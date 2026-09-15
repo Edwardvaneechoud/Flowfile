@@ -1,0 +1,2854 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/transform.html">
+      
+      
+        <link rel="prev" href="input.html">
+      
+      
+        <link rel="next" href="combine.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Transformations - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#transformations" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Transformations
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../what-is-flowfile.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Get Started
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Visual Editor
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../connect/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Connect Your Data
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../catalog/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Catalog & Automation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../python-api/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../ai/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../deployment/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy & Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../for-developers/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    
+  
+  
+  
+    <a href="../../../what-is-flowfile.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Visual Editor
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../building-flows.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Actions
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Data Actions
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="input.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Input Sources
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transformations
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="transform.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transformations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#filter-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filter data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#select-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Select data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sort-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sort data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#formula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Formula
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multi-field-formula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-field formula
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-cleansing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data cleansing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drop-duplicates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Drop duplicates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rename-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rename columns
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#add-record-id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Add record Id
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#take-sample" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Take Sample
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#text-to-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Text to rows
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sql-query" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SQL Query
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#polars-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Polars code
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python Script
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="combine.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Combine Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="aggregate.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ml.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Machine Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="output.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Output Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../formulas/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formula Language
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kernels.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sandboxed Python (Kernels)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kernel-api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The flowfile_ctx API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../node-designer.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Node Designer
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../tutorials/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Worked Examples
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../settings.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../connect/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Data
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../catalog/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog & Automation
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../python-api/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../ai/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../deployment/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy & Operate
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../for-developers/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#filter-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filter data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#select-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Select data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sort-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sort data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#formula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Formula
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multi-field-formula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-field formula
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-cleansing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data cleansing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#drop-duplicates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Drop duplicates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rename-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rename columns
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#add-record-id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Add record Id
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#take-sample" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Take Sample
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#text-to-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Text to rows
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sql-query" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SQL Query
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#polars-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Polars code
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python Script
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="transformations">Transformations</h1>
+<p>Transformations reshape a dataset: choose rows, choose columns, calculate new values, clean up messy text. Most take one input and return one table, so they chain freely. Two exceptions: <strong>Filter data</strong> can send non-matching rows out of a second handle, and the code actions — <strong>SQL Query</strong>, <strong>Polars code</strong> and <strong>Python Script</strong> — accept up to 10 inputs each.</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>What it does</th>
+<th style="text-align: center;">Lite</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#filter-data">Filter data</a></td>
+<td>Keep only the rows that match a condition</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#select-data">Select data</a></td>
+<td>Choose, rename and reorder columns</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#sort-data">Sort data</a></td>
+<td>Order rows by one or more columns</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#formula">Formula</a></td>
+<td>Calculate one new or replacement column</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#multi-field-formula">Multi-field formula</a></td>
+<td>Apply one calculation across many columns at once</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#data-cleansing">Data cleansing</a></td>
+<td>Fix nulls, whitespace, stray characters and casing in one pass</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#drop-duplicates">Drop duplicates</a></td>
+<td>Remove repeated rows</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#rename-columns">Rename columns</a></td>
+<td>Rename many columns by one rule</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#add-record-id">Add record Id</a></td>
+<td>Number the rows, optionally restarting per group</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#take-sample">Take Sample</a></td>
+<td>Work with the first N rows while you build</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#text-to-rows">Text to rows</a></td>
+<td>Split a delimited cell into one row per value</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#sql-query">SQL Query</a></td>
+<td>Query the connected inputs with SQL</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#polars-code">Polars code</a></td>
+<td>Write a Polars expression directly</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#python-script">Python Script</a></td>
+<td>Run Python in an isolated kernel container</td>
+<td style="text-align: center;"></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition info">
+<p class="admonition-title">In Flowfile Lite</p>
+<p>The browser-only <a href="../../deployment/lite.html">Flowfile Lite</a> build includes the nine actions marked ● above. <strong>Multi-field formula</strong>, <strong>Data cleansing</strong>, <strong>Text to rows</strong>, <strong>SQL Query</strong> and <strong>Python Script</strong> need the full desktop or server build.</p>
+</div>
+<h2 id="filter-data"><img alt="Filter data" height="44" src="../../../assets/images/nodes/filter.svg" width="44" /> Filter data</h2>
+<p>Keeps only the rows that match a condition, in one of three modes.</p>
+<p><strong>Basic</strong> — pick a column, an operator and a value. No syntax to learn, and it covers string, numeric and date comparisons.</p>
+<p><strong>Advanced</strong> — write a <a href="../../formulas/index.html">formula</a> that evaluates to <code>true</code> or <code>false</code>; only the <code>true</code> rows survive.</p>
+<p><strong>Split</strong> — instead of dropping the non-matching rows, send them out of a second output handle, so both halves stay in the flow.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Basic filter / Advanced filter</strong></td>
+<td>Switches between the point-and-click condition builder and the expression editor. Basic by default.</td>
+</tr>
+<tr>
+<td><strong>Single output / Split into pass/fail outputs</strong></td>
+<td>Turns the one output into two handles — <code>P</code> for matching rows, <code>F</code> for the rest. Single by default.</td>
+</tr>
+<tr>
+<td><strong>Column</strong></td>
+<td>The column the condition is evaluated against. Basic mode.</td>
+</tr>
+<tr>
+<td><strong>Operator</strong></td>
+<td>How the column is compared: Equals, Does not equal, Greater than, Less than, Contains, In, Between and their negations. Defaults to Equals.</td>
+</tr>
+<tr>
+<td><strong>Value</strong></td>
+<td>What the column is compared against — a comma-separated list for In, and the start of the range for Between.</td>
+</tr>
+<tr>
+<td><strong>And</strong></td>
+<td>The inclusive end of the range. Shown only when the operator is Between.</td>
+</tr>
+<tr>
+<td><strong>Advanced filter</strong></td>
+<td>The expression to evaluate per row. Advanced mode.</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Advanced expression</th>
+<th>Keeps</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>[City] = 'Amsterdam'</code></td>
+<td>Rows where <code>City</code> is "Amsterdam"</td>
+</tr>
+<tr>
+<td><code>[Age] &gt; 30</code></td>
+<td>Rows where <code>Age</code> is over 30</td>
+</tr>
+<tr>
+<td><code>[Country] = 'USA' and [Sales] &gt; 100</code></td>
+<td>Rows matching both conditions</td>
+</tr>
+<tr>
+<td><code>is_not_empty([email])</code></td>
+<td>Rows that have an email address</td>
+</tr>
+</tbody>
+</table>
+<p>Any formula returning <code>true</code>/<code>false</code> works, including <a href="../../formulas/functions.html">functions</a> like <code>contains()</code>, <code>between()</code> and <code>is_empty()</code>.</p>
+<h2 id="select-data"><img alt="Select data" height="44" src="../../../assets/images/nodes/select.svg" width="44" /> Select data</h2>
+<p>Chooses which columns to keep, what to call them, and what order they appear in.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Column Selection</strong></td>
+<td>Which columns to keep.</td>
+</tr>
+<tr>
+<td><strong>Reordering</strong></td>
+<td>Drag columns into place, or sort them alphabetically.</td>
+</tr>
+<tr>
+<td><strong>Rename Column</strong></td>
+<td>A new name for any selected column; the data is untouched.</td>
+</tr>
+<tr>
+<td><strong>Keep Missing Fields</strong></td>
+<td>Keep columns in the selection list even when they are absent from the current input, so the node survives a source that gains the column back.</td>
+</tr>
+</tbody>
+</table>
+<p>A selected column that is missing from the input is marked unavailable rather than failing the node, and the order you set here is the order downstream actions see.</p>
+<h2 id="sort-data"><img alt="Sort data" height="44" src="../../../assets/images/nodes/sort.svg" width="44" /> Sort data</h2>
+<p>Orders rows by one or more columns, each with its own direction.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Sort Columns</strong></td>
+<td>Columns to sort by, applied in the order listed.</td>
+</tr>
+<tr>
+<td><strong>Sort Order</strong></td>
+<td><code>asc</code> or <code>desc</code>, per column.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="formula"><img alt="Formula" height="44" src="../../../assets/images/nodes/formula.svg" width="44" /> Formula</h2>
+<p>Creates a new column, or replaces an existing one, by evaluating a formula for every row. If the name you give is new, the column is added; if it already exists, its values are replaced.</p>
+<p>Formulas use the <a href="../../formulas/index.html">Flowfile formula language</a>: reference columns as <code>[column]</code>, call any <a href="../../formulas/functions.html">built-in function</a>, and branch with <code>if ... then ... elseif ... else ... endif</code>. The editor autocompletes column names and functions and shows inline documentation, and the formula compiles to a native Polars expression — there is no row-by-row Python cost.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Column Name</strong></td>
+<td>The name of the new or replaced column.</td>
+</tr>
+<tr>
+<td><strong>Formula</strong></td>
+<td>The expression to evaluate, for example <code>round([price] * (1 - [discount]), 2)</code>.</td>
+</tr>
+<tr>
+<td><strong>Data Type</strong></td>
+<td><code>Auto</code> infers the type from the formula. Set it explicitly to force a cast.</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">Try formulas in your browser</p>
+<p>The <a href="https://edwardvaneechoud.github.io/polars_expr_transformer/">interactive formula playground</a> runs the full language against sample data with nothing to install.</p>
+</div>
+<h2 id="multi-field-formula"><img alt="Multi-field formula" height="44" src="../../../assets/images/nodes/multi_field_formula.svg" width="44" /> Multi-field formula</h2>
+<div class="ff-split">
+<div>
+<p>Runs one formula over many columns, instead of one <a href="#formula">Formula</a> node per column — the same calculation across every numeric column, across a listed subset, or across the whole frame. Three placeholders bind to whichever column is being processed.</p>
+<p>The drawer's <strong>Preview</strong> lists the columns the formula will touch and the names it will write, before you run anything.</p>
+</div>
+<p><img alt="Multi-Field Formula settings: Apply to set to Specific columns, the formula [_CurrentField_] / [Total] * 100, Output set to Write to new columns with the suffix % Total and data type Float64, and the Preview mapping January through April onto January % Total through April % Total" src="../../../assets/images/guides/nodes/multi-field-formula-settings.png" /></p>
+</div>
+<table>
+<thead>
+<tr>
+<th>Placeholder</th>
+<th>Binds to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>[_CurrentField_]</code></td>
+<td>The column's value — what the calculation works on.</td>
+</tr>
+<tr>
+<td><code>[_CurrentFieldName_]</code></td>
+<td>The column's name as text, e.g. <code>"revenue"</code>.</td>
+</tr>
+<tr>
+<td><code>[_CurrentFieldType_]</code></td>
+<td>The column's data type as text, e.g. <code>"Float64"</code> or <code>"String"</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Any other column can still be referenced by name, so <code>[_CurrentField_] / [Total]</code> is valid.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Apply to</strong></td>
+<td>Which columns the formula runs over: <strong>All columns</strong>, <strong>Specific columns</strong>, or <strong>By data type</strong>. All columns by default.</td>
+</tr>
+<tr>
+<td><strong>Select columns</strong></td>
+<td>The columns to target, in the order you pick them. Names no longer present in the input are skipped. Shown for <em>Specific columns</em>.</td>
+</tr>
+<tr>
+<td><strong>Select data type</strong></td>
+<td>The one group to target: Numeric, String, Date, Boolean, Binary, Complex or Other. Shown for <em>By data type</em>.</td>
+</tr>
+<tr>
+<td><strong>Formula</strong></td>
+<td>The expression evaluated once per targeted column.</td>
+</tr>
+<tr>
+<td><strong>Output</strong></td>
+<td><strong>Overwrite selected columns</strong> replaces each source column; <strong>Write to new columns</strong> appends the results and keeps the sources. Overwrite by default.</td>
+</tr>
+<tr>
+<td><strong>Prefix</strong> / <strong>Suffix</strong></td>
+<td>Text wrapped around each source column's name to build the new name. At least one is required, and a generated name that already exists is an error.</td>
+</tr>
+<tr>
+<td><strong>Data type</strong></td>
+<td>The type every result is cast to. <code>Auto</code> keeps whatever the expression produces.</td>
+</tr>
+</tbody>
+</table>
+<p>Selecting nothing is not an error — the frame passes through unchanged. Overwriting leaves names and column order unchanged.</p>
+<p>All expressions are evaluated in one pass, so a formula referencing a column that is itself being overwritten still reads that column's original value.</p>
+<p><strong>Example — each month as a share of the total.</strong> A table with a <code>Total</code> column and twelve month columns. Set <strong>Apply to</strong> → <em>Specific columns</em> → the twelve month columns, with the formula <code>[_CurrentField_] / [Total] * 100</code>. Set <strong>Output</strong> → <em>Write to new columns</em>, <strong>Suffix</strong> to <code>% Total</code> (the leading space is part of it) and <strong>Data type</strong> to <code>Float64</code>. The month columns keep their values and <code>January % Total</code> … <code>December % Total</code> are appended after them.</p>
+<p>In Python this is <a href="../../python-api/reference/flowframe-operations.html#one-formula-over-many-columns"><code>multi_field_formula()</code></a>. <a href="../tutorials/code-generator.html">Exporting to Python</a> renders it as a <code>multi_field_formula()</code> call in the FlowFrame modes; the pure-Polars mode reports it as unsupported.</p>
+<h2 id="data-cleansing"><img alt="Data cleansing" height="44" src="../../../assets/images/nodes/data_cleansing.svg" width="44" /> Data cleansing</h2>
+<div class="ff-split">
+<div>
+<p>Fixes the usual problems in a raw export in one pass: rows and columns that hold nothing, nulls where a blank or a zero is wanted, stray whitespace, unwanted characters, and inconsistent casing.</p>
+<p>A freshly dropped node is already valid — it fills nulls and trims whitespace on every column — so the drawer is where you narrow it down or switch on the stricter rules.</p>
+</div>
+<p><img alt="Data Cleansing settings: the Remove null data, Columns to cleanse, Replace nulls, Remove unwanted characters, and Modify case sections" src="../../../assets/images/guides/nodes/data-cleansing-settings.png" /></p>
+</div>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Remove null data</strong></td>
+<td>Two frame-wide toggles: drop rows that are null in every field, and drop columns that are null in every row. Both off by default.</td>
+</tr>
+<tr>
+<td><strong>Columns to cleanse</strong></td>
+<td>Whether the rules below run on <strong>All columns</strong> or only <strong>Selected columns</strong>. All columns by default.</td>
+</tr>
+<tr>
+<td><strong>Replace nulls</strong></td>
+<td>Fill nulls with blank text in text columns, and with <code>0</code> in numeric columns. Both on by default.</td>
+</tr>
+<tr>
+<td><strong>Remove unwanted characters</strong></td>
+<td>Trim leading and trailing whitespace (on by default); collapse tabs, line breaks and repeated spaces; strip all whitespace; or remove letters, numbers or punctuation.</td>
+</tr>
+<tr>
+<td><strong>Modify case</strong></td>
+<td>Leave unchanged, UPPERCASE, lowercase or Title Case. Unchanged by default.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>What each rule does</strong></p>
+<p>The two <strong>Remove null data</strong> rules look at the whole frame and ignore the column selection. Every other rule applies only to the columns you select, and only when the column's type matches: the null-to-blank, character and case rules change <strong>text</strong> columns, the null-to-zero rule changes <strong>numeric</strong> columns, and any other type passes through untouched even when selected. Column names, order and types are unchanged — only <em>Remove columns that are null in every row</em> can remove a column.</p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Option</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Remove null data</td>
+<td>Remove rows that are null in every field</td>
+<td>Drops a row only when <em>every</em> column is null. An empty string is not null, so a row holding <code>""</code> stays.</td>
+</tr>
+<tr>
+<td>Remove null data</td>
+<td>Remove columns that are null in every row</td>
+<td>Drops a column only when it is null in <em>every</em> row. Decided from the data at run time, so the output schema can be narrower than the edit-time preview.</td>
+</tr>
+<tr>
+<td>Columns to cleanse</td>
+<td>All columns / Selected columns</td>
+<td>Which columns the rules below apply to. Selected columns no longer present in the input are ignored.</td>
+</tr>
+<tr>
+<td>Replace nulls</td>
+<td>With blank text, in text columns</td>
+<td>Nulls become <code>""</code>. On by default.</td>
+</tr>
+<tr>
+<td>Replace nulls</td>
+<td>With 0, in numeric columns</td>
+<td>Nulls become <code>0</code>. On by default.</td>
+</tr>
+<tr>
+<td>Remove unwanted characters</td>
+<td>Leading and trailing whitespace</td>
+<td>Trims both ends. On by default.</td>
+</tr>
+<tr>
+<td>Remove unwanted characters</td>
+<td>Tabs, line breaks and repeated spaces</td>
+<td>Collapses every run of whitespace into a single space.</td>
+</tr>
+<tr>
+<td>Remove unwanted characters</td>
+<td>All whitespace</td>
+<td>Removes whitespace entirely. Supersedes the two options above it.</td>
+</tr>
+<tr>
+<td>Remove unwanted characters</td>
+<td>Letters / Numbers / Punctuation</td>
+<td>Removes letters (including accented ones), digits, or ASCII punctuation.</td>
+</tr>
+<tr>
+<td>Modify case</td>
+<td>Leave unchanged / UPPERCASE / lowercase / Title Case</td>
+<td>Casing applied last. Title Case follows Polars and capitalizes the letter after any non-letter, so <code>3rd street</code> becomes <code>3Rd Street</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Within a text column the rules run in a fixed order: fill nulls, remove letters, numbers and punctuation, clean up whitespace, then apply the casing rule. Removing characters first means the gaps they leave behind are collapsed by the whitespace step.</p>
+<div class="admonition tip">
+<p class="admonition-title">Cleanse before you join or group</p>
+<p>Keys that differ only by trailing spaces or casing do not match. A Data cleansing node on each input with <em>Leading and trailing whitespace</em> and a casing rule turns <code>"Amsterdam "</code> and <code>"amsterdam"</code> into the same key before a <a href="combine.html#join">Join</a> or <a href="aggregate.html#group-by">Group by</a> sees them.</p>
+</div>
+<p>In Python this is <a href="../../python-api/reference/flowframe-operations.html#cleaning-messy-text"><code>data_cleansing()</code></a>, and it exports to native Polars string expressions in every <a href="../tutorials/code-generator.html">code export mode</a>.</p>
+<h2 id="drop-duplicates"><img alt="Drop duplicates" height="44" src="../../../assets/images/nodes/unique.svg" width="44" /> Drop duplicates</h2>
+<p>Removes rows that repeat across the columns you nominate, keeping the first occurrence.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Columns</strong></td>
+<td>The columns duplicates are judged on. Two rows count as duplicates when these columns match, whatever the other columns hold.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="rename-columns"><img alt="Rename columns" height="44" src="../../../assets/images/nodes/dynamic_rename.svg" width="44" /> Rename columns</h2>
+<p>Renames many columns at once by applying a single rule, instead of editing names one by one in a <a href="#select-data">Select data</a> node.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Rename mode</strong></td>
+<td>The rule to apply: <strong>Prefix</strong>, <strong>Suffix</strong>, <strong>Formula</strong> or <strong>First row</strong>. Prefix by default.</td>
+</tr>
+<tr>
+<td><strong>Prefix</strong> / <strong>Suffix</strong> / <strong>Formula</strong></td>
+<td>The mode's own value. Only the one matching the selected mode is shown.</td>
+</tr>
+<tr>
+<td><strong>Apply to</strong></td>
+<td>Which columns the rule touches: <strong>All columns</strong>, <strong>Specific columns</strong> or <strong>By data type</strong>. All columns by default.</td>
+</tr>
+<tr>
+<td><strong>Select columns</strong></td>
+<td>The columns to rename. Shown for <em>Specific columns</em>.</td>
+</tr>
+<tr>
+<td><strong>Select data type</strong></td>
+<td>The one group to rename. Shown for <em>By data type</em>; nothing is renamed until a group is picked.</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Prefix</td>
+<td>Prepend a fixed string to each selected column name.</td>
+</tr>
+<tr>
+<td>Suffix</td>
+<td>Append a fixed string to each selected column name.</td>
+</tr>
+<tr>
+<td>Formula</td>
+<td>Compute the new name with a <a href="../../formulas/index.html">formula</a>; <code>[column_name]</code> is bound to each column's current name, e.g. <code>uppercase([column_name])</code> or <code>"v2_" + [column_name]</code>.</td>
+</tr>
+<tr>
+<td>First row</td>
+<td>Promote the first data row to column headers and drop it from the data.</td>
+</tr>
+</tbody>
+</table>
+<p>Only the columns you select are renamed. In first-row mode the first row is dropped regardless of the selection, and a null or empty header value raises an error.</p>
+<h2 id="add-record-id"><img alt="Add record Id" height="44" src="../../../assets/images/nodes/record_id.svg" width="44" /> Add record Id</h2>
+<p>Adds a column holding an incrementing number — either one sequence across the whole table, or a sequence that restarts for each group.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Output Column Name</strong></td>
+<td>Name of the new column. Default <code>record_id</code>.</td>
+</tr>
+<tr>
+<td><strong>Offset</strong></td>
+<td>The number the sequence starts at. Default <code>1</code>.</td>
+</tr>
+<tr>
+<td><strong>Group By</strong></td>
+<td>When on, the number restarts within each group instead of running across all rows. Default off.</td>
+</tr>
+<tr>
+<td><strong>Group By Columns</strong></td>
+<td>The columns defining those groups. Only used when <strong>Group By</strong> is on.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="take-sample"><img alt="Take Sample" height="44" src="../../../assets/images/nodes/sample.svg" width="44" /> Take Sample</h2>
+<p>Keeps the first N rows, so you can iterate on a small slice before running the full dataset.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Sample Size</strong></td>
+<td>Number of rows to keep. Default <code>1000</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="text-to-rows"><img alt="Text to rows" height="44" src="../../../assets/images/nodes/text_to_rows.svg" width="44" /> Text to rows</h2>
+<p>Splits a delimited cell into one row per value, repeating the rest of the row for each. A cell holding <code>red,green,blue</code> becomes three rows.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Column to Split</strong></td>
+<td>The column holding the delimited text.</td>
+</tr>
+<tr>
+<td><strong>Output Column Name</strong></td>
+<td>Name of the resulting column. Defaults to the original column.</td>
+</tr>
+<tr>
+<td><strong>Split by Fixed Value</strong></td>
+<td>When on, split on a fixed delimiter. Default <code>,</code>.</td>
+</tr>
+<tr>
+<td><strong>Delimiter</strong></td>
+<td>The character to split on, for example <code>,</code>, <code>;</code> or <code>\|</code>.</td>
+</tr>
+<tr>
+<td><strong>Split by Column</strong></td>
+<td>Use values from another column as the delimiter instead of a fixed one.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="sql-query"><img alt="SQL Query" height="44" src="../../../assets/images/nodes/sql_query.svg" width="44" /> SQL Query</h2>
+<p>Runs a SQL <code>SELECT</code> across the connected inputs using the Polars SQL dialect. Each input is a table named <code>input_1</code>, <code>input_2</code>, … in connection order, and up to 10 can be connected at once. SQL Query nodes chain like any other transformation.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SQL Query</strong></td>
+<td>The statement to execute, referencing the connected inputs as <code>input_1</code>, <code>input_2</code>, …</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="k">SUM</span><span class="p">(</span><span class="n">o</span><span class="p">.</span><span class="n">amount</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">total</span>
+<span class="k">FROM</span><span class="w"> </span><span class="n">input_1</span><span class="w"> </span><span class="k">c</span>
+<span class="k">JOIN</span><span class="w"> </span><span class="n">input_2</span><span class="w"> </span><span class="n">o</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">customer_id</span>
+<span class="k">GROUP</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">name</span>
+</code></pre></div>
+<p>The node is read-only: a query must start with <code>SELECT</code> or <code>WITH</code>, and statements that modify data or schema — <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>, <code>DROP</code>, <code>CREATE</code>, <code>ALTER</code>, <code>TRUNCATE</code> — are rejected. Invalid or unsafe SQL surfaces as a node error before the flow runs.</p>
+<div class="admonition tip">
+<p class="admonition-title">Querying catalog tables</p>
+<p>To run SQL across registered catalog tables rather than connected nodes, use the <a href="../catalog/sql-editor.html">SQL editor</a>.</p>
+</div>
+<h2 id="polars-code"><img alt="Polars code" height="44" src="../../../assets/images/nodes/polars_code.svg" width="44" /> Polars code</h2>
+<p>Writes a <a href="https://docs.pola.rs/">Polars</a> expression directly, for transformations no other action covers.</p>
+<p>Pipelines built with the Python API only fall back to this node for operations without a native equivalent; <a href="../../python-api/concepts/design-concepts.html#which-operations-become-which-node">which operations become which node</a> lists the calls that render as Select data, Filter data, Formula, and the other native nodes instead.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Code</strong></td>
+<td>The Polars code to run. The incoming frame is <code>input_df</code> — or <code>input_df_0</code>, <code>input_df_1</code>, … when several are connected. For multi-line code, assign the result to <code>output_df</code>. A commented example template is there to start from.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="n">input_df</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s1">'Age'</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">30</span><span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">input_df</span><span class="o">.</span><span class="n">select</span><span class="p">([</span><span class="s1">'Name'</span><span class="p">,</span> <span class="s1">'City'</span><span class="p">])</span>
+<span class="n">filtered</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s1">'City'</span><span class="p">)</span> <span class="o">==</span> <span class="s1">'Amsterdam'</span><span class="p">)</span>
+<span class="n">output_df</span> <span class="o">=</span> <span class="n">filtered</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s1">'Name'</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s1">'Customer_Name'</span><span class="p">))</span>
+</code></pre></div>
+<h2 id="python-script"><img alt="Python Script" height="44" src="../../../assets/images/nodes/python_code.svg" width="44" /> Python Script</h2>
+<p>Executes Python in an isolated Docker <a href="../kernels.html">kernel</a> container, with a notebook-style editor of multiple cells, named inputs and outputs, variables that persist across executions within a flow, and the <code>flowfile</code> API for data I/O, artifacts, display and logging.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Kernel</strong></td>
+<td>The running kernel to execute on.</td>
+</tr>
+<tr>
+<td><strong>Code</strong></td>
+<td>The Python code, written in the notebook editor.</td>
+</tr>
+<tr>
+<td><strong>Output Names</strong></td>
+<td>Named outputs. Default <code>main</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><a href="../kernels.html">Sandboxed Python</a> covers kernels in full, and <a href="../kernel-api.html">the flowfile_ctx API</a> documents what the code can call.</p>
+<hr />
+<p><a href="input.html">← Input Sources</a> | <a href="combine.html">Next: Combine Operations →</a></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="input.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Input Sources">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Input Sources
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="combine.html" class="md-footer__link md-footer__link--next" aria-label="Next: Combine Operations">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Combine Operations
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.prune", "navigation.tracking", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../../javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>

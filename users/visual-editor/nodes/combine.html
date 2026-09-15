@@ -1,0 +1,2536 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/combine.html">
+      
+      
+        <link rel="prev" href="transform.html">
+      
+      
+        <link rel="next" href="aggregate.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Combine Operations - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#combine-operations" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Combine Operations
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../what-is-flowfile.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Get Started
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Visual Editor
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../connect/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Connect Your Data
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../catalog/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Catalog & Automation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../python-api/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../ai/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../deployment/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy & Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../for-developers/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    
+  
+  
+  
+    <a href="../../../what-is-flowfile.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Visual Editor
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../building-flows.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Actions
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Data Actions
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="input.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Input Sources
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="transform.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transformations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Combine Operations
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="combine.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Combine Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#join" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Join
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fuzzy-match" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fuzzy match
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#union-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Union data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cross-join" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross join
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#graph-solver" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Graph solver
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gate
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Gate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#inputs-and-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inputs and outputs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#condition-source-flow-parameter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Condition source: flow parameter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#condition-source-formula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Condition source: formula
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-ifelse-pattern" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The if/else pattern
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#wait-for" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wait For
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="aggregate.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ml.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Machine Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="output.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Output Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../formulas/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formula Language
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kernels.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sandboxed Python (Kernels)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kernel-api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The flowfile_ctx API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../node-designer.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Node Designer
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../tutorials/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Worked Examples
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../settings.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../connect/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Data
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../catalog/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog & Automation
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../python-api/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../ai/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../deployment/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy & Operate
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../for-developers/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#join" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Join
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fuzzy-match" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fuzzy match
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#union-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Union data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cross-join" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross join
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#graph-solver" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Graph solver
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gate
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Gate">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#inputs-and-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inputs and outputs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#condition-source-flow-parameter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Condition source: flow parameter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#condition-source-formula" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Condition source: formula
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-ifelse-pattern" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The if/else pattern
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#wait-for" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wait For
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="combine-operations">Combine Operations</h1>
+<p>Most of these bring separate datasets together — by matching values, stacking rows, or finding near-matches. The category also holds the actions that work on relationships <em>within</em> one table, and the ones that control which branches of a flow run at all, so a few take a single input rather than two.</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>What it does</th>
+<th style="text-align: center;">Lite</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#join">Join</a></td>
+<td>Match rows from two datasets on shared key columns</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#fuzzy-match">Fuzzy match</a></td>
+<td>Match rows on values that are similar but not identical</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#union-data">Union data</a></td>
+<td>Stack datasets on top of each other</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#cross-join">Cross join</a></td>
+<td>Every combination of rows from two datasets</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#graph-solver">Graph solver</a></td>
+<td>Group records that are connected to each other — one input</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#gate">Gate</a></td>
+<td>Run a branch only when a condition holds</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#wait-for">Wait For</a></td>
+<td>Hold a branch until another branch finishes</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#run-flow">Run Flow</a></td>
+<td>Execute another flow as a single step</td>
+<td style="text-align: center;"></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition info">
+<p class="admonition-title">In Flowfile Lite</p>
+<p>The browser-only <a href="../../deployment/lite.html">Flowfile Lite</a> build supports <strong>Join</strong>, <strong>Cross join</strong> and <strong>Union data</strong>. The rest need the full desktop or server build.</p>
+</div>
+<h2 id="join"><img alt="Join" height="44" src="../../../assets/images/nodes/join.svg" width="44" /> Join</h2>
+<p>Matches rows from two inputs on one or more shared key columns — the spreadsheet VLOOKUP, without the lookup breaking when rows move. Connect the left and right datasets, pick the join type, choose the key columns, and select which columns to keep from each side. Duplicate column names are renamed automatically.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Join Type</strong></td>
+<td>How unmatched rows are treated. See the table below.</td>
+</tr>
+<tr>
+<td><strong>Join Columns</strong></td>
+<td>The column pairs matched against each other.</td>
+</tr>
+<tr>
+<td><strong>Left data</strong> / <strong>Right data</strong></td>
+<td>The column list for each input. Untick <strong>Keep</strong> to drop a column, type a <strong>New column name</strong> to rename it, and drag rows to set the output order. Hidden for semi and anti joins.</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>inner</code></td>
+<td>Only rows with a match in both inputs.</td>
+</tr>
+<tr>
+<td><code>left</code></td>
+<td>Every left row; matched right columns, nulls where there is no match.</td>
+</tr>
+<tr>
+<td><code>right</code></td>
+<td>Every right row; matched left columns, nulls where there is no match.</td>
+</tr>
+<tr>
+<td><code>full</code></td>
+<td>Every row from both inputs, matched where possible.</td>
+</tr>
+<tr>
+<td><code>semi</code></td>
+<td>Left rows that have a match on the right — right columns are not added.</td>
+</tr>
+<tr>
+<td><code>anti</code></td>
+<td>Left rows that have no match on the right.</td>
+</tr>
+</tbody>
+</table>
+<p>Semi and anti joins pass all left-side columns through unchanged. <code>outer</code> is accepted as an alias for <code>full</code>.</p>
+<p>For a Cartesian product with no keys at all, use the dedicated <a href="#cross-join">Cross join</a> action — the Join node's strategies all require key columns.</p>
+<h2 id="fuzzy-match"><img alt="Fuzzy match" height="44" src="../../../assets/images/nodes/fuzzy_match.svg" width="44" /> Fuzzy match</h2>
+<p>Matches rows on values that are close rather than identical, which is what you need when the same customer is "Acme Corp" in one system and "ACME Corporation" in another. Each match carries a score, so you can see how confident it was.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Join Columns</strong></td>
+<td>The column pairs compared against each other.</td>
+</tr>
+<tr>
+<td><strong>Fuzzy Algorithm</strong></td>
+<td>One of <code>levenshtein</code>, <code>jaro</code>, <code>jaro_winkler</code>, <code>hamming</code>, <code>damerau_levenshtein</code> or <code>indel</code>.</td>
+</tr>
+<tr>
+<td><strong>Threshold Score</strong></td>
+<td>Minimum similarity for a match, 0–100. Default <code>80</code>.</td>
+</tr>
+<tr>
+<td><strong>Left data</strong> / <strong>Right data</strong></td>
+<td>The column list for each input. Untick <strong>Keep</strong> to drop a column, type a <strong>New column name</strong> to rename it, and drag rows to set the output order.</td>
+</tr>
+</tbody>
+</table>
+<p>Fuzzy matching compares candidate pairs rather than looking keys up directly, so it is far more expensive than a <a href="#join">Join</a>. Cut both inputs down first — filter to the rows that need matching, and join exactly the ones that match cleanly.</p>
+<h2 id="union-data"><img alt="Union data" height="44" src="../../../assets/images/nodes/union.svg" width="44" /> Union data</h2>
+<p>Stacks datasets on top of each other, aligning columns by name. Columns that exist in only some inputs are kept and filled with nulls elsewhere, so inputs do not have to share an identical schema. It has no settings — connect the inputs and it aligns them.</p>
+<p>Union is also where conditional branches re-converge: it runs as long as at least one input survived, so a branch that was <a href="#gate">gated</a> off simply contributes nothing. A branch that <em>failed</em>, on the other hand, still blocks it.</p>
+<h2 id="cross-join"><img alt="Cross join" height="44" src="../../../assets/images/nodes/cross_join.svg" width="44" /> Cross join</h2>
+<p>Produces every combination of rows from two inputs — the Cartesian product. Ten rows joined to five gives fifty.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Left data</strong> / <strong>Right data</strong></td>
+<td>The column list for each input. Untick <strong>Keep</strong> to drop a column, type a <strong>New column name</strong> to rename it, and drag rows to set the output order.</td>
+</tr>
+</tbody>
+</table>
+<p>Both lists arrive pre-filled with every incoming column, all kept. Renaming matters here because the two sides often share column names.</p>
+<p>Output size is the product of the inputs, so this grows fast. It is the right action for building a complete grid (every product against every month, say) and the wrong one for matching records.</p>
+<h2 id="graph-solver"><img alt="Graph solver" height="44" src="../../../assets/images/nodes/graph_solver.svg" width="44" /> Graph solver</h2>
+<p>Unlike the rest of this category, Graph solver takes a <strong>single input</strong>: one table of pairwise connections, where each row is an edge. It assigns a shared group identifier to everything transitively connected — the connected components of a graph. If A links to B and B links to C, all three land in one group even though A and C never appear together.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>From Column</strong></td>
+<td>The starting point of each connection.</td>
+</tr>
+<tr>
+<td><strong>To Column</strong></td>
+<td>The endpoint of each connection.</td>
+</tr>
+<tr>
+<td><strong>Output Column</strong></td>
+<td>Where the assigned group identifier is written.</td>
+</tr>
+</tbody>
+</table>
+<p>This is the action behind entity resolution: after a <a href="#fuzzy-match">Fuzzy match</a> produces pairs of records that look like the same thing, Graph solver collapses those pairs into one group per real-world entity.</p>
+<h2 id="gate"><img alt="Gate" height="44" src="../../../assets/images/nodes/gate.svg" width="44" /> Gate</h2>
+<p>Decides whether a branch runs at all. The data input passes through unchanged while the condition holds. When it does not hold, the gate itself still succeeds — but every node downstream is <strong>skipped</strong>, not failed. The run stays green, progress still reaches its total, and sources upstream of the gate still finish their post-run work (a Kafka Source commits its offsets as usual).</p>
+<p>Where <a href="transform.html#filter-data">Filter data</a> decides which <em>rows</em> continue, Gate decides whether the <em>rest of the branch</em> executes.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Condition source</strong></td>
+<td><strong>Flow parameter</strong> (the default) compares a parameter against a value; <strong>Formula</strong> evaluates a row predicate.</td>
+</tr>
+<tr>
+<td><strong>Parameter</strong> / <strong>Operator</strong> / <strong>Value</strong></td>
+<td>Shown for a flow-parameter condition. The value is coerced to the parameter's declared type.</td>
+</tr>
+<tr>
+<td><strong>Formula</strong></td>
+<td>Shown for a formula condition. The gate opens when at least one row matches.</td>
+</tr>
+<tr>
+<td><strong>Add an else output</strong></td>
+<td>Off by default. Adds a second exit that runs when the condition does <em>not</em> hold.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="inputs-and-outputs">Inputs and outputs</h3>
+<table>
+<thead>
+<tr>
+<th>Handle</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Data (passes through)</strong></td>
+<td>The dataset the gate forwards. Required, on the left edge.</td>
+</tr>
+<tr>
+<td><strong>Control (optional)</strong></td>
+<td>The small square pip at the <strong>bottom</strong> of the node — a signal, not data. Read only when the condition source is <strong>Formula</strong>; when connected, the formula is checked against this input instead of the data input.</td>
+</tr>
+<tr>
+<td><strong>Then</strong> (<code>T</code>)</td>
+<td>The data, live while the condition holds. The only output unless the else output is enabled.</td>
+</tr>
+<tr>
+<td><strong>Else</strong> (<code>E</code>, optional)</td>
+<td>Enable <strong>Add an else output</strong> in the settings: the data leaves here when the condition does <strong>not</strong> hold. Exactly one of the two sides runs per execution; the other side's downstream is skipped.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="condition-source-flow-parameter">Condition source: flow parameter</h3>
+<div class="ff-split">
+<div>
+<p>The default. Pick a flow parameter (defined in <strong>Flow settings</strong>), an operator, and — for the comparing operators — a value. The value you type is coerced using the parameter's declared type, so an <code>integer</code> parameter compares as a number, not as text.</p>
+<p>Parameter conditions resolve before the run starts, so the execution plan already knows which branches are live.</p>
+</div>
+<p><img alt="Gate settings in parameter mode: the Condition source toggle and the Parameter, Operator, and Value row" src="../../../assets/images/guides/nodes/gate-parameter-settings.png" /></p>
+</div>
+<table>
+<thead>
+<tr>
+<th>Operator</th>
+<th>Gate opens when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>equals</strong></td>
+<td>The parameter's value equals the value you typed.</td>
+</tr>
+<tr>
+<td><strong>not equals</strong></td>
+<td>It does not equal that value.</td>
+</tr>
+<tr>
+<td><strong>is one of</strong></td>
+<td>It appears in the comma-separated list you typed.</td>
+</tr>
+<tr>
+<td><strong>is not one of</strong></td>
+<td>It does not appear in that list.</td>
+</tr>
+<tr>
+<td><strong>is true</strong></td>
+<td>It reads as boolean true (<code>true</code>, <code>1</code>, <code>yes</code>, <code>on</code>).</td>
+</tr>
+<tr>
+<td><strong>is false</strong></td>
+<td>It does not read as true.</td>
+</tr>
+<tr>
+<td><strong>is set</strong></td>
+<td>It is not empty.</td>
+</tr>
+</tbody>
+</table>
+<p>Overriding the parameter is what flips the gate — including on a <a href="../../deployment/cli.html">headless run</a>: <code>flowfile run flow my_flow.yaml --param env=prod</code>.</p>
+<h3 id="condition-source-formula">Condition source: formula</h3>
+<p>Write a flowfile formula — the same expression language as <a href="transform.html#filter-data">Filter data</a>'s advanced mode. The gate applies it as a row predicate and opens when <strong>at least one row matches</strong>. An empty result closes the gate: no matching rows means don't run the branch. A formula that cannot run (a typo, an unknown column) fails the gate visibly rather than silently picking a branch, and <code>${param}</code> references resolve inside the formula like in any other node — <code>${env} = 'prod'</code> compares the parameter's value against the literal.</p>
+<p>The formula is checked against the <strong>control input when one is connected, otherwise against the data input itself</strong>:</p>
+<ul>
+<li><em>Gate on the data:</em> leave the control handle unconnected and write the condition over the data's own columns — <code>[status] = 'error'</code> runs the branch only when error rows exist.</li>
+<li><em>Gate on a signal:</em> wire any node to the control handle and the formula reads that frame instead — a Group by producing <code>null_rate</code> feeding the control handle with formula <code>[null_rate] &lt; 0.05</code> gates the write on a quality verdict computed elsewhere.</li>
+</ul>
+<p>A formula gate re-evaluates on every run even when nothing else in the flow changed, because the data it checks can change without any setting changing.</p>
+<h3 id="the-ifelse-pattern">The if/else pattern</h3>
+<p>Enable <strong>Add an else output</strong> and the gate becomes a two-exit router: one condition, two branches, complementarity guaranteed. Put each branch behind one exit and re-converge them on a <strong>Union data</strong>:</p>
+<pre class="mermaid"><code>graph LR
+    R[Read data] --&gt; G["Gate: env equals prod"]
+    G -- "T (then)" --&gt; P[Enrich for prod]
+    G -- "E (else)" --&gt; D[Sample for dev]
+    P --&gt; U[Union data]
+    D --&gt; U
+    U --&gt; W[Write data]</code></pre>
+<p>Exactly one side runs, and the Union outputs whichever branch ran.</p>
+<details>
+<summary>When the two branches produce different columns</summary>
+<p>A column produced only by the skipped branch is absent from the output — it does not come back as nulls. So when the two branches produce different shapes, configure the nodes downstream of the Union against the columns the branches share, or end each branch with a <a href="transform.html#select-data">Select data</a> that establishes a common shape (keep the missing columns) before the Union.</p>
+<p>Edit-time schema prediction is gate-blind: the canvas predicts the union of both branches' columns, so a run's actual output can be narrower than the predicted schema.</p>
+<p>Two separate gates with hand-written complementary conditions still work, but the else output cannot drift out of complement.</p>
+</details>
+<details>
+<summary>Skipped is not failed — what a closed gate looks like on the canvas</summary>
+<p><img alt="A run where the gate closed: Manual input and Gate show green success dots, and the Count records node behind the gate shows the hollow grey skipped ring" class="ff-wide" src="../../../assets/images/guides/nodes/gate-skipped-branch.png" /></p>
+<p>A deliberately skipped node shows a hollow grey ring on the canvas ("Skipped (gated off) — condition not met") and appears as <strong>Skipped</strong> in the run report with no runtime. It is a successful outcome: the flow's overall status stays green and the completed-node count still reaches its total.</p>
+<p>Skips caused by a <em>failure</em> or by invalid settings are unchanged — they still block everything downstream, including a Union that has other healthy inputs.</p>
+<div class="admonition warning">
+<p class="admonition-title">A closed gate does not stop the upstream</p>
+<p>A gate only prevents its <strong>downstream</strong> from running. Everything between the source and the gate still executes, so an expensive read placed above a gate is paid for even when the branch is off. Put the gate as early in the branch as the condition allows.</p>
+</div>
+</details>
+<details>
+<summary>Export to Python — how a gate becomes a real if block</summary>
+<p>Gates survive all three <a href="../tutorials/code-generator.html">code export modes</a> — Polars, FlowFrame and Project: each gate becomes a real <code>if</code> block over the generated function's keyword arguments. An else-output gate exports as a genuine <code>if</code>/<code>else</code> pair, and the Union re-converging its two sides collapses to a conditional assignment — whichever side ran is the result. A Union behind independent gates instead appends each surviving branch to a list under its own <code>if</code> guard and concatenates the list, so a gated-off branch simply isn't in it. A formula gate exports as a small row-probe helper evaluated when the pipeline function runs.</p>
+<p>Single-node preview ignores gates entirely — fetching one node's data plans as if every gate were open, so you can inspect a branch that this run's condition would skip.</p>
+</details>
+<h2 id="wait-for"><img alt="Wait For" height="44" src="../../../assets/images/nodes/wait_for.svg" width="44" /> Wait For</h2>
+<p>A pass-through with two inputs: the <strong>left</strong> input flows through unchanged, and the <strong>right</strong> input only enforces ordering. Once both have finished, the node emits the left input's data on its single output. There are no settings — wire the data branch into the left input and the dependency branch into the right.</p>
+<p>Use it when a downstream node depends on a <em>side effect</em> of a sibling branch rather than on its data. The common case is <a href="ml.html#apply-model">Apply Model</a> needing <a href="ml.html#train-model">Train Model</a> to have written its artifact first.</p>
+<h2 id="run-flow"><img alt="Run Flow" height="44" src="../../../assets/images/nodes/run_flow.svg" width="44" /> Run Flow</h2>
+<p>Executes another, catalog-registered flow inside this one — the calling side of a <a href="../subflows.html">subflow</a>. Its input and output handles are shaped by the child flow's Flow Input and Flow Output nodes.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Flow</strong></td>
+<td>The catalog-registered child flow to run.</td>
+</tr>
+<tr>
+<td><strong>Parameter bindings</strong></td>
+<td>Default, constant, or column-mapped value per child parameter.</td>
+</tr>
+<tr>
+<td><strong>Iteration mode</strong></td>
+<td>Run once with the first row's values, or once per row (capped at 1000).</td>
+</tr>
+</tbody>
+</table>
+<p><a href="../subflows.html">Subflows</a> covers registration, wiring and error handling.</p>
+<hr />
+<p><a href="transform.html">← Transformations</a> | <a href="aggregate.html">Next: Aggregations →</a></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="transform.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Transformations">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Transformations
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="aggregate.html" class="md-footer__link md-footer__link--next" aria-label="Next: Aggregations">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Aggregations
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.prune", "navigation.tracking", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../../javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,2927 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/input.html">
+      
+      
+        <link rel="prev" href="index.html">
+      
+      
+        <link rel="next" href="transform.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Input Sources - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#input-sources" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Input Sources
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../what-is-flowfile.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Get Started
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Visual Editor
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../connect/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Connect Your Data
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../catalog/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Catalog & Automation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../python-api/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../ai/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../deployment/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy & Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../for-developers/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    
+  
+  
+  
+    <a href="../../../what-is-flowfile.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Visual Editor
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../building-flows.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Actions
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Data Actions
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Input Sources
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="input.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Input Sources
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#read-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Read data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#csv-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CSV settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#excel-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Excel settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#list-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        List files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#manual-input" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Manual input
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#database-reader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read from Database
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cloud-storage-reader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read from cloud provider
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#catalog-reader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read from Catalog
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Read from Catalog">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reading-history-from-an-scd2-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading history from an SCD2 table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-virtual-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading virtual tables
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sql-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SQL mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rest-api-reader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        REST API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#kafka-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kafka Source
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#google-analytics-reader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Google Analytics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flow-input" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flow Input
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="transform.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transformations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="combine.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Combine Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="aggregate.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ml.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Machine Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="output.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Output Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../formulas/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formula Language
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kernels.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sandboxed Python (Kernels)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kernel-api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The flowfile_ctx API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../node-designer.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Node Designer
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../tutorials/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Worked Examples
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../settings.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../connect/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Data
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../catalog/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog & Automation
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../python-api/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../ai/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../deployment/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy & Operate
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../for-developers/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#read-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Read data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#csv-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CSV settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#excel-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Excel settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#list-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        List files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#manual-input" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Manual input
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#database-reader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read from Database
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cloud-storage-reader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read from cloud provider
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#catalog-reader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read from Catalog
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Read from Catalog">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reading-history-from-an-scd2-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading history from an SCD2 table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-virtual-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading virtual tables
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sql-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SQL mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rest-api-reader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        REST API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#kafka-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kafka Source
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#google-analytics-reader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Google Analytics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flow-input" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flow Input
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="input-sources">Input Sources</h1>
+<p>Every flow starts here. Input actions have no incoming connection — they produce the first table, whether that comes from a file on your disk, a database, cloud storage, a streaming topic, an API, or the catalog.</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>What it does</th>
+<th style="text-align: center;">Lite</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#read-data">Read data</a></td>
+<td>Load a local CSV, Excel, Parquet, Arrow, NDJSON or Avro file</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#list-files">List files</a></td>
+<td>Turn a folder's contents into a table of file metadata</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#manual-input">Manual input</a></td>
+<td>Type or paste a small dataset directly</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#database-reader">Read from Database</a></td>
+<td>Query a table or write SQL against a database</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#cloud-storage-reader">Read from cloud provider</a></td>
+<td>Read from S3, Azure Data Lake or Google Cloud Storage</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#catalog-reader">Read from Catalog</a></td>
+<td>Read a registered catalog table, physical or virtual</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#rest-api-reader">REST API</a></td>
+<td>Fetch JSON from an HTTP endpoint, with auth and pagination</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#kafka-source">Kafka Source</a></td>
+<td>Consume messages from a Kafka or Redpanda topic</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#google-analytics-reader">Google Analytics</a></td>
+<td>Run a GA4 report</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#flow-input">Flow Input</a></td>
+<td>Named entry point when this flow runs inside another</td>
+<td style="text-align: center;"></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition info">
+<p class="admonition-title">In Flowfile Lite</p>
+<p>The browser-only <a href="../../deployment/lite.html">Flowfile Lite</a> build reads local files, host-provided datasets (<strong>External Data</strong>, a Lite-only action), <strong>Manual input</strong> and <strong>Read from Catalog</strong>. It has no backend, so databases, cloud storage, APIs and Kafka are not available.</p>
+</div>
+<h2 id="read-data"><img alt="Read data" height="44" src="../../../assets/images/nodes/input_data.svg" width="44" /> Read data</h2>
+<p>Loads a local file. Pick the file and the format-specific settings below adapt to it.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Path</strong></td>
+<td>The file to read. Accepts a flow parameter inside the path, e.g. <code>${data_dir}/file.csv</code>. <strong>Browse files</strong> opens a picker.</td>
+</tr>
+<tr>
+<td><strong>Read</strong></td>
+<td><strong>Single file</strong>, or a <strong>directory</strong> scan that reads every same-format file in a folder and stacks them into one table. Single file by default.</td>
+</tr>
+<tr>
+<td><strong>File format</strong></td>
+<td>The format of the files inside a scanned folder — a bare directory has no extension to sniff. Shown for a directory scan.</td>
+</tr>
+<tr>
+<td><strong>File path column</strong></td>
+<td>Optional name for an extra column holding each row's source file, so you can tell which file it came from. Shown for a directory scan.</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Extensions</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CSV</td>
+<td><code>.csv</code>, <code>.txt</code></td>
+<td>Full parsing control, see below</td>
+</tr>
+<tr>
+<td>Excel</td>
+<td><code>.xlsx</code>, <code>.xls</code></td>
+<td>Sheet and cell-range selection, see below</td>
+</tr>
+<tr>
+<td>Parquet</td>
+<td><code>.parquet</code></td>
+<td>No extra settings; read lazily</td>
+</tr>
+<tr>
+<td>Arrow IPC / Feather</td>
+<td><code>.arrow</code>, <code>.ipc</code>, <code>.feather</code></td>
+<td>Stores schema and types natively, read lazily so large files stream without being held in memory</td>
+</tr>
+<tr>
+<td>NDJSON</td>
+<td><code>.ndjson</code>, <code>.jsonl</code></td>
+<td>One JSON record per line, schema inferred, read lazily</td>
+</tr>
+<tr>
+<td>Avro</td>
+<td><code>.avro</code></td>
+<td>Row-based binary format that embeds its own schema. Read eagerly, on the compute worker rather than the core service</td>
+</tr>
+</tbody>
+</table>
+<h3 id="csv-settings">CSV settings</h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Has Headers</strong></td>
+<td><code>yes</code> treats the first row as column names; <code>no</code> assigns <code>Column 1</code>, <code>Column 2</code>, …</td>
+</tr>
+<tr>
+<td><strong>Delimiter</strong></td>
+<td>The character separating values, such as <code>,</code>, <code>;</code> or <code>\t</code>.</td>
+</tr>
+<tr>
+<td><strong>Encoding</strong></td>
+<td>File encoding, such as <code>UTF-8</code> or <code>ISO-8859-1</code>.</td>
+</tr>
+<tr>
+<td><strong>Quote Character</strong></td>
+<td>Character enclosing text fields so delimiters inside them are not split on.</td>
+</tr>
+<tr>
+<td><strong>New Line Delimiter</strong></td>
+<td>How line ends are detected, such as <code>\n</code> or <code>\r\n</code>.</td>
+</tr>
+<tr>
+<td><strong>Schema Infer Length</strong></td>
+<td>How many rows are scanned to infer column types.</td>
+</tr>
+<tr>
+<td><strong>Truncate Long Lines</strong></td>
+<td>Truncate over-long lines instead of raising an error.</td>
+</tr>
+<tr>
+<td><strong>Ignore Errors</strong></td>
+<td>Continue past rows that fail to parse.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="excel-settings">Excel settings</h3>
+<p>Type inference picks the reader. Enabled, a more permissive reader parses the sheet and assigns a data type per column; disabled, a faster reader returns values as stored. A sheet the fast reader cannot handle — blank cells or stray values outside the table — falls back to the permissive reader automatically, noted in the run log.</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Sheet Name</strong></td>
+<td>Which sheet to read. Defaults to the first.</td>
+</tr>
+<tr>
+<td><strong>Start Row</strong> / <strong>Start Column</strong></td>
+<td>Zero-based index where reading begins. Default <code>0</code>.</td>
+</tr>
+<tr>
+<td><strong>End Row</strong> / <strong>End Column</strong></td>
+<td>Zero-based index where reading stops. <code>0</code> means read everything.</td>
+</tr>
+<tr>
+<td><strong>Has Headers</strong></td>
+<td>Treat the first row as column names.</td>
+</tr>
+<tr>
+<td><strong>Type Inference</strong></td>
+<td>Infer a data type per column, or return values as stored.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="list-files"><img alt="List files" height="44" src="../../../assets/images/nodes/list_files.svg" width="44" /> List files</h2>
+<p>Turns a folder into a table — one row per file, with its path, size and timestamps. Use it to inventory a drop folder, filter down to the files you actually want, and feed their paths into whatever comes next.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Folder</strong></td>
+<td>The folder to list. Accepts a flow parameter, e.g. <code>${data_dir}/incoming</code>.</td>
+</tr>
+<tr>
+<td><strong>File types</strong></td>
+<td>Extensions to keep (<code>csv</code>, <code>parquet</code>, …). Leave empty to list everything.</td>
+</tr>
+<tr>
+<td><strong>Include</strong></td>
+<td>List files, folders, or both.</td>
+</tr>
+<tr>
+<td><strong>Hidden files</strong></td>
+<td>Include dotfiles and hidden entries. Off by default.</td>
+</tr>
+<tr>
+<td><strong>Search subfolders</strong></td>
+<td>Descend into subfolders, up to <strong>Max depth</strong>.</td>
+</tr>
+<tr>
+<td><strong>Max rows</strong></td>
+<td>Cap the number of rows returned.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Output columns</strong> — fixed, so downstream actions know the schema before the flow runs.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>file_name</code></td>
+<td>String</td>
+<td>Name including the extension</td>
+</tr>
+<tr>
+<td><code>file_path</code></td>
+<td>String</td>
+<td>Absolute path — the column downstream readers consume</td>
+</tr>
+<tr>
+<td><code>directory</code></td>
+<td>String</td>
+<td>Absolute path of the containing folder</td>
+</tr>
+<tr>
+<td><code>relative_path</code></td>
+<td>String</td>
+<td>Path relative to the folder you selected</td>
+</tr>
+<tr>
+<td><code>file_type</code></td>
+<td>String</td>
+<td>Extension without the dot</td>
+</tr>
+<tr>
+<td><code>size_bytes</code></td>
+<td>Int64</td>
+<td>Size on disk</td>
+</tr>
+<tr>
+<td><code>last_modified</code></td>
+<td>Datetime</td>
+<td>Last modification time</td>
+</tr>
+<tr>
+<td><code>created_date</code></td>
+<td>Datetime</td>
+<td>Creation time</td>
+</tr>
+<tr>
+<td><code>is_directory</code></td>
+<td>Boolean</td>
+<td><code>true</code> for folders</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">Reading every file in a folder</p>
+<p>To <em>read</em> a folder of files rather than inventory it, <a href="#read-data">Read data</a> has a <strong>Directory</strong> scan mode that reads them as one table. Reach for List files when you want the file metadata itself — to audit a folder, filter on size or modification date, or drive downstream logic from the file list.</p>
+</div>
+<h2 id="manual-input"><img alt="Manual input" height="44" src="../../../assets/images/nodes/manual_input.svg" width="44" /> Manual input</h2>
+<p>Creates a dataset by typing it in or pasting from the clipboard. Useful for lookup tables, test fixtures, and the handful of rows you would otherwise keep in a stray spreadsheet.</p>
+<p><strong>Settings</strong></p>
+<p>The drawer is a small spreadsheet rather than a form: <strong>Add Column</strong> and <strong>Add Row</strong> grow the grid, and you type directly into the cells.</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Column name</strong></td>
+<td>Typed into the header cell. New columns arrive as <code>Column 1</code>, <code>Column 2</code>, …</td>
+</tr>
+<tr>
+<td><strong>Data type</strong></td>
+<td>The type each column's values are cast to: String, Date, Datetime, Time, Int64, Int32, Int16, Float64, Float32 or Boolean. String by default, re-inferred when you paste.</td>
+</tr>
+<tr>
+<td><strong>Paste CSV/TSV</strong></td>
+<td>Opens a panel for bulk-loading delimited text, with a Tab / Comma / Auto-detect choice and a <strong>First row is headers</strong> toggle (on by default).</td>
+</tr>
+<tr>
+<td><strong>Edit JSON</strong></td>
+<td>Opens the same table as a JSON array of row objects, for editing or pasting wholesale.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="database-reader"><img alt="Read from Database" height="44" src="../../../assets/images/nodes/database_reader.svg" width="44" /> Read from Database</h2>
+<div class="ff-split">
+<div>
+<p>Loads data from a database table or a custom SQL query. Supports PostgreSQL, MySQL, SQLite, DuckDB, SQL Server and Denodo.</p>
+<p><strong>Validate Settings</strong> checks the connection before you run anything. <a href="../tutorials/database-connectivity.html">Connect to PostgreSQL</a> is a step-by-step walkthrough.</p>
+</div>
+<p><img alt="Database Reader settings" src="../../../assets/images/guides/nodes/database-reader-settings.png" /></p>
+</div>
+<p><strong>Connection modes</strong></p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Reference</strong></td>
+<td>Use a saved connection from the <a href="../connections.html">Connection Manager</a>. Recommended.</td>
+</tr>
+<tr>
+<td><strong>Inline</strong></td>
+<td>Enter credentials directly in the node settings.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Schema</strong></td>
+<td>Database schema to query, e.g. <code>public</code>.</td>
+</tr>
+<tr>
+<td><strong>Table</strong></td>
+<td>Table to read from.</td>
+</tr>
+<tr>
+<td><strong>Custom SQL</strong></td>
+<td>Write a query instead of reading a whole table.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="cloud-storage-reader"><img alt="Read from cloud provider" height="44" src="../../../assets/images/nodes/cloud_storage_reader.svg" width="44" /> Read from cloud provider</h2>
+<div class="ff-split">
+<div>
+<p>Reads directly from cloud object storage: AWS S3 (including S3-compatible services like MinIO), Azure Data Lake Storage, and Google Cloud Storage.</p>
+<p>Authenticate with a <a href="../tutorials/cloud-connections.html">saved cloud connection</a>, or — for S3 only — with local AWS credentials from a CLI profile or environment variables.</p>
+</div>
+<p><img alt="Screenshot of the Cloud Storage Reader configuration" src="../../../assets/images/ui/screenshot_cloud_reader_input.png" /></p>
+</div>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>File Path</strong></td>
+<td>Full URI including the scheme, e.g. <code>s3://bucket/folder/file.csv</code>. <strong>Browse</strong> navigates the connection and picks one.</td>
+</tr>
+<tr>
+<td><strong>File Format</strong></td>
+<td>CSV, Parquet, JSON, Delta Lake or Iceberg.</td>
+</tr>
+<tr>
+<td><strong>Scan Mode</strong></td>
+<td>A single file, or a directory scan that reads every matching file in a folder.</td>
+</tr>
+</tbody>
+</table>
+<p>CSV adds <strong>Has Headers</strong>, <strong>Delimiter</strong> (default <code>,</code>) and <strong>Encoding</strong> (UTF-8 or UTF-8 Lossy). Delta Lake adds an optional <strong>Version</strong> to read a specific version rather than the latest.</p>
+<h2 id="catalog-reader"><img alt="Read from Catalog" height="44" src="../../../assets/images/nodes/catalog_reader.svg" width="44" /> Read from Catalog</h2>
+<div class="ff-split">
+<div>
+<p>Reads a table registered in the <a href="../catalog/index.html">Catalog</a> — either a physical table backed by Delta or Parquet files, or a <a href="../catalog/virtual-tables.html">virtual table</a> resolved on demand.</p>
+<p>Once a table is selected the node shows its row count, column count, and schema.</p>
+</div>
+<p><img alt="Catalog Reader settings" src="../../../assets/images/guides/nodes/catalog-reader-settings.png" /></p>
+</div>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Catalog / Schema</strong></td>
+<td>The namespace containing the table.</td>
+</tr>
+<tr>
+<td><strong>Table</strong></td>
+<td>The table itself. Virtual tables are marked with a bolt icon.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="reading-history-from-an-scd2-table">Reading history from an SCD2 table</h3>
+<p>When the selected table is tracked with <a href="../catalog/slowly-changing-dimensions.html">SCD2</a>, a <strong>History</strong> selector appears.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>All records</strong> (default)</td>
+<td>Every version of every row.</td>
+</tr>
+<tr>
+<td><strong>Active records</strong></td>
+<td>Only the current version of each row, where <code>valid_to</code> is empty.</td>
+</tr>
+<tr>
+<td><strong>Active at a point in time</strong></td>
+<td>The version that was current at a given moment.</td>
+</tr>
+</tbody>
+</table>
+<p>The default is all records: reading an SCD2 table without setting History returns full history, not the current snapshot. Set it to <strong>Active records</strong> when the downstream flow expects one row per business key.</p>
+<h3 id="reading-virtual-tables">Reading virtual tables</h3>
+<p>A virtual table resolves at run time and behaves identically to a physical one from the flow's perspective. Optimized virtual tables deserialize a stored execution plan instantly, keeping full Polars query optimization (predicate and projection pushdown); standard virtual tables run the producer flow end to end. See <a href="../catalog/virtual-tables.html">Virtual Flow Tables</a>.</p>
+<h3 id="sql-mode">SQL mode</h3>
+<p>The node also has a SQL mode for querying across every catalog table, physical and virtual, registered by name in a Polars SQL context — so you can join across the whole catalog. See the <a href="../catalog/sql-editor.html">SQL editor</a>.</p>
+<h2 id="rest-api-reader"><img alt="REST API" height="44" src="../../../assets/images/nodes/rest_api_reader.svg" width="44" /> REST API</h2>
+<p>Fetches JSON from an HTTP endpoint. Supports <code>GET</code> and <code>POST</code>, custom headers and query parameters, several authentication schemes, and automatic pagination. JSON is the only supported response format.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Method</strong></td>
+<td><code>GET</code> or <code>POST</code>. Default <code>GET</code>.</td>
+</tr>
+<tr>
+<td><strong>URL</strong></td>
+<td>The request URL. Required.</td>
+</tr>
+<tr>
+<td><strong>Record path</strong></td>
+<td>Dot-path to the array of records inside the response, e.g. <code>data.items</code>. Leave empty to use the top level. Nested objects are flattened into dotted column names.</td>
+</tr>
+<tr>
+<td><strong>Headers</strong></td>
+<td>Optional request headers, as name/value pairs.</td>
+</tr>
+<tr>
+<td><strong>Query parameters</strong></td>
+<td>Optional query-string parameters, as name/value pairs.</td>
+</tr>
+<tr>
+<td><strong>JSON body</strong></td>
+<td>Body sent with <code>POST</code> requests. Must be valid JSON.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Authentication</strong> — the credential is never stored on the node; it references a reusable <a href="../catalog/secrets.html">secret</a> by name.</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>None</strong></td>
+<td>No authentication. Default.</td>
+</tr>
+<tr>
+<td><strong>API key</strong></td>
+<td>Sends the key under a configurable <strong>Key name</strong> (default <code>X-API-Key</code>), in either the header or a query parameter.</td>
+</tr>
+<tr>
+<td><strong>Bearer token</strong></td>
+<td>Sends the secret as an <code>Authorization: Bearer &lt;token&gt;</code> header.</td>
+</tr>
+<tr>
+<td><strong>Basic</strong></td>
+<td>HTTP Basic authentication with a username and a secret password.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Pagination</strong></p>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>None</strong></td>
+<td>A single request. Default.</td>
+</tr>
+<tr>
+<td><strong>Offset / limit</strong></td>
+<td>Increments an offset parameter (default <code>offset</code>) by the page size, passed via a limit parameter (default <code>limit</code>, default <code>100</code>).</td>
+</tr>
+<tr>
+<td><strong>Page number</strong></td>
+<td>Increments a page parameter (default <code>page</code>) from a configurable start page (default <code>1</code>).</td>
+</tr>
+<tr>
+<td><strong>Cursor / next-page token</strong></td>
+<td>Follows a cursor read from the response body (dot-path) or a response header, sent back via a configurable request parameter.</td>
+</tr>
+</tbody>
+</table>
+<p>Paginated reads are bounded by <strong>Max pages</strong> (default <code>1000</code>) and an optional <strong>Max records</strong> cap. <strong>Timeout</strong> defaults to 30 seconds and <strong>Max retries</strong> to <code>3</code>.</p>
+<p><strong>Fetch sample</strong> runs one capped request and previews the inferred columns. Skip it and the schema is inferred on the first run instead.</p>
+<h2 id="kafka-source"><img alt="Kafka Source" height="44" src="../../../assets/images/nodes/kafka_source.svg" width="44" /> Kafka Source</h2>
+<p>Consumes messages from a Kafka or Redpanda topic using a saved <a href="../connections.html#kafka-connections">Kafka connection</a>. Message values are parsed as JSON, the only supported value format.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Kafka Connection</strong></td>
+<td>A saved connection holding bootstrap servers and security settings.</td>
+</tr>
+<tr>
+<td><strong>Topic Name</strong></td>
+<td>The topic to consume. <strong>Fetch Topics</strong> lists what the broker has, or type the name.</td>
+</tr>
+<tr>
+<td><strong>Start Offset</strong></td>
+<td>Where to begin when no tracked offset exists: <code>latest</code> (default) or <code>earliest</code>.</td>
+</tr>
+<tr>
+<td><strong>Max Messages</strong></td>
+<td>Most messages to read in one run. Default <code>100,000</code>.</td>
+</tr>
+<tr>
+<td><strong>Poll Timeout (seconds)</strong></td>
+<td>How long to poll the broker. Default <code>30</code>.</td>
+</tr>
+<tr>
+<td><strong>Sync Name</strong></td>
+<td>Optional. A unique key tracking consumer offsets between runs, so each run continues where the last stopped.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Infer Schema</strong> previews the columns parsed from sample messages.</p>
+<div class="admonition tip">
+<p class="admonition-title">Incremental reads and resetting offsets</p>
+<p>With a <strong>Sync Name</strong> set, Flowfile tracks the consumer group's offsets so each run only reads new messages. <strong>Reset Offsets</strong> clears the tracked position, and the next run re-reads from the configured <strong>Start Offset</strong>.</p>
+</div>
+<h2 id="google-analytics-reader"><img alt="Google Analytics" height="44" src="../../../assets/images/nodes/google_analytics.svg" width="44" /> Google Analytics</h2>
+<p>Runs a Google Analytics 4 report using a saved connection, authenticated with a service-account key or via OAuth.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Google Analytics Connection</strong></td>
+<td>A saved GA connection, holding its credentials and an optional default property.</td>
+</tr>
+<tr>
+<td><strong>GA4 Property ID</strong></td>
+<td>The numeric property to query, e.g. <code>123456789</code>. Prefilled from the connection's default when set.</td>
+</tr>
+<tr>
+<td><strong>Start Date</strong> / <strong>End Date</strong></td>
+<td>The report range. Accepts GA4 relative tokens (<code>7daysAgo</code>, <code>yesterday</code>, <code>today</code>) or absolute <code>YYYY-MM-DD</code> dates. Defaults <code>7daysAgo</code> → <code>yesterday</code>, and a <strong>Quick Range</strong> dropdown fills common windows.</td>
+</tr>
+<tr>
+<td><strong>Metrics</strong></td>
+<td>One or more GA4 metrics, e.g. <code>sessions</code>, <code>totalUsers</code>. At least one is required.</td>
+</tr>
+<tr>
+<td><strong>Dimensions</strong></td>
+<td>Optional breakdowns, e.g. <code>date</code>, <code>pagePath</code>, <code>eventName</code>.</td>
+</tr>
+<tr>
+<td><strong>Row Limit</strong></td>
+<td>Optional cap. Leave blank to fetch every row GA returns, paginated in 100k-row chunks.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Filters</strong> apply to any selected metric or dimension, and Flowfile routes each to GA4's dimension or metric filter automatically. Multiple filters of the same kind combine with AND.</p>
+<ul>
+<li>Dimension (string) operators: <code>equals</code>, <code>not_equals</code>, <code>contains</code>, <code>begins_with</code>, <code>ends_with</code>, <code>regex</code>, <code>in_list</code>, <code>not_in_list</code>. Matching is case-insensitive unless the <code>Aa</code> toggle is on.</li>
+<li>Metric (numeric) operators: <code>equals</code>, <code>not_equals</code>, <code>less_than</code>, <code>less_equal</code>, <code>greater_than</code>, <code>greater_equal</code>, <code>between</code>.</li>
+</ul>
+<p><strong>Sort By</strong> takes one or more entries on a selected metric or dimension, ascending or descending. GA4 applies them in list order — combine with <strong>Row Limit</strong> for top-N reports.</p>
+<div class="admonition tip">
+<p class="admonition-title">Cache slow reports</p>
+<p>Fetching from Google Analytics can be slow. Enable <strong>Cache Results</strong> on the node, or write the result to the <a href="../catalog/index.html">catalog</a>, for faster iteration.</p>
+</div>
+<h2 id="flow-input"><img alt="Flow Input" height="44" src="../../../assets/images/nodes/flow_input.svg" width="44" /> Flow Input</h2>
+<p>A named entry point for a <a href="../subflows.html">subflow</a> — a flow called from another flow. It has no upstream connection: when the flow runs on its own it serves the sample data in its settings, and when a parent calls it through a <a href="combine.html#run-flow">Run Flow</a> node, the parent's dataset replaces that sample.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Input name</strong></td>
+<td>The port name the parent binds data to. Default <code>input</code>.</td>
+</tr>
+<tr>
+<td><strong>Sample data</strong></td>
+<td>The dataset served when the flow runs standalone.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p><a href="index.html">← All actions</a> | <a href="transform.html">Next: Transformations →</a></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="index.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Data Actions">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Data Actions
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="transform.html" class="md-footer__link md-footer__link--next" aria-label="Next: Transformations">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Transformations
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.prune", "navigation.tracking", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../../javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>
