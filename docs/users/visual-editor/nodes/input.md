@@ -1,130 +1,89 @@
-# Input Nodes
+# Input Sources
 
-Input nodes are the starting point for any data flow. Flowfile supports reading from **local files**, **databases**, **cloud storage**, **catalog tables**, and **manual input**.
+Every flow starts here. Input actions have no incoming connection — they produce the first table, whether that comes from a file on your disk, a database, cloud storage, a streaming topic, an API, or the catalog.
 
-!!! info "Not all input nodes are in Flowfile Lite"
-    The browser-only [Flowfile Lite](../../deployment/lite.md) build reads **local files (CSV/Excel/Parquet)**, host-provided datasets (**External Data**), **Manual Input**, and **Read from Catalog** — but it has no backend, so **Cloud Storage Reader**, **Database Reader**, and the API/Kafka sources are not available.
+| Action | What it does | Lite |
+|---|---|:--:|
+| [Read data](#read-data) | Load a local CSV, Excel, Parquet, Arrow, NDJSON or Avro file | ● |
+| [List files](#list-files) | Turn a folder's contents into a table of file metadata | |
+| [Manual input](#manual-input) | Type or paste a small dataset directly | ● |
+| [Read from Database](#database-reader) | Query a table or write SQL against a database | |
+| [Read from cloud provider](#cloud-storage-reader) | Read from S3, Azure Data Lake or Google Cloud Storage | |
+| [Read from Catalog](#catalog-reader) | Read a registered catalog table, physical or virtual | ● |
+| [REST API](#rest-api-reader) | Fetch JSON from an HTTP endpoint, with auth and pagination | |
+| [Kafka Source](#kafka-source) | Consume messages from a Kafka or Redpanda topic | |
+| [Google Analytics](#google-analytics-reader) | Run a GA4 report | |
+| [Flow Input](#flow-input) | Named entry point when this flow runs inside another | |
 
-## Node Details
+!!! info "In Flowfile Lite"
+    The browser-only [Flowfile Lite](../../deployment/lite.md) build reads local files, host-provided datasets (**External Data**, a Lite-only action), **Manual input** and **Read from Catalog**. It has no backend, so databases, cloud storage, APIs and Kafka are not available.
 
-### ![Read Data](../../../assets/images/nodes/input_data.svg){ width="50" height="50" } Read Data
+## ![Read data](../../../assets/images/nodes/input_data.svg){ width="44" height="44" } Read data
 
-The **Read Data** node allows you to load local data into your flow. It supports **CSV**, **Excel**, **Parquet**, **Arrow IPC/Feather**, **NDJSON**, and **Avro** file formats, each with specific configuration options.
+Loads a local file. Pick the file and the format-specific settings below adapt to it.
 
-#### **Supported Formats:**
+**Settings**
 
-- **CSV files** (`.csv`, `.txt`)
-- **Excel files** (`.xlsx`, `.xls`)
-- **Parquet files** (`.parquet`)
-- **Arrow IPC / Feather files** (`.arrow`, `.ipc`, `.feather`)
-- **NDJSON files** (`.ndjson`, `.jsonl`)
-- **Avro files** (`.avro`)
+| Setting | Description |
+|---|---|
+| **Path** | The file to read. Accepts a flow parameter inside the path, e.g. `${data_dir}/file.csv`. **Browse files** opens a picker. |
+| **Read** | **Single file**, or a **directory** scan that reads every same-format file in a folder and stacks them into one table. Single file by default. |
+| **File format** | The format of the files inside a scanned folder — a bare directory has no extension to sniff. Shown for a directory scan. |
+| **File path column** | Optional name for an extra column holding each row's source file, so you can tell which file it came from. Shown for a directory scan. |
 
-#### CSV  
-When a **CSV** file is selected, the following setup options are available:  
+| Format | Extensions | Notes |
+|---|---|---|
+| CSV | `.csv`, `.txt` | Full parsing control, see below |
+| Excel | `.xlsx`, `.xls` | Sheet and cell-range selection, see below |
+| Parquet | `.parquet` | No extra settings; read lazily |
+| Arrow IPC / Feather | `.arrow`, `.ipc`, `.feather` | Stores schema and types natively, read lazily so large files stream without being held in memory |
+| NDJSON | `.ndjson`, `.jsonl` | One JSON record per line, schema inferred, read lazily |
+| Avro | `.avro` | Row-based binary format that embeds its own schema. Read eagerly, on the compute worker rather than the core service |
 
-| Parameter               | Description                                                                                                                                                                          |
-|-------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Has Headers**         | Determines whether the first row is used as headers. If `"yes"`, the first row is treated as column names. If `"no"`, default column names like `"Column 1, Column 2, ..."` are assigned. |
-| **Delimiter**           | Specifies the character used to separate values (e.g., comma `,`, semicolon `;`, tab `\t`).                                                                                          |
-| **Encoding**            | Defines the file encoding (e.g., `UTF-8`, `ISO-8859-1`).                                                                                                                             |
-| **Quote Character**     | Character used to enclose text fields, preventing delimiter conflicts (e.g., `"`, `'`).                                                                                              |
-| **New Line Delimiter**  | Specifies how new lines are detected (e.g., `\n`, `\r\n`).                                                                                                                          |
-| **Schema Infer Length** | Determines how many rows are scanned to infer column types.                                                                                                                         |
-| **Truncate Long Lines** | If enabled, long lines are truncated instead of causing errors.                                                                                                                     |
-| **Ignore Errors**       | If enabled, the process continues even if some rows cause errors.                                                                                                                   |
+### CSV settings
 
----
+| Setting | Description |
+|---|---|
+| **Has Headers** | `yes` treats the first row as column names; `no` assigns `Column 1`, `Column 2`, … |
+| **Delimiter** | The character separating values, such as `,`, `;` or `\t`. |
+| **Encoding** | File encoding, such as `UTF-8` or `ISO-8859-1`. |
+| **Quote Character** | Character enclosing text fields so delimiters inside them are not split on. |
+| **New Line Delimiter** | How line ends are detected, such as `\n` or `\r\n`. |
+| **Schema Infer Length** | How many rows are scanned to infer column types. |
+| **Truncate Long Lines** | Truncate over-long lines instead of raising an error. |
+| **Ignore Errors** | Continue past rows that fail to parse. |
 
-#### Excel  
-When an **Excel** file is selected, you can specify the sheet, select specific rows and columns, and configure headers and type inference options to tailor data loading to your needs. Type inference picks the reader: enabled, a more permissive reader parses the sheet and assigns a data type per column; disabled, a faster reader returns the values as they are stored. A sheet the fast reader cannot handle — blank cells or stray values outside the table — falls back to the permissive reader automatically, noted in the run log.
+### Excel settings
 
-| Parameter          | Description                                                                                                                                              |
-|--------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Sheet Name**     | The name of the sheet to be read. If not specified, the first sheet is used.                                                                             |
-| **Start Row**      | The row index (zero-based) from which reading starts. Default is `0` (beginning of the sheet).                                                           |
-| **Start Column**   | The column index (zero-based) from which reading starts. Default is `0` (first column).                                                                  |
-| **End Row**        | The row index (zero-based) at which reading stops. Default is `0` (read all rows).                                                                       |
-| **End Column**     | The column index (zero-based) at which reading stops. Default is `0` (read all columns).                                                                 |
-| **Has Headers**    | Determines whether the first row is treated as headers. If `true`, the first row is used as column names. If `false`, default column names are assigned. |
-| **Type Inference** | If `true`, the engine attempts to infer data types. If `false`, data types are not automatically inferred.                                               |
+Type inference picks the reader. Enabled, a more permissive reader parses the sheet and assigns a data type per column; disabled, a faster reader returns values as stored. A sheet the fast reader cannot handle — blank cells or stray values outside the table — falls back to the permissive reader automatically, noted in the run log.
 
----
+| Setting | Description |
+|---|---|
+| **Sheet Name** | Which sheet to read. Defaults to the first. |
+| **Start Row** / **Start Column** | Zero-based index where reading begins. Default `0`. |
+| **End Row** / **End Column** | Zero-based index where reading stops. `0` means read everything. |
+| **Has Headers** | Treat the first row as column names. |
+| **Type Inference** | Infer a data type per column, or return values as stored. |
 
-#### Parquet  
-When a **Parquet** file is selected, no additional setup options are required.
+## ![List files](../../../assets/images/nodes/list_files.svg){ width="44" height="44" } List files
 
----
+Turns a folder into a table — one row per file, with its path, size and timestamps. Use it to inventory a drop folder, filter down to the files you actually want, and feed their paths into whatever comes next.
 
-#### Arrow IPC / Feather  
-When an **Arrow IPC/Feather** file is selected, no additional setup options are required. The Arrow IPC format stores schema and data types natively and is read lazily, so large files stream efficiently without holding the dataset in memory.
+**Settings**
 
----
+| Setting | Description |
+|---|---|
+| **Folder** | The folder to list. Accepts a flow parameter, e.g. `${data_dir}/incoming`. |
+| **File types** | Extensions to keep (`csv`, `parquet`, …). Leave empty to list everything. |
+| **Include** | List files, folders, or both. |
+| **Hidden files** | Include dotfiles and hidden entries. Off by default. |
+| **Search subfolders** | Descend into subfolders, up to **Max depth**. |
+| **Max rows** | Cap the number of rows returned. |
 
-#### NDJSON  
-When a **newline-delimited JSON** file is selected, no additional setup options are required. Each line is parsed as a JSON record and the schema is inferred automatically. NDJSON is read lazily.
-
----
-
-#### Avro  
-When an **Avro** file is selected, no additional setup options are required. Avro is a row-based binary format that embeds its own schema. Avro is read eagerly (the load runs on the compute worker, not the core service).
-
----
-
-### ![Cloud Storage](../../../assets/images/nodes/cloud_storage_reader.svg){ width="50" height="50" } Cloud Storage Reader
-
-The **Cloud Storage Reader** node reads data directly from cloud object storage. It supports **AWS S3** (including S3-compatible services like MinIO), **Azure Data Lake Storage (ADLS)**, and **Google Cloud Storage (GCS)**.
-
-<details  markdown="1">
-<summary>Screenshot: Cloud Storage Reader Configuration</summary>
-
-![Screenshot of the Cloud Storage Reader configuration](../../../assets/images/ui/screenshot_cloud_reader_input.png)
-
-</details>
-
-#### **Connection Options:**
-- Use a saved cloud connection — **AWS S3**, **Azure Data Lake Storage (ADLS)**, or **Google Cloud Storage (GCS)** (see [Manage Cloud Connections](../tutorials/cloud-connections.md))
-- For S3, use local AWS credentials instead (an AWS CLI profile or environment variables)
-
-#### **File Settings:**
-
-| Parameter          | Description                                                                                              |
-|--------------------|----------------------------------------------------------------------------------------------------------|
-| **File Path**      | Full URI of the file or directory, including the scheme (e.g., `s3://bucket/folder/file.csv`). Click **Browse** to navigate the connection and pick one. |
-| **File Format**    | Supported formats: CSV, Parquet, JSON, Delta Lake, Iceberg                                              |
-| **Scan Mode**      | Single file or directory scan (reads all matching files in a directory)                                 |
-
-#### **Format-Specific Options:**
-
-**CSV Options:**
-- **Has Headers**: First row contains column headers
-- **Delimiter**: Character separating values (default: `,`)
-- **Encoding**: File encoding (UTF-8 or UTF-8 Lossy)
-
-**Delta Lake Options:**
-- **Version**: Specify a specific version to read (optional, defaults to latest)
-
----
-
-### ![List Files](../../../assets/images/nodes/list_files.svg){ width="50" height="50" } List Files
-
-The **List Files** node turns a folder into a table — one row per file, with its path, size and timestamps. Use it to inventory a drop folder, filter down to the files you actually want, and feed their paths into whatever comes next.
-
-#### **Settings:**
-
-| Parameter | Description |
-|-----------|-------------|
-| **Folder** | The folder to list. Accepts a flow parameter, e.g. `${data_dir}/incoming` |
-| **File types** | Extensions to keep (`csv`, `parquet`, …). Leave empty to list everything |
-| **Include** | Whether to list files, folders, or both |
-| **Hidden files** | Include dotfiles and hidden entries (off by default) |
-| **Search subfolders** | Descend into subfolders, up to **Max depth** |
-| **Max rows** | Cap the number of rows returned |
-
-#### **Output columns:**
+**Output columns** — fixed, so downstream actions know the schema before the flow runs.
 
 | Column | Type | Description |
-|--------|------|-------------|
+|---|---|---|
 | `file_name` | String | Name including the extension |
 | `file_path` | String | Absolute path — the column downstream readers consume |
 | `directory` | String | Absolute path of the containing folder |
@@ -135,252 +94,211 @@ The **List Files** node turns a folder into a table — one row per file, with i
 | `created_date` | Datetime | Creation time |
 | `is_directory` | Boolean | `true` for folders |
 
-The columns are fixed, so downstream nodes know the schema before the flow runs.
+!!! tip "Reading every file in a folder"
+    To *read* a folder of files rather than inventory it, [Read data](#read-data) has a **Directory** scan mode that reads them as one table. Reach for List files when you want the file metadata itself — to audit a folder, filter on size or modification date, or drive downstream logic from the file list.
 
-#### **Usage:**
+## ![Manual input](../../../assets/images/nodes/manual_input.svg){ width="44" height="44" } Manual input
 
-1. Add a **List Files** node and browse to a folder
-2. Optionally filter by extension or turn on **Search subfolders**
-3. Run the flow to see the inventory
+Creates a dataset by typing it in or pasting from the clipboard. Useful for lookup tables, test fixtures, and the handful of rows you would otherwise keep in a stray spreadsheet.
 
-!!! tip "Reading every file in the folder"
-    To *read* a folder of files rather than inventory it, the [Read Data](#read-data) node has a
-    **Directory** scan mode that reads them as one table. Reach for **List Files** when you want the
-    file metadata itself — to audit a folder, filter on size or modification date, or drive
-    downstream logic from the file list.
+**Settings**
 
----
+The drawer is a small spreadsheet rather than a form: **Add Column** and **Add Row** grow the grid, and you type directly into the cells.
 
-### ![Manual Input](../../../assets/images/nodes/manual_input.svg){ width="50" height="50" } Manual Input
+| Setting | Description |
+|---|---|
+| **Column name** | Typed into the header cell. New columns arrive as `Column 1`, `Column 2`, … |
+| **Data type** | The type each column's values are cast to: String, Date, Datetime, Time, Int64, Int32, Int16, Float64, Float32 or Boolean. String by default, re-inferred when you paste. |
+| **Paste CSV/TSV** | Opens a panel for bulk-loading delimited text, with a Tab / Comma / Auto-detect choice and a **First row is headers** toggle (on by default). |
+| **Edit JSON** | Opens the same table as a JSON array of row objects, for editing or pasting wholesale. |
 
-The **Manual Input** node allows you to create data directly within Flowfile or paste data from your clipboard.
+## ![Read from Database](../../../assets/images/nodes/database_reader.svg){ width="44" height="44" } Read from Database { #database-reader }
 
----
+<div class="ff-split" markdown>
 
-### ![Database Reader](../../../assets/images/nodes/database_reader.svg){ width="50" height="50" } Database Reader
+<div markdown>
+Loads data from a database table or a custom SQL query. Supports PostgreSQL, MySQL, SQLite, DuckDB, SQL Server and Denodo.
 
-The **Database Reader** node loads data from database tables or custom SQL queries. It supports **PostgreSQL**, **MySQL**, **SQLite**, **DuckDB**, **SQL Server**, and **Denodo**.
-
-#### **Connection Modes:**
-
-| Mode | Description |
-|------|-------------|
-| **Reference** | Use a saved connection from the [Connection Manager](../connections.md) (recommended) |
-| **Inline** | Enter connection credentials directly in the node settings |
-
-#### **Query Settings:**
-
-| Parameter | Description |
-|-----------|-------------|
-| **Schema** | Database schema to query (e.g., `public`) |
-| **Table** | Table name to read from |
-| **Custom SQL** | Optional: write a custom SQL query instead of reading a full table |
-
-#### **Usage:**
-
-1. Add a **Database Reader** node to your flow
-2. Select **Reference** mode and choose a saved connection (or use **Inline** for quick tests)
-3. Select the schema and table, or write a custom SQL query
-4. Click **Validate Settings** to verify the connection
-5. Run the flow to load data
+**Validate Settings** checks the connection before you run anything. [Connect to PostgreSQL](../tutorials/database-connectivity.md) is a step-by-step walkthrough.
+</div>
 
 ![Database Reader settings](../../../assets/images/guides/nodes/database-reader-settings.png)
 
-*Database Reader node configured with a reference connection*
+</div>
 
-For a step-by-step tutorial, see [Connect to PostgreSQL](../tutorials/database-connectivity.md).
+**Connection modes**
 
----
+| Mode | Description |
+|---|---|
+| **Reference** | Use a saved connection from the [Connection Manager](../connections.md). Recommended. |
+| **Inline** | Enter credentials directly in the node settings. |
 
-### REST API Reader
+**Settings**
 
-The **REST API Reader** node fetches JSON data from an HTTP endpoint and loads it into your flow. It supports `GET` and `POST` requests, custom headers and query parameters, several authentication schemes, and automatic pagination. JSON is the only supported response format.
+| Setting | Description |
+|---|---|
+| **Schema** | Database schema to query, e.g. `public`. |
+| **Table** | Table to read from. |
+| **Custom SQL** | Write a query instead of reading a whole table. |
 
-#### **Request Settings:**
+## ![Read from cloud provider](../../../assets/images/nodes/cloud_storage_reader.svg){ width="44" height="44" } Read from cloud provider { #cloud-storage-reader }
 
-| Parameter | Description |
-|-----------|-------------|
-| **Method** | HTTP method: `GET` or `POST`. Default `GET`. |
-| **URL** | The request URL (required), e.g. `https://api.example.com/v1/items`. |
-| **Record path** | Dot-path to the array of records inside the JSON response (e.g. `data.items`). Leave empty to use the top-level response. Nested objects are flattened into dotted column names. |
+<div class="ff-split" markdown>
+
+<div markdown>
+Reads directly from cloud object storage: AWS S3 (including S3-compatible services like MinIO), Azure Data Lake Storage, and Google Cloud Storage.
+
+Authenticate with a [saved cloud connection](../tutorials/cloud-connections.md), or — for S3 only — with local AWS credentials from a CLI profile or environment variables.
+</div>
+
+![Screenshot of the Cloud Storage Reader configuration](../../../assets/images/ui/screenshot_cloud_reader_input.png)
+
+</div>
+
+**Settings**
+
+| Setting | Description |
+|---|---|
+| **File Path** | Full URI including the scheme, e.g. `s3://bucket/folder/file.csv`. **Browse** navigates the connection and picks one. |
+| **File Format** | CSV, Parquet, JSON, Delta Lake or Iceberg. |
+| **Scan Mode** | A single file, or a directory scan that reads every matching file in a folder. |
+
+CSV adds **Has Headers**, **Delimiter** (default `,`) and **Encoding** (UTF-8 or UTF-8 Lossy). Delta Lake adds an optional **Version** to read a specific version rather than the latest.
+
+## ![Read from Catalog](../../../assets/images/nodes/catalog_reader.svg){ width="44" height="44" } Read from Catalog { #catalog-reader }
+
+<div class="ff-split" markdown>
+
+<div markdown>
+Reads a table registered in the [Catalog](../catalog/index.md) — either a physical table backed by Delta or Parquet files, or a [virtual table](../catalog/virtual-tables.md) resolved on demand.
+
+Once a table is selected the node shows its row count, column count, and schema.
+</div>
+
+![Catalog Reader settings](../../../assets/images/guides/nodes/catalog-reader-settings.png)
+
+</div>
+
+**Settings**
+
+| Setting | Description |
+|---|---|
+| **Catalog / Schema** | The namespace containing the table. |
+| **Table** | The table itself. Virtual tables are marked with a bolt icon. |
+
+### Reading history from an SCD2 table
+
+When the selected table is tracked with [SCD2](../catalog/slowly-changing-dimensions.md), a **History** selector appears.
+
+| Option | Description |
+|---|---|
+| **All records** (default) | Every version of every row. |
+| **Active records** | Only the current version of each row, where `valid_to` is empty. |
+| **Active at a point in time** | The version that was current at a given moment. |
+
+The default is all records: reading an SCD2 table without setting History returns full history, not the current snapshot. Set it to **Active records** when the downstream flow expects one row per business key.
+
+### Reading virtual tables
+
+A virtual table resolves at run time and behaves identically to a physical one from the flow's perspective. Optimized virtual tables deserialize a stored execution plan instantly, keeping full Polars query optimization (predicate and projection pushdown); standard virtual tables run the producer flow end to end. See [Virtual Flow Tables](../catalog/virtual-tables.md).
+
+### SQL mode
+
+The node also has a SQL mode for querying across every catalog table, physical and virtual, registered by name in a Polars SQL context — so you can join across the whole catalog. See the [SQL editor](../catalog/sql-editor.md).
+
+## ![REST API](../../../assets/images/nodes/rest_api_reader.svg){ width="44" height="44" } REST API { #rest-api-reader }
+
+Fetches JSON from an HTTP endpoint. Supports `GET` and `POST`, custom headers and query parameters, several authentication schemes, and automatic pagination. JSON is the only supported response format.
+
+**Settings**
+
+| Setting | Description |
+|---|---|
+| **Method** | `GET` or `POST`. Default `GET`. |
+| **URL** | The request URL. Required. |
+| **Record path** | Dot-path to the array of records inside the response, e.g. `data.items`. Leave empty to use the top level. Nested objects are flattened into dotted column names. |
 | **Headers** | Optional request headers, as name/value pairs. |
 | **Query parameters** | Optional query-string parameters, as name/value pairs. |
-| **JSON body** | Request body sent with `POST` requests (must be valid JSON). |
+| **JSON body** | Body sent with `POST` requests. Must be valid JSON. |
 
-#### **Authentication:**
-
-The credential is never stored on the node — it references a reusable [secret](../catalog/secrets.md) by name.
+**Authentication** — the credential is never stored on the node; it references a reusable [secret](../catalog/secrets.md) by name.
 
 | Type | Description |
-|------|-------------|
-| **None** | No authentication (default). |
-| **API key** | Sends the key under a configurable **Key name** (default `X-API-Key`), placed in either the request **Header** or **Query param**. |
+|---|---|
+| **None** | No authentication. Default. |
+| **API key** | Sends the key under a configurable **Key name** (default `X-API-Key`), in either the header or a query parameter. |
 | **Bearer token** | Sends the secret as an `Authorization: Bearer <token>` header. |
-| **Basic** | HTTP Basic authentication with a **Username** and a secret password. |
+| **Basic** | HTTP Basic authentication with a username and a secret password. |
 
-#### **Pagination:**
+**Pagination**
 
 | Strategy | Description |
-|----------|-------------|
-| **None** | A single request (default). |
-| **Offset / limit** | Increments an offset parameter (default `offset`) by the page size (default `100`), passed via a limit parameter (default `limit`). |
-| **Page number** | Increments a page parameter (default `page`) starting from a configurable start page (default `1`). |
+|---|---|
+| **None** | A single request. Default. |
+| **Offset / limit** | Increments an offset parameter (default `offset`) by the page size, passed via a limit parameter (default `limit`, default `100`). |
+| **Page number** | Increments a page parameter (default `page`) from a configurable start page (default `1`). |
 | **Cursor / next-page token** | Follows a cursor read from the response body (dot-path) or a response header, sent back via a configurable request parameter. |
 
-Paginated reads are bounded by **Max pages** (default `1000`) and an optional **Max records** cap (leave blank for unlimited).
+Paginated reads are bounded by **Max pages** (default `1000`) and an optional **Max records** cap. **Timeout** defaults to 30 seconds and **Max retries** to `3`.
 
-#### **Advanced:**
+**Fetch sample** runs one capped request and previews the inferred columns. Skip it and the schema is inferred on the first run instead.
 
-| Parameter | Description |
-|-----------|-------------|
-| **Timeout (seconds)** | Per-request timeout. Default `30`. |
-| **Max retries** | Number of retries for transient failures. Default `3`. |
+## ![Kafka Source](../../../assets/images/nodes/kafka_source.svg){ width="44" height="44" } Kafka Source
 
-#### **Usage:**
+Consumes messages from a Kafka or Redpanda topic using a saved [Kafka connection](../connections.md#kafka-connections). Message values are parsed as JSON, the only supported value format.
 
-1. Add a **REST API Reader** node to your flow.
-2. Set the **Method** and **URL**, and (for nested responses) the **Record path**.
-3. Add any **headers**, **query parameters**, or a **JSON body** (for `POST` requests).
-4. Configure **Authentication** and **Pagination** if the API requires them.
-5. Click **Fetch sample** to run one capped request and preview the inferred columns. If you skip this, the schema is inferred on the first run.
+**Settings**
 
----
+| Setting | Description |
+|---|---|
+| **Kafka Connection** | A saved connection holding bootstrap servers and security settings. |
+| **Topic Name** | The topic to consume. **Fetch Topics** lists what the broker has, or type the name. |
+| **Start Offset** | Where to begin when no tracked offset exists: `latest` (default) or `earliest`. |
+| **Max Messages** | Most messages to read in one run. Default `100,000`. |
+| **Poll Timeout (seconds)** | How long to poll the broker. Default `30`. |
+| **Sync Name** | Optional. A unique key tracking consumer offsets between runs, so each run continues where the last stopped. |
 
-### Kafka Source
-
-The **Kafka Source** node consumes messages from a **Kafka** or **Redpanda** topic and loads them into your flow. It reads JSON-encoded message values using a saved [Kafka connection](../connections.md#kafka-connections).
-
-#### **Settings:**
-
-| Parameter | Description |
-|-----------|-------------|
-| **Kafka Connection** | A saved Kafka connection (bootstrap servers and security settings). Set one up in the [Connections](../connections.md#kafka-connections) manager first. |
-| **Topic Name** | The topic to consume from. Use **Fetch Topics** to list topics from the broker, or type the name directly. |
-| **Start Offset** | Where to begin reading when no tracked offset exists: `latest` (default) or `earliest`. |
-| **Max Messages** | Maximum number of messages to read in a single run. Default `100,000`. |
-| **Poll Timeout (seconds)** | How long to poll the broker for messages. Default `30`. |
-| **Sync Name** | *(Optional)* A unique key used to track consumer offsets between runs. When set, each run continues from where the previous one stopped (incremental reads). |
-
-Message values are parsed as **JSON** (the only supported value format).
-
-#### **Usage:**
-
-1. Create a Kafka connection in the [Connections](../connections.md#kafka-connections) manager.
-2. Add a **Kafka Source** node and select the connection.
-3. Click **Fetch Topics** and choose a topic (or enter the topic name).
-4. Configure the **Start Offset**, **Max Messages**, and **Poll Timeout**.
-5. (Optional) Set a **Sync Name** for incremental reads across runs.
-6. Click **Infer Schema** to preview the columns parsed from sample messages.
+**Infer Schema** previews the columns parsed from sample messages.
 
 !!! tip "Incremental reads and resetting offsets"
-    With a **Sync Name** set, Flowfile tracks the consumer group's offsets so each run only reads new messages. Use the **Reset Offsets** button to clear the tracked position — the next run then re-reads from the configured **Start Offset**.
+    With a **Sync Name** set, Flowfile tracks the consumer group's offsets so each run only reads new messages. **Reset Offsets** clears the tracked position, and the next run re-reads from the configured **Start Offset**.
 
----
+## ![Google Analytics](../../../assets/images/nodes/google_analytics.svg){ width="44" height="44" } Google Analytics { #google-analytics-reader }
 
-### Google Analytics Reader
+Runs a Google Analytics 4 report using a saved connection, authenticated with a service-account key or via OAuth.
 
-The **Google Analytics Reader** node runs a **Google Analytics 4 (GA4)** report and loads the result into your flow. It uses a saved Google Analytics connection (authenticated with a **service account** key or via **OAuth**) and lets you choose metrics, dimensions, a date range, filters, and sorting.
+**Settings**
 
-#### **Settings:**
+| Setting | Description |
+|---|---|
+| **Google Analytics Connection** | A saved GA connection, holding its credentials and an optional default property. |
+| **GA4 Property ID** | The numeric property to query, e.g. `123456789`. Prefilled from the connection's default when set. |
+| **Start Date** / **End Date** | The report range. Accepts GA4 relative tokens (`7daysAgo`, `yesterday`, `today`) or absolute `YYYY-MM-DD` dates. Defaults `7daysAgo` → `yesterday`, and a **Quick Range** dropdown fills common windows. |
+| **Metrics** | One or more GA4 metrics, e.g. `sessions`, `totalUsers`. At least one is required. |
+| **Dimensions** | Optional breakdowns, e.g. `date`, `pagePath`, `eventName`. |
+| **Row Limit** | Optional cap. Leave blank to fetch every row GA returns, paginated in 100k-row chunks. |
 
-| Parameter | Description |
-|-----------|-------------|
-| **Google Analytics Connection** | A saved GA connection. Each connection stores its credentials and an optional default property. Set one up from the **Connections** page (Google Analytics tab). |
-| **GA4 Property ID** | The numeric GA4 property to query (e.g. `123456789`). Prefilled from the connection's default property when one is set. |
-| **Start Date** / **End Date** | The report date range. Accepts GA4 relative tokens (e.g. `7daysAgo`, `yesterday`, `today`) or absolute `YYYY-MM-DD` dates. Defaults are `7daysAgo` → `yesterday`. A **Quick Range** dropdown fills in common windows. |
-| **Metrics** | One or more GA4 metrics to fetch (e.g. `sessions`, `totalUsers`). **At least one metric is required.** |
-| **Dimensions** | *(Optional)* GA4 dimensions to break the metrics down by (e.g. `date`, `pagePath`, `eventName`). |
-| **Row Limit** | *(Optional)* Cap on the number of rows. Leave blank to fetch every row GA returns (paginated in 100k-row chunks). |
+**Filters** apply to any selected metric or dimension, and Flowfile routes each to GA4's dimension or metric filter automatically. Multiple filters of the same kind combine with AND.
 
-#### **Filters:**
+- Dimension (string) operators: `equals`, `not_equals`, `contains`, `begins_with`, `ends_with`, `regex`, `in_list`, `not_in_list`. Matching is case-insensitive unless the `Aa` toggle is on.
+- Metric (numeric) operators: `equals`, `not_equals`, `less_than`, `less_equal`, `greater_than`, `greater_equal`, `between`.
 
-Add row-level filters on any selected metric or dimension. Each filter's **field** must be one of the chosen metrics or dimensions; Flowfile routes it to GA4's dimension or metric filter automatically. Multiple filters of the same kind are combined with **AND**.
-
-- **Dimension (string) operators:** `equals`, `not_equals`, `contains`, `begins_with`, `ends_with`, `regex`, `in_list`, `not_in_list`. String matching is case-insensitive unless you enable the case-sensitive (`Aa`) toggle.
-- **Metric (numeric) operators:** `equals`, `not_equals`, `less_than`, `less_equal`, `greater_than`, `greater_equal`, `between`.
-
-#### **Sort By:**
-
-Add one or more sort entries, each on a selected metric or dimension, in **Ascending** or **Descending** order. GA4 applies them in list order — combine with **Row Limit** to fetch top-N reports.
-
-#### **Usage:**
-
-1. Set up a Google Analytics connection from the **Connections** page.
-2. Add a **Google Analytics Reader** node and select the connection.
-3. Confirm the **Property ID** (or enter one if the connection has no default).
-4. Choose a **date range**, one or more **metrics**, and any **dimensions**.
-5. (Optional) Add **filters** and **sort** entries, and set a **Row Limit**.
+**Sort By** takes one or more entries on a selected metric or dimension, ascending or descending. GA4 applies them in list order — combine with **Row Limit** for top-N reports.
 
 !!! tip "Cache slow reports"
     Fetching from Google Analytics can be slow. Enable **Cache Results** on the node, or write the result to the [catalog](../catalog/index.md), for faster iteration.
 
----
+## ![Flow Input](../../../assets/images/nodes/flow_input.svg){ width="44" height="44" } Flow Input
 
-### Catalog Reader
+A named entry point for a [subflow](../subflows.md) — a flow called from another flow. It has no upstream connection: when the flow runs on its own it serves the sample data in its settings, and when a parent calls it through a [Run Flow](combine.md#run-flow) node, the parent's dataset replaces that sample.
 
-The **Catalog Reader** node reads a table registered in the [Catalog](../catalog/index.md). It supports both **physical** tables (Delta/Parquet files) and **[virtual tables](../catalog/virtual-tables.md)** (resolved on demand).
+**Settings**
 
-#### **Settings:**
-
-| Parameter | Description |
-|-----------|-------------|
-| **Catalog / Schema** | Select the namespace containing the table |
-| **Table** | Select from tables registered in the chosen namespace |
-
-The table dropdown shows both physical and virtual tables. Virtual tables are marked with a **bolt icon** to distinguish them from physical tables.
-
-When the selected table is tracked with [SCD2](../catalog/slowly-changing-dimensions.md), a **History** selector appears:
-
-| Option | Description |
-|--------|-------------|
-| **All records (default)** | No filter — every version of every row |
-| **Active records** | Only the current version of each row (`valid_to` is empty) |
-| **Active at a point in time** | The version that was current at a given point in time |
-
-The default is **all records**: reading an SCD2 table without setting History returns full history, not just the current snapshot. Set History to **Active records** when the downstream flow expects one row per business key.
-
-Once a table is selected, the node displays metadata:
-- **Rows** — total row count
-- **Columns** — total column count
-- **Schema** — column names and data types
-
-#### **Usage:**
-
-1. Add a **Catalog Reader** node to your flow
-2. Select the catalog/schema namespace
-3. Select the table from the dropdown
-4. Review the schema preview
-5. Run the flow to load the table data
-
-![Catalog Reader settings](../../../assets/images/guides/nodes/catalog-reader-settings.png)
-
-*Catalog Reader showing table selection and schema preview*
-
-#### **Reading Virtual Tables**
-
-When you select a virtual table, the Catalog Reader resolves it at run time:
-
-- **Optimized virtual tables** — the stored execution plan is deserialized instantly, with full Polars query optimization (predicate and projection pushdown)
-- **Standard virtual tables** — the producer flow is executed end-to-end to produce the result
-
-From your flow's perspective, a virtual table behaves identically to a physical one — the resolution happens transparently. For details on optimization and when to use virtual tables, see [Virtual Flow Tables](../catalog/virtual-tables.md).
-
-#### **SQL Mode**
-
-The Catalog Reader also supports a **SQL mode** where you can write SQL queries against all catalog tables (both physical and virtual). Tables are registered by name in a Polars SQL context, so you can join and query across the entire catalog. See [SQL Editor](../catalog/sql-editor.md) for more details.
+| Setting | Description |
+|---|---|
+| **Input name** | The port name the parent binds data to. Default `input`. |
+| **Sample data** | The dataset served when the flow runs standalone. |
 
 ---
 
-### Flow Input
-
-The **Flow Input** node is a named entry point for a [subflow](../subflows.md) — a flow called from another flow. It has no upstream connection; when the flow runs on its own it serves the sample data configured in its settings, and when a parent flow calls it through a Run Flow node, the parent's dataset replaces that sample.
-
-| Parameter | Description |
-|-----------|-------------|
-| **Input name** | The port name the parent binds data to (default `input`) |
-| **Sample data** | The dataset served when the flow runs standalone |
-
-See [Subflows](../subflows.md) for the full pattern.
-
----
-[← Node overview](index.md) | [Next: Transform data →](transform.md)
+[← All actions](index.md) | [Next: Transformations →](transform.md)

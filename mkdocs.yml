@@ -18,11 +18,17 @@ theme:
     code: Source Code Pro
   features:
     - navigation.tabs
-    - navigation.sections
+    - navigation.indexes
+    - navigation.prune
+    - navigation.tracking
     - navigation.top
+    - navigation.footer
+    - toc.follow
     - search.suggest
     - search.highlight
+    - search.share
     - content.code.copy
+    - content.tabs.link
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -71,6 +77,9 @@ plugins:
 
 markdown_extensions:
   - attr_list
+  - tables
+  - toc:
+      toc_depth: 3
   - md_in_html
   - admonition
   - pymdownx.details
@@ -105,7 +114,7 @@ nav:
     - Quickstart: quickstart.md
     - Flowfile Lite (Browser): users/deployment/lite.md
     - By Audience:
-      - Overview: users/index.md
+      - users/index.md
       - Coming from Excel: users/coming-from-excel.md
       - Build Flows Visually: users/build-flows-visually.md
       - Analyze Your Data: users/analyze-your-data.md
@@ -114,19 +123,19 @@ nav:
       - Run Flowfile for a Team: users/deploy-for-a-team.md
 
   - Visual Editor:
-    - Overview: users/visual-editor/index.md
+    - users/visual-editor/index.md
     - Building Flows: users/visual-editor/building-flows.md
-    - Formulas:
-      - Formula Language: users/formulas/index.md
+    - Data Actions:
+      - users/visual-editor/nodes/index.md
+      - Input Sources: users/visual-editor/nodes/input.md
+      - Transformations: users/visual-editor/nodes/transform.md
+      - Combine Operations: users/visual-editor/nodes/combine.md
+      - Aggregations: users/visual-editor/nodes/aggregate.md
+      - Machine Learning: users/visual-editor/nodes/ml.md
+      - Output Operations: users/visual-editor/nodes/output.md
+    - Formula Language:
+      - users/formulas/index.md
       - Function Reference: users/formulas/functions.md
-    - Node Reference:
-      - Overview: users/visual-editor/nodes/index.md
-      - Input Nodes: users/visual-editor/nodes/input.md
-      - Transform Nodes: users/visual-editor/nodes/transform.md
-      - Combine Nodes: users/visual-editor/nodes/combine.md
-      - Aggregate Nodes: users/visual-editor/nodes/aggregate.md
-      - Output Nodes: users/visual-editor/nodes/output.md
-      - Machine Learning Nodes: users/visual-editor/nodes/ml.md
     - Sandboxed Python (Kernels): users/visual-editor/kernels.md
     - The flowfile_ctx API: users/visual-editor/kernel-api.md
     - Node Designer:
@@ -135,14 +144,14 @@ nav:
       - 'Tutorial: K-Means on a Kernel': users/visual-editor/kmeans-kernel-node.md
       - Community Nodes: users/visual-editor/community-nodes.md
     - Worked Examples:
-      - Overview: users/visual-editor/tutorials/index.md
+      - users/visual-editor/tutorials/index.md
       - Sales Pipeline: users/visual-editor/tutorials/sales-pipeline.md
       - Sales Dashboard: users/visual-editor/tutorials/sales-dashboard.md
       - Export to Python: users/visual-editor/tutorials/code-generator.md
     - Settings: users/visual-editor/settings.md
 
   - Connect Your Data:
-    - Overview: users/connect/index.md
+    - users/connect/index.md
     - Connections: users/visual-editor/connections.md
     - Secrets & Encryption: users/visual-editor/catalog/secrets.md
     - Databases: users/visual-editor/tutorials/database-connectivity.md
@@ -151,7 +160,7 @@ nav:
     - REST APIs & Google Analytics: users/connect/apis.md
 
   - Catalog & Automation:
-    - Overview: users/visual-editor/catalog/index.md
+    - users/visual-editor/catalog/index.md
     - Virtual Tables: users/visual-editor/catalog/virtual-tables.md
     - Slowly Changing Dimensions: users/visual-editor/catalog/slowly-changing-dimensions.md
     - SQL Editor: users/visual-editor/catalog/sql-editor.md
@@ -164,15 +173,15 @@ nav:
     - Projects & Git: users/projects.md
 
   - Python API:
-    - Overview: users/python-api/index.md
+    - users/python-api/index.md
     - Quick Start: users/python-api/quickstart.md
     - Core Concepts:
-      - Overview: users/python-api/concepts/index.md
+      - users/python-api/concepts/index.md
       - FlowFrame & FlowGraph: users/python-api/concepts/design-concepts.md
       - Expressions: users/python-api/concepts/expressions.md
       - Formulas in Python: users/python-api/concepts/formulas.md
     - API Reference:
-      - Overview: users/python-api/reference/index.md
+      - users/python-api/reference/index.md
       - Reading Data: users/python-api/reference/reading-data.md
       - Writing Data: users/python-api/reference/writing-data.md
       - Catalog References: users/python-api/reference/catalog-references.md
@@ -183,15 +192,15 @@ nav:
       - Cloud Storage: users/python-api/reference/cloud-connections.md
       - Visual UI Integration: users/python-api/reference/visual-ui.md
     - Tutorials:
-      - Overview: users/python-api/tutorials/index.md
+      - users/python-api/tutorials/index.md
       - Building Flows with Code: users/python-api/tutorials/flowfile_frame_api.md
 
   - AI Assistant:
-    - Overview: ai/index.md
+    - ai/index.md
     - Provider Setup: ai/providers.md
 
   - Deploy & Operate:
-    - Overview: users/deployment/index.md
+    - users/deployment/index.md
     - Desktop App: users/deployment/desktop.md
     - Python Package: users/deployment/python.md
     - Docker: users/deployment/docker.md
