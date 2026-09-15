@@ -23,8 +23,11 @@ export interface NodeDefinition {
   available?: boolean
   // Extra search terms so the palette filter matches by concept, not just by name.
   keywords?: string[]
-  // Heading slug appended to the category docsUrl for the locked-node "Learn more" link.
+  // Heading slug appended to the docs page for the locked-node "Learn more" link.
   docsAnchor?: string
+  // Overrides the category's docsUrl when a node is documented on another page —
+  // core's node_group, which the docs follow, can differ from this palette's grouping.
+  docsUrl?: string
 }
 
 export interface NodeCategory {
@@ -71,7 +74,7 @@ export function createNodeCategories(): NodeCategory[] {
         { type: 'dynamic_rename', name: 'Rename', icon: 'dynamic_rename.svg', inputs: 1, outputs: 1, keywords: ['rename', 'columns', 'prefix', 'suffix'] },
         { type: 'record_id', name: 'Record ID', icon: 'record_id.svg', inputs: 1, outputs: 1, keywords: ['row number', 'index', 'id', 'sequence'] },
         { type: 'head', name: 'Take Sample', icon: 'sample.svg', inputs: 1, outputs: 1, keywords: ['sample', 'limit', 'top', 'head', 'subset'] },
-        { type: 'window_functions', name: 'Window Functions', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['window', 'rolling', 'cumulative', 'rank', 'partition', 'lag', 'lead', 'over'], docsAnchor: 'window-functions' },
+        { type: 'window_functions', name: 'Window Functions', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['window', 'rolling', 'cumulative', 'rank', 'partition', 'lag', 'lead', 'over'], docsUrl: 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/aggregate', docsAnchor: 'window-functions' },
         { type: 'sql_query', name: 'SQL Query', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['sql', 'query', 'select', 'where'], docsAnchor: 'sql-query' },
         { type: 'python_script', name: 'Python Script', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['python', 'code', 'script', 'kernel', 'pandas'], docsAnchor: 'python-script' }
       ]
