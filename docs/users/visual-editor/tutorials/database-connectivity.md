@@ -79,7 +79,7 @@ The flow reads the table, derives a column, filters, aggregates several metrics 
     - median of `profit` → `median_profit`
 4. Add a second **Filter** to keep languages with `[films] >= 10`, then a **Sort** on `total_profit` descending.
 
-For per-node settings, see the [node reference](../nodes/transform.md).
+For per-node settings, see [Data Actions](../nodes/index.md).
 
 ![Connected transformation nodes](../../../assets/images/guides/database_connectivity/transformations.png)
 

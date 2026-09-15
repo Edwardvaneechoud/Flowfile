@@ -6,10 +6,8 @@
 // heading slugs in `docs/users/visual-editor/nodes/*.md` — renaming a heading
 // degrades to "right page, wrong scroll position", it does not 404.
 //
-// Do NOT derive the page from `node_group`: two nodes are deliberately
-// documented on a page that disagrees with their palette group —
-// `window_functions` (group `aggregate`) lives on transform.html, and
-// `wait_for` (group `combine`) lives on ml.html.
+// Do NOT derive the page from `node_group`: the docs pages are hand-maintained
+// and a node can move between them without its palette group changing.
 import { docsUrl } from "../../lib/docsLinks";
 import type { NodeTemplate } from "../../types";
 import type { ContextMenuOption } from "../../components/common/ContextMenu/types";
@@ -32,6 +30,7 @@ export const NODE_DOC_PAGES: Readonly<Record<string, string>> = {
   google_analytics_reader: "input.html#google-analytics-reader",
   rest_api_reader: "input.html#rest-api-reader",
   flow_input: "input.html#flow-input",
+  list_files: "input.html#list-files",
 
   // transform.html
   formula: "transform.html#formula",
@@ -45,13 +44,13 @@ export const NODE_DOC_PAGES: Readonly<Record<string, string>> = {
   unique: "transform.html#drop-duplicates",
   text_to_rows: "transform.html#text-to-rows",
   polars_code: "transform.html#polars-code",
+  data_cleansing: "transform.html#data-cleansing",
   sql_query: "transform.html#sql-query",
   python_script: "transform.html#python-script",
-  // Palette group is "aggregate", but the docs section lives on transform.html.
-  window_functions: "transform.html#window-functions",
 
   // combine.html
   join: "combine.html#join",
+  wait_for: "combine.html#wait-for",
   fuzzy_match: "combine.html#fuzzy-match",
   union: "combine.html#union-data",
   graph_solver: "combine.html#graph-solver",
@@ -64,14 +63,13 @@ export const NODE_DOC_PAGES: Readonly<Record<string, string>> = {
   pivot: "aggregate.html#pivot-data",
   unpivot: "aggregate.html#unpivot-data",
   record_count: "aggregate.html#count-records",
+  window_functions: "aggregate.html#window-functions",
 
   // ml.html
   random_split: "ml.html#random-split",
   train_model: "ml.html#train-model",
   apply_model: "ml.html#apply-model",
   evaluate_model: "ml.html#evaluate-model",
-  // Palette group is "combine", but the docs section lives on ml.html.
-  wait_for: "ml.html#wait-for",
 
   // output.html
   output: "output.html#write-data",
