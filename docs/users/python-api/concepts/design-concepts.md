@@ -71,7 +71,7 @@ Operations with a visual-node equivalent appear as that node type, so the step s
 | `rename({"a": "b"})` | Select data | — |
 | `filter(ff.col("a") > 1, ff.col("g").is_in(["x", "y"]))` | Filter data, advanced expression `([a] > 1) and [g] in ("x", "y")` | a predicate has no formula form: a lambda (`map_elements`), a method the formula language does not cover, or a string literal containing both `'` and `"` |
 | `filter(flowfile_formula="[a] > 1")` | Filter data | — |
-| `filter_split(...)` | Filter data in split mode | — (predicates without a formula form are stored as Polars expression text) |
+| `filter_split(...)` | Filter data in split mode | never; a predicate without a formula form raises `ValueError`, because the split node has no code fallback |
 | `with_columns((ff.col("a") * 2).alias("b"))` | Formula, one node per expression | any expression has no formula form (see [Formulas in Python](formulas.md)) |
 | `with_columns(ff.when(cond).then(x).otherwise(y).alias("b"))` | Formula, `if … then … elseif … else … endif` | a condition or branch value has no formula form |
 | `with_columns(ff.col("a").sum().over("g").alias("t"))` | Window functions | see [Aggregations](../reference/aggregations.md) |

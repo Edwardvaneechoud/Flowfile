@@ -104,7 +104,7 @@ class FlowFrame:
     # Add a regular join node to the graph.
     def _add_regular_join_node(self, new_node_id: int, join_input: transform_schema.JoinInput, description: str, other: FlowFrame) -> None: ...
 
-    # Predicate text for ``FilterInput.advanced_filter``: the flowfile-formula
+    # Formula text for a split filter's ``advanced_filter``; raises when a predicate has none.
     def _build_filter_expression_string(self, predicates: tuple, constraints: dict) -> str: ...
 
     # Build kwargs dictionary for Polars join code.

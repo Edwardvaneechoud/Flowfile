@@ -144,6 +144,14 @@ def test_filter_split_uses_the_formula_predicate():
     assert failed.collect()["a"].to_list() == [1]
 
 
+def test_filter_split_without_formula_form_raises():
+    """The split node has no Polars-code fallback, so an untranslatable predicate fails loudly."""
+    with pytest.raises(ValueError, match="filter_split predicates must have a flowfile-formula form"):
+        _frame().filter_split(col("a").map_elements(lambda x: x > 1, return_dtype=pl.Boolean))
+    with pytest.raises(ValueError, match="filter_split predicates must have a flowfile-formula form"):
+        _frame().filter_split(col("a").shift(1) > 1)
+
+
 # when / then / otherwise
 
 
