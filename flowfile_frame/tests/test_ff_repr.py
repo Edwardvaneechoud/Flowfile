@@ -68,10 +68,13 @@ class TestFfReprBasic:
         assert lit(False)._ff_repr == "false"
 
     def test_lit_none_ff_repr(self):
-        assert lit(None)._ff_repr is None
+        assert lit(None)._ff_repr == "null"
 
     def test_lit_string_with_quotes(self):
-        assert lit('say "hello"')._ff_repr == '"say \\"hello\\""'
+        assert lit('say "hello"')._ff_repr == "'say \"hello\"'"
+
+    def test_lit_string_with_both_quote_kinds_has_no_ff_repr(self):
+        assert lit('it\'s "x"')._ff_repr is None
 
     def test_lit_string_with_backslash(self):
         assert lit("back\\slash")._ff_repr == '"back\\\\slash"'

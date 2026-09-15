@@ -3913,14 +3913,14 @@ plot = ["altair (>=5.4.0)", "graphviz (>=0.20)", "great-tables (>=0.9)", "vegafu
 
 [[package]]
 name = "polars-expr-transformer"
-version = "0.6.0"
+version = "0.6.1"
 description = "Transform string-based expressions into Polars DataFrame operations"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "polars_expr_transformer-0.6.0-py3-none-any.whl", hash = "sha256:930ac32c774ea998db3ff009d67b679ac9f6c4b40b98e3922767adb7755a3e49"},
-    {file = "polars_expr_transformer-0.6.0.tar.gz", hash = "sha256:5e9e67d4367b1e3f241fec0a95a4538d24bc610e9bece2311a909ca713170e3e"},
+    {file = "polars_expr_transformer-0.6.1-py3-none-any.whl", hash = "sha256:a79b6ad9f372a62b2166b3cd9d16b03099c687bd82065c38d0e858f4500ff8a0"},
+    {file = "polars_expr_transformer-0.6.1.tar.gz", hash = "sha256:ff3990b8ecd2bac77b5e6d55633ec80cbfe2ce4b3ec613002ee5cf05e69d0d5e"},
 ]
 
 [package.dependencies]
@@ -6566,4 +6566,4 @@ type = ["pytest-mypy (>=1.0.1) ; platform_python_implementation != \"PyPy\""]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.14"
-content-hash = "74fd33e4b6d70fbc35ded6b9498f6872ea2cf0ed1c7e8e15e5bceb720328ff08"
+content-hash = "03718d5a44c0071549b5f193d098f90a6d8e988b7828a48113e703b0a72bf1cc"

@@ -16,7 +16,7 @@ Every formula compiles to a native [Polars](https://pola.rs) expression before i
 | [Formula node](../visual-editor/nodes/transform.md#formula) | Create or replace a column with a formula. |
 | [Multi-Field Formula node](../visual-editor/nodes/transform.md#multi-field-formula) | Apply one formula to many columns at once; `[_CurrentField_]`, `[_CurrentFieldName_]` and `[_CurrentFieldType_]` bind to each selected column. |
 | [Filter node](../visual-editor/nodes/transform.md#filter-data) (advanced mode) | Keep rows where a formula evaluates to `true`; split mode routes passing and failing rows to separate outputs. |
-| [Python API](../python-api/concepts/formulas.md) | Pass formula strings to `with_columns(flowfile_formulas=...)`, `multi_field_formula(formula, ...)`, `filter(flowfile_formula=...)`, and `filter_split(flowfile_formula=...)`. |
+| [Python API](../python-api/concepts/formulas.md) | Pass formula strings to `with_columns(flowfile_formulas=...)`, `multi_field_formula(formula, ...)`, `filter(flowfile_formula=...)`, and `filter_split(flowfile_formula=...)`. Fluent expressions with a formula equivalent — `filter(ff.col("a") > 1)`, `ff.when(...)` chains, `is_in` — lower onto the same Filter and Formula nodes; see [which operations become which node](../python-api/concepts/design-concepts.md#which-operations-become-which-node). |
 
 ---
 
@@ -50,12 +50,21 @@ true   false
 | `=` `==` `!=` | Equality (`=` and `==` are equivalent) |
 | `>` `>=` `<` `<=` | Comparison |
 | `and` `or` | Boolean logic |
+| `not( )` | Boolean negation |
+| `in ( )` `not in ( )` | Membership in a list of literals |
 | `( )` | Grouping |
 
 Use parentheses to control evaluation order:
 
 ```text
 [price] * (1 - [discount])
+```
+
+Membership compares a value against a parenthesised, comma-separated list of literals:
+
+```text
+[team] in ("DS", "DE")
+[status] not in ("cancelled", "refunded")
 ```
 
 !!! warning "Use `and` / `or`, not `&&` / `||`"

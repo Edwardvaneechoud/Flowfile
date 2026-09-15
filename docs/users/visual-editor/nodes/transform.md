@@ -404,6 +404,8 @@ This node is useful for time-series features such as moving averages, running to
 
 The **Polars Code** node allows you to write custom **Polars DataFrame** transformations directly in your workflow.
 
+Pipelines built with the Python API only fall back to this node for operations without a native equivalent; [which operations become which node](../../python-api/concepts/design-concepts.md#which-operations-become-which-node) lists the calls that render as Select data, Filter data, Formula, and the other native nodes instead.
+
 ---
 
 #### **Key Features**  
