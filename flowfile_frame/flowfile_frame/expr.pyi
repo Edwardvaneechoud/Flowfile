@@ -306,6 +306,9 @@ class Expr:
     # Helper to get appropriate string representation for an expression
     def _get_expr_repr(self, expr) -> Any: ...
 
+    # Structured form of ``pl.col(x).<agg>()`` over plain columns, so that
+    def _partition_aggregate_spec(self, partition_cols: list) -> dict[str, Any] | None: ...
+
     def abs(self, ) -> Any: ...
 
     # Method equivalent of addition operator `expr + other`.
@@ -1061,6 +1064,9 @@ class Column(Expr):
     # Helper to get appropriate string representation for an expression
     def _get_expr_repr(self, expr) -> Any: ...
 
+    # Structured form of ``pl.col(x).<agg>()`` over plain columns, so that
+    def _partition_aggregate_spec(self, partition_cols: list) -> dict[str, Any] | None: ...
+
     def abs(self, ) -> Any: ...
 
     # Method equivalent of addition operator `expr + other`.
@@ -1764,6 +1770,9 @@ class When(Expr):
 
     # Helper to get appropriate string representation for an expression
     def _get_expr_repr(self, expr) -> Any: ...
+
+    # Structured form of ``pl.col(x).<agg>()`` over plain columns, so that
+    def _partition_aggregate_spec(self, partition_cols: list) -> dict[str, Any] | None: ...
 
     def abs(self, ) -> Any: ...
 

@@ -4327,7 +4327,7 @@ class FlowGraph:
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_window_functions(self, settings: input_schema.NodeWindowFunctions) -> "FlowGraph":
-        """Adds a window-functions node (rolling, cumulative, rank, tile).
+        """Adds a window-functions node (rolling, cumulative, rank, tile, partition aggregates).
 
         Args:
             settings: The settings for the window-functions operation.

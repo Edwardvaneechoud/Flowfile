@@ -265,9 +265,12 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "'sort' (rank by aggregate)."
     ),
     "window_functions": (
-        "Add rolling, cumulative, rank, or tile columns over ordered rows, "
-        "optionally reset per partition (Polars `.over(...)`). Use for running "
-        "totals, moving averages, row ranks within a group, or N-tile buckets. "
+        "Add rolling, cumulative, rank, tile, or partition-aggregate columns over "
+        "rows, optionally reset per partition (Polars `.over(...)`). Use for running "
+        "totals, moving averages, row ranks within a group, N-tile buckets, or a "
+        "per-group aggregate broadcast to every row (functions 'mean', 'sum', 'min', "
+        "'max', 'count', 'std', 'median' — SQL `AVG(x) OVER (PARTITION BY g)`, no "
+        "window_size, no order_by needed). "
         "Don't use for plain group aggregation (one row per group) — that's "
         "'group_by'; window functions keep every input row and add columns. "
         "Rolling and tile functions REQUIRE at least one order_by column; "

@@ -502,7 +502,14 @@ export type WindowFunctionName =
   | "cum_min"
   | "cum_max"
   | "rank"
-  | "tile";
+  | "tile"
+  | "mean"
+  | "sum"
+  | "min"
+  | "max"
+  | "count"
+  | "std"
+  | "median";
 
 export type RankMethod = "ordinal" | "dense" | "min" | "max" | "average";
 

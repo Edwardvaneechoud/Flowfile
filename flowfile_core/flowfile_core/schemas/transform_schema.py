@@ -996,6 +996,13 @@ WindowFunctionName = Literal[
     "cum_max",
     "rank",
     "tile",
+    "mean",
+    "sum",
+    "min",
+    "max",
+    "count",
+    "std",
+    "median",
 ]
 
 RankMethod = Literal["ordinal", "dense", "min", "max", "average"]
@@ -1004,6 +1011,8 @@ RollingEdgeBehavior = Literal["require_full", "partial", "fill_zero"]
 
 _ROLLING_FUNCTIONS = {"rolling_sum", "rolling_mean", "rolling_min", "rolling_max", "rolling_std"}
 _CUMULATIVE_FUNCTIONS = {"cum_sum", "cum_count", "cum_min", "cum_max"}
+AGGREGATE_WINDOW_FUNCTIONS = frozenset({"mean", "sum", "min", "max", "count", "std", "median"})
+"""Partition-wide aggregates broadcast to every row (SQL ``AVG(x) OVER (PARTITION BY g)``)."""
 
 
 def _is_rolling(func: str) -> bool:
@@ -1014,15 +1023,19 @@ def _is_cumulative(func: str) -> bool:
     return func in _CUMULATIVE_FUNCTIONS
 
 
+def is_aggregate_window_function(func: str) -> bool:
+    return func in AGGREGATE_WINDOW_FUNCTIONS
+
+
 def get_window_output_type(func: str, input_type: str | None = None) -> str | None:
     """Infers the output data type of window functions."""
-    if func in {"rolling_mean", "rolling_std"}:
+    if func in {"rolling_mean", "rolling_std", "mean", "std", "median"}:
         return "Float64"
-    if func in {"rolling_sum", "rolling_min", "rolling_max", "cum_sum", "cum_min", "cum_max"}:
+    if func in {"rolling_sum", "rolling_min", "rolling_max", "cum_sum", "cum_min", "cum_max", "sum", "min", "max"}:
         return input_type
     if func in {"cum_count", "tile"}:
         return "Int64"
-    if func == "rank":
+    if func in {"rank", "count"}:
         return "UInt32"
     return input_type
 
@@ -1030,9 +1043,11 @@ def get_window_output_type(func: str, input_type: str | None = None) -> str | No
 class WindowFunctionInput(BaseModel):
     """A single window-function operation producing one new column.
 
-    `column` is the source column for rolling, cumulative and rank functions.
-    For `tile`, `column` is ignored (ordering comes from the outer
-    ``WindowFunctionsInput.order_by``).
+    `column` is the source column for rolling, cumulative, rank and
+    partition-aggregate functions. The aggregates (``mean``, ``sum``, ``min``,
+    ``max``, ``count``, ``std``, ``median``) take no window and broadcast one
+    value per partition to every row of it. For `tile`, `column` is ignored
+    (ordering comes from the outer ``WindowFunctionsInput.order_by``).
     """
 
     column: str | None = None
@@ -1052,7 +1067,7 @@ class WindowFunctionInput(BaseModel):
                 raise ValueError(f"{self.function!r} requires a positive window_size")
             if self.column is None:
                 raise ValueError(f"{self.function!r} requires a source column")
-        elif _is_cumulative(self.function) or self.function == "rank":
+        elif _is_cumulative(self.function) or self.function == "rank" or is_aggregate_window_function(self.function):
             if self.column is None:
                 raise ValueError(f"{self.function!r} requires a source column")
         elif self.function == "tile":
