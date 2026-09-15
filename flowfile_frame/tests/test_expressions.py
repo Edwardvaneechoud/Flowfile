@@ -896,6 +896,72 @@ class TestLambdaSerialization:
         result = output_df.select('test')
         assert_frame_equal(pl.LazyFrame({'test': [42, 52, 62, 72, 82]}, schema=pl.Schema([('test', pl.Int32)])), result.data)
 
+    @staticmethod
+    def _assert_lambda_defined_before_split(polars_code: str) -> None:
+        """The generated code must define its lambdas above the definitions/expression split."""
+        marker = "#─────SPLIT─────"
+        assert marker in polars_code
+        definitions, _, expression = polars_code.partition(marker)
+        assert "def _lambda_fn_" in definitions
+        assert "_lambda_fn_" in expression
+
+    def test_binary_op_keeps_lambda_definition_in_filter(self, sample_df):
+        """A comparison against a map_elements result must keep the lambda definition."""
+        result = sample_df.filter(col("value_1").map_elements(lambda x: x * 2, return_dtype=pl.Int64) > 40)
+        polars_code = result.get_node_settings().setting_input.polars_code_input.polars_code
+        self._assert_lambda_defined_before_split(polars_code)
+
+        expected = sample_df.data.filter(
+            pl.col("value_1").map_elements(lambda x: x * 2, return_dtype=pl.Int64) > 40
+        ).collect()
+        assert_frame_equal(result.collect(), expected)
+
+    def test_binary_op_keeps_lambda_definition_in_with_columns(self, sample_df):
+        """Arithmetic on a map_elements result must keep the lambda definition."""
+        result = sample_df.with_columns(
+            [(col("value_1").map_elements(lambda x: x * 2, return_dtype=pl.Int64) + 1).alias("b")]
+        )
+        polars_code = result.get_node_settings().setting_input.polars_code_input.polars_code
+        self._assert_lambda_defined_before_split(polars_code)
+
+        expected = sample_df.data.with_columns(
+            [(pl.col("value_1").map_elements(lambda x: x * 2, return_dtype=pl.Int64) + 1).alias("b")]
+        ).collect()
+        assert_frame_equal(result.collect(), expected)
+
+    def test_binary_op_merges_lambda_definitions_from_both_operands(self, sample_df):
+        """Both sides of a binary op contribute their lambda definitions."""
+        result = sample_df.with_columns(
+            (
+                col("value_1").map_elements(lambda x: x * 2, return_dtype=pl.Int64)
+                + col("id").map_elements(lambda x: x + 100, return_dtype=pl.Int64)
+            ).alias("b")
+        )
+        polars_code = result.get_node_settings().setting_input.polars_code_input.polars_code
+        definitions = polars_code.partition("#─────SPLIT─────")[0]
+        assert definitions.count("def _lambda_fn_") == 2
+
+        expected = sample_df.data.with_columns(
+            (
+                pl.col("value_1").map_elements(lambda x: x * 2, return_dtype=pl.Int64)
+                + pl.col("id").map_elements(lambda x: x + 100, return_dtype=pl.Int64)
+            ).alias("b")
+        ).collect()
+        assert_frame_equal(result.collect(), expected)
+
+    def test_reverse_binary_op_keeps_lambda_definition(self, sample_df):
+        """Reverse operators (literal on the left) must keep the lambda definition too."""
+        result = sample_df.with_columns(
+            (100 - col("value_1").map_elements(lambda x: x * 2, return_dtype=pl.Int64)).alias("b")
+        )
+        polars_code = result.get_node_settings().setting_input.polars_code_input.polars_code
+        self._assert_lambda_defined_before_split(polars_code)
+
+        expected = sample_df.data.with_columns(
+            (100 - pl.col("value_1").map_elements(lambda x: x * 2, return_dtype=pl.Int64)).alias("b")
+        ).collect()
+        assert_frame_equal(result.collect(), expected)
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

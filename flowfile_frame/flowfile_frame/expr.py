@@ -84,10 +84,26 @@ def _get_ff_repr(value: Any) -> str | None:
     elif isinstance(value, int | float):
         return str(value)
     elif isinstance(value, str):
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
+        # The formula parser has no quote escape: use the quote kind the value lacks.
+        escaped = value.replace("\\", "\\\\")
+        if '"' not in escaped:
+            return f'"{escaped}"'
+        if "'" not in escaped:
+            return f"'{escaped}'"
+        return None
+    elif value is None:
+        return "null"
     else:
         return None
+
+
+def _membership_ff_repr(ff_repr: str | None, values: Any) -> str | None:
+    """``[col] in ("a", "b")`` when ``values`` is a plain sequence of scalar literals, else None."""
+    if ff_repr is None or not isinstance(values, list | tuple | set | frozenset):
+        return None
+    if not all(isinstance(v, bool | int | float | str) for v in values):
+        return None
+    return f"{ff_repr} in ({', '.join(_get_ff_repr(v) for v in values)})"
 
 
 def _compute_cast_ff_repr(ff_repr: str | None, pl_dtype: pl.DataType | type) -> str | None:
@@ -119,6 +135,17 @@ def _get_expr_and_repr(value: Any) -> tuple[pl.Expr | None, str]:
     else:
         # Assume literal
         return pl.lit(value), repr(value)
+
+
+def _merge_operand_metadata(left: Expr, *operands: Any) -> tuple[list[str], bool]:
+    """Lambda sources and code-convertability carried over from an operator's operands."""
+    sources = list(left._function_sources)
+    convertable = left.convertable_to_code
+    for operand in operands:
+        if isinstance(operand, Expr):
+            sources.extend(source for source in operand._function_sources if source not in sources)
+            convertable = convertable and operand.convertable_to_code
+    return sources, convertable
 
 
 class StringMethods:
@@ -660,6 +687,8 @@ class Expr:
             except Exception:
                 pass
 
+        function_sources, convertable_to_code = _merge_operand_metadata(self, other)
+
         # Binary ops clear the aggregation state and selector link
         return Expr(
             result_expr,
@@ -669,6 +698,8 @@ class Expr:
             selector=None,
             agg_func=None,
             is_complex=True,
+            convertable_to_code=convertable_to_code,
+            _function_sources=function_sources,
             ff_repr=new_ff,
         )
 
@@ -857,28 +888,36 @@ class Expr:
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} + {self._repr_str})"
         res_expr = other_expr + self.expr if other_expr is not None and self.expr is not None else None
+        function_sources, convertable_to_code = _merge_operand_metadata(self, other)
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True,
+                    convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("+", other))
 
     def __rsub__(self, other):
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} - {self._repr_str})"
         res_expr = other_expr - self.expr if other_expr is not None and self.expr is not None else None
+        function_sources, convertable_to_code = _merge_operand_metadata(self, other)
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True,
+                    convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("-", other))
 
     def __rmul__(self, other):
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} * {self._repr_str})"
         res_expr = other_expr * self.expr if other_expr is not None and self.expr is not None else None
+        function_sources, convertable_to_code = _merge_operand_metadata(self, other)
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True,
+                    convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("*", other))
 
     def __rtruediv__(self, other):
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} / {self._repr_str})"
         res_expr = other_expr / self.expr if other_expr is not None and self.expr is not None else None
+        function_sources, convertable_to_code = _merge_operand_metadata(self, other)
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True,
+                    convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("/", other))
 
     def __rfloordiv__(self, other):
@@ -887,13 +926,17 @@ class Expr:
         res_expr = other_expr // self.expr if other_expr is not None and self.expr is not None else None
         other_ff = _get_ff_repr(other)
         ff = f"floor(({other_ff} / {self._ff_repr}))" if other_ff is not None and self._ff_repr is not None else None
-        return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True, ff_repr=ff)
+        function_sources, convertable_to_code = _merge_operand_metadata(self, other)
+        return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True,
+                    convertable_to_code=convertable_to_code, _function_sources=function_sources, ff_repr=ff)
 
     def __rmod__(self, other):
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} % {self._repr_str})"
         res_expr = other_expr % self.expr if other_expr is not None and self.expr is not None else None
+        function_sources, convertable_to_code = _merge_operand_metadata(self, other)
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True,
+                    convertable_to_code=convertable_to_code, _function_sources=function_sources,
                     ff_repr=self._create_reverse_binary_ff_repr("%", other))
 
     def __rpow__(self, other):
@@ -903,7 +946,9 @@ class Expr:
         res_expr = base_expr.pow(self.expr) if self.expr is not None and base_expr is not None else None
         other_ff = _get_ff_repr(other)
         ff = f"power({other_ff}, {self._ff_repr})" if other_ff is not None and self._ff_repr is not None else None
-        return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True, ff_repr=ff)
+        function_sources, convertable_to_code = _merge_operand_metadata(self, other)
+        return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True,
+                    convertable_to_code=convertable_to_code, _function_sources=function_sources, ff_repr=ff)
 
     # --- Comparison operations ---
     def __eq__(self, other):
@@ -958,13 +1003,31 @@ class Expr:
     def __invert__(self) -> Expr:
         new_repr = f"~({self._repr_str})"
         res_expr = ~self.expr if self.expr is not None else None
+        ff = f"not({self._ff_repr})" if self._ff_repr is not None else None
         # Invert clears agg_func
-        return Expr(res_expr, None, repr_str=new_repr, initial_column_name=self._initial_column_name, agg_func=None)
+        return Expr(
+            res_expr,
+            None,
+            repr_str=new_repr,
+            initial_column_name=self._initial_column_name,
+            agg_func=None,
+            convertable_to_code=self.convertable_to_code,
+            _function_sources=self._function_sources,
+            ff_repr=ff,
+        )
 
     def __neg__(self) -> Expr:
         new_repr = f"-{self._repr_str}"
         res_expr = -self.expr if self.expr is not None else None
-        return Expr(res_expr, None, repr_str=new_repr, initial_column_name=self._initial_column_name, agg_func=None)
+        return Expr(
+            res_expr,
+            None,
+            repr_str=new_repr,
+            initial_column_name=self._initial_column_name,
+            agg_func=None,
+            convertable_to_code=self.convertable_to_code,
+            _function_sources=self._function_sources,
+        )
 
     def is_null(self):
         result_expr = self.expr.is_null() if self.expr is not None else None
@@ -1030,7 +1093,13 @@ class Expr:
     def is_in(self, values):
         res_expr = self.expr.is_in(values) if self.expr is not None else None
         # is_in is not an aggregation, resets agg_func
-        result = self._create_next_expr(values, method_name="is_in", result_expr=res_expr, is_complex=True)
+        result = self._create_next_expr(
+            values,
+            method_name="is_in",
+            result_expr=res_expr,
+            is_complex=True,
+            ff_repr=_membership_ff_repr(self._ff_repr, values),
+        )
         result.agg_func = None
         return result
 
@@ -1427,7 +1496,14 @@ add_expr_methods(Expr)
 
 
 class When(Expr):
-    """Class that represents a when-then-otherwise expression chain."""
+    """Class that represents a when-then-otherwise expression chain.
+
+    Alongside the Polars source string, the chain keeps a flowfile-formula form
+    (``if c1 then v1 elseif c2 then v2 else v endif``) whenever every condition
+    and value has one, so ``with_columns`` can lower it onto a native Formula
+    node. A chain used without ``otherwise`` renders with ``else null``, which is
+    Polars' implicit default.
+    """
 
     def __init__(self, condition):
         """Initialize a When expression with a condition."""
@@ -1437,6 +1513,8 @@ class When(Expr):
         repr_str = f"pl.when({condition_repr})"
         super().__init__(expr=None, repr_str=repr_str, is_complex=True)
         self._branch_expr = None
+        self._ff_branches: list[tuple[str | None, str | None]] = []
+        self._pending_ff_condition = self._get_branch_ff_repr(condition)
 
     @staticmethod
     def _get_expr_and_repr(value):
@@ -1449,16 +1527,36 @@ class When(Expr):
         else:
             return value, repr(value)
 
+    @staticmethod
+    def _get_branch_ff_repr(value) -> str | None:
+        """Formula form of a branch operand; bare strings are column names, as in Polars."""
+        if isinstance(value, str) and not value.startswith("pl."):
+            return f"[{value}]"
+        return _get_ff_repr(value)
+
+    def _build_ff_repr(self, else_ff: str | None) -> str | None:
+        if else_ff is None or not self._ff_branches:
+            return None
+        parts = []
+        for i, (condition_ff, then_ff) in enumerate(self._ff_branches):
+            if condition_ff is None or then_ff is None:
+                return None
+            parts.append(f"{'if' if i == 0 else 'elseif'} {condition_ff} then {then_ff}")
+        return f"{' '.join(parts)} else {else_ff} endif"
+
     def then(self, value):
         """Set the value to use when the condition is True."""
         value_expr, value_repr = self._get_expr_and_repr(value)
 
         self._repr_str = f"{self._repr_str}.then({value_repr})"
         try:
-            self._branch_expr = pl.when(self.condition).then(value_expr)
+            chain = self._branch_expr if self._branch_expr is not None else pl.when(self.condition)
+            self._branch_expr = chain.then(value_expr)
         except Exception as e:
             logger.warning(f"Error in then() creation: {e}")
 
+        self._ff_branches.append((self._pending_ff_condition, self._get_branch_ff_repr(value)))
+        self._ff_repr = self._build_ff_repr("null")
         return self
 
     def otherwise(self, value):
@@ -1473,7 +1571,7 @@ class When(Expr):
         except Exception as e:
             logger.warning(f"Could not create when-then-otherwise expression: {e}")
 
-        return Expr(pl_expr, repr_str=final_repr)
+        return Expr(pl_expr, repr_str=final_repr, ff_repr=self._build_ff_repr(self._get_branch_ff_repr(value)))
 
     def when(self, condition):
         """Create a new branch in the chain."""
@@ -1490,6 +1588,8 @@ class When(Expr):
         except Exception as e:
             logger.warning(f"Error adding new when() branch: {e}")
 
+        self._pending_ff_condition = self._get_branch_ff_repr(condition)
+        self._ff_repr = None
         return self
 
 
