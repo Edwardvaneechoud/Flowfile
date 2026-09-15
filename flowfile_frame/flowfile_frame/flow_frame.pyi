@@ -131,6 +131,9 @@ class FlowFrame:
     # Determine if we should use Polars code instead of native join.
     def _should_use_polars_code_for_join(self, maintain_order, coalesce, nulls_equal, validate, suffix) -> bool: ...
 
+    # Emits one Window Functions node when every expression is a partition
+    def _try_native_window_functions(self, exprs: list[Expr], new_node_id: int, description: str | None) -> FlowFrame | None: ...
+
     def _with_flowfile_formula(self, flowfile_formula: str, output_column_name: str, output_column_datatype: str = 'Auto', description: str = None) -> 'FlowFrame': ...
 
     # Shared implementation for option-light file writers (ipc/ndjson/avro).

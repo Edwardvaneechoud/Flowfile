@@ -97,5 +97,20 @@ df = df.with_columns([
 !!! note "Use `cum_sum`, not `cumsum`"
     The cumulative-sum expression follows the pinned Polars name: `cum_sum()`. `cumsum()` raises `AttributeError`.
 
+### Partition aggregates
+
+A plain aggregate over a partition broadcasts the group's value to every row of the group, the SQL `AVG(x) OVER (PARTITION BY g)` pattern:
+
+```python
+df = df.with_columns([
+    ff.col("amount").mean().over("region").alias("region_avg"),
+    ff.col("amount").sum().over("region").alias("region_total"),
+])
+```
+
+Each row keeps its own `amount` and also carries its region's average and total, so `ff.col("amount") / ff.col("region_total")` gives the row's share of its group.
+
+When every expression in the `with_columns` call is `ff.col(x).<agg>().over(partition).alias(name)` with the same partition columns, the call becomes a single editable **Window Functions** node in the visual editor. The supported aggregates are `mean`, `sum`, `min`, `max`, `count`, `std` and `median`. Passing `order_by`, using a different partition per expression, aggregating an arithmetic expression, or leaving off the alias falls back to a Polars Code node with the same result.
+
 ---
 [← Previous: DataFrame Operations](flowframe-operations.md) | [Next: Joins →](joins.md)

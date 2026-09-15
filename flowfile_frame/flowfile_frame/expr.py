@@ -431,6 +431,7 @@ class Expr:
     is_complex: bool = False
     convertable_to_code: bool
     _function_sources: list[str]  # Add this attribute
+    _window_spec: dict[str, Any] | None
 
     def __init__(
         self,
@@ -455,6 +456,7 @@ class Expr:
         self.convertable_to_code = convertable_to_code
         self._function_sources = _function_sources or []
         self._ff_repr = ff_repr
+        self._window_spec = None
         # --- Determine Representation String ---
         if repr_str is not None:
             self._repr_str = repr_str
@@ -1049,6 +1051,7 @@ class Expr:
             _function_sources=self._function_sources,
             ff_repr=self._ff_repr,
         )
+        new_instance._window_spec = self._window_spec
         return new_instance
 
     def fill_null(self, value):
@@ -1201,11 +1204,10 @@ class Expr:
 
                 res_expr = self.expr.over(partition_by=partition_arg, **polars_call_kwargs)
 
-            except Exception:
-                logger.warning("Could not create polars expression for over(): {e}")
-                pass
+            except Exception as e:
+                logger.warning(f"Could not create polars expression for over(): {e}")
 
-        return Expr(
+        result = Expr(
             res_expr,
             self.column_name,
             repr_str=f"{self._repr_str}.over({args_str_for_repr})",
@@ -1214,6 +1216,27 @@ class Expr:
             agg_func=None,
             _function_sources=self._function_sources,
         )
+        if order_by is None and not descending and not nulls_last and mapping_strategy == "group_to_rows":
+            result._window_spec = self._partition_aggregate_spec(processed_partition_cols)
+        return result
+
+    def _partition_aggregate_spec(self, partition_cols: list) -> dict[str, Any] | None:
+        """Structured form of ``pl.col(x).<agg>()`` over plain columns, so that
+        ``FlowFrame.with_columns`` can emit a native Window Functions node
+        instead of a Polars-code node. ``None`` when the expression is anything else."""
+        func = self.agg_func
+        source = self._initial_column_name
+        if func not in transform_schema.AGGREGATE_WINDOW_FUNCTIONS or source is None:
+            return None
+        expected_args = "ddof=1" if func == "std" else ""
+        if self._repr_str != f"pl.col({source!r}).{func}({expected_args})":
+            return None
+        partition_by: list[str] = []
+        for part in partition_cols:
+            if not isinstance(part, Column) or part._select_input.is_altered:
+                return None
+            partition_by.append(part.column_name)
+        return {"column": source, "function": func, "partition_by": partition_by}
 
     def get_polars_code(self) -> str:
         """

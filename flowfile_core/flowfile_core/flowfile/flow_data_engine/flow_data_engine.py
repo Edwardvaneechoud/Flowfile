@@ -182,7 +182,7 @@ def _build_window_expr(
             expr = expr.fill_null(0)
         return over(expr).alias(w.new_column_name)
 
-    if func.startswith("cum_"):
+    if func.startswith("cum_") or transform_schemas.is_aggregate_window_function(func):
         expr = getattr(pl.col(w.column), func)()
         return over(expr).alias(w.new_column_name)
 
@@ -1061,7 +1061,7 @@ class FlowDataEngine:
     def do_window_functions(
         self, settings: transform_schemas.WindowFunctionsInput, calculate_schema_stats: bool = False
     ) -> FlowDataEngine:
-        """Applies window functions (rolling, cumulative, rank, tile) to the data.
+        """Applies window functions (rolling, cumulative, rank, tile, partition aggregates) to the data.
 
         When ``settings.order_by`` is provided, rows are sorted first so that
         rolling and tile operations have a deterministic order; the sort is

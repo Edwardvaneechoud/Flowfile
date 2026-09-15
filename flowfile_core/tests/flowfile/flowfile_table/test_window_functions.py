@@ -264,3 +264,60 @@ def test_duplicate_output_names_rejected() -> None:
                 ),
             ],
         )
+
+
+def test_partition_aggregates_broadcast_per_group() -> None:
+    fde = FlowDataEngine(pl.DataFrame({"a": [1, 2, 3], "g": ["x", "x", "y"]}))
+    settings = transform_schema.WindowFunctionsInput(
+        partition_by=["g"],
+        window_functions=[
+            transform_schema.WindowFunctionInput(column="a", function="mean", new_column_name="m"),
+            transform_schema.WindowFunctionInput(column="a", function="sum", new_column_name="s"),
+            transform_schema.WindowFunctionInput(column="a", function="min", new_column_name="mn"),
+            transform_schema.WindowFunctionInput(column="a", function="max", new_column_name="mx"),
+            transform_schema.WindowFunctionInput(column="a", function="count", new_column_name="c"),
+            transform_schema.WindowFunctionInput(column="a", function="std", new_column_name="sd"),
+            transform_schema.WindowFunctionInput(column="a", function="median", new_column_name="md"),
+        ],
+    )
+    out = _collect(fde.do_window_functions(settings))
+    expected = pl.DataFrame({"a": [1, 2, 3], "g": ["x", "x", "y"]}).with_columns(
+        pl.col("a").mean().over("g").alias("m"),
+        pl.col("a").sum().over("g").alias("s"),
+        pl.col("a").min().over("g").alias("mn"),
+        pl.col("a").max().over("g").alias("mx"),
+        pl.col("a").count().over("g").alias("c"),
+        pl.col("a").std().over("g").alias("sd"),
+        pl.col("a").median().over("g").alias("md"),
+    )
+    assert out.equals(expected)
+    assert out["m"].to_list() == [1.5, 1.5, 3.0]
+    assert out["c"].to_list() == [2, 2, 1]
+
+
+def test_partition_aggregate_without_partition_is_table_wide() -> None:
+    fde = FlowDataEngine(pl.DataFrame({"a": [1, 2, 3]}))
+    settings = transform_schema.WindowFunctionsInput(
+        window_functions=[transform_schema.WindowFunctionInput(column="a", function="mean", new_column_name="m")]
+    )
+    out = _collect(fde.do_window_functions(settings))
+    assert out["m"].to_list() == [2.0, 2.0, 2.0]
+
+
+def test_partition_aggregate_requires_column_but_not_order_by() -> None:
+    with pytest.raises(ValidationError, match="requires a source column"):
+        transform_schema.WindowFunctionInput(function="mean", new_column_name="m")
+    settings = transform_schema.WindowFunctionsInput(
+        partition_by=["g"],
+        window_functions=[transform_schema.WindowFunctionInput(column="a", function="sum", new_column_name="s")],
+    )
+    assert settings.order_by == []
+
+
+def test_partition_aggregate_output_types() -> None:
+    assert transform_schema.get_window_output_type("mean", "Int64") == "Float64"
+    assert transform_schema.get_window_output_type("median", "Int64") == "Float64"
+    assert transform_schema.get_window_output_type("std", "Int64") == "Float64"
+    assert transform_schema.get_window_output_type("sum", "Int32") == "Int32"
+    assert transform_schema.get_window_output_type("min", "String") == "String"
+    assert transform_schema.get_window_output_type("count", "String") == "UInt32"

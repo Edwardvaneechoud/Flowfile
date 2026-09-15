@@ -3329,6 +3329,10 @@ class FlowFrame:
                     ff = ff._with_flowfile_formula(expr_obj._ff_repr, expr_obj.column_name, description)
                 return ff
 
+            window_frame = self._try_native_window_functions(actual_exprs_to_process, new_node_id, description)
+            if window_frame is not None:
+                return window_frame
+
             for current_expr_obj in actual_exprs_to_process:
                 all_input_expr_objects.append(current_expr_obj)
                 pure_expr_str, raw_defs_str = _extract_expr_parts(current_expr_obj)
@@ -3393,6 +3397,41 @@ class FlowFrame:
             return ff
         else:
             raise ValueError("Either exprs/named_exprs or flowfile_formulas with output_column_names must be provided")
+
+    def _try_native_window_functions(
+        self, exprs: list[Expr], new_node_id: int, description: str | None
+    ) -> FlowFrame | None:
+        """Emits one Window Functions node when every expression is a partition
+        aggregate (``col(x).<agg>().over(g).alias(name)``) and all share the same
+        partition columns. Returns ``None`` when the call does not fit, so the
+        caller falls back to a Polars-code node.
+        """
+        specs = [getattr(e, "_window_spec", None) for e in exprs]
+        if not specs or any(spec is None for spec in specs):
+            return None
+        partition_by = specs[0]["partition_by"]
+        if any(spec["partition_by"] != partition_by for spec in specs):
+            return None
+        window_functions = []
+        for expr_obj, spec in zip(exprs, specs, strict=True):
+            if expr_obj.column_name is None or expr_obj.column_name == spec["column"]:
+                return None
+            window_functions.append(
+                transform_schema.WindowFunctionInput(
+                    column=spec["column"], function=spec["function"], new_column_name=expr_obj.column_name
+                )
+            )
+        settings = input_schema.NodeWindowFunctions(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            depending_on_id=self.node_id,
+            window_input=transform_schema.WindowFunctionsInput(
+                partition_by=partition_by, window_functions=window_functions
+            ),
+            description=description,
+        )
+        self.flow_graph.add_window_functions(settings)
+        return self._create_child_frame(new_node_id)
 
     def with_row_index(self, name: str = "index", offset: int = 0, description: str = None) -> FlowFrame:
         """
