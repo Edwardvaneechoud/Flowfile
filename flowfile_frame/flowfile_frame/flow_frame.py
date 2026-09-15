@@ -1346,15 +1346,22 @@ class FlowFrame:
         self.flow_graph.add_filter(filter_settings)
 
     def _build_filter_expression_string(self, predicates: tuple, constraints: dict) -> str:
-        """Predicate text for ``FilterInput.advanced_filter``: the flowfile-formula
-        form when every predicate has one, else the AND-joined Polars expression
-        strings (which the formula parser also accepts verbatim)."""
+        """Formula text for a split filter's ``advanced_filter``; raises when a predicate has none.
+
+        The split filter is one two-output node with no Polars-code fallback, and the
+        engine turns an expression it cannot parse into "keep nothing" with only a
+        warning, so an untranslatable predicate must fail here instead of silently
+        emptying the pass output.
+        """
         exprs = self._collect_filter_exprs(predicates, constraints)
         formula = _filter_exprs_to_formula(exprs)
-        if formula is not None:
-            return formula
-        pure_polars_expr_strings = [f"({_extract_expr_parts(e)[0]})" for e in exprs]
-        return " & ".join(pure_polars_expr_strings) if pure_polars_expr_strings else "pl.lit(True)"
+        if formula is None:
+            raise ValueError(
+                "filter_split predicates must have a flowfile-formula form (comparisons, and/or/not, is_in, "
+                "is_null, ...); lambdas and unmapped methods are not supported. Pass flowfile_formula=... "
+                "or use filter() twice instead."
+            )
+        return formula
 
     def filter_split(
         self,
@@ -1372,6 +1379,9 @@ class FlowFrame:
         Args mirror :meth:`filter` — accept either positional polars
         expressions, a ``flowfile_formula`` string, or keyword constraints.
         Combinations of predicates and constraints are AND-ed together.
+        Predicates must have a flowfile-formula form (see :meth:`filter`);
+        others raise ``ValueError`` because the split node has no Polars-code
+        fallback.
         """
         if (len(predicates) > 0 or len(constraints) > 0) and flowfile_formula:
             raise ValueError("You can only use one of the following: predicates, constraints or flowfile_formula")
