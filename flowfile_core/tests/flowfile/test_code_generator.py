@@ -5180,8 +5180,8 @@ def test_filter_advanced_mode(export_func):
 
     code = export_func(flow)
     if export_func is export_flow_to_polars:
-        verify_code_contains(code, "simple_function_to_expr")
-        verify_code_contains(code, "[age] > 25 AND [salary] > 60000")
+        verify_code_contains(code, 'pl.col("age") > pl.lit(25)', 'pl.col("salary") > pl.lit(60000)')
+        assert "simple_function_to_expr" not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
@@ -5228,7 +5228,7 @@ def test_unique_without_columns(export_func):
 
 
 def test_select_with_no_columns_kept():
-    """Test select node where no columns are marked as keep."""
+    """A select that unchecks every listed column keeps the unlisted ones (keep_missing), so it is a drop."""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)
 
@@ -5245,8 +5245,84 @@ def test_select_with_no_columns_kept():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     code = export_flow_to_polars(flow)
-    assert "df_2" not in code  # empty select elided; source passes through
-    verify_code_contains(code, "source = pl.LazyFrame")
+    verify_code_contains(code, '.drop(["id", "name"])')
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_drop_shaped_select_exports_as_drop(export_func):
+    """A select that only unchecks columns — what FlowFrame.drop emits — exports as ``.drop([...])``."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    select_node = input_schema.NodeSelect(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        select_input=[
+            transform_schema.SelectInput("id"),
+            transform_schema.SelectInput("name", keep=False),
+            transform_schema.SelectInput("age"),
+            transform_schema.SelectInput("city", keep=False),
+            transform_schema.SelectInput("salary"),
+        ],
+        keep_missing=True,
+    )
+    flow.add_select(select_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    verify_code_contains(code, '.drop(["name", "city"])')
+    assert ".select(" not in code
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_reordering_select_is_not_exported_as_drop():
+    """Kept columns listed out of input order are a reorder, so the node stays a select."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    select_node = input_schema.NodeSelect(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        select_input=[
+            transform_schema.SelectInput("salary"),
+            transform_schema.SelectInput("name", keep=False),
+            transform_schema.SelectInput("id"),
+        ],
+        keep_missing=True,
+    )
+    flow.add_select(select_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    assert ".drop(" not in code
+    verify_code_contains(code, ".select(")
+
+
+def test_polars_code_description_names_the_exported_function():
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    flow.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=1,
+            node_id=2,
+            depending_on_ids=[1],
+            polars_code_input=transform_schema.PolarsCodeInput(
+                polars_code="input_df.with_columns((pl.col('age') * 2).alias('double_age'))"
+            ),
+            description="Double the age",
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, "# Custom Polars code: Double the age")
     verify_if_execute(code)
 
 
