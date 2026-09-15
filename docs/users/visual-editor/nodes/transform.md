@@ -282,6 +282,8 @@ The node is read-only: a query must start with `SELECT` or `WITH`, and statement
 
 Writes a [Polars](https://docs.pola.rs/) expression directly, for transformations no other action covers.
 
+Pipelines built with the Python API only fall back to this node for operations without a native equivalent; [which operations become which node](../../python-api/concepts/design-concepts.md#which-operations-become-which-node) lists the calls that render as Select data, Filter data, Formula, and the other native nodes instead.
+
 **Settings**
 
 | Setting | Description |
