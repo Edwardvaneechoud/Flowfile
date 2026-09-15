@@ -8,7 +8,7 @@ Aggregations collapse or reshape a dataset: totals per group, a crosstab, a runn
 | [Pivot data](#pivot-data) | Turn the values of one column into columns of their own | ● |
 | [Unpivot data](#unpivot-data) | Turn a set of columns back into rows | ● |
 | [Count records](#count-records) | Add the total row count as a column | ● |
-| [Window functions](#window-functions) | Rolling, cumulative, rank and tile calculations, without collapsing rows | |
+| [Window functions](#window-functions) | Rolling, cumulative, rank, tile and partition-aggregate calculations, without collapsing rows | |
 
 !!! info "In Flowfile Lite"
     **Group by**, **Pivot data**, **Unpivot data** and **Count records** run in the browser-only [Flowfile Lite](../../deployment/lite.md) build. **Window functions** needs the full desktop or server build.
@@ -64,7 +64,7 @@ Counts the rows and returns that single number in a column named `number_of_reco
 <div class="ff-split" markdown>
 
 <div markdown>
-Adds rolling, cumulative, rank or tile columns calculated over ordered — and optionally partitioned — rows. Each function you configure produces one new column and every input row survives, which is what separates this from [Group by](#group-by).
+Adds rolling, cumulative, rank, tile or partition-aggregate columns calculated over ordered — and optionally partitioned — rows. Each function you configure produces one new column and every input row survives, which is what separates this from [Group by](#group-by).
 
 Each row under **Window functions** is one output column: pick the function, the source column, the name to write, and the function's own parameters.
 </div>
@@ -78,7 +78,7 @@ Each row under **Window functions** is one output column: pick the function, the
 | Setting | Description |
 |---|---|
 | **Partition by** | Optional. Columns that restart each calculation per group. Leave empty to calculate over the whole table. |
-| **Order by** | Column(s) plus direction that define row order within each partition. Required for rolling and tile functions. |
+| **Order by** | Column(s) plus direction that define row order within each partition. Required for rolling and tile functions; not used by partition aggregates. |
 | **Window functions** | One or more operations. Each takes a function, a source column, an output column name, and any function-specific parameters. |
 
 **Available functions**
@@ -89,10 +89,21 @@ Each row under **Window functions** is one output column: pick the function, the
 | Cumulative sum / count / min / max | Cumulative | — | Running total, count, min or max up to each row |
 | Rank | Ranking | Tie-breaking method: `ordinal`, `dense`, `min`, `max` or `average` | Rank of each row |
 | Tile | Ranking | Number of groups | Splits the ordered rows into N equal-sized buckets |
+| Mean / sum / min / max / count / std / median | Partition aggregate | — | One value per partition, written to every row of that partition (SQL `AVG(x) OVER (PARTITION BY g)`) |
 
 For rolling functions, the first rows — where the window is not yet full — can be left `null` (the default), computed from the partial window, or filled with `0`.
 
 Each function needs a unique output column name, and existing columns are always preserved.
+
+**Partition aggregates.** With **Partition by** set to `region`, source column `amount`, function *Mean* and output name `region_avg`, every row gets its region's average alongside its own value:
+
+| region | amount | region_avg |
+|---|---|---|
+| north | 10 | 20.0 |
+| north | 30 | 20.0 |
+| south | 5 | 5.0 |
+
+This is the one-node form of a [Group by](#group-by) followed by a [Join](combine.md#join) back onto the original rows. From the Python API, `df.with_columns(ff.col("amount").mean().over("region").alias("region_avg"))` builds this same node.
 
 ---
 

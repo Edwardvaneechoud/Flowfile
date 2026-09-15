@@ -128,7 +128,7 @@ The palette groups actions the same way this reference does, under the same head
 | [Union data](combine.md#union-data) | Stack multiple datasets by combining rows | Combine | ● |
 | [Unpivot data](aggregate.md#unpivot-data) | Transform data from wide format to long format | Aggregations | ● |
 | [Wait For](combine.md#wait-for) | Pass the left input through; the right input only enforces ordering | Combine | |
-| [Window functions](aggregate.md#window-functions) | Rolling, cumulative, rank and tile calculations | Aggregations | |
+| [Window functions](aggregate.md#window-functions) | Rolling, cumulative, rank, tile and partition-aggregate calculations | Aggregations | |
 | [Write data](output.md#write-data) | Save your data as CSV, Excel, Parquet and other files | Output | ● |
 | [Write to Catalog](output.md#catalog-writer) | Save data as a table in the data catalog | Output | ● |
 | [Write to cloud provider](output.md#cloud-storage-writer) | Save data to AWS S3 and other cloud storage | Output | |

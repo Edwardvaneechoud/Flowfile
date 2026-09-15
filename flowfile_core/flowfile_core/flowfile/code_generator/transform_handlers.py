@@ -292,7 +292,7 @@ class TransformHandlersMixin(ConverterMixinBase):
             if behavior == "fill_zero":
                 base = f"{base}.fill_null(0)"
             return f"{over(base)}.alias({self._py_str(w.new_column_name)})"
-        if func.startswith("cum_"):
+        if func.startswith("cum_") or transform_schema.is_aggregate_window_function(func):
             base = f"{fw}.col({self._py_str(w.column)}).{func}()"
             return f"{over(base)}.alias({self._py_str(w.new_column_name)})"
         if func == "rank":
@@ -326,7 +326,7 @@ class TransformHandlersMixin(ConverterMixinBase):
     def _handle_window_functions(
         self, settings: input_schema.NodeWindowFunctions, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """Handle window function nodes (rolling, cumulative, rank, tile)."""
+        """Handle window function nodes (rolling, cumulative, rank, tile, partition aggregates)."""
         input_df = input_vars.get("main", "df")
         window_input = settings.window_input
 
