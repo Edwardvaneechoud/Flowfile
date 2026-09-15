@@ -344,7 +344,7 @@ The **Text to Rows** node splits text from a selected column into multiple rows 
 
 ### Window Functions
 
-The **Window Functions** node adds rolling, cumulative, rank, or tile columns calculated over ordered — and optionally partitioned — rows. Each configured function produces one new column using Polars `over(...)` semantics, without collapsing rows the way a Group By does.
+The **Window Functions** node adds rolling, cumulative, rank, tile, or partition-aggregate columns calculated over ordered — and optionally partitioned — rows. Each configured function produces one new column using Polars `over(...)` semantics, without collapsing rows the way a Group By does.
 
 ---
 
@@ -352,7 +352,7 @@ The **Window Functions** node adds rolling, cumulative, rank, or tile columns ca
 
 - **Partition** calculations so they restart per group (like `.over(...)`)
 - **Order** rows within each partition
-- **Rolling**, **cumulative**, **ranking**, and **tile** functions
+- **Rolling**, **cumulative**, **ranking**, **tile**, and **partition aggregate** functions
 - Add multiple functions in one node — each writes its own output column
 
 ---
@@ -362,7 +362,7 @@ The **Window Functions** node adds rolling, cumulative, rank, or tile columns ca
 | Parameter | Description |
 |-----------|-------------|
 | **Partition by** | *(Optional)* Columns that reset each calculation per group. Leave empty to compute over the whole table. |
-| **Order by** | Column(s) and direction (ascending/descending) defining row order within each partition. **Required** for rolling and tile functions. |
+| **Order by** | Column(s) and direction (ascending/descending) defining row order within each partition. **Required** for rolling and tile functions; not used by partition aggregates. |
 | **Window functions** | One or more operations. Each takes a **function**, a **source column**, an **output column name**, and any function-specific parameters. |
 
 ---
@@ -375,6 +375,7 @@ The **Window Functions** node adds rolling, cumulative, rank, or tile columns ca
 | **Cumulative sum / count / min / max** | Cumulative | — | Running total / count / min / max up to each row |
 | **Rank** | Ranking | **Tie-breaking method**: `ordinal`, `dense`, `min`, `max`, or `average` | Rank of each row |
 | **Tile** | Ranking | **Number of groups** | Splits the ordered rows into N equal-sized groups |
+| **Mean / sum / min / max / count / std / median** | Partition aggregate | — | One value per partition, written to every row of that partition (SQL `AVG(x) OVER (PARTITION BY g)`) |
 
 For rolling functions, **incomplete windows** (the first rows, before the window is full) can be left empty (`null`, the default), computed from the **partial** window, or **filled with 0**.
 
@@ -386,7 +387,17 @@ For rolling functions, **incomplete windows** (the first rows, before the window
 - Each window function must have a **unique output column name**.
 - Existing columns are preserved — every function adds a new column.
 
-This node is useful for time-series features such as moving averages, running totals, ranking within groups, and bucketing rows into quantiles.
+**Partition-aggregate example.** With **Partition by** = `region`, source column `amount`, function **Mean** and output name `region_avg`, every row gets its region's average alongside its own value:
+
+| region | amount | region_avg |
+|--------|--------|------------|
+| north | 10 | 20.0 |
+| north | 30 | 20.0 |
+| south | 5 | 5.0 |
+
+This is the one-node form of a Group By followed by a Join back onto the original rows. Written with the Python API, `df.with_columns(ff.col("amount").mean().over("region").alias("region_avg"))` produces this same node.
+
+This node is useful for time-series features such as moving averages, running totals, ranking within groups, bucketing rows into quantiles, and comparing each row against its group's total or average.
 
 ---
 ### ![Polars Code](../../../assets/images/nodes/polars_code.svg){ width="50" height="50" } Polars Code  
