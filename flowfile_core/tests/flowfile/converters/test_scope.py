@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from flowfile_core.flowfile.converters.alteryx.mappers import TOOL_MAPPERS
 from flowfile_core.flowfile.converters.alteryx.scope import (
     BUCKETS,
     NO_OP_TOOLS,
@@ -24,7 +25,8 @@ LEARNING = Path(__file__).resolve().parents[5]
 SCOPE_JSON = LEARNING / "tools" / "alteryx_scope.json"
 CENSUS_JSON = LEARNING / "tools" / "census_out" / "census.json"
 
-pytestmark = pytest.mark.skipif(
+# Only the drift tests need the private folder; the rest hold wherever the repo is checked out.
+needs_corpus = pytest.mark.skipif(
     not (SCOPE_JSON.exists() and CENSUS_JSON.exists()),
     reason=f"corpus taxonomy or census not present ({SCOPE_JSON}, {CENSUS_JSON})",
 )
@@ -36,25 +38,27 @@ NO_OP_BUCKET = "no_op"
 def _taxonomy() -> dict[str, str]:
     """The JSON's `out_of_scope:<bucket>` / `noop` labels, normalised to this registry's bucket names."""
     raw = json.loads(SCOPE_JSON.read_text())
-    return {
-        name: (NO_OP_BUCKET if label == JSON_NO_OP else label.split(":", 1)[1]) for name, label in raw.items()
-    }
+    return {name: (NO_OP_BUCKET if label == JSON_NO_OP else label.split(":", 1)[1]) for name, label in raw.items()}
 
 
+@needs_corpus
 def test_out_of_scope_table_equals_the_taxonomy():
     expected = {name: bucket for name, bucket in _taxonomy().items() if bucket != NO_OP_BUCKET}
     assert OUT_OF_SCOPE == expected
 
 
+@needs_corpus
 def test_no_op_table_equals_the_taxonomy():
     expected = {name for name, bucket in _taxonomy().items() if bucket == NO_OP_BUCKET}
     assert set(NO_OP_TOOLS) == expected
 
 
+@needs_corpus
 def test_every_bucket_in_the_taxonomy_has_a_sentence():
     assert set(BUCKETS) == set(_taxonomy().values())
 
 
+@needs_corpus
 def test_every_key_names_a_tool_the_corpus_actually_contains():
     census_tools = set(json.loads(CENSUS_JSON.read_text())["tools"])
     unknown = sorted(set(_taxonomy()) - census_tools)
@@ -71,6 +75,7 @@ def test_census_tool_name_uses_the_macro_basename_with_its_extension():
     assert census_tool_name(_tool()) == "<unknown>"
 
 
+@needs_corpus
 def test_macro_keys_classify_through_the_basename():
     macros = sorted(name for name in _taxonomy() if name.endswith(".yxmc"))
     assert len(macros) == 7
@@ -82,3 +87,8 @@ def test_macro_keys_classify_through_the_basename():
 
 def test_an_unlisted_tool_is_in_scope():
     assert classify("Filter") is None
+
+
+def test_every_no_op_tool_has_a_mapper():
+    """A no-op without a mapper would emit a node while its consumers were wired past it."""
+    assert set(NO_OP_TOOLS) <= set(TOOL_MAPPERS)

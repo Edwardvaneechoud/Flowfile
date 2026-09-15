@@ -94,7 +94,8 @@ def test_without_inspect_a_flow_is_written_beside_the_source(workflow: Path, cap
     written = workflow.with_suffix(".yaml")
     flow = yaml.safe_load(written.read_text())
     assert flow["flowfile_name"] == "Out Of Scope Tools"
-    assert len(flow["nodes"]) == 8
+    # Six nodes for eight tools: the Message and the Test have no effect, so they emit none.
+    assert len(flow["nodes"]) == 6
     assert f"{workflow} -> {written}" in capsys.readouterr().out
 
 

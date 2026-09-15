@@ -16,11 +16,15 @@ import yaml
 from flowfile_core.flowfile.converters.alteryx.mappers import (
     DEFAULT_INPUT_ANCHOR,
     DEFAULT_OUTPUT_ANCHOR,
+    POS_SCALE,
     RIGHT,
     EmitContext,
+    comment_bounds,
     comment_text,
     get_mapper,
+    rewrite_placeholder_bodies,
     tool_label,
+    uncarried_wire_message,
 )
 from flowfile_core.flowfile.converters.alteryx.report import (
     ConversionReport,
@@ -35,13 +39,10 @@ from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.schemas import schemas
 from shared._version import get_version
 
-POS_SCALE = 3.0
 X_OFFSET = 60
 Y_OFFSET = 100
 SYNTHETIC_X_STEP = 300
 SYNTHETIC_Y_STEP = 200
-COMMENT_MIN_WIDTH = 120
-COMMENT_MIN_HEIGHT = 40
 
 __all__ = ["build_report", "convert_yxmd", "dump_flow_yaml", "emit_tools"]
 
@@ -156,10 +157,13 @@ def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolRepor
     nodes = {node.id: node for node in ctx.nodes}
     seen: set[tuple[int, int, str]] = set()
     for connection in workflow.connections:
-        if (connection.dest_tool_id, connection.dest_anchor) in ctx.suppressed_inputs:
+        if ctx.carries(connection) or (connection.dest_tool_id, connection.dest_anchor) in ctx.suppressed_inputs:
             continue
-        origin = ctx.output_map.get((connection.origin_tool_id, connection.origin_anchor)) or ctx.output_map.get(
-            (connection.origin_tool_id, DEFAULT_OUTPUT_ANCHOR)
+        source = ctx.resolve_output(connection.origin_tool_id, connection.origin_anchor)
+        origin = (
+            ctx.output_map.get(source) or ctx.output_map.get((source[0], DEFAULT_OUTPUT_ANCHOR))
+            if source is not None
+            else None
         )
         targets = ctx.input_map.get((connection.dest_tool_id, connection.dest_anchor)) or ctx.input_map.get(
             (connection.dest_tool_id, DEFAULT_INPUT_ANCHOR)
@@ -169,6 +173,14 @@ def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolRepor
                 f"A connection from ToolID {connection.origin_tool_id} ({connection.origin_anchor}) to "
                 f"ToolID {connection.dest_tool_id} ({connection.dest_anchor}) was dropped; reconnect it by hand."
             )
+            destination = rows.get(connection.dest_tool_id)
+            if origin is None:
+                # An anchor a tool deliberately leaves empty (a Detour's unused side) says so itself.
+                message = ctx.inactive_outputs.get((connection.origin_tool_id, connection.origin_anchor), message)
+            elif destination is not None and destination.status == "no_op":
+                # There is no node to reconnect to; say which wire the tool did not hand on instead.
+                carried = any(ctx.carries(wire) for wire in ctx.inbound.get(connection.dest_tool_id, []))
+                message = uncarried_wire_message(ctx.tools[connection.dest_tool_id], connection, carried=carried)
             for tool_id in (connection.origin_tool_id, connection.dest_tool_id):
                 _report_dropped_connection(rows.get(tool_id), message)
             continue
@@ -196,7 +208,7 @@ def _emit_comments(
     """
     comments: list[schemas.FlowfileComment] = []
     rows: list[ToolReportRow] = []
-    for index, box in enumerate(workflow.text_boxes, start=1):
+    for box in workflow.text_boxes:
         text = comment_text(box)
         if not text:
             rows.append(
@@ -212,15 +224,10 @@ def _emit_comments(
                 )
             )
             continue
-        x, y = ctx.positions.get(box.tool_id, (X_OFFSET, Y_OFFSET))
+        x, y, width, height = comment_bounds(box, ctx)
         comments.append(
             schemas.FlowfileComment(
-                id=index,
-                text=text,
-                x_position=x,
-                y_position=y,
-                width=max(round((box.width or 0) * POS_SCALE), COMMENT_MIN_WIDTH),
-                height=max(round((box.height or 0) * POS_SCALE), COMMENT_MIN_HEIGHT),
+                id=ctx.new_comment_id(), text=text, x_position=x, y_position=y, width=width, height=height
             )
         )
         rows.append(
@@ -295,6 +302,7 @@ def convert_yxmd(data: bytes, *, source_name: str) -> ConversionResult:
     rows.extend(comment_rows)
 
     _wire(ctx, workflow, rows_by_tool)
+    rewrite_placeholder_bodies(ctx)
 
     flow_data = schemas.FlowfileData(
         flowfile_version=get_version(),
@@ -307,7 +315,7 @@ def convert_yxmd(data: bytes, *, source_name: str) -> ConversionResult:
             auto_save=False,
         ),
         nodes=ctx.nodes,
-        comments=comments,
+        comments=[*ctx.comments, *comments],
     )
     # Fail here rather than at open time if a mapper ever emits an unserializable payload.
     schemas.FlowfileData.model_validate(flow_data.model_dump(mode="json"))

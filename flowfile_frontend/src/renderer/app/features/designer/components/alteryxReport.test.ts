@@ -277,6 +277,12 @@ describe("entityLabel", () => {
   it("dashes a tool that emitted no node", () => {
     expect(entityLabel(makeRow("Sample", "skipped", { flowfile_node_type: null }))).toBe("—");
   });
+
+  it("dashes a no-op, which is imported as a wire rather than a node", () => {
+    const row = makeRow("Message", "no_op", { flowfile_node_ids: [], flowfile_node_type: null });
+    expect(entityLabel(row)).toBe("—");
+    expect(nodeRequestLink(row, {})).toBeNull();
+  });
 });
 
 describe("nodeRequestLink", () => {

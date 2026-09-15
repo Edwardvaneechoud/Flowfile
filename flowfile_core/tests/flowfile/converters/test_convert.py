@@ -20,6 +20,15 @@ from flowfile_core.schemas import schemas
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 ENVELOPE_KEYS = schemas.FlowfileNode._setting_input_exclude
 
+# Alteryx's own sample workflows are proprietary, so none of them is committed here. A test that
+# needs a real one reads it from the private corpus beside the repo and skips where that is absent.
+LEARNING = Path(__file__).resolve().parents[5]
+CORPUS_MULTI_FIELD_FORMULA = LEARNING / "alteryx_nodes" / "02 Preparation" / "Multi-Field_Formula.yxmd"
+needs_corpus = pytest.mark.skipif(
+    not CORPUS_MULTI_FIELD_FORMULA.exists(),
+    reason=f"Alteryx corpus workflow not present ({CORPUS_MULTI_FIELD_FORMULA})",
+)
+
 # Every .yxmd in the folder converts except the ones named here, so a new fixture joins the
 # corpus-wide guards by existing rather than by being remembered.
 UNCONVERTIBLE_FIXTURES = frozenset({"empty_canvas.yxmd"})
@@ -1339,18 +1348,1012 @@ def test_an_out_of_scope_node_says_why_instead_of_promising_a_rebuild(out_of_sco
     assert "rebuild the logic here" not in code
 
 
-def test_a_no_op_node_says_it_does_nothing(out_of_scope: ConversionResult):
-    row = next(row for row in out_of_scope.report.rows if row.alteryx_tool_id == 5)
-    assert row.messages == [BUCKETS["no_op"]]
-    node = dumped_nodes(out_of_scope)[row.flowfile_node_ids[0]]
-    assert node["description"] == BUCKETS["no_op"]
-    assert node["setting_input"]["polars_code_input"]["polars_code"].endswith("output_df = input_df")
+def test_a_no_op_tool_emits_no_node_and_hands_its_input_on(out_of_scope: ConversionResult):
+    """Tool 5 is a Message between the Image Input and the DateTime; it costs no node at all."""
+    rows = {row.alteryx_tool_id: row for row in out_of_scope.report.rows}
+    message = rows[5]
+    assert (message.status, message.reason) == ("no_op", "no_op")
+    assert (message.flowfile_node_ids, message.flowfile_node_type) == ([], None)
+    assert message.messages == [BUCKETS["no_op"]]
+    # The DateTime behind it is wired to what fed the Message, and no wire was reported dropped.
+    nodes = dumped_nodes(out_of_scope)
+    assert nodes[rows[7].flowfile_node_ids[0]]["input_ids"] == rows[4].flowfile_node_ids
+    assert not any("was dropped" in text for row in out_of_scope.report.rows for text in row.messages)
+    assert rows[4].status == "out_of_scope"
 
 
 def test_an_out_of_scope_tool_still_passes_its_data_through(out_of_scope: ConversionResult):
+    """Six nodes for eight tools: the Message and the Test emit none, the chain stays connected."""
     nodes = dumped_nodes(out_of_scope)
-    assert [nodes[node_id]["outputs"] for node_id in sorted(nodes)] == [[2], [3], [4], [5], [6], [7], [8], []]
-    assert [nodes[node_id]["input_ids"] for node_id in sorted(nodes)] == [[], [1], [2], [3], [4], [5], [6], [7]]
+    assert [nodes[node_id]["outputs"] for node_id in sorted(nodes)] == [[2], [3], [4], [5], [6], []]
+    assert [nodes[node_id]["input_ids"] for node_id in sorted(nodes)] == [[], [1], [2], [3], [4], [5]]
+
+
+@pytest.fixture()
+def no_op_passthrough() -> ConversionResult:
+    return convert("no_op_passthrough.yxmd")
+
+
+@pytest.fixture()
+def detour() -> ConversionResult:
+    return convert("detour.yxmd")
+
+
+def test_every_output_anchor_of_a_no_op_is_wired_to_its_source(no_op_passthrough: ConversionResult):
+    """The Block Until Done's three anchors, one of them behind a Message, all carry the Text Input."""
+    rows = {row.alteryx_tool_id: row for row in no_op_passthrough.report.rows}
+    assert (rows[2].status, rows[2].flowfile_node_ids) == ("no_op", [])
+    assert (rows[6].status, rows[6].flowfile_node_ids) == ("no_op", [])
+    nodes = dumped_nodes(no_op_passthrough)
+    source = rows[1].flowfile_node_ids
+    for tool_id in (3, 4, 5):
+        assert nodes[rows[tool_id].flowfile_node_ids[0]]["input_ids"] == source, tool_id
+    assert nodes[source[0]]["outputs"] == [4, 5, 2, 3]
+    assert not any("was dropped" in text for row in no_op_passthrough.report.rows for text in row.messages)
+
+
+def test_a_consumer_behind_a_no_op_still_knows_its_columns(no_op_passthrough: ConversionResult):
+    """Column knowledge resolves through the no-ops, and does so before they are mapped.
+
+    Tools 5 and 7 sit behind the Message but are written before it, so the Filter's record of
+    its input columns is what proves the resolution does not depend on document order.
+    """
+    ctx, rows = emit_tools(parse_yxmd(read_fixture("no_op_passthrough.yxmd")))
+    assert ctx.input_columns(5) == ["CrateId", "Grower"]
+    assert ctx.tool_columns[7] == ["CrateId", "Grower"]
+    assert 2 not in ctx.tool_columns and 6 not in ctx.tool_columns
+
+
+def test_a_detour_wires_only_the_anchor_its_configuration_makes_live(detour: ConversionResult):
+    rows = {row.alteryx_tool_id: row for row in detour.report.rows}
+    nodes = dumped_nodes(detour)
+    source = rows[1].flowfile_node_ids
+    for detour_id, live_consumer, dead_consumer, live, dead in ((2, 3, 4, "Right", "Left"), (7, 8, 9, "Left", "Right")):
+        assert (rows[detour_id].status, rows[detour_id].flowfile_node_ids) == ("no_op", [])
+        assert nodes[rows[live_consumer].flowfile_node_ids[0]]["input_ids"] == source
+        assert nodes[rows[dead_consumer].flowfile_node_ids[0]]["input_ids"] == []
+        assert (rows[dead_consumer].status, rows[dead_consumer].reason) == ("partial", "dropped_connection")
+        sentence = (
+            f"This Alteryx Detour is configured to send its records out of the '{live}' anchor, so nothing "
+            f"leaves the '{dead}' anchor; the connections from it were not wired."
+        )
+        assert rows[dead_consumer].messages == [sentence]
+        assert sentence in rows[detour_id].messages
+
+
+def test_a_detour_end_takes_the_side_its_detour_made_live(detour: ConversionResult):
+    """Two hops: the Detour End resolves through the Detour to the Text Input that fed it."""
+    rows = {row.alteryx_tool_id: row for row in detour.report.rows}
+    nodes = dumped_nodes(detour)
+    for end_id, consumer_id, detour_id, live in ((5, 6, 2, "Right"), (10, 11, 7, "Left")):
+        assert (rows[end_id].status, rows[end_id].flowfile_node_ids) == ("no_op", [])
+        assert rows[end_id].messages[1] == (
+            f"The records arrive from the '{live}' anchor of the Alteryx Detour "
+            f"(ToolID {detour_id}), which is the side its configuration makes live."
+        )
+        assert nodes[rows[consumer_id].flowfile_node_ids[0]]["input_ids"] == rows[1].flowfile_node_ids
+
+
+DETOUR_END_WITHOUT_A_DETOUR = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="CrateId" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="2"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Grower" /></Fields>
+        <Data><r><c>Okonjo</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="3"><GuiSettings Plugin="AlteryxBasePluginsGui.DetourEnd.DetourEnd" />
+      <Properties><Configuration /></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="3" Connection="%s" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="%s" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+@pytest.mark.parametrize("anchors", [(b"Left", b"Right"), (b"Left", b"Left")])
+def test_a_detour_end_that_no_detour_feeds_fails_closed(anchors: tuple[bytes, bytes]):
+    """No live Detour upstream means no side to take, so a real node stands in and runs.
+
+    The second case is the one that would otherwise pick a side silently: both wires arrive on
+    one anchor, so the wire that carries the records cannot be told from the one that does not.
+    """
+    result = convert_yxmd(DETOUR_END_WITHOUT_A_DETOUR % anchors, source_name="detour_end.yxmd")
+    row = report_row(result, 3)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("placeholder", "mapper_refused", "polars_code")
+    node = dumped_nodes(result)[row.flowfile_node_ids[0]]
+    body = node["setting_input"]["polars_code_input"]["polars_code"]
+    ast.parse(body)
+    # Two sources, so the body reads the first of two inputs — and both are really wired to it.
+    assert body.endswith("output_df = input_df_1")
+    assert node["input_ids"] == [1, 2]
+
+
+def _arity_workflow(tools: str, connections: str) -> bytes:
+    """One Text Input plus whatever else the shape needs, as bytes ready to convert."""
+    return (
+        """<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="601"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="CrateId" /><Field name="Grower" /></Fields>
+        <Data><r><c>1</c><c>Okonjo</c></r></Data>
+      </Configuration></Properties></Node>"""
+        + tools
+        + """
+  </Nodes>
+  <Connections>"""
+        + connections
+        + """
+  </Connections>
+</AlteryxDocument>
+"""
+    ).encode("utf-8")
+
+
+_DETOUR_RIGHT = """
+    <Node ToolID="602"><GuiSettings Plugin="AlteryxBasePluginsGui.Detour.Detour" />
+      <Properties><Configuration><DetourRight value="True" /></Configuration></Properties></Node>"""
+_DETOUR_END = """
+    <Node ToolID="605"><GuiSettings Plugin="AlteryxBasePluginsGui.DetourEnd.DetourEnd" />
+      <Properties><Configuration /></Properties></Node>"""
+
+# A live side that carries a Select is no longer a wire *from* a Detour, so the end refuses; the
+# dead Left wire is a source the refusal counts but wiring never lays.
+DETOUR_END_BEHIND_A_SELECT = _arity_workflow(
+    _DETOUR_RIGHT
+    + """
+    <Node ToolID="603"><GuiSettings Plugin="AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect" />
+      <Properties><Configuration>
+        <SelectFields><SelectField field="CrateId" selected="True" /></SelectFields>
+      </Configuration></Properties></Node>"""
+    + _DETOUR_END,
+    """
+    <Connection><Origin ToolID="601" Connection="Output" />
+      <Destination ToolID="602" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="602" Connection="Right" />
+      <Destination ToolID="603" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="603" Connection="Output" />
+      <Destination ToolID="605" Connection="Right" /></Connection>
+    <Connection><Origin ToolID="602" Connection="Left" />
+      <Destination ToolID="605" Connection="Left" /></Connection>""",
+)
+
+# Two anchors of ONE Flowfile node: a Filter is one node with a True and a False handle.
+DETOUR_END_BEHIND_ONE_FILTER = _arity_workflow(
+    """
+    <Node ToolID="604"><GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter" />
+      <Properties><Configuration>
+        <Expression>[CrateId] &gt; 0</Expression>
+      </Configuration></Properties></Node>"""
+    + _DETOUR_END,
+    """
+    <Connection><Origin ToolID="601" Connection="Output" />
+      <Destination ToolID="604" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="604" Connection="True" />
+      <Destination ToolID="605" Connection="Left" /></Connection>
+    <Connection><Origin ToolID="604" Connection="False" />
+      <Destination ToolID="605" Connection="Right" /></Connection>""",
+)
+
+# The same shape through an unmapped tool, whose every anchor is registered on its one placeholder.
+DETOUR_END_BEHIND_ONE_PLACEHOLDER = _arity_workflow(
+    """
+    <Node ToolID="606"><GuiSettings Plugin="AlteryxBasePluginsGui.Tile.Tile" />
+      <Properties><Configuration><Method>EqualRecords</Method></Configuration></Properties></Node>"""
+    + _DETOUR_END,
+    """
+    <Connection><Origin ToolID="601" Connection="Output" />
+      <Destination ToolID="606" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="606" Connection="Output" />
+      <Destination ToolID="605" Connection="Left" /></Connection>
+    <Connection><Origin ToolID="606" Connection="Output2" />
+      <Destination ToolID="605" Connection="Right" /></Connection>""",
+)
+
+# The negative control: map_join registers Left and Right on two DIFFERENT nodes, so these really
+# are two inputs and the body has to keep saying so.
+DETOUR_END_BEHIND_A_JOIN = _arity_workflow(
+    """
+    <Node ToolID="607"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="CrateId" /><Field name="Packhouse" /></Fields>
+        <Data><r><c>1</c><c>Shed 2</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="608"><GuiSettings Plugin="AlteryxBasePluginsGui.Join.Join" />
+      <Properties><Configuration joinByRecordPos="False">
+        <JoinInfo connection="Left"><Field field="CrateId" /></JoinInfo>
+        <JoinInfo connection="Right"><Field field="CrateId" /></JoinInfo>
+      </Configuration></Properties></Node>"""
+    + _DETOUR_END,
+    """
+    <Connection><Origin ToolID="601" Connection="Output" />
+      <Destination ToolID="608" Connection="Left" /></Connection>
+    <Connection><Origin ToolID="607" Connection="Output" />
+      <Destination ToolID="608" Connection="Right" /></Connection>
+    <Connection><Origin ToolID="608" Connection="Left" />
+      <Destination ToolID="605" Connection="Left" /></Connection>
+    <Connection><Origin ToolID="608" Connection="Right" />
+      <Destination ToolID="605" Connection="Right" /></Connection>""",
+)
+
+# Both wires leave the side the Detour makes dead, so the node is wired to nothing at all.
+DETOUR_END_BEHIND_A_DEAD_SIDE = _arity_workflow(
+    _DETOUR_RIGHT + _DETOUR_END,
+    """
+    <Connection><Origin ToolID="601" Connection="Output" />
+      <Destination ToolID="602" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="602" Connection="Left" />
+      <Destination ToolID="605" Connection="Left" /></Connection>
+    <Connection><Origin ToolID="602" Connection="Left" />
+      <Destination ToolID="605" Connection="Right" /></Connection>""",
+)
+
+
+@pytest.mark.parametrize(
+    ("workflow", "edges", "tail"),
+    [
+        (DETOUR_END_BEHIND_A_SELECT, 1, "output_df = input_df"),
+        (DETOUR_END_BEHIND_ONE_FILTER, 1, "output_df = input_df"),
+        (DETOUR_END_BEHIND_ONE_PLACEHOLDER, 1, "output_df = input_df"),
+        (DETOUR_END_BEHIND_A_JOIN, 2, "output_df = input_df_1"),
+        (DETOUR_END_BEHIND_A_DEAD_SIDE, 0, "output_df = pl.DataFrame()"),
+    ],
+    ids=["select_on_the_live_side", "one_filter", "one_placeholder", "a_join_really_is_two", "dead_side_only"],
+)
+def test_a_placeholder_body_is_written_for_the_edges_it_receives(
+    tmp_path: Path, workflow: bytes, edges: int, tail: str
+):
+    """The engine binds input_df for one input and input_df_1..N for more, so a body written for a
+    wire count wiring then collapses names something that was never bound."""
+    result = convert_yxmd(workflow, source_name="arity.yxmd")
+    row = report_row(result, 605)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused"), row.messages
+    node = dumped_nodes(result)[row.flowfile_node_ids[0]]
+    assert len(node["input_ids"]) == edges
+    assert node["is_start_node"] is (edges == 0)
+    body = node["setting_input"]["polars_code_input"]["polars_code"]
+    ast.parse(body)
+    assert body.endswith(tail)
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+
+
+def _two_sources(destination: str, dest_anchors: tuple[str, str], extra: str = "", wires: str = "") -> bytes:
+    """Two Text Inputs into one tool that emits no node, plus whatever the shape needs behind it."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="711"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="CrateId" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="712"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Grower" /></Fields>
+        <Data><r><c>Okonjo</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="713"><GuiSettings Plugin="{destination}" />
+      <Properties><Configuration /></Properties></Node>{extra}
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="711" Connection="Output" />
+      <Destination ToolID="713" Connection="{dest_anchors[0]}" /></Connection>
+    <Connection><Origin ToolID="712" Connection="Output" />
+      <Destination ToolID="713" Connection="{dest_anchors[1]}" /></Connection>{wires}
+  </Connections>
+</AlteryxDocument>
+""".encode()
+
+
+# Alteryx unions every wire arriving on one input anchor; a Message carries one of them onward.
+TWO_WIRES_INTO_ONE_MESSAGE = _two_sources(
+    "AlteryxBasePluginsGui.Message.Message",
+    ("Input", "Input"),
+    extra="""
+    <Node ToolID="714"><GuiSettings Plugin="AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect" />
+      <Properties><Configuration>
+        <SelectFields><SelectField field="CrateId" selected="True" /></SelectFields>
+      </Configuration></Properties></Node>""",
+    wires="""
+    <Connection><Origin ToolID="713" Connection="Output" />
+      <Destination ToolID="714" Connection="Input" /></Connection>""",
+)
+
+# A Detour End expects the dead side of its own Detour, not a stream from somewhere else.
+A_STRANGER_ON_A_DETOUR_END = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="721"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="CrateId" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="722"><GuiSettings Plugin="AlteryxBasePluginsGui.Detour.Detour" />
+      <Properties><Configuration><DetourRight value="True" /></Configuration></Properties></Node>
+    <Node ToolID="723"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Grower" /></Fields>
+        <Data><r><c>Okonjo</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="724"><GuiSettings Plugin="AlteryxBasePluginsGui.DetourEnd.DetourEnd" />
+      <Properties><Configuration /></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="721" Connection="Output" />
+      <Destination ToolID="722" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="722" Connection="Right" />
+      <Destination ToolID="724" Connection="Right" /></Connection>
+    <Connection><Origin ToolID="723" Connection="Output" />
+      <Destination ToolID="724" Connection="Left" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+# Expect Equal is a sink: Alteryx gives it no output anchor, so both wires end there on purpose.
+EXPECT_EQUAL_COMPARES_TWO_INPUTS = _two_sources("AlteryxBasePluginsGui.ExpectEqual.ExpectEqual", ("Expected", "Actual"))
+
+
+def dropped_messages(result: ConversionResult) -> list[tuple[int, str]]:
+    return [
+        (row.alteryx_tool_id, message)
+        for row in result.report.rows
+        for message in row.messages
+        if "was not carried over" in message or "was dropped" in message
+    ]
+
+
+def test_a_no_op_reports_the_second_wire_onto_one_anchor(tmp_path: Path):
+    """Alteryx unions two wires onto a Message's input; Flowfile has one edge, so one is lost."""
+    result = convert_yxmd(TWO_WIRES_INTO_ONE_MESSAGE, source_name="two_wires.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    sentence = (
+        "The Alteryx 'Message' (ToolID 713) has no effect on the data, so no node was imported for it "
+        "and only the stream it passes on was kept; the connection from ToolID 712 ('Output') into its "
+        "'Input' anchor was not carried over."
+    )
+    assert dropped_messages(result) == [(712, sentence), (713, sentence)]
+    # The wire it did carry is the one the consumer gets, and the source that lost one says so.
+    assert (rows[712].status, rows[712].reason) == ("partial", "dropped_connection")
+    assert (rows[711].status, rows[713].status) == ("converted", "no_op")
+    nodes = dumped_nodes(result)
+    assert nodes[rows[714].flowfile_node_ids[0]]["input_ids"] == rows[711].flowfile_node_ids
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    assert flow.run_graph().success
+
+
+def test_a_detour_end_reports_a_wire_that_is_not_its_detour():
+    """The dead side of its own Detour is expected here; a third stream is a wire the flow lost."""
+    result = convert_yxmd(A_STRANGER_ON_A_DETOUR_END, source_name="stranger.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    assert rows[724].status == "no_op"
+    messages = dropped_messages(result)
+    assert [tool_id for tool_id, _ in messages] == [723, 724]
+    assert "ToolID 723 ('Output') into its 'Left' anchor was not carried over" in messages[0][1]
+    assert (rows[723].status, rows[723].reason) == ("partial", "dropped_connection")
+
+
+def test_a_sink_consumes_every_wire_it_is_given(tmp_path: Path):
+    """Expect Equal has no output anchor at all, so neither input is a wire that went missing."""
+    result = convert_yxmd(EXPECT_EQUAL_COMPARES_TWO_INPUTS, source_name="expect_equal.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    assert rows[713].status == "no_op"
+    assert (rows[711].status, rows[712].status) == ("converted", "converted")
+    assert dropped_messages(result) == []
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    assert flow.run_graph().success
+
+
+# The three shapes below all put a no-op between a tool and the thing it needs to read, which is
+# the only way to tell a resolved origin from a raw one.
+SORT_THEN_MESSAGE_THEN_RUNNING_TOTAL = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="731"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Grower" /><Field name="Crates" /></Fields>
+        <Data><r><c>Okonjo</c><c>3</c></r><r><c>Salgado</c><c>5</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="732"><GuiSettings Plugin="AlteryxBasePluginsGui.Sort.Sort" />
+      <Properties><Configuration>
+        <SortInfo><Field field="Grower" order="Ascending" /></SortInfo>
+      </Configuration></Properties></Node>
+    <Node ToolID="733"><GuiSettings Plugin="AlteryxBasePluginsGui.Message.Message" />
+      <Properties><Configuration /></Properties></Node>
+    <Node ToolID="734"><GuiSettings Plugin="AlteryxBasePluginsGui.RunningTotal.RunningTotal" />
+      <Properties><Configuration>
+        <RunningTotalFields><Field field="Crates" /></RunningTotalFields>
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="731" Connection="Output" />
+      <Destination ToolID="732" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="732" Connection="Output" />
+      <Destination ToolID="733" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="733" Connection="Output" />
+      <Destination ToolID="734" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+TEXT_INPUT_THEN_MESSAGE_THEN_RENAME = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="741"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="CrateId" /><Field name="Grower" /></Fields>
+        <Data><r><c>1</c><c>Okonjo</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="742"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="NewName" /></Fields>
+        <Data><r><c>Crate</c></r><r><c>Picker</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="743"><GuiSettings Plugin="AlteryxBasePluginsGui.Message.Message" />
+      <Properties><Configuration /></Properties></Node>
+    <Node ToolID="744"><GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename" />
+      <Properties><Configuration>
+        <RenameMode>RightInputRows</RenameMode>
+        <Fields><Field name="CrateId" /><Field name="Grower" /><Field name="*Unknown" /></Fields>
+        <NamesFromRows><InputMode>Positional</InputMode><NewName>NewName</NewName></NamesFromRows>
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="741" Connection="Output" />
+      <Destination ToolID="744" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="742" Connection="Output" />
+      <Destination ToolID="743" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="743" Connection="Output" />
+      <Destination ToolID="744" Connection="Right" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+JOIN_BEHIND_A_MESSAGE = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="751"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="CrateId" /><Field name="Grower" /></Fields>
+        <Data><r><c>1</c><c>Okonjo</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="752"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="CrateId" /><Field name="Packhouse" /></Fields>
+        <Data><r><c>1</c><c>Shed 2</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="753"><GuiSettings Plugin="AlteryxBasePluginsGui.Message.Message" />
+      <Properties><Configuration /></Properties></Node>
+    <Node ToolID="754"><GuiSettings Plugin="AlteryxBasePluginsGui.Join.Join" />
+      <Properties><Configuration joinByRecordPos="False">
+        <JoinInfo connection="Left"><Field field="CrateId" /></JoinInfo>
+        <JoinInfo connection="Right"><Field field="CrateId" /></JoinInfo>
+        <SelectConfiguration><Configuration outputConnection="Join">
+          <SelectFields>
+            <SelectField field="Right_CrateId" selected="True" rename="Right_CrateId" />
+            <SelectField field="*Unknown" selected="True" />
+          </SelectFields>
+        </Configuration></SelectConfiguration>
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="751" Connection="Output" />
+      <Destination ToolID="754" Connection="Left" /></Connection>
+    <Connection><Origin ToolID="752" Connection="Output" />
+      <Destination ToolID="753" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="753" Connection="Output" />
+      <Destination ToolID="754" Connection="Right" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_a_running_total_behind_a_no_op_still_sees_the_sort():
+    """`_feeds_in_stated_order` reads the tool the wire resolves to, not the Message in front of it."""
+    result = convert_yxmd(SORT_THEN_MESSAGE_THEN_RUNNING_TOTAL, source_name="running_total.yxmd")
+    row = report_row(result, 734)
+    assert (row.status, row.reason) == ("converted", "converted"), row.messages
+    assert not any("order the rows arrive" in message for message in row.messages)
+
+
+def test_a_dynamic_rename_behind_a_no_op_reads_the_text_input_rows():
+    """`resolved_source` walks past the Message to the Text Input whose rows hold the names."""
+    result = convert_yxmd(TEXT_INPUT_THEN_MESSAGE_THEN_RENAME, source_name="rename.yxmd")
+    row = report_row(result, 744)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "option_unsupported", "select")
+    assert "the rows of 'TextInput' (ToolID 742)" in row.messages[0]
+    renames = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["select_input"]
+    assert [(entry["old_name"], entry["new_name"]) for entry in renames] == [
+        ("CrateId", "Crate"),
+        ("Grower", "Picker"),
+    ]
+
+
+def test_a_join_behind_a_no_op_still_applies_its_field_selection():
+    """`_anchor_columns` resolves through the Message, so the Right_ prefix resolves to a real column."""
+    result = convert_yxmd(JOIN_BEHIND_A_MESSAGE, source_name="join_behind_message.yxmd")
+    row = report_row(result, 754)
+    assert not any("which input each selected field comes from" in message for message in row.messages), row.messages
+    join = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["join_input"]
+    right = join["right_select"]["select"]
+    assert [(entry["old_name"], entry.get("new_name", entry["old_name"])) for entry in right] == [
+        ("CrateId", "Right_CrateId"),
+        ("Packhouse", "Packhouse"),
+    ]
+
+
+WIRE_OUT_OF_A_TEST_TOOL = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="CrateId" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="2"><GuiSettings Plugin="AlteryxBasePluginsGui.Test.Test" />
+      <Properties><Configuration><Tests /></Configuration></Properties></Node>
+    <Node ToolID="3"><GuiSettings Plugin="AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect" />
+      <Properties><Configuration>
+        <SelectFields><SelectField field="CrateId" selected="True" /></SelectFields>
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_a_wire_leaving_a_test_tool_is_reported_on_both_rows():
+    """A Test is a sink in Alteryx, so a wire out of one is a wire Flowfile cannot reconnect."""
+    result = convert_yxmd(WIRE_OUT_OF_A_TEST_TOOL, source_name="test_tool.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    assert rows[2].status == "no_op"
+    assert (rows[3].status, rows[3].reason) == ("partial", "dropped_connection")
+    for tool_id in (2, 3):
+        assert any("was dropped" in message for message in rows[tool_id].messages), tool_id
+    assert dumped_nodes(result)[rows[3].flowfile_node_ids[0]]["input_ids"] == []
+
+
+@pytest.fixture()
+def explorer_box() -> ConversionResult:
+    return convert("explorer_box.yxmd")
+
+
+def test_an_explorer_box_becomes_a_canvas_comment_not_a_tool(explorer_box: ConversionResult):
+    """It documents the canvas, so it is an annotation and leaves both coverage percentages."""
+    row = report_row(explorer_box, 2)
+    assert (row.entity, row.status, row.reason) == ("annotation", "converted", "annotation")
+    assert (row.flowfile_node_type, row.flowfile_node_ids) == ("comment", [])
+    assert [comment.text for comment in explorer_box.flow_data.comments if comment.id == 1] == [
+        "Alteryx Explorer Box: https://example.com/crate-handbook.htm"
+    ]
+    # Only the Text Input and the two wired boxes are tools; the annotations are counted apart.
+    assert (explorer_box.report.total_tools, explorer_box.report.total_annotations) == (3, 5)
+    assert [node["type"] for node in dumped_nodes(explorer_box).values()] == [
+        "manual_input",
+        "polars_code",
+        "polars_code",
+    ]
+
+
+def test_an_explorer_box_keeps_a_windows_path_exactly_as_written(explorer_box: ConversionResult):
+    """The path only resolves on the machine the workflow came from; rewriting it would be a guess."""
+    row = report_row(explorer_box, 3)
+    assert (row.status, row.reason) == ("converted", "annotation")
+    texts = [comment.text for comment in explorer_box.flow_data.comments]
+    assert "Alteryx Explorer Box: D:\\Orchard\\Handbooks\\picking.html" in texts
+
+
+def test_an_explorer_box_without_an_address_is_skipped(explorer_box: ConversionResult):
+    row = report_row(explorer_box, 4)
+    assert (row.entity, row.status, row.reason) == ("annotation", "skipped", "annotation")
+    assert row.flowfile_node_type is None
+    assert not any("names no address" in comment.text for comment in explorer_box.flow_data.comments)
+
+
+def test_an_explorer_box_address_carrying_a_token_is_not_copied(explorer_box: ConversionResult):
+    row = report_row(explorer_box, 5)
+    assert (row.entity, row.status, row.reason) == ("annotation", "partial", "annotation")
+    assert any("carries credentials or query parameters" in message for message in row.messages)
+    assert not any("okonjo-secret" in comment.text for comment in explorer_box.flow_data.comments)
+    assert any("was not copied out of the workflow" in comment.text for comment in explorer_box.flow_data.comments)
+
+
+def test_a_wired_explorer_box_stays_a_node(explorer_box: ConversionResult):
+    """A comment cannot carry a wire, so a box that has one keeps a pass-through node instead."""
+    row = report_row(explorer_box, 6)
+    assert (row.entity, row.status, row.reason) == ("tool", "placeholder", "mapper_refused")
+    assert (
+        dumped_nodes(explorer_box)[row.flowfile_node_ids[0]]["input_ids"]
+        == report_row(explorer_box, 1).flowfile_node_ids
+    )
+
+
+def test_a_wired_explorer_box_does_not_copy_a_credential_address_into_its_body(explorer_box: ConversionResult):
+    """The wired branch dumps the configuration, so it has to refuse what the comment refuses."""
+    row = report_row(explorer_box, 8)
+    assert (row.entity, row.status, row.reason) == ("tool", "placeholder", "mapper_refused")
+    body = dumped_nodes(explorer_box)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+    assert "salgado-secret" not in body
+    assert "<URL>[redacted by Flowfile]</URL>" in body
+    assert "Credential values were not copied out of the workflow: URL." in body
+    # The box without a token still shows its address, so the screen is the address, not the tag.
+    plain = report_row(explorer_box, 6)
+    plain_body = dumped_nodes(explorer_box)[plain.flowfile_node_ids[0]]["setting_input"]["polars_code_input"][
+        "polars_code"
+    ]
+    assert "<URL>https://example.com/wired.htm</URL>" in plain_body
+
+
+def test_comment_ids_are_unique_across_explorer_boxes_and_text_boxes(explorer_box: ConversionResult):
+    """`restore_comments` keys comments by id, so a collision would silently drop one."""
+    comments = explorer_box.flow_data.comments
+    assert len(comments) == 4
+    assert len({comment.id for comment in comments}) == len(comments)
+    assert comments[-1].text == "Picking rules live in the handbook above."
+
+
+@pytest.fixture()
+def map_input() -> ConversionResult:
+    return convert("map_input.yxmd")
+
+
+def map_input_raw(result: ConversionResult, tool_id: int) -> dict:
+    row = report_row(result, tool_id)
+    assert row.flowfile_node_type == "manual_input", row.messages
+    return dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["raw_data_format"]
+
+
+def test_map_input_becomes_a_manual_input_of_all_string_columns(map_input: ConversionResult):
+    """Alteryx declares no types here, so inferring one would retype a label like 00123."""
+    raw = map_input_raw(map_input, 3)
+    assert [(column["name"], column["data_type"]) for column in raw["columns"]] == [
+        ("PlotCode", "String"),
+        ("Grower", "String"),
+    ]
+    # Columnar, padded where the row ran short.
+    assert raw["data"] == [["00123", "00124"], ["Okonjo", None]]
+    row = report_row(map_input, 3)
+    assert (row.status, row.reason) == ("converted", "converted")
+
+
+def test_map_input_keeps_a_drawn_shape_byte_for_byte(map_input: ConversionResult):
+    """The shapes are found by what they hold, not by Alteryx's default column name."""
+    raw = map_input_raw(map_input, 1)
+    assert [column["name"] for column in raw["columns"]] == ["Marker", "Shape"]
+    assert raw["data"][1] == ['{"type":"point","coordinates":[4.895168,52.370216]}']
+    row = report_row(map_input, 1)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert "no spatial type" in row.messages[0]
+
+
+def test_map_input_says_what_it_did_not_import(map_input: ConversionResult):
+    row = report_row(map_input, 2)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert any("says it holds 3 rows but the workflow stores 2" in message for message in row.messages)
+    assert any("backdrop, not an input" in message for message in row.messages)
+    assert map_input_raw(map_input, 2)["data"][0] == ["Weigh bridge", "Cold store"]
+
+
+def test_map_input_in_select_mode_fails_closed(map_input: ConversionResult):
+    """Its output is whatever a user clicks on a map while the workflow runs."""
+    row = report_row(map_input, 4)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("placeholder", "option_unsupported", "polars_code")
+    assert "pick features on a map" in row.messages[0]
+
+
+@pytest.fixture()
+def make_group() -> ConversionResult:
+    return convert("make_group.yxmd")
+
+
+def test_make_group_becomes_a_solver_and_a_reshape(make_group: ConversionResult):
+    """Two nodes because the shapes differ: the solver labels rows, Alteryx returns Key/Group pairs."""
+    row = report_row(make_group, 2)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "row_order_unknown", "graph_solver")
+    nodes = dumped_nodes(make_group)
+    solver_id, reshape_id = row.flowfile_node_ids
+    assert [nodes[node_id]["type"] for node_id in row.flowfile_node_ids] == ["graph_solver", "polars_code"]
+    solver = nodes[solver_id]["setting_input"]["graph_solver_input"]
+    assert (solver["col_from"], solver["col_to"]) == ("Grower", "Buyer")
+    assert solver["output_column_name"] == "__make_group_component"
+    assert nodes[reshape_id]["input_ids"] == [solver_id]
+    assert "first key it meets in arrival order" in row.messages[0]
+
+
+def test_the_make_group_flow_runs_and_names_the_alteryx_columns(tmp_path: Path, make_group: ConversionResult):
+    """Alteryx's own downstream tools read these two columns by name, so the names are the contract."""
+    flow = open_flow(write_flow(make_group, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step for step in run_info.node_step_result if not step.success]
+    groups = flow.get_node(report_row(make_group, 2).flowfile_node_ids[1]).get_resulting_data()
+    frame = groups.data_frame.collect()
+    assert frame.columns == ["Key", "Group"]
+    assert dict(zip(frame["Key"].to_list(), frame["Group"].to_list(), strict=True)) == {
+        "Okonjo": "Okonjo",
+        "Salgado": "Okonjo",
+        "Vetle": "Okonjo",
+        "Petrova": "Nakamura",
+        "Nakamura": "Nakamura",
+        "Ibarra": "Ibarra",
+    }
+    # The Select behind it keeps both columns, so a consumer really is handed Key and Group.
+    downstream = flow.get_node(report_row(make_group, 3).flowfile_node_ids[0]).get_resulting_data()
+    assert downstream.data_frame.collect().columns == ["Key", "Group"]
+
+
+def test_make_group_without_both_keys_fails_closed(make_group: ConversionResult):
+    row = report_row(make_group, 4)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("placeholder", "mapper_refused", "polars_code")
+    assert "does not name both of its key fields" in row.messages[0]
+
+
+def test_make_group_names_an_option_it_did_not_read(make_group: ConversionResult):
+    row = report_row(make_group, 5)
+    assert (row.status, row.reason) == ("partial", "row_order_unknown")
+    assert "CaseSensitive" in row.messages[1]
+
+
+def test_make_group_refuses_to_group_null_keys_when_it_runs(make_group: ConversionResult):
+    """polars_grouper joins every null-keyed row into one component, which is a wrong group."""
+    row = report_row(make_group, 2)
+    code = dumped_nodes(make_group)[row.flowfile_node_ids[1]]["setting_input"]["polars_code_input"]["polars_code"]
+    executable = polars_code_parser.get_executable(code, 1)
+    solved = pl.LazyFrame({"Grower": ["Okonjo", None], "Buyer": [None, "Vetle"], "__make_group_component": [0, 0]})
+    with pytest.raises(AssertionError, match="a key is null"):
+        executable(solved).collect()
+
+
+def _make_group(first: str, second: str, columns: str, rows: str) -> bytes:
+    """A Text Input feeding one Make Group, with whatever key pair the shape needs."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="761"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields>{columns}</Fields>
+        <Data>{rows}</Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="762"><GuiSettings Plugin="AlteryxBasePluginsGui.MakeGroup.MakeGroup" />
+      <Properties><Configuration>
+        <Key1st>{first}</Key1st>
+        <Key2nd>{second}</Key2nd>
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="761" Connection="Output" />
+      <Destination ToolID="762" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+""".encode()
+
+
+ONE_COLUMN = '<Field name="Grower" />'
+ONE_COLUMN_ROWS = "<r><c>Okonjo</c></r><r><c>Salgado</c></r>"
+
+
+def test_make_group_with_one_column_on_both_keys_emits_one_key(tmp_path: Path):
+    """Alteryx allows the same field on both sides; selecting it twice is a duplicate-name error."""
+    result = convert_yxmd(_make_group("Grower", "Grower", ONE_COLUMN, ONE_COLUMN_ROWS), source_name="mg.yxmd")
+    row = report_row(result, 762)
+    assert row.status == "partial", row.messages
+    code = dumped_nodes(result)[row.flowfile_node_ids[1]]["setting_input"]["polars_code_input"]["polars_code"]
+    assert "_keys = ['Grower']" in code
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+
+
+def test_make_group_avoids_an_upstream_column_of_its_own_helper_name():
+    """The component column is private; shadowing a real one would drop the user's data."""
+    columns = '<Field name="Grower" /><Field name="Buyer" /><Field name="__make_group_component" />'
+    rows = "<r><c>Okonjo</c><c>Salgado</c><c>x</c></r>"
+    result = convert_yxmd(_make_group("Grower", "Buyer", columns, rows), source_name="mg.yxmd")
+    row = report_row(result, 762)
+    solver = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["graph_solver_input"]
+    assert solver["output_column_name"] == "__make_group_component_1"
+
+
+def test_make_group_refuses_a_key_carrying_a_backslash():
+    """A backslash cannot be written into the generated code as a literal, so the mapper stops."""
+    result = convert_yxmd(_make_group("C:\\", "Buyer", ONE_COLUMN, ONE_COLUMN_ROWS), source_name="mg.yxmd")
+    row = report_row(result, 762)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("placeholder", "option_unsupported", "polars_code")
+
+
+MAKE_GROUP_FEEDING_A_MULTI_FIELD_FORMULA = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="771"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Grower" /><Field name="Buyer" /></Fields>
+        <Data><r><c>Okonjo</c><c>Salgado</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="772"><GuiSettings Plugin="AlteryxBasePluginsGui.MakeGroup.MakeGroup" />
+      <Properties><Configuration>
+        <Key1st>Grower</Key1st>
+        <Key2nd>Buyer</Key2nd>
+      </Configuration></Properties></Node>
+    <Node ToolID="773"><GuiSettings Plugin="AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula" />
+      <Properties><Configuration>
+        <FieldType>Text</FieldType>
+        <Fields><Field name="Key" /><Field name="Group" /><Field name="*Unknown" /></Fields>
+        <CopyOutput value="False" />
+        <Expression>[_CurrentFieldName_] + "=" + [_CurrentField_]</Expression>
+        <ChangeFieldType value="False" />
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="771" Connection="Output" />
+      <Destination ToolID="772" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="772" Connection="Output" />
+      <Destination ToolID="773" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_a_consumer_of_make_group_is_told_the_alteryx_column_names():
+    """[_CurrentFieldName_] over *Unknown converts only when the upstream columns are known."""
+    result = convert_yxmd(MAKE_GROUP_FEEDING_A_MULTI_FIELD_FORMULA, source_name="mg_mff.yxmd")
+    row = report_row(result, 773)
+    assert (row.status, row.reason) == ("converted", "converted"), row.messages
+    assert not any("Flowfile cannot see" in message for message in row.messages)
+
+
+@pytest.fixture()
+def field_info() -> ConversionResult:
+    return convert("field_info.yxmd")
+
+
+def field_info_body(result: ConversionResult, tool_id: int) -> str:
+    row = report_row(result, tool_id)
+    return dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+
+
+FIELD_INFO_FRAME = pl.LazyFrame(
+    {"CrateId": [1, 2], "Grower": ["Okonjo", "Salgado"], "PickedOn": [None, None]},
+    schema={"CrateId": pl.Int32, "Grower": pl.String, "PickedOn": pl.Datetime("us")},
+)
+
+
+def test_field_info_emits_the_input_schema_as_rows(field_info: ConversionResult):
+    row = report_row(field_info, 2)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "option_unsupported", "polars_code")
+    result = polars_code_parser.get_executable(field_info_body(field_info, 2), 1)(FIELD_INFO_FRAME).collect()
+    assert result.columns == ["Name", "Type"]
+    assert result.to_dicts() == [
+        {"Name": "CrateId", "Type": "Int32"},
+        {"Name": "Grower", "Type": "String"},
+        {"Name": "PickedOn", "Type": "Datetime(time_unit='us', time_zone=None)"},
+    ]
+
+
+def test_field_info_names_the_columns_alteryx_has_and_polars_does_not(field_info: ConversionResult):
+    message = report_row(field_info, 2).messages[0]
+    for column in ("Size", "Scale", "Source", "Description"):
+        assert column in message, column
+    assert "Polars type name" in message
+
+
+def test_field_info_reads_the_schema_without_reading_a_row(field_info: ConversionResult):
+    """An empty frame still has a schema, which is the whole output of this tool."""
+    executable = polars_code_parser.get_executable(field_info_body(field_info, 2), 1)
+    empty = executable(FIELD_INFO_FRAME.filter(pl.col("CrateId") < 0)).collect()
+    assert empty["Name"].to_list() == ["CrateId", "Grower", "PickedOn"]
+
+
+def test_field_info_is_wired_at_both_ends_and_names_its_two_columns(field_info: ConversionResult):
+    """One consumer pins all three registrations: the output anchor, the input anchor and the columns.
+
+    The Multi-Field Formula behind it binds [_CurrentFieldName_] over `*Unknown`, which converts
+    only when the upstream column names are known — so its status is the record of `tool_columns`.
+    """
+    rows = {row.alteryx_tool_id: row for row in field_info.report.rows}
+    consumer = rows[6]
+    # register_all_outputs: the consumer is wired to the Field Info node, not to what fed it.
+    assert dumped_nodes(field_info)[consumer.flowfile_node_ids[0]]["input_ids"] == rows[2].flowfile_node_ids
+    # register_all_inputs: the Text Input's wire reached a node, so nothing was reported dropped.
+    assert (rows[1].status, rows[1].reason) == ("converted", "converted")
+    assert not any("dropped" in message for row in field_info.report.rows for message in row.messages)
+    # tool_columns: the consumer could only convert because it was told Name and Type.
+    assert (consumer.status, consumer.reason) == ("converted", "converted"), consumer.messages
+    assert "String columns" in consumer.messages[0]
+
+
+@pytest.mark.parametrize(("tool_id", "inputs"), [(3, 0), (5, 2)])
+def test_field_info_fails_closed_unless_exactly_one_input_arrives(
+    field_info: ConversionResult, tool_id: int, inputs: int
+):
+    row = report_row(field_info, tool_id)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert f"has {inputs} inputs" in row.messages[0]
+    body = field_info_body(field_info, tool_id)
+    assert "collect_schema" not in body
+    assert body.endswith("output_df = pl.DataFrame()" if inputs == 0 else "output_df = input_df_1")
+
+
+FIELD_INFO_WITH_OPTIONS = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="CrateId" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="2"><GuiSettings Plugin="AlteryxBasePluginsGui.FieldInfo.FieldInfo" />
+      <Properties><Configuration><OutputFields>Name</OutputFields></Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_field_info_configuration_flowfile_cannot_read_fails_closed():
+    result = convert_yxmd(FIELD_INFO_WITH_OPTIONS, source_name="field_info.yxmd")
+    row = report_row(result, 2)
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert "OutputFields" in row.messages[0]
+    assert field_info_body(result, 2).endswith("output_df = input_df")
+
+
+API_OUTPUT_WITH_OPTIONS = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.APIOutput.APIOutput" />
+      <Properties><Configuration><ResponseFormat>xml</ResponseFormat></Configuration></Properties></Node>
+  </Nodes>
+</AlteryxDocument>
+"""
+
+
+def test_api_output_becomes_the_api_response_node():
+    result = convert("api_output.yxmd")
+    row = report_row(result, 2)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("converted", "converted", "api_response")
+    settings = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]
+    assert (settings["orientation"], settings["max_rows"]) == ("records", None)
+
+
+def test_api_output_configuration_flowfile_does_not_read_is_named():
+    row = convert_yxmd(API_OUTPUT_WITH_OPTIONS, source_name="api.yxmd").report.rows[0]
+    assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "option_unsupported", "api_response")
+    assert "ResponseFormat" in row.messages[0]
+
+
+def test_the_api_response_flow_runs_and_returns_its_input(tmp_path: Path):
+    result = convert("api_output.yxmd")
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step for step in run_info.node_step_result if not step.success]
+    response = flow.get_node(report_row(result, 2).flowfile_node_ids[0]).get_resulting_data().data_frame.collect()
+    assert response.columns == ["CrateId", "Grower"]
+    assert response["Grower"].to_list() == ["Okonjo", "Salgado"]
+
+
+def test_resolve_output_returns_an_unaliased_anchor_and_refuses_a_cycle():
+    from flowfile_core.flowfile.converters.alteryx.mappers import EmitContext
+
+    ctx = EmitContext()
+    assert ctx.resolve_output(7, "Output") == (7, "Output")
+    ctx.alias_output(7, "Output", 8, "Output")
+    assert ctx.resolve_output(7, "Output") == (8, "Output")
+    ctx.alias_output(8, "Output", 7, "Output")
+    assert ctx.resolve_output(7, "Output") is None
 
 
 def test_out_of_scope_tools_leave_the_in_scope_denominator(out_of_scope: ConversionResult):
@@ -1681,7 +2684,8 @@ def regex_and_multifield() -> ConversionResult:
 
 @pytest.fixture()
 def multi_field_formula() -> ConversionResult:
-    return convert("multi_field_formula.yxmd")
+    """Alteryx's own Multi-Field Formula sample, read from the private corpus and never committed."""
+    return convert_yxmd(CORPUS_MULTI_FIELD_FORMULA.read_bytes(), source_name="Multi-Field_Formula.yxmd")
 
 
 @pytest.fixture()
@@ -1831,6 +2835,7 @@ def test_multi_field_formula_becomes_one_node_over_the_selected_fields(regex_and
     assert settings["output_data_type"] == "Auto"
 
 
+@needs_corpus
 def test_multi_field_replace_over_a_data_type_keeps_the_placeholder(multi_field_formula: ConversionResult):
     """Tool 36: every text field, in place, no type change."""
     row = report_row(multi_field_formula, 36)
@@ -1846,6 +2851,7 @@ def test_multi_field_replace_over_a_data_type_keeps_the_placeholder(multi_field_
     assert settings["output_data_type"] == "Auto"
 
 
+@needs_corpus
 def test_multi_field_copy_output_becomes_a_prefixed_new_column_mode(multi_field_formula: ConversionResult):
     """Tool 37: the same selection, written to New_-prefixed copies."""
     row = report_row(multi_field_formula, 37)
@@ -1858,6 +2864,7 @@ def test_multi_field_copy_output_becomes_a_prefixed_new_column_mode(multi_field_
     assert settings["selected_data_type"] == "String"
 
 
+@needs_corpus
 def test_multi_field_suffix_keeps_its_leading_space_and_the_trailing_space_column(
     multi_field_formula: ConversionResult,
 ):
@@ -1890,6 +2897,7 @@ def test_multi_field_suffix_keeps_its_leading_space_and_the_trailing_space_colum
     assert any("FixedDecimal" in message for message in row.messages)
 
 
+@needs_corpus
 def test_every_multi_field_formula_tool_in_the_reference_workflow_converts(multi_field_formula: ConversionResult):
     rows = [row for row in multi_field_formula.report.rows if row.alteryx_tool == "MultiFieldFormula"]
     assert [row.alteryx_tool_id for row in rows] == [36, 37, 38]
@@ -1992,6 +3000,7 @@ def test_multi_field_formula_admits_when_the_upstream_columns_are_unknown():
     # Origin 9 does not exist, so nothing upstream is known and the check cannot be made.
     row = report_row(convert_yxmd(MULTI_FIELD_UNKNOWN_UPSTREAM % b"9", source_name="mff.yxmd"), 2)
     assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert any("Flowfile cannot see" in message for message in row.messages)
 
 
 # Tool 9 is a Sort with no input, so what leaves it is unknown without dropping any wire.

@@ -107,7 +107,8 @@ BUCKETS: dict[str, str] = {
     f" not implement, so its output cannot be reproduced; {PASSES_THROUGH}",
     "os_and_binary": "This tool runs operating-system commands or writes binary blobs, which a"
     f" Flowfile flow deliberately cannot do; {PASSES_THROUGH}",
-    NO_OP_BUCKET: "This tool has no effect on the data (messages, tests, ordering hints); nothing to convert.",
+    NO_OP_BUCKET: "This tool has no effect on the data (messages, tests, ordering hints); its input is wired"
+    " straight to what it fed.",
 }
 
 

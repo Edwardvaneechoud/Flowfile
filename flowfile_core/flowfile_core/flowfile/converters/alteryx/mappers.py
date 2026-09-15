@@ -17,8 +17,8 @@ from dataclasses import dataclass, field
 from polars_expr_transformer import simple_function_to_expr
 
 from flowfile_core.flowfile.converters.alteryx.expression import TranslationOutcome, try_translate
-from flowfile_core.flowfile.converters.alteryx.report import ToolReportRow, ToolStatus
-from flowfile_core.flowfile.converters.alteryx.scope import census_tool_name, classify
+from flowfile_core.flowfile.converters.alteryx.report import ToolEntity, ToolReportRow, ToolStatus
+from flowfile_core.flowfile.converters.alteryx.scope import ScopeVerdict, census_tool_name, classify
 from flowfile_core.flowfile.converters.alteryx.tool_identity import is_official, tool_key
 from flowfile_core.flowfile.converters.alteryx.yxmd_parser import AlteryxConnection, AlteryxTool
 from flowfile_core.schemas import input_schema, schemas, transform_schema
@@ -33,6 +33,11 @@ WARNING_PREFIX = "⚠ "
 
 CONFIG_COMMENT_MAX_LINES = 80
 CONFIG_COMMENT_LINE_LIMIT = 300
+
+# Alteryx canvas units are a third of Flowfile's, and a comment has a floor Flowfile can show.
+POS_SCALE = 3.0
+COMMENT_MIN_WIDTH = 120
+COMMENT_MIN_HEIGHT = 40
 
 FORMULA_STEP_DX = 150
 FORMULA_STEP_DY = 110
@@ -116,6 +121,20 @@ _OUTPUT_TABLE_SETTINGS: dict[str, type] = {
 
 
 @dataclass
+class _PlaceholderBody:
+    """What a passthrough body was written from, so it can be written again for the real edges.
+
+    ``notes`` is a copy so that a re-render reproduces the body the node was first given: a mapper
+    is free to keep appending to the list it passed, and the rewrite must not pick those up.
+    """
+
+    tool: AlteryxTool
+    notes: list[str]
+    header: str | None
+    emitted_inputs: int
+
+
+@dataclass
 class EmitContext:
     """Shared state every mapper writes into while emitting nodes."""
 
@@ -128,6 +147,11 @@ class EmitContext:
     output_map: dict[tuple[int, str], tuple[int, str]] = field(default_factory=dict)
     # (alteryx tool id, anchor) -> [(flowfile node id, "main"|"right")]
     input_map: dict[tuple[int, str], list[tuple[int, str]]] = field(default_factory=dict)
+    # (tool id, output anchor) -> (tool id, output anchor) that really produces it, for a tool
+    # that emits no node. Pairs, never node ids, so the per-anchor handles in output_map hold.
+    output_aliases: dict[tuple[int, str], tuple[int, str]] = field(default_factory=dict)
+    # (tool id, output anchor) -> why that anchor carries no data, for the consumer's message
+    inactive_outputs: dict[tuple[int, str], str] = field(default_factory=dict)
     # best-effort column tracker: tool id -> columns leaving that tool (None = unknown)
     tool_columns: dict[int, list[str] | None] = field(default_factory=dict)
     # (tool id, output anchor) -> columns leaving *that anchor*, when they are not the tool's own.
@@ -137,11 +161,27 @@ class EmitContext:
     tools: dict[int, AlteryxTool] = field(default_factory=dict)
     # (dest tool id, dest anchor) pairs a mapper resolved at convert time and does not want wired
     suppressed_inputs: set[tuple[int, str]] = field(default_factory=set)
+    # flowfile node id -> the passthrough body it was given, rewritten once wiring has settled.
+    # Keyed by node, not by tool: one tool can emit several placeholders, each with its own arity.
+    placeholder_bodies: dict[int, _PlaceholderBody] = field(default_factory=dict)
+    # the wires a tool that emits no node really hands onward, by the identity of the connection
+    # object. Not by value: two wires can agree on both ends and both anchors, and the parser's
+    # dataclass compares by value. `AlteryxWorkflow.connections` holds every object for the whole
+    # conversion, so an id cannot be recycled underneath this.
+    consumed_connections: set[int] = field(default_factory=set)
+    # canvas comments a mapper made; `convert_yxmd` adds them to the ones the text boxes made
+    comments: list[schemas.FlowfileComment] = field(default_factory=list)
     next_node_id: int = 0
+    next_comment_id: int = 0
 
     def new_node_id(self) -> int:
         self.next_node_id += 1
         return self.next_node_id
+
+    def new_comment_id(self) -> int:
+        """The next comment id. Comments are keyed by id on restore, so a clash drops one silently."""
+        self.next_comment_id += 1
+        return self.next_comment_id
 
     def position(self, tool: AlteryxTool, dx: int = 0, dy: int = 0) -> tuple[int, int]:
         x, y = self.positions.get(tool.tool_id, (60, 100))
@@ -196,6 +236,43 @@ class EmitContext:
     def input_count(self, tool_id: int) -> int:
         return len(self.inbound.get(tool_id, []))
 
+    def alias_output(self, tool_id: int, anchor: str, source_tool_id: int, source_anchor: str) -> None:
+        """Point one output anchor at the anchor that really produces its data; no node is emitted."""
+        self.output_aliases[(tool_id, anchor)] = (source_tool_id, source_anchor)
+
+    def resolve_output(self, tool_id: int, anchor: str) -> tuple[int, str] | None:
+        """The (tool, anchor) whose Flowfile node really produces the data on this anchor.
+
+        A tool that does nothing to the data emits no node and aliases its output anchors onto
+        whatever fed it, so its consumers have to be pointed one hop further back — or several,
+        for a chain of them. The pair comes back unchanged when nothing aliases it, and an anchor
+        that has emitted a node ends the walk. ``None`` means the aliases form a cycle, which no
+        Alteryx canvas produces but a hand-written file could.
+        """
+        seen: set[tuple[int, str]] = set()
+        key = (tool_id, anchor)
+        while key not in self.output_map:
+            if key in seen:
+                return None
+            seen.add(key)
+            if key in self.output_aliases:
+                key = self.output_aliases[key]
+                continue
+            # Mapping runs in document order, so the no-op feeding this anchor may not have
+            # registered its alias yet; its configuration says the same thing that alias will.
+            connection = _no_op_source(self, *key)
+            if connection is None:
+                return key
+            key = (connection.origin_tool_id, connection.origin_anchor)
+        return key
+
+    def resolved_source(self, tool_id: int, anchors: tuple[str, ...]) -> tuple[int, str] | None:
+        """The (tool, anchor) really producing the data on the first of ``anchors`` that is wired."""
+        connection = self.source_connection(tool_id, anchors)
+        if connection is None:
+            return None
+        return self.resolve_output(connection.origin_tool_id, connection.origin_anchor)
+
     def has_outgoing(self, tool_id: int, anchor: str) -> bool:
         return any(connection.origin_anchor == anchor for connection in self.outbound.get(tool_id, []))
 
@@ -203,10 +280,12 @@ class EmitContext:
         """Columns arriving on one anchor, when they are confidently known."""
         for connection in self.inbound.get(tool_id, []):
             if connection.dest_anchor == anchor:
-                key = (connection.origin_tool_id, connection.origin_anchor)
+                key = self.resolve_output(connection.origin_tool_id, connection.origin_anchor)
+                if key is None:
+                    return None
                 if key in self.anchor_columns:
                     return self.anchor_columns[key]
-                return self.tool_columns.get(connection.origin_tool_id)
+                return self.tool_columns.get(key[0])
         return None
 
     def source_connection(self, tool_id: int, anchors: tuple[str, ...]) -> AlteryxConnection | None:
@@ -217,14 +296,16 @@ class EmitContext:
                     return connection
         return None
 
-    def source_tool(self, tool_id: int, anchors: tuple[str, ...]) -> AlteryxTool | None:
-        """The tool feeding the first of ``anchors`` that is actually wired."""
-        connection = self.source_connection(tool_id, anchors)
-        return self.tools.get(connection.origin_tool_id) if connection is not None else None
-
     def suppress_input(self, tool_id: int, anchors: tuple[str, ...]) -> None:
         """Mark anchors this mapper resolved at convert time so wiring skips them silently."""
         self.suppressed_inputs.update((tool_id, anchor) for anchor in anchors)
+
+    def consume(self, *connections: AlteryxConnection) -> None:
+        """Record wires a tool with no node carries onward, so wiring does not report them dropped."""
+        self.consumed_connections.update(id(connection) for connection in connections)
+
+    def carries(self, connection: AlteryxConnection) -> bool:
+        return id(connection) in self.consumed_connections
 
 
 ToolMapper = Callable[[AlteryxTool, EmitContext], ToolReportRow]
@@ -249,13 +330,19 @@ def _row(
     messages: list[str] | None = None,
     *,
     reason: str,
+    entity: ToolEntity = "tool",
 ) -> ToolReportRow:
-    """One report row. ``reason`` is required: every status has a cause worth naming."""
+    """One report row. ``reason`` is required: every status has a cause worth naming.
+
+    *entity* is ``annotation`` for a tool that documents the canvas rather than touching data,
+    which keeps it out of both coverage percentages the way a Comment tool already is.
+    """
     key = tool_key(tool.plugin)
     return ToolReportRow(
         alteryx_tool_id=tool.tool_id,
         alteryx_tool=tool_label(tool),
         census_name=census_tool_name(tool),
+        entity=entity,
         alteryx_tool_key=key,
         flowfile_node_ids=node_ids,
         flowfile_node_type=node_type,
@@ -401,6 +488,9 @@ def _map_alteryx_type(alteryx_type: str | None) -> str | None:
 _SECRET_NAME_RE = re.compile(r"password|secret|token|credential|client_?id|api_?key|connectionid|dcm", re.IGNORECASE)
 _CONNECTION_STRING_RE = re.compile(r"(?:^|[;:\s])(?:pwd|password)\s*=", re.IGNORECASE)
 REDACTED = "[redacted by Flowfile]"
+# The Explorer Box's address tag, the one value screened by shape rather than by name.
+HTML_BOX = "HtmlBox"
+ADDRESS_TAG = "URL"
 
 
 _SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]+://|^[A-Za-z][A-Za-z0-9+.\-]{2,}:(?![\\/])")
@@ -477,7 +567,7 @@ def _safe_extension(filename: str) -> str:
     return f"'{extension}'" if _SIMPLE_EXTENSION_RE.match(extension) else UNRECOGNISED_FORMAT
 
 
-def _redact_secrets(element: ET.Element) -> list[str]:
+def _redact_secrets(element: ET.Element, *, screen_address: bool = False) -> list[str]:
     """Blank credential-shaped values in a config tree, returning the names that were blanked.
 
     The placeholder comment is written into the saved flow file, so whatever Alteryx stored in
@@ -485,6 +575,11 @@ def _redact_secrets(element: ET.Element) -> list[str]:
     otherwise land on disk in plain text. Matching is by name and fails closed: every attribute
     of a credential-shaped element goes too, and any element whose text looks like a connection
     string carrying a password is blanked whole even when its own name says nothing.
+
+    *screen_address* adds the Explorer Box's rule: its ``<URL>`` is screened by the same test
+    that decides whether the address may go on the canvas, so a wired box does not copy into a
+    placeholder body what the comment refused. It is off for every other tool, whose ``<URL>``
+    is the configuration a reader needs to rebuild the node rather than a canvas decoration.
     """
     redacted: list[str] = []
     for node in element.iter():
@@ -493,8 +588,9 @@ def _redact_secrets(element: ET.Element) -> list[str]:
             if (is_secret or _SECRET_NAME_RE.search(name)) and node.attrib[name]:
                 node.attrib[name] = REDACTED
                 redacted.append(f"{node.tag}@{name}")
-        text = node.text or ""
-        if text.strip() and (is_secret or _CONNECTION_STRING_RE.search(text)):
+        text = (node.text or "").strip()
+        is_secret_address = screen_address and node.tag == ADDRESS_TAG and _address_carries_credentials(text)
+        if text and (is_secret or is_secret_address or _CONNECTION_STRING_RE.search(text)):
             node.text = REDACTED
             redacted.append(node.tag)
     return sorted(dict.fromkeys(redacted))
@@ -505,7 +601,7 @@ def _config_xml_lines(tool: AlteryxTool) -> tuple[list[str], list[str]]:
     if tool.configuration is None:
         return [], []
     element = copy.deepcopy(tool.configuration)
-    redacted = _redact_secrets(element)
+    redacted = _redact_secrets(element, screen_address=census_tool_name(tool) == HTML_BOX)
     ET.indent(element, space="  ")
     try:
         rendered = ET.tostring(element, encoding="unicode")
@@ -561,7 +657,6 @@ def emit_placeholder(
     ctx: EmitContext,
     messages: list[str],
     *,
-    num_inputs: int | None = None,
     dx: int = 0,
     dy: int = 0,
     register_anchors: bool = True,
@@ -573,8 +668,12 @@ def emit_placeholder(
     *wording* and *code_wording* carry a sentence that replaces the default "needs manual
     conversion" text on the node description and in the generated code. A node standing in for
     a tool Flowfile will never convert is not a defect, so the description also loses its ⚠.
+
+    The Alteryx wire count is only the first guess at how many inputs the body should read:
+    wiring can hand the node fewer edges than the tool has wires. :func:`rewrite_placeholder_bodies`
+    corrects it afterwards, which is why the arguments it needs are recorded here.
     """
-    inputs = ctx.input_count(tool.tool_id) if num_inputs is None else num_inputs
+    inputs = ctx.input_count(tool.tool_id)
     settings = input_schema.NodePolarsCode(
         flow_id=ctx.flow_id,
         node_id=ctx.new_node_id(),
@@ -594,10 +693,77 @@ def emit_placeholder(
         description=_description(tool, warning),
         is_start_node=inputs == 0,
     )
+    ctx.placeholder_bodies[node_id] = _PlaceholderBody(tool, list(messages), code_wording, inputs)
     if register_anchors:
         ctx.register_all_outputs(tool.tool_id, node_id)
         ctx.register_all_inputs(tool.tool_id, node_id)
     return node_id
+
+
+def _received_edges(node: schemas.FlowfileNode) -> int:
+    """How many streams the engine will really hand this node once the flow is loaded."""
+    return len(node.input_ids or []) + (node.left_input_id is not None) + (node.right_input_id is not None)
+
+
+def rewrite_placeholder_bodies(ctx: EmitContext) -> None:
+    """Write every passthrough body for the edges its node actually received.
+
+    A body is rendered when the node is emitted, from the number of Alteryx wires arriving at the
+    tool. Wiring then collapses every wire resolving to one Flowfile node into a single edge and
+    drops the wires whose source anchor carries nothing, so a body written for two inputs can land
+    on a node the engine hands a single ``input_df`` — and the node fails at run time on a name
+    that was never bound. Reading the finished node instead is order-independent: by the time this
+    runs, every wire the workflow states has been laid or accounted for.
+    """
+    nodes = {node.id: node for node in ctx.nodes}
+    for node_id, body in ctx.placeholder_bodies.items():
+        node = nodes.get(node_id)
+        if node is None:
+            continue
+        received = _received_edges(node)
+        if received == body.emitted_inputs:
+            continue
+        node.setting_input.polars_code_input.polars_code = _placeholder_code(
+            body.tool, received, body.notes, body.header
+        )
+        node.is_start_node = received == 0
+
+
+def emit_passthrough(tool: AlteryxTool, ctx: EmitContext, anchor_map: dict[str, str]) -> None:
+    """Emit no node: hand each output anchor the wire that arrives on its input anchor.
+
+    A tool that does nothing to the data should not cost a node in the imported flow, so its
+    consumers are wired straight to whatever fed it. Only the wires it really hands on are marked
+    consumed — Alteryx unions every wire arriving on one input anchor and this carries the first,
+    so anything else it received is a wire the imported flow does not have and wiring says so on
+    both rows. A caller that swallows more than it passes on (a sink, a Detour End's dead side)
+    declares that itself. ``tool_columns`` is deliberately left unwritten: the column readers
+    resolve through the alias to the real source, and an entry here would answer "unknown" for a
+    tool that changes nothing.
+    """
+    for output_anchor, input_anchor in anchor_map.items():
+        connection = ctx.source_connection(tool.tool_id, (input_anchor,))
+        if connection is not None:
+            ctx.alias_output(tool.tool_id, output_anchor, connection.origin_tool_id, connection.origin_anchor)
+            ctx.consume(connection)
+
+
+def uncarried_wire_message(tool: AlteryxTool, connection: AlteryxConnection, *, carried: bool) -> str:
+    """Why a wire into a tool that emitted no node never reached the tool's consumers.
+
+    *carried* says whether the tool handed any stream onward at all: a no-op fed only on an anchor
+    it does not read keeps nothing, and telling the user one stream survived would be false.
+    """
+    fate = (
+        "only the stream it passes on was kept"
+        if carried
+        else "it carried no stream onward at all, so this branch ends here"
+    )
+    return (
+        f"The Alteryx '{tool_label(tool)}' (ToolID {tool.tool_id}) has no effect on the data, so no node was "
+        f"imported for it and {fate}; the connection from ToolID {connection.origin_tool_id} "
+        f"('{connection.origin_anchor}') into its '{connection.dest_anchor}' anchor was not carried over."
+    )
 
 
 def map_unsupported(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -626,6 +792,218 @@ def _placeholder_row(tool: AlteryxTool, ctx: EmitContext, messages: list[str], r
     node_id = emit_placeholder(tool, ctx, messages)
     ctx.tool_columns[tool.tool_id] = None
     return _row(tool, "placeholder", [node_id], "polars_code", messages, reason=reason)
+
+
+# Which input anchor feeds which output anchor, for the tools that only pass records on.
+# Test and ExpectEqual are sinks: Alteryx gives them no output anchor at all.
+NO_OP_ANCHORS: dict[str, dict[str, str]] = {
+    "Message": {DEFAULT_OUTPUT_ANCHOR: DEFAULT_INPUT_ANCHOR},
+    "Throttle": {DEFAULT_OUTPUT_ANCHOR: DEFAULT_INPUT_ANCHOR},
+    "BlockUntilDone": {
+        DEFAULT_OUTPUT_ANCHOR: DEFAULT_INPUT_ANCHOR,
+        "Output2": DEFAULT_INPUT_ANCHOR,
+        "Output3": DEFAULT_INPUT_ANCHOR,
+    },
+    "Test": {},
+    "ExpectEqual": {},
+}
+
+DETOUR = "Detour"
+DETOUR_END = "DetourEnd"
+DETOUR_LEFT = "Left"
+DETOUR_RIGHT = "Right"
+
+
+def _no_op_verdict(tool: AlteryxTool) -> ScopeVerdict | None:
+    """The scope verdict when this tool really has no effect on the data, else ``None``."""
+    verdict = classify(census_tool_name(tool))
+    return verdict if verdict is not None and verdict.status == "no_op" else None
+
+
+def _detour_active_anchor(tool: AlteryxTool) -> str:
+    """The Detour anchor the records leave by; Alteryx detours left unless told otherwise."""
+    return DETOUR_RIGHT if _flag(_config(tool), "DetourRight") else DETOUR_LEFT
+
+
+def _is_detour_wire(ctx: EmitContext, connection: AlteryxConnection) -> bool:
+    """Whether this wire leaves a Detour directly, by either of its sides."""
+    source = ctx.tools.get(connection.origin_tool_id)
+    return source is not None and census_tool_name(source) == DETOUR
+
+
+def _is_live_detour_wire(ctx: EmitContext, connection: AlteryxConnection) -> bool:
+    if not _is_detour_wire(ctx, connection):
+        return False
+    return connection.origin_anchor == _detour_active_anchor(ctx.tools[connection.origin_tool_id])
+
+
+def _detour_end_wire(ctx: EmitContext, tool: AlteryxTool) -> tuple[AlteryxConnection | None, str]:
+    """The one wire a Detour End takes its records from, or why the mapper will not guess.
+
+    Which side is live is a property of the upstream Detour's configuration, not of the order
+    the tools happened to be mapped in, so this reads the tools rather than what was emitted.
+    """
+    inbound = ctx.inbound.get(tool.tool_id, [])
+    live = [connection for connection in inbound if _is_live_detour_wire(ctx, connection)]
+    if len(live) != 1:
+        return None, (
+            f"{len(live)} of the {len(inbound)} inputs of this Alteryx Detour End come from the live anchor of a "
+            "Detour, so which stream continues cannot be read from the workflow; this node passes its input through."
+        )
+    if sum(1 for connection in inbound if connection.dest_anchor == live[0].dest_anchor) > 1:
+        return None, (
+            f"Several inputs of this Alteryx Detour End arrive on its '{live[0].dest_anchor}' anchor, so the live "
+            "stream cannot be told from the others; this node passes its input through."
+        )
+    return live[0], ""
+
+
+def _no_op_source(ctx: EmitContext, tool_id: int, anchor: str) -> AlteryxConnection | None:
+    """The wire a tool with no effect hands to the consumers of one of its output anchors.
+
+    One reading of the tool's own configuration, shared by the mappers below and by the anchor
+    resolution, so what a consumer is told never depends on which of the two ran first.
+    """
+    tool = ctx.tools.get(tool_id)
+    if tool is None or _no_op_verdict(tool) is None:
+        return None
+    name = census_tool_name(tool)
+    if name == DETOUR:
+        if anchor != _detour_active_anchor(tool):
+            return None
+        return ctx.source_connection(tool_id, (DEFAULT_INPUT_ANCHOR,))
+    if name == DETOUR_END:
+        return _detour_end_wire(ctx, tool)[0] if anchor == DEFAULT_OUTPUT_ANCHOR else None
+    input_anchor = NO_OP_ANCHORS.get(name, {}).get(anchor)
+    return ctx.source_connection(tool_id, (input_anchor,)) if input_anchor else None
+
+
+def map_no_op(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """A tool with no effect on the data: no node at all, its input handed to its consumers."""
+    verdict = _no_op_verdict(tool)
+    if verdict is None:
+        return map_unsupported(tool, ctx)
+    anchors = NO_OP_ANCHORS.get(census_tool_name(tool), {})
+    emit_passthrough(tool, ctx, anchors)
+    if not anchors:
+        # A sink has no output anchor at all, so every wire into it ends there on purpose.
+        ctx.consume(*ctx.inbound.get(tool.tool_id, []))
+    return _row(tool, verdict.status, [], None, [verdict.sentence], reason=verdict.reason)
+
+
+def map_detour(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Alteryx's Detour sends every record down one of two anchors; the other carries nothing."""
+    verdict = _no_op_verdict(tool)
+    if verdict is None:
+        return map_unsupported(tool, ctx)
+    active = _detour_active_anchor(tool)
+    inactive = DETOUR_LEFT if active == DETOUR_RIGHT else DETOUR_RIGHT
+    emit_passthrough(tool, ctx, {active: DEFAULT_INPUT_ANCHOR})
+    messages = [verdict.sentence]
+    if ctx.has_outgoing(tool.tool_id, inactive):
+        message = (
+            f"This Alteryx Detour is configured to send its records out of the '{active}' anchor, so nothing "
+            f"leaves the '{inactive}' anchor; the connections from it were not wired."
+        )
+        ctx.inactive_outputs[(tool.tool_id, inactive)] = message
+        messages.append(message)
+    return _row(tool, verdict.status, [], None, messages, reason=verdict.reason)
+
+
+def map_detour_end(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Alteryx's Detour End rejoins the two paths of a Detour; only the live one carries records."""
+    verdict = _no_op_verdict(tool)
+    if verdict is None:
+        return map_unsupported(tool, ctx)
+    connection, refusal = _detour_end_wire(ctx, tool)
+    if connection is None:
+        return _placeholder_row(tool, ctx, [refusal], reason="mapper_refused")
+    emit_passthrough(tool, ctx, {DEFAULT_OUTPUT_ANCHOR: connection.dest_anchor})
+    # The dead side of the same Detour is expected to arrive here and expected to carry nothing.
+    ctx.consume(*(wire for wire in ctx.inbound.get(tool.tool_id, []) if _is_detour_wire(ctx, wire)))
+    message = (
+        f"The records arrive from the '{connection.origin_anchor}' anchor of the Alteryx Detour "
+        f"(ToolID {connection.origin_tool_id}), which is the side its configuration makes live."
+    )
+    return _row(tool, verdict.status, [], None, [verdict.sentence, message], reason=verdict.reason)
+
+
+def comment_bounds(tool: AlteryxTool, ctx: EmitContext) -> tuple[int, int, int, int]:
+    """The canvas box for a comment made from an Alteryx box tool: placed by the layout, size scaled."""
+    x, y = ctx.position(tool)
+    return (
+        x,
+        y,
+        max(round((tool.width or 0) * POS_SCALE), COMMENT_MIN_WIDTH),
+        max(round((tool.height or 0) * POS_SCALE), COMMENT_MIN_HEIGHT),
+    )
+
+
+EXPLORER_BOX_PREFIX = "Alteryx Explorer Box: "
+EXPLORER_BOX_REDACTED = "an address that looks like it carries credentials, which was not copied out of the workflow"
+
+
+def _address_carries_credentials(url: str) -> bool:
+    """Whether an Explorer Box address carries a secret, which must not be copied onto the canvas.
+
+    Deliberately not ``_looks_like_connection``: every address here has a scheme or is a path,
+    so that test would refuse the documentation links this tool mostly points at. Only userinfo,
+    a password key-value or query parameters (where tokens travel) are treated as secrets.
+    ``_redact_secrets`` applies it to any ``<URL>`` it dumps, so a wired Explorer Box — which
+    becomes a placeholder rather than a comment — does not copy in what the comment refused.
+    """
+    return bool(_carries_credentials(url) or _USER_PASSWORD_RE.search(url) or _QUERY_PARAMETER_RE.search(url))
+
+
+def map_html_box(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Alteryx's Explorer Box shows a web page on the canvas; Flowfile keeps the address as a comment.
+
+    It is documentation, not a transformation — it has no anchors and no output schema — so it
+    becomes an annotation like a Comment tool rather than a node, and never enters the coverage
+    percentages. ``HideAddressBar`` is read and ignored: Flowfile has no browser pane to hide a
+    bar in. The address is kept exactly as written, including a Windows path that only resolves
+    on the machine the workflow came from; resolving it would be a guess about someone's disk.
+    """
+    if ctx.input_count(tool.tool_id) or ctx.outbound.get(tool.tool_id):
+        return _placeholder_row(
+            tool,
+            ctx,
+            [
+                "This Alteryx Explorer Box is wired into the flow, which a canvas comment cannot be; "
+                "it was left as a pass-through node instead."
+            ],
+            reason="mapper_refused",
+        )
+    url = _text(_config(tool), "URL")
+    if not url:
+        return _row(
+            tool,
+            "skipped",
+            [],
+            None,
+            ["This Alteryx Explorer Box names no address, so there was nothing to keep."],
+            reason="annotation",
+            entity="annotation",
+        )
+
+    status: ToolStatus = "converted"
+    messages = ["Imported as a canvas comment holding the address; Flowfile does not show the page itself."]
+    if _address_carries_credentials(url):
+        status = "partial"
+        text = f"{EXPLORER_BOX_PREFIX}{EXPLORER_BOX_REDACTED}."
+        messages.append(
+            "The address was not copied into the comment because it carries credentials or query parameters; "
+            "it is still in the original .yxmd."
+        )
+    else:
+        text = f"{EXPLORER_BOX_PREFIX}{url}"
+    x, y, width, height = comment_bounds(tool, ctx)
+    ctx.comments.append(
+        schemas.FlowfileComment(
+            id=ctx.new_comment_id(), text=text, x_position=x, y_position=y, width=width, height=height
+        )
+    )
+    return _row(tool, status, [], "comment", messages, reason="annotation", entity="annotation")
 
 
 def _parse_number(value: str) -> tuple[bool, bool]:
@@ -912,7 +1290,6 @@ def _emit_formula_chain(tool: AlteryxTool, ctx: EmitContext, assignments: list[_
                     tool,
                     ctx,
                     [f"{target} = {expression}", str(outcome.reason)],
-                    num_inputs=1,
                     dx=dx,
                     dy=dy,
                     register_anchors=False,
@@ -1091,7 +1468,8 @@ def _rename_from_right_input(
     tool: AlteryxTool, ctx: EmitContext, config: ET.Element, targets: list[str], mode: str
 ) -> ToolReportRow:
     connection = ctx.source_connection(tool.tool_id, DYNAMIC_RENAME_SOURCE_ANCHORS)
-    source = ctx.tools.get(connection.origin_tool_id) if connection is not None else None
+    resolved = ctx.resolved_source(tool.tool_id, DYNAMIC_RENAME_SOURCE_ANCHORS)
+    source = ctx.tools.get(resolved[0]) if resolved is not None else None
     if connection is None or source is None:
         return _placeholder_row(
             tool, ctx, ["The Alteryx Dynamic Rename field-name input is not connected."], reason="mapper_refused"
@@ -1758,7 +2136,6 @@ def map_unique(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             tool,
             ctx,
             ["This branch should contain the duplicate rows dropped by the Unique node."],
-            num_inputs=1,
             dy=ANTI_DY,
             register_anchors=False,
         )
@@ -2038,12 +2415,14 @@ def _anchor_columns(ctx: EmitContext, tool_id: int, anchor: str) -> list[str] | 
     for connection in ctx.inbound.get(tool_id, []):
         if connection.dest_anchor != anchor:
             continue
-        key = (connection.origin_tool_id, connection.origin_anchor)
+        key = ctx.resolve_output(connection.origin_tool_id, connection.origin_anchor)
+        if key is None:
+            return None
         if key in ctx.anchor_columns:
             return ctx.anchor_columns[key]
-        if connection.origin_tool_id in ctx.tool_columns:
-            return ctx.tool_columns[connection.origin_tool_id]
-        source = ctx.tools.get(connection.origin_tool_id)
+        if key[0] in ctx.tool_columns:
+            return ctx.tool_columns[key[0]]
+        source = ctx.tools.get(key[0])
         return _declared_output_columns(source) if source is not None else None
     return None
 
@@ -2516,6 +2895,272 @@ def map_browse(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, "converted", [node_id], "explore_data", [], reason="viewer")
 
 
+MAP_INPUT_DRAW_MODE = "draw"
+MAP_INPUT_SELECT_MODE = "select"
+# Alteryx writes a drawn shape as its own lowercase literal, which is not GeoJSON.
+_MAP_INPUT_SPATIAL_RE = re.compile(r'^\s*\{\s*"type"\s*:\s*"\w+"\s*,\s*"coordinates"\s*:', re.IGNORECASE)
+MAP_INPUT_SPATIAL_MESSAGE = (
+    "The drawn shapes are kept exactly as Alteryx wrote them, as text: Flowfile has no spatial type, "
+    "and every spatial tool that would read them is out of scope."
+)
+
+
+def _map_input_rows(config: ET.Element, width: int) -> list[list[str | None]]:
+    """The drawn rows, cell text verbatim, padded and truncated to the declared field count."""
+    rows: list[list[str | None]] = []
+    for row_element in config.findall("Data/r"):
+        cells: list[str | None] = [cell.text for cell in row_element.findall("c")]
+        rows.append(cells[:width] + [None] * max(0, width - len(cells)))
+    return rows
+
+
+def map_map_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Alteryx's Map Input holds shapes someone drew on a map; Flowfile keeps them as typed-in rows.
+
+    Every column is String, whatever it holds: the tool declares no types, and the shapes are
+    Alteryx's own ``{"type":"point","coordinates":[...]}`` literal, which only survives a
+    round-trip if it is copied byte for byte. Inferring types here would turn a label like
+    ``00123`` into a number, which is the one thing a hand-typed input must not do.
+    """
+    config = _config(tool)
+    mode = _normalise_mode(_text(config, "Mode"))
+    if mode != MAP_INPUT_DRAW_MODE:
+        message = (
+            "This Alteryx Map Input asks the user to pick features on a map while the workflow runs, "
+            "which a Flowfile flow cannot do."
+            if mode == MAP_INPUT_SELECT_MODE
+            else f"Alteryx Map Input mode {_text(config, 'Mode') or '(empty)'!r} has no Flowfile equivalent."
+        )
+        return _placeholder_row(tool, ctx, [message], reason="option_unsupported")
+
+    fields = config.findall("Fields/Field")
+    if not fields:
+        return _placeholder_row(
+            tool,
+            ctx,
+            ["This Alteryx Map Input declares no fields, so there is nothing to read."],
+            reason="mapper_refused",
+        )
+    names = [element.get("name") or f"column_{index}" for index, element in enumerate(fields)]
+    rows = _map_input_rows(config, len(names))
+
+    settings = input_schema.NodeManualInput(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name=name, data_type="String") for name in names],
+            data=[[row[index] for row in rows] for index in range(len(names))],
+        ),
+    )
+    node_id = ctx.add_node(tool, "manual_input", settings, description=_description(tool), is_start_node=True)
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.tool_columns[tool.tool_id] = names
+
+    messages: list[str] = []
+    status: ToolStatus = "converted"
+    reason = "converted"
+    if any(_MAP_INPUT_SPATIAL_RE.match(value or "") for row in rows for value in row):
+        status, reason = "partial", "option_unsupported"
+        messages.append(MAP_INPUT_SPATIAL_MESSAGE)
+    declared = _attribute(config, "NumRows", "value")
+    if declared.isdigit() and int(declared) != len(rows):
+        status, reason = "partial", "option_unsupported"
+        messages.append(
+            f"The Alteryx Map Input says it holds {declared} rows but the workflow stores {len(rows)}; "
+            "the stored rows were kept."
+        )
+    if _text(config, "ReferenceFile"):
+        messages.append(
+            "The reference file this map was drawn over is a backdrop, not an input, so it was not imported."
+        )
+    return _row(tool, status, [node_id], "manual_input", messages, reason=reason)
+
+
+MAKE_GROUP_COLUMNS = ["Key", "Group"]
+MAKE_GROUP_COMPONENT = "__make_group_component"
+_MAKE_GROUP_KEYS = ("Key1st", "Key2nd")
+
+
+def _unique_column(name: str, taken: list[str] | None) -> str:
+    """A column name nothing upstream already uses, so a private helper column cannot shadow data."""
+    if not taken:
+        return name
+    candidate = name
+    suffix = 1
+    while candidate in taken:
+        candidate, suffix = f"{name}_{suffix}", suffix + 1
+    return candidate
+
+
+def _make_group_code(tool: AlteryxTool, keys: list[str], component: str) -> str:
+    """Turn the solved graph back into Alteryx's shape: one row per key, plus the group it is in."""
+    message = (
+        f"Alteryx Make Group (ToolID {tool.tool_id}): a key is null, and the group solver joins every "
+        "null-keyed row into a single group; remove or fill the nulls before this node."
+    )
+    return "\n".join(
+        [
+            f"# Alteryx Make Group (ToolID {tool.tool_id}): one row per key, with the group it belongs to.",
+            "# Alteryx names the group after the first key it meets; this names it after the lowest key.",
+            *(f"# {line}" for line in _original_config_lines(tool)),
+            f"_keys = {keys!r}",
+            f"_pairs = input_df.select([pl.col(_key).cast(pl.String) for _key in _keys] + [pl.col({component!r})])",
+            "assert not _pairs.select(",
+            "    pl.any_horizontal([pl.col(_key).is_null().any() for _key in _keys])",
+            f").collect().item(), {message!r}",
+            "output_df = (",
+            f"    _pairs.unpivot(on=_keys, index=[{component!r}], value_name='Key')",
+            "    .unique(subset=['Key'], maintain_order=True)",
+            f"    .with_columns(pl.col('Key').min().over({component!r}).alias('Group'))",
+            "    .select(['Key', 'Group'])",
+            ")",
+        ]
+    )
+
+
+def map_make_group(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Alteryx's Make Group finds the connected components of a pair of key columns.
+
+    Two nodes, because the shapes differ: Flowfile's ``graph_solver`` appends a component id to
+    every input row, while Alteryx returns exactly two columns — ``Key`` and ``Group``, one row
+    per distinct key — so generated code reshapes the solved frame back into that.
+    """
+    config = _config(tool)
+    keys = [_text(config, key) for key in _MAKE_GROUP_KEYS]
+    if not all(keys):
+        return _placeholder_row(
+            tool,
+            ctx,
+            ["The Alteryx Make Group tool does not name both of its key fields."],
+            reason="mapper_refused",
+        )
+    refusal = _backslash_refusal({"a Make Group key": keys})
+    if refusal is not None:
+        return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
+
+    known = ctx.input_columns(tool.tool_id)
+    component = _unique_column(MAKE_GROUP_COMPONENT, known)
+    solver = input_schema.NodeGraphSolver(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        graph_solver_input=transform_schema.GraphSolverInput(
+            col_from=keys[0], col_to=keys[1], output_column_name=component
+        ),
+    )
+    solver_id = ctx.add_node(tool, "graph_solver", solver, description=_description(tool))
+    reshape = input_schema.NodePolarsCode(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        polars_code_input=transform_schema.PolarsCodeInput(
+            polars_code=_make_group_code(tool, list(dict.fromkeys(keys)), component)
+        ),
+    )
+    reshape_id = ctx.add_node(tool, "polars_code", reshape, dx=FORMULA_STEP_DX, dy=FORMULA_STEP_DY)
+    _link(ctx, solver_id, reshape_id)
+    ctx.register_all_inputs(tool.tool_id, solver_id)
+    ctx.register_all_outputs(tool.tool_id, reshape_id)
+    ctx.tool_columns[tool.tool_id] = list(MAKE_GROUP_COLUMNS)
+
+    messages = [
+        "Alteryx names each group after the first key it meets in arrival order; the generated code names "
+        "it after the lowest key in the group, which is the same name whenever the lowest key arrives first."
+    ]
+    unknown = sorted({child.tag for child in config} - set(_MAKE_GROUP_KEYS))
+    if unknown:
+        messages.append(f"This Alteryx Make Group carries configuration Flowfile does not read: {', '.join(unknown)}.")
+    return _row(tool, "partial", [solver_id, reshape_id], "graph_solver", messages, reason="row_order_unknown")
+
+
+FIELD_INFO_COLUMNS = ["Name", "Type"]
+_FIELD_INFO_MISSING = ("Size", "Scale", "Source", "Description")
+
+
+def _field_info_code(tool: AlteryxTool) -> str:
+    """The input's schema as two String columns, read without touching a single row."""
+    return "\n".join(
+        [
+            f"# Alteryx Field Info (ToolID {tool.tool_id}): the input's schema as rows, one per column.",
+            "# Type is the Polars type name; Alteryx's Size, Scale, Source and Description have no equivalent.",
+            *(f"# {line}" for line in _original_config_lines(tool)),
+            "_schema = input_df.collect_schema()",
+            "output_df = pl.LazyFrame(",
+            '    {"Name": list(_schema.names()), "Type": [str(_type) for _type in _schema.dtypes()]},',
+            '    schema={"Name": pl.String, "Type": pl.String},',
+            ")",
+        ]
+    )
+
+
+def map_field_info(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Alteryx's Field Info describes the incoming schema; Flowfile reads it off the frame.
+
+    Alteryx emits six columns per field (Name, Type, Size, Scale, Source, Description). Polars
+    keeps only a name and a dtype — size and scale live inside the dtype, and a column has no
+    provenance or description to report — so the node emits the two it can and says so.
+    """
+    unknown = sorted({child.tag for child in _config(tool)})
+    if unknown:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [f"This Alteryx Field Info carries configuration Flowfile cannot read: {', '.join(unknown)}."],
+            reason="option_unsupported",
+        )
+    inputs = ctx.input_count(tool.tool_id)
+    if inputs != 1:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [
+                f"This Alteryx Field Info has {inputs} inputs; it describes the schema of exactly one, "
+                "so there is nothing to describe."
+            ],
+            reason="mapper_refused",
+        )
+    settings = input_schema.NodePolarsCode(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        polars_code_input=transform_schema.PolarsCodeInput(polars_code=_field_info_code(tool)),
+    )
+    node_id = ctx.add_node(tool, "polars_code", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    ctx.tool_columns[tool.tool_id] = list(FIELD_INFO_COLUMNS)
+    message = (
+        "Alteryx also reports " + ", ".join(_FIELD_INFO_MISSING) + " per field, which Polars does not keep; "
+        "Type is the Polars type name (Int64, Datetime(time_unit='us', time_zone=None)), not the Alteryx one."
+    )
+    return _row(tool, "partial", [node_id], "polars_code", [message], reason="option_unsupported")
+
+
+def map_api_output(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Alteryx's API Output hands its records back to whatever called the workflow.
+
+    Alteryx writes one engine message per record for an SDK callback to collect; Flowfile marks
+    the node's input as the body of the API response when the flow is published as an endpoint.
+    The same records, delivered differently — and the tool has nothing to configure, so the node
+    defaults (every row, one object per row) are a reading rather than a guess.
+    """
+    unknown = sorted({child.tag for child in _config(tool)})
+    settings = input_schema.NodeApiResponse(flow_id=ctx.flow_id, node_id=ctx.new_node_id())
+    node_id = ctx.add_node(tool, "api_response", settings, description=_description(tool))
+    # A sink: Alteryx gives the tool no output anchor, so a wire out of one is reported dropped.
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    if unknown:
+        return _row(
+            tool,
+            "partial",
+            [node_id],
+            "api_response",
+            [
+                "This Alteryx API Output carries configuration Flowfile does not read, so the response "
+                f"shape may differ: {', '.join(unknown)}."
+            ],
+            reason="option_unsupported",
+        )
+    return _row(tool, "converted", [node_id], "api_response", [], reason="converted")
+
+
 _RECORD_ID_LAST_POSITION = "1"
 
 
@@ -2967,11 +3612,12 @@ def _feeds_in_stated_order(ctx: EmitContext, tool_id: int) -> bool:
     One unsorted stream is enough to make an order-dependent result order-dependent again, so
     this is an all-of check over the anchor's wires, not a look at whichever one comes first.
     """
-    sources = [
-        ctx.tools.get(connection.origin_tool_id)
+    origins = [
+        ctx.resolve_output(connection.origin_tool_id, connection.origin_anchor)
         for connection in ctx.inbound.get(tool_id, [])
         if connection.dest_anchor == DEFAULT_INPUT_ANCHOR
     ]
+    sources = [ctx.tools.get(origin[0]) if origin is not None else None for origin in origins]
     return bool(sources) and all(source is not None and _emitted_sort(ctx, source) for source in sources)
 
 
@@ -3130,6 +3776,18 @@ TOOL_MAPPERS: dict[str, ToolMapper] = {
     "DbFileOutput": map_file_output,
     "BrowseV2": map_browse,
     "Browse": map_browse,
+    "Message": map_no_op,
+    "Throttle": map_no_op,
+    "BlockUntilDone": map_no_op,
+    "Test": map_no_op,
+    "ExpectEqual": map_no_op,
+    "Detour": map_detour,
+    "DetourEnd": map_detour_end,
+    HTML_BOX: map_html_box,
+    "APIOutput": map_api_output,
+    "FieldInfo": map_field_info,
+    "MakeGroup": map_make_group,
+    "MapInput": map_map_input,
 }
 
 
