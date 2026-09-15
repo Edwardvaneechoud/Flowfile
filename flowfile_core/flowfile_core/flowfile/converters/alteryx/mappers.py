@@ -11,11 +11,13 @@ from __future__ import annotations
 import copy
 import re
 import xml.etree.ElementTree as ET
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from polars_expr_transformer import simple_function_to_expr
 
+from flowfile_core.configs.node_store.nodes import get_all_standard_nodes
 from flowfile_core.flowfile.converters.alteryx.expression import TranslationOutcome, try_translate
 from flowfile_core.flowfile.converters.alteryx.report import ToolEntity, ToolReportRow, ToolStatus
 from flowfile_core.flowfile.converters.alteryx.scope import ScopeVerdict, census_tool_name, classify
@@ -76,6 +78,8 @@ _SUMMARIZE_ACTIONS: dict[str, str] = {
     "concat": "concat",
     "concatenate": "concat",
     "stddev": "std",
+    # `AggColl.agg` is `getattr(pl, ...)`, so the value has to be the polars name, not Alteryx's.
+    "variance": "var",
     "first": "first",
     "last": "last",
 }
@@ -169,6 +173,10 @@ class EmitContext:
     # dataclass compares by value. `AlteryxWorkflow.connections` holds every object for the whole
     # conversion, so an id cannot be recycled underneath this.
     consumed_connections: set[int] = field(default_factory=set)
+    # the wires a mapper read at import time on an anchor it suppressed, by connection identity.
+    # A suppressed anchor carries no edge, so wiring has to tell the one wire that was really read
+    # from the ones that were not; without this every extra stream on that anchor vanishes silently.
+    resolved_inputs: set[int] = field(default_factory=set)
     # canvas comments a mapper made; `convert_yxmd` adds them to the ones the text boxes made
     comments: list[schemas.FlowfileComment] = field(default_factory=list)
     next_node_id: int = 0
@@ -297,8 +305,28 @@ class EmitContext:
         return None
 
     def suppress_input(self, tool_id: int, anchors: tuple[str, ...]) -> None:
-        """Mark anchors this mapper resolved at convert time so wiring skips them silently."""
+        """Mark anchors this mapper resolved at convert time so wiring lays no edge for them."""
         self.suppressed_inputs.update((tool_id, anchor) for anchor in anchors)
+
+    def mark_resolved(self, *connections: AlteryxConnection | None) -> None:
+        """Record the wires a mapper really read on a suppressed anchor, so wiring stays quiet about them."""
+        self.resolved_inputs.update(id(connection) for connection in connections if connection is not None)
+
+    def was_resolved(self, connection: AlteryxConnection) -> bool:
+        return id(connection) in self.resolved_inputs
+
+    def anchor_was_read(self, tool_id: int, anchor: str) -> bool:
+        """Whether the mapper took anything at all off this anchor, on any wire arriving on it.
+
+        A mapper suppresses an anchor because it will lay no edge for it, which is not the same as
+        having read it: a rename taking its names from a formula suppresses the name anchor and
+        reads none of it. The per-wire answer cannot tell those apart, so the message asks the anchor.
+        """
+        return any(
+            self.was_resolved(connection)
+            for connection in self.inbound.get(tool_id, [])
+            if connection.dest_anchor == anchor
+        )
 
     def consume(self, *connections: AlteryxConnection) -> None:
         """Record wires a tool with no node carries onward, so wiring does not report them dropped."""
@@ -357,6 +385,11 @@ def _config(tool: AlteryxTool) -> ET.Element:
     return tool.configuration if tool.configuration is not None else ET.Element("Configuration")
 
 
+def _macro_values(config: ET.Element) -> dict[str, str]:
+    """A macro's ``<Value name="...">`` questions as a dict; a macro writes every answer this way."""
+    return {value.get("name", ""): (value.text or "").strip() for value in config.findall("Value")}
+
+
 def _text(element: ET.Element | None, path: str, default: str = "") -> str:
     if element is None:
         return default
@@ -387,6 +420,24 @@ def _attribute(element: ET.Element | None, path: str, name: str, default: str = 
     if found is None:
         return default
     return (found.get(name) or default).strip()
+
+
+def _whole_number(text: str, *, minimum: int = 0) -> int | None:
+    """An Alteryx integer setting, or ``None`` when the file does not state a usable one.
+
+    Alteryx writes these as free text, so a workflow can carry ``2.7``, ``-5`` or ``1e400`` where a
+    count belongs. Reading them with ``int(float(...))`` truncated the decimal, passed the negative
+    into a node that then kept no rows, and let the infinity raise ``OverflowError`` out of the whole
+    conversion — no float is built here, so that last one cannot arise at all. ``minimum`` is the
+    smallest value the calling site can use: zero where zero means something of its own, one where
+    the setting is a count.
+    """
+    stripped = text.strip()
+    digits = stripped[1:] if stripped[:1] in ("+", "-") else stripped
+    if not digits.isdecimal():
+        return None
+    value = int(stripped)
+    return value if value >= minimum else None
 
 
 def _flag(element: ET.Element | None, path: str) -> bool | None:
@@ -705,6 +756,31 @@ def _received_edges(node: schemas.FlowfileNode) -> int:
     return len(node.input_ids or []) + (node.left_input_id is not None) + (node.right_input_id is not None)
 
 
+_NODE_TEMPLATES = get_all_standard_nodes()[1]
+
+
+def accepts_another_input(node: schemas.FlowfileNode, kind: str = MAIN, *, right_port: bool = False) -> bool:
+    """Whether the palette lets this node take one more stream in the slot ``kind`` names.
+
+    Alteryx unions every wire arriving on one input anchor; a Flowfile node has a fixed number of
+    input ports, so two Alteryx sources on the single ``Input`` of a Select is a shape the imported
+    flow cannot hold. A port is not interchangeable with the port beside it: the right-hand wire of
+    a two-input node sits in ``right_input_id``, so a second wire onto that slot overwrites the
+    first instead of filling a free port, while two wires onto the left slot fill both ports and
+    leave the real right-hand wire nothing to take. Asking per slot is what keeps the wire the
+    workflow states on the anchor the workflow put it on. ``right_port`` says the mappers gave this
+    node a right-hand slot, which the main slot therefore does not get to use. A node type the
+    palette does not know is not limited here — every type the mappers emit is in the registry, so
+    that is a guard against a future one going missing, not a licence to guess.
+    """
+    template = _NODE_TEMPLATES.get(node.type)
+    if template is None:
+        return True
+    if kind == RIGHT:
+        return node.right_input_id is None
+    return len(node.input_ids or []) < template.input - (1 if right_port else 0)
+
+
 def rewrite_placeholder_bodies(ctx: EmitContext) -> None:
     """Write every passthrough body for the edges its node actually received.
 
@@ -763,6 +839,44 @@ def uncarried_wire_message(tool: AlteryxTool, connection: AlteryxConnection, *, 
         f"The Alteryx '{tool_label(tool)}' (ToolID {tool.tool_id}) has no effect on the data, so no node was "
         f"imported for it and {fate}; the connection from ToolID {connection.origin_tool_id} "
         f"('{connection.origin_anchor}') into its '{connection.dest_anchor}' anchor was not carried over."
+    )
+
+
+def unread_input_message(tool: AlteryxTool, connection: AlteryxConnection, *, read: bool) -> str:
+    """Why a stream on an anchor the mapper suppressed was not read.
+
+    ``read`` says whether the mapper took anything off this anchor at all. One that did not — a
+    rename whose names come from a formula, from the first row, or from a prefix — suppresses the
+    anchor without reading it, and calling this wire a further stream on an anchor one stream was
+    read from would be false twice over.
+    """
+    if read:
+        return (
+            f"The Alteryx '{tool_label(tool)}' (ToolID {tool.tool_id}) read its '{connection.dest_anchor}' anchor "
+            f"at import time and takes one stream from it; the connection from ToolID {connection.origin_tool_id} "
+            f"('{connection.origin_anchor}') is a further stream on that anchor and was not read."
+        )
+    return (
+        f"The Alteryx '{tool_label(tool)}' (ToolID {tool.tool_id}) does not read its "
+        f"'{connection.dest_anchor}' anchor in this configuration, so no stream was taken from it; the "
+        f"connection from ToolID {connection.origin_tool_id} ('{connection.origin_anchor}') into that "
+        "anchor was not carried over."
+    )
+
+
+def full_input_message(tool: AlteryxTool, connection: AlteryxConnection, node_type: str, sources: list[int]) -> str:
+    """Why a wire was dropped: the Flowfile node it targets has no input port left for it.
+
+    Alteryx unions every wire arriving on one input anchor. Emitting a union here would change the
+    data in a way the workflow never asked for, so the wire is dropped and both ends are told.
+    """
+    taken = ", ".join(f"ToolID {source}" for source in sources) or "none"
+    return (
+        f"The Flowfile '{node_type}' node for ToolID {connection.dest_tool_id} "
+        f"('{tool_label(tool)}') takes {_NODE_TEMPLATES[node_type].input} input(s) and already has its input "
+        f"from {taken}; the connection from ToolID {connection.origin_tool_id} ('{connection.origin_anchor}') "
+        f"into its '{connection.dest_anchor}' anchor was not wired. Alteryx unions the streams arriving on one "
+        "anchor — add a Union node upstream and wire that in if that is what this workflow meant."
     )
 
 
@@ -949,8 +1063,11 @@ def _address_carries_credentials(url: str) -> bool:
     Deliberately not ``_looks_like_connection``: every address here has a scheme or is a path,
     so that test would refuse the documentation links this tool mostly points at. Only userinfo,
     a password key-value or query parameters (where tokens travel) are treated as secrets.
-    ``_redact_secrets`` applies it to any ``<URL>`` it dumps, so a wired Explorer Box — which
-    becomes a placeholder rather than a comment — does not copy in what the comment refused.
+    ``_redact_secrets`` applies it to the ``<URL>`` of an Explorer Box and of nothing else, so a
+    wired one — which becomes a placeholder rather than a comment — does not copy into its
+    configuration dump what the comment refused. Every other tool's ``<URL>`` is configuration a
+    reader needs to rebuild the node, and is screened by name and by connection string like the
+    rest of its settings.
     """
     return bool(_carries_credentials(url) or _USER_PASSWORD_RE.search(url) or _QUERY_PARAMETER_RE.search(url))
 
@@ -1035,7 +1152,12 @@ def _column_values(raw: list[str | None], declared: str | None) -> tuple[str, li
     return "String", [value for value in raw]
 
 
-def map_text_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+def _text_input_columns(tool: AlteryxTool) -> tuple[list[str], list[str], list[list], list[str]]:
+    """A Text Input as Flowfile builds it: column names, types, values, and which types were inferred.
+
+    One authority, because a mapper that types the column and a consumer that asks what type it has
+    must not answer differently.
+    """
     config = _config(tool)
     fields = config.findall("Fields/Field")
     names = [field_element.get("name") or f"column_{index}" for index, field_element in enumerate(fields)]
@@ -1043,20 +1165,23 @@ def map_text_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     rows: list[list[str | None]] = []
     for row_element in config.findall("Data/r"):
         cells = [cell.text for cell in row_element.findall("c")]
-        cells = cells[: len(names)] + [None] * max(0, len(names) - len(cells))
-        rows.append(cells)
+        rows.append(cells[: len(names)] + [None] * max(0, len(names) - len(cells)))
 
-    columns: list[input_schema.MinimalFieldInfo] = []
+    types: list[str] = []
     data: list[list] = []
     inferred: list[str] = []
     for index, name in enumerate(names):
-        raw = [row[index] for row in rows]
-        data_type, values = _column_values(raw, declared[index])
+        data_type, values = _column_values([row[index] for row in rows], declared[index])
         if declared[index] is None and data_type != "String":
             inferred.append(name)
-        columns.append(input_schema.MinimalFieldInfo(name=name, data_type=data_type))
+        types.append(data_type)
         data.append(values)
+    return names, types, data, inferred
 
+
+def map_text_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    names, types, data, inferred = _text_input_columns(tool)
+    columns = [input_schema.MinimalFieldInfo(name=name, data_type=types[index]) for index, name in enumerate(names)]
     settings = input_schema.NodeManualInput(
         flow_id=ctx.flow_id,
         node_id=ctx.new_node_id(),
@@ -1342,6 +1467,129 @@ def map_formula(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _emit_formula_chain(tool, ctx, assignments)
 
 
+# Alteryx date tokens onto strftime. A whole run of letters has to be exactly one of these, so the
+# order carries no meaning and a mapping is the honest shape. Only the padded forms are here: an
+# unpadded `d`, `M` or `H` and the two-digit `yy` fall through to the refusal below, `yy` because
+# its century is a guess and the rest because chrono has no code for them.
+_DATETIME_TOKENS: dict[str, str] = {
+    "Month": "%B",
+    "yyyy": "%Y",
+    "Mon": "%b",
+    "day": "%A",
+    "dy": "%a",
+    "MM": "%m",
+    "dd": "%d",
+    "HH": "%H",
+    "hh": "%I",
+    "mm": "%M",
+    "ss": "%S",
+    "tt": "%p",
+}
+# strftime codes that place the value on a calendar; a parse with none of them has only a time.
+_DATETIME_DATE_CODES = frozenset("YymdbBaAj")
+DATETIME_LANGUAGE = "English"
+
+
+def _datetime_strftime(alteryx_format: str) -> tuple[str, str | None]:
+    """Alteryx's date-format tokens as a strftime string, or why one of them was not converted.
+
+    A whole run of letters has to be exactly one token. Alteryx's token list is longer than the part
+    verified here, so stitching two together — reading `Monday` as `Mon` + `day`, or `dddd` as `dd`
+    twice — would silently format the wrong thing. Whether Designer accepts a separator-free run of
+    several real tokens is unverified and no corpus workflow writes one, so `yyyyMMdd` is refused
+    with the rest rather than converted on a guess.
+    """
+    if not alteryx_format.strip():
+        return "", "the format is empty"
+    rendered: list[str] = []
+    index = 0
+    while index < len(alteryx_format):
+        character = alteryx_format[index]
+        if character.isascii() and character.isalpha():
+            end = index
+            while end < len(alteryx_format) and alteryx_format[end].isascii() and alteryx_format[end].isalpha():
+                end += 1
+            run = alteryx_format[index:end]
+            code = _DATETIME_TOKENS.get(run)
+            if code is None:
+                return "", f"'{run}' is not a date token Flowfile converts"
+            rendered.append(code)
+            index = end
+            continue
+        rendered.append("%%" if character == "%" else character)
+        index += 1
+    result = "".join(rendered)
+    if "%" not in result.replace("%%", ""):
+        return "", "it names no date or time part at all"
+    return result, None
+
+
+def map_date_time(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Alteryx's Date Time tool parses a string into a date or formats a date into a string.
+
+    ``IsFrom`` is the whole mode: true converts the field *to* a string in the given format, false
+    converts *from* one. The tool's "Custom" radio button is a label on the format box, not a third
+    mode — the token string is in ``<Format>`` either way. Both directions become the Alteryx
+    formula the translator already knows, so the format string is validated once, by the same
+    whitelist every ``DateTimeParse`` in a Formula tool goes through.
+    """
+    config = _config(tool)
+    language = _text(config, "Language") or DATETIME_LANGUAGE
+    if language != DATETIME_LANGUAGE:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [f"This Alteryx Date Time tool reads or writes {language} month and day names, which Flowfile cannot."],
+            reason="option_unsupported",
+        )
+    source = _text(config, "InputFieldName")
+    target = _text(config, "OutputFieldName")
+    if not source or not target:
+        missing = "input" if not source else "output"
+        return _placeholder_row(
+            tool, ctx, [f"This Alteryx Date Time tool names no {missing} field."], reason="option_unsupported"
+        )
+    to_string = _flag(config, "IsFrom")
+    if to_string is None:
+        return _placeholder_row(
+            tool,
+            ctx,
+            ["This Alteryx Date Time tool does not say whether it reads a string or writes one."],
+            reason="option_unsupported",
+        )
+    alteryx_format = _raw_text(config, "Format").strip()
+    strftime, refusal = _datetime_strftime(alteryx_format)
+    if refusal is not None:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [f"The Alteryx date format '{_one_line(alteryx_format)}' was not converted because {refusal}."],
+            reason="option_unsupported",
+        )
+
+    function = "DateTimeFormat" if to_string else "DateTimeParse"
+    expression = f'{function}([{source}], "{strftime}")'
+    row = _emit_formula_chain(tool, ctx, [_Assignment(target=target, expression=expression)])
+    if row.status != "converted":
+        return row
+    if to_string:
+        # Measured on the corpus: every one of these reads a Text Input column, which Alteryx stores
+        # as text and Flowfile therefore types as String, and the generated `format_date` raises on it.
+        row.status, row.reason = "partial", "option_unsupported"
+        row.messages.append(
+            f"Alteryx keeps a date as text and formats it from there; Flowfile's formula needs a real Date "
+            f"or Datetime column, so '{_one_line(source)}' has to be one by the time this node runs — parse "
+            "it first (a Date Time tool the other way round, or a Select that changes the type) if it is text."
+        )
+    elif not set(strftime.replace("%%", "")) & _DATETIME_DATE_CODES:
+        row.status, row.reason = "partial", "option_unsupported"
+        row.messages.append(
+            f"Alteryx reads '{_one_line(alteryx_format)}' into a Time; Flowfile has no Time column, so "
+            f"'{_one_line(target)}' becomes a Datetime holding that time on 0001-01-01."
+        )
+    return row
+
+
 def _link(ctx: EmitContext, from_id: int, to_id: int, handle: str = PASS_HANDLE) -> None:
     """Connect two emitted nodes directly (used for 1:N expansions)."""
     nodes = {node.id: node for node in ctx.nodes}
@@ -1385,8 +1633,21 @@ def _selection_settings(names: list[str], selected: list[str], unknown_selected:
     return {"selection_mode": "list", "selected_columns": selected}
 
 
-def _register_rename_anchors(ctx: EmitContext, tool_id: int, first_id: int, last_id: int | None = None) -> None:
-    """Wire only the data anchor; the field-name anchor is resolved at import time, not wired."""
+def _register_rename_anchors(
+    ctx: EmitContext,
+    tool_id: int,
+    first_id: int,
+    last_id: int | None = None,
+    *,
+    read: AlteryxConnection | None = None,
+) -> None:
+    """Wire only the data anchor; the field-name anchor is resolved at import time, not wired.
+
+    Suppression is per anchor, because an anchor is what carries an edge, but *read* is the one
+    wire the mapper really took its names from. Every other wire onto a suppressed anchor is a
+    stream the imported flow does not have, and wiring reports each of them rather than letting
+    them disappear into the first.
+    """
     ctx.register_input(tool_id, DEFAULT_INPUT_ANCHOR, first_id, MAIN)
     unwired: list[str] = []
     for connection in ctx.inbound.get(tool_id, []):
@@ -1395,6 +1656,7 @@ def _register_rename_anchors(ctx: EmitContext, tool_id: int, first_id: int, last
         else:
             unwired.append(connection.dest_anchor)
     ctx.suppress_input(tool_id, tuple(unwired))
+    ctx.mark_resolved(read)
     ctx.register_all_outputs(tool_id, first_id if last_id is None else last_id)
 
 
@@ -1433,7 +1695,12 @@ def _emit_dynamic_rename(
 
 
 def _static_rename_to_select(
-    tool: AlteryxTool, ctx: EmitContext, targets: list[str], new_names: list[str], origin: str
+    tool: AlteryxTool,
+    ctx: EmitContext,
+    targets: list[str],
+    new_names: list[str],
+    origin: str,
+    read: AlteryxConnection,
 ) -> ToolReportRow:
     """Turn a rename whose new names are already known at import time into a plain select."""
     pairs = list(zip(targets, new_names, strict=False))
@@ -1448,7 +1715,7 @@ def _static_rename_to_select(
         flow_id=ctx.flow_id, node_id=ctx.new_node_id(), keep_missing=True, select_input=select_input
     )
     node_id = ctx.add_node(tool, "select", settings, description=_description(tool))
-    _register_rename_anchors(ctx, tool.tool_id, node_id)
+    _register_rename_anchors(ctx, tool.tool_id, node_id, read=read)
     rename_map = {old: new for old, new in pairs if new}
     ctx.tool_columns[tool.tool_id] = [rename_map.get(name, name) for name in targets]
     messages = [
@@ -1488,9 +1755,8 @@ def _rename_from_right_input(
                 ],
                 reason="mapper_refused",
             )
-        return _static_rename_to_select(
-            tool, ctx, targets, new_names, f"the columns of '{tool_label(source)}' (ToolID {source.tool_id})"
-        )
+        origin = f"the columns of '{tool_label(source)}' (ToolID {source.tool_id})"
+        return _static_rename_to_select(tool, ctx, targets, new_names, origin, connection)
 
     names_from_rows = config.find("NamesFromRows")
     input_mode = _text(names_from_rows, "InputMode") if names_from_rows is not None else ""
@@ -1515,7 +1781,7 @@ def _rename_from_right_input(
             reason="mapper_refused",
         )
     return _static_rename_to_select(
-        tool, ctx, targets, new_names, f"the rows of '{tool_label(source)}' (ToolID {source.tool_id})"
+        tool, ctx, targets, new_names, f"the rows of '{tool_label(source)}' (ToolID {source.tool_id})", connection
     )
 
 
@@ -1864,9 +2130,8 @@ def _regex_output_names(config: ET.Element, method: str, column: str) -> tuple[l
         return names, None
     if _is_true(_attribute(config, "ParseSimple/SplitToRows", "value")):
         return [], "Alteryx RegEx 'split to rows' parsing has no verified Polars translation"
-    try:
-        count = int(float(_attribute(config, "ParseSimple/NumFields", "value") or "0"))
-    except ValueError:
+    count = _whole_number(_attribute(config, "ParseSimple/NumFields", "value") or "0")
+    if count is None:
         return [], "the Alteryx RegEx output field count could not be read"
     if count < 1:
         return [], "the Alteryx RegEx tool parses into no output fields"
@@ -2038,20 +2303,205 @@ def map_sort(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, "converted", [node_id], "sort", [], reason="converted")
 
 
-def map_summarize(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
-    config = _config(tool)
-    agg_cols: list[transform_schema.AggColl] = []
+STRING_TYPE = "String"
+# The file format whose Flowfile read takes each column's type from the file rather than inferring
+# it, and which Alteryx itself read to fill the cache being quoted back. A CSV or an Excel sheet is
+# read by inference, so a cached `String` on one records what Alteryx's own run produced, not a type
+# Flowfile will produce. Arrow/IPC and Avro state their types too, but no corpus or fixture workflow
+# reads one, so they are left out rather than trusted on the reasoning alone.
+_TYPED_READ_EXTENSIONS = frozenset({"parquet"})
+
+
+def _reads_typed_file(tool: AlteryxTool) -> bool:
+    """Whether the tool's ``<File>`` names a file format that states its own column types.
+
+    A connection string or URL is refused even when its tail looks like a file name, because the
+    importer has already labelled that same tool `connection_string` — a value the emitter calls a
+    connection cannot also be a file whose types are settled.
+
+    A ``.yxdb`` is refused too, although ``flowfile convert yxdb`` hands every Alteryx string type
+    back as a Polars ``String``. The cache being read is Alteryx's record of reading the ``.yxdb``,
+    while the node Flowfile emits reads the *Parquet sibling* beside it — a different file, which
+    ``_map_yxdb_input`` already says it cannot prove exists, and which nothing here can prove came
+    from that command rather than from a differently typed Parquet at the same path. There is no
+    sibling check to ask: ``convert_yxmd`` is handed uploaded bytes and never the directory the
+    workflow lives in, so the only honest answer about a file this process cannot see is unknown.
+    """
+    path, _table = _file_element_path(_config(tool))
+    if not path or _carries_credentials(path) or _looks_like_connection(path):
+        return False
+    _directory, filename = _split_path(path)
+    return _extension(filename) in _TYPED_READ_EXTENSIONS
+
+
+def _declared_column_types(tool: AlteryxTool | None) -> dict[str, str]:
+    """The Flowfile type of each column a tool emits, as far as the tool's own XML settles it.
+
+    Read from the tool's configuration rather than from what its mapper published, because mapping
+    runs in document order and a source is often reached after the tool consuming it.
+
+    Only the columns whose type the XML really settles are in the answer; an absent column means
+    unknown, which the caller says rather than guesses at.
+
+    Alteryx's cached ``<RecordInfo>`` is *Alteryx's* type, not Flowfile's, so it is not an answer.
+    It rides on tools Flowfile turned into placeholders, and on a Text Input it says ``V_String``
+    for the column ``_text_input_columns`` reads back as ``Int64``. Two tools do state a type
+    Flowfile will really produce: a Text Input, which the mapper types from this same helper and
+    which answers for every column it has; and an Input Data tool reading the one file format that
+    both carries its own types and is the file Alteryx cached (``_reads_typed_file``), which answers
+    **only for its string columns** — all four Alteryx string types reach Polars as ``String``, while
+    a cached numeric name says nothing about the width Polars will give it.
+
+    A Text Input column name entered twice answers for neither: ``dict(zip(...))`` let the second
+    one own the type, which is a guess about which column a consumer meant. The flow cannot be built
+    either way — ``manual_input`` raises ``DuplicateError`` on the repeated name — so there is no
+    right answer to pick, only a quieter wrong one.
+    """
+    if tool is None:
+        return {}
+    if tool.tool_name == "TextInput":
+        names, types, _, _ = _text_input_columns(tool)
+        occurrences = Counter(names)
+        return {name: data_type for name, data_type in zip(names, types, strict=True) if occurrences[name] == 1}
+    if tool.tool_name == "DbFileInput" and _reads_typed_file(tool):
+        return {
+            name: STRING_TYPE
+            for name, alteryx_type in tool.output_field_types.items()
+            if _map_alteryx_type(alteryx_type) == STRING_TYPE
+        }
+    return {}
+
+
+def _default_anchor_wires(ctx: EmitContext, tool_id: int) -> list[AlteryxConnection]:
+    """Every wire arriving on the tool's default input anchor, in document order."""
+    return [connection for connection in ctx.inbound.get(tool_id, []) if connection.dest_anchor == DEFAULT_INPUT_ANCHOR]
+
+
+def _input_column_type(ctx: EmitContext, tool_id: int, column: str) -> str | None:
+    """The Flowfile type of one column arriving on the default anchor; ``None`` means unknown.
+
+    One hop, deliberately: the hop lands on a source that types itself or on a tool that does not,
+    and a chain of converted tools in between would still end on one of those two answers.
+
+    A second wire on the anchor makes the answer unknown rather than the first wire's. Alteryx
+    unions the streams arriving on one anchor, so a column's type there is settled by all of them or
+    by none; ``source_connection`` hands back whichever document order reaches first, which is a
+    statement about the file's line numbering and not about the frame this node will be given.
+    """
+    wires = _default_anchor_wires(ctx, tool_id)
+    if len(wires) != 1:
+        return None
+    key = ctx.resolve_output(wires[0].origin_tool_id, wires[0].origin_anchor)
+    if key is None:
+        return None
+    return _declared_column_types(ctx.tools.get(key[0])).get(column)
+
+
+# Alteryx actions with no `pl.<name>`, as the expression a generated group_by uses instead.
+# `{c}` is the quoted column name. Longest and Shortest sort nulls last in both directions so a
+# missing value never wins either end: a null is not a string of length zero. Blank is null or the
+# empty string, the rule `expression.py`'s IsEmpty emits, so a string of spaces is not blank.
+_SUMMARIZE_GENERATED: dict[str, str] = {
+    "mode": "pl.col({c}).mode().sort().first()",
+    "longest": "pl.col({c}).sort_by(pl.col({c}).str.len_chars(), descending=True, nulls_last=True).first()",
+    "shortest": "pl.col({c}).sort_by(pl.col({c}).str.len_chars(), nulls_last=True).first()",
+    "countnonblank": '(pl.col({c}).is_not_null() & (pl.col({c}) != "")).sum()',
+    "countblank": '(pl.col({c}).is_null() | (pl.col({c}) == "")).sum()',
+}
+SUMMARIZE_MODE_ACTION = "mode"
+SUMMARIZE_MODE_MESSAGE = (
+    "Alteryx's Mode picks one value when several are equally common and its rule for that is not "
+    "verified; the generated code takes the lowest of them, so the result is at least the same on "
+    "every run."
+)
+SUMMARIZE_GROUP_BY = "groupby"
+# First and Last name a value by its position, so both read an arrival order the tool never states.
+_SUMMARIZE_ORDER_ACTIONS = frozenset({"first", "last"})
+SUMMARIZE_ORDER_MESSAGE = (
+    "Alteryx's First and Last pick a value by the order the rows arrive in, which this workflow does "
+    "not state; sort the rows upstream if the order matters."
+)
+# The generated actions that read a column's characters, as Alteryx spells them in its own dialog.
+SUMMARIZE_STRING_ACTIONS: dict[str, str] = {
+    "longest": "Longest",
+    "shortest": "Shortest",
+    "countnonblank": "Count Non Blank",
+    "countblank": "Count Blank",
+}
+SUMMARIZE_STRING_TYPE_MESSAGE = (
+    "These Alteryx Summarize aggregations read the characters of a column Flowfile does not know to be a String: "
+)
+SUMMARIZE_STRING_TYPE_ADVICE = (
+    ". The column has to be a String by the time this node runs, or the flow fails when it is read "
+    "— give it that type upstream (a Select that changes it) if Alteryx stored it as text."
+)
+SUMMARIZE_MULTI_SOURCE_MESSAGE = (
+    "More than one stream arrives on this Summarize's '{anchor}' anchor, from {origins}. Alteryx "
+    "unions them, so no single one of them settles what type a column has here — which is why the "
+    "types above read 'unknown here'."
+)
+
+
+@dataclass
+class _Summarization:
+    """One ``<SummarizeField>``: the column, the action as Flowfile spells it, and the output name."""
+
+    column: str
+    action: str
+    output: str
+
+
+def _summarize_expression(item: _Summarization) -> str:
+    """The aggregation as generated Polars, matching what ``AggColl.agg_func`` would have built."""
+    quoted = repr(item.column)
+    if item.action in _SUMMARIZE_GENERATED:
+        return _SUMMARIZE_GENERATED[item.action].format(c=quoted)
+    if item.action == "concat":
+        return f"pl.col({quoted}).cast(pl.Utf8).str.concat(delimiter=',')"
+    return f"pl.{item.action}({quoted})"
+
+
+def _summarize_code(tool: AlteryxTool, keys: list[_Summarization], aggregations: list[_Summarization]) -> str:
+    """The whole Summarize as one generated group_by; an empty key list groups the whole frame."""
+    group_exprs = ", ".join(f"pl.col({item.column!r}).alias({item.output!r})" for item in keys)
+    lines = [
+        f"# Alteryx Summarize (ToolID {tool.tool_id}): "
+        + (f"grouped by {_one_line(', '.join(item.column for item in keys))}" if keys else "over every row")
+        + ", with aggregations Flowfile's group-by node cannot name.",
+        *(f"# {line}" for line in _original_config_lines(tool)),
+        f"output_df = input_df.group_by([{group_exprs}]).agg(",
+        *(f"    {_summarize_expression(item)}.alias({item.output!r})," for item in aggregations),
+        ")",
+    ]
+    return "\n".join(lines)
+
+
+def _summarizations(config: ET.Element) -> tuple[list[_Summarization], list[str]]:
+    """Every ``<SummarizeField>`` as a ``_Summarization``, plus the actions Flowfile does not know."""
+    items: list[_Summarization] = []
     unmapped: list[str] = []
     for element in config.findall("SummarizeFields/SummarizeField"):
-        name = element.get("field") or ""
-        action = (element.get("action") or "").strip()
-        mapped = _SUMMARIZE_ACTIONS.get(action.lower())
-        if not name:
+        column = element.get("field") or ""
+        raw = (element.get("action") or "").strip()
+        if not column:
             continue
-        if mapped is None:
-            unmapped.append(f"{action or '(empty)'} on {name}")
+        action = _SUMMARIZE_ACTIONS.get(raw.lower()) or (raw.lower() if raw.lower() in _SUMMARIZE_GENERATED else None)
+        if action is None:
+            unmapped.append(f"{raw or '(empty)'} on {column}")
             continue
-        agg_cols.append(transform_schema.AggColl(name, mapped, element.get("rename") or None))
+        items.append(_Summarization(column, action, element.get("rename") or None or f"{raw}_{column}"))
+    return items, unmapped
+
+
+def map_summarize(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Alteryx's Summarize is a group-by; five of its actions have no name in Flowfile's node.
+
+    Mode, Longest, Shortest, Count Non Blank and Count Blank are ordinary Polars expressions but not
+    ones ``AggColl`` can name, so a tool using any of them becomes a single generated group_by with
+    *all* of its aggregations in it — splitting the tool in two would change what is grouped.
+    """
+    config = _config(tool)
+    items, unmapped = _summarizations(config)
     if unmapped:
         return _placeholder_row(
             tool,
@@ -2059,53 +2509,428 @@ def map_summarize(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             ["Unsupported Alteryx Summarize actions: " + ", ".join(unmapped)],
             reason="option_unsupported",
         )
-    if not agg_cols:
+    keys = [item for item in items if item.action == SUMMARIZE_GROUP_BY]
+    aggregations = [item for item in items if item.action != SUMMARIZE_GROUP_BY]
+    if not items:
         return _placeholder_row(
             tool, ctx, ["The Alteryx Summarize tool has no aggregations configured."], reason="mapper_refused"
         )
 
-    settings = input_schema.NodeGroupBy(
+    generated = [item for item in aggregations if item.action in _SUMMARIZE_GENERATED]
+    order_dependent = any(item.action in _SUMMARIZE_ORDER_ACTIONS for item in aggregations)
+    order_messages = (
+        [SUMMARIZE_ORDER_MESSAGE] if order_dependent and not _feeds_in_stated_order(ctx, tool.tool_id) else []
+    )
+    if not generated:
+        settings = input_schema.NodeGroupBy(
+            flow_id=ctx.flow_id,
+            node_id=ctx.new_node_id(),
+            groupby_input=transform_schema.GroupByInput(
+                agg_cols=[transform_schema.AggColl(item.column, item.action, item.output) for item in items]
+            ),
+        )
+        node_id = ctx.add_node(tool, "group_by", settings, description=_description(tool))
+        ctx.register_all_outputs(tool.tool_id, node_id)
+        ctx.register_all_inputs(tool.tool_id, node_id)
+        ctx.tool_columns[tool.tool_id] = [item.output for item in items]
+        if order_messages:
+            return _row(tool, "partial", [node_id], "group_by", order_messages, reason="row_order_unknown")
+        return _row(tool, "converted", [node_id], "group_by", [], reason="converted")
+
+    refusal = _backslash_refusal(
+        {
+            "a Summarize field": [item.column for item in items],
+            "a Summarize output name": [item.output for item in items],
+        }
+    )
+    if refusal is not None:
+        return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
+
+    settings = input_schema.NodePolarsCode(
         flow_id=ctx.flow_id,
         node_id=ctx.new_node_id(),
-        groupby_input=transform_schema.GroupByInput(agg_cols=agg_cols),
+        polars_code_input=transform_schema.PolarsCodeInput(polars_code=_summarize_code(tool, keys, aggregations)),
     )
-    node_id = ctx.add_node(tool, "group_by", settings, description=_description(tool))
+    node_id = ctx.add_node(tool, "polars_code", settings, description=_description(tool))
     ctx.register_all_outputs(tool.tool_id, node_id)
     ctx.register_all_inputs(tool.tool_id, node_id)
-    ctx.tool_columns[tool.tool_id] = [agg.new_name for agg in agg_cols]
-    return _row(tool, "converted", [node_id], "group_by", [], reason="converted")
+    ctx.tool_columns[tool.tool_id] = [item.output for item in [*keys, *aggregations]]
+
+    messages = [SUMMARIZE_MODE_MESSAGE] if any(item.action == SUMMARIZE_MODE_ACTION for item in generated) else []
+    messages += order_messages
+    untyped = []
+    for item in generated:
+        if item.action not in SUMMARIZE_STRING_ACTIONS:
+            continue
+        found = _input_column_type(ctx, tool.tool_id, item.column)
+        if found != "String":
+            untyped.append(
+                f"{SUMMARIZE_STRING_ACTIONS[item.action]} on '{_one_line(item.column)}' ({found or 'unknown here'})"
+            )
+    if untyped:
+        messages.append(SUMMARIZE_STRING_TYPE_MESSAGE + ", ".join(untyped) + SUMMARIZE_STRING_TYPE_ADVICE)
+        wires = _default_anchor_wires(ctx, tool.tool_id)
+        if len(wires) > 1:
+            messages.append(
+                SUMMARIZE_MULTI_SOURCE_MESSAGE.format(
+                    anchor=DEFAULT_INPUT_ANCHOR,
+                    origins=", ".join(f"ToolID {wire.origin_tool_id} ('{wire.origin_anchor}')" for wire in wires),
+                )
+            )
+    if messages:
+        # An order-dependent answer is silently wrong where a type error is loud, so it names the row.
+        reason = "row_order_unknown" if order_messages else "option_unsupported"
+        return _row(tool, "partial", [node_id], "polars_code", messages, reason=reason)
+    return _row(tool, "converted", [node_id], "polars_code", [], reason="converted")
+
+
+SAMPLE_ORDER_MESSAGE = (
+    "Which rows this keeps depends on the order they arrive in, which this workflow does not state; "
+    "sort the rows upstream if the order matters."
+)
+# `Sample.yxmd`'s comment box at tool 96, beside the grouped Sample at tool 99, states both halves.
+SAMPLE_GROUP_SORT_MESSAGE = (
+    "Alteryx's classic engine also sorts a grouped Sample's output by the grouping column, which this "
+    "node does not; the rows keep the order they arrived in, as they do under Alteryx's AMP engine, so "
+    "sort on the grouping column downstream if that order matters."
+)
+# Alteryx Sample modes that pick a fixed slice, as (whole-frame method, per-group row predicate).
+# The group form is a filter on the row's position inside its group, because polars has no
+# "first N of each group" verb that keeps the frame lazy.
+# First has no whole-frame form: an ungrouped First is the native sample node, never generated code.
+_SAMPLE_MODES: dict[str, tuple[str | None, str]] = {
+    "first": (None, "_position < {n}"),
+    "last": ("input_df.tail({n})", "_position >= _size - {n}"),
+    "skip": ("input_df.slice({n})", "_position >= {n}"),
+    "sample": ("input_df.gather_every({n})", "_position % {n} == 0"),
+}
+# Held until decision 3 rules what they mean: `Random` is a per-row 1-in-N draw rather than a
+# fixed-size sample, and `NPercent` is Alteryx's "first N%", a deterministic head — so neither is
+# the `NodeSample` random branch the plan assumed.
+_SAMPLE_BLOCKED_MODES = {
+    "random": "a 1-in-N chance per row rather than a sample of a fixed size",
+    "npercent": "the first N% of the rows rather than a random share of them",
+}
+
+
+def _sample_code(tool: AlteryxTool, mode: str, size: int, groups: list[str]) -> str:
+    """The Alteryx slice as generated code; grouped forms filter on the row's place in its group."""
+    whole, predicate = _SAMPLE_MODES[mode]
+    header = (
+        f"# Alteryx Sample (ToolID {tool.tool_id}): mode '{mode}', N={size}"
+        + (f", restarting for each {_one_line(', '.join(groups))}" if groups else "")
+        + "."
+    )
+    lines = [header, *(f"# {line}" for line in _original_config_lines(tool))]
+    if not groups:
+        lines.append(f"output_df = {whole.format(n=size)}")
+        return "\n".join(lines)
+    lines.append(f"_position = pl.int_range(pl.len()).over({groups!r})")
+    if "_size" in predicate:
+        lines.append(f"_size = pl.len().over({groups!r})")
+    lines.append(f"output_df = input_df.filter({predicate.format(n=size)})")
+    return "\n".join(lines)
 
 
 def map_sample(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Alteryx's Sample keeps a slice of the rows, optionally restarting for each group.
+
+    Every mode in the table picks rows by position, so every one of them depends on the order the
+    rows arrive in — including the plain "first N" this mapper used to convert without a caveat.
+    The ungrouped "first N" is the one shape the native sample node already expresses; the rest
+    become generated code rather than a node Flowfile does not have. A mode Alteryx did not write is
+    not "First": defaulting it would keep the wrong rows in silence, so it is refused the way a
+    record count that cannot be read is.
+    """
     config = _config(tool)
-    mode = _text(config, "Mode") or "First"
-    group_fields = config.find("GroupFields")
-    if mode.lower() != "first":
+    raw_mode = _text(config, "Mode")
+    if not raw_mode:
+        return _placeholder_row(tool, ctx, ["The Alteryx Sample mode could not be read."], reason="mapper_refused")
+    mode = _normalise_mode(raw_mode)
+    if mode in _SAMPLE_BLOCKED_MODES:
         return _placeholder_row(
             tool,
             ctx,
-            [f"Alteryx Sample mode '{mode}' has no Flowfile equivalent; only 'First N' is converted."],
+            [
+                f"Alteryx Sample mode '{raw_mode}' is not converted: it keeps "
+                f"{_SAMPLE_BLOCKED_MODES[mode]}, which is not verified against Designer."
+            ],
             reason="option_unsupported",
         )
-    if group_fields is not None and len(list(group_fields)) > 0:
+    if mode not in _SAMPLE_MODES:
         return _placeholder_row(
-            tool, ctx, ["Grouped Alteryx sampling has no Flowfile equivalent."], reason="option_unsupported"
+            tool,
+            ctx,
+            [f"Alteryx Sample mode '{raw_mode}' has no Flowfile equivalent."],
+            reason="option_unsupported",
         )
-    try:
-        size = int(float(_text(config, "N") or "1"))
-    except ValueError:
+    size = _whole_number(_text(config, "N"))
+    if size is None:
         return _placeholder_row(
             tool, ctx, ["The Alteryx Sample record count could not be read."], reason="mapper_refused"
         )
+    if size < 1:
+        return _placeholder_row(
+            tool, ctx, [f"The Alteryx Sample record count {size} is not a positive number."], reason="mapper_refused"
+        )
+    groups = [element.get("name") for element in config.findall("GroupFields/Field") if element.get("name")]
+    refusal = _backslash_refusal({"a Sample group field": groups})
+    if refusal is not None:
+        return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
 
-    settings = input_schema.NodeSample(
-        flow_id=ctx.flow_id, node_id=ctx.new_node_id(), sample_method="first", sample_size=size
-    )
+    if mode == "first" and not groups:
+        settings = input_schema.NodeSample(
+            flow_id=ctx.flow_id, node_id=ctx.new_node_id(), sample_method="first", sample_size=size
+        )
+        node_type = "sample"
+    else:
+        settings = input_schema.NodePolarsCode(
+            flow_id=ctx.flow_id,
+            node_id=ctx.new_node_id(),
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=_sample_code(tool, mode, size, groups)),
+        )
+        node_type = "polars_code"
+    node_id = ctx.add_node(tool, node_type, settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    ctx.tool_columns[tool.tool_id] = ctx.input_columns(tool.tool_id)
+
+    grouped = [SAMPLE_GROUP_SORT_MESSAGE] if groups else []
+    if _feeds_in_stated_order(ctx, tool.tool_id):
+        return _row(tool, "converted", [node_id], node_type, grouped, reason="converted")
+    return _row(tool, "partial", [node_id], node_type, [SAMPLE_ORDER_MESSAGE, *grouped], reason="row_order_unknown")
+
+
+_RANDOM_RECORDS_KEYS = ("Number", "NNumber", "Percent", "NPercent", "Deterministic", "Seed")
+
+
+def _random_records_seed(values: dict[str, str]) -> tuple[int | None, str | None]:
+    """The seed, or why it could not be read. ``None`` is Alteryx's own "different every run".
+
+    A negative seed is refused rather than passed on: Polars seeds a shuffle with an unsigned
+    integer, so it would raise only once the flow was finally executed.
+    """
+    if not _is_true(values.get("Deterministic")):
+        return None, None
+    seed = _whole_number(values.get("Seed") or "")
+    if seed is None:
+        return None, "The Alteryx Random Records tool is set to be deterministic but its seed could not be read."
+    return seed, None
+
+
+def map_random_records(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Maps the Random Records macro (RandomRecords.yxmc) onto the native sample node.
+
+    The macro asks for a count or a percentage, never both, so the two checkboxes are read as the
+    exclusive pair they are and any other combination is refused rather than resolved by
+    precedence. ``NPercent`` is handed over as written: ``fraction`` on the node is a percentage
+    (its validator allows 0 to 100) and the engine is what divides by a hundred.
+
+    Both tools keep the rows in their original order and both return the whole frame when asked
+    for more rows than there are, so there is no order to guess and nothing to caveat.
+    """
+    values = _macro_values(_config(tool))
+    unrecognized = sorted(set(values) - set(_RANDOM_RECORDS_KEYS))
+    if unrecognized:
+        return _placeholder_row(
+            tool,
+            ctx,
+            ["The Random Records configuration has settings Flowfile does not read: " + ", ".join(unrecognized) + "."],
+            reason="option_unsupported",
+        )
+    by_count, by_percent = _is_true(values.get("Number")), _is_true(values.get("Percent"))
+    if by_count == by_percent:
+        chosen = "both a record count and a percentage" if by_count else "neither a record count nor a percentage"
+        return _placeholder_row(
+            tool,
+            ctx,
+            [f"The Alteryx Random Records tool selects {chosen}, so how much to sample cannot be read."],
+            reason="mapper_refused",
+        )
+    seed, refusal = _random_records_seed(values)
+    if refusal is not None:
+        return _placeholder_row(tool, ctx, [refusal], reason="mapper_refused")
+
+    if by_count:
+        size = _whole_number(values.get("NNumber") or "", minimum=1)
+        if size is None:
+            return _placeholder_row(
+                tool, ctx, ["The Alteryx Random Records record count could not be read."], reason="mapper_refused"
+            )
+        settings = input_schema.NodeSample(
+            flow_id=ctx.flow_id,
+            node_id=ctx.new_node_id(),
+            sample_method="random",
+            sample_size=size,
+            seed=seed,
+        )
+    else:
+        try:
+            percent = float(values.get("NPercent") or "")
+        except ValueError:
+            return _placeholder_row(
+                tool, ctx, ["The Alteryx Random Records percentage could not be read."], reason="mapper_refused"
+            )
+        if not 0 < percent <= 100:
+            return _placeholder_row(
+                tool,
+                ctx,
+                [f"The Alteryx Random Records percentage {percent:g} is not between 0 and 100."],
+                reason="mapper_refused",
+            )
+        settings = input_schema.NodeSample(
+            flow_id=ctx.flow_id,
+            node_id=ctx.new_node_id(),
+            sample_method="random_fraction",
+            fraction=percent,
+            seed=seed,
+        )
+
     node_id = ctx.add_node(tool, "sample", settings, description=_description(tool))
     ctx.register_all_outputs(tool.tool_id, node_id)
     ctx.register_all_inputs(tool.tool_id, node_id)
     ctx.tool_columns[tool.tool_id] = ctx.input_columns(tool.tool_id)
-    return _row(tool, "converted", [node_id], "sample", [], reason="converted")
+    messages = (
+        []
+        if seed is not None
+        else ["This Alteryx Random Records tool is not deterministic, so it draws different rows on every run."]
+    )
+    return _row(tool, "converted", [node_id], "sample", messages, reason="converted")
+
+
+RANK_COLUMN = "Rank"
+# Alteryx's ranking modes onto polars' `rank` methods, with whether the arrival order decides them.
+_RANK_METHODS: dict[str, tuple[str, bool]] = {
+    "dense": ("dense", False),
+    "fractional": ("average", False),
+    "ordinal": ("ordinal", True),
+}
+# Held until Edward's decision 3 rules their tie shape; see `map_rank`.
+_RANK_BLOCKED_MODES = frozenset({"standard", "competition"})
+RANK_ORDER_MESSAGE = (
+    "Alteryx's Ordinal rank breaks ties by the order the rows arrive in, which this workflow does not "
+    "state; sort the rows upstream if the order matters."
+)
+RANK_COLLISION_UNKNOWN_MESSAGE = (
+    "The columns reaching this tool are not known at import time, so whether one of them is already called "
+    f"'{RANK_COLUMN}' could not be checked; if one is, this node replaces it."
+)
+
+
+def _rank_code(tool: AlteryxTool, field: str, method: str, descending: bool, groups: list[str], column: str) -> str:
+    """The rank as a new column, with the rows left exactly where they were."""
+    over = f".over({groups!r})" if groups else ""
+    return "\n".join(
+        [
+            f"# Alteryx Rank (ToolID {tool.tool_id}): {_one_line(field)}, "
+            f"{'descending' if descending else 'ascending'}"
+            + (f", within each {_one_line(', '.join(groups))}" if groups else "")
+            + ".",
+            *(f"# {line}" for line in _original_config_lines(tool)),
+            "output_df = input_df.with_columns(",
+            f"    pl.col({field!r}).rank(method={method!r}, descending={descending}){over}.alias({column!r})",
+            ")",
+        ]
+    )
+
+
+def map_rank(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Alteryx's Rank numbers the rows by one field, optionally restarting for each group.
+
+    Not `window_functions`: that node has no descending flag, and half of Alteryx's rank is the
+    direction. The rank is added as a column and nothing is reordered, which is why the message
+    names the column — a workflow that wants the rows in rank order has to sort on it.
+
+    A null in the ranked field is not a value, so polars leaves its rank null rather than ranking it
+    last (measured on polars 1.43.2); the message says so, because SQL users expect the opposite.
+
+    Standard and Competition are blocked, and not because the two agree. `02 Preparation/Rank.yxmd`'s
+    own comment boxes call Standard "Equal items share the lowest possible rank" (1,2,2,4) and
+    Modified Competition "The next item receives the following rank, regardless of the number of
+    ties" (1,3,3,4) — two different answers, one polars argument apart. Which polars method each one
+    is remains Edward's call under decision 3; until it is ruled, guessing is a silent data change.
+    """
+    config = _config(tool)
+    modes = [element.get("value") or "" for element in config.findall("RankingModes/Mode")]
+    if len(modes) != 1:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [f"This Alteryx Rank tool names {len(modes)} ranking modes; Flowfile can express exactly one."],
+            reason="option_unsupported",
+        )
+    mode = _normalise_mode(modes[0])
+    if mode in _RANK_BLOCKED_MODES:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [
+                f"Alteryx ranking mode '{modes[0]}' is not converted: how it numbers ties is not verified "
+                "against Designer, and guessing between 1,2,2,4 and 1,3,3,4 would be a silent data change."
+            ],
+            reason="option_unsupported",
+        )
+    if mode not in _RANK_METHODS:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [f"Alteryx ranking mode '{modes[0] or '(empty)'}' has no Flowfile equivalent."],
+            reason="option_unsupported",
+        )
+    method, order_dependent = _RANK_METHODS[mode]
+
+    fields = config.findall("SortInfo/Field")
+    if len(fields) != 1:
+        reason = "names no field to rank by" if not fields else f"ranks by {len(fields)} fields at once"
+        return _placeholder_row(
+            tool,
+            ctx,
+            [f"This Alteryx Rank tool {reason}, which Flowfile's rank cannot express."],
+            reason="mapper_refused" if not fields else "option_unsupported",
+        )
+    field = fields[0].get("field") or ""
+    if not field:
+        return _placeholder_row(
+            tool, ctx, ["This Alteryx Rank tool names no field to rank by."], reason="mapper_refused"
+        )
+    descending = (fields[0].get("order") or "").lower().startswith("desc")
+    groups = [element.get("name") for element in config.findall("GroupFields/Field") if element.get("name")]
+    refusal = _backslash_refusal({"the Rank field": field, "a Rank group field": groups})
+    if refusal is not None:
+        return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
+
+    known = ctx.input_columns(tool.tool_id)
+    column = _unique_column(RANK_COLUMN, known)
+    settings = input_schema.NodePolarsCode(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        polars_code_input=transform_schema.PolarsCodeInput(
+            polars_code=_rank_code(tool, field, method, descending, groups, column)
+        ),
+    )
+    node_id = ctx.add_node(tool, "polars_code", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    # `_unique_column` answers with a name `known` does not hold, so the published list cannot repeat it.
+    ctx.tool_columns[tool.tool_id] = [*known, column] if known is not None else None
+
+    taken = (
+        f", because the columns reaching this tool already carry a '{RANK_COLUMN}' that Flowfile does not overwrite,"
+        if column != RANK_COLUMN
+        else ""
+    )
+    messages = [
+        f"The rank is added as a column called '{column}'{taken} and the rows keep the order they arrived in; "
+        f"sort on '{column}' downstream if the rows themselves have to be in rank order.",
+        f"A row whose '{_one_line(field)}' is null gets a null '{column}': Flowfile ranks only the rows that "
+        f"have a value, so a null takes no rank number and is not ranked last.",
+    ]
+    if known is None:
+        messages.append(RANK_COLLISION_UNKNOWN_MESSAGE)
+    if order_dependent and not _feeds_in_stated_order(ctx, tool.tool_id):
+        messages.append(RANK_ORDER_MESSAGE)
+        return _row(tool, "partial", [node_id], "polars_code", messages, reason="row_order_unknown")
+    return _row(tool, "converted", [node_id], "polars_code", messages, reason="converted")
 
 
 def map_unique(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -2756,7 +3581,9 @@ def _emit_file_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             f"The workflow reads from '{_safe_path(path)}'; repoint this node at your own copy of the file."
         )
 
-    headerless = received.table_settings.has_headers is False
+    # Only the text formats have a header row to miss: Parquet, Arrow/IPC, NDJSON and Avro name their
+    # own columns, and their settings object carries no `has_headers` to read at all.
+    headerless = received.file_type in ("csv", "json", "excel") and received.table_settings.has_headers is False
     if headerless and tool.output_fields:
         # Without this rename, references to Alteryx's Field_N names silently miss Polars' column_N.
         rename_id = _emit_positional_header_rename(tool, ctx, tool.output_fields)
@@ -3241,6 +4068,66 @@ def map_record_id(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return _row(tool, "converted", [node_id], node_type, [], reason="converted")
 
 
+TRANSPOSE_UNKNOWN_FIELD = "*Unknown"
+TRANSPOSE_NAME_COLUMN = "Name"
+TRANSPOSE_VALUE_COLUMN = "Value"
+_TRANSPOSE_WARN = "warn"
+_TRANSPOSE_MIXED_TYPES = (
+    "This Alteryx Transpose is set to warn when its data fields do not share one type; Flowfile widens "
+    "them to a common type instead, and fails when there is none."
+)
+
+
+def _transpose_unknown_code(tool: AlteryxTool, keys: list[str], deselected: list[str]) -> str:
+    """Unpivot everything that is neither a key nor explicitly deselected, whatever else arrives.
+
+    Alteryx resolves ``*Unknown`` against the schema at run time, so the column set is not a list
+    the importer can write down; a selector that names what to *leave out* says the same thing and
+    keeps working when a column is added upstream.
+    """
+    excluded = [*keys, *(name for name in deselected if name not in keys)]
+    return "\n".join(
+        [
+            f"# Alteryx Transpose (ToolID {tool.tool_id}): every column except "
+            f"{_one_line(', '.join(excluded)) or '(none)'} becomes a "
+            f"{TRANSPOSE_NAME_COLUMN}/{TRANSPOSE_VALUE_COLUMN} pair.",
+            *(f"# {line}" for line in _original_config_lines(tool)),
+            "output_df = input_df.unpivot(",
+            f"    on=cs.exclude({excluded!r}),",
+            f"    index={keys!r},",
+            f"    variable_name={TRANSPOSE_NAME_COLUMN!r},",
+            f"    value_name={TRANSPOSE_VALUE_COLUMN!r},",
+            ")",
+        ]
+    )
+
+
+def _transpose_messages(config: ET.Element) -> list[str]:
+    """Alteryx's data-field type-conflict setting, read and reported but never acted on."""
+    return [_TRANSPOSE_MIXED_TYPES] if _text(config, "ErrorWarn").lower() == _TRANSPOSE_WARN else []
+
+
+def _emit_transpose_unknown(tool: AlteryxTool, ctx: EmitContext, config: ET.Element, keys: list[str]) -> ToolReportRow:
+    deselected = [
+        name
+        for element in config.findall("DataFields/Field")
+        if (name := element.get("field")) and name != TRANSPOSE_UNKNOWN_FIELD and not _is_true(element.get("selected"))
+    ]
+    refusal = _backslash_refusal({"a Transpose key field": keys, "a deselected Transpose data field": deselected})
+    if refusal is not None:
+        return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
+    settings = input_schema.NodePolarsCode(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        polars_code_input=transform_schema.PolarsCodeInput(polars_code=_transpose_unknown_code(tool, keys, deselected)),
+    )
+    node_id = ctx.add_node(tool, "polars_code", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    ctx.tool_columns[tool.tool_id] = [*keys, TRANSPOSE_NAME_COLUMN, TRANSPOSE_VALUE_COLUMN]
+    return _row(tool, "converted", [node_id], "polars_code", _transpose_messages(config), reason="converted")
+
+
 def map_transpose(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     config = _config(tool)
     key_fields = [element.get("field") for element in config.findall("KeyFields/Field") if element.get("field")]
@@ -3253,13 +4140,8 @@ def map_transpose(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         return _placeholder_row(
             tool, ctx, ["The Alteryx Transpose tool selects no data fields."], reason="mapper_refused"
         )
-    if "*Unknown" in selected:
-        return _placeholder_row(
-            tool,
-            ctx,
-            ["The Alteryx Transpose selects '*Unknown' data fields, so the column set is not static."],
-            reason="option_unsupported",
-        )
+    if TRANSPOSE_UNKNOWN_FIELD in selected:
+        return _emit_transpose_unknown(tool, ctx, config, key_fields)
 
     settings = input_schema.NodeUnpivot(
         flow_id=ctx.flow_id,
@@ -3273,16 +4155,16 @@ def map_transpose(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         node_id=ctx.new_node_id(),
         keep_missing=True,
         select_input=[
-            transform_schema.SelectInput(old_name="variable", new_name="Name"),
-            transform_schema.SelectInput(old_name="value", new_name="Value"),
+            transform_schema.SelectInput(old_name="variable", new_name=TRANSPOSE_NAME_COLUMN),
+            transform_schema.SelectInput(old_name="value", new_name=TRANSPOSE_VALUE_COLUMN),
         ],
     )
     rename_id = ctx.add_node(tool, "select", rename, dx=FORMULA_STEP_DX, dy=FORMULA_STEP_DY)
     _link(ctx, unpivot_id, rename_id)
     ctx.register_all_inputs(tool.tool_id, unpivot_id)
     ctx.register_all_outputs(tool.tool_id, rename_id)
-    ctx.tool_columns[tool.tool_id] = [*key_fields, "Name", "Value"]
-    return _row(tool, "converted", [unpivot_id, rename_id], "unpivot", [], reason="converted")
+    ctx.tool_columns[tool.tool_id] = [*key_fields, TRANSPOSE_NAME_COLUMN, TRANSPOSE_VALUE_COLUMN]
+    return _row(tool, "converted", [unpivot_id, rename_id], "unpivot", _transpose_messages(config), reason="converted")
 
 
 CROSS_TAB_SAFE_CHARACTERS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_"
@@ -3641,6 +4523,33 @@ _CLEANSE_CASE_MODE = "Drop Down (81)"
 _CLEANSE_CASE_MODES = {"upper": "uppercase", "lower": "lowercase", "title": "titlecase"}
 
 
+def _emit_cleansing_node(
+    tool: AlteryxTool,
+    ctx: EmitContext,
+    cleansing_input: transform_schema.DataCleansingInput,
+    messages: list[str] | None = None,
+    *,
+    status: ToolStatus = "converted",
+    reason: str = "converted",
+) -> ToolReportRow:
+    """Emit the data_cleansing node, shared by the Cleanse macro and the Data Cleanse Pro tool.
+
+    The two read completely different configurations — widget ids in one, self-describing elements
+    in the other — and agree from here on, so everything downstream of the reading lives once.
+    Removing empty columns changes the schema in a way that depends on the data, which the importer
+    never sees, so the column tracker has to admit it no longer knows what leaves this tool.
+    """
+    settings = input_schema.NodeDataCleansing(
+        flow_id=ctx.flow_id, node_id=ctx.new_node_id(), cleansing_input=cleansing_input
+    )
+    node_id = ctx.add_node(tool, "data_cleansing", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    known = ctx.input_columns(tool.tool_id)
+    ctx.tool_columns[tool.tool_id] = None if cleansing_input.remove_null_columns else known
+    return _row(tool, status, [node_id], "data_cleansing", messages or [], reason=reason)
+
+
 def _parse_cleanse_fields(raw: str) -> list[str] | None:
     """Parse the Cleanse field list box: comma-separated double-quoted names, or empty for none."""
     cleaned = raw.strip()
@@ -3666,7 +4575,7 @@ def map_data_cleansing(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     options translate one-to-one.
     """
     config = _config(tool)
-    values = {value.get("name", ""): (value.text or "").strip() for value in config.findall("Value")}
+    values = _macro_values(config)
     expected = {*_CLEANSE_CHECKBOXES, _CLEANSE_FIELD_LIST, _CLEANSE_CASE_ENABLED, _CLEANSE_CASE_MODE}
     missing = sorted(expected - set(values) - _CLEANSE_OPTIONAL_CHECKBOXES)
     if missing:
@@ -3707,22 +4616,311 @@ def map_data_cleansing(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
                 reason="option_unsupported",
             )
 
-    settings = input_schema.NodeDataCleansing(
+    cleansing_input = transform_schema.DataCleansingInput(
+        selection_mode="list",
+        selected_columns=fields,
+        case_mode=case_mode,
+        **{target: _is_true(values.get(name)) for name, target in _CLEANSE_CHECKBOXES.items()},
+    )
+    return _emit_cleansing_node(tool, ctx, cleansing_input)
+
+
+# Data Cleanse Pro writes self-describing elements instead of the macro's widget ids, and its own
+# casing is inconsistent: `Checkbox_Replace*` has a lower-case b, `CheckBox_ModifyCase` a capital
+# one. Every tag is spelled here exactly as Alteryx writes it.
+_CLEANSE_PRO_FLAGS = {
+    "RemoveNullRows": "remove_null_rows",
+    "RemoveNullColumns": "remove_null_columns",
+    "RemoveLeadingAndTrailingWhitespace": "trim_whitespace",
+    "RemoveTabsLineBreaksAndDuplicates": "normalize_whitespace",
+    "RemoveAllWhitespaces": "remove_all_whitespace",
+    "RemoveLetters": "remove_letters",
+    "RemoveNumbers": "remove_numbers",
+    "RemovePunctuation": "remove_punctuation",
+}
+# Checkbox -> (the radio button it gates, the element Alteryx resolves the pair into, the setting).
+_CLEANSE_PRO_REPLACEMENTS = (
+    (
+        "Checkbox_ReplaceStringColumns",
+        "radioButton_ReplaceNullwithBlanks",
+        "ReplaceWithBlanks",
+        "replace_nulls_with_blank",
+    ),
+    ("Checkbox_ReplaceNumericColumns", "radioButton_ReplaceNullwithZero", "ReplaceWithZero", "replace_nulls_with_zero"),
+)
+# The inverse replacements, which Flowfile has no setting for; only refused when really switched on.
+_CLEANSE_PRO_INVERSE = (
+    ("Checkbox_ReplaceStringColumns", "radioButton_ReplaceBlankswithNulls", "replacing blanks with nulls"),
+    ("Checkbox_ReplaceNumericColumns", "radioButton_ReplaceZerowithNulls", "replacing zeroes with nulls"),
+)
+_CLEANSE_PRO_UNSUPPORTED = {
+    "RemoveHTMLTags": "removing HTML tags",
+    "RemoveInvisibleCharacters": "removing invisible characters",
+}
+# Per-tool character overrides; an empty value is the default set the Flowfile node already applies.
+_CLEANSE_PRO_CHARACTER_SETS = ("Letters", "Numbers", "Punctuations", "Exceptions")
+_CLEANSE_PRO_CASE = ("CheckBox_ModifyCase", "ModifyCase")
+_CLEANSE_PRO_TAGS = frozenset(
+    {
+        *_CLEANSE_PRO_FLAGS,
+        *_CLEANSE_PRO_UNSUPPORTED,
+        *_CLEANSE_PRO_CHARACTER_SETS,
+        *_CLEANSE_PRO_CASE,
+        *(name for pair in _CLEANSE_PRO_REPLACEMENTS for name in pair[:3]),
+        *(pair[1] for pair in _CLEANSE_PRO_INVERSE),
+        "Fields",
+    }
+)
+CLEANSE_PRO_UNKNOWN_FIELD = "*Unknown"
+
+
+def _cleanse_pro_selection(config: ET.Element) -> tuple[list[str], list[str], bool]:
+    """``Fields`` as (every named field, the selected ones, whether ``*Unknown`` is selected).
+
+    Data Cleanse Pro names its fields in ``@value``, not the ``@name`` every other tool uses, so
+    this cannot be ``_field_selection``: reading the wrong attribute would silently select nothing.
+    """
+    names: list[str] = []
+    selected: list[str] = []
+    unknown_selected = False
+    for element in config.findall("Fields/Field"):
+        name = element.get("value") or ""
+        is_selected = _is_true(element.get("selected"))
+        if name == CLEANSE_PRO_UNKNOWN_FIELD:
+            unknown_selected = is_selected
+            continue
+        if not name:
+            continue
+        names.append(name)
+        if is_selected:
+            selected.append(name)
+    return names, selected, unknown_selected
+
+
+def _cleanse_pro_replacements(config: ET.Element) -> tuple[dict[str, bool], str | None]:
+    """The two null-replacement settings, or why the configuration contradicts itself.
+
+    Alteryx keeps the radio button's last position when its checkbox is unticked (corpus tool 132
+    still says "replace blanks with nulls" under a box nobody ticked), so neither element decides
+    on its own. ``ReplaceWithBlanks``/``ReplaceWithZero`` are what Alteryx resolved the pair into,
+    so they are the arbiter, and a disagreement means this reading of the tool is wrong.
+    """
+    settings: dict[str, bool] = {}
+    for checkbox, radio, resolved, target in _CLEANSE_PRO_REPLACEMENTS:
+        enabled = _flag(config, checkbox) is True and _flag(config, radio) is True
+        if _flag(config, resolved) is not enabled:
+            return {}, (
+                f"This Alteryx Data Cleanse Pro says <{checkbox}> and <{radio}> together mean "
+                f"{'on' if enabled else 'off'}, but its own <{resolved}> says the opposite; "
+                "the tool was not converted rather than guessed at."
+            )
+        settings[target] = enabled
+    return settings, None
+
+
+def _cleanse_pro_refusal(config: ET.Element) -> str | None:
+    """The first option Flowfile cannot express, in the tool's own words, or None."""
+    unrecognized = sorted({child.tag for child in config} - _CLEANSE_PRO_TAGS)
+    if unrecognized:
+        return "This Alteryx Data Cleanse Pro carries settings Flowfile does not read: " + ", ".join(unrecognized) + "."
+    for tag, description in _CLEANSE_PRO_UNSUPPORTED.items():
+        if _flag(config, tag):
+            return f"Alteryx Data Cleanse Pro option <{tag}> ({description}) has no Flowfile equivalent."
+    for checkbox, radio, description in _CLEANSE_PRO_INVERSE:
+        if _flag(config, checkbox) and _flag(config, radio):
+            return f"Alteryx Data Cleanse Pro option <{radio}> ({description}) has no Flowfile equivalent."
+    for tag in _CLEANSE_PRO_CHARACTER_SETS:
+        if _attribute(config, tag, "value"):
+            return (
+                f"This Alteryx Data Cleanse Pro overrides the <{tag}> character set, which the Flowfile "
+                "data cleansing node does not take."
+            )
+    return None
+
+
+def map_data_cleanse_pro(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Maps Alteryx's Data Cleanse Pro tool onto the native data_cleansing node.
+
+    The newer sibling of the Cleanse macro: the same rules, written as named elements rather than
+    widget ids, plus per-tool character sets and HTML/invisible-character stripping that Flowfile
+    has no equivalent for and refuses instead of dropping quietly.
+    """
+    config = _config(tool)
+    refusal = _cleanse_pro_refusal(config)
+    if refusal is not None:
+        return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
+    replacements, contradiction = _cleanse_pro_replacements(config)
+    if contradiction is not None:
+        return _placeholder_row(tool, ctx, [contradiction], reason="mapper_refused")
+
+    case_mode = "none"
+    if _flag(config, "CheckBox_ModifyCase"):
+        raw_case = _attribute(config, "ModifyCase", "value") or _text(config, "ModifyCase")
+        case_mode = "none" if raw_case.lower() == "none" else _CLEANSE_CASE_MODES.get(raw_case.lower())
+        if case_mode is None:
+            return _placeholder_row(
+                tool,
+                ctx,
+                [f"The Alteryx Data Cleanse Pro case mode '{raw_case or '(empty)'}' is not recognized."],
+                reason="option_unsupported",
+            )
+
+    names, selected, unknown_selected = _cleanse_pro_selection(config)
+    deselected = [name for name in names if name not in selected]
+    messages: list[str] = []
+    status: ToolStatus = "converted"
+    reason = "converted"
+    if not unknown_selected:
+        selection = {"selection_mode": "list", "selected_columns": selected}
+    elif not deselected:
+        selection = {"selection_mode": "all", "selected_columns": []}
+    else:
+        # Every column except a named few: the set is only nameable if the schema is known here.
+        known = ctx.input_columns(tool.tool_id)
+        if known is None:
+            return _placeholder_row(
+                tool,
+                ctx,
+                [
+                    "This Alteryx Data Cleanse Pro cleanses every column except "
+                    + ", ".join(deselected)
+                    + ", and the columns reaching it are not known at import time."
+                ],
+                reason="mapper_refused",
+            )
+        selection = {"selection_mode": "list", "selected_columns": [c for c in known if c not in deselected]}
+        status, reason = "partial", "option_unsupported"
+        messages.append(
+            "This Alteryx Data Cleanse Pro cleanses every column except "
+            + ", ".join(deselected)
+            + "; Flowfile cleanses a named list, so the list was frozen to the columns reaching this tool "
+            "at import time and a column added upstream later will not be cleansed."
+        )
+
+    cleansing_input = transform_schema.DataCleansingInput(
+        case_mode=case_mode,
+        **selection,
+        **replacements,
+        **{target: bool(_flag(config, tag)) for tag, target in _CLEANSE_PRO_FLAGS.items()},
+    )
+    return _emit_cleansing_node(tool, ctx, cleansing_input, messages, status=status, reason=reason)
+
+
+SELECT_RECORDS_ROW = "__select_records_row"
+_SELECT_RECORDS_RANGE_RE = re.compile(r"^(?:(\d+)\s*-\s*(\d+)|(\d+)\s*\+|-\s*(\d+)|(\d+))$")
+
+
+def _select_records_ranges(raw: str) -> tuple[list[tuple[int, int | None]], str | None]:
+    """The macro's range box as 1-based inclusive (start, end) pairs; ``None`` end means "to the end".
+
+    Four forms and nothing else: ``N``, ``N-M``, ``N+`` and ``-N``. Anything the box holds that is
+    not one of them is refused rather than skipped, because a token this mapper does not understand
+    is rows the imported flow would silently keep or drop.
+    """
+    tokens = [token for token in re.split(r"[,\s]+", raw.strip()) if token]
+    if not tokens:
+        return [], "it names no rows at all"
+    ranges: list[tuple[int, int | None]] = []
+    for token in tokens:
+        match = _SELECT_RECORDS_RANGE_RE.match(token)
+        if match is None:
+            return [], f"'{_one_line(token)}' is not one of the forms N, N-M, N+ or -N"
+        start_end, end_of, from_start, to_end, single = match.groups()
+        if start_end is not None:
+            start, end = int(start_end), int(end_of)
+        elif from_start is not None:
+            start, end = int(from_start), None
+        elif to_end is not None:
+            start, end = 1, int(to_end)
+        else:
+            start = end = int(single)
+        if start < 1 or (end is not None and end < 1):
+            return [], f"'{_one_line(token)}' numbers rows from below 1, and Alteryx numbers them from 1"
+        if end is not None and end < start:
+            return [], f"'{_one_line(token)}' ends before it starts"
+        ranges.append((start, end))
+    return ranges, None
+
+
+def _select_records_predicate(column: str, ranges: list[tuple[int, int | None]]) -> str:
+    """The ranges as one expression in the Flowfile formula dialect: an OR over the ranges."""
+    clauses = []
+    for start, end in ranges:
+        if end is None:
+            clauses.append(f"[{column}] >= {start}")
+        elif end == start:
+            clauses.append(f"[{column}] = {start}")
+        elif start == 1:
+            clauses.append(f"[{column}] <= {end}")
+        else:
+            clauses.append(f"([{column}] >= {start} and [{column}] <= {end})")
+    return " or ".join(clauses)
+
+
+def map_select_records(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Maps the Select Records macro (SelectRecords.yxmc) onto record_id + filter + select.
+
+    Alteryx picks rows by their position in the stream, which is not something a Flowfile filter can
+    ask about, so the position is made into a column first and dropped again afterwards. The helper
+    column is named against the incoming schema so it cannot shadow a column of the user's own; when
+    that schema is not known at import time the name cannot be checked, so the report names it.
+    """
+    raw = _macro_values(_config(tool)).get("Ranges", "")
+    ranges, refusal = _select_records_ranges(raw)
+    if refusal is not None:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [f"The Alteryx Select Records range '{_one_line(raw)}' was not converted because {refusal}."],
+            reason="mapper_refused",
+        )
+    known = ctx.input_columns(tool.tool_id)
+    column = _unique_column(SELECT_RECORDS_ROW, known)
+
+    record_id = input_schema.NodeRecordId(
         flow_id=ctx.flow_id,
         node_id=ctx.new_node_id(),
-        cleansing_input=transform_schema.DataCleansingInput(
-            selection_mode="list",
-            selected_columns=fields,
-            case_mode=case_mode,
-            **{target: _is_true(values.get(name)) for name, target in _CLEANSE_CHECKBOXES.items()},
+        record_id_input=transform_schema.RecordIdInput(output_column_name=column, offset=1),
+    )
+    record_id_node = ctx.add_node(tool, "record_id", record_id, description=_description(tool))
+    row_filter = input_schema.NodeFilter(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        filter_input=transform_schema.FilterInput(
+            mode="advanced", advanced_filter=_select_records_predicate(column, ranges)
         ),
     )
-    node_id = ctx.add_node(tool, "data_cleansing", settings, description=_description(tool))
-    ctx.register_all_outputs(tool.tool_id, node_id)
-    ctx.register_all_inputs(tool.tool_id, node_id)
-    known = ctx.input_columns(tool.tool_id)
-    ctx.tool_columns[tool.tool_id] = None if settings.cleansing_input.remove_null_columns else known
-    return _row(tool, "converted", [node_id], "data_cleansing", [], reason="converted")
+    filter_node = ctx.add_node(tool, "filter", row_filter, dx=FORMULA_STEP_DX, dy=FORMULA_STEP_DY)
+    drop = input_schema.NodeSelect(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        keep_missing=True,
+        select_input=[transform_schema.SelectInput(old_name=column, keep=False)],
+    )
+    drop_node = ctx.add_node(tool, "select", drop, dx=2 * FORMULA_STEP_DX, dy=2 * FORMULA_STEP_DY)
+    _link(ctx, record_id_node, filter_node)
+    _link(ctx, filter_node, drop_node)
+    ctx.register_all_inputs(tool.tool_id, record_id_node)
+    ctx.register_all_outputs(tool.tool_id, drop_node)
+    ctx.tool_columns[tool.tool_id] = known
+
+    node_ids = [record_id_node, filter_node, drop_node]
+    messages = [
+        f"Alteryx picks these rows by their position, so the position becomes a temporary column "
+        f"('{column}') that the last of the three nodes drops again."
+    ]
+    if known is None:
+        messages.append(
+            f"The columns reaching this tool are not known at import time, so that name was not checked "
+            f"against them; rename a column of your own called '{column}' before this node."
+        )
+    if _feeds_in_stated_order(ctx, tool.tool_id):
+        return _row(tool, "converted", node_ids, "filter", messages, reason="converted")
+    messages.append(
+        "Which rows those positions are depends on the order the rows arrive in, which this workflow "
+        "does not state; sort the rows upstream if the order matters."
+    )
+    return _row(tool, "partial", node_ids, "filter", messages, reason="row_order_unknown")
 
 
 def map_count_records(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -3788,12 +4986,17 @@ TOOL_MAPPERS: dict[str, ToolMapper] = {
     "FieldInfo": map_field_info,
     "MakeGroup": map_make_group,
     "MapInput": map_map_input,
+    "DataCleansePro": map_data_cleanse_pro,
+    "DateTime": map_date_time,
+    "Rank": map_rank,
 }
 
 
 MACRO_MAPPERS: dict[str, ToolMapper] = {
     "cleanse.yxmc": map_data_cleansing,
     "countrecords.yxmc": map_count_records,
+    "randomrecords.yxmc": map_random_records,
+    "selectrecords.yxmc": map_select_records,
 }
 
 

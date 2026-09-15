@@ -1,6 +1,7 @@
 """Tests for the Alteryx -> Flowfile tool mappers and the convert orchestrator."""
 
 import ast
+from datetime import date, datetime
 from pathlib import Path
 
 import polars as pl
@@ -8,7 +9,12 @@ import pytest
 import yaml
 from polars_expr_transformer import simple_function_to_expr
 
-from flowfile_core.flowfile.converters.alteryx import ConversionResult, YxmdParseError, convert_yxmd
+from flowfile_core.flowfile.converters.alteryx import (
+    ConversionResult,
+    YxmdParseError,
+    convert_yxmd,
+    mappers,
+)
 from flowfile_core.flowfile.converters.alteryx.convert import emit_tools
 from flowfile_core.flowfile.converters.alteryx.scope import BUCKETS
 from flowfile_core.flowfile.converters.alteryx.yxmd_parser import parse_yxmd
@@ -1194,9 +1200,9 @@ def test_unsupported_tool_becomes_a_documented_passthrough(unsupported: Conversi
     placeholder = nodes[2]
     code = placeholder["setting_input"]["polars_code_input"]["polars_code"]
     assert placeholder["type"] == "polars_code"
-    assert code.startswith("# Alteryx tool 'DateTime' (ToolID 2) could not be converted automatically.")
+    assert code.startswith("# Alteryx tool 'XMLParse' (ToolID 2) could not be converted automatically.")
     assert code.endswith("output_df = input_df")
-    assert "DateTime" in placeholder["description"]
+    assert "XMLParse" in placeholder["description"]
     assert placeholder["description"].startswith("⚠")
 
 
@@ -1222,8 +1228,10 @@ def test_placeholders_preserve_the_graph_shape(unsupported: ConversionResult):
             {
                 "total": 13,
                 "annotations": 0,
-                "converted": 11,
-                "partial": 2,
+                # The Sample is `partial` from W5.6: every mode picks rows by position, and nothing
+                # upstream of this one states an order.
+                "converted": 10,
+                "partial": 3,
                 "commented": 0,
                 "placeholder": 0,
                 "skipped": 0,
@@ -1349,13 +1357,13 @@ def test_an_out_of_scope_node_says_why_instead_of_promising_a_rebuild(out_of_sco
 
 
 def test_a_no_op_tool_emits_no_node_and_hands_its_input_on(out_of_scope: ConversionResult):
-    """Tool 5 is a Message between the Image Input and the DateTime; it costs no node at all."""
+    """Tool 5 is a Message between the Image Input and the XMLParse; it costs no node at all."""
     rows = {row.alteryx_tool_id: row for row in out_of_scope.report.rows}
     message = rows[5]
     assert (message.status, message.reason) == ("no_op", "no_op")
     assert (message.flowfile_node_ids, message.flowfile_node_type) == ([], None)
     assert message.messages == [BUCKETS["no_op"]]
-    # The DateTime behind it is wired to what fed the Message, and no wire was reported dropped.
+    # The XMLParse behind it is wired to what fed the Message, and no wire was reported dropped.
     nodes = dumped_nodes(out_of_scope)
     assert nodes[rows[7].flowfile_node_ids[0]]["input_ids"] == rows[4].flowfile_node_ids
     assert not any("was dropped" in text for row in out_of_scope.report.rows for text in row.messages)
@@ -1527,7 +1535,8 @@ DETOUR_END_BEHIND_A_SELECT = _arity_workflow(
       <Destination ToolID="605" Connection="Left" /></Connection>""",
 )
 
-# Two anchors of ONE Flowfile node: a Filter is one node with a True and a False handle.
+# Two anchors of ONE Flowfile node, but two different output handles: a Filter's True and False
+# are two streams, so they stay two edges and the body reads two inputs.
 DETOUR_END_BEHIND_ONE_FILTER = _arity_workflow(
     """
     <Node ToolID="604"><GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter" />
@@ -1602,7 +1611,7 @@ DETOUR_END_BEHIND_A_DEAD_SIDE = _arity_workflow(
     ("workflow", "edges", "tail"),
     [
         (DETOUR_END_BEHIND_A_SELECT, 1, "output_df = input_df"),
-        (DETOUR_END_BEHIND_ONE_FILTER, 1, "output_df = input_df"),
+        (DETOUR_END_BEHIND_ONE_FILTER, 2, "output_df = input_df_1"),
         (DETOUR_END_BEHIND_ONE_PLACEHOLDER, 1, "output_df = input_df"),
         (DETOUR_END_BEHIND_A_JOIN, 2, "output_df = input_df_1"),
         (DETOUR_END_BEHIND_A_DEAD_SIDE, 0, "output_df = pl.DataFrame()"),
@@ -1752,6 +1761,453 @@ def test_a_sink_consumes_every_wire_it_is_given(tmp_path: Path):
     assert dropped_messages(result) == []
     flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
     assert flow.run_graph().success
+
+
+# --- W5 pre-flight: the wiring shapes a Flowfile edge cannot hold, and the pins for W4's fixes ---
+
+# One Select has one input port; Alteryx would union both Text Inputs onto it.
+TWO_SOURCES_ON_ONE_SELECT = _two_sources(
+    "AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect",
+    ("Input", "Input"),
+)
+
+# A Unique with a Dupes branch registers BOTH its nodes on the same input anchor, so the refusal
+# has to hold for every target a wire fans out to, not just the first.
+TWO_SOURCES_ON_A_UNIQUE_WITH_DUPES = _two_sources(
+    "AlteryxBasePluginsGui.Unique.Unique",
+    ("Input", "Input"),
+    extra="""
+    <Node ToolID="715"><GuiSettings Plugin="AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect" />
+      <Properties><Configuration>
+        <SelectFields><SelectField field="CrateId" selected="True" /></SelectFields>
+      </Configuration></Properties></Node>""",
+    wires="""
+    <Connection><Origin ToolID="713" Connection="Dupes" />
+      <Destination ToolID="715" Connection="Input" /></Connection>""",
+)
+
+# Both halves of one Filter into one Union: two streams, two handles, two edges.
+FILTER_BOTH_ANCHORS_INTO_ONE_UNION = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="741"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="CrateId" /></Fields>
+        <Data><r><c>1</c></r><r><c>-2</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="742"><GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter" />
+      <Properties><Configuration>
+        <Expression>[CrateId] &gt; 0</Expression>
+      </Configuration></Properties></Node>
+    <Node ToolID="743"><GuiSettings Plugin="AlteryxBasePluginsGui.Union.Union" />
+      <Properties><Configuration><Mode>ByName</Mode></Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="741" Connection="Output" />
+      <Destination ToolID="742" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="742" Connection="True" />
+      <Destination ToolID="743" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="742" Connection="False" />
+      <Destination ToolID="743" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+# A wire on the name anchor of three renames that take their names from their own configuration.
+A_NAME_WIRE_ON_A_RENAME_THAT_READS_NONE = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="760"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="a" /></Fields>
+        <Data><r><c>1</c></r><r><c>2</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="761"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Name" /></Fields>
+        <Data><r><c>Crates</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="762"><GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename" />
+      <Properties><Configuration>
+        <RenameMode>Formula</RenameMode>
+        <Fields><Field name="a" /><Field name="*Unknown" /></Fields>
+        <Expression>Uppercase([_CurrentField_])</Expression>
+      </Configuration></Properties></Node>
+    <Node ToolID="770"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="a" /></Fields>
+        <Data><r><c>1</c></r><r><c>2</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="771"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Name" /></Fields>
+        <Data><r><c>Crates</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="772"><GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename" />
+      <Properties><Configuration>
+        <RenameMode>FirstRow</RenameMode>
+        <Fields><Field name="a" /><Field name="*Unknown" /></Fields>
+      </Configuration></Properties></Node>
+    <Node ToolID="780"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="a" /></Fields>
+        <Data><r><c>1</c></r><r><c>2</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="781"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Name" /></Fields>
+        <Data><r><c>Crates</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="782"><GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename" />
+      <Properties><Configuration>
+        <RenameMode>AddPrefixSuffix</RenameMode>
+        <Fields><Field name="a" /><Field name="*Unknown" /></Fields>
+        <AddPrefixSuffix><Prefix>pre_</Prefix><Suffix>_post</Suffix></AddPrefixSuffix>
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="760" Connection="Output" />
+      <Destination ToolID="762" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="761" Connection="Output" />
+      <Destination ToolID="762" Connection="Right" /></Connection>
+    <Connection><Origin ToolID="770" Connection="Output" />
+      <Destination ToolID="772" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="771" Connection="Output" />
+      <Destination ToolID="772" Connection="Right" /></Connection>
+    <Connection><Origin ToolID="780" Connection="Output" />
+      <Destination ToolID="782" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="781" Connection="Output" />
+      <Destination ToolID="782" Connection="Right" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+# Two Text Inputs on a Dynamic Rename's name anchor: the mapper reads one of them.
+TWO_NAME_SOURCES_ON_A_DYNAMIC_RENAME = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="751"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Field_1" /></Fields>
+        <Data><r><c>3</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="752"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Name" /></Fields>
+        <Data><r><c>Crates</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="753"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Name" /></Fields>
+        <Data><r><c>Pallets</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="754"><GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename" />
+      <Properties><Configuration>
+        <RenameMode>RightInputRows</RenameMode>
+        <Fields><Field name="Field_1" /><Field name="*Unknown" /></Fields>
+        <NamesFromRows><InputMode>Positional</InputMode><NewName>Name</NewName></NamesFromRows>
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="751" Connection="Output" />
+      <Destination ToolID="754" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="752" Connection="Output" />
+      <Destination ToolID="754" Connection="Right" /></Connection>
+    <Connection><Origin ToolID="753" Connection="Output" />
+      <Destination ToolID="754" Connection="Right" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+# A tool that is not an Explorer Box: its <URL> is configuration a reader needs, not canvas décor.
+AN_ORDINARY_TOOL_WITH_A_URL = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="761"><GuiSettings Plugin="AlteryxBasePluginsGui.Tile.Tile" />
+      <Properties><Configuration>
+        <Method>EqualRecords</Method>
+        <URL>https://orchard.example.com/feed?token=okonjo-secret</URL>
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections />
+</AlteryxDocument>
+"""
+
+
+def full_input_messages(result: ConversionResult) -> list[tuple[int, str]]:
+    return [
+        (row.alteryx_tool_id, message)
+        for row in result.report.rows
+        for message in row.messages
+        if "was not wired" in message or "was not read" in message
+    ]
+
+
+def test_a_second_source_on_a_single_input_node_is_dropped_and_named(tmp_path: Path):
+    """Alteryx unions both wires onto the Select; a union here would invent rows, so one is dropped."""
+    result = convert_yxmd(TWO_SOURCES_ON_ONE_SELECT, source_name="two_sources.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    sentence = (
+        "The Flowfile 'select' node for ToolID 713 ('AlteryxSelect') takes 1 input(s) and already has its "
+        "input from ToolID 711; the connection from ToolID 712 ('Output') into its 'Input' anchor was not "
+        "wired. Alteryx unions the streams arriving on one anchor — add a Union node upstream and wire that "
+        "in if that is what this workflow meant."
+    )
+    assert full_input_messages(result) == [(712, sentence), (713, sentence)]
+    assert (rows[712].status, rows[712].reason) == ("partial", "dropped_connection")
+    assert (rows[713].status, rows[713].reason) == ("partial", "dropped_connection")
+    assert rows[711].status == "converted"
+    nodes = dumped_nodes(result)
+    assert nodes[rows[713].flowfile_node_ids[0]]["input_ids"] == rows[711].flowfile_node_ids
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    assert flow.run_graph().success
+
+
+def test_the_dupes_branch_of_a_two_source_unique_refuses_the_same_wire(tmp_path: Path):
+    """One Alteryx wire reaches two Flowfile nodes here; the second source is refused at both."""
+    result = convert_yxmd(TWO_SOURCES_ON_A_UNIQUE_WITH_DUPES, source_name="two_sources_unique.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    unique_id, dupes_id = rows[713].flowfile_node_ids
+    nodes = dumped_nodes(result)
+    # Both nodes stand for one Alteryx tool, so the refused wire has to be refused at both.
+    assert nodes[unique_id]["input_ids"] == rows[711].flowfile_node_ids
+    assert nodes[dupes_id]["input_ids"] == rows[711].flowfile_node_ids
+    messages = full_input_messages(result)
+    assert [tool_id for tool_id, _ in messages] == [712, 713]
+    assert "'unique' node for ToolID 713" in messages[0][1]
+    assert "from ToolID 711; the connection from ToolID 712 ('Output')" in messages[0][1]
+    assert (rows[712].status, rows[712].reason) == ("partial", "dropped_connection")
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    assert flow.run_graph().success
+
+
+def _join_wires(wires: str) -> bytes:
+    """Three Text Inputs that share a join key, into one Alteryx Join; *wires* says which anchors."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+<Nodes>
+<Node ToolID="711"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+<Properties><Configuration>
+<Fields><Field name="CrateId" /><Field name="Grower" /></Fields>
+<Data><r><c>1</c><c>Okonjo</c></r></Data>
+</Configuration></Properties></Node>
+<Node ToolID="712"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+<Properties><Configuration>
+<Fields><Field name="CrateId" /><Field name="Variety" /></Fields>
+<Data><r><c>1</c><c>Gala</c></r></Data>
+</Configuration></Properties></Node>
+<Node ToolID="714"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+<Properties><Configuration>
+<Fields><Field name="CrateId" /><Field name="Packhouse" /></Fields>
+<Data><r><c>1</c><c>Shed 2</c></r></Data>
+</Configuration></Properties></Node>
+<Node ToolID="713"><GuiSettings Plugin="AlteryxBasePluginsGui.Join.Join" />
+<Properties><Configuration joinByRecordPos="False">
+<JoinInfo connection="Left"><Field field="CrateId" /></JoinInfo>
+<JoinInfo connection="Right"><Field field="CrateId" /></JoinInfo>
+</Configuration></Properties></Node>
+</Nodes>
+<Connections>{wires}
+</Connections>
+</AlteryxDocument>
+""".encode()
+
+
+def _wire_xml(origin: int, anchor: str) -> str:
+    return (
+        f'\n<Connection><Origin ToolID="{origin}" Connection="Output" />'
+        f'<Destination ToolID="713" Connection="{anchor}" /></Connection>'
+    )
+
+
+# Two wires on Left used to fill both ports, so the Join's real Right wire looked like the spare.
+TWO_LEFT_WIRES_AND_A_RIGHT_ON_ONE_JOIN = _join_wires(
+    _wire_xml(711, "Left") + _wire_xml(712, "Left") + _wire_xml(714, "Right")
+)
+# The right-hand slot holds one stream; a second write replaced the first without a word.
+TWO_RIGHT_WIRES_ON_ONE_JOIN = _join_wires(_wire_xml(711, "Left") + _wire_xml(712, "Right") + _wire_xml(714, "Right"))
+# Two Left wires and nothing on Right: the shape that silently gave a Join two main ports.
+TWO_LEFT_WIRES_AND_NO_RIGHT_ON_ONE_JOIN = _join_wires(_wire_xml(711, "Left") + _wire_xml(712, "Left"))
+
+
+def test_both_halves_of_a_filter_reach_one_union_as_two_edges(tmp_path: Path):
+    """The output handle is part of an edge's identity; without it document order picks a winner.
+
+    Two wires on one anchor of an N-ary target is not a full slot: arity is asked per slot.
+    """
+    result = convert_yxmd(FILTER_BOTH_ANCHORS_INTO_ONE_UNION, source_name="filter_union.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    nodes = dumped_nodes(result)
+    filter_id = rows[742].flowfile_node_ids[0]
+    union_id = rows[743].flowfile_node_ids[0]
+    assert nodes[filter_id]["outputs"] == [union_id, union_id]
+    assert nodes[filter_id]["output_handles"] == ["output-0", "output-1"]
+    assert nodes[union_id]["input_ids"] == [filter_id, filter_id]
+    assert nodes[union_id]["right_input_id"] is None
+    assert full_input_messages(result) == []
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+
+
+JOIN_FULL_SENTENCE = (
+    "The Flowfile 'join' node for ToolID 713 ('Join') takes 2 input(s) and already has its input "
+    "from {taken}; the connection from ToolID {dropped} ('Output') into its '{anchor}' anchor was "
+    "not wired. Alteryx unions the streams arriving on one anchor — add a Union node upstream and "
+    "wire that in if that is what this workflow meant."
+)
+
+
+def test_a_second_left_wire_is_dropped_and_the_right_wire_keeps_its_slot(tmp_path: Path):
+    """Two wires on Left used to fill both ports, so the Join's real Right wire was the one reported."""
+    result = convert_yxmd(TWO_LEFT_WIRES_AND_A_RIGHT_ON_ONE_JOIN, source_name="two_left.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    sentence = JOIN_FULL_SENTENCE.format(taken="ToolID 711", dropped=712, anchor="Left")
+    assert full_input_messages(result) == [(712, sentence), (713, sentence)]
+    assert (rows[712].status, rows[712].reason) == ("partial", "dropped_connection")
+    assert (rows[713].status, rows[713].reason) == ("partial", "dropped_connection")
+    assert (rows[711].status, rows[714].status) == ("converted", "converted")
+    nodes = dumped_nodes(result)
+    join = nodes[rows[713].flowfile_node_ids[0]]
+    assert join["input_ids"] == rows[711].flowfile_node_ids
+    assert join["right_input_id"] == rows[714].flowfile_node_ids[0]
+    assert nodes[rows[712].flowfile_node_ids[0]]["outputs"] == []
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    assert flow.run_graph().success
+
+
+def test_a_second_right_wire_is_dropped_instead_of_overwriting_the_first(tmp_path: Path):
+    """Writing ``right_input_id`` twice replaced the first wire in silence."""
+    result = convert_yxmd(TWO_RIGHT_WIRES_ON_ONE_JOIN, source_name="two_right.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    sentence = JOIN_FULL_SENTENCE.format(taken="ToolID 711, ToolID 712", dropped=714, anchor="Right")
+    assert full_input_messages(result) == [(714, sentence), (713, sentence)]
+    assert (rows[714].status, rows[714].reason) == ("partial", "dropped_connection")
+    assert (rows[713].status, rows[713].reason) == ("partial", "dropped_connection")
+    nodes = dumped_nodes(result)
+    join = nodes[rows[713].flowfile_node_ids[0]]
+    assert join["right_input_id"] == rows[712].flowfile_node_ids[0]
+    assert join["input_ids"] == rows[711].flowfile_node_ids
+    assert nodes[rows[714].flowfile_node_ids[0]]["outputs"] == []
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    assert flow.run_graph().success
+
+
+def test_two_left_wires_alone_do_not_fill_the_right_hand_slot(tmp_path: Path):
+    """The right slot stays empty rather than being filled from the anchor next to it."""
+    result = convert_yxmd(TWO_LEFT_WIRES_AND_NO_RIGHT_ON_ONE_JOIN, source_name="two_left_only.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    assert (rows[713].status, rows[713].reason) == ("partial", "dropped_connection")
+    join = dumped_nodes(result)[rows[713].flowfile_node_ids[0]]
+    assert join["input_ids"] == rows[711].flowfile_node_ids
+    assert join["right_input_id"] is None
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    assert flow.run_graph().success
+
+
+def test_a_second_name_source_on_a_dynamic_rename_is_reported(tmp_path: Path):
+    """The mapper reads one stream off the name anchor; the other is a wire the flow does not have."""
+    result = convert_yxmd(TWO_NAME_SOURCES_ON_A_DYNAMIC_RENAME, source_name="two_name_sources.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    sentence = (
+        "The Alteryx 'DynamicRename' (ToolID 754) read its 'Right' anchor at import time and takes one "
+        "stream from it; the connection from ToolID 753 ('Output') is a further stream on that anchor "
+        "and was not read."
+    )
+    assert full_input_messages(result) == [(753, sentence), (754, sentence)]
+    assert (rows[753].status, rows[753].reason) == ("partial", "dropped_connection")
+    # The names really did come from the first of the two, and neither name source is wired.
+    renames = dumped_nodes(result)[rows[754].flowfile_node_ids[0]]["setting_input"]["select_input"]
+    assert renames == [{"old_name": "Field_1", "new_name": "Crates"}]
+    for source in (752, 753):
+        assert dumped_nodes(result)[rows[source].flowfile_node_ids[0]]["outputs"] == []
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    assert flow.run_graph().success
+
+
+UNREAD_ANCHOR_SENTENCE = (
+    "The Alteryx 'DynamicRename' (ToolID {tool}) does not read its 'Right' anchor in this "
+    "configuration, so no stream was taken from it; the connection from ToolID {source} ('Output') "
+    "into that anchor was not carried over."
+)
+
+
+@pytest.fixture()
+def rename_reading_no_anchor() -> ConversionResult:
+    return convert_yxmd(A_NAME_WIRE_ON_A_RENAME_THAT_READS_NONE, source_name="unread_anchor.yxmd")
+
+
+@pytest.mark.parametrize(
+    ("mode", "source", "tool"),
+    [("Formula", 761, 762), ("FirstRow", 771, 772), ("AddPrefixSuffix", 781, 782)],
+    ids=["formula", "first_row", "add_prefix_suffix"],
+)
+def test_a_rename_that_reads_no_anchor_says_so(
+    rename_reading_no_anchor: ConversionResult, mode: str, source: int, tool: int
+):
+    """These modes take their names from their own configuration, so both clauses of the old
+    sentence — that the anchor was read, and that this wire is a further stream — were false."""
+    result = rename_reading_no_anchor
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    sentence = UNREAD_ANCHOR_SENTENCE.format(tool=tool, source=source)
+    assert (tool, sentence) in dropped_messages(result)
+    assert (source, sentence) in dropped_messages(result)
+    assert (rows[tool].status, rows[tool].reason) == ("partial", "dropped_connection")
+    assert (rows[source].status, rows[source].reason) == ("partial", "dropped_connection")
+    assert rows[tool].messages.count(sentence) == 1
+    assert dumped_nodes(result)[rows[source].flowfile_node_ids[0]]["outputs"] == []
+
+
+def test_no_rename_that_reads_no_anchor_claims_it_read_one(tmp_path: Path, rename_reading_no_anchor: ConversionResult):
+    """The old wording must be gone entirely, not merely joined by the new one."""
+    result = rename_reading_no_anchor
+    assert full_input_messages(result) == []
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    assert len(rows[782].flowfile_node_ids) == 2
+    nodes = dumped_nodes(result)
+    assert nodes[rows[782].flowfile_node_ids[0]]["outputs"] == [rows[782].flowfile_node_ids[1]]
+    for data, tool in ((760, 762), (770, 772), (780, 782)):
+        assert nodes[rows[tool].flowfile_node_ids[0]]["input_ids"] == rows[data].flowfile_node_ids
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    assert flow.run_graph().success
+
+
+def test_the_right_input_rename_still_says_it_read_the_anchor():
+    """The read branch is unchanged: only the anchor the mapper never touched gets the new wording."""
+    result = convert_yxmd(TWO_NAME_SOURCES_ON_A_DYNAMIC_RENAME, source_name="two_name_sources.yxmd")
+    assert dropped_messages(result) == []
+    assert len(full_input_messages(result)) == 2
+
+
+def test_a_detour_end_is_never_told_about_the_dead_side_of_its_own_detour(detour: ConversionResult):
+    """The dead wire is expected here and carries nothing; reporting it would be noise, not news."""
+    rows = {row.alteryx_tool_id: row for row in detour.report.rows}
+    for end_id, detour_id, live in ((5, 2, "Right"), (10, 7, "Left")):
+        assert (rows[end_id].status, rows[end_id].reason) == ("no_op", "no_op")
+        assert rows[end_id].messages == [
+            "This tool has no effect on the data (messages, tests, ordering hints); its input is wired "
+            "straight to what it fed.",
+            f"The records arrive from the '{live}' anchor of the Alteryx Detour "
+            f"(ToolID {detour_id}), which is the side its configuration makes live.",
+        ]
+
+
+def test_a_url_outside_an_explorer_box_stays_in_its_configuration_dump():
+    """Screening every <URL> would strip the address an unmapped tool needs to be rebuilt."""
+    result = convert_yxmd(AN_ORDINARY_TOOL_WITH_A_URL, source_name="url.yxmd")
+    row = report_row(result, 761)
+    body = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+    assert "https://orchard.example.com/feed?token=okonjo-secret" in body
+    assert "Credential values were not copied" not in body
+
+
+def test_make_group_and_field_info_publish_the_columns_alteryx_gives_them():
+    """Downstream mappers read `tool_columns`, which the finished flow no longer shows."""
+    ctx, _ = emit_tools(parse_yxmd(read_fixture("make_group.yxmd")))
+    assert ctx.tool_columns[2] == ["Key", "Group"]
+    ctx, _ = emit_tools(parse_yxmd(read_fixture("field_info.yxmd")))
+    assert ctx.tool_columns[2] == ["Name", "Type"]
 
 
 # The three shapes below all put a no-op between a tool and the thing it needs to read, which is
@@ -2358,7 +2814,7 @@ def test_resolve_output_returns_an_unaliased_anchor_and_refuses_a_cycle():
 
 def test_out_of_scope_tools_leave_the_in_scope_denominator(out_of_scope: ConversionResult):
     coverage = out_of_scope.report.coverage
-    # 8 tools, 6 of them settled non-goals: only TextInput and DateTime are Flowfile's to convert.
+    # 8 tools, 6 of them settled non-goals: only TextInput and XMLParse are Flowfile's to convert.
     assert (coverage.tools, coverage.in_scope, coverage.mapped) == (8, 2, 1)
     assert (coverage.mapped_percent, coverage.in_scope_percent) == (12, 50)
     assert "1 of 8 Alteryx tools reached a Flowfile node (12% of all tools)" in coverage.definition
@@ -3313,8 +3769,8 @@ def test_placeholders_embed_the_original_configuration_and_annotation(unsupporte
     row = report_row(unsupported, 2)
     assert row.status == "placeholder"
     code = dumped_nodes(unsupported)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
-    assert "# Alteryx annotation: Parse the date column" in code
-    assert "<OutputFieldName>DateTime_Out</OutputFieldName>" in code
+    assert "# Alteryx annotation: Parse the payload column" in code
+    assert "<OutputFieldName>XMLParse_Out</OutputFieldName>" in code
     assert code.splitlines()[-1] == "output_df = input_df"
 
 
@@ -4021,9 +4477,9 @@ def test_data_cleansing_fails_closed_to_a_placeholder(case_id: str, overrides: d
             "<FieldName>RecordID</FieldName><StartValue>1</StartValue><FieldType>String</FieldType>",
         ),
         (
-            "transpose-unknown-selected",
+            "transpose-no-data-fields",
             "AlteryxBasePluginsGui.Transpose.Transpose",
-            '<KeyFields /><DataFields><Field field="*Unknown" selected="True" /></DataFields>',
+            '<KeyFields /><DataFields><Field field="value" selected="False" /></DataFields>',
         ),
         (
             "cross-tab-unmapped-method",
@@ -4043,6 +4499,1814 @@ def test_new_tools_fail_closed_to_placeholders(case_id: str, plugin: str, config
     row = report_row(result, 2)
     assert row.status == "placeholder", case_id
     assert row.flowfile_node_type == "polars_code"
+
+
+# --- W5.1 Random Records ---
+
+RANDOM_RECORDS_DEFAULTS = {
+    "Number": "False",
+    "NNumber": "1000",
+    "Percent": "False",
+    "NPercent": "10",
+    "Deterministic": "False",
+    "Seed": "17",
+}
+
+
+def random_records_config(overrides: dict[str, str | None]) -> str:
+    values = {**RANDOM_RECORDS_DEFAULTS, **overrides}
+    return "".join(f'<Value name="{name}">{text}</Value>' for name, text in values.items() if text is not None)
+
+
+@pytest.fixture()
+def random_records() -> ConversionResult:
+    return convert("random_records.yxmd")
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "expected"),
+    [
+        (2, {"sample_method": "random", "sample_size": 3, "fraction": 10.0, "seed": None}),
+        (3, {"sample_method": "random_fraction", "sample_size": 1000, "fraction": 50.0, "seed": None}),
+        (4, {"sample_method": "random_fraction", "sample_size": 1000, "fraction": 25.0, "seed": 458676342}),
+    ],
+    ids=["a_record_count", "a_percentage", "a_percentage_with_a_seed"],
+)
+def test_random_records_maps_the_macro_onto_the_sample_node(
+    random_records: ConversionResult, tool_id: int, expected: dict
+):
+    """`fraction` on the node is a percentage — the engine divides by 100, so 50 stays 50."""
+    row = report_row(random_records, tool_id)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("converted", "converted", "sample")
+    settings = dumped_nodes(random_records)[row.flowfile_node_ids[0]]["setting_input"]
+    assert {key: settings[key] for key in expected} == expected
+
+
+def test_a_random_records_without_a_seed_says_it_draws_again_every_run(random_records: ConversionResult):
+    sentence = "This Alteryx Random Records tool is not deterministic, so it draws different rows on every run."
+    assert sentence in report_row(random_records, 2).messages
+    assert sentence not in report_row(random_records, 4).messages
+
+
+@pytest.mark.parametrize(
+    ("case_id", "overrides", "reason", "fragment"),
+    [
+        ("neither", {}, "mapper_refused", "neither a record count nor a percentage"),
+        (
+            "both",
+            {"Number": "True", "Percent": "True"},
+            "mapper_refused",
+            "both a record count and a percentage",
+        ),
+        (
+            "unreadable_count",
+            {"Number": "True", "NNumber": "a few"},
+            "mapper_refused",
+            "record count could not be read",
+        ),
+        (
+            "unreadable_percentage",
+            {"Percent": "True", "NPercent": "most"},
+            "mapper_refused",
+            "percentage could not be read",
+        ),
+        ("percentage_above_100", {"Percent": "True", "NPercent": "250"}, "mapper_refused", "is not between 0 and 100"),
+        ("negative_percentage", {"Percent": "True", "NPercent": "-5"}, "mapper_refused", "is not between 0 and 100"),
+        ("zero_percentage", {"Percent": "True", "NPercent": "0"}, "mapper_refused", "is not between 0 and 100"),
+        (
+            "unreadable_seed",
+            {"Number": "True", "Deterministic": "True", "Seed": ""},
+            "mapper_refused",
+            "its seed could not be read",
+        ),
+        (
+            "a_negative_seed",
+            {"Number": "True", "Deterministic": "True", "Seed": "-1"},
+            "mapper_refused",
+            "its seed could not be read",
+        ),
+        (
+            "an_infinite_seed",
+            {"Number": "True", "Deterministic": "True", "Seed": "1e400"},
+            "mapper_refused",
+            "its seed could not be read",
+        ),
+        (
+            "a_decimal_seed",
+            {"Number": "True", "Deterministic": "True", "Seed": "7.5"},
+            "mapper_refused",
+            "its seed could not be read",
+        ),
+        ("a_negative_count", {"Number": "True", "NNumber": "-5"}, "mapper_refused", "record count could not be read"),
+        ("a_zero_count", {"Number": "True", "NNumber": "0"}, "mapper_refused", "record count could not be read"),
+        ("a_decimal_count", {"Number": "True", "NNumber": "2.7"}, "mapper_refused", "record count could not be read"),
+        (
+            "an_infinite_count",
+            {"Number": "True", "NNumber": "1e400"},
+            "mapper_refused",
+            "record count could not be read",
+        ),
+        (
+            "an_option_flowfile_does_not_read",
+            {"Number": "True", "WithReplacement": "True"},
+            "option_unsupported",
+            "settings Flowfile does not read: WithReplacement",
+        ),
+    ],
+)
+def test_random_records_fails_closed(case_id: str, overrides: dict, reason: str, fragment: str):
+    """A count that is not a number, a percentage outside 0-100 or an option added by a later
+    macro build are all read and refused, never rounded into something that runs."""
+    document = macro_after_text_input("RandomRecords.yxmc", random_records_config(overrides))
+    row = report_row(convert_yxmd(document, source_name="random_records.yxmd"), 2)
+    assert (row.status, row.reason) == ("placeholder", reason)
+    assert any(fragment in message for message in row.messages), row.messages
+
+
+def test_the_random_records_flow_runs(tmp_path: Path, random_records: ConversionResult):
+    """The seeded tool keeps exactly a quarter of four rows; the rest only have to execute."""
+    flow = open_flow(write_flow(random_records, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+    seeded = report_row(random_records, 4).flowfile_node_ids[0]
+    frame = flow.get_node(seeded).get_resulting_data().data_frame.collect()
+    assert frame.columns == ["CrateId", "Grower"]
+    assert frame.height == 1
+
+
+# --- W5.2 Data Cleanse Pro ---
+
+
+CLEANSE_PRO_PLUGIN = "AlteryxBasePluginsGui.DataCleansePro.DataCleansePro"
+
+# The same tool behind an unmapped one, whose output columns nothing can name.
+CLEANSE_PRO_BEHIND_A_PLACEHOLDER = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="value" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.XMLParse.XMLParse" />
+      <Properties><Configuration /></Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DataCleansePro.DataCleansePro" />
+      <Properties><Configuration>%s</Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+CLEANSE_PRO_DEFAULTS = {
+    "RemoveNullRows": "False",
+    "RemoveNullColumns": "False",
+    "RemoveTabsLineBreaksAndDuplicates": "False",
+    "RemoveLeadingAndTrailingWhitespace": "False",
+    "RemoveAllWhitespaces": "False",
+    "RemoveHTMLTags": "False",
+    "RemoveInvisibleCharacters": "False",
+    "RemoveLetters": "False",
+    "RemoveNumbers": "False",
+    "RemovePunctuation": "False",
+    "Letters": "",
+    "Numbers": "",
+    "Punctuations": "",
+    "Exceptions": "",
+    "Checkbox_ReplaceStringColumns": "False",
+    "Checkbox_ReplaceNumericColumns": "False",
+    "radioButton_ReplaceNullwithBlanks": "True",
+    "radioButton_ReplaceBlankswithNulls": "False",
+    "radioButton_ReplaceNullwithZero": "True",
+    "radioButton_ReplaceZerowithNulls": "False",
+    "ReplaceWithBlanks": "False",
+    "ReplaceWithZero": "False",
+    "CheckBox_ModifyCase": "False",
+    "ModifyCase": "none",
+}
+
+CLEANSE_PRO_FIELDS = (
+    '<Fields><Field value="value" selected="True" /><Field value="*Unknown" selected="False" /></Fields>'
+)
+
+
+def cleanse_pro_config(overrides: dict[str, str] | None = None, fields: str = CLEANSE_PRO_FIELDS) -> str:
+    values = {**CLEANSE_PRO_DEFAULTS, **(overrides or {})}
+    return "".join(f'<{name} value="{text}" />' for name, text in values.items()) + fields
+
+
+@pytest.fixture()
+def cleanse_pro() -> ConversionResult:
+    return convert("data_cleanse_pro.yxmd")
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "expected"),
+    [
+        (
+            2,
+            {
+                "selection_mode": "list",
+                "selected_columns": ["Grower"],
+                "trim_whitespace": True,
+                "remove_numbers": True,
+            },
+        ),
+        (3, {"selection_mode": "all", "selected_columns": [], "normalize_whitespace": True}),
+        (4, {"selection_mode": "list", "selected_columns": ["Crates"], "replace_nulls_with_zero": True}),
+        (
+            5,
+            {
+                "selection_mode": "list",
+                "selected_columns": ["Grower", "Packhouse"],
+                "case_mode": "uppercase",
+                "remove_punctuation": True,
+            },
+        ),
+    ],
+    ids=["a_named_list", "everything_via_unknown", "numeric_nulls_to_zero", "uppercase"],
+)
+def test_data_cleanse_pro_maps_onto_the_data_cleansing_node(
+    cleanse_pro: ConversionResult, tool_id: int, expected: dict
+):
+    """Every rule that is off has to stay off: the defaults on the node are not all False."""
+    row = report_row(cleanse_pro, tool_id)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("converted", "converted", "data_cleansing")
+    settings = dumped_nodes(cleanse_pro)[row.flowfile_node_ids[0]]["setting_input"]["cleansing_input"]
+    assert settings == {
+        "remove_null_rows": False,
+        "remove_null_columns": False,
+        "selection_mode": "list",
+        "selected_columns": [],
+        "replace_nulls_with_blank": False,
+        "replace_nulls_with_zero": False,
+        "trim_whitespace": False,
+        "normalize_whitespace": False,
+        "remove_all_whitespace": False,
+        "remove_letters": False,
+        "remove_numbers": False,
+        "remove_punctuation": False,
+        "case_mode": "none",
+        **expected,
+    }
+
+
+def test_data_cleanse_pro_reads_the_field_names_from_the_value_attribute():
+    """Data Cleanse Pro writes @value where every other tool writes @name; @name selects nothing."""
+    fields = '<Fields><Field name="value" selected="True" /><Field value="*Unknown" selected="False" /></Fields>'
+    document = tool_after_text_input(CLEANSE_PRO_PLUGIN, cleanse_pro_config(fields=fields))
+    settings = dumped_nodes(convert_yxmd(document, source_name="pro.yxmd"))[2]["setting_input"]["cleansing_input"]
+    assert settings["selected_columns"] == []
+    document = tool_after_text_input(CLEANSE_PRO_PLUGIN, cleanse_pro_config())
+    settings = dumped_nodes(convert_yxmd(document, source_name="pro.yxmd"))[2]["setting_input"]["cleansing_input"]
+    assert settings["selected_columns"] == ["value"]
+
+
+@pytest.mark.parametrize(
+    ("case_id", "overrides", "expected"),
+    [
+        ("both_off", {}, False),
+        (
+            "checkbox_only",
+            {"Checkbox_ReplaceStringColumns": "True", "radioButton_ReplaceNullwithBlanks": "False"},
+            False,
+        ),
+        ("radio_only_is_stale_state", {"radioButton_ReplaceNullwithBlanks": "True"}, False),
+        (
+            "both_on",
+            {
+                "Checkbox_ReplaceStringColumns": "True",
+                "radioButton_ReplaceNullwithBlanks": "True",
+                "ReplaceWithBlanks": "True",
+            },
+            True,
+        ),
+    ],
+)
+def test_a_cleanse_pro_radio_button_only_counts_under_a_ticked_checkbox(case_id: str, overrides: dict, expected: bool):
+    """Alteryx keeps the radio's last position when the box is unticked, so the box decides too."""
+    document = tool_after_text_input(CLEANSE_PRO_PLUGIN, cleanse_pro_config(overrides))
+    settings = dumped_nodes(convert_yxmd(document, source_name="pro.yxmd"))[2]["setting_input"]["cleansing_input"]
+    assert settings["replace_nulls_with_blank"] is expected
+
+
+def test_a_cleanse_pro_that_contradicts_its_own_resolved_setting_is_refused():
+    """ReplaceWithBlanks is what Alteryx resolved the pair into; disagreeing means this is misread."""
+    overrides = {"Checkbox_ReplaceStringColumns": "True", "radioButton_ReplaceNullwithBlanks": "True"}
+    document = tool_after_text_input(CLEANSE_PRO_PLUGIN, cleanse_pro_config(overrides))
+    row = report_row(convert_yxmd(document, source_name="pro.yxmd"), 2)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert any("its own <ReplaceWithBlanks> says the opposite" in message for message in row.messages), row.messages
+
+
+@pytest.mark.parametrize(
+    ("case_id", "overrides", "fragment"),
+    [
+        ("html_tags", {"RemoveHTMLTags": "True"}, "<RemoveHTMLTags> (removing HTML tags)"),
+        (
+            "invisible_characters",
+            {"RemoveInvisibleCharacters": "True"},
+            "<RemoveInvisibleCharacters> (removing invisible characters)",
+        ),
+        (
+            "blanks_to_nulls",
+            {"Checkbox_ReplaceStringColumns": "True", "radioButton_ReplaceBlankswithNulls": "True"},
+            "<radioButton_ReplaceBlankswithNulls> (replacing blanks with nulls)",
+        ),
+        (
+            "zeroes_to_nulls",
+            {"Checkbox_ReplaceNumericColumns": "True", "radioButton_ReplaceZerowithNulls": "True"},
+            "<radioButton_ReplaceZerowithNulls> (replacing zeroes with nulls)",
+        ),
+        ("letters", {"Letters": "aeiou"}, "overrides the <Letters> character set"),
+        ("exceptions", {"Exceptions": "-"}, "overrides the <Exceptions> character set"),
+        ("unknown_case", {"CheckBox_ModifyCase": "True", "ModifyCase": "sentence"}, "case mode 'sentence'"),
+    ],
+)
+def test_data_cleanse_pro_fails_closed(case_id: str, overrides: dict, fragment: str):
+    document = tool_after_text_input(CLEANSE_PRO_PLUGIN, cleanse_pro_config(overrides))
+    row = report_row(convert_yxmd(document, source_name="pro.yxmd"), 2)
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert any(fragment in message for message in row.messages), row.messages
+
+
+def test_a_cleanse_pro_option_flowfile_does_not_read_fails_closed():
+    """A later build adding an option must not convert as though the option were not there."""
+    config = cleanse_pro_config() + '<RemoveEmoji value="True" />'
+    row = report_row(convert_yxmd(tool_after_text_input(CLEANSE_PRO_PLUGIN, config), source_name="pro.yxmd"), 2)
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert any("settings Flowfile does not read: RemoveEmoji" in message for message in row.messages), row.messages
+
+
+def test_a_cleanse_pro_selecting_all_but_one_column_freezes_the_list_and_says_so():
+    """`*Unknown` on with a named field off is "everything except"; a named list cannot grow."""
+    fields = '<Fields><Field value="value" selected="False" /><Field value="*Unknown" selected="True" /></Fields>'
+    document = tool_after_text_input(CLEANSE_PRO_PLUGIN, cleanse_pro_config(fields=fields))
+    result = convert_yxmd(document, source_name="pro.yxmd")
+    row = report_row(result, 2)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert any("cleanses every column except value" in message for message in row.messages), row.messages
+    settings = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["cleansing_input"]
+    assert (settings["selection_mode"], settings["selected_columns"]) == ("list", [])
+
+
+def test_a_cleanse_pro_selecting_all_but_one_is_refused_when_the_columns_are_unknown():
+    """Behind an unmapped tool there is no column list to subtract from, so nothing is guessed."""
+    fields = '<Fields><Field value="value" selected="False" /><Field value="*Unknown" selected="True" /></Fields>'
+    document = CLEANSE_PRO_BEHIND_A_PLACEHOLDER % cleanse_pro_config(fields=fields).encode()
+    row = report_row(convert_yxmd(document, source_name="pro.yxmd"), 3)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert any("not known at import time" in message for message in row.messages), row.messages
+
+
+def test_the_cleanse_pro_flow_runs_and_applies_each_rule(tmp_path: Path, cleanse_pro: ConversionResult):
+    flow = open_flow(write_flow(cleanse_pro, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+    frames = {
+        tool_id: flow.get_node(report_row(cleanse_pro, tool_id).flowfile_node_ids[0])
+        .get_resulting_data()
+        .data_frame.collect()
+        for tool_id in (2, 3, 4, 5)
+    }
+    assert frames[2]["Grower"].to_list() == ["Okonjo", "salgado", "Brandt"]
+    assert frames[3]["Packhouse"].to_list() == ["Shed 2", "Shed 1", None]
+    assert frames[4]["Crates"].to_list() == [7, 0, 4]
+    assert frames[5]["Grower"].to_list() == [" OKONJO ", "SALGADO", "BRANDT"]
+
+
+# --- W5.3 Transpose *Unknown ---
+
+TRANSPOSE_UNKNOWN_CONFIG = """
+        <ErrorWarn>Ignore</ErrorWarn>
+        <KeyFields><Field field="%s" /></KeyFields>
+        <DataFields>
+          <Field field="%s" selected="False" />
+          <Field field="*Unknown" selected="True" />
+        </DataFields>"""
+
+
+@pytest.fixture()
+def transpose_unknown() -> ConversionResult:
+    return convert("transpose_unknown.yxmd")
+
+
+def test_transpose_unknown_becomes_a_selector_over_everything_else(transpose_unknown: ConversionResult):
+    """`*Unknown` is resolved at run time by Alteryx, so the code says what to leave out, not in."""
+    row = report_row(transpose_unknown, 2)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("converted", "converted", "polars_code")
+    body = dumped_nodes(transpose_unknown)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"][
+        "polars_code"
+    ]
+    ast.parse(body)
+    assert body.endswith(
+        "output_df = input_df.unpivot(\n"
+        "    on=cs.exclude(['Ref', 'Bucket']),\n"
+        "    index=['Ref'],\n"
+        "    variable_name='Name',\n"
+        "    value_name='Value',\n"
+        ")"
+    )
+
+
+def test_a_transpose_set_to_warn_on_mixed_types_says_so(transpose_unknown: ConversionResult):
+    """Alteryx warns about data fields that do not share a type; polars widens or fails instead."""
+    sentence = (
+        "This Alteryx Transpose is set to warn when its data fields do not share one type; Flowfile widens "
+        "them to a common type instead, and fails when there is none."
+    )
+    assert sentence in report_row(transpose_unknown, 2).messages
+    assert sentence not in report_row(transpose_unknown, 3).messages
+    # Tool 4 is the STATIC path set to Warn: both paths return the same `_transpose_messages`.
+    static_warn = report_row(transpose_unknown, 4)
+    assert (static_warn.status, static_warn.flowfile_node_type) == ("converted", "unpivot")
+    assert static_warn.messages == [sentence]
+
+
+def test_the_static_transpose_path_is_untouched_by_the_unknown_branch(transpose_unknown: ConversionResult):
+    """A listed selection still becomes the native unpivot plus the Alteryx rename, as before."""
+    row = report_row(transpose_unknown, 3)
+    assert (row.status, row.flowfile_node_type) == ("converted", "unpivot")
+    nodes = dumped_nodes(transpose_unknown)
+    unpivot_id, rename_id = row.flowfile_node_ids
+    assert nodes[unpivot_id]["setting_input"]["unpivot_input"] == {
+        "index_columns": ["Ref"],
+        "value_columns": ["Q1", "Q2"],
+        "data_type_selector": None,
+        "data_type_selector_mode": "column",
+    }
+    assert [item["new_name"] for item in nodes[rename_id]["setting_input"]["select_input"]] == ["Name", "Value"]
+
+
+def test_the_transpose_unknown_flow_runs_and_keeps_only_the_data_columns(
+    tmp_path: Path, transpose_unknown: ConversionResult
+):
+    """Ref is a key and Bucket is deselected, so only Q1 and Q2 become Name/Value rows."""
+    flow = open_flow(write_flow(transpose_unknown, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+    node_id = report_row(transpose_unknown, 2).flowfile_node_ids[0]
+    frame = flow.get_node(node_id).get_resulting_data().data_frame.collect().sort("Ref", "Name")
+    assert frame.columns == ["Ref", "Name", "Value"]
+    assert frame.rows() == [("C-1", "Q1", 11), ("C-1", "Q2", 12), ("C-2", "Q1", 21), ("C-2", "Q2", 22)]
+
+
+@pytest.mark.parametrize(
+    ("case_id", "key", "deselected"),
+    [("a_key_field", "value\\\\", "other"), ("a_deselected_field", "value", "other\\\\")],
+)
+def test_a_transpose_name_ending_in_a_backslash_is_refused(case_id: str, key: str, deselected: str):
+    """The name lands in a generated body, where a trailing backslash breaks the comment stripper."""
+    config = TRANSPOSE_UNKNOWN_CONFIG % (key, deselected)
+    document = tool_after_text_input("AlteryxBasePluginsGui.Transpose.Transpose", config)
+    row = report_row(convert_yxmd(document, source_name="transpose.yxmd"), 2)
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert any("ends with a backslash" in message for message in row.messages), row.messages
+
+
+# --- W5.4 Date Time ---
+
+DATETIME_PLUGIN = "AlteryxBasePluginsGui.DateTime.DateTime"
+
+
+def datetime_config(alteryx_format: str, *, is_from: str = "False", **overrides: str) -> str:
+    values = {
+        "IsFrom": f'<IsFrom value="{is_from}" />',
+        "InputFieldName": "<InputFieldName>value</InputFieldName>",
+        "Language": "<Language>English</Language>",
+        "Format": f"<Format>{alteryx_format}</Format>",
+        "OutputFieldName": "<OutputFieldName>parsed</OutputFieldName>",
+    }
+    values.update(overrides)
+    return "".join(values.values())
+
+
+@pytest.fixture()
+def datetime_tokens() -> ConversionResult:
+    return convert("datetime_tokens.yxmd")
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "column", "expression"),
+    [
+        (2, "Shipped on", 'to_date([Shipped text], "%m-%d/%Y")'),
+        (3, "Gate moment", 'to_datetime([Gate time], "%H:%M:%S")'),
+        (4, "Picked label", 'format_date([Picked on], "%B %d, %Y")'),
+        (5, "Weighed label", 'format_date([Weighed at], "%A, %d %B, %Y")'),
+    ],
+    ids=["parse_a_date", "parse_a_time", "format_a_date", "format_a_datetime"],
+)
+def test_date_time_becomes_one_formula_per_tool(
+    datetime_tokens: ConversionResult, tool_id: int, column: str, expression: str
+):
+    """`IsFrom` is the whole mode: true writes a string out of a date, false reads one in."""
+    row = report_row(datetime_tokens, tool_id)
+    assert (row.flowfile_node_type, len(row.flowfile_node_ids)) == ("formula", 1)
+    settings = dumped_nodes(datetime_tokens)[row.flowfile_node_ids[0]]["setting_input"]["function"]
+    assert settings["field"]["name"] == column
+    assert settings["function"] == expression
+
+
+def test_a_time_only_parse_is_partial_because_flowfile_has_no_time_column(datetime_tokens: ConversionResult):
+    """`to_datetime` puts a bare time on 0001-01-01, which is not what Alteryx calls a Time."""
+    row = report_row(datetime_tokens, 3)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert any("becomes a Datetime holding that time on 0001-01-01" in message for message in row.messages)
+    assert report_row(datetime_tokens, 2).status == "converted"
+
+
+@pytest.mark.parametrize("tool_id", [4, 5])
+def test_formatting_a_date_is_partial_because_alteryx_keeps_dates_as_text(
+    datetime_tokens: ConversionResult, tool_id: int
+):
+    """`format_date` compiles to `.dt.to_string()`, which raises on the String an Alteryx Text
+    Input becomes — three of the six corpus instances do exactly that, so this is not theoretical."""
+    row = report_row(datetime_tokens, tool_id)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert any("has to be one by the time this node runs" in message for message in row.messages), row.messages
+    assert report_row(datetime_tokens, 2).status == "converted"
+
+
+def test_the_datetime_flow_runs_and_reproduces_the_alteryx_values(tmp_path: Path, datetime_tokens: ConversionResult):
+    """Both directions on real values: the format tools read declared Date/DateTime columns."""
+    flow = open_flow(write_flow(datetime_tokens, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+    frames = {
+        tool_id: flow.get_node(report_row(datetime_tokens, tool_id).flowfile_node_ids[0])
+        .get_resulting_data()
+        .data_frame.collect()
+        for tool_id in (2, 3, 4, 5)
+    }
+    assert frames[2]["Shipped on"].to_list() == [date(2024, 7, 19), date(2024, 11, 2)]
+    assert frames[3]["Gate moment"].to_list() == [datetime(1, 1, 1, 8, 15), datetime(1, 1, 1, 16, 40, 30)]
+    assert frames[4]["Picked label"].to_list() == ["March 05, 2024", "November 21, 2024"]
+    assert frames[5]["Weighed label"].to_list() == ["Tuesday, 05 March, 2024", "Thursday, 21 November, 2024"]
+
+
+@pytest.mark.parametrize(
+    ("alteryx_format", "strftime"),
+    [
+        ("yyyy-MM-dd", '"%Y-%m-%d"'),
+        ("dd/MM/yyyy HH:mm:ss", '"%d/%m/%Y %H:%M:%S"'),
+        ("hh:mm tt", '"%I:%M %p"'),
+        ("dy Mon dd yyyy", '"%a %b %d %Y"'),
+        ("day, Month dd, yyyy", '"%A, %B %d, %Y"'),
+        ("yyyy-MM-dd 100%", '"%Y-%m-%d 100%%"'),
+    ],
+)
+def test_the_alteryx_token_table_becomes_strftime(alteryx_format: str, strftime: str):
+    """A run of letters is one token or none, so `Month` is never read as `MM` plus a literal."""
+    document = tool_after_text_input(DATETIME_PLUGIN, datetime_config(alteryx_format))
+    row = report_row(convert_yxmd(document, source_name="dt.yxmd"), 2)
+    assert row.flowfile_node_type == "formula", row.messages
+    function = dumped_nodes(convert_yxmd(document, source_name="dt.yxmd"))[2]["setting_input"]["function"]["function"]
+    assert function.endswith(f"{strftime})")
+
+
+@pytest.mark.parametrize(
+    ("case_id", "config", "fragment"),
+    [
+        ("two_digit_year", datetime_config("MM/dd/yy"), "'yy' is not a date token"),
+        ("unpadded_day", datetime_config("M/d/yyyy"), "'M' is not a date token"),
+        ("unpadded_hour", datetime_config("H:mm"), "'H' is not a date token"),
+        ("an_unknown_token", datetime_config("yyyy-MM-ddTzz"), "'ddTzz' is not a date token"),
+        ("a_compounded_word", datetime_config("Monday"), "'Monday' is not a date token"),
+        ("a_repeated_token", datetime_config("dddd"), "'dddd' is not a date token"),
+        ("tokens_with_no_separator", datetime_config("yyyyMMdd"), "'yyyyMMdd' is not a date token"),
+        ("no_date_part_at_all", datetime_config("--/--"), "it names no date or time part at all"),
+        ("an_empty_format", datetime_config(""), "the format is empty"),
+        (
+            "another_language",
+            datetime_config("yyyy-MM-dd", Language="<Language>French</Language>"),
+            "reads or writes French month and day names",
+        ),
+        ("no_input_field", datetime_config("yyyy", InputFieldName="<InputFieldName />"), "names no input field"),
+        ("no_output_field", datetime_config("yyyy", OutputFieldName="<OutputFieldName />"), "names no output field"),
+        ("no_direction", datetime_config("yyyy", IsFrom="<IsFrom />"), "whether it reads a string or writes one"),
+    ],
+)
+def test_date_time_fails_closed(case_id: str, config: str, fragment: str):
+    """An unread token would format the wrong thing silently, so anything unverified is refused.
+
+    The three separator-free cases are the point: `Monday` used to become `%b%A` and `dddd` `%d%d`,
+    both `converted` and both wrong; `yyyyMMdd` happened to be right, by luck rather than by rule.
+    """
+    row = report_row(convert_yxmd(tool_after_text_input(DATETIME_PLUGIN, config), source_name="dt.yxmd"), 2)
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert any(fragment in message for message in row.messages), row.messages
+
+
+# --- W5.5 Rank ---
+
+RANK_PLUGIN = "AlteryxBasePluginsGui.Rank.Rank"
+
+
+def rank_config(modes: str, sort_info: str = '<Field field="value" order="Descending" />', groups: str = "") -> str:
+    return (
+        f"<RankingModes>{modes}</RankingModes>"
+        f'<SortInfo locale="0">{sort_info}</SortInfo>'
+        f"<GroupFields>{groups}</GroupFields>"
+    )
+
+
+@pytest.fixture()
+def rank_modes() -> ConversionResult:
+    return convert("rank_modes.yxmd")
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "status", "reason", "expression"),
+    [
+        (2, "converted", "converted", "pl.col('Units').rank(method='dense', descending=True).alias('Rank')"),
+        (3, "converted", "converted", "pl.col('Units').rank(method='average', descending=True).alias('Rank')"),
+        (4, "partial", "row_order_unknown", "pl.col('Units').rank(method='ordinal', descending=True).alias('Rank')"),
+        (
+            5,
+            "partial",
+            "row_order_unknown",
+            "pl.col('Units').rank(method='ordinal', descending=True).over(['Team']).alias('Rank')",
+        ),
+        (9, "converted", "converted", "pl.col('Units').rank(method='ordinal', descending=True).alias('Rank')"),
+    ],
+    ids=["dense", "fractional", "ordinal", "ordinal_grouped", "ordinal_behind_a_sort"],
+)
+def test_rank_becomes_a_rank_expression_per_mode(
+    rank_modes: ConversionResult, tool_id: int, status: str, reason: str, expression: str
+):
+    """Ordinal breaks ties by arrival order, so it is only `converted` when a Sort states one."""
+    row = report_row(rank_modes, tool_id)
+    assert (row.status, row.reason, row.flowfile_node_type) == (status, reason, "polars_code")
+    body = dumped_nodes(rank_modes)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+    ast.parse(body)
+    assert body.endswith(f"output_df = input_df.with_columns(\n    {expression}\n)")
+
+
+def test_rank_names_its_column_and_says_it_does_not_reorder(rank_modes: ConversionResult):
+    """Nothing in the corpus pins the name, so the report is where a reader learns it."""
+    row = report_row(rank_modes, 2)
+    assert row.messages == [
+        "The rank is added as a column called 'Rank' and the rows keep the order they arrived in; "
+        "sort on 'Rank' downstream if the rows themselves have to be in rank order.",
+        "A row whose 'Units' is null gets a null 'Rank': Flowfile ranks only the rows that have a "
+        "value, so a null takes no rank number and is not ranked last.",
+    ]
+    assert report_row(rank_modes, 4).messages[-1] == (
+        "Alteryx's Ordinal rank breaks ties by the order the rows arrive in, which this workflow does not "
+        "state; sort the rows upstream if the order matters."
+    )
+
+
+@pytest.mark.parametrize("tool_id", [6, 7])
+def test_standard_and_competition_stay_placeholders_until_the_tie_rule_is_confirmed(
+    rank_modes: ConversionResult, tool_id: int
+):
+    """1,2,2,4 and 1,3,3,4 are one polars argument apart and the wrong one is silently wrong data."""
+    row = report_row(rank_modes, tool_id)
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert any("guessing between 1,2,2,4 and 1,3,3,4" in message for message in row.messages), row.messages
+
+
+def test_the_rank_flow_runs_and_reproduces_the_documented_tie_behaviour(tmp_path: Path, rank_modes: ConversionResult):
+    """Five rows with one tie and one null, so every mode's tie rule shows up in the numbers.
+
+    Nothing re-sorts the frames. The ranks are read in the order the rows leave each node, which is
+    the only way the Sort in front of tool 9 can be seen at all: it breaks the 20/20 tie the other
+    way round from arrival order, so tool 9's ranks are no longer a copy of tool 4's.
+    """
+    flow = open_flow(write_flow(rank_modes, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+    ranked = {}
+    for tool_id in (2, 3, 4, 5, 9):
+        frame = (
+            flow.get_node(report_row(rank_modes, tool_id).flowfile_node_ids[0])
+            .get_resulting_data()
+            .data_frame.collect()
+        )
+        assert frame.columns == ["Crate", "Units", "Team", "Rank"]
+        ranked[tool_id] = frame.select(["Crate", "Rank"]).rows()
+    assert ranked[2] == [("C-1", 3), ("C-2", 2), ("C-3", 2), ("C-4", 1), ("C-5", None)]
+    assert ranked[3] == [("C-1", 4.0), ("C-2", 2.5), ("C-3", 2.5), ("C-4", 1.0), ("C-5", None)]
+    assert ranked[4] == [("C-1", 4), ("C-2", 2), ("C-3", 3), ("C-4", 1), ("C-5", None)]
+    assert ranked[5] == [("C-1", 2), ("C-2", 1), ("C-3", 2), ("C-4", 1), ("C-5", None)]
+    # Behind the Sort the tie resolves the other way round, and the null leads a descending sort.
+    assert ranked[9] == [("C-5", None), ("C-4", 1), ("C-3", 2), ("C-2", 3), ("C-1", 4)]
+
+
+RANK_BEHIND_A_PLACEHOLDER = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="value" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.XMLParse.XMLParse" />
+      <Properties><Configuration /></Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Rank.Rank" />
+      <Properties><Configuration>%s</Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_rank_does_not_overwrite_an_incoming_rank_column(tmp_path: Path, rank_modes: ConversionResult):
+    """Tool 11's input already carries a 'Rank', so the mapper names its own column around it."""
+    row = report_row(rank_modes, 11)
+    assert (row.status, row.reason) == ("converted", "converted")
+    flow = open_flow(write_flow(rank_modes, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+    frame = flow.get_node(row.flowfile_node_ids[0]).get_resulting_data().data_frame.collect().sort("Crate")
+    assert frame.columns == ["Crate", "Rank", "Units", "Rank_1"]
+    assert frame["Rank"].to_list() == ["gold", "silver", "bronze"]
+    assert frame["Rank_1"].to_list() == [3, 1, 2]
+    assert row.messages == [
+        "The rank is added as a column called 'Rank_1', because the columns reaching this tool already "
+        "carry a 'Rank' that Flowfile does not overwrite, and the rows keep the order they arrived in; "
+        "sort on 'Rank_1' downstream if the rows themselves have to be in rank order.",
+        "A row whose 'Units' is null gets a null 'Rank_1': Flowfile ranks only the rows that have a "
+        "value, so a null takes no rank number and is not ranked last.",
+    ]
+
+
+def test_rank_publishes_the_resolved_column_once():
+    """`['Crate', 'Rank', 'Units', 'Rank']` is what a downstream Cleanse Pro would freeze into its list."""
+    ctx, _ = emit_tools(parse_yxmd(read_fixture("rank_modes.yxmd")))
+    assert ctx.tool_columns[2] == ["Crate", "Units", "Team", "Rank"]
+    assert ctx.tool_columns[11] == ["Crate", "Rank", "Units", "Rank_1"]
+
+
+def test_rank_says_it_could_not_check_for_a_rank_column_when_the_schema_is_unknown():
+    """Behind a placeholder there is no column list to test against, so the caveat is the honest answer."""
+    document = (
+        RANK_BEHIND_A_PLACEHOLDER
+        % rank_config('<Mode value="Dense" />', '<Field field="value" order="Descending" />').encode()
+    )
+    row = report_row(convert_yxmd(document, source_name="rank.yxmd"), 3)
+    assert (row.status, row.reason) == ("converted", "converted")
+    assert row.messages == [
+        "The rank is added as a column called 'Rank' and the rows keep the order they arrived in; "
+        "sort on 'Rank' downstream if the rows themselves have to be in rank order.",
+        "A row whose 'value' is null gets a null 'Rank': Flowfile ranks only the rows that have a "
+        "value, so a null takes no rank number and is not ranked last.",
+        "The columns reaching this tool are not known at import time, so whether one of them is already "
+        "called 'Rank' could not be checked; if one is, this node replaces it.",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("case_id", "config", "status_reason", "fragment"),
+    [
+        (
+            "two_modes",
+            rank_config('<Mode value="Dense" /><Mode value="Ordinal" />'),
+            ("placeholder", "option_unsupported"),
+            "names 2 ranking modes",
+        ),
+        ("no_mode", rank_config(""), ("placeholder", "option_unsupported"), "names 0 ranking modes"),
+        (
+            "an_unknown_mode",
+            rank_config('<Mode value="Percentile" />'),
+            ("placeholder", "option_unsupported"),
+            "ranking mode 'Percentile' has no Flowfile equivalent",
+        ),
+        (
+            "no_sort_field",
+            rank_config('<Mode value="Dense" />', sort_info=""),
+            ("placeholder", "mapper_refused"),
+            "names no field to rank by",
+        ),
+        (
+            "two_sort_fields",
+            rank_config(
+                '<Mode value="Dense" />',
+                sort_info='<Field field="value" order="Desc" /><Field field="other" order="Asc" />',
+            ),
+            ("placeholder", "option_unsupported"),
+            "ranks by 2 fields at once",
+        ),
+        (
+            "a_field_ending_in_a_backslash",
+            rank_config('<Mode value="Dense" />', sort_info='<Field field="value\\\\" order="Desc" />'),
+            ("placeholder", "option_unsupported"),
+            "ends with a backslash",
+        ),
+    ],
+)
+def test_rank_fails_closed(case_id: str, config: str, status_reason: tuple[str, str], fragment: str):
+    row = report_row(convert_yxmd(tool_after_text_input(RANK_PLUGIN, config), source_name="rank.yxmd"), 2)
+    assert (row.status, row.reason) == status_reason
+    assert any(fragment in message for message in row.messages), row.messages
+
+
+# --- W5.6 Sample mode table ---
+
+SAMPLE_PLUGIN = "AlteryxBasePluginsGui.Sample.Sample"
+
+
+def sample_config(mode: str, n: str = "2", groups: str = "") -> str:
+    return f"<Mode>{mode}</Mode><N>{n}</N><GroupFields>{groups}</GroupFields>"
+
+
+@pytest.fixture()
+def sample_modes() -> ConversionResult:
+    return convert("sample_modes.yxmd")
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "node_type", "tail"),
+    [
+        (2, "sample", None),
+        (3, "polars_code", "output_df = input_df.tail(2)"),
+        (4, "polars_code", "output_df = input_df.slice(2)"),
+        (5, "polars_code", "output_df = input_df.gather_every(3)"),
+        (
+            6,
+            "polars_code",
+            "_position = pl.int_range(pl.len()).over(['Lane'])\noutput_df = input_df.filter(_position < 2)",
+        ),
+        (8, "polars_code", "output_df = input_df.tail(2)"),
+    ],
+    ids=["first", "last", "skip", "one_in_n", "first_grouped", "last_behind_a_sort"],
+)
+def test_the_sample_mode_table(sample_modes: ConversionResult, tool_id: int, node_type: str, tail: str | None):
+    """Only the ungrouped "first N" is a node Flowfile already has; the rest are generated."""
+    row = report_row(sample_modes, tool_id)
+    assert row.flowfile_node_type == node_type
+    settings = dumped_nodes(sample_modes)[row.flowfile_node_ids[0]]["setting_input"]
+    if tail is None:
+        assert (settings["sample_method"], settings["sample_size"]) == ("first", 2)
+        return
+    body = settings["polars_code_input"]["polars_code"]
+    ast.parse(body)
+    assert body.endswith(tail)
+
+
+SAMPLE_GROUP_SORT_SENTENCE = (
+    "Alteryx's classic engine also sorts a grouped Sample's output by the grouping column, which this "
+    "node does not; the rows keep the order they arrived in, as they do under Alteryx's AMP engine, so "
+    "sort on the grouping column downstream if that order matters."
+)
+
+
+@pytest.mark.parametrize("tool_id", [2, 3, 4, 5, 6])
+def test_every_sample_mode_is_partial_until_the_order_is_stated(sample_modes: ConversionResult, tool_id: int):
+    """Every mode in the table picks rows by position — including the plain "first N", which this
+    wave demotes from converted for exactly that reason."""
+    row = report_row(sample_modes, tool_id)
+    assert (row.status, row.reason) == ("partial", "row_order_unknown")
+    order = (
+        "Which rows this keeps depends on the order they arrive in, which this workflow does not state; "
+        "sort the rows upstream if the order matters."
+    )
+    grouped = [SAMPLE_GROUP_SORT_SENTENCE] if tool_id == 6 else []
+    assert row.messages == [order, *grouped]
+
+
+def test_only_a_grouped_sample_says_the_classic_engine_sorts_its_output(sample_modes: ConversionResult):
+    """`Sample.yxmd`'s own comment box at tool 96 states both halves; an ungrouped Sample has neither."""
+    assert SAMPLE_GROUP_SORT_SENTENCE in report_row(sample_modes, 6).messages
+    for tool_id in (2, 3, 4, 5, 8):
+        assert SAMPLE_GROUP_SORT_SENTENCE not in report_row(sample_modes, tool_id).messages
+
+
+def test_a_sample_with_no_mode_is_refused_rather_than_defaulted_to_first():
+    """A missing `<Mode>` used to mean First, which silently keeps the wrong rows."""
+    for config in ("<N>2</N>", "<Mode></Mode><N>2</N>"):
+        row = report_row(convert_yxmd(tool_after_text_input(SAMPLE_PLUGIN, config), source_name="s.yxmd"), 2)
+        assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+        assert any("Sample mode could not be read" in message for message in row.messages), row.messages
+
+
+def test_a_sample_behind_a_sort_is_converted_without_a_caveat(sample_modes: ConversionResult):
+    row = report_row(sample_modes, 8)
+    assert (row.status, row.reason, row.messages) == ("converted", "converted", [])
+
+
+def test_the_sample_flow_runs_and_keeps_the_right_rows(tmp_path: Path, sample_modes: ConversionResult):
+    """Seven rows in two lanes, so every mode's slice is distinguishable."""
+    flow = open_flow(write_flow(sample_modes, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+    kept = {
+        tool_id: flow.get_node(report_row(sample_modes, tool_id).flowfile_node_ids[0])
+        .get_resulting_data()
+        .data_frame.collect()["Crates"]
+        .to_list()
+        for tool_id in (2, 3, 4, 5, 6, 8)
+    }
+    assert kept[2] == [1, 2]
+    assert kept[3] == [6, 7]
+    assert kept[4] == [3, 4, 5, 6, 7]
+    assert kept[5] == [1, 4, 7]
+    assert kept[6] == [1, 2, 4, 5]
+    assert kept[8] == [2, 1]
+
+
+@pytest.mark.parametrize(
+    ("case_id", "config", "reason", "fragment"),
+    [
+        (
+            "random",
+            sample_config("Random", n="10"),
+            "option_unsupported",
+            "a 1-in-N chance per row rather than a sample of a fixed size",
+        ),
+        (
+            "n_percent",
+            sample_config("NPercent", n="10"),
+            "option_unsupported",
+            "the first N% of the rows rather than a random share of them",
+        ),
+        (
+            "an_unknown_mode",
+            sample_config("Stratified"),
+            "option_unsupported",
+            "mode 'Stratified' has no Flowfile equivalent",
+        ),
+        ("an_unreadable_count", sample_config("First", n="a few"), "mapper_refused", "count could not be read"),
+        ("a_zero_count", sample_config("First", n="0"), "mapper_refused", "0 is not a positive number"),
+        ("a_negative_count", sample_config("First", n="-5"), "mapper_refused", "count could not be read"),
+        ("a_decimal_count", sample_config("First", n="2.7"), "mapper_refused", "count could not be read"),
+        ("an_infinite_count", sample_config("First", n="1e400"), "mapper_refused", "count could not be read"),
+        (
+            "a_group_field_ending_in_a_backslash",
+            sample_config("First", groups='<Field name="lane\\\\" />'),
+            "option_unsupported",
+            "ends with a backslash",
+        ),
+    ],
+)
+def test_sample_fails_closed(case_id: str, config: str, reason: str, fragment: str):
+    """Random and NPercent are held: neither is the fixed-size random sample the plan assumed."""
+    row = report_row(convert_yxmd(tool_after_text_input(SAMPLE_PLUGIN, config), source_name="sample.yxmd"), 2)
+    assert (row.status, row.reason) == ("placeholder", reason)
+    assert any(fragment in message for message in row.messages), row.messages
+
+
+@pytest.mark.parametrize(
+    ("case_id", "num_fields"),
+    [("negative", "-2"), ("decimal", "2.7"), ("infinite", "1e400"), ("a_word", "several")],
+)
+def test_the_regex_output_field_count_is_read_by_the_same_reader(case_id: str, num_fields: str):
+    """The fourth site of the one integer reader: a count that is not a whole number is refused."""
+    result = convert_yxmd(regex_tokenize("([A-Z]{2})", num_fields=num_fields), source_name="regex.yxmd")
+    row = report_row(result, 2)
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert any("output field count could not be read" in message for message in row.messages), row.messages
+
+
+@pytest.mark.parametrize(
+    ("text", "minimum", "expected"),
+    [
+        ("3", 0, 3),
+        ("+3", 0, 3),
+        ("  7 ", 0, 7),
+        ("0", 0, 0),
+        ("0", 1, None),
+        ("-5", 0, None),
+        ("2.7", 0, None),
+        ("1e400", 0, None),
+        ("inf", 0, None),
+        ("nan", 0, None),
+        ("", 0, None),
+        ("+-3", 0, None),
+        ("\u00b2", 0, None),
+    ],
+)
+def test_the_whole_number_reader_refuses_everything_that_is_not_one(text: str, minimum: int, expected):
+    """`int(float(...))` accepted three of these and raised OverflowError on a fourth."""
+    assert mappers._whole_number(text, minimum=minimum) == expected
+
+
+def test_an_infinite_count_does_not_escape_the_conversion():
+    """`1e400` used to raise OverflowError past `convert_yxmd`, so the upload 500ed with no event."""
+    document = tool_after_text_input(SAMPLE_PLUGIN, sample_config("First", n="1e400"))
+    assert report_row(convert_yxmd(document, source_name="sample.yxmd"), 2).status == "placeholder"
+    huge = b'<?xml version="1.0"?><AlteryxDocument><Nodes><Node ToolID="1e400" /></Nodes></AlteryxDocument>'
+    with pytest.raises(YxmdParseError):
+        convert_yxmd(huge, source_name="huge.yxmd")
+
+
+def test_the_sample_group_fields_are_read_by_tag_not_by_position():
+    """`<GroupFields>` sits after `<N>` in some workflows and before it in others."""
+    config = '<GroupFields><Field name="value" /></GroupFields><N>2</N><Mode>Last</Mode>'
+    result = convert_yxmd(tool_after_text_input(SAMPLE_PLUGIN, config), source_name="sample.yxmd")
+    body = dumped_nodes(result)[2]["setting_input"]["polars_code_input"]["polars_code"]
+    assert "_position = pl.int_range(pl.len()).over(['value'])" in body
+    assert body.endswith("output_df = input_df.filter(_position >= _size - 2)")
+
+
+# --- W5.7 Select Records ---
+
+
+@pytest.fixture()
+def select_records() -> ConversionResult:
+    return convert("select_records.yxmd")
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "status", "predicate"),
+    [
+        (2, "partial", "[__select_records_row] <= 5"),
+        (3, "partial", "([__select_records_row] >= 3 and [__select_records_row] <= 7)"),
+        (4, "partial", "[__select_records_row] = 12"),
+        (5, "partial", "[__select_records_row] >= 9"),
+        (7, "converted", "([__select_records_row] >= 3 and [__select_records_row] <= 7)"),
+    ],
+    ids=["to_n", "n_to_m", "one_row", "n_and_up", "behind_a_sort"],
+)
+def test_select_records_becomes_record_id_filter_and_select(
+    select_records: ConversionResult, tool_id: int, status: str, predicate: str
+):
+    """Alteryx filters on a position, which a Flowfile filter cannot ask about until it is a column."""
+    row = report_row(select_records, tool_id)
+    assert row.status == status
+    assert len(row.flowfile_node_ids) == 3
+    nodes = dumped_nodes(select_records)
+    record_id, row_filter, drop = (nodes[node_id] for node_id in row.flowfile_node_ids)
+    assert [record_id["type"], row_filter["type"], drop["type"]] == ["record_id", "filter", "select"]
+    assert record_id["setting_input"]["record_id_input"] == {
+        "output_column_name": "__select_records_row",
+        "offset": 1,
+        "group_by": False,
+        "group_by_columns": [],
+    }
+    assert row_filter["setting_input"]["filter_input"]["advanced_filter"] == predicate
+    assert drop["setting_input"]["keep_missing"] is True
+    assert [(item["old_name"], item["keep"]) for item in drop["setting_input"]["select_input"]] == [
+        ("__select_records_row", False)
+    ]
+    assert record_id["outputs"] == [row_filter["id"]] and row_filter["outputs"] == [drop["id"]]
+
+
+def test_a_select_records_range_of_several_tokens_becomes_one_or(select_records: ConversionResult):
+    """Whitespace and commas both separate; each token becomes one clause of a single OR."""
+    document = macro_after_text_input("SelectRecords.yxmc", '<Value name="Ranges">-5\n3-7, 12\n9+</Value>')
+    result = convert_yxmd(document, source_name="select_records.yxmd")
+    row = report_row(result, 2)
+    assert dumped_nodes(result)[row.flowfile_node_ids[1]]["setting_input"]["filter_input"]["advanced_filter"] == (
+        "[__select_records_row] <= 5 or ([__select_records_row] >= 3 and [__select_records_row] <= 7)"
+        " or [__select_records_row] = 12 or [__select_records_row] >= 9"
+    )
+
+
+SELECT_RECORDS_OVER_ITS_OWN_HELPER = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="__select_records_row" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings />
+      <Properties><Configuration><Value name="Ranges">1</Value></Configuration></Properties>
+      <EngineSettings Macro="SelectRecords.yxmc" />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_the_select_records_helper_column_does_not_shadow_one_of_the_users():
+    """`_unique_column` is what stops the helper overwriting a column the workflow already has."""
+    result = convert_yxmd(SELECT_RECORDS_OVER_ITS_OWN_HELPER, source_name="select_records.yxmd")
+    settings = dumped_nodes(result)[report_row(result, 2).flowfile_node_ids[0]]["setting_input"]
+    assert settings["record_id_input"]["output_column_name"] == "__select_records_row_1"
+    drop = dumped_nodes(result)[report_row(result, 2).flowfile_node_ids[-1]]["setting_input"]
+    assert [item["old_name"] for item in drop["select_input"]] == ["__select_records_row_1"]
+
+
+def test_the_select_records_flow_runs_and_keeps_exactly_those_rows(tmp_path: Path, select_records: ConversionResult):
+    """Fourteen rows, so every range form lands somewhere different — and the helper column is gone."""
+    flow = open_flow(write_flow(select_records, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+    kept = {}
+    for tool_id in (2, 3, 4, 5, 7):
+        frame = (
+            flow.get_node(report_row(select_records, tool_id).flowfile_node_ids[-1])
+            .get_resulting_data()
+            .data_frame.collect()
+        )
+        assert frame.columns == ["Crate", "Crates"]
+        kept[tool_id] = frame["Crates"].to_list()
+    assert kept[2] == [1, 2, 3, 4, 5]
+    assert kept[3] == [3, 4, 5, 6, 7]
+    assert kept[4] == [12]
+    assert kept[5] == [9, 10, 11, 12, 13, 14]
+    assert kept[7] == [12, 11, 10, 9, 8]
+
+
+SELECT_RECORDS_BEHIND_A_PLACEHOLDER = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="value" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.XMLParse.XMLParse" />
+      <Properties><Configuration /></Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="" />
+      <EngineSettings Macro="SelectRecords.yxmc" />
+      <Properties><Configuration><Value name="Ranges">1-3</Value></Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_select_records_names_its_helper_column_when_the_schema_is_unknown():
+    """`_unique_column` cannot avoid a collision it cannot see, so the report names what to rename."""
+    row = report_row(convert_yxmd(SELECT_RECORDS_BEHIND_A_PLACEHOLDER, source_name="sr.yxmd"), 3)
+    assert row.status == "partial"
+    assert row.messages[1] == (
+        "The columns reaching this tool are not known at import time, so that name was not checked "
+        "against them; rename a column of your own called '__select_records_row' before this node."
+    )
+
+
+def test_select_records_says_nothing_extra_when_the_schema_is_known(select_records: ConversionResult):
+    """A known schema is checked, so there is nothing to warn about and the message stays one sentence."""
+    assert all("was not checked against them" not in message for message in report_row(select_records, 2).messages)
+
+
+@pytest.mark.parametrize(
+    ("case_id", "ranges", "fragment"),
+    [
+        ("empty", "", "it names no rows at all"),
+        ("backwards", "7-3", "'7-3' ends before it starts"),
+        ("zero", "0-5", "numbers rows from below 1"),
+        ("negative_looking", "1--5", "is not one of the forms N, N-M, N+ or -N"),
+        ("a_word", "first ten", "'first' is not one of the forms"),
+        ("a_plus_in_front", "+9", "'+9' is not one of the forms"),
+        ("a_decimal", "1.5", "'1.5' is not one of the forms"),
+    ],
+)
+def test_select_records_fails_closed(case_id: str, ranges: str, fragment: str):
+    """A token this mapper cannot read is rows it would silently keep or drop."""
+    document = macro_after_text_input("SelectRecords.yxmc", f'<Value name="Ranges">{ranges}</Value>')
+    row = report_row(convert_yxmd(document, source_name="select_records.yxmd"), 2)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert any(fragment in message for message in row.messages), row.messages
+
+
+# --- W5.8 Summarize exotic actions ---
+
+SUMMARIZE_PLUGIN = "AlteryxSpatialPluginsGui.Summarize.Summarize"
+
+
+def summarize_config(*fields: tuple[str, str]) -> str:
+    return (
+        "<SummarizeFields>"
+        + "".join(
+            f'<SummarizeField field="{column}" action="{action}" rename="{action}_{column}" />'
+            for column, action in fields
+        )
+        + "</SummarizeFields>"
+    )
+
+
+SUMMARIZE_BEHIND_A_PLACEHOLDER = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="value" /></Fields>
+        <Data><r><c>a</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.XMLParse.XMLParse" />
+      <Properties><Configuration /></Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxSpatialPluginsGui.Summarize.Summarize" />
+      <Properties><Configuration>%s</Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+@pytest.fixture()
+def summarize_exotic() -> ConversionResult:
+    return convert("summarize_exotic.yxmd")
+
+
+def test_variance_reaches_the_native_group_by_node(summarize_exotic: ConversionResult):
+    """`AggColl.agg` is `getattr(pl, ...)`, so the table entry has to be polars' name for it."""
+    row = report_row(summarize_exotic, 2)
+    assert (row.status, row.flowfile_node_type) == ("converted", "group_by")
+    aggs = dumped_nodes(summarize_exotic)[row.flowfile_node_ids[0]]["setting_input"]["groupby_input"]["agg_cols"]
+    assert [(item["old_name"], item["agg"], item["new_name"]) for item in aggs] == [
+        ("Region", "groupby", "Region"),
+        ("Spend", "var", "Variance_Spend"),
+        ("Spend", "std", "StdDev_Spend"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("tool_id", "status", "reason", "body"),
+    [
+        (
+            3,
+            "partial",
+            "option_unsupported",
+            "output_df = input_df.group_by([]).agg(\n"
+            "    pl.col('Spend').mode().sort().first().alias('Mode_Spend'),\n"
+            "    pl.col('Name').sort_by(pl.col('Name').str.len_chars(), descending=True, nulls_last=True)"
+            ".first().alias('Longest_Name'),\n"
+            "    (pl.col('Name').is_not_null() & (pl.col('Name') != \"\")).sum().alias('CountNonBlank_Name'),\n"
+            "    (pl.col('Name').is_null() | (pl.col('Name') == \"\")).sum().alias('CountBlank_Name'),\n"
+            ")",
+        ),
+        (
+            4,
+            "converted",
+            "converted",
+            "output_df = input_df.group_by([pl.col('Region').alias('Region')]).agg(\n"
+            "    pl.col('Name').sort_by(pl.col('Name').str.len_chars(), descending=True, nulls_last=True)"
+            ".first().alias('Longest_Name'),\n"
+            "    (pl.col('Name').is_null() | (pl.col('Name') == \"\")).sum().alias('CountBlank_Name'),\n"
+            ")",
+        ),
+    ],
+    ids=["ungrouped_with_a_mode", "grouped_without_one"],
+)
+def test_an_exotic_action_turns_the_whole_tool_into_one_generated_group_by(
+    summarize_exotic: ConversionResult, tool_id: int, status: str, reason: str, body: str
+):
+    """Splitting the tool would change what is grouped, so every aggregation moves together."""
+    row = report_row(summarize_exotic, tool_id)
+    assert (row.status, row.reason, row.flowfile_node_type) == (status, reason, "polars_code")
+    code = dumped_nodes(summarize_exotic)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+    ast.parse(code)
+    assert code.endswith(body)
+
+
+def test_a_mode_is_partial_because_its_tie_rule_is_unverified(summarize_exotic: ConversionResult):
+    """`.sort().first()` is not Alteryx's rule, but it is at least the same answer every run."""
+    assert report_row(summarize_exotic, 3).messages == [
+        "Alteryx's Mode picks one value when several are equally common and its rule for that is not "
+        "verified; the generated code takes the lowest of them, so the result is at least the same on "
+        "every run."
+    ]
+    assert report_row(summarize_exotic, 4).messages == []
+
+
+def test_first_and_last_read_an_order_the_workflow_does_not_state(summarize_exotic: ConversionResult):
+    """W5.5/W5.6 applied the order rule to Rank Ordinal and to every Sample mode; these are the same
+    question asked of an aggregation, and `pl.first`/`pl.last` answer it from arrival order."""
+    row = report_row(summarize_exotic, 8)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "row_order_unknown", "group_by")
+    assert row.messages == [
+        "Alteryx's First and Last pick a value by the order the rows arrive in, which this workflow "
+        "does not state; sort the rows upstream if the order matters."
+    ]
+
+
+def test_a_first_behind_a_sort_converts(summarize_exotic: ConversionResult):
+    """A Sort states the order, which is exactly what the message asks the workflow to do."""
+    row = report_row(summarize_exotic, 10)
+    assert (row.status, row.reason, row.messages) == ("converted", "converted", [])
+
+
+def test_a_first_in_a_generated_group_by_is_order_dependent_too():
+    """Both exits of `map_summarize` answer the same question; only one of them used to."""
+    config = summarize_config(("value", "First"), ("value", "Longest"))
+    document = tool_after_text_input(SUMMARIZE_PLUGIN, config)
+    row = report_row(convert_yxmd(document, source_name="s.yxmd"), 2)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "row_order_unknown", "polars_code")
+    assert any(m.startswith("Alteryx's First and Last pick a value by the order") for m in row.messages)
+    assert any(m.startswith("These Alteryx Summarize aggregations read the characters") for m in row.messages)
+
+
+def test_the_spatial_summarize_actions_stay_a_placeholder(summarize_exotic: ConversionResult):
+    """Scope is keyed by tool name, so moving one action out of the denominator would be new policy."""
+    row = report_row(summarize_exotic, 5)
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert any("SpatialObjCombine on Shape" in message for message in row.messages), row.messages
+
+
+@pytest.mark.parametrize(
+    ("action", "label"),
+    [
+        ("Longest", "Longest"),
+        ("Shortest", "Shortest"),
+        ("CountNonBlank", "Count Non Blank"),
+        ("CountBlank", "Count Blank"),
+    ],
+)
+def test_a_string_aggregation_on_a_column_flowfile_typed_numeric_is_partial(action: str, label: str):
+    """The helper's one cell is `1`, so `value` is Int64 and `.str.len_chars()` raises at collect."""
+    document = tool_after_text_input(SUMMARIZE_PLUGIN, summarize_config(("value", action)))
+    row = report_row(convert_yxmd(document, source_name="s.yxmd"), 2)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "option_unsupported", "polars_code")
+    assert any(f"{label} on 'value' (Int64)" in message for message in row.messages), row.messages
+
+
+def test_a_string_aggregation_on_an_unknown_column_type_is_partial():
+    """Nothing settles the type behind a placeholder, and an unprovable String is not a String."""
+    document = SUMMARIZE_BEHIND_A_PLACEHOLDER % summarize_config(("value", "Longest")).encode()
+    row = report_row(convert_yxmd(document, source_name="s.yxmd"), 3)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert any("Longest on 'value' (unknown here)" in message for message in row.messages), row.messages
+
+
+def two_text_inputs_into_one_summarize(wires: str) -> bytes:
+    """Two Text Inputs on one Summarize `Input` anchor: tool 1 types `Code` String, tool 2 Int64."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Code" type="V_String" /></Fields>
+        <Data><r><c>abc</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Code" /></Fields>
+        <Data><r><c>1</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="{SUMMARIZE_PLUGIN}" />
+      <Properties><Configuration>{summarize_config(("Code", "Longest"))}</Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>{wires}</Connections>
+</AlteryxDocument>
+""".encode()
+
+
+STRING_SOURCE_FIRST = (
+    '<Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>'
+    '<Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>'
+)
+NUMERIC_SOURCE_FIRST = (
+    '<Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>'
+    '<Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>'
+)
+
+
+@pytest.mark.parametrize(
+    ("wires", "origins"),
+    [
+        (STRING_SOURCE_FIRST, "ToolID 1 ('Output'), ToolID 2 ('Output')"),
+        (NUMERIC_SOURCE_FIRST, "ToolID 2 ('Output'), ToolID 1 ('Output')"),
+    ],
+    ids=["string_source_first", "numeric_source_first"],
+)
+def test_two_wires_on_one_summarize_anchor_settle_no_type(wires: str, origins: str):
+    """`source_connection` answered from the first wire, so document order decided the type.
+
+    Alteryx unions the streams arriving on one anchor: `Code` is a String on one of these Text
+    Inputs and an Int64 on the other, so the union settles nothing and neither wire may answer for
+    it. The old rule read the String source as the whole truth whenever the file happened to write
+    that wire first, and said `converted` with no message at all. Both wires are named, in the order
+    the file writes them, so the reader can see which two streams the answer is missing.
+    """
+    row = report_row(convert_yxmd(two_text_inputs_into_one_summarize(wires), source_name="s.yxmd"), 3)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert any("Longest on 'Code' (unknown here)" in message for message in row.messages), row.messages
+    assert row.messages[-1] == (
+        f"More than one stream arrives on this Summarize's 'Input' anchor, from {origins}. Alteryx "
+        "unions them, so no single one of them settles what type a column has here — which is why "
+        "the types above read 'unknown here'."
+    )
+
+
+def text_input_with_two_columns_named_code() -> bytes:
+    """One Text Input declaring `Code` twice — Int64 first, String second — into a Summarize."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="Code" /><Field name="Code" type="V_String" /></Fields>
+        <Data><r><c>1</c><c>abc</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="{SUMMARIZE_PLUGIN}" />
+      <Properties><Configuration>{summarize_config(("Code", "Longest"))}</Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+""".encode()
+
+
+def test_a_column_name_a_text_input_uses_twice_settles_no_type():
+    """`dict(zip(names, types))` let the second `Code` own the name, so the String one answered.
+
+    Which of the two a Summarize means is not a question the XML answers, and the flow cannot be
+    built either way — `manual_input` raises `DuplicateError` on the repeated name — so the guard
+    says unknown rather than picking the column that happens to come last.
+    """
+    row = report_row(convert_yxmd(text_input_with_two_columns_named_code(), source_name="s.yxmd"), 2)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert any("Longest on 'Code' (unknown here)" in message for message in row.messages), row.messages
+
+
+def test_the_duplicate_named_text_input_really_cannot_be_built(tmp_path: Path):
+    """The reason the guard has no answer to give, executed rather than asserted.
+
+    The flow does not reach a run: `manual_input` builds its frame while the graph is being opened,
+    so the repeated name stops it there. Whichever `Code` the Summarize meant is moot.
+    """
+    result = convert_yxmd(text_input_with_two_columns_named_code(), source_name="s.yxmd")
+    path = write_flow(result, tmp_path / "flow.yaml")
+    with pytest.raises(pl.exceptions.DuplicateError, match="'Code' has more than one occurrence"):
+        open_flow(path)
+
+
+XML_PARSE_PLUGIN = "AlteryxBasePluginsGui.XMLParse.XMLParse"
+SORT_PLUGIN = "AlteryxBasePluginsGui.Sort.Sort"
+FILE_INPUT_PLUGIN = "AlteryxBasePluginsGui.DbFileInput.DbFileInput"
+SORT_ON_CODE = '<SortInfo locale="0"><Field field="Code" order="Ascending" /></SortInfo>'
+# Alteryx's own cached output schema, which every tool carries and which says what *Alteryx* ran.
+CACHED_STRING_CODE = (
+    '<MetaInfo connection="Output"><RecordInfo><Field name="Code" size="10" type="V_String" /></RecordInfo></MetaInfo>'
+)
+
+
+def summarize_behind_one_tool(fields: str, plugin: str, config: str, cache: str = "") -> bytes:
+    """A Text Input -> one tool that may carry Alteryx's cached schema -> a Summarize on Longest."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        {fields}
+        <Data><r><c>01</c></r><r><c>2</c></r><r><c>003</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="{plugin}" />
+      <Properties>{cache}<Configuration>{config}</Configuration></Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="{SUMMARIZE_PLUGIN}" />
+      <Properties><Configuration>{summarize_config(("Code", "Longest"))}</Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+""".encode()
+
+
+def summarize_behind_file_input(path: str) -> bytes:
+    """An Input Data tool whose cached schema calls `Code` a string, feeding a Summarize on Longest."""
+    return f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="{FILE_INPUT_PLUGIN}" />
+      <Properties>{CACHED_STRING_CODE}<Configuration>
+        <File OutputFileName="" FileFormat="19" SearchSubDirs="False" RecordLimit="">{path}</File>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="{SUMMARIZE_PLUGIN}" />
+      <Properties><Configuration>{summarize_config(("Code", "Longest"))}</Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+""".encode()
+
+
+@pytest.mark.parametrize(
+    "extension",
+    ["parquet", "ndjson", "ipc", "feather", "arrow", "avro"],
+    ids=lambda extension: f"reads_a_{extension}",
+)
+def test_a_self_describing_file_format_has_no_header_row_to_miss(extension: str):
+    """`has_headers` lives only on the text formats' settings, and reading it 500ed the upload.
+
+    `_READ_FILE_TYPES` has advertised these six since W1, but the headerless branch asked every
+    settings object for a `has_headers` that `InputParquetTable`, `InputIpcTable`, `InputNdjsonTable`
+    and `InputAvroTable` do not have, so an Input Data tool pointed at one raised `AttributeError`
+    out of `convert_yxmd`. No corpus workflow reads one, which is why it stayed hidden.
+    """
+    row = report_row(convert_yxmd(summarize_behind_file_input(f"data\\customers.{extension}"), source_name="s.yxmd"), 1)
+    assert (row.status, row.flowfile_node_type) == ("converted", "read")
+    assert row.messages == []
+
+
+@pytest.mark.parametrize(
+    ("case_id", "fields", "plugin", "config", "cache", "collects"),
+    [
+        # The W5.10 defect, one tool upstream of the test that pinned it: the cache rides on a tool
+        # Flowfile did not convert, so the frame reaching the Summarize is the Text Input's Int64.
+        (
+            "a_placeholder_carrying_the_cache",
+            '<Fields><Field name="Code" /></Fields>',
+            XML_PARSE_PLUGIN,
+            "",
+            CACHED_STRING_CODE,
+            None,
+        ),
+        # Converting the tool in between does not help: `01 / 2 / 003` is still read back as Int64,
+        # and the cache still reports the V_String Alteryx itself ran on.
+        (
+            "a_converted_pass_through_carrying_the_cache",
+            '<Fields><Field name="Code" /></Fields>',
+            SORT_PLUGIN,
+            SORT_ON_CODE,
+            CACHED_STRING_CODE,
+            None,
+        ),
+        # The cost of the rule, stated rather than hidden: `Code` really is a String on both sides,
+        # but a Sort declares no type of its own, so one hop back lands on a tool that cannot answer.
+        (
+            "a_string_declared_text_input_behind_a_sort",
+            '<Fields><Field name="Code" type="V_String" /></Fields>',
+            SORT_PLUGIN,
+            SORT_ON_CODE,
+            "",
+            [("003",)],
+        ),
+    ],
+)
+def test_a_cached_alteryx_record_info_is_not_a_flowfile_type(
+    tmp_path: Path, case_id: str, fields: str, plugin: str, config: str, cache: str, collects: list | None
+):
+    """W5.10 asked the tool feeding the Summarize what type it emits and believed the answer.
+
+    Every Alteryx tool carries a `<RecordInfo>` cache of the schema *Alteryx* last ran, so the
+    answer survived a tool Flowfile refused to convert and contradicted Flowfile's own reading of
+    the Text Input feeding it. Unknown is the only honest answer for a tool that states no type,
+    and the two cached cases prove why: both are green under the old rule and raise at `.collect()`.
+
+    The third case is the price, and `collects` states it plainly — an unprovable String is not a
+    String, so the guard also warns about a flow that runs and answers correctly.
+    """
+    document = summarize_behind_one_tool(fields, plugin, config, cache)
+    result = convert_yxmd(document, source_name="s.yxmd")
+    row = report_row(result, 3)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "option_unsupported", "polars_code")
+    assert any("Longest on 'Code' (unknown here)" in message for message in row.messages), row.messages
+
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    flow.run_graph()
+    frame = flow.get_node(row.flowfile_node_ids[0]).get_resulting_data().data_frame
+    if collects is None:
+        with pytest.raises(pl.exceptions.SchemaError, match="expected .*String.*, got .*i64"):
+            frame.collect()
+    else:
+        assert frame.collect().rows() == collects
+
+
+def summarize_behind_file_input_typed(path: str, alteryx_type: str) -> bytes:
+    """`summarize_behind_file_input` with the cached type under the reader's control."""
+    return summarize_behind_file_input(path).replace(
+        b'<Field name="Code" size="10" type="V_String" />',
+        f'<Field name="Code" size="10" type="{alteryx_type}" />'.encode(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("alteryx_type", "answers"),
+    [("V_String", True), ("String", True), ("WString", True), ("Int32", False), ("Double", False), ("Blob", False)],
+    ids=lambda value: f"cached_{value}",
+)
+def test_a_typed_read_answers_only_for_its_string_columns(alteryx_type: str, answers: bool):
+    """All four Alteryx string types reach Polars as `String`; the numeric names do not survive.
+
+    `yxdb.py` widens `Byte` and `Int16` to `Int32` and turns `FixedDecimal` into a `Decimal`, so a
+    cached numeric name is not what the Parquet sibling holds. Only the String half is an answer,
+    and a column outside it reads "unknown here" rather than a type nobody checked.
+    """
+    document = summarize_behind_file_input_typed("data\\customers.parquet", alteryx_type)
+    row = report_row(convert_yxmd(document, source_name="s.yxmd"), 2)
+    if answers:
+        assert (row.status, row.reason, row.messages) == ("converted", "converted", [])
+    else:
+        assert (row.status, row.reason) == ("partial", "option_unsupported")
+        assert any("Longest on 'Code' (unknown here)" in message for message in row.messages), row.messages
+
+
+def test_the_one_all_clear_the_guard_gives_is_executed(tmp_path: Path):
+    """The rule's only "yes" answer, run rather than asserted: a Parquet String really is a String.
+
+    The three cached cases prove the demotions prevent a `SchemaError`. This is the other direction —
+    the flow the guard leaves `converted` collects, so the all-clear is not simply a quieter warning.
+    """
+    source = tmp_path / "customers.parquet"
+    pl.DataFrame({"Code": ["01", "2", "003"]}).write_parquet(source)
+    result = convert_yxmd(summarize_behind_file_input(str(source)), source_name="s.yxmd")
+    row = report_row(result, 2)
+    assert (row.status, row.reason, row.messages) == ("converted", "converted", [])
+
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    flow.run_graph()
+    frame = flow.get_node(row.flowfile_node_ids[0]).get_resulting_data().data_frame
+    assert frame.collect().rows() == [("003",)]
+
+
+@pytest.mark.parametrize(
+    ("case_id", "path", "status", "reason", "messages"),
+    [
+        # The node reads the Parquet *sibling*, which is a different file from the one Alteryx
+        # cached and one this process cannot see; a `.yxdb` therefore settles nothing.
+        ("a_yxdb_read_through_its_parquet_sibling", "data\\customers.yxdb", "partial", "option_unsupported", None),
+        ("a_parquet_read", "data\\customers.parquet", "converted", "converted", []),
+        ("a_csv_the_reader_types_by_inference", "data\\customers.csv", "partial", "option_unsupported", None),
+        ("an_excel_sheet_the_reader_types_by_inference", "data\\customers.xlsx", "partial", "option_unsupported", None),
+        # A value the emitter has already labelled `connection_string` cannot also be a file whose
+        # types are settled, however its tail is spelled.
+        (
+            "an_odbc_connection_string_ending_in_parquet",
+            "odbc:Driver={Foo};DBQ=\\\\srv\\share\\db.parquet",
+            "partial",
+            "option_unsupported",
+            None,
+        ),
+        ("a_url_ending_in_parquet", "https://example.com/data.parquet", "partial", "option_unsupported", None),
+    ],
+)
+def test_an_input_data_tool_answers_for_a_file_that_states_its_own_types(
+    case_id: str, path: str, status: str, reason: str, messages: list[str] | None
+):
+    """The one cached schema Flowfile may read, because the reader reproduces it rather than guessing.
+
+    A Parquet carries every column's type and is the same file Alteryx read to fill the cache, so an
+    Alteryx string column arrives as a Polars String. A CSV or a worksheet is typed by inference at
+    read time, so the same cached `V_String` proves nothing about the frame Flowfile will build —
+    and a `.yxdb` is a third case: the node reads a Parquet sibling Alteryx never saw.
+    """
+    row = report_row(convert_yxmd(summarize_behind_file_input(path), source_name="s.yxmd"), 2)
+    assert (row.status, row.reason) == (status, reason)
+    if messages is None:
+        assert any("Longest on 'Code' (unknown here)" in message for message in row.messages), row.messages
+    else:
+        assert row.messages == messages
+
+
+def test_a_yxdb_read_and_the_tool_behind_it_make_the_same_claim():
+    """The read row says it cannot prove the Parquet sibling exists; the guard used to disagree.
+
+    `_map_yxdb_input` returns `partial`/`file_format` because nothing in the importer can see the
+    file `flowfile convert yxdb` is asked to write — a different file from the `.yxdb` Alteryx
+    cached, at a path this process is never even told the directory of. Reading that cache as
+    Flowfile's own type certified the Summarize behind that same node `converted` with no message:
+    two rows of one report making opposite claims about one file.
+    """
+    result = convert_yxmd(summarize_behind_file_input("data\\customers.yxdb"), source_name="s.yxmd")
+    read_row, summarize_row = report_row(result, 1), report_row(result, 2)
+    assert (read_row.status, read_row.reason) == ("partial", "file_format")
+    assert (summarize_row.status, summarize_row.reason) == ("partial", "option_unsupported")
+    assert any("Longest on 'Code' (unknown here)" in message for message in summarize_row.messages), (
+        summarize_row.messages
+    )
+
+
+def test_a_numeric_looking_string_column_is_typed_int64_and_the_body_raises_at_collect(
+    tmp_path: Path, summarize_exotic: ConversionResult
+):
+    """`01 / 2 / 003` is entered as text and read back as Int64, so the message is literally true."""
+    row = report_row(summarize_exotic, 7)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert row.messages == [
+        "These Alteryx Summarize aggregations read the characters of a column Flowfile does not know "
+        "to be a String: Longest on 'Code' (Int64), Shortest on 'Code' (Int64). The column has to be "
+        "a String by the time this node runs, or the flow fails when it is read — give it that type "
+        "upstream (a Select that changes it) if Alteryx stored it as text."
+    ]
+    flow = open_flow(write_flow(summarize_exotic, tmp_path / "flow.yaml"))
+    flow.run_graph()
+    with pytest.raises(pl.exceptions.SchemaError, match="expected .*String.*, got .*i64"):
+        flow.get_node(row.flowfile_node_ids[0]).get_resulting_data().data_frame.collect()
+
+
+def test_the_exotic_summarize_flow_runs_on_blanks_nulls_and_a_tie(tmp_path: Path, summarize_exotic: ConversionResult):
+    """Six rows: one null name, one all-spaces name that is *not* blank, and a tie on the modal spend."""
+    flow = open_flow(write_flow(summarize_exotic, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+    frames = {
+        tool_id: flow.get_node(report_row(summarize_exotic, tool_id).flowfile_node_ids[0])
+        .get_resulting_data()
+        .data_frame.collect()
+        for tool_id in (2, 3, 4)
+    }
+    assert frames[2].sort("Region").rows() == [("N", 0.0, 0.0), ("S", 6.0, 2.449489742783178)]
+    assert frames[3].rows() == [(1, "cecilia", 5, 1)]
+    assert frames[4].sort("Region").rows() == [("N", "anna", 0), ("S", "cecilia", 1)]
+
+
+def test_the_empty_string_half_of_blank_is_executed_not_just_printed(
+    tmp_path: Path, summarize_exotic: ConversionResult
+):
+    """Blank is null *or* the empty string, and until now only the null half ever ran.
+
+    No Text Input cell can carry an empty string: Designer writes exactly one empty form, `<c />`,
+    and `<c></c>` and an empty CDATA parse to the same `text is None` — none of the three carries
+    character data for ElementTree to hand back, so the fixture's `<c />` row is a null and nothing
+    else.
+    An empty string therefore has to be *computed*, and tool 11 computes one the way an analyst
+    would: `Trim([Name])` over the three-space row. Both halves of both counts then fire, on one
+    value each — `== ""` for the trimmed row, `is_null()` for the `<c />` row.
+
+    Tool 12 is `partial` because a Formula states no output type Flowfile can read, which is the
+    W5.11 rule working, not a defect: the flow runs and the counts are right.
+    """
+    row = report_row(summarize_exotic, 12)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "option_unsupported", "polars_code")
+    code = dumped_nodes(summarize_exotic)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+    assert "(pl.col('Name').is_not_null() & (pl.col('Name') != \"\")).sum()" in code
+    assert "(pl.col('Name').is_null() | (pl.col('Name') == \"\")).sum()" in code
+
+    flow = open_flow(write_flow(summarize_exotic, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+    counts = flow.get_node(row.flowfile_node_ids[0]).get_resulting_data().data_frame.collect()
+    assert counts.rows() == [(4, 2)]
+
+
+def test_a_generated_blank_count_does_not_trim_because_is_empty_does_not(summarize_exotic: ConversionResult):
+    """One workflow must not answer "is this blank?" twice; the other side is pinned by the Filter tests."""
+    for tool_id in (3, 4):
+        row = report_row(summarize_exotic, tool_id)
+        code = dumped_nodes(summarize_exotic)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"][
+            "polars_code"
+        ]
+        assert "strip_chars" not in code
+
+
+@pytest.mark.parametrize(
+    ("case_id", "config", "reason", "fragment"),
+    [
+        (
+            "an_action_flowfile_does_not_know",
+            summarize_config(("value", "Percentile")),
+            "option_unsupported",
+            "Unsupported Alteryx Summarize actions: Percentile on value",
+        ),
+        ("nothing_configured", "<SummarizeFields />", "mapper_refused", "has no aggregations configured"),
+    ],
+)
+def test_summarize_fails_closed(case_id: str, config: str, reason: str, fragment: str):
+    row = report_row(convert_yxmd(tool_after_text_input(SUMMARIZE_PLUGIN, config), source_name="s.yxmd"), 2)
+    assert (row.status, row.reason) == ("placeholder", reason)
+    assert any(fragment in message for message in row.messages), row.messages
 
 
 def test_extra_tools_flow_runs(tmp_path: Path, extra_tools: ConversionResult):

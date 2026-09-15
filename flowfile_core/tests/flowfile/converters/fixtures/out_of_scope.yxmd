@@ -71,15 +71,14 @@
       </Properties>
     </Node>
     <Node ToolID="7">
-      <GuiSettings Plugin="AlteryxBasePluginsGui.DateTime.DateTime">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.XMLParse.XMLParse">
         <Position x="918" y="54" />
       </GuiSettings>
       <Properties>
         <Configuration>
-          <IsFrom value="True" />
-          <InputFieldName>id</InputFieldName>
-          <Format>yyyy-MM-dd</Format>
-          <OutputFieldName>DateTime_Out</OutputFieldName>
+          <Field>id</Field>
+          <ChildValues value="True" />
+          <OutputFieldName>XMLParse_Out</OutputFieldName>
         </Configuration>
       </Properties>
     </Node>

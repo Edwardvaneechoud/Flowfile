@@ -195,7 +195,7 @@ class TestDomainEvents:
         report = published[0][1]
         assert isinstance(report, ConversionReport)
         assert report.total_tools == response.json()["report"]["total_tools"]
-        assert {row.alteryx_tool_key for row in report.rows} >= {"TextInput", "DateTime", "user_macro"}
+        assert {row.alteryx_tool_key for row in report.rows} >= {"TextInput", "XMLParse", "user_macro"}
 
     def test_a_parse_failure_publishes_the_error(self, published):
         response = _post("invalid.xml")
@@ -247,17 +247,17 @@ class TestNodeRequests:
         self._github_answers(
             monkeypatch,
             [
-                {"number": 42, "title": "[Alteryx node] DateTime", "html_url": issue_url},
+                {"number": 42, "title": "[Alteryx node] XMLParse", "html_url": issue_url},
                 {"number": 43, "title": "unrelated", "html_url": "x"},
             ],
         )
         response = client.get(self.ENDPOINT)
         assert response.status_code == 200, response.text
-        assert response.json() == {"issues": {"DateTime": issue_url}}
+        assert response.json() == {"issues": {"XMLParse": issue_url}}
 
         report = _post("unsupported.yxmd").json()["report"]
         placeholder_keys = {row["alteryx_tool_key"] for row in report["rows"] if row["status"] == "placeholder"}
-        assert "DateTime" in placeholder_keys
+        assert "XMLParse" in placeholder_keys
 
     def test_a_github_failure_answers_empty_not_an_error(self, monkeypatch):
         self._github_answers(monkeypatch, {"message": "rate limited"}, status=403)

@@ -19,12 +19,15 @@ from flowfile_core.flowfile.converters.alteryx.mappers import (
     POS_SCALE,
     RIGHT,
     EmitContext,
+    accepts_another_input,
     comment_bounds,
     comment_text,
+    full_input_message,
     get_mapper,
     rewrite_placeholder_bodies,
     tool_label,
     uncarried_wire_message,
+    unread_input_message,
 )
 from flowfile_core.flowfile.converters.alteryx.report import (
     ConversionReport,
@@ -152,12 +155,45 @@ def _report_dropped_connection(row: ToolReportRow | None, message: str) -> None:
         row.status, row.reason = "partial", "dropped_connection"
 
 
+def _report_both_ends(rows: dict[int, ToolReportRow], connection: AlteryxConnection, message: str) -> None:
+    for tool_id in (connection.origin_tool_id, connection.dest_tool_id):
+        _report_dropped_connection(rows.get(tool_id), message)
+
+
 def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolReportRow]) -> None:
-    """Translate Alteryx wires into Flowfile edges via the anchor registries."""
+    """Translate Alteryx wires into Flowfile edges via the anchor registries.
+
+    Two Alteryx shapes have no Flowfile edge to become, and both are reported rather than merged:
+    a wire onto an anchor a mapper already read at import time, and a wire onto a node whose input
+    ports are full. Alteryx unions everything arriving on one anchor; emitting that union here
+    would change the data, while a message on both rows only changes what the user is told.
+
+    An edge is identified by its output handle as well as its ends, so a Filter's True and False
+    anchors into one target stay two streams rather than one wire seen twice. The targets of a
+    single wire are deduplicated too, because ``register_all_inputs`` names one node once per
+    anchor. A refusal covers the whole connection: one Alteryx tool can stand on several Flowfile
+    nodes — a Unique and its Dupes branch — and they have to agree about what reached them.
+    Fullness is asked of the slot the wire resolves to, not of the node: a second wire onto a
+    Join's right-hand anchor would overwrite the first silently, and two wires onto its left anchor
+    would fill both ports and leave the real right-hand wire reported as the dropped one.
+    """
     nodes = {node.id: node for node in ctx.nodes}
-    seen: set[tuple[int, int, str]] = set()
+    # nodes a mapper gave a right-hand slot, so their main slot is one port smaller than the template
+    right_ports = {node_id for pairs in ctx.input_map.values() for node_id, kind in pairs if kind == RIGHT}
+    # (flowfile node id) -> the Alteryx tools already feeding it, so a refusal can name them
+    wired_from: dict[int, list[int]] = {}
+    seen: set[tuple[int, str, int, str]] = set()
     for connection in workflow.connections:
-        if ctx.carries(connection) or (connection.dest_tool_id, connection.dest_anchor) in ctx.suppressed_inputs:
+        if ctx.carries(connection):
+            continue
+        if (connection.dest_tool_id, connection.dest_anchor) in ctx.suppressed_inputs:
+            if not ctx.was_resolved(connection):
+                message = unread_input_message(
+                    ctx.tools[connection.dest_tool_id],
+                    connection,
+                    read=ctx.anchor_was_read(connection.dest_tool_id, connection.dest_anchor),
+                )
+                _report_both_ends(rows, connection, message)
             continue
         source = ctx.resolve_output(connection.origin_tool_id, connection.origin_anchor)
         origin = (
@@ -181,19 +217,40 @@ def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolRepor
                 # There is no node to reconnect to; say which wire the tool did not hand on instead.
                 carried = any(ctx.carries(wire) for wire in ctx.inbound.get(connection.dest_tool_id, []))
                 message = uncarried_wire_message(ctx.tools[connection.dest_tool_id], connection, carried=carried)
-            for tool_id in (connection.origin_tool_id, connection.dest_tool_id):
-                _report_dropped_connection(rows.get(tool_id), message)
+            _report_both_ends(rows, connection, message)
             continue
         source_id, handle = origin
-        for target_id, kind in targets:
-            key = (source_id, target_id, kind)
-            if key in seen:
-                continue
-            seen.add(key)
+        # Distinct against the edges already laid and against each other.
+        fresh: list[tuple[int, str]] = []
+        for pair in targets:
+            if (source_id, handle, *pair) not in seen and pair not in fresh:
+                fresh.append(pair)
+        full = [
+            target_id
+            for target_id, kind in fresh
+            if not accepts_another_input(nodes[target_id], kind, right_port=target_id in right_ports)
+        ]
+        if full:
+            for target_id in full:
+                _report_both_ends(
+                    rows,
+                    connection,
+                    full_input_message(
+                        ctx.tools[connection.dest_tool_id],
+                        connection,
+                        nodes[target_id].type,
+                        wired_from.get(target_id, []),
+                    ),
+                )
+            continue
+        for target_id, kind in fresh:
+            seen.add((source_id, handle, target_id, kind))
+            target = nodes[target_id]
             if kind == RIGHT:
-                nodes[target_id].right_input_id = source_id
+                target.right_input_id = source_id
             else:
-                nodes[target_id].input_ids.append(source_id)
+                target.input_ids.append(source_id)
+            wired_from.setdefault(target_id, []).append(connection.origin_tool_id)
             nodes[source_id].outputs.append(target_id)
             nodes[source_id].output_handles.append(handle)
 
