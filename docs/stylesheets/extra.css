@@ -233,3 +233,90 @@
 .md-typeset a.ff-path-purple > strong {
     color: var(--ff-purple);
 }
+
+/* Reference tables: Material defaults them to an inline-block that stops at
+   content width, which reads as ragged on settings-heavy pages. Full width,
+   tinted header row, and a node icon sized to the line in heading links. */
+.md-typeset__table {
+    width: 100%;
+}
+
+.md-typeset__table table:not([class]) {
+    display: table;
+    width: 100%;
+}
+
+.md-typeset table:not([class]) th {
+    background: color-mix(in srgb, var(--ff-royal) 9%, transparent);
+    font-weight: 600;
+}
+
+.md-typeset table:not([class]) tr:hover > td {
+    background: color-mix(in srgb, var(--ff-cerulean) 5%, transparent);
+}
+
+/* Node-reference heading glyphs sit on the text baseline rather than
+   stretching the heading box. */
+.md-typeset h2 > img {
+    vertical-align: -0.28em;
+    margin-right: 0.25em;
+}
+
+/* Figure beside prose. Settings-drawer captures are portrait (some twice as tall
+   as wide), so stacking them full-width pushes the text off-screen. Pair them with
+   the intro prose instead and leave wide tables full width below. */
+.md-typeset .ff-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.85fr);
+    gap: 1.4rem;
+    align-items: start;
+    margin: 1em 0 1.2em;
+}
+
+.md-typeset .ff-split > * {
+    min-width: 0;
+}
+
+.md-typeset .ff-split > *:first-child > :first-child {
+    margin-top: 0;
+}
+
+.md-typeset .ff-split p {
+    margin: 0 0 0.6em;
+}
+
+/* Screenshots read as deliberate objects, not raw pastes: hairline frame, own
+   background so a transparent capture never blends into the page. */
+.md-typeset .ff-split img,
+.md-typeset .ff-shot img,
+.md-typeset img.ff-shot {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    max-height: 30rem;
+    margin: 0;
+    border: 1px solid var(--md-default-fg-color--lightest);
+    border-radius: 8px;
+    background: var(--md-default-bg-color);
+}
+
+/* Wide canvas captures stay full width but keep the frame and stop upscaling
+   past their native size, which is what made the small ones look soft. */
+.md-typeset img.ff-wide {
+    display: block;
+    max-width: 100%;
+    margin: 1em auto;
+    border: 1px solid var(--md-default-fg-color--lightest);
+    border-radius: 8px;
+    background: var(--md-default-bg-color);
+}
+
+@media screen and (max-width: 59.9em) {
+    .md-typeset .ff-split {
+        grid-template-columns: 1fr;
+    }
+
+    .md-typeset .ff-split img {
+        max-height: 24rem;
+    }
+}

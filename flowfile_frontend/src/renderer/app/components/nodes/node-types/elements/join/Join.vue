@@ -130,15 +130,13 @@ import { useAiAutocompleteStore } from "../../../../../stores/ai-autocomplete-st
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { SelectInput } from "../../../baseNode/nodeInput";
-import { NodeJoin } from "./joinInterfaces";
+import { NodeJoin, JOIN_TYPES, type JoinType } from "./joinInterfaces";
 import DropDown from "../../../baseNode/page_objects/dropDown.vue";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
 import unavailableField from "../../../baseNode/selectComponents/UnavailableFields.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
-type JoinType = "inner" | "left" | "right" | "full" | "semi" | "anti" | "cross";
-
-const joinTypes: JoinType[] = ["inner", "left", "right", "full", "semi", "anti", "cross"];
+const joinTypes = JOIN_TYPES;
 
 const JOIN_TYPES_WITHOUT_COLUMN_SELECTION: JoinType[] = ["anti", "semi"];
 
