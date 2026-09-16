@@ -4,7 +4,9 @@ Flowfile can import an Alteryx Designer workflow (`.yxmd`) and rebuild it as a F
 
 ## How to import
 
-**In the app:** click **Import Alteryx workflow…** in the header (or on the empty canvas), pick a `.yxmd` file, and read the report before you run the flow.
+**In the app:** open the **Create** dropdown in the header and choose **Import Alteryx workflow…** (the empty canvas offers the same button), pick a `.yxmd` file, and read the report before you run the flow.
+
+![The Create dropdown in the Flowfile header with the Import Alteryx workflow entry](../assets/images/alteryx/header-import-button.png)
 
 **From the command line:**
 
@@ -33,9 +35,17 @@ Every Alteryx tool gets one row with a status:
 
 Every wire that could not be connected is reported on both of its ends.
 
+![The import report: one placeholder, two partial and several converted rows, each with the reason](../assets/images/alteryx/import-dialog-report.png)
+
+Open the flow and the report's notes are on the canvas: a placeholder node carries a visible warning label, and its settings hold the original Alteryx configuration as comments so you can rebuild the step in place.
+
+![The imported flow on the canvas with the placeholder node labelled Needs manual conversion](../assets/images/alteryx/imported-flow-canvas.png)
+
+![A placeholder node opened: the Polars Code settings show the reason and the original Alteryx configuration as comments](../assets/images/alteryx/placeholder-node.png)
+
 ## Coverage, measured
 
-Measured on Alteryx's own 121 One Tool Example workflows (923 tools). Numbers as of Flowfile 0.17.6.
+Measured on Alteryx's own 121 One Tool Example workflows (923 tools). Numbers as of Flowfile 0.17.6. Open the sections below for the per-tool detail.
 
 | | |
 |---|---|
@@ -45,29 +55,33 @@ Measured on Alteryx's own 121 One Tool Example workflows (923 tools). Numbers as
 | Of all 923 tools, mapped | 61% |
 | Sample workflows that run end to end without a placeholder in the chain | 39 of 121 |
 
-### Per tool
+??? success "Tools that convert cleanly on every sample instance"
 
-Tools Flowfile converts cleanly on every sample instance: Select, Filter (simple and custom), Formula, Sort, Unique, Summarize, Join, Union, Transpose, Cross Tab, Record ID, Text To Columns, Text Input, Browse, Data Cleansing (both macros), Multi-Field Formula, Dynamic Rename, Date Time, Rank, Imputation, Weighted Average, Random Records, Count Records, Append Fields, API Output.
+    Tools Flowfile converts cleanly on every sample instance: Select, Filter (simple and custom), Formula, Sort, Unique, Summarize, Join, Union, Transpose, Cross Tab, Record ID, Text To Columns, Text Input, Browse, Data Cleansing (both macros), Multi-Field Formula, Dynamic Rename, Date Time, Rank, Imputation, Weighted Average, Random Records, Count Records, Append Fields, API Output.
 
-Tools that convert with a caveat on some or all instances (`partial`), and why:
+??? warning "Tools that convert with a caveat (partial), and why"
 
-| Tool | Why partial |
-|---|---|
-| Input Data (`.yxdb`) | Flowfile reads Parquet, not `.yxdb`. Convert the data first with `flowfile convert yxdb`; the node is pre-pointed at the Parquet path. |
-| Output Data | Same for `.yxdb` output; multi-file output is refused. |
-| Pearson Correlation, Spearman Correlation | The arithmetic is verified; the output layout and the name of the leading column are Flowfile's. |
-| Field Summary, Basic Data Profile | The profile columns are Flowfile's choice. The rendered-report anchors have no Flowfile equivalent. |
-| Sample, Select Records, Running Total, Make Group, Rank | Order-dependent. Alteryx keeps arrival order; Flowfile only promises order after an explicit Sort. Converted cleanly when a Sort feeds them. |
-| Summarize | `First`/`Last` are order-dependent; a few exotic aggregations are generated code. |
-| Join | Alteryx's join-select configuration is applied where the source columns are known; otherwise you are told. |
-| Union | By-position and manual modes carry a message; by-name converts. |
-| Generate Rows | Loops that are a plain numeric or date range convert; a step that depends on a column is refused. |
-| Create Samples | Split sizes match; membership differs because the two shuffles are different generators. |
-| Date Time Now | One row, evaluated when the flow runs. |
-| RegEx | Regex dialects differ; the generated pattern is shown for you to verify. |
-| Dynamic Rename (right-input modes) | Resolved at import time when the name source is a Text Input; otherwise refused. |
+    Tools that convert with a caveat on some or all instances (`partial`), and why:
 
-Not converted (placeholder), by frequency in the samples: Directory, Join Multiple, Blob Convert, Fuzzy Match, XML Parse, Find Replace, Jupyter Code, Multi-Row Formula, Tile, Blob Input, Make Columns, Multi-Field Binning, Arrange, Dynamic Input, Dynamic Select, Dynamic Replace, JSON Parse, Base64 Encoder, Auto Field, Oversample Field. Each placeholder carries the tool's configuration as comments. If one of these blocks a real workflow of yours, [open a node request](https://github.com/Edwardvaneechoud/Flowfile/issues/new?template=alteryx_node_request.yml); requests are ranked by how often they come up.
+    | Tool | Why partial |
+    |---|---|
+    | Input Data (`.yxdb`) | Flowfile reads Parquet, not `.yxdb`. Convert the data first with `flowfile convert yxdb`; the node is pre-pointed at the Parquet path. |
+    | Output Data | Same for `.yxdb` output; multi-file output is refused. |
+    | Pearson Correlation, Spearman Correlation | The arithmetic is verified; the output layout and the name of the leading column are Flowfile's. |
+    | Field Summary, Basic Data Profile | The profile columns are Flowfile's choice. The rendered-report anchors have no Flowfile equivalent. |
+    | Sample, Select Records, Running Total, Make Group, Rank | Order-dependent. Alteryx keeps arrival order; Flowfile only promises order after an explicit Sort. Converted cleanly when a Sort feeds them. |
+    | Summarize | `First`/`Last` are order-dependent; a few exotic aggregations are generated code. |
+    | Join | Alteryx's join-select configuration is applied where the source columns are known; otherwise you are told. |
+    | Union | By-position and manual modes carry a message; by-name converts. |
+    | Generate Rows | Loops that are a plain numeric or date range convert; a step that depends on a column is refused. |
+    | Create Samples | Split sizes match; membership differs because the two shuffles are different generators. |
+    | Date Time Now | One row, evaluated when the flow runs. |
+    | RegEx | Regex dialects differ; the generated pattern is shown for you to verify. |
+    | Dynamic Rename (right-input modes) | Resolved at import time when the name source is a Text Input; otherwise refused. |
+
+??? failure "Tools not converted yet (placeholder)"
+
+    Not converted (placeholder), by frequency in the samples: Directory, Join Multiple, Blob Convert, Fuzzy Match, XML Parse, Find Replace, Jupyter Code, Multi-Row Formula, Tile, Blob Input, Make Columns, Multi-Field Binning, Arrange, Dynamic Input, Dynamic Select, Dynamic Replace, JSON Parse, Base64 Encoder, Auto Field, Oversample Field. Each placeholder carries the tool's configuration as comments. If one of these blocks a real workflow of yours, [open a node request](https://github.com/Edwardvaneechoud/Flowfile/issues/new?template=alteryx_node_request.yml); requests are ranked by how often they come up.
 
 ## Not yet tested, honestly
 
