@@ -58,8 +58,11 @@ def _db_path() -> Path:
     db_path = get_database_path()
     if db_path is None:
         raise HTTPException(
-            status_code=503,
-            detail={"error_code": "BACKUP_FAILED", "message": "This deployment does not use a file database."},
+            status_code=409,
+            detail={
+                "error_code": "BACKUPS_DISABLED",
+                "message": "Built-in snapshots require a SQLite file database. Use your database server backup tools.",
+            },
         )
     return db_path
 
@@ -67,8 +70,10 @@ def _db_path() -> Path:
 @router.get("/db_backups", response_model=DbBackupsOut, tags=["system"])
 def list_db_backups(_current_user: User = Depends(get_current_admin_user)) -> DbBackupsOut:
     """The snapshots of the catalog database, newest first."""
-    db_path = _db_path()
+    db_path = get_database_path()
     keep = backup.keep_count()
+    if db_path is None:
+        return DbBackupsOut(directory="", keep=keep, enabled=False, backups=[])
     return DbBackupsOut(
         directory=str(db_path.parent / backup.BACKUP_DIR_NAME),
         keep=keep,

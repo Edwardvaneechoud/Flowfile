@@ -217,7 +217,6 @@ class FlowfileStorage:
         local_model`` locally). Deliberately NOT created eagerly in
         ``_ensure_directories`` — the local-model manager creates it only when
         the user opts into the install, so users who never want it pay nothing.
-        Mirrors Duckle's app-data ``engines/`` location.
         """
         return self.base_directory / "local_model"
 
@@ -445,16 +444,17 @@ def get_template_data_directory() -> str:
 
 
 def get_database_url() -> str:
-    """Resolve the SQLite database URL for the Flowfile catalog.
+    """Resolve the database URL for the Flowfile catalog.
 
     Priority:
-    1. ``FLOWFILE_DB_PATH`` env var (explicit override)
-    2. ``TESTING=True`` env var → temp directory test DB
-    3. Default: ``<storage.database_directory>/flowfile_catalog.db``
+    1. ``FLOWFILE_DATABASE_URL`` env var (full SQLAlchemy URL)
+    2. ``FLOWFILE_DB_PATH`` env var (path or full URL)
+    3. ``TESTING=True`` env var → temp directory test DB
+    4. Default: ``<storage.database_directory>/flowfile_catalog.db``
     """
-    custom = os.environ.get("FLOWFILE_DB_PATH")
+    custom = os.environ.get("FLOWFILE_DATABASE_URL") or os.environ.get("FLOWFILE_DB_PATH")
     if custom:
-        return f"sqlite:///{custom}"
+        return custom if "://" in custom else f"sqlite:///{custom}"
 
     if os.environ.get("TESTING") == "True":
         return f"sqlite:///{storage.temp_directory / 'test_flowfile_catalog.db'}"
@@ -466,10 +466,10 @@ def get_legacy_database_path() -> Path | None:
     """Return the path to the old ``flowfile.db`` if it exists, else ``None``.
 
     Used only during the one-time data migration from ``flowfile.db`` →
-    ``flowfile_catalog.db``.  Returns ``None`` when ``FLOWFILE_DB_PATH`` is
-    set (the user is managing their own database path).
+    ``flowfile_catalog.db``. Returns ``None`` when ``FLOWFILE_DATABASE_URL``
+    or ``FLOWFILE_DB_PATH`` is set (the user manages the database location).
     """
-    if os.environ.get("FLOWFILE_DB_PATH"):
+    if os.environ.get("FLOWFILE_DATABASE_URL") or os.environ.get("FLOWFILE_DB_PATH"):
         return None
 
     if os.environ.get("TESTING") == "True":

@@ -42,10 +42,10 @@ def _backfill_public_namespaces() -> None:
     ).fetchone()
     if general is None:
         return
-    bind.execute(sa.text("UPDATE catalog_namespaces SET is_public = 1 WHERE id = :g"), {"g": general[0]})
+    bind.execute(sa.text("UPDATE catalog_namespaces SET is_public = true WHERE id = :g"), {"g": general[0]})
     bind.execute(
         sa.text(
-            "UPDATE catalog_namespaces SET is_public = 1 "
+            "UPDATE catalog_namespaces SET is_public = true "
             "WHERE parent_id = :g AND name IN ('default', 'Unnamed Flows', 'Local Flows')"
         ),
         {"g": general[0]},

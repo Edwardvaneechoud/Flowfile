@@ -214,7 +214,11 @@ How they work together:
 - [ ] Restrict access to the Docker socket mount (consider a socket proxy)
 
 !!! info "Storage backend"
-    The catalog database is SQLite, stored in the `flowfile-internal-storage` volume. There is no supported external-database (PostgreSQL) or Redis configuration — Flowfile resolves its database URL to a local SQLite file. Keep the internal-storage volume on durable, backed-up storage.
+    The catalog defaults to SQLite in the `flowfile-internal-storage` volume. Set `FLOWFILE_DB_PATH=/app/internal_storage/database/flowfile_catalog.db` to choose a different SQLite file, or set `FLOWFILE_DATABASE_URL=postgresql+psycopg2://flowfile:password@postgres:5432/flowfile` to use PostgreSQL 16. `FLOWFILE_DATABASE_URL` takes precedence over `FLOWFILE_DB_PATH`. Full SQLAlchemy URLs also work in `FLOWFILE_DB_PATH` for compatibility.
+
+    Pass the variable into the core container's `environment` section (and any standalone scheduler); putting it in `.env` alone does not pass it through Docker Compose. Create the PostgreSQL database and user first, with permission to create and alter its catalog tables. Flowfile applies Alembic migrations and seeds the configured admin on startup. URL-encode special characters in credentials.
+
+    Built-in database snapshots are available only for SQLite. For PostgreSQL, use server backup tools such as `pg_dump` and restore through PostgreSQL. Keep the internal-storage and user-data volumes durable as well: flow files and catalog table data still live outside the metadata database.
 
 ## Group-Based Sharing
 
