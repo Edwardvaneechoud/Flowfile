@@ -984,6 +984,11 @@ def _literal_unit(node: _Node, function_name: str) -> tuple[str, str]:
     return raw, raw.strip().lower().rstrip("s")
 
 
+# The Flowfile calls DateTimeAdd becomes; a caller generating its own date arithmetic reads them
+# to say which of its expressions needs a real Date rather than Alteryx's text date.
+DATETIME_ADD_CALLS = tuple(sorted(set(_DATETIME_ADD_UNITS.values())))
+
+
 def _emit_datetime_add(node: _Call) -> str:
     raw, unit = _literal_unit(node.args[2], "DateTimeAdd")
     target = _DATETIME_ADD_UNITS.get(unit)

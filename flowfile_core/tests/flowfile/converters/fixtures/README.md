@@ -7,6 +7,7 @@
 | `containers.yxmd` | tool containers, nested tools, text boxes (imported as canvas comments) |
 | `unsupported.yxmd` | tools with no mapper, plus a macro node |
 | `dynamic_rename.yxmd` | Dynamic Rename formula / first-row / prefix+suffix / unsupported modes |
+| `dynamic_rename_affix.yxmd` | Dynamic Rename `Add` and `Remove` in the shape Alteryx really writes (`<Type>`/`<Text>`/`<OnError>`), a suffix whose text starts with a space, both remove directions, and a `NamesFromRows/InputMode=Mapped` table holding a self-rename, a column it does not name and a name that is no column |
 | `multi_field_formula_runs.yxmd` | the same three Multi-Field Formula shapes plus a `[_CurrentFieldType_]` tool, an untranslatable expression, a rejected `[_RecordID_]` special and an untranslatable expression carrying a declared `Int32` output type, fed by a Text Input, so the imported flow can actually be executed |
 | `regex_and_multifield.yxmd` | RegEx parse and match, plus a Multi-Field Formula over an explicitly listed subset of fields |
 | `simple_filter.yxmd` | simple-mode Filter operators, including an unsupported one |
@@ -25,7 +26,12 @@
 | `make_group.yxmd` | Make Group over a key pair, plus one missing a key and one carrying an option Flowfile does not read |
 | `map_input.yxmd` | Map Input: a drawn point, a point and a polygon with a reference file and a wrong `NumRows`, a labels-only tool, and one in `Select` mode |
 | `data_cleanse_pro.yxmd` | Data Cleanse Pro: whitespace and number removal, tab/line-break cleanup, numeric-column replacement, and punctuation removal with a case change |
+| `imputation.yxmd` | the Imputation macro: nulls replaced by a fixed value in place, into Alteryx's `_ImputedValue` field and beside an `_Indicator` column, by mean, by mode, a median over a String column, two replace-with radios on at once, a chosen value replaced by a statistic, and an `_Indicator` name a column arriving already holds |
+| `weighted_average.yxmd` | the Weighted Average macro: ungrouped and grouped, a column weighted by itself, a String value column, an output name that is already the group field, and a group field the stream does not carry |
+| `create_samples.yxmd` | the Create Samples macro: a 70/20/10 split with all three anchors wired, a 50/50 split whose `Holdout` anchor is declared empty and whose consumer reports the dropped wire, and the three refusals (over 100%, an unreadable percentage, two zeroes) |
+| `generate_rows.yxmd` | Generate Rows as a range: a start node with no input, a bound read from an input column, a date range, an exclusive condition with a step of 3, and the five refusals (a descending condition, a data-dependent step, a record-count cap, `+1` on a date column, and a created column that already arrives) |
 | `datetime_tokens.yxmd` | Date Time both directions (parse and format), a time-only format, and four formats carrying eight of the tokenizer's twelve tokens — `Mon`, `dy`, `hh` and `tt` are covered by the parametrised token test instead |
+| `date_time_now.yxmd` | Date Time Now as a start node: a date format feeding a Select that renames the invented column, a time-only format, a language Flowfile cannot write, and a letter run that is not one token |
 | `random_records.yxmd` | the Random Records macro: a record count, an unseeded percentage, a seeded one, and a tool that selects neither |
 | `rank_modes.yxmd` | every Rank mode, one grouped, one behind a Sort that breaks the tie the other way round, a null in the ranked field, and an input that already carries a `Rank` column |
 | `sample_modes.yxmd` | the Sample mode table — First, Last, Skip, every-Nth, one grouped — plus one behind a Sort |

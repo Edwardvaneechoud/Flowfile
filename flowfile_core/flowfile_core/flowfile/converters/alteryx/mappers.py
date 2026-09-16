@@ -19,6 +19,7 @@ from polars_expr_transformer import simple_function_to_expr
 
 from flowfile_core.configs.node_store.nodes import get_all_standard_nodes
 from flowfile_core.flowfile.converters.alteryx.expression import (
+    DATETIME_ADD_CALLS,
     DUNDER_RE,
     TranslationOutcome,
     regex_rejection,
@@ -1947,6 +1948,70 @@ def map_date_time(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     return row
 
 
+DATE_TIME_NOW_COLUMN = "DateTimeNow"
+
+
+def map_date_time_now(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Alteryx's Date Time Now: a start node whose one row holds the time the workflow ran.
+
+    The tool is implemented as a supporting macro (`DTNEngine.yxmc`) but Alteryx writes its plugin
+    name on the node, so it dispatches like any other tool. Its output is a string, not a date —
+    comment box 79 of `DateTimeNow.yxmd` says the tool "inputs the current date and time … in the
+    format you choose", and the format goes through the same token table the Date Time tool uses,
+    so an unmapped token refuses here as it does there.
+    """
+    config = _config(tool)
+    values = _macro_values(config)
+    language = values.get("Language") or DATETIME_LANGUAGE
+    if language != DATETIME_LANGUAGE:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [f"This Alteryx Date Time Now tool writes {language} month and day names, which Flowfile cannot."],
+            reason="option_unsupported",
+        )
+    alteryx_format = values.get("OutputFormat", "")
+    strftime, refusal = _datetime_strftime(alteryx_format)
+    if refusal is not None:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [f"The Alteryx date format '{_one_line(alteryx_format)}' was not converted because {refusal}."],
+            reason="option_unsupported",
+        )
+    # Nothing downstream can collide with it: the tool reads no input, so the frame is this column.
+    column = _unique_column(DATE_TIME_NOW_COLUMN, [])
+    code = "\n".join(
+        [
+            f"# Alteryx Date Time Now (ToolID {tool.tool_id}): one row holding the time the flow runs.",
+            *(f"# {line}" for line in _original_config_lines(tool)),
+            f"output_df = pl.select(pl.lit(datetime.datetime.now()).dt.strftime({strftime!r})"
+            f".alias({column!r})).lazy()",
+        ]
+    )
+    settings = input_schema.NodePolarsCode(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        polars_code_input=transform_schema.PolarsCodeInput(polars_code=code),
+    )
+    node_id = ctx.add_node(tool, "polars_code", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.tool_columns[tool.tool_id] = [column]
+    return _row(
+        tool,
+        "partial",
+        [node_id],
+        "polars_code",
+        [
+            f"Alteryx does not record what it calls this tool's one column, so Flowfile names it "
+            f"'{column}'; rename it if the rest of the flow expects another name.",
+            f"The value is the moment the flow runs, formatted as '{_one_line(alteryx_format)}' "
+            f"(strftime {strftime!r}), so it changes from run to run.",
+        ],
+        reason="option_unsupported",
+    )
+
+
 def _link(ctx: EmitContext, from_id: int, to_id: int, handle: str = PASS_HANDLE) -> None:
     """Connect two emitted nodes directly (used for 1:N expansions)."""
     nodes = {node.id: node for node in ctx.nodes}
@@ -1957,7 +2022,12 @@ def _link(ctx: EmitContext, from_id: int, to_id: int, handle: str = PASS_HANDLE)
 
 
 DYNAMIC_RENAME_SOURCE_ANCHORS = ("Source", "Right", "R")
-DYNAMIC_RENAME_TARGET_ANCHORS = ("Targets", "Input", "Left", "T")
+# The data side of a side-input tool, shared by Dynamic Rename and Find Replace: both wire the
+# stream they transform onto `Targets` and the lookup table onto `Source`. It is deliberately
+# disjoint from DYNAMIC_RENAME_SOURCE_ANCHORS, which `sole_source_connection` consumes
+# first-match-wins — a `Targets` inside that tuple would make the data stream answer for the
+# lookup table on every tool whose Source anchor is not wired.
+TARGETS_ANCHORS = ("Targets", "Input", "Left", "T")
 
 
 def _normalise_mode(value: str) -> str:
@@ -2008,7 +2078,7 @@ def _register_rename_anchors(
     ctx.register_input(tool_id, DEFAULT_INPUT_ANCHOR, first_id, MAIN)
     unwired: list[str] = []
     for connection in ctx.inbound.get(tool_id, []):
-        if connection.dest_anchor in DYNAMIC_RENAME_TARGET_ANCHORS:
+        if connection.dest_anchor in TARGETS_ANCHORS:
             ctx.register_input(tool_id, connection.dest_anchor, first_id, MAIN)
         else:
             unwired.append(connection.dest_anchor)
@@ -2017,13 +2087,17 @@ def _register_rename_anchors(
     ctx.register_all_outputs(tool_id, first_id if last_id is None else last_id)
 
 
-def _text_input_values(tool: AlteryxTool, column: str) -> list[str] | None:
-    """The rows of one Text Input column, when the tool feeding the names is a Text Input."""
+def _text_input_values(tool: AlteryxTool, column: str, *, strict: bool = False) -> list[str] | None:
+    """The rows of one Text Input column, when the tool feeding the names is a Text Input.
+
+    ``strict`` is for a caller that names the column it wants: the Mapped rename reads *two* of
+    them, so falling back to the first column would silently pair a name with itself.
+    """
     if tool.tool_name != "TextInput":
         return None
     config = _config(tool)
     names = [element.get("name") or "" for element in config.findall("Fields/Field")]
-    if not names:
+    if not names or (strict and column not in names):
         return None
     index = names.index(column) if column in names else 0
     values: list[str] = []
@@ -2055,37 +2129,59 @@ def _static_rename_to_select(
     tool: AlteryxTool,
     ctx: EmitContext,
     targets: list[str],
-    new_names: list[str],
+    pairs: list[tuple[str, str]],
     origin: str,
     read: AlteryxConnection,
+    extra_messages: list[str] | None = None,
 ) -> ToolReportRow:
-    """Turn a rename whose new names are already known at import time into a plain select."""
-    pairs = list(zip(targets, new_names, strict=False))
-    select_input = [
-        transform_schema.SelectInput(old_name=old, new_name=new, keep=True) for old, new in pairs if new and old != new
-    ]
-    if not select_input:
+    """Turn a rename whose new names are already known at import time into a plain select.
+
+    *pairs* is (current name, new name); the Positional branch zips the two lists in order and the
+    Mapped branch matches them by the name the side table states, which is the whole difference
+    between the two modes.
+    """
+    rename_map = {old: new for old, new in pairs if new and old != new}
+    if not rename_map:
         return _placeholder_row(
             tool, ctx, ["The Alteryx Dynamic Rename resolved to no column renames."], reason="mapper_refused"
         )
+    # A select emits its listed columns first and the rest after, so listing only the renamed ones
+    # would move them to the front — a rename is not allowed to change the layout. Listing every
+    # column in the order it really arrives keeps it. Where that order is not known, the tool's
+    # cached field list is not evidence of it, so the shipped shape stands and the row says so.
+    arriving = _targets_columns(ctx, tool.tool_id)
+    order = arriving if arriving is not None else [name for name in targets if name in rename_map]
+    select_input = [
+        transform_schema.SelectInput(old_name=name, new_name=rename_map.get(name, name), keep=True) for name in order
+    ]
     settings = input_schema.NodeSelect(
         flow_id=ctx.flow_id, node_id=ctx.new_node_id(), keep_missing=True, select_input=select_input
     )
     node_id = ctx.add_node(tool, "select", settings, description=_description(tool))
     _register_rename_anchors(ctx, tool.tool_id, node_id, read=read)
-    rename_map = {old: new for old, new in pairs if new}
-    ctx.tool_columns[tool.tool_id] = [rename_map.get(name, name) for name in targets]
+    ctx.tool_columns[tool.tool_id] = [rename_map.get(name, name) for name in order]
     messages = [
         f"The new column names were read from {origin} at import time and became a Select node "
-        f"renaming {len(select_input)} column(s).",
+        f"renaming {len(rename_map)} column(s).",
         "The Alteryx field-name input is no longer connected; the node that supplied it is kept unwired "
         "so you can see where the names came from.",
     ]
-    if len(new_names) < len(targets):
+    if arriving is None and len(order) != len(targets):
         messages.append(
-            f"Only {len(new_names)} name(s) were available for {len(targets)} column(s); the rest keep their names."
+            "The columns arriving here are not known at import time, so the Select node names only the "
+            "renamed ones and Flowfile emits them before the columns it leaves alone; check the column "
+            "order against Alteryx's."
         )
+    messages.extend(extra_messages or [])
     return _row(tool, "partial", [node_id], "select", messages, reason="option_unsupported")
+
+
+def _targets_columns(ctx: EmitContext, tool_id: int) -> list[str] | None:
+    """The columns arriving on the data anchor of a side-input tool, when they are known."""
+    for anchor in TARGETS_ANCHORS:
+        if ctx.anchor_wires(tool_id, (anchor,)):
+            return ctx.input_columns(tool_id, anchor)
+    return None
 
 
 def _rename_from_right_input(
@@ -2121,15 +2217,25 @@ def _rename_from_right_input(
                 reason="mapper_refused",
             )
         origin = f"the columns of '{tool_label(source)}' (ToolID {source.tool_id})"
-        return _static_rename_to_select(tool, ctx, targets, new_names, origin, connection)
+        pairs = list(zip(targets, new_names, strict=False))
+        extra = (
+            [f"Only {len(new_names)} name(s) were available for {len(targets)} column(s); the rest keep their names."]
+            if len(new_names) < len(targets)
+            else []
+        )
+        return _static_rename_to_select(tool, ctx, targets, pairs, origin, connection, extra)
 
     names_from_rows = config.find("NamesFromRows")
-    input_mode = _text(names_from_rows, "InputMode") if names_from_rows is not None else ""
-    if input_mode and input_mode.strip().lower() != "positional":
+    raw_input_mode = _text(names_from_rows, "InputMode") if names_from_rows is not None else ""
+    input_mode = _normalise_mode(raw_input_mode)
+    origin = f"the rows of '{tool_label(source)}' (ToolID {source.tool_id})"
+    if input_mode == "mapped":
+        return _mapped_rename_to_select(tool, ctx, names_from_rows, targets, source, origin, connection)
+    if input_mode and input_mode != "positional":
         return _placeholder_row(
             tool,
             ctx,
-            [f"Alteryx Dynamic Rename input mode '{input_mode}' has no Flowfile equivalent."],
+            [f"Alteryx Dynamic Rename input mode '{raw_input_mode}' has no Flowfile equivalent."],
             reason="option_unsupported",
         )
     column = _text(names_from_rows, "NewName") if names_from_rows is not None else ""
@@ -2145,9 +2251,74 @@ def _rename_from_right_input(
             ],
             reason="mapper_refused",
         )
-    return _static_rename_to_select(
-        tool, ctx, targets, new_names, f"the rows of '{tool_label(source)}' (ToolID {source.tool_id})", connection
+    extra = (
+        [f"Only {len(new_names)} name(s) were available for {len(targets)} column(s); the rest keep their names."]
+        if len(new_names) < len(targets)
+        else []
     )
+    return _static_rename_to_select(
+        tool, ctx, targets, list(zip(targets, new_names, strict=False)), origin, connection, extra
+    )
+
+
+def _mapped_rename_to_select(
+    tool: AlteryxTool,
+    ctx: EmitContext,
+    names_from_rows: ET.Element | None,
+    targets: list[str],
+    source: AlteryxTool,
+    origin: str,
+    read: AlteryxConnection,
+) -> ToolReportRow:
+    """`InputMode=Mapped`: the side table names both the old and the new column, so order is free.
+
+    Positional pairs the two lists by position, which is exactly what this mode exists to avoid —
+    `Dynamic_Rename.yxmd`'s own comment box 28 says the table is mapped "to account for the fact
+    that Field12 and Field11 are out of order".
+    """
+    old_column = _text(names_from_rows, "OldName")
+    new_column = _text(names_from_rows, "NewName")
+    old_values = _text_input_values(source, old_column, strict=True) if old_column else None
+    new_values = _text_input_values(source, new_column, strict=True) if new_column else None
+    if old_values is None or new_values is None:
+        missing = [name for name, values in ((old_column, old_values), (new_column, new_values)) if values is None]
+        return _placeholder_row(
+            tool,
+            ctx,
+            [
+                "The Alteryx Dynamic Rename maps old names to new ones through the column(s) "
+                f"{', '.join(repr(name) for name in missing) or '(unnamed)'} of "
+                f"'{tool_label(source)}' (ToolID {source.tool_id}), which cannot be read at import time; "
+                "rebuild this as a Select node once you know the names."
+            ],
+            reason="mapper_refused",
+        )
+    mapping = {old: new for old, new in zip(old_values, new_values, strict=False) if old and new}
+    pairs = [(target, mapping[target]) for target in targets if target in mapping]
+    if not pairs:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [
+                f"The Alteryx Dynamic Rename's mapping table names no column this tool renames; its "
+                f"{old_column!r} values are {_one_line(', '.join(sorted(mapping))) or '(empty)'}."
+            ],
+            reason="mapper_refused",
+        )
+    extra = []
+    unmapped = [target for target in targets if target not in mapping]
+    if unmapped:
+        extra.append(
+            f"The mapping table names no new name for {', '.join(repr(name) for name in unmapped)}; "
+            "those columns keep their names."
+        )
+    unused = [old for old in mapping if old not in targets]
+    if unused:
+        extra.append(
+            f"The mapping table also names {', '.join(repr(name) for name in unused)}, which this tool "
+            "does not rename."
+        )
+    return _static_rename_to_select(tool, ctx, targets, pairs, f"{origin} matched by name", read, extra)
 
 
 def map_dynamic_rename(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -2189,14 +2360,11 @@ def map_dynamic_rename(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         row.status, row.reason = status, reason
         return row
 
-    if mode in ("addprefixsuffix", "addprefix", "addsuffix", "prefix", "suffix", "prefixsuffix"):
-        prefix = _text(config, ".//Prefix")
-        suffix = _text(config, ".//Suffix")
-        if not prefix and not suffix:
-            return _placeholder_row(
-                tool, ctx, ["The Alteryx Dynamic Rename has no prefix or suffix configured."], reason="mapper_refused"
-            )
-        return _emit_prefix_suffix_rename(tool, ctx, prefix, suffix, selection)
+    if mode in ("add", "addprefixsuffix", "addprefix", "addsuffix", "prefix", "suffix", "prefixsuffix"):
+        return _add_affix_rename(tool, ctx, config, selection)
+
+    if mode in ("remove", "removeprefixsuffix", "removeprefix", "removesuffix"):
+        return _remove_affix_rename(tool, ctx, config, selection)
 
     if mode in ("rightinputrows", "rightinputmetadata"):
         return _rename_from_right_input(tool, ctx, config, selected or names, mode)
@@ -2207,6 +2375,121 @@ def map_dynamic_rename(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
         [f"Alteryx Dynamic Rename mode '{raw_mode or '(empty)'}' has no Flowfile equivalent."],
         reason="option_unsupported",
     )
+
+
+_AFFIX_TYPES = ("prefix", "suffix")
+
+
+def _affix_settings(config: ET.Element, element_name: str) -> tuple[str, str, str] | None:
+    """``<AddPrefixSuffix>``/``<RemovePrefixSuffix>`` as (type, text, on-error), or None when absent.
+
+    Alteryx writes the affix as a `<Type>`/`<Text>` pair inside one element, not as the `<Prefix>`
+    and `<Suffix>` elements this mapper used to look for (W7a.1 item 0d). The text is read raw:
+    a leading or trailing space in a prefix is part of the name Alteryx builds. None means the
+    element says neither, which is what sends the Add branch to the older reading rather than
+    refusing a shape that used to convert.
+    """
+    element = config.find(element_name)
+    if element is None or (element.find("Type") is None and element.find("Text") is None):
+        return None
+    return _text(element, "Type").lower(), _raw_text(element, "Text"), _text(element, "OnError")
+
+
+def _affix_refusal(affix_type: str, text: str, on_error: str) -> str | None:
+    """Why this affix cannot become a rename, or None."""
+    if affix_type not in _AFFIX_TYPES:
+        named = f"'{_one_line(affix_type)}'" if affix_type else "(empty)"
+        return f"Alteryx Dynamic Rename affix type {named} is neither a prefix nor a suffix."
+    if not text:
+        return "The Alteryx Dynamic Rename has no prefix or suffix configured."
+    if on_error and on_error.lower() != "warn":
+        # 'Warn' says what it does to the run: it carries on. No comment box in the corpus states
+        # what any other value does, and guessing would decide whether the flow stops.
+        return (
+            f"Alteryx Dynamic Rename on-error setting '{_one_line(on_error)}' has no Flowfile equivalent; "
+            "only 'Warn', which lets the run carry on, can be reproduced."
+        )
+    return None
+
+
+def _add_affix_rename(tool: AlteryxTool, ctx: EmitContext, config: ET.Element, selection: dict) -> ToolReportRow:
+    settings = _affix_settings(config, "AddPrefixSuffix")
+    if settings is None:
+        # An Alteryx build that writes the affix as its own element still converts.
+        prefix, suffix = _text(config, ".//Prefix"), _text(config, ".//Suffix")
+        if not prefix and not suffix:
+            return _placeholder_row(
+                tool, ctx, ["The Alteryx Dynamic Rename has no prefix or suffix configured."], reason="mapper_refused"
+            )
+        return _emit_prefix_suffix_rename(tool, ctx, prefix, suffix, selection)
+
+    affix_type, text, on_error = settings
+    refusal = _affix_refusal(affix_type, text, on_error)
+    if refusal is not None:
+        return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
+    prefix = text if affix_type == "prefix" else ""
+    suffix = text if affix_type == "suffix" else ""
+    row = _emit_prefix_suffix_rename(tool, ctx, prefix, suffix, selection)
+    if on_error:
+        row.messages.append(_AFFIX_ON_ERROR_MESSAGE)
+        row.status, row.reason = "partial", "option_unsupported"
+    return row
+
+
+_AFFIX_ON_ERROR_MESSAGE = (
+    "Alteryx's own on-error warning for this rename is not reproduced, and this workflow does not "
+    "state which condition it guards; check the renamed columns."
+)
+_REMOVE_AFFIX_MESSAGES = (
+    "Alteryx removes the {affix} here; Flowfile strips it from a column that carries it and leaves "
+    "every other column's name alone. What Designer does to a column without the {affix} is stated "
+    "nowhere in this workflow.",
+    "A column whose whole name is {text!r} would be renamed to an empty string, which this workflow "
+    "does not say Alteryx allows.",
+)
+
+
+def _remove_affix_rename(tool: AlteryxTool, ctx: EmitContext, config: ET.Element, selection: dict) -> ToolReportRow:
+    """Alteryx removes a prefix or suffix; Flowfile has no such rename mode, so it becomes a formula."""
+    settings = _affix_settings(config, "RemovePrefixSuffix")
+    if settings is None:
+        return _placeholder_row(
+            tool, ctx, ["The Alteryx Dynamic Rename has no prefix or suffix configured."], reason="mapper_refused"
+        )
+    affix_type, text, on_error = settings
+    refusal = _affix_refusal(affix_type, text, on_error)
+    if refusal is not None:
+        return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
+    backslash = _backslash_refusal({f"the Dynamic Rename {affix_type}": text})
+    if backslash is not None:
+        return _placeholder_row(tool, ctx, [backslash], reason="mapper_refused")
+    if '"' in text:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [
+                f"The Alteryx Dynamic Rename removes {text!r}, which contains a double quote and so has "
+                "no form as a Flowfile formula string literal."
+            ],
+            reason="mapper_refused",
+        )
+    test, keep = ("starts_with", "right") if affix_type == "prefix" else ("ends_with", "left")
+    formula = (
+        f'if {test}([column_name], "{text}") '
+        f"then {keep}([column_name], length([column_name]) - {len(text)}) "
+        "else [column_name] endif"
+    )
+    messages = [message.format(affix=affix_type, text=text) for message in _REMOVE_AFFIX_MESSAGES]
+    if on_error:
+        messages.append(_AFFIX_ON_ERROR_MESSAGE)
+    row = _emit_dynamic_rename(
+        tool,
+        ctx,
+        transform_schema.DynamicRenameInput(rename_mode="formula", formula=formula, **selection),
+        messages,
+    )
+    row.status, row.reason = "partial", "option_unsupported"
+    return row
 
 
 def _emit_prefix_suffix_rename(
@@ -4932,16 +5215,19 @@ def _emitted_sort(ctx: EmitContext, source: AlteryxTool) -> bool:
     return bool(_sort_fields(_config(source)))
 
 
-def _feeds_in_stated_order(ctx: EmitContext, tool_id: int) -> bool:
-    """Whether *every* stream arriving on the input anchor was put in a stated order.
+def _feeds_in_stated_order(ctx: EmitContext, tool_id: int, anchor: str = DEFAULT_INPUT_ANCHOR) -> bool:
+    """Whether *every* stream arriving on *anchor* was put in a stated order.
 
     One unsorted stream is enough to make an order-dependent result order-dependent again, so
     this is an all-of check over the anchor's wires, not a look at whichever one comes first.
+    A tool whose data arrives somewhere other than ``Input`` — a Dynamic Rename's or a Find
+    Replace's ``Targets`` — answered False for every upstream until the anchor became an
+    argument, because the filter below matched no wire at all and an empty ``sources`` is False.
     """
     origins = [
         ctx.resolve_output(connection.origin_tool_id, connection.origin_anchor)
         for connection in ctx.inbound.get(tool_id, [])
-        if connection.dest_anchor == DEFAULT_INPUT_ANCHOR
+        if connection.dest_anchor == anchor
     ]
     sources = [ctx.tools.get(origin[0]) if origin is not None else None for origin in origins]
     return bool(sources) and all(source is not None and _emitted_sort(ctx, source) for source in sources)
@@ -4994,14 +5280,775 @@ def _emit_cleansing_node(
     return _row(tool, status, [node_id], "data_cleansing", messages or [], reason=reason)
 
 
-def _parse_cleanse_fields(raw: str) -> list[str] | None:
-    """Parse the Cleanse field list box: comma-separated double-quoted names, or empty for none."""
+def _parse_quoted_field_list(raw: str) -> list[str] | None:
+    """Parse a macro list box: comma-separated double-quoted names, or empty for none.
+
+    Shared by the Cleanse and Imputation macros, which write their field lists identically.
+    """
     cleaned = raw.strip()
     if not cleaned:
         return []
     if not re.fullmatch(r'"[^"]*"(?:,"[^"]*")*', cleaned):
         return None
     return re.findall(r'"([^"]*)"', cleaned)
+
+
+# Imputation_v3.yxmc's widget names, spelled exactly as the shipped macro writes them.
+_IMPUTATION_FIELDS = "listbox Select Incoming Fields"
+_IMPUTATION_FROM_NULL = "radio Null Value"
+_IMPUTATION_FROM_VALUE = "radio User Specified Replace From Value"
+_IMPUTATION_FROM_NUMBER = "updown User Replace Value"
+_IMPUTATION_WITH_VALUE = "radio User Specified Replace With Value"
+_IMPUTATION_WITH_NUMBER = "updown User Replace With Value"
+_IMPUTATION_INDICATOR = "checkbox Impute Indicator"
+_IMPUTATION_SEPARATE = "checkbox Imputed Values Separate Field"
+# Each statistic and the Polars expression that computes it over the column being imputed.
+_IMPUTATION_STATISTICS = {
+    "radio Mean": "pl.col(_f).mean()",
+    "radio Median": "pl.col(_f).median()",
+    # W5.8/W5.10's precedent (Summarize tool 111): Polars returns an arbitrary mode on a tie, so the
+    # generated code sorts and takes the first to be at least deterministic. `drop_nulls` first
+    # because a null is one of the values `mode()` counts, and the null is what is being replaced.
+    "radio Mode": "pl.col(_f).drop_nulls().mode().sort().first()",
+}
+_IMPUTATION_EXPECTED = frozenset(
+    {
+        _IMPUTATION_FIELDS,
+        _IMPUTATION_FROM_NULL,
+        _IMPUTATION_FROM_VALUE,
+        _IMPUTATION_FROM_NUMBER,
+        _IMPUTATION_WITH_VALUE,
+        _IMPUTATION_WITH_NUMBER,
+        _IMPUTATION_INDICATOR,
+        _IMPUTATION_SEPARATE,
+        *_IMPUTATION_STATISTICS,
+    }
+)
+# Alteryx's own names for the two optional columns, stated in `Imputation.yxmd`'s boxes 174 and 177.
+IMPUTATION_IMPUTED_SUFFIX = "_ImputedValue"
+IMPUTATION_INDICATOR_SUFFIX = "_Indicator"
+IMPUTATION_MODE_MESSAGE = (
+    "Polars returns an arbitrary value when two values tie for most frequent, so the generated code "
+    "sorts the tied values and takes the first; Alteryx's own tie rule is not stated in this workflow."
+)
+IMPUTATION_FROM_VALUE_STATISTIC_MESSAGE = (
+    "The statistic is computed over every row, the rows holding {value} included. Whether Alteryx "
+    "leaves those rows out of it is stated nowhere in this workflow, and the two readings give "
+    "different numbers."
+)
+IMPUTATION_WIDENS_MESSAGE = (
+    "{columns} arrive as whole numbers and the replacement is the {statistic}, so Flowfile's result is "
+    "a Float64 column; what Alteryx does to the column's type here is not stated in this workflow."
+)
+IMPUTATION_UNKNOWN_TYPE_MESSAGE = (
+    "The type of {columns} is not known at import time (only a Text Input or a typed file read states "
+    "one Flowfile will really produce), so a non-numeric column here would raise when the flow runs "
+    "instead of being refused now."
+)
+
+
+def _imputation_number(raw: str) -> str | None:
+    """An Alteryx `updown` value as a Python literal, or None when it is not a number.
+
+    A whole number is written as an integer so that filling an integer column keeps its type;
+    `0.00000` is how the widget spells zero, not a statement that the column becomes a Double.
+    """
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return repr(int(value)) if value.is_integer() else repr(value)
+
+
+def _exclusive_radio(values: dict[str, str], names: list[str]) -> tuple[str, str | None]:
+    """The one radio button that is on, or why the group cannot be read.
+
+    Alteryx writes every button of a group, so several on or none on is a configuration this
+    importer has no reading for rather than one to resolve by precedence.
+    """
+    on = [name for name in names if _is_true(values.get(name))]
+    if len(on) == 1:
+        return on[0], None
+    quoted = ", ".join(repr(name) for name in names)
+    state = "none of" if not on else f"{len(on)} of"
+    return "", f"{state} the radio buttons {quoted} are on, so the option cannot be read"
+
+
+def map_imputation(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Imputation_v3.yxmc: replace nulls (or one chosen value) with a statistic or a fixed number.
+
+    The macro asks two exclusive questions — what to replace and what to replace it with — and each
+    radio button sits beside the value it enables, so a stale number can be left in the box: corpus
+    tool 180 has Mean on and `0.00000` still in the replace-with box. The radio is therefore read
+    first and the number only under the radio that uses it.
+    """
+    config = _config(tool)
+    values = _macro_values(config)
+    missing = sorted(_IMPUTATION_EXPECTED - set(values))
+    if missing:
+        return _placeholder_row(
+            tool,
+            ctx,
+            ["The Alteryx Imputation configuration is missing expected settings: " + ", ".join(missing) + "."],
+            reason="mapper_refused",
+        )
+    unrecognized = sorted(set(values) - _IMPUTATION_EXPECTED)
+    if unrecognized:
+        return _placeholder_row(
+            tool,
+            ctx,
+            ["The Alteryx Imputation configuration has unrecognized settings: " + ", ".join(unrecognized) + "."],
+            reason="option_unsupported",
+        )
+
+    fields = _parse_quoted_field_list(values[_IMPUTATION_FIELDS])
+    refusal: str | None = None
+    if fields is None:
+        refusal = "its field list could not be read"
+    elif not fields:
+        refusal = "it selects no field to impute"
+    elif "*Unknown" in fields:
+        refusal = "it imputes dynamic or unknown fields, which Flowfile cannot express"
+    elif len(fields) != len(set(fields)):
+        refusal = "a field is selected more than once"
+    if refusal is None:
+        from_radio, refusal = _exclusive_radio(values, [_IMPUTATION_FROM_NULL, _IMPUTATION_FROM_VALUE])
+    if refusal is None:
+        with_radio, refusal = _exclusive_radio(values, [*_IMPUTATION_STATISTICS, _IMPUTATION_WITH_VALUE])
+    if refusal is None:
+        refusal = _backslash_refusal({"an Imputation field": fields})
+        if refusal is not None:
+            return _placeholder_row(tool, ctx, [refusal], reason="option_unsupported")
+    if refusal is None:
+        known = ctx.input_columns(tool.tool_id)
+        refusal = _missing_column_refusal(known, fields)
+    if refusal is not None:
+        return _placeholder_row(
+            tool, ctx, [f"The Alteryx Imputation was not converted because {refusal}."], reason="mapper_refused"
+        )
+
+    from_value = _imputation_number(values[_IMPUTATION_FROM_NUMBER]) if from_radio == _IMPUTATION_FROM_VALUE else None
+    if from_radio == _IMPUTATION_FROM_VALUE and from_value is None:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [
+                "The Alteryx Imputation replaces a chosen value, and "
+                f"'{_one_line(values[_IMPUTATION_FROM_NUMBER])}' is not a number Flowfile can read."
+            ],
+            reason="mapper_refused",
+        )
+    with_value = _imputation_number(values[_IMPUTATION_WITH_NUMBER]) if with_radio == _IMPUTATION_WITH_VALUE else None
+    if with_radio == _IMPUTATION_WITH_VALUE and with_value is None:
+        return _placeholder_row(
+            tool,
+            ctx,
+            [
+                "The Alteryx Imputation replaces with a fixed value, and "
+                f"'{_one_line(values[_IMPUTATION_WITH_NUMBER])}' is not a number Flowfile can read."
+            ],
+            reason="mapper_refused",
+        )
+
+    statistic = with_radio in _IMPUTATION_STATISTICS
+    if with_radio in ("radio Mean", "radio Median"):
+        for column in fields:
+            declared = _input_column_type(ctx, tool.tool_id, column)
+            if declared is not None and declared not in _NUMERIC_TYPES:
+                return _placeholder_row(
+                    tool,
+                    ctx,
+                    [
+                        f"The Alteryx Imputation was not converted because the field {column!r} is a "
+                        f"{declared} column, which has no {with_radio.split()[-1].lower()} to compute."
+                    ],
+                    reason="mapper_refused",
+                )
+
+    separate = _is_true(values[_IMPUTATION_SEPARATE])
+    indicator = _is_true(values[_IMPUTATION_INDICATOR])
+    taken = list(known) if known is not None else list(fields)
+    imputed_names: dict[str, str] = {}
+    indicator_names: dict[str, str] = {}
+    renamed: list[str] = []
+    for column in fields:
+        if separate:
+            name = _unique_column(f"{column}{IMPUTATION_IMPUTED_SUFFIX}", taken)
+            imputed_names[column] = name
+            taken.append(name)
+            if name != f"{column}{IMPUTATION_IMPUTED_SUFFIX}":
+                renamed.append(name)
+        else:
+            imputed_names[column] = column
+        if indicator:
+            name = _unique_column(f"{column}{IMPUTATION_INDICATOR_SUFFIX}", taken)
+            indicator_names[column] = name
+            taken.append(name)
+            if name != f"{column}{IMPUTATION_INDICATOR_SUFFIX}":
+                renamed.append(name)
+
+    replacement = _IMPUTATION_STATISTICS[with_radio] if statistic else f"pl.lit({with_value})"
+    if from_radio == _IMPUTATION_FROM_NULL:
+        matched = "pl.col(_f).is_null()"
+        flagged, value_expression = matched, f"pl.col(_f).fill_null({replacement})"
+    else:
+        matched = f"(pl.col(_f) == {from_value})"
+        # A null compares to null, and box 177 gives the indicator only 1 and 0.
+        flagged = f"{matched}.fill_null(False)"
+        value_expression = f"pl.when({matched}).then({replacement}).otherwise(pl.col(_f))"
+
+    lines = [
+        f"# Alteryx Imputation (ToolID {tool.tool_id}): replace "
+        + ("nulls" if from_radio == _IMPUTATION_FROM_NULL else f"the value {from_value}")
+        + " in the listed columns.",
+        *(f"# {line}" for line in _original_config_lines(tool)),
+        f"_fields = {fields!r}",
+        f"_imputed = {imputed_names!r}",
+    ]
+    projections = [f"[{value_expression}.alias(_imputed[_f]) for _f in _fields]"]
+    if indicator:
+        lines.append(f"_indicator = {indicator_names!r}")
+        projections.append(f"[{flagged}.cast(pl.Int64).alias(_indicator[_f]) for _f in _fields]")
+    body = "\n    + ".join(projections)
+    lines.append(f"output_df = input_df.with_columns(\n    {body}\n)")
+
+    settings = input_schema.NodePolarsCode(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        polars_code_input=transform_schema.PolarsCodeInput(polars_code="\n".join(lines)),
+    )
+    node_id = ctx.add_node(tool, "polars_code", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    added = [name for name in taken if known is None or name not in known]
+    ctx.tool_columns[tool.tool_id] = [*known, *added] if known is not None else None
+
+    messages: list[str] = []
+    status: ToolStatus = "converted"
+    reason = "converted"
+    if separate:
+        messages.append(
+            f"The imputed values land in {', '.join(repr(imputed_names[f]) for f in fields)} and the original "
+            "column(s) are left alone, as Alteryx's own comment box describes; Flowfile appends them after "
+            "the columns that arrive."
+        )
+    if indicator:
+        messages.append(
+            f"The column(s) {', '.join(repr(indicator_names[f]) for f in fields)} hold 1 where the value was "
+            "imputed and 0 where it was not, the meaning Alteryx's own comment box states; Flowfile appends "
+            "them last."
+        )
+    if renamed:
+        messages.append(
+            f"Alteryx's own name(s) for {', '.join(repr(name) for name in renamed)} were already taken by a "
+            "column arriving here, so Flowfile numbered them."
+        )
+        status, reason = "partial", "option_unsupported"
+    if with_radio == "radio Mode":
+        messages.append(IMPUTATION_MODE_MESSAGE)
+        status, reason = "partial", "option_unsupported"
+    if statistic and from_radio == _IMPUTATION_FROM_VALUE:
+        messages.append(IMPUTATION_FROM_VALUE_STATISTIC_MESSAGE.format(value=from_value))
+        status, reason = "partial", "option_unsupported"
+    if with_radio in ("radio Mean", "radio Median"):
+        whole = [column for column in fields if (_input_column_type(ctx, tool.tool_id, column) or "").startswith("Int")]
+        if whole:
+            messages.append(
+                IMPUTATION_WIDENS_MESSAGE.format(
+                    columns=", ".join(repr(name) for name in whole), statistic=with_radio.split()[-1].lower()
+                )
+            )
+    untyped = [column for column in fields if _input_column_type(ctx, tool.tool_id, column) is None]
+    if untyped:
+        messages.append(IMPUTATION_UNKNOWN_TYPE_MESSAGE.format(columns=_one_line(", ".join(repr(c) for c in untyped))))
+        status, reason = "partial", "option_unsupported"
+    return _row(tool, status, [node_id], "polars_code", messages, reason=reason)
+
+
+_WEIGHTED_AVG_VALUE = "Value"
+_WEIGHTED_AVG_WEIGHT = "Weight"
+_WEIGHTED_AVG_OUTPUT = "OutputFieldName"
+_WEIGHTED_AVG_GROUPS = "GroupFields"
+_WEIGHTED_AVG_EXPECTED = frozenset(
+    {_WEIGHTED_AVG_VALUE, _WEIGHTED_AVG_WEIGHT, _WEIGHTED_AVG_OUTPUT, _WEIGHTED_AVG_GROUPS}
+)
+WEIGHTED_AVG_COLUMN = "WeightedAverage"
+WEIGHTED_AVG_ZERO_MESSAGE = (
+    "When the weights of a group add up to zero there is nothing to divide by; Flowfile's answer is "
+    "NaN, and Alteryx's is stated nowhere in this workflow."
+)
+WEIGHTED_AVG_UNKNOWN_TYPE_MESSAGE = (
+    "The type of {columns} is not known at import time (only a Text Input or a typed file read states "
+    "one Flowfile will really produce), so a non-numeric column here would raise when the flow runs "
+    "instead of being refused now — and Alteryx's own comment box 94 says both columns must be numeric."
+)
+
+
+def map_weighted_average(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """WeightedAvg.yxmc: sum(value x weight) / sum(weight), over the whole stream or per group.
+
+    The macro names one `GroupFields` value and box 80 says a user may pick several; no corpus
+    instance writes more than one and nothing here states how Alteryx separates them, so the value
+    is read as one column name and a name the stream does not hold is refused rather than split on
+    a guessed separator.
+    """
+    config = _config(tool)
+    values = _macro_values(config)
+    missing = sorted(_WEIGHTED_AVG_EXPECTED - set(values))
+    if missing:
+        return _placeholder_row(
+            tool,
+            ctx,
+            ["The Alteryx Weighted Average configuration is missing expected settings: " + ", ".join(missing) + "."],
+            reason="mapper_refused",
+        )
+    unrecognized = sorted(set(values) - _WEIGHTED_AVG_EXPECTED)
+    if unrecognized:
+        return _placeholder_row(
+            tool,
+            ctx,
+            ["The Alteryx Weighted Average configuration has unrecognized settings: " + ", ".join(unrecognized) + "."],
+            reason="option_unsupported",
+        )
+
+    value, weight = values[_WEIGHTED_AVG_VALUE], values[_WEIGHTED_AVG_WEIGHT]
+    groups = [values[_WEIGHTED_AVG_GROUPS]] if values[_WEIGHTED_AVG_GROUPS] else []
+    known = ctx.input_columns(tool.tool_id)
+    refusal: str | None = None
+    if not value or not weight:
+        refusal = f"it names no {'value' if not value else 'weight'} column"
+    elif value == weight:
+        refusal = f"the value and the weight are both {value!r}, which weights every row by itself"
+    if refusal is None:
+        refusal = _missing_column_refusal(known, [value, weight, *groups])
+    if refusal is not None:
+        return _placeholder_row(
+            tool, ctx, [f"The Alteryx Weighted Average was not converted because {refusal}."], reason="mapper_refused"
+        )
+    backslash = _backslash_refusal({"a Weighted Average column": [value, weight, *groups]})
+    if backslash is not None:
+        return _placeholder_row(tool, ctx, [backslash], reason="option_unsupported")
+    for column in (value, weight):
+        declared = _input_column_type(ctx, tool.tool_id, column)
+        if declared is not None and declared not in _NUMERIC_TYPES:
+            return _placeholder_row(
+                tool,
+                ctx,
+                [
+                    f"The Alteryx Weighted Average was not converted because {column!r} is a {declared} column, "
+                    "and Alteryx's own comment box says the value and the weight must both be numeric."
+                ],
+                reason="mapper_refused",
+            )
+
+    output = _unique_column(values[_WEIGHTED_AVG_OUTPUT] or WEIGHTED_AVG_COLUMN, groups)
+    average = f"((pl.col({value!r}) * pl.col({weight!r})).sum() / pl.col({weight!r}).sum()).alias({output!r})"
+    lines = [
+        f"# Alteryx Weighted Average (ToolID {tool.tool_id}): sum(value x weight) / sum(weight)"
+        + (f", one row per {', '.join(repr(name) for name in groups)}." if groups else " over every row."),
+        *(f"# {line}" for line in _original_config_lines(tool)),
+    ]
+    if groups:
+        lines.append(f"output_df = input_df.group_by({groups!r}).agg(\n    {average}\n)")
+    else:
+        lines.append(f"output_df = input_df.select(\n    {average}\n)")
+
+    settings = input_schema.NodePolarsCode(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        polars_code_input=transform_schema.PolarsCodeInput(polars_code="\n".join(lines)),
+    )
+    node_id = ctx.add_node(tool, "polars_code", settings, description=_description(tool))
+    ctx.register_all_outputs(tool.tool_id, node_id)
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    ctx.tool_columns[tool.tool_id] = [*groups, output]
+
+    messages = [WEIGHTED_AVG_ZERO_MESSAGE]
+    status: ToolStatus = "converted"
+    reason = "converted"
+    if output != (values[_WEIGHTED_AVG_OUTPUT] or WEIGHTED_AVG_COLUMN):
+        messages.append(
+            f"The output name Alteryx wrote was already a group field here, so Flowfile called the "
+            f"column {output!r}."
+        )
+        status, reason = "partial", "option_unsupported"
+    untyped = [column for column in (value, weight) if _input_column_type(ctx, tool.tool_id, column) is None]
+    if untyped:
+        messages.append(WEIGHTED_AVG_UNKNOWN_TYPE_MESSAGE.format(columns=", ".join(repr(name) for name in untyped)))
+        status, reason = "partial", "option_unsupported"
+    return _row(tool, status, [node_id], "polars_code", messages, reason=reason)
+
+
+# Create_Samples.yxmc's three output anchors, in the order its two percentages describe them.
+CREATE_SAMPLES_ANCHORS = ("Estimation", "Validation", "Holdout")
+_CREATE_SAMPLES_ESTIMATION = "estimation pct"
+_CREATE_SAMPLES_VALIDATION = "validation pct"
+_CREATE_SAMPLES_SEED = "rand seed"
+_CREATE_SAMPLES_EXPECTED = frozenset({_CREATE_SAMPLES_ESTIMATION, _CREATE_SAMPLES_VALIDATION, _CREATE_SAMPLES_SEED})
+CREATE_SAMPLES_MEMBERSHIP_MESSAGE = (
+    "Flowfile and Alteryx shuffle with different generators, so the same seed puts different rows in "
+    "each sample; only the sizes agree."
+)
+CREATE_SAMPLES_EMPTY_ANCHOR_MESSAGE = (
+    "The two percentages add up to 100, so Alteryx's {anchor} sample is empty; Flowfile declares that "
+    "anchor empty rather than emitting a split with no rows."
+)
+
+
+def _create_samples_percentage(raw: str) -> float | None:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value
+
+
+def map_create_samples(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Create_Samples.yxmc splits rows into an estimation, a validation and a holdout sample.
+
+    Comment box 94 of `CreateSamples.yxmd` states the arithmetic: the two percentages are named and
+    "if the combined total is less than 100%, the remaining rows are returned in the holdout sample".
+    `NodeRandomSplit` refuses a split of zero and requires the splits to sum to 100, so a holdout of
+    nothing is left out of the node and the anchor is declared empty instead.
+    """
+    config = _config(tool)
+    values = _macro_values(config)
+    missing = sorted(_CREATE_SAMPLES_EXPECTED - set(values))
+    if missing:
+        return _placeholder_row(
+            tool,
+            ctx,
+            ["The Alteryx Create Samples configuration is missing expected settings: " + ", ".join(missing) + "."],
+            reason="mapper_refused",
+        )
+    unrecognized = sorted(set(values) - _CREATE_SAMPLES_EXPECTED)
+    if unrecognized:
+        return _placeholder_row(
+            tool,
+            ctx,
+            ["The Alteryx Create Samples configuration has unrecognized settings: " + ", ".join(unrecognized) + "."],
+            reason="option_unsupported",
+        )
+    estimation = _create_samples_percentage(values[_CREATE_SAMPLES_ESTIMATION])
+    validation = _create_samples_percentage(values[_CREATE_SAMPLES_VALIDATION])
+    refusal: str | None = None
+    if estimation is None or validation is None:
+        unreadable = _CREATE_SAMPLES_ESTIMATION if estimation is None else _CREATE_SAMPLES_VALIDATION
+        refusal = f"the {unreadable} it writes is not a number"
+    elif estimation < 0 or validation < 0:
+        refusal = "a sample percentage is negative"
+    elif estimation + validation > 100:
+        refusal = f"its samples ask for {estimation:g}% + {validation:g}% of the rows, which is more than there are"
+    elif estimation + validation == 0:
+        refusal = "both sample percentages are zero, so every sample is empty"
+    if refusal is not None:
+        return _placeholder_row(
+            tool, ctx, [f"The Alteryx Create Samples was not converted because {refusal}."], reason="mapper_refused"
+        )
+
+    seed = _whole_number(values[_CREATE_SAMPLES_SEED]) if values[_CREATE_SAMPLES_SEED] else None
+    shares = dict(zip(CREATE_SAMPLES_ANCHORS, [estimation, validation, 100.0 - estimation - validation], strict=True))
+    splits = [
+        input_schema.RandomSplitGroup(name=anchor, percentage=share) for anchor, share in shares.items() if share > 0
+    ]
+    settings = input_schema.NodeRandomSplit(flow_id=ctx.flow_id, node_id=ctx.new_node_id(), splits=splits, seed=seed)
+    node_id = ctx.add_node(tool, "random_split", settings, description=_description(tool))
+    ctx.register_all_inputs(tool.tool_id, node_id)
+    # The node's outputs are its splits in order, so the anchor a wire leaves from picks the handle.
+    # Only the three anchors the macro names are registered: the tool has no unnamed output, so a
+    # wire on any other anchor is reported dropped rather than handed one of the three samples.
+    for index, split in enumerate(splits):
+        ctx.register_output(tool.tool_id, split.name, node_id, f"output-{index}")
+    ctx.tool_columns[tool.tool_id] = ctx.input_columns(tool.tool_id)
+
+    messages = [CREATE_SAMPLES_MEMBERSHIP_MESSAGE]
+    for anchor, share in shares.items():
+        if share > 0:
+            continue
+        message = CREATE_SAMPLES_EMPTY_ANCHOR_MESSAGE.format(anchor=anchor)
+        ctx.inactive_outputs[(tool.tool_id, anchor)] = message
+        if ctx.has_outgoing(tool.tool_id, anchor):
+            messages.append(message)
+    return _row(tool, "partial", [node_id], "random_split", messages, reason="option_unsupported")
+
+
+GENERATE_ROWS_START_COLUMN = "_alteryx_generate_start"
+GENERATE_ROWS_END_COLUMN = "_alteryx_generate_end"
+GENERATE_ROWS_SEED_COLUMN = "_alteryx_generate_seed"
+# Alteryx's DateTimeAdd units onto Polars interval strings; the same seven the translator maps.
+_GENERATE_ROWS_INTERVALS = {
+    "year": "y",
+    "month": "mo",
+    "week": "w",
+    "day": "d",
+    "hour": "h",
+    "minute": "m",
+    "second": "s",
+}
+_GENERATE_ROWS_INTEGER_TYPES = frozenset({"Int16", "Int32", "Int64"})
+# The Flowfile date-arithmetic calls DateTimeAdd becomes; each one needs a real Date, not a text date.
+_GENERATE_ROWS_DATE_CALLS = DATETIME_ADD_CALLS
+_GENERATE_ROWS_DATE_TYPES = {"Date": "date_ranges", "Datetime": "datetime_ranges"}
+_GENERATE_ROWS_STEP_RE = re.compile(r"^\[(?P<field>.+?)\]\s*\+\s*(?P<amount>\d+)$")
+_GENERATE_ROWS_DATE_STEP_RE = re.compile(
+    r"^DateTimeAdd\(\s*\[(?P<field>.+?)\]\s*,\s*(?P<amount>\d+)\s*,\s*(?P<quote>[\"'])(?P<unit>[A-Za-z]+)(?P=quote)\s*\)$",
+    re.IGNORECASE,
+)
+_GENERATE_ROWS_COND_RE = re.compile(r"^\[(?P<field>.+?)\]\s*(?P<operator><=|<)\s*(?P<bound>.+)$", re.DOTALL)
+GENERATE_ROWS_RECORD_COUNT_MESSAGE = (
+    "Alteryx's record-count cap is {written} here, which this workflow does not say the meaning of; "
+    "Flowfile reads it as no cap and generates every row the condition allows."
+)
+GENERATE_ROWS_TEXT_DATE_MESSAGE = (
+    "Alteryx keeps a date as text and its date functions accept text; Flowfile's need a real Date "
+    "column, so {expressions} raises at run time unless what it reads is already one."
+)
+
+
+def _bracket_field(expression: str, field: str) -> str:
+    """Write every bare mention of *field* as `[field]`, leaving strings and brackets alone.
+
+    Alteryx's own expression builder writes the generated column unbracketed — `RowCount <= 10` —
+    and the translator refuses a bare identifier that names a function, which `RowCount` does. The
+    caller knows this identifier is its own new column, so binding it here is a fact rather than a
+    guess, the shape `map_dynamic_rename` uses for `[_CurrentField_]`.
+    """
+    out: list[str] = []
+    index = 0
+    while index < len(expression):
+        char = expression[index]
+        if char in "\"'":
+            end = expression.find(char, index + 1)
+            end = len(expression) if end == -1 else end + 1
+            out.append(expression[index:end])
+            index = end
+            continue
+        if char == "[":
+            end = expression.find("]", index + 1)
+            end = len(expression) if end == -1 else end + 1
+            out.append(expression[index:end])
+            index = end
+            continue
+        if char.isalpha() or char == "_":
+            end = index
+            while end < len(expression) and (expression[end].isalnum() or expression[end] == "_"):
+                end += 1
+            word = expression[index:end]
+            after = expression[end:].lstrip()
+            out.append(f"[{field}]" if word == field and not after.startswith("(") else word)
+            index = end
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
+def _generate_rows_step(loop: str, field: str, flowfile_type: str) -> tuple[str, str | None]:
+    """The loop's constant step as a Polars argument, or why the loop is not a range.
+
+    An Alteryx loop expression is a recurrence, and only the ones that add a fixed amount to the
+    generated column are a range. The declared type picks which shape is allowed: box 170 of
+    `Generate_Rows.yxmd` says `[date]+1` "would not have worked" on a date, and `DateTimeAdd` on an
+    integer column is the same mismatch the other way round.
+    """
+    if flowfile_type in _GENERATE_ROWS_INTEGER_TYPES:
+        match = _GENERATE_ROWS_STEP_RE.match(loop)
+        if match is None or match.group("field") != field:
+            return "", f"its loop expression {_one_line(loop)!r} is not {field!r} plus a fixed number"
+        return match.group("amount"), None
+    if flowfile_type in _GENERATE_ROWS_DATE_TYPES:
+        match = _GENERATE_ROWS_DATE_STEP_RE.match(loop)
+        if match is None or match.group("field") != field:
+            return "", (f"its loop expression {_one_line(loop)!r} is not a DateTimeAdd of a fixed amount to {field!r}")
+        interval = _GENERATE_ROWS_INTERVALS.get(match.group("unit").strip().lower().rstrip("s"))
+        if interval is None:
+            return "", f"the DateTimeAdd unit {match.group('unit')!r} in its loop expression has no Polars interval"
+        return f"{match.group('amount')}{interval}", None
+    return "", f"the column it creates is declared {flowfile_type}, which Flowfile cannot generate a range of"
+
+
+def _generate_rows_code(
+    tool: AlteryxTool,
+    field: str,
+    flowfile_type: str,
+    start: str,
+    end: str,
+    step: str,
+    inclusive: bool,
+    drop: list[str],
+    seeded: bool,
+) -> str:
+    """The range body: one list per input row, exploded into rows."""
+    lines = [
+        f"# Alteryx Generate Rows (ToolID {tool.tool_id}): {field!r} runs from the initialisation "
+        f"expression to the condition's bound, stepping by {step}.",
+        *(f"# {line}" for line in _original_config_lines(tool)),
+    ]
+    if flowfile_type in _GENERATE_ROWS_INTEGER_TYPES:
+        # int_ranges stops before its end, so an inclusive `<=` needs one more step of room.
+        stop = f"pl.col({end!r}).cast(pl.Int64) + {step}" if inclusive else f"pl.col({end!r}).cast(pl.Int64)"
+        rows = f"pl.int_ranges(pl.col({start!r}).cast(pl.Int64), {stop}, {step})"
+        cast = f".with_columns(pl.col({field!r}).cast(pl.{flowfile_type}))"
+    else:
+        # The bounds may arrive as Alteryx's own text dates or as real ones, and only the frame says
+        # which, so the cast is chosen from the schema rather than assumed here.
+        lines.extend(
+            [
+                "_schema = input_df.collect_schema()",
+                f"_start = pl.col({start!r})",
+                f"_end = pl.col({end!r})",
+                f"_start = _start.str.strptime(pl.{flowfile_type}) if _schema[{start!r}] == pl.String else _start",
+                f"_end = _end.str.strptime(pl.{flowfile_type}) if _schema[{end!r}] == pl.String else _end",
+            ]
+        )
+        closed = "both" if inclusive else "left"
+        rows = f"pl.{_GENERATE_ROWS_DATE_TYPES[flowfile_type]}(_start, _end, {step!r}, closed={closed!r})"
+        cast = ""
+    source = f"pl.select(pl.lit(1).alias({GENERATE_ROWS_SEED_COLUMN!r})).lazy()" if seeded else "input_df"
+    lines.append(
+        f"output_df = (\n    {source}\n    .with_columns({rows}.alias({field!r}))\n"
+        f"    .filter(pl.col({field!r}).list.len() > 0)\n"
+        f"    .explode({field!r})\n    .drop({drop!r})\n){cast}"
+    )
+    return "\n".join(lines)
+
+
+def map_generate_rows(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """Alteryx's Generate Rows loops a new column from an initialisation value while a condition holds.
+
+    Only the shape that is a range converts: a loop that adds a fixed amount and a condition that
+    compares the generated column with a bound. Anything else is a recurrence whose next value
+    depends on the data — corpus tool 164 steps by `[category]` — and a range cannot express it.
+    """
+    config = _config(tool)
+    field = _text(config, "CreateField_Name")
+    known = ctx.input_columns(tool.tool_id)
+    refusal: str | None = None
+    if _flag(config, "UpdateField"):
+        refusal = "it loops an existing column rather than creating one, which Flowfile cannot reproduce"
+    elif not field:
+        refusal = "it names no column to create"
+    elif known is not None and field in known:
+        refusal = f"the column {field!r} it creates already arrives here"
+    flowfile_type = _map_alteryx_type(_text(config, "CreateField_Type"))
+    if refusal is None and flowfile_type is None:
+        refusal = f"the Alteryx type '{_text(config, 'CreateField_Type') or '(empty)'}' has no Flowfile equivalent"
+    if refusal is None:
+        refusal = _backslash_refusal({"the Generate Rows column": field})
+    record_count = _attribute(config, "RecordCount", "value")
+    if refusal is None and record_count.strip() not in ("", "0"):
+        refusal = (
+            f"it caps the run at {_one_line(record_count)} records, and this workflow does not state "
+            "what Alteryx counts towards that cap"
+        )
+    if refusal is not None:
+        return _placeholder_row(
+            tool, ctx, [f"The Alteryx Generate Rows was not converted because {refusal}."], reason="mapper_refused"
+        )
+
+    step, refusal = _generate_rows_step(_bracket_field(_text(config, "Expression_Loop"), field), field, flowfile_type)
+    condition = _bracket_field(_text(config, "Expression_Cond"), field)
+    if refusal is None:
+        match = _GENERATE_ROWS_COND_RE.match(condition.strip())
+        if match is None or match.group("field") != field:
+            refusal = f"its condition {_one_line(condition)!r} is not {field!r} compared with '<' or '<=' to a bound"
+        elif f"[{field}]" in match.group("bound"):
+            refusal = f"its condition's bound reads {field!r}, the column the tool is still generating"
+    if refusal is not None:
+        return _placeholder_row(
+            tool, ctx, [f"The Alteryx Generate Rows was not converted because {refusal}."], reason="mapper_refused"
+        )
+
+    inclusive = match.group("operator") == "<="
+    columns = frozenset(known or ())
+    initial = try_translate(_bracket_field(_text(config, "Expression_Init"), field), known_columns=columns)
+    bound = try_translate(match.group("bound").strip(), known_columns=columns)
+    for label, outcome, expression in (
+        ("initialisation", initial, _text(config, "Expression_Init")),
+        ("condition's bound", bound, match.group("bound").strip()),
+    ):
+        if outcome.translated is None:
+            return _placeholder_row(
+                tool,
+                ctx,
+                [
+                    f"The Alteryx Generate Rows {label} expression could not be converted: {outcome.reason}.",
+                    f"Original expression: {_one_line(expression)}",
+                ],
+                reason="translator_refused",
+            )
+
+    taken = [*(known or []), field]
+    start_column = _unique_column(GENERATE_ROWS_START_COLUMN, taken)
+    end_column = _unique_column(GENERATE_ROWS_END_COLUMN, [*taken, start_column])
+    seeded = ctx.input_count(tool.tool_id) == 0
+    drop = [start_column, end_column, *([GENERATE_ROWS_SEED_COLUMN] if seeded else [])]
+
+    node_ids: list[int] = []
+    previous: int | None = None
+    if seeded:
+        seed = input_schema.NodePolarsCode(
+            flow_id=ctx.flow_id,
+            node_id=ctx.new_node_id(),
+            polars_code_input=transform_schema.PolarsCodeInput(
+                polars_code=f"output_df = pl.select(pl.lit(1).alias({GENERATE_ROWS_SEED_COLUMN!r})).lazy()"
+            ),
+        )
+        previous = ctx.add_node(tool, "polars_code", seed, description=_description(tool))
+        node_ids.append(previous)
+    for index, (column, formula) in enumerate(((start_column, initial.translated), (end_column, bound.translated))):
+        settings = input_schema.NodeFormula(
+            flow_id=ctx.flow_id,
+            node_id=ctx.new_node_id(),
+            function=transform_schema.FunctionInput(
+                field=transform_schema.FieldInput(name=column, data_type=transform_schema.AUTO_DATA_TYPE),
+                function=formula,
+            ),
+        )
+        node_id = ctx.add_node(
+            tool, "formula", settings, dx=(index + 1) * FORMULA_STEP_DX, description=_description(tool)
+        )
+        node_ids.append(node_id)
+        if previous is not None:
+            _link(ctx, previous, node_id)
+        previous = node_id
+
+    code = _generate_rows_code(
+        tool, field, flowfile_type, start_column, end_column, step, inclusive, drop, seeded=False
+    )
+    settings = input_schema.NodePolarsCode(
+        flow_id=ctx.flow_id,
+        node_id=ctx.new_node_id(),
+        polars_code_input=transform_schema.PolarsCodeInput(polars_code=code),
+    )
+    last_id = ctx.add_node(tool, "polars_code", settings, dx=3 * FORMULA_STEP_DX, description=_description(tool))
+    node_ids.append(last_id)
+    _link(ctx, previous, last_id)
+    if not seeded:
+        ctx.register_all_inputs(tool.tool_id, node_ids[0])
+    ctx.register_all_outputs(tool.tool_id, last_id)
+    ctx.tool_columns[tool.tool_id] = [*(known or []), field]
+
+    messages = [
+        GENERATE_ROWS_RECORD_COUNT_MESSAGE.format(written="0" if record_count.strip() == "0" else "not written")
+    ]
+    if not seeded:
+        messages.append(
+            f"Alteryx runs this loop for every row that arrives and repeats that row's data on each "
+            f"generated row; the generated {field!r} is exploded out of one list per input row, and a row "
+            "whose loop never satisfies the condition is dropped, as Alteryx drops it."
+        )
+    text_dates = [
+        label
+        for label, outcome in (("initialisation", initial), ("condition's bound", bound))
+        if flowfile_type in _GENERATE_ROWS_DATE_TYPES
+        and any(f"{call}(" in outcome.translated for call in _GENERATE_ROWS_DATE_CALLS)
+    ]
+    if text_dates:
+        messages.append(
+            GENERATE_ROWS_TEXT_DATE_MESSAGE.format(expressions=" and ".join(f"the {label}" for label in text_dates))
+        )
+    return _row(tool, "partial", node_ids, "polars_code", messages, reason="option_unsupported")
 
 
 def map_data_cleansing(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
@@ -5037,7 +6084,7 @@ def map_data_cleansing(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
             ["The Data Cleansing configuration has unrecognized settings: " + ", ".join(unrecognized) + "."],
             reason="option_unsupported",
         )
-    fields = _parse_cleanse_fields(values[_CLEANSE_FIELD_LIST])
+    fields = _parse_quoted_field_list(values[_CLEANSE_FIELD_LIST])
     if fields is None:
         return _placeholder_row(
             tool, ctx, ["The Data Cleansing field list could not be read."], reason="mapper_refused"
@@ -5972,6 +7019,8 @@ TOOL_MAPPERS: dict[str, ToolMapper] = {
     "MapInput": map_map_input,
     "DataCleansePro": map_data_cleanse_pro,
     "DateTime": map_date_time,
+    "DateTimeNow": map_date_time_now,
+    "GenerateRows": map_generate_rows,
     "Rank": map_rank,
     "PearsonCorrelation": map_pearson_correlation,
     "BasicDataProfile": map_basic_data_profile,
@@ -5985,6 +7034,9 @@ MACRO_MAPPERS: dict[str, ToolMapper] = {
     "selectrecords.yxmc": map_select_records,
     "spearmancorrcoeff.yxmc": map_spearman_correlation,
     "field_summary_report.yxmc": map_field_summary_report,
+    "imputation_v3.yxmc": map_imputation,
+    "weightedavg.yxmc": map_weighted_average,
+    "create_samples.yxmc": map_create_samples,
 }
 
 

@@ -1,0 +1,165 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="10" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <NumRows value="3" />
+        <Fields><Field name="Crate" /><Field name="Seats" /><Field name="OpenDt" /><Field name="CloseDt" /></Fields>
+        <Data>
+          <r><c>a</c><c>2</c><c>2015-02-01</c><c>2015-02-03</c></r>
+          <r><c>b</c><c>3</c><c>2015-03-01</c><c>2015-03-02</c></r>
+        </Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.GenerateRows.GenerateRows">
+        <Position x="110" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <UpdateField value="False" />
+        <UpdateField_Name />
+        <CreateField_Name>RowCount</CreateField_Name>
+        <CreateField_Type>Int32</CreateField_Type>
+        <CreateField_Size>4</CreateField_Size>
+        <Expression_Init>1</Expression_Init>
+        <Expression_Cond>RowCount &lt;= 5</Expression_Cond>
+        <Expression_Loop>RowCount + 1</Expression_Loop>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.GenerateRows.GenerateRows">
+        <Position x="210" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <UpdateField value="False" />
+        <UpdateField_Name />
+        <CreateField_Name>Seat</CreateField_Name>
+        <CreateField_Type>Int32</CreateField_Type>
+        <CreateField_Size>4</CreateField_Size>
+        <Expression_Init>1</Expression_Init>
+        <Expression_Cond>[Seat] &lt;= [Seats]</Expression_Cond>
+        <Expression_Loop>[Seat] + 1</Expression_Loop>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.GenerateRows.GenerateRows">
+        <Position x="310" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <UpdateField value="False" />
+        <UpdateField_Name />
+        <CreateField_Name>Day</CreateField_Name>
+        <CreateField_Type>Date</CreateField_Type>
+        <CreateField_Size>4</CreateField_Size>
+        <Expression_Init>[OpenDt]</Expression_Init>
+        <Expression_Cond>[Day] &lt;= [CloseDt]</Expression_Cond>
+        <Expression_Loop>DateTimeAdd([Day],1,"days")</Expression_Loop>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.GenerateRows.GenerateRows">
+        <Position x="410" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <UpdateField value="False" />
+        <UpdateField_Name />
+        <CreateField_Name>Step</CreateField_Name>
+        <CreateField_Type>Int32</CreateField_Type>
+        <CreateField_Size>4</CreateField_Size>
+        <Expression_Init>0</Expression_Init>
+        <Expression_Cond>[Step] &lt; 10</Expression_Cond>
+        <Expression_Loop>[Step] + 3</Expression_Loop>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="6">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.GenerateRows.GenerateRows">
+        <Position x="510" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <UpdateField value="False" />
+        <UpdateField_Name />
+        <CreateField_Name>Back</CreateField_Name>
+        <CreateField_Type>Int32</CreateField_Type>
+        <CreateField_Size>4</CreateField_Size>
+        <Expression_Init>10</Expression_Init>
+        <Expression_Cond>[Back] &gt;= 1</Expression_Cond>
+        <Expression_Loop>[Back] + 1</Expression_Loop>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="7">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.GenerateRows.GenerateRows">
+        <Position x="610" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <UpdateField value="False" />
+        <UpdateField_Name />
+        <CreateField_Name>Odd</CreateField_Name>
+        <CreateField_Type>Int32</CreateField_Type>
+        <CreateField_Size>4</CreateField_Size>
+        <Expression_Init>1</Expression_Init>
+        <Expression_Cond>[Odd] &lt;= [Seats]</Expression_Cond>
+        <Expression_Loop>If [Crate]='a' Then [Odd] + 1 Else [Odd] + 2 EndIf</Expression_Loop>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="8">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.GenerateRows.GenerateRows">
+        <Position x="710" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <UpdateField value="False" />
+        <UpdateField_Name />
+        <CreateField_Name>Capped</CreateField_Name>
+        <CreateField_Type>Int32</CreateField_Type>
+        <CreateField_Size>4</CreateField_Size>
+        <Expression_Init>1</Expression_Init>
+        <Expression_Cond>[Capped] &lt;= 5</Expression_Cond>
+        <Expression_Loop>[Capped] + 1</Expression_Loop>
+        <RecordCount value="3" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="9">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.GenerateRows.GenerateRows">
+        <Position x="810" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <UpdateField value="False" />
+        <UpdateField_Name />
+        <CreateField_Name>Wrong</CreateField_Name>
+        <CreateField_Type>Date</CreateField_Type>
+        <CreateField_Size>4</CreateField_Size>
+        <Expression_Init>[OpenDt]</Expression_Init>
+        <Expression_Cond>[Wrong] &lt;= [CloseDt]</Expression_Cond>
+        <Expression_Loop>[Wrong] + 1</Expression_Loop>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="10">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.GenerateRows.GenerateRows">
+        <Position x="910" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <UpdateField value="False" />
+        <UpdateField_Name />
+        <CreateField_Name>Crate</CreateField_Name>
+        <CreateField_Type>Int32</CreateField_Type>
+        <CreateField_Size>4</CreateField_Size>
+        <Expression_Init>1</Expression_Init>
+        <Expression_Cond>[Crate] &lt;= 5</Expression_Cond>
+        <Expression_Loop>[Crate] + 1</Expression_Loop>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="4" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="5" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="6" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="7" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="8" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="9" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="10" Connection="Input" /></Connection>
+  </Connections>
+  <Properties><MetaInfo><Name>Generate rows</Name></MetaInfo></Properties>
+</AlteryxDocument>

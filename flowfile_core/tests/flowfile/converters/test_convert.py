@@ -6753,9 +6753,9 @@ def test_a_yxdb_read_and_the_tool_behind_it_make_the_same_claim():
     read_row, summarize_row = report_row(result, 1), report_row(result, 2)
     assert (read_row.status, read_row.reason) == ("partial", "file_format")
     assert (summarize_row.status, summarize_row.reason) == ("partial", "option_unsupported")
-    assert any("Longest on 'Code' (unknown here)" in message for message in summarize_row.messages), (
-        summarize_row.messages
-    )
+    assert any(
+        "Longest on 'Code' (unknown here)" in message for message in summarize_row.messages
+    ), summarize_row.messages
 
 
 def test_a_numeric_looking_string_column_is_typed_int64_and_the_body_raises_at_collect(
@@ -8465,3 +8465,774 @@ def test_the_profile_says_what_percent_missing_counts(profile: ConversionResult)
     row = report_row(profile, 410)
     assert any("'PercentMissing' counts nulls and nothing else" in message for message in row.messages)
     assert any("stated nowhere in the workflow" in message for message in row.messages)
+
+
+THREE_WIRES_OUT_OF_ORDER = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.JoinMultiple.JoinMultiple" />
+      <Properties><Configuration><JoinByRecPos value="True" /></Configuration></Properties></Node>
+    <Node ToolID="2"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="wire" /></Fields>
+        <Data><r><c>one</c></r></Data></Configuration></Properties></Node>
+    <Node ToolID="3"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="wire" /></Fields>
+        <Data><r><c>two</c></r></Data></Configuration></Properties></Node>
+    <Node ToolID="4"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="wire" /></Fields>
+        <Data><r><c>three</c></r></Data></Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection name="#3"><Origin ToolID="4" Connection="Output" />
+      <Destination ToolID="1" Connection="Input" /></Connection>
+    <Connection name="#1"><Origin ToolID="2" Connection="Output" />
+      <Destination ToolID="1" Connection="Input" /></Connection>
+    <Connection name="#2"><Origin ToolID="3" Connection="Output" />
+      <Destination ToolID="1" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_a_multi_input_body_binds_input_df_n_to_the_nth_entry_of_input_ids(tmp_path: Path):
+    """`input_df_2` is the second wire Alteryx numbered, not the second one the document writes.
+
+    `test_multi_input_wires_follow_the_numbers_alteryx_wrote_not_document_order` pins the list;
+    this pins that the engine hands a three-input body the same list in the same order, which is
+    what every N-input mapper (JoinMultiple, Find Replace, Union) is about to be built on.
+    """
+    result = convert_yxmd(THREE_WIRES_OUT_OF_ORDER, source_name="join_multiple.yxmd")
+    rows = {row.alteryx_tool_id: row for row in result.report.rows}
+    placeholder_id = rows[1].flowfile_node_ids[0]
+    assert dumped_nodes(result)[placeholder_id]["input_ids"] == [rows[tool].flowfile_node_ids[0] for tool in (2, 3, 4)]
+
+    # The passthrough body reads only `input_df_1`; this one names all three.
+    for node in result.flow_data.nodes:
+        if node.id == placeholder_id:
+            node.setting_input.polars_code_input.polars_code = (
+                "output_df = pl.concat([input_df_1, input_df_2, input_df_3])"
+            )
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert [step.node_id for step in run_info.node_step_result if not step.success] == []
+    frame = flow.get_node(placeholder_id).get_resulting_data().data_frame.collect()
+    assert frame["wire"].to_list() == ["one", "two", "three"]
+
+
+SORTED_TARGETS = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="Crate" /></Fields>
+        <Data><r><c>b</c></r><r><c>a</c></r></Data></Configuration></Properties></Node>
+    <Node ToolID="2"><GuiSettings Plugin="AlteryxBasePluginsGui.Sort.Sort" />
+      <Properties><Configuration><SortInfo>
+        <Field field="Crate" order="Ascending" /></SortInfo></Configuration></Properties></Node>
+    <Node ToolID="3"><GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename" />
+      <Properties><Configuration><RenameMode>FirstRow</RenameMode>
+        <Fields><Field name="Crate" /><Field name="*Unknown" /></Fields>
+        <Expression /></Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="2" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" />
+      <Destination ToolID="3" Connection="%s" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_the_order_rule_can_be_asked_about_an_anchor_other_than_input():
+    """A `Targets`-fed tool answered False for every upstream, sorted or not, until W7a.1."""
+    ctx, _ = emit_tools(parse_yxmd(SORTED_TARGETS % b"Targets"))
+    assert mappers._feeds_in_stated_order(ctx, 3, anchor="Targets") is True
+    # The default anchor carries no wire at all here, and no wires is not a stated order.
+    assert mappers._feeds_in_stated_order(ctx, 3) is False
+
+
+def test_an_unsorted_targets_stream_still_states_no_order():
+    document = SORTED_TARGETS % b"Targets"
+    unsorted = document.replace(b'<Field field="Crate" order="Ascending" />', b"")
+    ctx, _ = emit_tools(parse_yxmd(unsorted))
+    assert mappers._feeds_in_stated_order(ctx, 3, anchor="Targets") is False
+
+
+def test_the_data_anchors_never_overlap_the_side_input_anchors():
+    """`sole_source_connection` takes the first *connected* anchor of the tuple it is given.
+
+    A name in both tuples would let a Dynamic Rename or a Find Replace read its own data stream as
+    the lookup table whenever the real `Source` anchor is unwired, which is a wrong answer rather
+    than a refusal.
+    """
+    assert not set(mappers.TARGETS_ANCHORS) & set(mappers.DYNAMIC_RENAME_SOURCE_ANCHORS)
+
+
+@pytest.fixture()
+def rename_affix() -> ConversionResult:
+    return convert("dynamic_rename_affix.yxmd")
+
+
+def test_add_reads_the_type_and_text_alteryx_really_writes(rename_affix: ConversionResult):
+    """`<RenameMode>Add</RenameMode>` with `<AddPrefixSuffix><Type>/<Text>`, the corpus's own shape.
+
+    Before W7a.1 the mode itself fell through to "has no Flowfile equivalent", and behind that gate
+    the reading looked for `<Prefix>`/`<Suffix>` elements no corpus workflow writes.
+    """
+    row = report_row(rename_affix, 2)
+    assert (row.status, row.reason, row.messages) == ("converted", "converted", [])
+    settings = dumped_nodes(rename_affix)[row.flowfile_node_ids[0]]["setting_input"]["dynamic_rename_input"]
+    assert (settings["rename_mode"], settings["prefix"]) == ("prefix", "Total_")
+    assert settings["selected_columns"] == ["Units"]
+
+
+def test_an_added_suffix_keeps_the_space_alteryx_wrote(rename_affix: ConversionResult):
+    """`<Text> (raw)</Text>` — the leading space is part of the name, as in Multi-Field Formula."""
+    row = report_row(rename_affix, 3)
+    assert row.status == "converted"
+    settings = dumped_nodes(rename_affix)[row.flowfile_node_ids[0]]["setting_input"]["dynamic_rename_input"]
+    assert (settings["rename_mode"], settings["suffix"]) == ("suffix", " (raw)")
+
+
+def test_remove_becomes_a_formula_that_strips_only_the_names_carrying_the_affix(rename_affix: ConversionResult):
+    """Flowfile has prefix and suffix rename modes but no remove, so the rule becomes a formula."""
+    row = report_row(rename_affix, 4)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    settings = dumped_nodes(rename_affix)[row.flowfile_node_ids[0]]["setting_input"]["dynamic_rename_input"]
+    assert settings["rename_mode"] == "formula"
+    assert settings["formula"] == (
+        'if ends_with([column_name], "Name") then left([column_name], length([column_name]) - 4) '
+        "else [column_name] endif"
+    )
+
+
+def test_removing_a_prefix_cuts_from_the_other_end(rename_affix: ConversionResult):
+    row = report_row(rename_affix, 5)
+    settings = dumped_nodes(rename_affix)[row.flowfile_node_ids[0]]["setting_input"]["dynamic_rename_input"]
+    assert settings["formula"] == (
+        'if starts_with([column_name], "Total_") then right([column_name], length([column_name]) - 6) '
+        "else [column_name] endif"
+    )
+
+
+def test_remove_says_what_it_could_not_verify(rename_affix: ConversionResult):
+    """Two unverified points and, on tool 4 only, the on-error setting."""
+    assert report_row(rename_affix, 4).messages == [
+        "Alteryx removes the suffix here; Flowfile strips it from a column that carries it and leaves "
+        "every other column's name alone. What Designer does to a column without the suffix is stated "
+        "nowhere in this workflow.",
+        "A column whose whole name is 'Name' would be renamed to an empty string, which this workflow "
+        "does not say Alteryx allows.",
+        "Alteryx's own on-error warning for this rename is not reproduced, and this workflow does not "
+        "state which condition it guards; check the renamed columns.",
+    ]
+    # Tool 5 writes no <OnError>, so it carries only the two sentences the rename itself owes.
+    assert len(report_row(rename_affix, 5).messages) == 2
+
+
+def test_a_mapped_table_pairs_the_names_by_name_not_by_position(rename_affix: ConversionResult):
+    """The mode exists because the table's order and the stream's order disagree (corpus box 28)."""
+    row = report_row(rename_affix, 7)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "option_unsupported", "select")
+    renames = dumped_nodes(rename_affix)[row.flowfile_node_ids[0]]["setting_input"]["select_input"]
+    assert [(entry["old_name"], entry["new_name"]) for entry in renames] == [
+        ("CrateName (raw)", "Crate"),
+        ("Units", "Boxes"),
+    ]
+    assert row.messages[0].startswith("The new column names were read from the rows of 'TextInput' (ToolID 6) matched")
+
+
+def test_a_mapped_table_names_both_the_columns_it_missed_and_the_ones_it_does_not_touch(
+    rename_affix: ConversionResult,
+):
+    """'Team' maps to itself and is not a rename; 'Weight' has no row; 'Ghost' names no column."""
+    messages = report_row(rename_affix, 7).messages
+    assert "The mapping table names no new name for 'Weight'; those columns keep their names." in messages
+    assert "The mapping table also names 'Ghost', which this tool does not rename." in messages
+
+
+def test_every_affix_mode_runs(rename_affix: ConversionResult, tmp_path: Path):
+    """Add prefix, add suffix, remove suffix, remove prefix and the mapped table, in one chain."""
+    flow = open_flow(write_flow(rename_affix, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert [step.node_id for step in run_info.node_step_result if not step.success] == []
+    last = report_row(rename_affix, 7).flowfile_node_ids[-1]
+    frame = flow.get_node(last).get_resulting_data().data_frame.collect()
+    # Four renames in a row leave the arriving columns unknown, so the Select names only what it
+    # renames and Flowfile emits those first — which is the caveat the row carries.
+    assert frame.columns == ["Crate", "Boxes", "Team", "Weight"]
+    assert frame["Boxes"].to_list() == [4, 7]
+    messages = report_row(rename_affix, 7).messages
+    assert any("check the column order against Alteryx's" in message for message in messages)
+
+
+MAPPED_WITHOUT_THE_NAMED_COLUMNS = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="a" /></Fields>
+        <Data><r><c>1</c></r></Data></Configuration></Properties></Node>
+    <Node ToolID="2"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration><Fields><Field name="New" /></Fields>
+        <Data><r><c>b</c></r></Data></Configuration></Properties></Node>
+    <Node ToolID="3"><GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename" />
+      <Properties><Configuration><RenameMode>RightInputRows</RenameMode>
+        <Fields><Field name="a" /><Field name="*Unknown" /></Fields><Expression />
+        <NamesFromRows><InputMode>Mapped</InputMode><OldName>Old</OldName><NewName>New</NewName>
+        </NamesFromRows></Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="3" Connection="Targets" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" />
+      <Destination ToolID="3" Connection="Source" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_a_mapped_table_missing_the_old_name_column_is_refused_not_read_from_the_first_one():
+    """Positional falls back to the first column; Mapped names two, so a fallback would pair wrongly."""
+    row = report_row(convert_yxmd(MAPPED_WITHOUT_THE_NAMED_COLUMNS, source_name="rename.yxmd"), 3)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert "the column(s) 'Old' of 'TextInput' (ToolID 2)" in row.messages[0]
+
+
+def test_an_affix_type_that_is_neither_a_prefix_nor_a_suffix_is_refused():
+    document = MAPPED_WITHOUT_THE_NAMED_COLUMNS.replace(
+        b"<RenameMode>RightInputRows</RenameMode>", b"<RenameMode>Add</RenameMode>"
+    ).replace(
+        b"<NamesFromRows><InputMode>Mapped</InputMode><OldName>Old</OldName><NewName>New</NewName>\n        "
+        b"</NamesFromRows>",
+        b"<AddPrefixSuffix><Type>Infix</Type><Text>x</Text></AddPrefixSuffix>",
+    )
+    row = report_row(convert_yxmd(document, source_name="rename.yxmd"), 3)
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert row.messages == ["Alteryx Dynamic Rename affix type 'infix' is neither a prefix nor a suffix."]
+
+
+def test_an_on_error_setting_that_is_not_warn_is_refused():
+    """'Warn' says the run carries on; nothing in the corpus states what any other value does."""
+    document = MAPPED_WITHOUT_THE_NAMED_COLUMNS.replace(
+        b"<RenameMode>RightInputRows</RenameMode>", b"<RenameMode>Remove</RenameMode>"
+    ).replace(
+        b"<NamesFromRows><InputMode>Mapped</InputMode><OldName>Old</OldName><NewName>New</NewName>\n        "
+        b"</NamesFromRows>",
+        b"<RemovePrefixSuffix><Type>Prefix</Type><Text>x</Text><OnError>Error</OnError></RemovePrefixSuffix>",
+    )
+    row = report_row(convert_yxmd(document, source_name="rename.yxmd"), 3)
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert row.messages == [
+        "Alteryx Dynamic Rename on-error setting 'Error' has no Flowfile equivalent; only 'Warn', "
+        "which lets the run carry on, can be reproduced."
+    ]
+
+
+def test_an_affix_holding_a_double_quote_is_refused_at_import_not_at_run_time():
+    document = MAPPED_WITHOUT_THE_NAMED_COLUMNS.replace(
+        b"<RenameMode>RightInputRows</RenameMode>", b"<RenameMode>Remove</RenameMode>"
+    ).replace(
+        b"<NamesFromRows><InputMode>Mapped</InputMode><OldName>Old</OldName><NewName>New</NewName>\n        "
+        b"</NamesFromRows>",
+        b"<RemovePrefixSuffix><Type>Suffix</Type><Text>a&quot;b</Text></RemovePrefixSuffix>",
+    )
+    row = report_row(convert_yxmd(document, source_name="rename.yxmd"), 3)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert "contains a double quote" in row.messages[0]
+
+
+@pytest.fixture()
+def date_time_now() -> ConversionResult:
+    return convert("date_time_now.yxmd")
+
+
+def test_date_time_now_is_a_start_node_holding_one_formatted_row(date_time_now: ConversionResult, tmp_path: Path):
+    """`DateTimeNow.yxmd`'s comment box 94: "A single row is returned with the date time data"."""
+    row = report_row(date_time_now, 1)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "option_unsupported", "polars_code")
+    node = dumped_nodes(date_time_now)[row.flowfile_node_ids[0]]
+    assert node["input_ids"] == []
+    assert node["setting_input"]["polars_code_input"]["polars_code"].endswith(
+        "output_df = pl.select(pl.lit(datetime.datetime.now()).dt.strftime('%Y-%m-%d')" ".alias('DateTimeNow')).lazy()"
+    )
+
+    flow = open_flow(write_flow(date_time_now, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert [step.node_id for step in run_info.node_step_result if not step.success] == []
+    frame = flow.get_node(report_row(date_time_now, 2).flowfile_node_ids[0]).get_resulting_data().data_frame.collect()
+    assert frame.columns == ["RunDate"]
+    assert frame.height == 1
+    assert frame["RunDate"][0] == date.today().strftime("%Y-%m-%d")
+
+
+def test_date_time_now_says_the_column_name_is_flowfiles_and_the_value_is_the_run_time(
+    date_time_now: ConversionResult,
+):
+    assert report_row(date_time_now, 1).messages == [
+        "Alteryx does not record what it calls this tool's one column, so Flowfile names it "
+        "'DateTimeNow'; rename it if the rest of the flow expects another name.",
+        "The value is the moment the flow runs, formatted as 'yyyy-MM-dd' (strftime '%Y-%m-%d'), "
+        "so it changes from run to run.",
+    ]
+
+
+def test_date_time_now_formats_a_time_through_the_same_token_table(date_time_now: ConversionResult):
+    code = dumped_nodes(date_time_now)[report_row(date_time_now, 3).flowfile_node_ids[0]]["setting_input"]
+    assert "strftime('%H:%M:%S')" in code["polars_code_input"]["polars_code"]
+
+
+def test_date_time_now_refuses_another_language(date_time_now: ConversionResult):
+    row = report_row(date_time_now, 4)
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert row.messages == ["This Alteryx Date Time Now tool writes French month and day names, which Flowfile cannot."]
+
+
+def test_date_time_now_refuses_a_token_the_date_time_tool_would_refuse_too(date_time_now: ConversionResult):
+    """One token table for both tools, so a run of letters that is not exactly one token fails closed."""
+    row = report_row(date_time_now, 5)
+    assert (row.status, row.reason) == ("placeholder", "option_unsupported")
+    assert row.messages == [
+        "The Alteryx date format 'yyyy-MM-ddTHH:mm' was not converted because "
+        "'ddTHH' is not a date token Flowfile converts."
+    ]
+
+
+@pytest.fixture()
+def imputation() -> ConversionResult:
+    return convert("imputation.yxmd")
+
+
+def imputation_code(result: ConversionResult, tool_id: int) -> str:
+    node = dumped_nodes(result)[report_row(result, tool_id).flowfile_node_ids[0]]
+    return node["setting_input"]["polars_code_input"]["polars_code"]
+
+
+def test_imputation_replaces_nulls_with_the_user_value_in_place(imputation: ConversionResult):
+    row = report_row(imputation, 2)
+    assert (row.status, row.reason, row.messages) == ("converted", "converted", [])
+    code = imputation_code(imputation, 2)
+    assert "_fields = ['Units', 'Weight']" in code
+    assert "[pl.col(_f).fill_null(pl.lit(0)).alias(_imputed[_f]) for _f in _fields]" in code
+
+
+def test_the_user_value_is_written_as_the_number_alteryx_means_not_as_the_widgets_decimals(
+    imputation: ConversionResult,
+):
+    """`0.00000` is how the updown widget spells zero; `fill_null(0.0)` would widen an Int64 column."""
+    assert "fill_null(pl.lit(0))" in imputation_code(imputation, 2)
+
+
+def test_imputation_puts_the_values_in_alteryxs_own_separate_field(imputation: ConversionResult):
+    """Box 174 names the suffix, so it is not Flowfile's invention — only the position is."""
+    assert "_imputed = {'Units': 'Units_ImputedValue', 'Weight': 'Weight_ImputedValue'}" in imputation_code(
+        imputation, 3
+    )
+    assert report_row(imputation, 3).messages == [
+        "The imputed values land in 'Units_ImputedValue', 'Weight_ImputedValue' and the original column(s) "
+        "are left alone, as Alteryx's own comment box describes; Flowfile appends them after the columns "
+        "that arrive."
+    ]
+
+
+def test_the_indicator_is_one_where_the_value_was_imputed(imputation: ConversionResult):
+    """Box 177 states the 1/0 meaning; the indicator reads the column before it is replaced."""
+    code = imputation_code(imputation, 4)
+    assert "[pl.col(_f).is_null().cast(pl.Int64).alias(_indicator[_f]) for _f in _fields]" in code
+    assert "'Units_Indicator', 'Weight_Indicator'" in report_row(imputation, 4).messages[0]
+
+
+def test_imputation_by_mean_names_the_type_it_widens(imputation: ConversionResult):
+    row = report_row(imputation, 5)
+    assert (row.status, row.reason) == ("converted", "converted")
+    assert "fill_null(pl.col(_f).mean())" in imputation_code(imputation, 5)
+    assert row.messages == [
+        "'Units', 'Weight' arrive as whole numbers and the replacement is the mean, so Flowfile's result "
+        "is a Float64 column; what Alteryx does to the column's type here is not stated in this workflow."
+    ]
+
+
+def test_imputation_by_mode_follows_the_summarize_precedent(imputation: ConversionResult):
+    """W5.8/W5.10 (Summarize tool 111): sort the tied values, take the first, report it as partial."""
+    row = report_row(imputation, 6)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert "fill_null(pl.col(_f).drop_nulls().mode().sort().first())" in imputation_code(imputation, 6)
+    assert row.messages == [mappers.IMPUTATION_MODE_MESSAGE]
+
+
+def test_the_mode_leaves_the_null_it_is_replacing_out_of_the_count(imputation: ConversionResult):
+    """`mode()` counts a null like any other value, and the most frequent value here *is* the null."""
+    code = imputation_code(imputation, 6)
+    executable = polars_code_parser.get_executable(code, 1)
+    frame = pl.LazyFrame({"Units": [4, None, None, 4, 7], "Weight": [1, 1, 2, None, None]})
+    assert executable(frame).collect()["Units"].to_list() == [4, 4, 4, 4, 7]
+
+
+def test_imputation_refuses_a_mean_over_a_column_whose_known_type_is_not_numeric(imputation: ConversionResult):
+    row = report_row(imputation, 7)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert row.messages == [
+        "The Alteryx Imputation was not converted because the field 'Crate' is a String column, "
+        "which has no median to compute."
+    ]
+
+
+def test_two_replace_with_radios_on_at_once_is_refused_not_resolved(imputation: ConversionResult):
+    row = report_row(imputation, 8)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert row.messages == [
+        "The Alteryx Imputation was not converted because 2 of the radio buttons 'radio Mean', "
+        "'radio Median', 'radio Mode', 'radio User Specified Replace With Value' are on, so the "
+        "option cannot be read."
+    ]
+
+
+def test_replacing_a_chosen_value_with_a_statistic_says_which_rows_the_statistic_counted(
+    imputation: ConversionResult,
+):
+    row = report_row(imputation, 9)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    code = imputation_code(imputation, 9)
+    assert "pl.when((pl.col(_f) == 4)).then(pl.col(_f).median()).otherwise(pl.col(_f))" in code
+    assert "(pl.col(_f) == 4).fill_null(False).cast(pl.Int64)" in code
+    assert mappers.IMPUTATION_FROM_VALUE_STATISTIC_MESSAGE.format(value=4) in row.messages
+
+
+def test_an_indicator_name_alteryx_already_uses_is_numbered_and_reported(imputation: ConversionResult):
+    """'Units_Indicator' arrives from the Text Input, so Alteryx's own name is not available."""
+    row = report_row(imputation, 10)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert "_indicator = {'Units': 'Units_Indicator_1'}" in imputation_code(imputation, 10)
+    assert row.messages[-1] == (
+        "Alteryx's own name(s) for 'Units_Indicator_1' were already taken by a column arriving here, "
+        "so Flowfile numbered them."
+    )
+
+
+def test_every_imputation_branch_runs(imputation: ConversionResult, tmp_path: Path):
+    flow = open_flow(write_flow(imputation, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert [step.node_id for step in run_info.node_step_result if not step.success] == []
+
+    replaced = flow.get_node(report_row(imputation, 2).flowfile_node_ids[0]).get_resulting_data()
+    # Row 2's Units is empty in the Text Input and is the value the tool imputes.
+    assert replaced.data_frame.collect()["Units"].to_list() == [4, 0, 8, 4]
+
+    averaged = flow.get_node(report_row(imputation, 5).flowfile_node_ids[0]).get_resulting_data()
+    frame = averaged.data_frame.collect()
+    assert frame["Units"].to_list() == [4.0, pytest.approx(16 / 3), 8.0, 4.0]
+
+    flagged = flow.get_node(report_row(imputation, 4).flowfile_node_ids[0]).get_resulting_data()
+    assert flagged.data_frame.collect()["Units_Indicator"].to_list() == [0, 1, 0, 0]
+
+
+@pytest.fixture()
+def weighted_average() -> ConversionResult:
+    return convert("weighted_average.yxmd")
+
+
+def weighted_average_code(result: ConversionResult, tool_id: int) -> str:
+    node = dumped_nodes(result)[report_row(result, tool_id).flowfile_node_ids[0]]
+    return node["setting_input"]["polars_code_input"]["polars_code"]
+
+
+def test_an_ungrouped_weighted_average_is_one_row(weighted_average: ConversionResult):
+    row = report_row(weighted_average, 2)
+    assert (row.status, row.reason) == ("converted", "converted")
+    assert "output_df = input_df.select(" in weighted_average_code(weighted_average, 2)
+    assert (
+        "((pl.col('UnitCost') * pl.col('Units')).sum() / pl.col('Units').sum()).alias('WeightedAverage')"
+        in weighted_average_code(weighted_average, 2)
+    )
+    assert row.messages == [mappers.WEIGHTED_AVG_ZERO_MESSAGE]
+
+
+def test_a_grouped_weighted_average_is_one_row_per_group(weighted_average: ConversionResult):
+    assert "output_df = input_df.group_by(['Team']).agg(" in weighted_average_code(weighted_average, 3)
+
+
+def test_weighting_a_column_by_itself_is_refused(weighted_average: ConversionResult):
+    row = report_row(weighted_average, 4)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert row.messages == [
+        "The Alteryx Weighted Average was not converted because the value and the weight are both "
+        "'Units', which weights every row by itself."
+    ]
+
+
+def test_weighted_average_refuses_a_column_whose_known_type_is_not_numeric(weighted_average: ConversionResult):
+    """Box 94: "Both columns must be numeric data to be available for selection"."""
+    row = report_row(weighted_average, 5)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert row.messages == [
+        "The Alteryx Weighted Average was not converted because 'Crate' is a String column, and "
+        "Alteryx's own comment box says the value and the weight must both be numeric."
+    ]
+
+
+def test_an_output_name_that_is_already_a_group_field_is_renamed_and_reported(weighted_average: ConversionResult):
+    row = report_row(weighted_average, 6)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert ".alias('Team_1')" in weighted_average_code(weighted_average, 6)
+    assert row.messages[-1] == (
+        "The output name Alteryx wrote was already a group field here, so Flowfile called the column 'Team_1'."
+    )
+
+
+def test_a_group_field_the_stream_does_not_carry_is_refused_not_split(weighted_average: ConversionResult):
+    """One `GroupFields` value is one column name; no corpus workflow states how several are spelled."""
+    row = report_row(weighted_average, 7)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert "the column(s) 'Depot' do not reach this tool" in row.messages[0]
+
+
+def test_the_weighted_average_is_the_weighted_average(weighted_average: ConversionResult, tmp_path: Path):
+    flow = open_flow(write_flow(weighted_average, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert [step.node_id for step in run_info.node_step_result if not step.success] == []
+
+    ungrouped = flow.get_node(report_row(weighted_average, 2).flowfile_node_ids[0]).get_resulting_data()
+    frame = ungrouped.data_frame.collect()
+    # (1*10 + 3*20 + 2*5 + 2*15) / (1 + 3 + 2 + 2) = 110 / 8
+    assert frame.to_dicts() == [{"WeightedAverage": 110 / 8}]
+
+    grouped = flow.get_node(report_row(weighted_average, 3).flowfile_node_ids[0]).get_resulting_data()
+    by_team = {row["Team"]: row["WeightedAverage"] for row in grouped.data_frame.collect().to_dicts()}
+    assert by_team == {"reds": (1 * 10 + 3 * 20) / 4, "blues": (2 * 5 + 2 * 15) / 4}
+
+
+@pytest.fixture()
+def create_samples() -> ConversionResult:
+    return convert("create_samples.yxmd")
+
+
+def test_create_samples_becomes_the_native_random_split(create_samples: ConversionResult):
+    """Box 94: the two percentages are named and the rest of the rows are the holdout."""
+    row = report_row(create_samples, 2)
+    assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "option_unsupported", "random_split")
+    settings = dumped_nodes(create_samples)[row.flowfile_node_ids[0]]["setting_input"]
+    assert settings["splits"] == [
+        {"name": "Estimation", "percentage": 70.0},
+        {"name": "Validation", "percentage": 20.0},
+        {"name": "Holdout", "percentage": 10.0},
+    ]
+    assert settings["seed"] == 42
+    assert row.messages == [mappers.CREATE_SAMPLES_MEMBERSHIP_MESSAGE]
+
+
+def test_each_alteryx_anchor_leaves_from_its_own_split(create_samples: ConversionResult):
+    """The node's outputs are its splits in order, so `Holdout` must not land on the first handle."""
+    nodes = dumped_nodes(create_samples)
+    split = nodes[report_row(create_samples, 2).flowfile_node_ids[0]]
+    consumers = {handle: node_id for node_id, handle in zip(split["outputs"], split["output_handles"], strict=True)}
+    assert consumers == {
+        "output-0": report_row(create_samples, 3).flowfile_node_ids[0],
+        "output-1": report_row(create_samples, 4).flowfile_node_ids[0],
+        "output-2": report_row(create_samples, 5).flowfile_node_ids[0],
+    }
+
+
+def test_a_holdout_of_nothing_is_declared_empty_rather_than_emitted(create_samples: ConversionResult):
+    """`NodeRandomSplit` rejects a split of 0, and a wire on that anchor is a dropped connection."""
+    row = report_row(create_samples, 6)
+    settings = dumped_nodes(create_samples)[row.flowfile_node_ids[0]]["setting_input"]
+    assert [split["name"] for split in settings["splits"]] == ["Estimation", "Validation"]
+    message = mappers.CREATE_SAMPLES_EMPTY_ANCHOR_MESSAGE.format(anchor="Holdout")
+    assert message in row.messages
+    consumer = report_row(create_samples, 7)
+    assert (consumer.status, consumer.reason) == ("partial", "dropped_connection")
+    assert message in consumer.messages
+
+
+def test_samples_asking_for_more_rows_than_there_are_is_refused(create_samples: ConversionResult):
+    row = report_row(create_samples, 8)
+    assert (row.status, row.reason) == ("placeholder", "mapper_refused")
+    assert row.messages == [
+        "The Alteryx Create Samples was not converted because its samples ask for 70% + 40% of the rows, "
+        "which is more than there are."
+    ]
+
+
+def test_an_unreadable_percentage_and_two_zeroes_are_both_refused(create_samples: ConversionResult):
+    assert report_row(create_samples, 9).messages == [
+        "The Alteryx Create Samples was not converted because the estimation pct it writes is not a number."
+    ]
+    assert report_row(create_samples, 10).messages == [
+        "The Alteryx Create Samples was not converted because both sample percentages are zero, "
+        "so every sample is empty."
+    ]
+
+
+def test_the_three_samples_hold_every_row_once(create_samples: ConversionResult, tmp_path: Path):
+    flow = open_flow(write_flow(create_samples, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert [step.node_id for step in run_info.node_step_result if not step.success] == []
+    frames = [
+        flow.get_node(report_row(create_samples, tool).flowfile_node_ids[0]).get_resulting_data().data_frame.collect()
+        for tool in (3, 4, 5)
+    ]
+    assert [frame.height for frame in frames] == [7, 2, 1]
+    assert sorted(crate for frame in frames for crate in frame["Crate"].to_list()) == sorted(
+        f"r{index}" for index in range(1, 11)
+    )
+
+
+@pytest.fixture()
+def generate_rows() -> ConversionResult:
+    return convert("generate_rows.yxmd")
+
+
+def generate_rows_nodes(result: ConversionResult, tool_id: int) -> list[dict]:
+    nodes = dumped_nodes(result)
+    return [nodes[node_id] for node_id in report_row(result, tool_id).flowfile_node_ids]
+
+
+def test_a_generate_rows_with_no_input_seeds_its_own_row(generate_rows: ConversionResult):
+    """`Generate_Rows.yxmd` tool 151 is wired to nothing, so the chain starts from a one-row frame."""
+    row = report_row(generate_rows, 2)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    seed, start, end, ranges = generate_rows_nodes(generate_rows, 2)
+    assert seed["input_ids"] == []
+    assert "pl.lit(1).alias('_alteryx_generate_seed')" in seed["setting_input"]["polars_code_input"]["polars_code"]
+    assert [node["setting_input"]["function"]["function"] for node in (start, end)] == ["1", "5"]
+    assert "pl.int_ranges(" in ranges["setting_input"]["polars_code_input"]["polars_code"]
+
+
+def test_the_generated_field_is_bracketed_before_it_reaches_the_translator(generate_rows: ConversionResult):
+    """`RowCount <= 10` is unbracketed and `RowCount` is an Alteryx function, so W6.5 refuses it bare."""
+    assert mappers._bracket_field("RowCount <= 10", "RowCount") == "[RowCount] <= 10"
+    # Not inside a string, not inside an existing bracket, and not when it is the function call.
+    assert mappers._bracket_field("'RowCount' + RowCount", "RowCount") == "'RowCount' + [RowCount]"
+    assert mappers._bracket_field("[RowCount] + RowCountX", "RowCount") == "[RowCount] + RowCountX"
+    assert mappers._bracket_field("RowCount()", "RowCount") == "RowCount()"
+
+
+def test_a_bound_reading_an_input_column_generates_a_different_number_of_rows_per_row(
+    generate_rows: ConversionResult,
+):
+    start, end, ranges = generate_rows_nodes(generate_rows, 3)
+    assert end["setting_input"]["function"]["function"] == "[Seats]"
+    code = ranges["setting_input"]["polars_code_input"]["polars_code"]
+    assert ".explode('Seat')" in code
+    assert "pl.col('_alteryx_generate_end').cast(pl.Int64) + 1" in code
+
+
+def test_an_exclusive_condition_does_not_add_a_step_of_room(generate_rows: ConversionResult):
+    code = generate_rows_nodes(generate_rows, 5)[-1]["setting_input"]["polars_code_input"]["polars_code"]
+    assert "pl.int_ranges(pl.col('_alteryx_generate_start').cast(pl.Int64), " in code
+    assert "pl.col('_alteryx_generate_end').cast(pl.Int64), 3)" in code
+
+
+def test_a_date_range_chooses_its_cast_from_the_frame_not_from_a_guess(generate_rows: ConversionResult):
+    """Alteryx stores a date as text; whether Flowfile's column is text or a Date is the schema's answer."""
+    code = generate_rows_nodes(generate_rows, 4)[-1]["setting_input"]["polars_code_input"]["polars_code"]
+    assert "_start.str.strptime(pl.Date) if _schema['_alteryx_generate_start'] == pl.String else _start" in code
+    assert "pl.date_ranges(_start, _end, '1d', closed='both')" in code
+
+
+def test_generate_rows_refuses_every_shape_that_is_not_a_range(generate_rows: ConversionResult):
+    refusals = {tool: report_row(generate_rows, tool) for tool in (6, 7, 8, 9, 10)}
+    assert {tool: (row.status, row.reason) for tool, row in refusals.items()} == {
+        tool: ("placeholder", "mapper_refused") for tool in (6, 7, 8, 9, 10)
+    }
+    assert refusals[6].messages == [
+        "The Alteryx Generate Rows was not converted because its condition '[Back] >= 1' is not 'Back' "
+        "compared with '<' or '<=' to a bound."
+    ]
+    assert refusals[7].messages == [
+        "The Alteryx Generate Rows was not converted because its loop expression \"If [Crate]='a' Then "
+        "[Odd] + 1 Else [Odd] + 2 EndIf\" is not 'Odd' plus a fixed number."
+    ]
+    assert refusals[8].messages == [
+        "The Alteryx Generate Rows was not converted because it caps the run at 3 records, and this "
+        "workflow does not state what Alteryx counts towards that cap."
+    ]
+    # Box 170 of Generate_Rows.yxmd: `[date]+1` "would not have worked" on a date column.
+    assert refusals[9].messages == [
+        "The Alteryx Generate Rows was not converted because its loop expression '[Wrong] + 1' is not a "
+        "DateTimeAdd of a fixed amount to 'Wrong'."
+    ]
+    assert refusals[10].messages == [
+        "The Alteryx Generate Rows was not converted because the column 'Crate' it creates already arrives here."
+    ]
+
+
+def test_generate_rows_says_it_read_the_record_count_as_no_cap(generate_rows: ConversionResult):
+    assert report_row(generate_rows, 2).messages[0] == (
+        "Alteryx's record-count cap is not written here, which this workflow does not say the meaning of; "
+        "Flowfile reads it as no cap and generates every row the condition allows."
+    )
+
+
+def test_the_generated_rows_are_the_range(generate_rows: ConversionResult, tmp_path: Path):
+    flow = open_flow(write_flow(generate_rows, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert [step.node_id for step in run_info.node_step_result if not step.success] == []
+
+    def frame_of(tool_id: int) -> pl.DataFrame:
+        return (
+            flow.get_node(report_row(generate_rows, tool_id).flowfile_node_ids[-1])
+            .get_resulting_data()
+            .data_frame.collect()
+        )
+
+    standalone = frame_of(2)
+    assert standalone.columns == ["RowCount"]
+    assert standalone["RowCount"].to_list() == [1, 2, 3, 4, 5]
+    assert standalone["RowCount"].dtype == pl.Int32
+
+    per_row = frame_of(3)
+    assert per_row["Crate"].to_list() == ["a", "a", "b", "b", "b"]
+    assert per_row["Seat"].to_list() == [1, 2, 1, 2, 3]
+
+    dates = frame_of(4)
+    assert dates["Day"].to_list() == [
+        date(2015, 2, 1),
+        date(2015, 2, 2),
+        date(2015, 2, 3),
+        date(2015, 3, 1),
+        date(2015, 3, 2),
+    ]
+
+    assert frame_of(5)["Step"].to_list() == [0, 3, 6, 9, 0, 3, 6, 9]
+
+
+GENERATE_ROWS_WITH_AN_EMPTY_RANGE = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="960"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="table" /><Field name="Seats" /></Fields>
+        <Data><r><c>window</c><c>2</c></r><r><c>bar</c><c>0</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="961"><GuiSettings Plugin="AlteryxBasePluginsGui.GenerateRows.GenerateRows" />
+      <Properties><Configuration>
+        <UpdateField value="False" />
+        <UpdateField_Name />
+        <CreateField_Name>Seat</CreateField_Name>
+        <CreateField_Type>Int32</CreateField_Type>
+        <CreateField_Size>4</CreateField_Size>
+        <Expression_Init>1</Expression_Init>
+        <Expression_Cond>[Seat] &lt;= [Seats]</Expression_Cond>
+        <Expression_Loop>[Seat] + 1</Expression_Loop>
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="960" Connection="Output" /><Destination ToolID="961" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_an_input_row_whose_loop_never_runs_is_dropped_not_kept_as_a_null_row(tmp_path: Path):
+    """Alteryx emits nothing for a row whose condition is false from the start (the corpus box says
+    the customer with zero authorized users is absent from the output); an exploded empty list
+    would keep it as one null row."""
+    result = convert_yxmd(GENERATE_ROWS_WITH_AN_EMPTY_RANGE, source_name="empty_range.yxmd")
+    row = report_row(result, 961)
+    assert row.status != "placeholder"
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+    frame = flow.get_node(row.flowfile_node_ids[-1]).get_resulting_data().data_frame.collect()
+    assert frame["table"].to_list() == ["window", "window"]
+    assert frame["Seat"].to_list() == [1, 2]
