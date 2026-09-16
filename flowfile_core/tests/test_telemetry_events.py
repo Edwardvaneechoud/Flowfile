@@ -458,7 +458,7 @@ def test_alteryx_import_reports_only_alteryx_names(sent, subscribed) -> None:
         "tool_count_bucket": "4-7",
         "converted_tools": ["DbFileOutput", "TextInput"],
         "partial_tools": [],
-        "placeholder_tools": ["DateTime", "user_macro"],
+        "placeholder_tools": ["XMLParse", "user_macro"],
     }
     blob = json.dumps(emitted)
     assert "Something" not in blob, "the user macro's filename leaked"
