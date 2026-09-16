@@ -217,7 +217,6 @@ class FlowfileStorage:
         local_model`` locally). Deliberately NOT created eagerly in
         ``_ensure_directories`` — the local-model manager creates it only when
         the user opts into the install, so users who never want it pay nothing.
-        Mirrors Duckle's app-data ``engines/`` location.
         """
         return self.base_directory / "local_model"
 

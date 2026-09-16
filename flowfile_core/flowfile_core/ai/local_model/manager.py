@@ -1,21 +1,4 @@
-"""On-demand local LLM runtime (llama.cpp ``llama-server`` + a small GGUF).
-
-Python port of Duckle's ``engine_manager.rs`` + ``llama_chat.rs``: download a
-pre-built ``llama-server`` and a small Qwen2.5-Coder GGUF (default ~2 GB
-Qwen2.5-Coder-3B) into the Flowfile storage dir, run it as a subprocess exposing
-an OpenAI-compatible API on ``127.0.0.1``, and let the litellm layer
-(:class:`~flowfile_core.ai.providers.local.LocalProvider`) drive it.
-
-Nothing is downloaded or spawned until the user opts in via the
-``/ai/local-model/*`` routes — if they never want it, nothing installs. The
-binary + model are fetched at install time (never bundled in the wheel) so
-PyPI / Electron stay small. Targets desktop / server modes; not WASM.
-
-Module-level singleton: at most one server runs at a time. ``_lock`` guards the
-``_server`` global for fast reads/writes, ``_boot_lock`` serialises the blocking
-boot (so ``status()`` stays responsive during a cold start), and installs are
-serialised by ``_install_lock``.
-"""
+"""On-demand local LLM runtime (llama.cpp ``llama-server`` + a small GGUF)."""
 
 from __future__ import annotations
 
@@ -42,8 +25,6 @@ from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
-# Pinned llama.cpp server build — mirror duckle/apps/desktop/src/engine_manager.rs.
-# The GGUF wire format is stable, so this one server binary serves every model
 # in the catalog below.
 LLAMACPP_REPO = "ggml-org/llama.cpp"
 LLAMACPP_BUILD = "b9305"
