@@ -45,7 +45,7 @@ Open the flow and the report's notes are on the canvas: a placeholder node carri
 
 ## Coverage, measured
 
-Measured on Alteryx's own 121 One Tool Example workflows (923 tools). Numbers as of Flowfile 0.18.0, where the importer ships as a beta. Open the sections below for the per-tool detail.
+Measured on Alteryx's own 121 One Tool Example workflows (923 tools). Numbers as of Flowfile 0.18.0. Open the sections below for the per-tool detail.
 
 | | |
 |---|---|
