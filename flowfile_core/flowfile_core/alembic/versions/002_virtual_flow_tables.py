@@ -23,7 +23,7 @@ def upgrade() -> None:
     op.add_column("catalog_tables", sa.Column("table_type", sa.String, nullable=False, server_default="physical"))
     op.add_column("catalog_tables", sa.Column("producer_registration_id", sa.Integer, nullable=True))
     op.add_column("catalog_tables", sa.Column("serialized_lazy_frame", sa.LargeBinary, nullable=True))
-    op.add_column("catalog_tables", sa.Column("is_optimized", sa.Boolean, nullable=True, server_default=sa.text("0")))
+    op.add_column("catalog_tables", sa.Column("is_optimized", sa.Boolean, nullable=True, server_default=sa.false()))
 
     # Allow NULL file_path for optimized virtual tables (no physical storage).
     # SQLite requires batch mode for ALTER COLUMN.
