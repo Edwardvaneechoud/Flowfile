@@ -188,12 +188,17 @@ def downgrade() -> None:
         op.execute(text("DROP INDEX ix_workspace_projects_active_owner"))
 
     # ── 1. Revert composite uniqueness back to per-path unique ────────────────
+    bind = op.get_bind()
+    if bind.dialect.name != "sqlite":
+        constraints = inspect(bind).get_unique_constraints("workspace_projects")
+        composite = [c for c in constraints if set(c["column_names"]) == {"owner_id", "folder_path"}]
+        if composite:
+            for constraint in composite:
+                op.drop_constraint(constraint["name"], "workspace_projects", type_="unique")
+            if not any(c["column_names"] == ["folder_path"] for c in constraints):
+                op.create_unique_constraint(None, "workspace_projects", ["folder_path"])
+        return
     if _has_unique_constraint("workspace_projects", "uq_project_owner_path"):
-        bind = op.get_bind()
-        if bind.dialect.name != "sqlite":
-            op.drop_constraint("uq_project_owner_path", "workspace_projects", type_="unique")
-            op.create_unique_constraint("workspace_projects_folder_path_key", "workspace_projects", ["folder_path"])
-            return
         bind.execute(
             text(
                 "CREATE TABLE _wp_old ("

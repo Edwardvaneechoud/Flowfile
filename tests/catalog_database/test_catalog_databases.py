@@ -10,6 +10,8 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
+from shared.database import create_catalog_engine
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -71,4 +73,21 @@ def test_postgres_catalog(tmp_path, postgres_server, scenario):
     finally:
         with admin.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        admin.dispose()
+
+
+@pytest.mark.docker_integration
+def test_postgres_pool_recovers_a_dropped_idle_connection(postgres_server):
+    engine = create_catalog_engine(postgres_server)
+    admin = create_engine(postgres_server, isolation_level="AUTOCOMMIT")
+    try:
+        with engine.connect() as conn:
+            original_pid = conn.scalar(text("SELECT pg_backend_pid()"))
+        with admin.connect() as conn:
+            assert conn.scalar(text("SELECT pg_terminate_backend(:pid)"), {"pid": original_pid})
+        with engine.connect() as conn:
+            assert conn.scalar(text("SELECT pg_backend_pid()")) != original_pid
+            assert conn.scalar(text("SELECT 1")) == 1
+    finally:
+        engine.dispose()
         admin.dispose()

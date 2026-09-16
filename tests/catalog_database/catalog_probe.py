@@ -5,7 +5,7 @@
 import os
 import sys
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -55,8 +55,23 @@ if sys.argv[1] == "populated":
     with engine.connect() as conn:
         assert conn.scalar(text("SELECT COUNT(*) FROM workspace_projects WHERE is_active = true")) == 1
         assert conn.scalar(text("SELECT COUNT(*) FROM catalog_namespaces WHERE is_public = true")) == 2
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE workspace_projects RENAME CONSTRAINT uq_project_owner_path "
+                    "TO custom_owner_path_unique"
+                )
+            )
+            conn.execute(text("CREATE INDEX workspace_projects_folder_path_key ON users (id)"))
     command.downgrade(cfg, "025")
+    constraints = inspect(engine).get_unique_constraints("workspace_projects")
+    assert any(c["column_names"] == ["folder_path"] for c in constraints)
+    assert not any(set(c["column_names"]) == {"owner_id", "folder_path"} for c in constraints)
     command.upgrade(cfg, "026")
+    constraints = inspect(engine).get_unique_constraints("workspace_projects")
+    assert any(set(c["column_names"]) == {"owner_id", "folder_path"} for c in constraints)
+    assert not any(c["column_names"] == ["folder_path"] for c in constraints)
 
 migration.run_startup_migration()
 init_db()
