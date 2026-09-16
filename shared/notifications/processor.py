@@ -11,9 +11,10 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, create_engine, or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
+from shared.database import create_catalog_engine
 from shared.models import (
     FlowRun,
     NotificationChannel,
@@ -59,9 +60,7 @@ def _utcnow() -> datetime:
 
 
 def _make_session() -> Session:
-    url = get_database_url()
-    connect_args = {"check_same_thread": False} if "sqlite" in url else {}
-    return Session(create_engine(url, connect_args=connect_args))
+    return Session(create_catalog_engine(get_database_url()))
 
 
 def _matching_rules(session: Session, run: FlowRun) -> list[NotificationRule]:

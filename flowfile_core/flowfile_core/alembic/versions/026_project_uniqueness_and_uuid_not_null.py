@@ -43,12 +43,15 @@ def _dedup_active_projects(bind) -> None:
     rows = bind.execute(
         text(
             "SELECT owner_id, MIN(id) AS keep_id FROM workspace_projects "
-            "WHERE is_active = 1 GROUP BY owner_id HAVING COUNT(*) > 1"
+            "WHERE is_active = true GROUP BY owner_id HAVING COUNT(*) > 1"
         )
     ).fetchall()
     for owner_id, keep_id in rows:
         bind.execute(
-            text("UPDATE workspace_projects SET is_active = 0 " "WHERE owner_id = :o AND is_active = 1 AND id != :k"),
+            text(
+                "UPDATE workspace_projects SET is_active = false "
+                "WHERE owner_id = :o AND is_active = true AND id != :k"
+            ),
             {"o": owner_id, "k": keep_id},
         )
 
@@ -120,14 +123,21 @@ def upgrade() -> None:
     _dedup_active_projects(bind)
 
     if not _has_unique_constraint("workspace_projects", "uq_project_owner_path"):
-        _rebuild_workspace_projects_composite(bind)
+        if bind.dialect.name == "sqlite":
+            _rebuild_workspace_projects_composite(bind)
+        else:
+            for constraint in inspect(bind).get_unique_constraints("workspace_projects"):
+                if constraint["column_names"] == ["folder_path"]:
+                    op.drop_constraint(constraint["name"], "workspace_projects", type_="unique")
+            op.create_unique_constraint("uq_project_owner_path", "workspace_projects", ["owner_id", "folder_path"])
 
     # ── 2. Partial unique index: one active project per owner ─────────────────
     if not _has_index("workspace_projects", "ix_workspace_projects_active_owner"):
+        active = "1" if bind.dialect.name == "sqlite" else "true"
         op.execute(
             text(
                 "CREATE UNIQUE INDEX ix_workspace_projects_active_owner "
-                "ON workspace_projects(owner_id) WHERE is_active = 1"
+                f"ON workspace_projects(owner_id) WHERE is_active = {active}"
             )
         )
 
@@ -180,6 +190,10 @@ def downgrade() -> None:
     # ── 1. Revert composite uniqueness back to per-path unique ────────────────
     if _has_unique_constraint("workspace_projects", "uq_project_owner_path"):
         bind = op.get_bind()
+        if bind.dialect.name != "sqlite":
+            op.drop_constraint("uq_project_owner_path", "workspace_projects", type_="unique")
+            op.create_unique_constraint("workspace_projects_folder_path_key", "workspace_projects", ["folder_path"])
+            return
         bind.execute(
             text(
                 "CREATE TABLE _wp_old ("

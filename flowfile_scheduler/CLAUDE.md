@@ -54,6 +54,6 @@ Tests live in `flowfile_scheduler/tests/`. They bind a `FlowScheduler` to a thro
 - `tests/test_cron_schedules.py` — cron/DST/catch-up/lock test coverage.
 - `tests/test_table_trigger_schedules.py` — table_trigger/table_set_trigger arming + watermark coverage, `flow_uuid` plumbing, orphaned-run reaping.
 - `../shared/models.py` — actual ORM table definitions (source of truth).
-- `../shared/storage_config.py` — `get_database_url()` (catalog SQLite path).
+- `../shared/storage_config.py` — `get_database_url()` (SQLite or PostgreSQL catalog URL); `shared/database.py` owns engine options.
 - `../shared/subprocess_utils.py` — `spawn_flow_subprocess()` (the fire-and-forget launcher).
 - `../flowfile_core/flowfile_core/scheduler/__init__.py` — core-side re-export + `_scheduler` singleton accessors.

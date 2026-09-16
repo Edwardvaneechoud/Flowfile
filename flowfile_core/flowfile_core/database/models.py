@@ -219,7 +219,13 @@ class WorkspaceProject(Base):
 
     __table_args__ = (
         UniqueConstraint("owner_id", "folder_path", name="uq_project_owner_path"),
-        Index("ix_workspace_projects_active_owner", "owner_id", sqlite_where=sa.text("is_active = 1"), unique=True),
+        Index(
+            "ix_workspace_projects_active_owner",
+            "owner_id",
+            sqlite_where=sa.text("is_active = 1"),
+            postgresql_where=sa.text("is_active = true"),
+            unique=True,
+        ),
     )
 
 
