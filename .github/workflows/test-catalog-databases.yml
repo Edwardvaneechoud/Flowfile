@@ -1,0 +1,54 @@
+name: Catalog databases
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  catalog-databases:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: catalog
+          POSTGRES_PASSWORD: catalog-test
+          POSTGRES_DB: catalog
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U catalog -d catalog"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_CATALOG_POSTGRES_URL: postgresql+psycopg2://catalog:catalog-test@localhost:5432/catalog
+      FLOWFILE_MODE: docker
+      FLOWFILE_STORAGE_DIR: /tmp/catalog-tests/storage
+      FLOWFILE_USER_DATA_DIR: /tmp/catalog-tests/user
+      CATALOG_BASELINE_REF: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install poetry
+          poetry install --no-interaction --no-ansi --with dev
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+      - name: Verify SQLite and PostgreSQL catalogs
+        run: poetry run pytest tests/catalog_database -v --basetemp=/tmp/catalog-proof
+      - name: Preserve SQLite schema evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalog-sqlite-schema
+          path: /tmp/catalog-proof/test_sqlite_schema_unchanged*/**/*.sql

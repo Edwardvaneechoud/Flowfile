@@ -19,11 +19,12 @@ from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Engine
+from sqlalchemy import inspect, text
+from sqlalchemy.engine import Engine, make_url
 
 import shared.storage_config as _storage_config
 from flowfile_core.database import backup as _backup
+from shared.database import create_catalog_engine, sqlite_database_path
 
 logger = logging.getLogger(__name__)
 
@@ -78,17 +79,22 @@ def _get_alembic_config() -> Config:
     base = _get_base_dir()
     cfg = Config(str(base / "alembic.ini"))
     cfg.set_main_option("script_location", str(base / "alembic"))
-    cfg.set_main_option("sqlalchemy.url", _storage_config.get_database_url())
+    cfg.set_main_option("sqlalchemy.url", _storage_config.get_database_url().replace("%", "%%"))
     return cfg
 
 
 def _catalog_db_exists() -> bool:
-    """Check whether the new ``flowfile_catalog.db`` file already exists."""
+    """Check the local file or the server catalog's Alembic revision."""
     url = _storage_config.get_database_url()
-    if "sqlite" in url:
-        db_path = Path(url.replace("sqlite:///", ""))
-        return db_path.exists()
-    return False
+    if make_url(url).get_backend_name() == "sqlite":
+        db_path = sqlite_database_path(url)
+        return db_path is not None and db_path.exists()
+    engine = create_catalog_engine(url)
+    try:
+        with engine.connect() as conn:
+            return bool(MigrationContext.configure(conn).get_current_heads())
+    finally:
+        engine.dispose()
 
 
 def _ensure_known_revision(cfg: Config) -> None:
@@ -99,7 +105,7 @@ def _ensure_known_revision(cfg: Config) -> None:
     Schema artifacts from the unknown revision are not reverted — only the
     ``alembic_version`` pointer is corrected so startup can proceed.
     """
-    engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
+    engine = create_catalog_engine(cfg.get_main_option("sqlalchemy.url"))
     try:
         if not inspect(engine).has_table("alembic_version"):
             return
@@ -130,10 +136,7 @@ def _ensure_known_revision(cfg: Config) -> None:
 
 
 def _database_path(cfg: Config) -> Path | None:
-    url = cfg.get_main_option("sqlalchemy.url") or ""
-    if url.startswith("sqlite:///"):
-        return Path(url.replace("sqlite:///", ""))
-    return None
+    return sqlite_database_path(cfg.get_main_option("sqlalchemy.url"))
 
 
 def _snapshot_if_migration_pending(cfg: Config) -> Path | None:
@@ -142,7 +145,7 @@ def _snapshot_if_migration_pending(cfg: Config) -> Path | None:
     if db_path is None or not db_path.exists():
         return None
     try:
-        engine = create_engine(cfg.get_main_option("sqlalchemy.url"))
+        engine = create_catalog_engine(cfg.get_main_option("sqlalchemy.url"))
         try:
             with engine.connect() as conn:
                 current = MigrationContext.configure(conn).get_current_revision()
@@ -270,6 +273,8 @@ def migrate_data_from_legacy_db() -> None:
     Uses dynamic column mapping so schema differences are handled
     gracefully.  The old database is **never modified**.
     """
+    if make_url(_storage_config.get_database_url()).get_backend_name() != "sqlite":
+        return
     legacy_path = _storage_config.get_legacy_database_path()
     if legacy_path is None:
         logger.info("No legacy database found, skipping data migration")
@@ -278,8 +283,8 @@ def migrate_data_from_legacy_db() -> None:
     new_url = _storage_config.get_database_url()
     old_url = f"sqlite:///{legacy_path}"
 
-    old_engine = create_engine(old_url, connect_args={"check_same_thread": False})
-    new_engine = create_engine(new_url, connect_args={"check_same_thread": False})
+    old_engine = create_catalog_engine(old_url)
+    new_engine = create_catalog_engine(new_url)
 
     try:
         old_inspector = inspect(old_engine)
@@ -333,7 +338,11 @@ def run_startup_migration() -> None:
     3. Neither exists (fresh install) → create schema from scratch
     """
     catalog_exists = _catalog_db_exists()
-    legacy_path = _storage_config.get_legacy_database_path()
+    legacy_path = (
+        _storage_config.get_legacy_database_path()
+        if make_url(_storage_config.get_database_url()).get_backend_name() == "sqlite"
+        else None
+    )
 
     if catalog_exists:
         logger.info("Existing catalog database detected, checking for pending migrations")

@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from croniter import croniter
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from flowfile_scheduler.models import (
@@ -27,6 +26,7 @@ from flowfile_scheduler.models import (
     SchedulerLock,
     ScheduleTriggerTable,
 )
+from shared.database import create_catalog_engine
 from shared.notifications.processor import process_pending_notifications
 from shared.run_completion import reap_orphaned_runs
 from shared.run_logs import cleanup_old_logs
@@ -70,9 +70,7 @@ class FlowScheduler:
         # zero seed would skip the first sweep for an hour on a freshly booted host.
         self._last_log_sweep: float | None = None
 
-        url = get_database_url()
-        connect_args = {"check_same_thread": False} if "sqlite" in url else {}
-        self._engine = create_engine(url, connect_args=connect_args)
+        self._engine = create_catalog_engine(get_database_url())
         self._session_factory = sessionmaker(bind=self._engine)
 
         # Ensure scheduler-specific tables exist (safe no-op if they already do)
@@ -80,7 +78,7 @@ class FlowScheduler:
 
         Base.metadata.create_all(self._engine, checkfirst=True)
 
-        logger.info("Scheduler %s targeting %s", self._holder_id, url)
+        logger.info("Scheduler %s targeting %s", self._holder_id, self._engine.url)
 
     # Public API (called from core's lifespan)
 
