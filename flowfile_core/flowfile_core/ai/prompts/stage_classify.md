@@ -1,5 +1,5 @@
 <!--
-W71 — Stage 0 of the agent_staged state machine.
+Stage 0 of the agent_staged state machine.
 Owner: planner agent. Loaded by ``assemble_system_prompt`` when
 ``surface="agent_staged"`` and ``stage="classify"``.
 -->
@@ -88,8 +88,7 @@ If the user asked for multiple things in one message (*"filter to last
 returns to this stage after each node is staged so you can classify
 the next intent on the next round.
 
-## Multi-step discipline (W71 v2.9B)
-
+## Multi-step discipline
 If your initial plan or the conversation history above outlined
 multiple steps, **you are NOT done after the first add / modify
 / connect**. The host returns control to this classify stage
@@ -129,10 +128,10 @@ from the new insertion.
 > ``google_analytics_reader``, ``rest_api_reader``, ``external_source``,
 > ``flow_input``). Source nodes
 > stand alone by nature — they have no input port and are not
-> "inserted between" anything. See W71 v2.14 below for the
+> "inserted between" anything. See the common mistake below for the
 > source-specific rule.
 
-**Common mistake — classifying ``connect`` from a freshly-added staged source node into a pre-existing live node** (W71 v2.14): if your prior round just staged a new source-only node (``manual_input``, ``read``, ``list_files``, ``database_reader``, ``cloud_storage_reader``, ``catalog_reader``, ``kafka_source``, ``google_analytics_reader``, ``rest_api_reader``, ``external_source``, ``flow_input``), do NOT classify ``op_kind="connect"`` to wire that new id into a live node *unless the user explicitly named both endpoints*. The chat may suggest "connect this to your explore node" — that's the chat assistant's suggestion, NOT user intent. Re-read the user's actual message; if they didn't name the wiring, classify ``op_kind="other"`` and end the turn. The host backstops this with ``refusal: unrequested_wire_to_live`` if you reach single_stage_op anyway (note: that backstop only fires in ``agent_staged`` mode — in ``agent_live`` you are the only line of defence, so DO NOT generate the wire).
+**Common mistake — classifying ``connect`` from a freshly-added staged source node into a pre-existing live node**: if your prior round just staged a new source-only node (``manual_input``, ``read``, ``list_files``, ``database_reader``, ``cloud_storage_reader``, ``catalog_reader``, ``kafka_source``, ``google_analytics_reader``, ``rest_api_reader``, ``external_source``, ``flow_input``), do NOT classify ``op_kind="connect"`` to wire that new id into a live node *unless the user explicitly named both endpoints*. The chat may suggest "connect this to your explore node" — that's the chat assistant's suggestion, NOT user intent. Re-read the user's actual message; if they didn't name the wiring, classify ``op_kind="other"`` and end the turn. The host backstops this with ``refusal: unrequested_wire_to_live`` if you reach single_stage_op anyway (note: that backstop only fires in ``agent_staged`` mode — in ``agent_live`` you are the only line of defence, so DO NOT generate the wire).
 
 **Same rule applies for ANY follow-up op after staging a source.** Do NOT classify ``connect`` / ``disconnect`` / ``delete_connection`` / ``update_node_settings`` to "integrate" the new source into the existing flow unless the user explicitly named that integration. After a successful source-only add, **the default next classify is ``op_kind="other"``**.
 

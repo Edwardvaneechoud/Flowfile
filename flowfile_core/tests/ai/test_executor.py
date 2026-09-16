@@ -1067,7 +1067,7 @@ def test_formula_predicts_via_mirror_not_kernel(call_kwargs: dict[str, Any], stu
 
 
 def test_add_with_llm_provided_colliding_node_id_is_refused(call_kwargs: dict[str, Any]) -> None:
-    """AC2 — LLM emits ``add_filter(node_id=3, upstream_node_ids=[3])``.
+    """LLM emits ``add_filter(node_id=3, upstream_node_ids=[3])``.
 
     The executor refuses with ``self_loop_prevented`` *before* Pydantic validation;
     no node is staged or applied; an audit row records the rejection.

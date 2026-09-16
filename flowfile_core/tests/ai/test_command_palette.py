@@ -223,7 +223,7 @@ def test_cmd_k_surface_in_lockstep() -> None:
 async def test_tools_passed_to_provider() -> None:
     """Cmd+K is a tool-call surface; the provider must receive non-empty tools.
 
-    This is the inverse of W20/W23/W34 which all assert ``tools=None``.
+    This is the inverse of the other AI routers, which all assert ``tools=None``.
     Regression guard: if a refactor accidentally drops the catalog, the LLM
     can't propose anything and every cmd_k call would silently degrade.
     """
@@ -459,7 +459,7 @@ async def test_degrades_when_all_calls_refused() -> None:
     so the frontend can show why.
 
     Insertion context with ``upstream_node_ids=[1]`` is required to trigger's column-ref validation pipeline — the executor only validates refs
-    when it has an upstream schema to validate against (D011 tier 1+).
+    when it has an upstream schema to validate against.
     """
     flow = _flow_with_orders()
     bad_call = ToolCall(
@@ -495,7 +495,7 @@ async def test_partial_refusal_stages_valid_ops() -> None:
     what we can, report what we can't.
 
     Insertion context with ``upstream_node_ids=[1]`` is required so the
-    executor can validate column refs (D011 tier 1+).
+    executor can validate column refs.
     """
     flow = _flow_with_orders()
     good = ToolCall(id="g", name="flowfile.graph.add_filter", arguments=_filter_settings_for_region())

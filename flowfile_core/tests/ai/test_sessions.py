@@ -7,12 +7,12 @@ Cases:
   ``pop_session`` return None for a different user_id than the owner.
 * ``test_clear_for_tests_wipes_all`` — fixture cleanup works.
 * ``test_capture_snapshot_basic`` — snapshot a flow with one node;
-  ``node_ids`` and ``node_types`` populated (W45 — hash fields removed).
+  ``node_ids`` and ``node_types`` populated (hash fields removed).
 * ``test_detect_drift_no_change`` — fresh snapshot vs same flow → None.
 * ``test_detect_drift_external_addition_fires`` — user adds a node
   post-snapshot the agent didn't stage → ``external_added_node_ids`` populated.
 * ``test_detect_drift_agent_staged_addition_is_not_drift`` — agent's own
-  staged node is excluded from the external-added bucket (W45 Q1).
+  staged node is excluded from the external-added bucket.
 * ``test_detect_drift_missing_node`` — delete a node post-snapshot →
   ``missing_node_ids`` populated.
 * ``test_capture_snapshot_records_node_types`` — node_type captured per id.
@@ -186,7 +186,7 @@ def test_capture_snapshot_records_node_types() -> None:
     assert snap.node_types == {1: "manual_input", 2: "manual_input"}
 
 
-# Drift detection (W45 — id-set only)
+# Drift detection (id-set only)
 
 
 def test_detect_drift_no_change() -> None:
@@ -272,7 +272,7 @@ def test_drift_detail_is_empty() -> None:
 
 
 def test_lazy_litellm_contract() -> None:
-    # Importing sessions must not pull litellm — same posture every workstream
+    # Importing sessions must not pull litellm — same posture every AI module
     # since has documented. If a prior test already imported litellm,
     # drop and re-import to verify the contract holds.
     sys.modules.pop("litellm", None)
@@ -330,7 +330,7 @@ def _staged_add_entry(
 
 
 def test_revalidate_staged_results_drops_collision_with_live() -> None:
-    """AC4 — a staged add whose node_id is now live (user-added during pause) is dropped."""
+    """A staged add whose node_id is now live (user-added during pause) is dropped."""
     sess = _make_session()
     # Pre-pause: agent staged node 3 with upstream from live node 1.
     sess.staged_results = [_staged_add_entry(node_id=3, upstream_node_ids=[1])]
@@ -352,7 +352,7 @@ def test_revalidate_staged_results_drops_collision_with_live() -> None:
 
 
 def test_revalidate_staged_results_drops_dead_upstream_reference() -> None:
-    """AC3 — a staged add referencing an upstream id that's no longer live is dropped."""
+    """A staged add referencing an upstream id that's no longer live is dropped."""
     sess = _make_session()
     # Pre-pause: agent staged node 7 chained off live node 5 (which we'll delete).
     sess.staged_results = [_staged_add_entry(node_id=7, upstream_node_ids=[5])]

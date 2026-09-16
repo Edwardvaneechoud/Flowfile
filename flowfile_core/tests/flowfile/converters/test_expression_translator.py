@@ -589,7 +589,7 @@ def test_allowed_specials_still_reject_other_specials():
     assert "[_RecordID_]" in outcome.reason
 
 
-# --- W6.5: an unbracketed field reference, resolved only against columns the caller vouches for ---
+# --- an unbracketed field reference, resolved only against columns the caller vouches for ---
 
 
 @pytest.mark.parametrize(
@@ -651,7 +651,7 @@ def test_the_power_operator_is_still_refused_with_the_rewrite_that_works():
     assert try_translate("Pow(x, 2)", known_columns=frozenset(["x"])).translated == "power([x], 2)"
 
 
-# --- W6.6: a mapping that is exact on some inputs and not on others owes its reader a sentence ---
+# --- a mapping that is exact on some inputs and not on others owes its reader a sentence ---
 # No shipped FunctionSpec carries a caveat today (MD5_UTF8 is exact; MD5_ASCII/MD5_UNICODE are
 # refused; Base64 is not a Desktop formula function), so the plumbing is pinned on a patched spec.
 
@@ -690,7 +690,7 @@ def test_one_caveat_is_reported_once_however_often_the_function_appears(caveated
     assert len(outcome.caveats) == 1
 
 
-# --- W6.10: reading a column as Float64 ---
+# --- reading a column as Float64 ---
 
 FLOAT_CAST_CASES: list[tuple[str, frozenset[str], str]] = [
     ("-20*POW([x], 7)", frozenset({"x"}), "-20 * power(to_number([x]), 7)"),
@@ -737,11 +737,11 @@ def test_the_float_field_set_does_not_leak_from_one_translation_into_the_next():
     assert try_translate("[x] * 2").translated == "[x] * 2"
 
 
-# --- W6.11: the integer literals float as well, and only in arithmetic positions ---
+# --- the integer literals float as well, and only in arithmetic positions ---
 
 
 FLOAT_LITERAL_CASES: list[tuple[str, str]] = [
-    # No column to cast at all, which is why the W6.10 rule could not reach these.
+    # No column to cast at all, which is why the floating rule could not reach these.
     ("POW(2, 70)", "power(2.0, 70.0)"),
     ("[x]*POW(2,70)", "[x] * power(2.0, 70.0)"),
     ("[x]+POW(60,6)", "[x] + power(60.0, 6.0)"),
@@ -781,7 +781,7 @@ def test_the_literal_flag_does_not_leak_from_one_translation_into_the_next():
     assert try_translate("POW(2, 70)").translated == "power(2, 70)"
 
 
-# --- W6.10: the regex screen is the engine, not a substring blocklist ---
+# --- the regex screen is the engine, not a substring blocklist ---
 
 
 @pytest.mark.parametrize(
@@ -814,7 +814,7 @@ def test_a_pattern_the_engine_accepts_still_converts():
     assert try_translate('REGEX_Match([Name], "[A-Z]+|west")').translated == 'contains([Name], "(?i)^(?:[A-Z]+|west)$")'
 
 
-# --- W6.11: the engine decides and the construct names are only wording ---
+# --- the engine decides and the construct names are only wording ---
 
 
 NAMED_GROUP_CASES: list[tuple[str, str | None]] = [

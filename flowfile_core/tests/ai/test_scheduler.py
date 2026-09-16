@@ -629,7 +629,7 @@ def test_retryable_exception_types_resolved_lazily(
 
 
 def test_default_retry_policy_matches_plan_section_5_1() -> None:
-    """The shipped default reflects plan §5.1 verbatim."""
+    """The shipped default is 2s, 4s, 8s, 16s."""
     p = DEFAULT_RETRY_POLICY
     assert p.max_retries == 4
     assert p.base_delay == pytest.approx(2.0)

@@ -1,8 +1,7 @@
 <!--
-Level 2 — Co-pilot surface suffix (D008).
+Level 2 — Co-pilot surface suffix.
 
-Owner: Phase 2 workstreams (W32, W33, W34). Surfaces using this suffix:
-cmd_k, ghost_node.
+Surfaces using this suffix: cmd_k, ghost_node.
 -->
 
 # Co-pilot mode

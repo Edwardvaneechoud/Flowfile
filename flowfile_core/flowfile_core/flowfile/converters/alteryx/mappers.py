@@ -2384,7 +2384,7 @@ def _affix_settings(config: ET.Element, element_name: str) -> tuple[str, str, st
     """``<AddPrefixSuffix>``/``<RemovePrefixSuffix>`` as (type, text, on-error), or None when absent.
 
     Alteryx writes the affix as a `<Type>`/`<Text>` pair inside one element, not as the `<Prefix>`
-    and `<Suffix>` elements this mapper used to look for (W7a.1 item 0d). The text is read raw:
+    and `<Suffix>` elements this mapper used to look for. The text is read raw:
     a leading or trailing space in a prefix is part of the name Alteryx builds. None means the
     element says neither, which is what sends the Add branch to the older reading rather than
     refusing a shape that used to convert.
@@ -3318,9 +3318,9 @@ _SAMPLE_MODES: dict[str, tuple[str | None, str]] = {
     "skip": ("input_df.slice({n})", "_position >= {n}"),
     "sample": ("input_df.gather_every({n})", "_position % {n} == 0"),
 }
-# Held until decision 3 rules what they mean: `Random` is a per-row 1-in-N draw rather than a
+# Blocked until their meaning is settled: `Random` is a per-row 1-in-N draw rather than a
 # fixed-size sample, and `NPercent` is Alteryx's "first N%", a deterministic head — so neither is
-# the `NodeSample` random branch the plan assumed.
+# the `NodeSample` random branch.
 _SAMPLE_BLOCKED_MODES = {
     "random": "a 1-in-N chance per row rather than a sample of a fixed size",
     "npercent": "the first N% of the rows rather than a random share of them",
@@ -3519,7 +3519,7 @@ _RANK_METHODS: dict[str, tuple[str, bool]] = {
     "fractional": ("average", False),
     "ordinal": ("ordinal", True),
 }
-# Held until Edward's decision 3 rules their tie shape; see `map_rank`.
+# Blocked until their tie shape is settled; see `map_rank`.
 _RANK_BLOCKED_MODES = frozenset({"standard", "competition"})
 RANK_ORDER_MESSAGE = (
     "Alteryx's Ordinal rank breaks ties by the order the rows arrive in, which this workflow does not "
@@ -5306,7 +5306,7 @@ _IMPUTATION_SEPARATE = "checkbox Imputed Values Separate Field"
 _IMPUTATION_STATISTICS = {
     "radio Mean": "pl.col(_f).mean()",
     "radio Median": "pl.col(_f).median()",
-    # W5.8/W5.10's precedent (Summarize tool 111): Polars returns an arbitrary mode on a tie, so the
+    # The Summarize precedent (tool 111): Polars returns an arbitrary mode on a tie, so the
     # generated code sorts and takes the first to be at least deterministic. `drop_nulls` first
     # because a null is one of the values `mode()` counts, and the null is what is being replaced.
     "radio Mode": "pl.col(_f).drop_nulls().mode().sort().first()",
@@ -6501,8 +6501,8 @@ def _correlation_fields(tool: AlteryxTool, ctx: EmitContext, config: ET.Element)
     ``*Unknown`` means "every other numeric column": Designer's field list offers only numeric
     columns, which the corpus shows directly — every one of the 15 instances lists the four numeric
     columns of its input and neither of the two string ones, whether selected or not. So it is
-    frozen to the numeric columns arriving at import time, the shape W5.2 gave DataCleansePro's
-    tool 133, and a column whose type Flowfile cannot state makes that freeze impossible.
+    frozen to the numeric columns arriving at import time, the shape DataCleansePro's
+    tool 133 already has, and a column whose type Flowfile cannot state makes that freeze impossible.
 
     ``*Unknown`` stands for the columns the field list does not *name*, so the exclusion is on
     ``names`` and not on ``selected``: a listed field the user unticked was excluded on purpose, and
@@ -6650,7 +6650,7 @@ def _spearman_group_field(values: dict[str, str], variables: list[str]) -> tuple
 
     12 of the 13 corpus instances leave ``Enable Group By`` off while ``Select Field to Group By``
     still holds a name — sometimes a real column, sometimes one from a different workflow — so the
-    switch is read first and the field is not looked at at all when it is off (W5.2's lesson).
+    switch is read first and the field is not looked at at all when it is off.
     """
     if not _is_true(values.get("Enable Group By")):
         return None, None
@@ -6847,7 +6847,7 @@ def _field_summary_fields(values: dict[str, str]) -> tuple[list[str] | None, str
     """The macro's comma-joined ``Name=True,Name=False`` list; the names themselves may hold spaces.
 
     ``None`` means "every column", which is what a list with nothing deselected asks for — and it is
-    emitted as *no* selection rather than as the names, the shape W5.3 gave Transpose's ``*Unknown``.
+    emitted as *no* selection rather than as the names, the shape Transpose's ``*Unknown`` takes.
     Naming them would be a claim about what arrives, and the importer does not know that: Alteryx's
     cached schema names a spatial column plainly, where the Parquet that `flowfile convert yxdb`
     wrote for the same `.yxdb` gives it a ``__spatial`` suffix, because a spatial column is renamed

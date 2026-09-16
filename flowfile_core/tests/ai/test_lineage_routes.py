@@ -154,7 +154,7 @@ def patch_get_configured_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[F
 # Flow fixtures
 
 
-_FLOW_ID = 9951  # avoid clashing with W23/W50 flow ids
+_FLOW_ID = 9951  # avoid clashing with the other AI test fixtures' flow ids
 
 
 def _flow_settings(*, name: str = "w51_test", source_registration_id: int | None = None) -> schemas.FlowSettings:
@@ -169,7 +169,7 @@ def _flow_settings(*, name: str = "w51_test", source_registration_id: int | None
 
 
 def _build_linear_flow(*, name: str = "w51_test", source_registration_id: int | None = None) -> FlowGraph:
-    """``orders (1) → filter_eu (2)`` — same shape as W23/W50 fixtures."""
+    """``orders (1) → filter_eu (2)`` — same shape as the other AI test fixtures."""
 
     flow = FlowGraph(
         flow_settings=_flow_settings(name=name, source_registration_id=source_registration_id),
@@ -696,7 +696,7 @@ def test_lineage_question_user_block_contains_columns_for_un_run_static_upstream
     assert response.status_code == 200
 
     captured = patch_get_configured_provider.last_call_kwargs["messages"]
-    assert len(captured) == 2  # system + user (W22 + history + question)
+    assert len(captured) == 2  # system + user (base prompt + history + question)
     _system_msg, user_msg = captured
 
     # The lineage user message is's body + history block + question.
@@ -846,7 +846,7 @@ def test_lineage_question_rejects_oversize_history_limit(authed_client: TestClie
 
 def test_lineage_surface_in_lockstep() -> None:
     """``"lineage"`` must appear in every place that knows about
-    surfaces, otherwise downstream callers (W11/W22/W30 + budget) will
+    surfaces, otherwise downstream callers (the prompt layers + budget) will
     fall back to defaults silently."""
 
     assert "lineage" in get_args(tool_registry.SurfaceLiteral)
@@ -996,7 +996,7 @@ def test_parse_node_results_json_is_defensive() -> None:
 def test_lazy_litellm_import_for_lineage_routes() -> None:
     """``import flowfile_core.ai.lineage_routes`` mustn't pull litellm.
 
-    Same contract as W11/W12/W13/W20/W23/W50 — the module sits behind
+    Same contract as the other AI routers — the module sits behind
     the BYOK seam, not the ``provider_factory`` bootstrap, so the heavy
     SDK stays out of the import graph until a real call happens.
 

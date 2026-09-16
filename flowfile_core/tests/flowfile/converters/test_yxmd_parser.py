@@ -407,7 +407,7 @@ def test_the_document_position_counts_every_node_the_parser_visits():
     ids=["by_plugin", "by_child_nodes"],
 )
 def test_a_tool_container_without_a_tool_id_is_refused_like_a_tool(container: str):
-    """W6 pre-flight: `_collect_tools` skipped a container before `_tool_id` could look at it.
+    """`_collect_tools` skipped a container before `_tool_id` could look at it.
 
     An id-less container was therefore dropped in silence while an id-less canvas tool beside it was
     refused — two answers to one question. All 120 containers in the corpus carry a ToolID, so this
@@ -442,7 +442,7 @@ def test_a_connection_end_without_a_tool_id_is_refused(end: str, wire: str):
 def test_a_connection_end_refusal_names_which_connection_it_was():
     """The message said which end was absent but not which wire, so a file with many said nothing.
 
-    A node's refusal has carried its document position since W5.12; a wire's did not, and a
+    A node's refusal has long carried its document position; a wire's did not, and a
     `<Connection>` has no other name to be called by.
     """
     document = b"""<?xml version="1.0"?>
