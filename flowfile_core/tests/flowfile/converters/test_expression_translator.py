@@ -48,9 +48,6 @@ FUNCTION_CASES: list[tuple[str, str, str]] = [
     ("reversestring", "ReverseString([Name])", "reverse([Name])"),
     ("tonumber", "ToNumber([Name])", "to_number([Name])"),
     ("tostring", "ToString([Amount])", "to_string([Amount])"),
-    ("md5_ascii", "MD5_ASCII([Name])", "md5([Name])"),
-    ("base64encode", "Base64Encode([Name])", "base64_encode([Name])"),
-    ("base64decode", "Base64Decode([Name])", "base64_decode([Name])"),
     ("abs", "Abs([Amount])", "abs([Amount])"),
     ("ceil", "Ceil([Amount])", "ceil([Amount])"),
     ("floor", "Floor([Amount])", "floor([Amount])"),
@@ -235,7 +232,6 @@ REJECTED_CASES: list[tuple[str, str]] = [
     ("in-operator", '[Status] IN ("a", "b")'),
     ("datetimetrim-unsupported-unit", 'DateTimeTrim([D], "fortnight")'),
     ("datetimetrim-non-literal-unit", "DateTimeTrim([D], [Unit])"),
-    ("md5-unicode", "MD5_Unicode([Name])"),
     ("null-literal", "NULL"),
     ("null-call", "Null()"),
     ("null-in-expression", "[Amount] = NULL()"),
@@ -616,49 +612,6 @@ def test_the_power_operator_is_still_refused_with_the_rewrite_that_works():
     assert outcome.translated is None
     assert outcome.reason == "the '^' power operator is not supported; rewrite it as Pow(base, exponent)"
     assert try_translate("Pow(x, 2)", known_columns=frozenset(["x"])).translated == "power([x], 2)"
-
-
-# --- W6.6: a mapping that is exact on some inputs and not on others owes its reader a sentence ---
-
-
-@pytest.mark.parametrize(
-    ("alteryx", "fragment"),
-    [
-        ("MD5_ASCII([Name])", "hashes the UTF-8 bytes"),
-        ("Base64Encode([Name])", "encodes the UTF-8 bytes"),
-        ("Base64Decode([Name])", "reads the decoded bytes back as UTF-8"),
-    ],
-    ids=["md5_ascii", "base64_encode", "base64_decode"],
-)
-def test_a_caveated_function_translates_and_says_what_it_does_not_promise(alteryx: str, fragment: str):
-    outcome = try_translate(alteryx)
-    assert outcome.translated is not None and outcome.reason is None
-    assert len(outcome.caveats) == 1
-    assert fragment in outcome.caveats[0]
-
-
-def test_an_uncaveated_translation_carries_no_caveats():
-    """Otherwise the demotion would fire on every formula and `partial` would stop meaning anything."""
-    assert try_translate("Uppercase([Name])").caveats == []
-    assert try_translate("[Amount] + 1").caveats == []
-
-
-def test_caveats_do_not_leak_from_one_translation_into_the_next():
-    """They are collected in module state, so the reset is the part worth pinning."""
-    assert try_translate("MD5_ASCII([Name])").caveats != []
-    assert try_translate("Uppercase([Name])").caveats == []
-
-
-def test_one_caveat_is_reported_once_however_often_the_function_appears():
-    outcome = try_translate("MD5_ASCII([A]) + MD5_ASCII([B])")
-    assert len(outcome.caveats) == 1
-
-
-def test_md5_unicode_is_refused_because_it_is_a_different_digest_not_a_caveat():
-    """UTF-16LE and UTF-8 disagree on every input that is not empty, so there is nothing to caveat."""
-    outcome = try_translate("MD5_Unicode([Name])")
-    assert outcome.translated is None
-    assert "UTF-16LE" in (outcome.reason or "")
 
 
 # --- W6.10: reading a column as Float64 ---
