@@ -45,7 +45,7 @@ Open the flow and the report's notes are on the canvas: a placeholder node carri
 
 ## Coverage, measured
 
-Measured on Alteryx's own 121 One Tool Example workflows (923 tools). Numbers as of Flowfile 0.17.6. Open the sections below for the per-tool detail.
+Measured on Alteryx's own 121 One Tool Example workflows (923 tools). Numbers as of Flowfile 0.18.0, where the importer ships as a beta. Open the sections below for the per-tool detail.
 
 | | |
 |---|---|
@@ -83,7 +83,7 @@ Measured on Alteryx's own 121 One Tool Example workflows (923 tools). Numbers as
 
     Not converted (placeholder), by frequency in the samples: Directory, Join Multiple, Blob Convert, Fuzzy Match, XML Parse, Find Replace, Jupyter Code, Multi-Row Formula, Tile, Blob Input, Make Columns, Multi-Field Binning, Arrange, Dynamic Input, Dynamic Select, Dynamic Replace, JSON Parse, Base64 Encoder, Auto Field, Oversample Field. Each placeholder carries the tool's configuration as comments. If one of these blocks a real workflow of yours, [open a node request](https://github.com/Edwardvaneechoud/Flowfile/issues/new?template=alteryx_node_request.yml); requests are ranked by how often they come up.
 
-## Not yet tested, honestly
+## Known limitations
 
 The importer is measured on Alteryx's sample workflows, not on production ones. These are the gaps we know about and have not closed:
 
