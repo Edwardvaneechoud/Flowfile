@@ -6574,58 +6574,75 @@ def test_a_self_describing_file_format_has_no_header_row_to_miss(extension: str)
 
 
 @pytest.mark.parametrize(
-    ("case_id", "fields", "plugin", "config", "cache", "collects"),
+    ("case_id", "fields", "plugin", "config", "cache", "fragment", "collects"),
     [
         # The W5.10 defect, one tool upstream of the test that pinned it: the cache rides on a tool
         # Flowfile did not convert, so the frame reaching the Summarize is the Text Input's Int64.
+        # A placeholder could have changed the column, so the walk stops there and says unknown.
         (
             "a_placeholder_carrying_the_cache",
             '<Fields><Field name="Code" /></Fields>',
             XML_PARSE_PLUGIN,
             "",
             CACHED_STRING_CODE,
+            "Longest on 'Code' (unknown here)",
             None,
         ),
-        # Converting the tool in between does not help: `01 / 2 / 003` is still read back as Int64,
-        # and the cache still reports the V_String Alteryx itself ran on.
+        # A Sort changes no column, so W6.11 walks through it to the Text Input — which reads
+        # `01 / 2 / 003` back as Int64. The cache still says V_String and is still not believed;
+        # the guard now names the type it really found instead of calling it unknown.
         (
             "a_converted_pass_through_carrying_the_cache",
             '<Fields><Field name="Code" /></Fields>',
             SORT_PLUGIN,
             SORT_ON_CODE,
             CACHED_STRING_CODE,
+            "Longest on 'Code' (Int64)",
             None,
         ),
-        # The cost of the rule, stated rather than hidden: `Code` really is a String on both sides,
-        # but a Sort declares no type of its own, so one hop back lands on a tool that cannot answer.
+        # What the one-hop rule used to cost, now recovered: `Code` really is a String on both
+        # sides, and walking past the Sort reaches the Text Input that declares it.
         (
             "a_string_declared_text_input_behind_a_sort",
             '<Fields><Field name="Code" type="V_String" /></Fields>',
             SORT_PLUGIN,
             SORT_ON_CODE,
             "",
+            None,
             [("003",)],
         ),
     ],
 )
 def test_a_cached_alteryx_record_info_is_not_a_flowfile_type(
-    tmp_path: Path, case_id: str, fields: str, plugin: str, config: str, cache: str, collects: list | None
+    tmp_path: Path,
+    case_id: str,
+    fields: str,
+    plugin: str,
+    config: str,
+    cache: str,
+    fragment: str | None,
+    collects: list | None,
 ):
     """W5.10 asked the tool feeding the Summarize what type it emits and believed the answer.
 
     Every Alteryx tool carries a `<RecordInfo>` cache of the schema *Alteryx* last ran, so the
     answer survived a tool Flowfile refused to convert and contradicted Flowfile's own reading of
-    the Text Input feeding it. Unknown is the only honest answer for a tool that states no type,
-    and the two cached cases prove why: both are green under the old rule and raise at `.collect()`.
+    the Text Input feeding it. The cache is still never an answer: both cached cases carry a
+    V_String that says nothing about the Int64 Flowfile will really produce, and both still refuse.
 
-    The third case is the price, and `collects` states it plainly — an unprovable String is not a
-    String, so the guard also warns about a flow that runs and answers correctly.
+    What changed in W6.11 is how far the question travels. A tool that provably changes no column
+    is walked through, so the third case — a String the workflow really does declare, one Sort away
+    — is green instead of being the stated price of stopping at the first hop.
     """
     document = summarize_behind_one_tool(fields, plugin, config, cache)
     result = convert_yxmd(document, source_name="s.yxmd")
     row = report_row(result, 3)
-    assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "option_unsupported", "polars_code")
-    assert any("Longest on 'Code' (unknown here)" in message for message in row.messages), row.messages
+    if fragment is None:
+        assert (row.status, row.reason, row.flowfile_node_type) == ("converted", "converted", "polars_code")
+        assert row.messages == []
+    else:
+        assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "option_unsupported", "polars_code")
+        assert any(fragment in message for message in row.messages), row.messages
 
     flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
     flow.run_graph()
@@ -7689,16 +7706,17 @@ def test_a_bare_reference_to_a_column_the_chain_just_wrote_resolves(tmp_path: Pa
     The third assignment names nothing at all, and keeps the refusal — which is what makes the first
     two a lookup rather than a rule that every bare word is a column.
 
-    Both resolved references are wrapped by W6.10's floating rule: the tool declares every target
-    Double, 'x' is a Text Input column and 'doubled' is this chain's own Double target.
+    Both resolved references are wrapped by W6.10's floating rule, and their literals floated by
+    W6.11's: the tool declares every target Double, 'x' is a Text Input column and 'doubled' is
+    this chain's own Double target.
     """
     result = convert_yxmd(BARE_IDENTIFIERS_IN_A_FORMULA_CHAIN, source_name="bare.yxmd")
     row = report_row(result, 902)
     assert (row.status, row.reason) == ("commented", "translator_refused")
     nodes = dumped_nodes(result)
     bodies = [nodes[node_id]["setting_input"]["function"]["function"] for node_id in row.flowfile_node_ids]
-    assert bodies[0] == "to_number([x]) * 2"
-    assert bodies[1] == "power(to_number([doubled]), 2)"
+    assert bodies[0] == "to_number([x]) * 2.0"
+    assert bodies[1] == "power(to_number([doubled]), 2.0)"
     assert bodies[2].startswith("// Alteryx formula could not be converted automatically:")
     assert "unbracketed field reference 'nowhere'" in bodies[2]
     flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
@@ -7817,16 +7835,17 @@ FLOAT_DECLARED_OVER_AN_INTEGER_COLUMN = b"""<?xml version="1.0"?>
 def test_a_double_assignment_computes_in_float64_and_does_not_wrap(tmp_path: Path):
     """-20 * 500^7 is -1.5625e20, which Int64 cannot hold; Alteryx declares the field Double.
 
-    The cast is on the column *reference*, not on the finished value: casting the result would
-    arrive after the wrap, and `(-20 * pl.col('x').pow(7)).cast(pl.Float64)` was measured returning
-    the wrapped integer rather than the number Designer prints.
+    The repair is on the *operands* — the column reference and the integer literals — not on the
+    finished value: casting the result would arrive after the wrap, and
+    `(-20 * pl.col('x').pow(7)).cast(pl.Float64)` was measured returning the wrapped integer rather
+    than the number Designer prints.
     """
     result = convert_yxmd(FLOAT_DECLARED_OVER_AN_INTEGER_COLUMN, source_name="floats.yxmd")
     row = report_row(result, 921)
     assert (row.status, row.reason) == ("converted", "converted")
     nodes = dumped_nodes(result)
     bodies = [nodes[node_id]["setting_input"]["function"]["function"] for node_id in row.flowfile_node_ids]
-    assert bodies[0] == "-20 * power(to_number([x]), 7)"
+    assert bodies[0] == "-20.0 * power(to_number([x]), 7.0)"
     # An integer-declared target is left alone: Alteryx computes that one in an integer type too.
     assert bodies[1] == "[x] + 1"
     # A Double-declared target reading a text column is left alone as well — to_number() is a strict
@@ -7849,10 +7868,8 @@ FLOAT_DECLARED_OVER_AN_UNTYPED_COLUMN = b"""<?xml version="1.0"?>
         <Fields><Field name="x" /></Fields>
         <Data><r><c>500</c></r></Data>
       </Configuration></Properties></Node>
-    <Node ToolID="931"><GuiSettings Plugin="AlteryxBasePluginsGui.Sort.Sort" />
-      <Properties><Configuration>
-        <SortInfo><Field field="x" order="Ascending" /></SortInfo>
-      </Configuration></Properties></Node>
+    <Node ToolID="931"><GuiSettings Plugin="AlteryxBasePluginsGui.XMLParse.XMLParse" />
+      <Properties><Configuration /></Properties></Node>
     <Node ToolID="932"><GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula" />
       <Properties><Configuration><FormulaFields>
         <FormulaField field="wraps" type="Double" size="8" expression="-20*POW([x], 7)" />
@@ -7869,10 +7886,12 @@ FLOAT_DECLARED_OVER_AN_UNTYPED_COLUMN = b"""<?xml version="1.0"?>
 
 
 def test_a_declared_float_over_a_column_of_unknown_type_loses_its_green_badge():
-    """One Sort between the Text Input and the Formula is enough: the type lookup is one hop.
+    """An unconverted tool between the Text Input and the Formula could have changed 'x' entirely.
 
-    Fail closed rather than cast on a guess — to_number() on a text column stops the flow, so the
-    row says what it could not settle and keeps the arithmetic it can defend.
+    W6.11's walk crosses only tools it can prove leave the column alone; a placeholder is the
+    opposite of that, so the walk stops here and the answer stays unknown. Fail closed rather than
+    cast on a guess — to_number() on a text column stops the flow, so the row says what it could
+    not settle and keeps the arithmetic it can defend.
     """
     result = convert_yxmd(FLOAT_DECLARED_OVER_AN_UNTYPED_COLUMN, source_name="untyped.yxmd")
     row = report_row(result, 932)
@@ -7884,7 +7903,257 @@ def test_a_declared_float_over_a_column_of_unknown_type_loses_its_green_badge():
         "this column against Designer before trusting it."
     ]
     nodes = dumped_nodes(result)
-    assert nodes[row.flowfile_node_ids[0]]["setting_input"]["function"]["function"] == "-20 * power([x], 7)"
+    # The literals still float — that half needs no promise about the column — but 'x' itself is
+    # left uncast, which is the half the row is demoted for.
+    assert nodes[row.flowfile_node_ids[0]]["setting_input"]["function"]["function"] == "-20.0 * power([x], 7.0)"
+
+
+# --- W6.11: the integer literals compute in the declared floating type too ---
+
+FLOAT_DECLARED_OVER_INTEGER_LITERALS = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="940"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="x" /><Field name="code" /></Fields>
+        <Data><r><c>3</c><c>abcdef</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="941"><GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula" />
+      <Properties><Configuration><FormulaFields>
+        <FormulaField field="literal_only" type="Double" size="8" expression="POW(2, 70)" />
+        <FormulaField field="wraps_first" type="Double" size="8" expression="[x]*POW(2,70)" />
+        <FormulaField field="adds_big" type="Double" size="8" expression="[x]+POW(60,6)" />
+        <FormulaField field="counted" type="Int32" size="4" expression="POW(2, 10)" />
+        <FormulaField field="sliced" type="Double" size="8" expression="Length(Substring([code], 0, 5)) * 2" />
+      </FormulaFields></Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="940" Connection="Output" />
+      <Destination ToolID="941" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_a_declared_float_computes_its_integer_literals_in_float_too(tmp_path: Path):
+    """A cast on the column references cannot reach these: two of them read no column at all.
+
+    `POW(2, 70)` wraps to 0 in Int32 where Alteryx prints 1.18e21, and in `[x]+POW(60,6)` the
+    literal subexpression has already wrapped before the column is ever added. Rendering the
+    integer literals as floats is what makes the arithmetic floating.
+    """
+    result = convert_yxmd(FLOAT_DECLARED_OVER_INTEGER_LITERALS, source_name="literals.yxmd")
+    row = report_row(result, 941)
+    assert (row.status, row.reason) == ("converted", "converted")
+    # Every operand's type is settled here, so the row owes no floating-point caveat.
+    assert row.messages == ["5 Alteryx assignments became 5 chained Flowfile nodes."]
+    nodes = dumped_nodes(result)
+    bodies = [nodes[node_id]["setting_input"]["function"]["function"] for node_id in row.flowfile_node_ids]
+    assert bodies[0] == "power(2.0, 70.0)"
+    assert bodies[1] == "to_number([x]) * power(2.0, 70.0)"
+    assert bodies[2] == "to_number([x]) + power(60.0, 6.0)"
+    # An integer-declared target keeps integer literals: Alteryx computes that one in Int32 too.
+    assert bodies[3] == "power(2, 10)"
+    # Only arithmetic operands float. A positional argument means an integer and stays one, or
+    # `substring()` would be handed 0.0 and 5.0.
+    assert bodies[4] == "length(substring([code], 0, 5)) * 2.0"
+
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+    frame = flow.get_node(row.flowfile_node_ids[-1]).get_resulting_data().data_frame.collect()
+    assert frame["literal_only"].to_list() == [1.1805916207174113e21]
+    assert frame["wraps_first"].to_list() == [3.541774862152234e21]
+    assert frame["adds_big"].to_list() == [46656000003.0]
+    assert frame["counted"].to_list() == [1024]
+    assert frame["sliced"].to_list() == [10.0]
+
+
+# --- W6.11: the type lookup walks through tools that change no column ---
+
+FLOAT_DECLARED_TWO_HOPS_UPSTREAM = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="950"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="x" /><Field name="tag" /></Fields>
+        <Data><r><c>500</c><c>Y</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="951"><GuiSettings Plugin="AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect" />
+      <Properties><Configuration><SelectFields>
+        <SelectField field="x" selected="True" />
+        <SelectField field="tag" selected="True" />
+        <SelectField field="*Unknown" selected="True" />
+      </SelectFields></Configuration></Properties></Node>
+    <Node ToolID="952"><GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter" />
+      <Properties><Configuration>
+        <Mode>Simple</Mode>
+        <Simple><Operator>=</Operator><Field>tag</Field>
+          <Operands><DateType>fixed</DateType><Operand>Y</Operand></Operands></Simple>
+      </Configuration></Properties></Node>
+    <Node ToolID="953"><GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula" />
+      <Properties><Configuration><FormulaFields>
+        <FormulaField field="wraps" type="Double" size="8" expression="-20*POW([x], 7)" />
+      </FormulaFields></Configuration></Properties></Node>
+    <Node ToolID="954"><GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula" />
+      <Properties><Configuration><FormulaFields>
+        <FormulaField field="halved" type="Double" size="8" expression="[x]/2" />
+      </FormulaFields></Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="950" Connection="Output" />
+      <Destination ToolID="951" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="951" Connection="Output" />
+      <Destination ToolID="952" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="952" Connection="True" />
+      <Destination ToolID="953" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="952" Connection="False" />
+      <Destination ToolID="954" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_the_type_lookup_walks_through_tools_that_change_no_column(tmp_path: Path):
+    """A Select that renames nothing and a Filter that drops rows both leave 'x' exactly as it was.
+
+    This is `ControlContainer.yxmd` tools 60 and 61 in miniature — both of a Filter's anchors, since
+    both carry every column through. Before W6.11 the lookup stopped at the first hop and told these
+    rows that 'x' was "not settled by this workflow", which the Text Input two hops up settles.
+    """
+    result = convert_yxmd(FLOAT_DECLARED_TWO_HOPS_UPSTREAM, source_name="hops.yxmd")
+    nodes = dumped_nodes(result)
+    for tool_id, body in ((953, "-20.0 * power(to_number([x]), 7.0)"), (954, "to_number([x]) / 2.0")):
+        row = report_row(result, tool_id)
+        assert (row.status, row.reason) == ("converted", "converted"), tool_id
+        assert row.messages == [], tool_id
+        assert nodes[row.flowfile_node_ids[0]]["setting_input"]["function"]["function"] == body, tool_id
+
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert run_info.success, [step.error for step in run_info.node_step_result if not step.success]
+    frame = flow.get_node(report_row(result, 953).flowfile_node_ids[-1]).get_resulting_data().data_frame.collect()
+    assert frame["wraps"].to_list() == [-1.5625e20]
+
+
+A_RENAME_BETWEEN_THE_SOURCE_AND_THE_FORMULA = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="960"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="x" /></Fields>
+        <Data><r><c>500</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="961"><GuiSettings Plugin="AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect" />
+      <Properties><Configuration><SelectFields>
+        <SelectField field="x" selected="True" rename="y" />
+        <SelectField field="*Unknown" selected="True" />
+      </SelectFields></Configuration></Properties></Node>
+    <Node ToolID="962"><GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula" />
+      <Properties><Configuration><FormulaFields>
+        <FormulaField field="wraps" type="Double" size="8" expression="-20*POW([y], 7)" />
+      </FormulaFields></Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="960" Connection="Output" />
+      <Destination ToolID="961" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="961" Connection="Output" />
+      <Destination ToolID="962" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_a_rename_between_the_source_and_the_formula_stops_the_walk():
+    """'y' downstream is 'x' upstream, and the walk is a name lookup — so it stops and says so.
+
+    The walk only crosses a tool it can prove changed nothing about this column; a Select that
+    renames it is exactly the tool it must not cross.
+    """
+    result = convert_yxmd(A_RENAME_BETWEEN_THE_SOURCE_AND_THE_FORMULA, source_name="renamed.yxmd")
+    row = report_row(result, 962)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert row.messages == [
+        "Alteryx declares 'wraps' as Double and evaluates the whole expression in floating point, "
+        "but the type of 'y' is not settled by this workflow. Flowfile computes in the type the "
+        "input carries, which differs from Alteryx wherever an integer column overflows; check "
+        "this column against Designer before trusting it."
+    ]
+
+
+# --- W6.11: a named group is not lookbehind, in the RegEx tool either ---
+
+
+def test_a_named_group_in_the_regex_tool_is_not_refused_as_lookbehind():
+    """`(?<` was screened as a substring, so `(?<a>...)` was refused with a sentence about lookbehind.
+
+    Polars accepts both spellings of a named group; only `(?P<a>...)` used to survive the screen.
+    The `<` is written `&lt;` because a raw one cannot appear in an XML attribute value.
+    """
+    accepted = convert_yxmd(
+        regex_tokenize("(?&lt;a>[A-Z]{2})-(?&lt;b>[0-9]{2})", num_fields="2"), source_name="named.yxmd"
+    )
+    row = report_row(accepted, 2)
+    assert row.status == "partial", row.messages
+    assert not any("lookbehind" in message for message in row.messages), row.messages
+
+    refused = convert_yxmd(regex_tokenize("(?&lt;=A)B", num_fields="1"), source_name="behind.yxmd")
+    row = report_row(refused, 2)
+    assert row.status == "placeholder"
+    assert row.messages == [
+        "The Alteryx RegEx tool could not be converted: the Alteryx regular expression uses "
+        "lookbehind, which Polars' regex engine does not support."
+    ]
+
+
+# --- W6.11: a wire onto an anchor the macro does not have is dropped, not quietly rerouted ---
+
+
+def test_a_wire_onto_an_anchor_the_field_summary_macro_does_not_have_is_dropped():
+    """`register_all_inputs` registered whatever anchor a wire arrived on, so a misaddressed wire
+    landed on the profile's own input and nothing said so. Only `Field Input` is registered now."""
+    document = read_fixture("field_profile.yxmd").replace(
+        b'<Destination ToolID="420" Connection="Field Input" />',
+        b'<Destination ToolID="420" Connection="Nonsense Anchor" />',
+    )
+    result = convert_yxmd(document, source_name="field_profile.yxmd")
+    dropped = "A connection from ToolID 400 (Output) to ToolID 420 (Nonsense Anchor) was dropped; reconnect it by hand."
+    # Both ends of the wire say so: the Text Input it left and the macro it never reached.
+    assert dropped in report_row(result, 400).messages
+    assert dropped in report_row(result, 420).messages
+    assert (report_row(result, 400).status, report_row(result, 400).reason) == ("partial", "dropped_connection")
+
+    # The wire the corpus really draws is untouched.
+    untouched = convert_yxmd(read_fixture("field_profile.yxmd"), source_name="field_profile.yxmd")
+    assert not any("was dropped" in message for message in report_row(untouched, 420).messages)
+
+
+# --- W6.11: what a fixed-date filter does on a real Date column, pending decision 6 ---
+
+
+def test_a_fixed_date_filter_on_a_real_date_column_raises_when_the_flow_runs(tmp_path: Path):
+    """Documents today's behaviour, which §6 decision 6 is about and will change.
+
+    Tool 580 filters `picked_on`, the string the Text Input holds, so its `<= "2017-12-29"` is a
+    string-to-string comparison that cannot raise. Pointed at `picked` — the Date the Formula at 505
+    parses — the same emitted expression compares a date with a string literal and Polars refuses.
+
+    The row is still `converted` with no message: nothing in `<DateType>fixed</DateType>` tells the
+    importer which of the two columns it is looking at, which is exactly decision 6. When that
+    decision lands, this test changes with it.
+    """
+    document = read_fixture("filter_regex_period.yxmd").replace(b"<Field>picked_on</Field>", b"<Field>picked</Field>")
+    result = convert_yxmd(document, source_name="filter_regex_period.yxmd")
+    row = report_row(result, 580)
+    assert (row.status, row.reason) == ("converted", "converted")
+    assert row.messages == []
+    assert _filter_expression(result, 580) == '[picked] <= "2017-12-29"'
+
+    flow = open_flow(write_flow(result, tmp_path / "flow.yaml"))
+    run_info = flow.run_graph()
+    assert not run_info.success
+    errors = [step.error for step in run_info.node_step_result if not step.success]
+    assert any("cannot compare 'date/datetime/time' to a string value" in (error or "") for error in errors), errors
 
 
 CORPUS_PEARSON = LEARNING / "alteryx_nodes" / "11 Data Investigation" / "Pearson_Correlation.yxmd"

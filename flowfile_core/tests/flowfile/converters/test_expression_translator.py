@@ -8,7 +8,9 @@ from polars_expr_transformer import simple_function_to_expr
 from flowfile_core.flowfile.converters.alteryx.expression import (
     FUNCTION_MAP,
     TranslationOutcome,
+    regex_rejection,
     try_translate,
+    unsupported_construct,
 )
 from flowfile_core.schemas.transform_schema import MULTI_FIELD_PLACEHOLDERS
 
@@ -48,6 +50,9 @@ FUNCTION_CASES: list[tuple[str, str, str]] = [
     ("reversestring", "ReverseString([Name])", "reverse([Name])"),
     ("tonumber", "ToNumber([Name])", "to_number([Name])"),
     ("tostring", "ToString([Amount])", "to_string([Amount])"),
+    ("md5_ascii", "MD5_ASCII([Name])", "md5([Name])"),
+    ("base64encode", "Base64Encode([Name])", "base64_encode([Name])"),
+    ("base64decode", "Base64Decode([Name])", "base64_decode([Name])"),
     ("abs", "Abs([Amount])", "abs([Amount])"),
     ("ceil", "Ceil([Amount])", "ceil([Amount])"),
     ("floor", "Floor([Amount])", "floor([Amount])"),
@@ -232,6 +237,7 @@ REJECTED_CASES: list[tuple[str, str]] = [
     ("in-operator", '[Status] IN ("a", "b")'),
     ("datetimetrim-unsupported-unit", 'DateTimeTrim([D], "fortnight")'),
     ("datetimetrim-non-literal-unit", "DateTimeTrim([D], [Unit])"),
+    ("md5-unicode", "MD5_Unicode([Name])"),
     ("null-literal", "NULL"),
     ("null-call", "Null()"),
     ("null-in-expression", "[Amount] = NULL()"),
@@ -614,6 +620,49 @@ def test_the_power_operator_is_still_refused_with_the_rewrite_that_works():
     assert try_translate("Pow(x, 2)", known_columns=frozenset(["x"])).translated == "power([x], 2)"
 
 
+# --- W6.6: a mapping that is exact on some inputs and not on others owes its reader a sentence ---
+
+
+@pytest.mark.parametrize(
+    ("alteryx", "fragment"),
+    [
+        ("MD5_ASCII([Name])", "hashes the UTF-8 bytes"),
+        ("Base64Encode([Name])", "encodes the UTF-8 bytes"),
+        ("Base64Decode([Name])", "reads the decoded bytes back as UTF-8"),
+    ],
+    ids=["md5_ascii", "base64_encode", "base64_decode"],
+)
+def test_a_caveated_function_translates_and_says_what_it_does_not_promise(alteryx: str, fragment: str):
+    outcome = try_translate(alteryx)
+    assert outcome.translated is not None and outcome.reason is None
+    assert len(outcome.caveats) == 1
+    assert fragment in outcome.caveats[0]
+
+
+def test_an_uncaveated_translation_carries_no_caveats():
+    """Otherwise the demotion would fire on every formula and `partial` would stop meaning anything."""
+    assert try_translate("Uppercase([Name])").caveats == []
+    assert try_translate("[Amount] + 1").caveats == []
+
+
+def test_caveats_do_not_leak_from_one_translation_into_the_next():
+    """They are collected in module state, so the reset is the part worth pinning."""
+    assert try_translate("MD5_ASCII([Name])").caveats != []
+    assert try_translate("Uppercase([Name])").caveats == []
+
+
+def test_one_caveat_is_reported_once_however_often_the_function_appears():
+    outcome = try_translate("MD5_ASCII([A]) + MD5_ASCII([B])")
+    assert len(outcome.caveats) == 1
+
+
+def test_md5_unicode_is_refused_because_it_is_a_different_digest_not_a_caveat():
+    """UTF-16LE and UTF-8 disagree on every input that is not empty, so there is nothing to caveat."""
+    outcome = try_translate("MD5_Unicode([Name])")
+    assert outcome.translated is None
+    assert "UTF-16LE" in (outcome.reason or "")
+
+
 # --- W6.10: reading a column as Float64 ---
 
 FLOAT_CAST_CASES: list[tuple[str, frozenset[str], str]] = [
@@ -661,6 +710,50 @@ def test_the_float_field_set_does_not_leak_from_one_translation_into_the_next():
     assert try_translate("[x] * 2").translated == "[x] * 2"
 
 
+# --- W6.11: the integer literals float as well, and only in arithmetic positions ---
+
+
+FLOAT_LITERAL_CASES: list[tuple[str, str]] = [
+    # No column to cast at all, which is why the W6.10 rule could not reach these.
+    ("POW(2, 70)", "power(2.0, 70.0)"),
+    ("[x]*POW(2,70)", "[x] * power(2.0, 70.0)"),
+    ("[x]+POW(60,6)", "[x] + power(60.0, 6.0)"),
+    ("-20*POW([x], 7)", "-20.0 * power([x], 7.0)"),
+    ("ABS([x] - 500)", "abs([x] - 500.0)"),
+    ("[x] / 2", "[x] / 2.0"),
+    # A positional argument means an integer; `substring([s], 0.0, 5.0)` is not the same call.
+    ("Substring([s], 0, 5)", "substring([s], 0, 5)"),
+    # Nor is a flag argument, nor a unit count.
+    ('REGEX_Match([s], "a", 1)', 'contains([s], "(?i)^(?:a)$")'),
+    ('DateTimeAdd([d], 3, "days")', "add_days([d], 3)"),
+    # A comparison is not arithmetic and cannot overflow, so its literal is left alone.
+    ("IF [x] < 1 THEN 1 ELSE 0 ENDIF", "if [x] < 1 then 1 else 0 endif"),
+]
+
+
+@pytest.mark.parametrize(("alteryx", "expected"), FLOAT_LITERAL_CASES)
+def test_an_integer_literal_floats_only_where_it_is_an_arithmetic_operand(alteryx: str, expected: str):
+    outcome = try_translate(alteryx, known_columns=frozenset({"x", "s", "d"}), float_literals=True)
+    assert outcome.reason is None
+    assert outcome.translated == expected
+
+
+def test_the_literal_rendering_is_what_stops_the_int32_wrap():
+    """2^70 is 1.18e21. Polars computes `power(2, 70)` in Int32 and returns 0 — no column involved."""
+    frame = pl.DataFrame({"unused": [1]})
+    wrapped = try_translate("POW(2, 70)").translated
+    assert frame.select(simple_function_to_expr(wrapped).alias("r"))["r"].to_list() == [0]
+
+    floated = try_translate("POW(2, 70)", float_literals=True).translated
+    assert frame.select(simple_function_to_expr(floated).alias("r"))["r"].to_list() == [1.1805916207174113e21]
+
+
+def test_the_literal_flag_does_not_leak_from_one_translation_into_the_next():
+    """Module state again, so the reset is the part worth pinning."""
+    assert try_translate("POW(2, 70)", float_literals=True).translated == "power(2.0, 70.0)"
+    assert try_translate("POW(2, 70)").translated == "power(2, 70)"
+
+
 # --- W6.10: the regex screen is the engine, not a substring blocklist ---
 
 
@@ -692,3 +785,50 @@ def test_a_pattern_the_engine_accepts_still_converts():
     """Otherwise the screen would be a refusal with extra steps."""
     assert try_translate('REGEX_Match([Name], "^[A-Z]{2}-\\\\d+")').translated is None  # backslash: tokenizer
     assert try_translate('REGEX_Match([Name], "[A-Z]+|west")').translated == 'contains([Name], "(?i)^(?:[A-Z]+|west)$")'
+
+
+# --- W6.11: the engine decides and the construct names are only wording ---
+
+
+NAMED_GROUP_CASES: list[tuple[str, str | None]] = [
+    # Both spellings of a named group are legal in Polars, and only one of them used to convert.
+    ("(?<n>a)b", 'contains([Name], "(?i)^(?:(?<n>a)b)$")'),
+    ("(?P<n>a)b", 'contains([Name], "(?i)^(?:(?P<n>a)b)$")'),
+    ("(?<=a)b", None),
+    ("(?<!a)b", None),
+    ("(?=a)b", None),
+    ("(?!a)b", None),
+]
+
+
+@pytest.mark.parametrize(("pattern", "expected"), NAMED_GROUP_CASES, ids=[case[0] for case in NAMED_GROUP_CASES])
+def test_a_named_group_converts_and_only_real_lookaround_is_refused(pattern: str, expected: str | None):
+    outcome = try_translate(f'REGEX_Match([Name], "{pattern}")')
+    assert outcome.translated == expected, outcome.reason
+
+
+@pytest.mark.parametrize(
+    ("pattern", "label"),
+    [
+        ("(?<=a)b", "lookbehind"),
+        ("(?<!a)b", "negative lookbehind"),
+        ("(?=a)b", "lookahead"),
+        ("(?!a)b", "negative lookahead"),
+    ],
+    ids=["lookbehind", "negative_lookbehind", "lookahead", "negative_lookahead"],
+)
+def test_real_lookaround_keeps_the_sentence_that_names_it(pattern: str, label: str):
+    """The names survive as wording; what changed is that the engine has to agree first."""
+    outcome = try_translate(f'REGEX_Match([Name], "{pattern}")')
+    assert outcome.translated is None
+    assert outcome.reason == f"the REGEX_Match() pattern uses {label}, which Polars' regex engine does not support"
+
+
+def test_the_construct_names_can_only_phrase_a_refusal_the_engine_already_made():
+    """The screen the names used to be is the bug: a name matched a pattern Polars accepts."""
+    assert unsupported_construct("(?<=a)b") == "lookbehind"
+    # A named group is not lookbehind, and nothing in it is a construct worth naming.
+    assert unsupported_construct("(?<n>a)b") is None
+    assert unsupported_construct("(?>ab)c") is None
+    assert regex_rejection("(?<n>a)b") is None
+    assert regex_rejection("(?<=a)b") is not None

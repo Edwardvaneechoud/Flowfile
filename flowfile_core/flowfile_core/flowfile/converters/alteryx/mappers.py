@@ -20,10 +20,10 @@ from polars_expr_transformer import simple_function_to_expr
 from flowfile_core.configs.node_store.nodes import get_all_standard_nodes
 from flowfile_core.flowfile.converters.alteryx.expression import (
     DUNDER_RE,
-    REGEX_UNSUPPORTED,
     TranslationOutcome,
     regex_rejection,
     try_translate,
+    unsupported_construct,
 )
 from flowfile_core.flowfile.converters.alteryx.report import ToolEntity, ToolReportRow, ToolStatus
 from flowfile_core.flowfile.converters.alteryx.scope import ScopeVerdict, census_tool_name, classify
@@ -1665,9 +1665,12 @@ def _float_operands(
 
     Alteryx evaluates the whole expression in the type it declares for the output, so a Double
     assignment over integer columns still computes in floating point; Polars computes in the
-    operands' own type and wraps. The repair is a cast on each numeric column *reference*, because a
-    cast on the finished value arrives after the wrap — ``(-20 * pl.col('x').pow(7)).cast(Float64)``
-    was measured returning the wrapped integer, not −1.5625e20.
+    operands' own type and wraps. The repair is applied to the *operands* — this cast on each
+    numeric column reference, and the float rendering of integer literals the caller asks
+    ``try_translate`` for beside it — because a cast on the finished value arrives after the wrap:
+    ``(-20 * pl.col('x').pow(7)).cast(Float64)`` was measured returning the wrapped integer, not
+    −1.5625e20. Neither half covers the other: a literal-only ``POW(2, 70)`` names no column to
+    cast, and ``[a] * [b]`` over two integer columns contains no literal to float.
 
     A column of unknown type cannot be cast: ``to_number`` is a strict cast, so naming a text column
     here stops the flow at run time. The unknown ones come back for the caller to say so on its row.
@@ -1716,14 +1719,20 @@ def _emit_formula_chain(tool: AlteryxTool, ctx: EmitContext, assignments: list[_
         outcome = try_translate(expression, known_columns=frozenset(known or ()))
         dx, dy = index * FORMULA_STEP_DX, index * FORMULA_STEP_DY
 
-        if outcome.translated is not None and assignment.data_type in FLOAT_TYPES and outcome.fields:
+        if outcome.translated is not None and assignment.data_type in FLOAT_TYPES:
             to_cast, unknown = _float_operands(ctx, tool.tool_id, outcome.fields, chain_types)
-            if to_cast:
-                recast = try_translate(expression, known_columns=frozenset(known or ()), float_fields=to_cast)
-                if recast.translated is not None:
-                    outcome = recast
-                else:  # the cast broke a formula that parsed without it; keep the original and say so
-                    unknown = sorted(set(unknown) | to_cast)
+            recast = try_translate(
+                expression,
+                known_columns=frozenset(known or ()),
+                float_fields=to_cast,
+                float_literals=True,
+            )
+            # No fallback for a recast that fails: every FUNCTION_MAP entry was tried at every
+            # arity and every column/literal split, and nothing parses plain and then fails once
+            # its columns are cast and its literals floated. A branch nothing can reach is a
+            # branch nothing tests.
+            if recast.translated is not None:
+                outcome = recast
             if unknown:
                 unsettled_floats = True
                 messages.append(_float_operand_message(target, assignment.alteryx_type, unknown))
@@ -2471,15 +2480,17 @@ _REPLACEMENT_GROUP_RE = re.compile(r"\$(\d+)")
 def _regex_pattern(config: ET.Element) -> tuple[str, str | None]:
     """The tool's regex, rejected when it uses constructs the Rust regex engine has no support for.
 
-    The three named tokens keep a sentence that names them; everything else is settled by handing the
-    finished pattern to the engine, which is the only screen that cannot fall behind it.
+    The engine decides, and it decides first: a name for the construct is only wording put on a
+    refusal it already made. Screening on the names instead refused `(?<n>a)b` — a named group
+    Polars accepts — as "lookbehind", while the `(?P<n>a)b` spelling of the same group converted.
+
+    The backreference and dunder screens stay ahead of it because neither is the engine's own
+    answer: a dunder is the polars_code node's rule, and the engine's complaint about `\\1` names
+    an escape rather than the backreference the reader wrote.
     """
     pattern = _attribute(config, "RegExExpression", "value")
     if not pattern:
         return "", "the Alteryx RegEx tool has no expression configured"
-    for token, label in REGEX_UNSUPPORTED:
-        if token in pattern:
-            return "", f"the Alteryx regular expression uses {label}, which Polars' regex engine does not support"
     if _REGEX_BACKREF_RE.search(pattern):
         return "", "the Alteryx regular expression uses a backreference, which Polars' regex engine does not support"
     if DUNDER_RE.search(pattern):
@@ -2488,6 +2499,9 @@ def _regex_pattern(config: ET.Element) -> tuple[str, str | None]:
         pattern = f"(?i){pattern}"
     rejection = regex_rejection(pattern)
     if rejection is not None:
+        label = unsupported_construct(pattern)
+        if label is not None:
+            return "", f"the Alteryx regular expression uses {label}, which Polars' regex engine does not support"
         return "", f"Polars' regex engine rejected the Alteryx regular expression: {rejection}"
     return pattern, None
 
@@ -2749,25 +2763,80 @@ def _default_anchor_wires(
     return [connection for connection in ctx.inbound.get(tool_id, []) if connection.dest_anchor == anchor]
 
 
+# Tools that hand every column to every output anchor with the name and the type it arrived with:
+# they choose rows, never columns. A Filter's True and False anchors both qualify, as do a Unique's
+# Unique and Duplicate ones. Nothing that can rename, cast or drop a column belongs here — a
+# Summarize rebuilds the frame, a Join renames its collisions, a Transpose replaces the columns.
+_ROW_ONLY_TOOLS = frozenset({"Filter", "Sort", "Sample", "Unique"})
+# A budget rather than a rule about workflows: `seen` already ends the aliased cycle a hand-written
+# file could contain, and no real chain of pass-throughs is twenty tools long.
+_TYPE_WALK_HOPS = 20
+
+
+def _passes_column_through(tool: AlteryxTool, column: str) -> bool:
+    """Whether this tool hands ``column`` on with the name and the type it received.
+
+    Only tools this can be *proved* for, from the tool's own XML — being unable to prove it is the
+    same answer as changing it. A Record ID adds one column and touches no other, so it answers for
+    everything but the one it writes. A Select has to be read: it can rename, cast and deselect, and
+    it passes this column through only when it does none of the three to it.
+    """
+    if tool.tool_name in _ROW_ONLY_TOOLS:
+        return True
+    if tool.tool_name == "RecordID":
+        return column != (_text(_config(tool), "FieldName") or "RecordID")
+    if tool.tool_name != "AlteryxSelect":
+        return False
+    entries = {element.get("field"): element for element in _config(tool).findall("SelectFields/SelectField")}
+    element = entries.get(column)
+    if element is None:
+        # The column travels through `*Unknown`, which has to be selected — and must not be the
+        # name another field was renamed to, or the column upstream is a different one.
+        unknown = entries.get("*Unknown")
+        if unknown is None or not _is_true(unknown.get("selected")):
+            return False
+        return not any(other.get("rename") == column for other in entries.values())
+    if not _is_true(element.get("selected")):
+        return False
+    return element.get("rename") in (None, "", column) and not element.get("type")
+
+
 def _input_column_type(ctx: EmitContext, tool_id: int, column: str, anchor: str = DEFAULT_INPUT_ANCHOR) -> str | None:
     """The Flowfile type of one column arriving on an anchor; ``None`` means unknown.
 
-    One hop, deliberately: the hop lands on a source that types itself or on a tool that does not,
-    and a chain of converted tools in between would still end on one of those two answers.
+    The walk goes back through every tool that provably passes the column through untouched
+    (``_passes_column_through``) until it reaches one that types the column or one that could have
+    changed it. Stopping at the first hop instead was measured telling `ControlContainer.yxmd`'s
+    tools 60 and 61 that `Field 2` "is not settled by this workflow", when the Text Input two hops
+    up declares it Int64 and the Filter between them changes no column at all.
 
     A second wire on the anchor makes the answer unknown rather than the first wire's. Alteryx
     unions the streams arriving on one anchor, so a column's type there is settled by all of them or
     by none; ``source_connection`` hands back whichever document order reaches first, which is a
     statement about the file's line numbering and not about the frame this node will be given.
     """
-    wires = _default_anchor_wires(ctx, tool_id, anchor)
-    if len(wires) != 1:
-        ctx.note_multi_stream_read(tool_id, anchor, wires)
-        return None
-    key = ctx.resolve_output(wires[0].origin_tool_id, wires[0].origin_anchor)
-    if key is None:
-        return None
-    return _declared_column_types(ctx.tools.get(key[0])).get(column)
+    seen: set[tuple[int, str]] = set()
+    for hop in range(_TYPE_WALK_HOPS):
+        wires = _default_anchor_wires(ctx, tool_id, anchor)
+        if len(wires) != 1:
+            # Only the tool being mapped is asking; a hop of this walk's own is not its business.
+            if hop == 0:
+                ctx.note_multi_stream_read(tool_id, anchor, wires)
+            return None
+        key = ctx.resolve_output(wires[0].origin_tool_id, wires[0].origin_anchor)
+        if key is None or key in seen:
+            return None
+        seen.add(key)
+        tool = ctx.tools.get(key[0])
+        if tool is None:
+            return None
+        declared = _declared_column_types(tool).get(column)
+        if declared is not None:
+            return declared
+        if not _passes_column_through(tool, column):
+            return None
+        tool_id, anchor = key[0], DEFAULT_INPUT_ANCHOR
+    return None
 
 
 # Alteryx actions with no `pl.<name>`, as the expression a generated group_by uses instead.
@@ -5630,9 +5699,10 @@ def map_spearman_correlation(tool: AlteryxTool, ctx: EmitContext) -> ToolReportR
     return _row(tool, "partial", [node_id], "polars_code", messages, reason="option_unsupported")
 
 
-# There is deliberately no FIELD_SUMMARY_ANCHOR beside these. `register_all_inputs` already covers
-# every anchor a wire arrives on, and the macro's data anchor has no name this corpus establishes —
-# naming one would be the guess the mapper's docstring declines to make.
+# The one input anchor the corpus establishes by name: all four Field Summary instances are wired
+# on `Field Input`. Registering it alone, rather than `register_all_inputs`, is what makes a wire
+# onto any other anchor a dropped connection instead of a silent extra stream into the profile.
+FIELD_SUMMARY_INPUT_ANCHOR = "Field Input"
 FIELD_SUMMARY_REPORT_ANCHORS = ("Reports", "Interactive")
 PROFILE_COLUMNS = ["Name", "Type", "PercentMissing", "UniqueValues"]
 _FIELD_SUMMARY_KEYS = ("Select Fields", "Sample Data", "Number", "NNumber", "Percent", "NPercent")
@@ -5783,6 +5853,11 @@ def map_field_summary_report(tool: AlteryxTool, ctx: EmitContext) -> ToolReportR
     what any anchor the mappers do not name falls back to — while the two rendered-report anchors are
     declared empty by name, so their consumers are told the wire was dropped instead of being handed
     the profile table under a different question's name.
+
+    The input side is the opposite: `Field Input` is a name the corpus does establish, so only that
+    anchor is registered. `register_all_inputs` would register whatever a wire happened to arrive
+    on, which laid a wire addressed to a nonexistent anchor onto the profile's own input and said
+    nothing about it; an unknown anchor now reaches no node and is reported on both rows.
     """
     values = _macro_values(_config(tool))
     unrecognized = sorted(set(values) - set(_FIELD_SUMMARY_KEYS))
@@ -5810,7 +5885,7 @@ def map_field_summary_report(tool: AlteryxTool, ctx: EmitContext) -> ToolReportR
     )
     node_id = ctx.add_node(tool, "polars_code", settings, description=_description(tool))
     ctx.register_output(tool.tool_id, DEFAULT_OUTPUT_ANCHOR, node_id)
-    ctx.register_all_inputs(tool.tool_id, node_id)
+    ctx.register_input(tool.tool_id, FIELD_SUMMARY_INPUT_ANCHOR, node_id)
     ctx.tool_columns[tool.tool_id] = list(PROFILE_COLUMNS)
 
     messages = [PROFILE_COLUMN_SET_MESSAGE.format(columns=", ".join(PROFILE_COLUMNS))]

@@ -13,7 +13,14 @@ from dataclasses import dataclass, field
 import polars as pl
 from polars_expr_transformer import simple_function_to_expr
 
-__all__ = ["TranslationOutcome", "try_translate", "FUNCTION_MAP", "REJECTED_FUNCTIONS", "regex_rejection"]
+__all__ = [
+    "TranslationOutcome",
+    "try_translate",
+    "FUNCTION_MAP",
+    "REJECTED_FUNCTIONS",
+    "regex_rejection",
+    "unsupported_construct",
+]
 
 
 @dataclass
@@ -48,16 +55,27 @@ class _Untranslatable(Exception):
 # because `_emit` is a plain recursive function and threading a collector through every emitter
 # would touch each of them for one feature; `try_translate` owns the reset and the read.
 _CAVEATS: list[str] = []
-# The column names that expression reads, and the ones the caller asked to be read as Float64.
-# Same reason, same owner: `try_translate` resets both and reads them back.
+# The column names that expression reads, the ones the caller asked to be read as Float64, and
+# whether integer literals render as floats. Same reason, same owner: `try_translate` resets all
+# three and reads them back.
 _FIELDS: set[str] = set()
 _FLOAT_FIELDS: frozenset[str] = frozenset()
+_FLOAT_LITERALS: bool = False
 
 # Alteryx evaluates a whole expression in the type it declares for the output, so an assignment
 # declared Double computes in floating point even where every operand is an integer column. The
 # caller names the integer columns and this wraps each reference, because a cast applied to the
 # finished value is too late: `-20 * pow(x, 7)` has already wrapped in Int64 by then.
 FLOAT_CAST = "to_number"
+
+# A literal needs the same treatment for the same reason, and a cast on the column cannot give it:
+# `POW(2, 70)` reads no column at all and still wraps, to 0 in Int32, where Alteryx prints 1.18e21.
+# Rendering the literals as floats — `power(2.0, 70.0)` — is what makes the arithmetic float.
+_INTEGER_LITERAL_RE = re.compile(r"\d+")
+# Only where an integer literal is an arithmetic operand. A positional or flag argument
+# (`Substring([s], 0, 5)`, `REGEX_Match([s], p, 1)`) means an integer and must stay one.
+_ARITHMETIC_OPS = frozenset({"+", "-", "*", "/"})
+_FLOAT_LITERAL_FUNCTIONS = frozenset({"pow"})
 
 
 @dataclass(frozen=True)
@@ -112,6 +130,41 @@ FUNCTION_MAP: dict[str, FunctionSpec] = {
     # type conversion
     "tonumber": _spec("ToNumber", "to_number", 1),
     "tostring": _spec("ToString", "to_string", 1),
+    # hashing / encoding
+    "md5_ascii": FunctionSpec(
+        "MD5_ASCII",
+        "md5",
+        1,
+        1,
+        caveat=(
+            "Alteryx's MD5_ASCII() hashes the ASCII bytes of its input and Flowfile's md5() hashes the "
+            "UTF-8 bytes. Those are the same bytes for ASCII text and different ones for anything else, "
+            "so a value with an accent, a currency sign or an emoji in it hashes to a different digest "
+            "in the two tools."
+        ),
+    ),
+    "base64encode": FunctionSpec(
+        "Base64Encode",
+        "base64_encode",
+        1,
+        1,
+        caveat=(
+            "Flowfile's base64_encode() encodes the UTF-8 bytes of its input. Which bytes Alteryx's "
+            "Base64Encode() encodes is not stated in any workflow here and no corpus tool uses it, so "
+            "check a non-ASCII value against Designer before trusting this column."
+        ),
+    ),
+    "base64decode": FunctionSpec(
+        "Base64Decode",
+        "base64_decode",
+        1,
+        1,
+        caveat=(
+            "Flowfile's base64_decode() reads the decoded bytes back as UTF-8 and yields null when they "
+            "are not valid UTF-8. Which encoding Alteryx's Base64Decode() assumes is not stated in any "
+            "workflow here and no corpus tool uses it, so check a non-ASCII value against Designer."
+        ),
+    ),
     # math
     "abs": _spec("Abs", "abs", 1),
     "ceil": _spec("Ceil", "ceil", 1),
@@ -165,6 +218,10 @@ REJECTED_FUNCTIONS: dict[str, str] = {
     "spellnumber": "SpellNumber() has no Flowfile formula equivalent",
     "randint": "RandInt() is non-deterministic and has no verified Flowfile equivalent",
     "rand": "Rand() is non-deterministic and has no verified Flowfile equivalent",
+    "md5_unicode": (
+        "MD5_Unicode() hashes UTF-16LE bytes and Flowfile's md5() hashes UTF-8 bytes, which is a "
+        "different digest for every input longer than nothing (use MD5_ASCII() for ASCII text)"
+    ),
 }
 
 _DATETIME_ADD_UNITS = {
@@ -196,8 +253,30 @@ _REGEX_UNESCAPABLE = "[^"
 # Constructs Polars' regex engine (Rust `regex`) has no support for, and the dunder shape the
 # polars_code node rejects. They live here because REGEX_Match() below screens a pattern with them;
 # `mappers.py` imports them back, because it imports this module and never the other way round.
-REGEX_UNSUPPORTED = (("(?=", "lookahead"), ("(?!", "negative lookahead"), ("(?<", "lookbehind"))
+#
+# These are *wording*, never the decision — `regex_rejection` decides, and this only names the
+# construct when the engine has already refused the pattern. The lookbehind tokens spell out their
+# `=` and `!` for that reason: a bare `(?<` also matches `(?<name>...)`, a named group Polars
+# accepts, and screening on it refused `(?<n>a)b` as "lookbehind" while `(?P<n>a)b` converted.
+REGEX_UNSUPPORTED = (
+    ("(?=", "lookahead"),
+    ("(?!", "negative lookahead"),
+    ("(?<=", "lookbehind"),
+    ("(?<!", "negative lookbehind"),
+)
 DUNDER_RE = re.compile(r"__\w+__")
+
+
+def unsupported_construct(pattern: str) -> str | None:
+    """The name of the construct in ``pattern`` a reader is likeliest to have meant, or ``None``.
+
+    Only for phrasing a refusal the engine has already made. Answering ``None`` costs the reader a
+    friendlier sentence and never costs a pattern its conversion.
+    """
+    for token, label in REGEX_UNSUPPORTED:
+        if token in pattern:
+            return label
+    return None
 
 
 def regex_rejection(pattern: str) -> str | None:
@@ -659,8 +738,12 @@ def _check_field_name(name: str, allowed_specials: frozenset[str] = frozenset())
     return name
 
 
-def _emit(node: _Node) -> tuple[str, int]:
+def _emit(node: _Node, numeric: bool = False) -> tuple[str, int]:
+    """Render one node. ``numeric`` marks an arithmetic position, where an integer literal becomes a
+    float so the expression computes in the floating type the caller's tool declared."""
     if isinstance(node, _Literal):
+        if numeric and _FLOAT_LITERALS and _INTEGER_LITERAL_RE.fullmatch(node.text):
+            return f"{node.text}.0", _PREC_ATOM
         return node.text, _PREC_ATOM
     if isinstance(node, _Field):
         _FIELDS.add(node.name)
@@ -668,15 +751,16 @@ def _emit(node: _Node) -> tuple[str, int]:
             return f"{FLOAT_CAST}([{node.name}])", _PREC_ATOM
         return f"[{node.name}]", _PREC_ATOM
     if isinstance(node, _Unary):
-        return f"-{_emit_child(node.operand, _PREC_UNARY)}", _PREC_UNARY
+        return f"-{_emit_child(node.operand, _PREC_UNARY, numeric=True)}", _PREC_UNARY
     if isinstance(node, _Not):
         return f"not({_emit_child(node.operand, _PREC_IF)})", _PREC_ATOM
     if isinstance(node, _Binary):
         if node.op == "=":
             # The Flowfile parser gives '=' maximum binding power, so compound operands need parens.
             return f"{_emit_child(node.left, _PREC_ATOM)} = {_emit_child(node.right, _PREC_ATOM)}", node.prec
-        left = _emit_child(node.left, node.prec)
-        right = _emit_child(node.right, node.prec, right=True)
+        arithmetic = node.op in _ARITHMETIC_OPS
+        left = _emit_child(node.left, node.prec, numeric=arithmetic)
+        right = _emit_child(node.right, node.prec, right=True, numeric=arithmetic)
         return f"{left} {node.op} {right}", node.prec
     if isinstance(node, _If):
         parts = []
@@ -690,8 +774,8 @@ def _emit(node: _Node) -> tuple[str, int]:
     raise _Untranslatable("the expression contains a construct that cannot be converted")
 
 
-def _emit_child(node: _Node, parent_prec: int, right: bool = False) -> str:
-    text, prec = _emit(node)
+def _emit_child(node: _Node, parent_prec: int, right: bool = False, numeric: bool = False) -> str:
+    text, prec = _emit(node, numeric)
     if prec < parent_prec or (right and prec == parent_prec):
         return f"({text})"
     return text
@@ -749,7 +833,8 @@ def _emit_call(node: _Call) -> tuple[str, int]:
             # A non-string operand cannot be the empty string, and `= ""` on it raises at run time.
             return f"is_empty({rendered})", _PREC_ATOM
         return f'(is_empty({rendered}) or {rendered} = "")', _PREC_ATOM
-    rendered_args = ", ".join(_emit_child(arg, _PREC_IF) for arg in node.args)
+    numeric = low in _FLOAT_LITERAL_FUNCTIONS
+    rendered_args = ", ".join(_emit_child(arg, _PREC_IF, numeric=numeric) for arg in node.args)
     return f"{spec.target}({rendered_args})", _PREC_ATOM
 
 
@@ -855,7 +940,7 @@ def _emit_regex_match(node: _Call) -> str:
     regular expression and neutralising its metacharacters would change what it matches. That is
     only safe because the tokenizer refuses any backslash inside a string literal, so no escape and
     no backreference can reach this at all — which leaves lookaround as the one unsupported
-    construct a pattern could still spell out, and that is screened below.
+    construct a pattern could still spell out, and the engine below is what screens it.
 
     The text operand is *not* folded to lower case the way Contains() folds it. Alteryx documents
     ``REGEX_Match(String, pattern, icase)`` with "By default icase=1 (meaning ignore case)"
@@ -870,11 +955,6 @@ def _emit_regex_match(node: _Call) -> str:
             "pattern built at run time cannot be checked for constructs Polars' regex engine lacks"
         )
     pattern = pattern_node.text[1:-1]
-    for token, label in REGEX_UNSUPPORTED:
-        if token in pattern:
-            raise _Untranslatable(
-                f"the REGEX_Match() pattern uses {label}, which Polars' regex engine does not support"
-            )
     if DUNDER_RE.search(pattern):
         raise _Untranslatable("the REGEX_Match() pattern contains a dunder pattern, which is rejected")
     ignore_case = True
@@ -889,6 +969,11 @@ def _emit_regex_match(node: _Call) -> str:
     anchored = f"{flags}^(?:{pattern})$"
     rejection = regex_rejection(anchored)
     if rejection is not None:
+        label = unsupported_construct(anchored)
+        if label is not None:
+            raise _Untranslatable(
+                f"the REGEX_Match() pattern uses {label}, which Polars' regex engine does not support"
+            )
         raise _Untranslatable(f"Polars' regex engine rejected the REGEX_Match() pattern: {rejection}")
     return f'contains({_emit_child(node.args[0], _PREC_IF)}, "{anchored}")'
 
@@ -1017,6 +1102,7 @@ def try_translate(
     allowed_specials: frozenset[str] = frozenset(),
     known_columns: frozenset[str] = frozenset(),
     float_fields: frozenset[str] = frozenset(),
+    float_literals: bool = False,
 ) -> TranslationOutcome:
     """Translate an Alteryx expression, or explain why it cannot be translated.
 
@@ -1032,13 +1118,18 @@ def try_translate(
     ``float_fields`` are the columns to read as Float64, for a caller whose tool declares a floating
     output type. Only a caller that knows a column really is numeric may name it: the cast is strict,
     so a text column in this set stops the flow at run time instead of computing something else.
+
+    ``float_literals`` renders integer literals in arithmetic positions as floats, for that same
+    caller. It needs no such promise — a literal's type is written in the expression — and it is
+    what makes an expression with no column in it, `POW(2, 70)`, compute the way Alteryx does.
     """
-    global _FLOAT_FIELDS
+    global _FLOAT_FIELDS, _FLOAT_LITERALS
     if not isinstance(alteryx_expr, str) or not alteryx_expr.strip():
         return TranslationOutcome(None, "the Alteryx expression is empty")
     _CAVEATS.clear()
     _FIELDS.clear()
     _FLOAT_FIELDS = frozenset(float_fields)
+    _FLOAT_LITERALS = float_literals
     try:
         tokens = _tokenize(alteryx_expr)
         if not tokens:
