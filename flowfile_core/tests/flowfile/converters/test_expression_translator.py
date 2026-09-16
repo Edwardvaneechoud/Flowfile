@@ -1,3 +1,4 @@
+import hashlib
 import warnings
 from datetime import date, datetime
 
@@ -7,6 +8,7 @@ from polars_expr_transformer import simple_function_to_expr
 
 from flowfile_core.flowfile.converters.alteryx.expression import (
     FUNCTION_MAP,
+    FunctionSpec,
     TranslationOutcome,
     regex_rejection,
     try_translate,
@@ -50,7 +52,7 @@ FUNCTION_CASES: list[tuple[str, str, str]] = [
     ("reversestring", "ReverseString([Name])", "reverse([Name])"),
     ("tonumber", "ToNumber([Name])", "to_number([Name])"),
     ("tostring", "ToString([Amount])", "to_string([Amount])"),
-    ("md5_ascii", "MD5_ASCII([Name])", "md5([Name])"),
+    ("md5_utf8", "MD5_UTF8([Name])", "md5([Name])"),
     ("base64encode", "Base64Encode([Name])", "base64_encode([Name])"),
     ("base64decode", "Base64Decode([Name])", "base64_decode([Name])"),
     ("abs", "Abs([Amount])", "abs([Amount])"),
@@ -237,7 +239,6 @@ REJECTED_CASES: list[tuple[str, str]] = [
     ("in-operator", '[Status] IN ("a", "b")'),
     ("datetimetrim-unsupported-unit", 'DateTimeTrim([D], "fortnight")'),
     ("datetimetrim-non-literal-unit", "DateTimeTrim([D], [Unit])"),
-    ("md5-unicode", "MD5_Unicode([Name])"),
     ("null-literal", "NULL"),
     ("null-call", "Null()"),
     ("null-in-expression", "[Amount] = NULL()"),
@@ -272,6 +273,9 @@ REJECTED_CASES: list[tuple[str, str]] = [
     ("unbracketed-field", "Amount + 1"),
     ("power-operator", "[Amount] ^ 2"),
     ("rowcount", "RowCount()"),
+    # Only MD5_UTF8 hashes the same bytes as Flowfile's md5(); the other two encodings differ.
+    ("md5-ascii", "MD5_ASCII([Name])"),
+    ("md5-unicode", "MD5_UNICODE([Name])"),
     # Only the format codes verified byte-identical in both dialects pass the whitelist.
     ("datetimeformat-unverified-code", 'DateTimeFormat([D], "%e %b %Y")'),
     ("datetimeformat-trailing-percent", 'DateTimeFormat([D], "%Y-%m-%")'),
@@ -540,6 +544,33 @@ def test_isempty_of_a_parsed_date_evaluates_without_a_string_comparison():
     assert values == [False, True]
 
 
+def test_md5_utf8_evaluates_to_the_alteryx_documented_digest():
+    """Alteryx MD5_UTF8 hashes the UTF-8 bytes of the text, which is exactly what md5() hashes.
+    'Lá' -> 68f0... is the worked example from Alteryx's own String Functions page."""
+    frame = pl.DataFrame({"Name": ["John", "Lá"]})
+    assert _evaluate("MD5_UTF8([Name])", frame) == [
+        hashlib.md5(b"John").hexdigest(),
+        "68f00289dc3be140b1dfd4e031d733f1",
+    ]
+
+
+def test_md5_ascii_and_unicode_stay_fail_closed_because_they_hash_other_bytes():
+    """Alteryx documents Md5_Ascii('Lá') as the digest of the narrow bytes and Md5_Unicode('Lá')
+    as the digest of the UTF-16LE bytes — neither equals the UTF-8 digest md5() would produce."""
+    documented = {
+        "latin-1": "0c0ee86cc87d87125ad8923562be952e",  # Md5_Ascii
+        "utf-16-le": "aa9969dfcca04249842cc457e5b3dd01",  # Md5_Unicode
+        "utf-8": "68f00289dc3be140b1dfd4e031d733f1",  # Md5_Utf8, the only one md5() reproduces
+    }
+    for encoding, digest in documented.items():
+        assert hashlib.md5("Lá".encode(encoding)).hexdigest() == digest
+
+    for expression in ("MD5_ASCII([Name])", "MD5_UNICODE([Name])"):
+        outcome = try_translate(expression)
+        assert outcome.translated is None
+        assert "MD5_UTF8" in outcome.reason
+
+
 MULTI_FIELD_SPECIALS = frozenset(MULTI_FIELD_PLACEHOLDERS)
 
 
@@ -621,46 +652,42 @@ def test_the_power_operator_is_still_refused_with_the_rewrite_that_works():
 
 
 # --- W6.6: a mapping that is exact on some inputs and not on others owes its reader a sentence ---
+# No shipped FunctionSpec carries a caveat today (MD5_UTF8 is exact; MD5_ASCII/MD5_UNICODE are
+# refused; Base64 is not a Desktop formula function), so the plumbing is pinned on a patched spec.
+
+CAVEAT_SENTENCE = "exact on ASCII input and different above it; check a non-ASCII value against Designer"
 
 
-@pytest.mark.parametrize(
-    ("alteryx", "fragment"),
-    [
-        ("MD5_ASCII([Name])", "hashes the UTF-8 bytes"),
-        ("Base64Encode([Name])", "encodes the UTF-8 bytes"),
-        ("Base64Decode([Name])", "reads the decoded bytes back as UTF-8"),
-    ],
-    ids=["md5_ascii", "base64_encode", "base64_decode"],
-)
-def test_a_caveated_function_translates_and_says_what_it_does_not_promise(alteryx: str, fragment: str):
-    outcome = try_translate(alteryx)
-    assert outcome.translated is not None and outcome.reason is None
-    assert len(outcome.caveats) == 1
-    assert fragment in outcome.caveats[0]
+@pytest.fixture
+def caveated_md5(monkeypatch: pytest.MonkeyPatch) -> str:
+    spec = FUNCTION_MAP["md5_utf8"]
+    monkeypatch.setitem(FUNCTION_MAP, "md5_utf8", FunctionSpec("MD5_UTF8", "md5", 1, 1, caveat=CAVEAT_SENTENCE))
+    assert spec.caveat is None
+    return "MD5_UTF8([Name])"
+
+
+def test_a_caveated_function_translates_and_says_what_it_does_not_promise(caveated_md5: str):
+    outcome = try_translate(caveated_md5)
+    assert outcome.translated == "md5([Name])" and outcome.reason is None
+    assert outcome.caveats == [CAVEAT_SENTENCE]
 
 
 def test_an_uncaveated_translation_carries_no_caveats():
     """Otherwise the demotion would fire on every formula and `partial` would stop meaning anything."""
     assert try_translate("Uppercase([Name])").caveats == []
     assert try_translate("[Amount] + 1").caveats == []
+    assert try_translate("MD5_UTF8([Name])").caveats == []
 
 
-def test_caveats_do_not_leak_from_one_translation_into_the_next():
+def test_caveats_do_not_leak_from_one_translation_into_the_next(caveated_md5: str):
     """They are collected in module state, so the reset is the part worth pinning."""
-    assert try_translate("MD5_ASCII([Name])").caveats != []
+    assert try_translate(caveated_md5).caveats != []
     assert try_translate("Uppercase([Name])").caveats == []
 
 
-def test_one_caveat_is_reported_once_however_often_the_function_appears():
-    outcome = try_translate("MD5_ASCII([A]) + MD5_ASCII([B])")
+def test_one_caveat_is_reported_once_however_often_the_function_appears(caveated_md5: str):
+    outcome = try_translate("MD5_UTF8([A]) + MD5_UTF8([B])")
     assert len(outcome.caveats) == 1
-
-
-def test_md5_unicode_is_refused_because_it_is_a_different_digest_not_a_caveat():
-    """UTF-16LE and UTF-8 disagree on every input that is not empty, so there is nothing to caveat."""
-    outcome = try_translate("MD5_Unicode([Name])")
-    assert outcome.translated is None
-    assert "UTF-16LE" in (outcome.reason or "")
 
 
 # --- W6.10: reading a column as Float64 ---

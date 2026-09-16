@@ -3,7 +3,7 @@
 FlowFrame methods accept standard **Polars expressions** — `ff.col`, operators, `ff.when`, and most of the Polars expression API. Expressions are the default way to express transformations.
 
 !!! note "Most of Polars, not all of it"
-    Nearly every Polars `Expr` method is available, but a few names track the pinned Polars version (`cum_sum`, not `cumsum`; `dt.weekday`, not `day_of_week`), some helpers are selectors rather than top-level functions (`ff.all_()`, not `ff.all()`; use `ff.col("*").exclude(...)`, there is no `ff.exclude()`), and expressions without a dedicated node render as `polars_code` nodes in the visual editor. See [FlowFrame and FlowGraph](design-concepts.md).
+    Nearly every Polars `Expr` method is available, but a few names track the pinned Polars version (`cum_sum`, not `cumsum`; `dt.weekday`, not `day_of_week`), some helpers are selectors rather than top-level functions (`ff.all_()`, not `ff.all()`; use `ff.col("*").exclude(...)`, there is no `ff.exclude()`), and expressions without a dedicated node render as `polars_code` nodes in the visual editor. [Which operations become which node](design-concepts.md#which-operations-become-which-node) lists the patterns that render natively.
 
 ## Column references and arithmetic
 
@@ -28,12 +28,16 @@ df = df.with_columns(
 )
 ```
 
+A `when` chain renders as a Formula node with the equivalent `if … then … elseif … else … endif` formula, so the branches stay editable in the visual editor. Membership tests use `is_in`: `ff.when(ff.col("team").is_in(["DS", "DE"]))` becomes `if [team] in ("DS", "DE") then … endif`. Conditions without a formula form (a `map_elements` call, for example) push the whole chain to a `polars_code` node.
+
 ## Filtering
 
 ```python
 df = df.filter(ff.col("price") > 100)
 df = df.filter(ff.col("status") != "cancelled", description="Drop cancelled orders")
 ```
+
+Comparison predicates render as a Filter node whose advanced expression is the equivalent formula: the first call above becomes `([price] > 100)`, and `ff.col("status").is_in(["new", "open"])` becomes `[status] in ("new", "open")`. Several predicates are joined with `and`. A predicate without a formula form (a lambda, or a method the [Formula Language](../../formulas/index.md) does not cover) renders as a `polars_code` node instead.
 
 ## Namespaces
 

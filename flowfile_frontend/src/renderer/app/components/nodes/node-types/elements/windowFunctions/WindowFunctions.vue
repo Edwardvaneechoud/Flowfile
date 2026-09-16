@@ -90,7 +90,7 @@
           <span class="listbox-subtitle">Window functions</span>
           <el-tooltip
             placement="top"
-            content="Each row adds one new column to the output. Pick a function (e.g. Rolling mean), a source column, a name for the new column, and any extra params that function needs."
+            content="Each row adds one new column to the output. Pick a function (e.g. Rolling mean), a source column, a name for the new column, and any extra params that function needs. Partition aggregates (Mean, Sum, ...) compute one value per partition and write it to every row of that partition."
           >
             <span class="help-icon">?</span>
           </el-tooltip>
@@ -139,6 +139,15 @@
                     <el-option-group label="Ranking">
                       <el-option label="Rank" value="rank" />
                       <el-option label="Tile (equal groups)" value="tile" />
+                    </el-option-group>
+                    <el-option-group label="Partition aggregate">
+                      <el-option label="Mean" value="mean" />
+                      <el-option label="Sum" value="sum" />
+                      <el-option label="Min" value="min" />
+                      <el-option label="Max" value="max" />
+                      <el-option label="Count" value="count" />
+                      <el-option label="Std" value="std" />
+                      <el-option label="Median" value="median" />
                     </el-option-group>
                   </el-select>
                 </td>

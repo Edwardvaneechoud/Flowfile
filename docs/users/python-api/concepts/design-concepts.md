@@ -60,8 +60,33 @@ df2 = df.filter(ff.col("amount") > 100)   # identical filter, new node
 print(len(df2.flow_graph.nodes))  # 3
 ```
 
-!!! note "Not every method gets its own node type"
-    Operations with a visual-node equivalent (formula-based filters, group-by, joins) appear as that node type; anything else lands in a generic `polars_code` node. The pipeline still works identically — the difference is only how editable the step is in the visual editor. See [Expressions](expressions.md) and [Formulas in Python](formulas.md) for which form produces which.
+### Which operations become which node
+
+Operations with a visual-node equivalent appear as that node type, so the step stays editable in the visual editor; anything else lands in a generic `polars_code` node. The pipeline runs identically either way. The table lists the FlowFrame calls that render natively and what pushes each one to a `polars_code` node.
+
+| FlowFrame call | Renders as | Falls back to `polars_code` when |
+|---|---|---|
+| `select("a", ff.col("b").alias("c"))` | Select data | a selector (`ff.selectors.numeric()`) or any other expression is passed |
+| `drop("a", "b")` | Select data, with the dropped columns unchecked | a selector is passed, or a named column is missing (with the default `strict=True`) |
+| `rename({"a": "b"})` | Select data | — |
+| `filter(ff.col("a") > 1, ff.col("g").is_in(["x", "y"]))` | Filter data, advanced expression `([a] > 1) and [g] in ("x", "y")` | a predicate has no formula form: a lambda (`map_elements`), a method the formula language does not cover, or a string literal containing both `'` and `"` |
+| `filter(flowfile_formula="[a] > 1")` | Filter data | — |
+| `filter_split(...)` | Filter data in split mode | never; a predicate without a formula form raises `ValueError`, because the split node has no code fallback |
+| `with_columns((ff.col("a") * 2).alias("b"))` | Formula, one node per expression | any expression has no formula form (see [Formulas in Python](formulas.md)) |
+| `with_columns(ff.when(cond).then(x).otherwise(y).alias("b"))` | Formula, `if … then … elseif … else … endif` | a condition or branch value has no formula form |
+| `with_columns(ff.col("a").sum().over("g").alias("t"))` | Window functions | see [Aggregations](../reference/aggregations.md) |
+| `with_columns(flowfile_formulas=[...], output_column_names=[...])` | Formula | — |
+| `sort("a", descending=True)` | Sort data | an expression key, `nulls_last`, `maintain_order`, or `multithreaded=False` |
+| `unique(["a"])` | Drop duplicates | an expression subset or `maintain_order=True` |
+| `head(n)`, `limit(n)`, `sample(n)` | Take Sample | — |
+| `with_row_index("record_id")` | Add record Id | any other name with the default `offset=0` |
+| `group_by("g").agg(ff.col("a").sum())` | Group by | an aggregation outside `sum`, `max`, `mean`, `median`, `min`, `count`, `n_unique`, `first`, `last`, `std`, `var`, `concat`; a selector; or `maintain_order=True` |
+| `join(other, on="k", how="inner")` | Join | `suffix`, `validate`, `nulls_equal`, `coalesce`, or `maintain_order` |
+| `concat([a, b], how="diagonal_relaxed")` | Union data | any other `how` |
+| `pivot(...)`, `unpivot(...)` | Pivot data, Unpivot data | several `on` or `values` columns; custom variable or value names |
+| `tail`, `slice`, `shift`, `fill_null`, and the rest of the `LazyFrame` API | Polars code | always |
+
+A `polars_code` node created without `description=` is labelled after its operation and output columns (`Add columns: b`, `Filter on: a`, `Sort by: a`); pass `description=` to choose the label. Opening a saved pipeline and saving it again preserves every node, native or code, unchanged.
 
 ## FlowGraph: the pipeline's record
 

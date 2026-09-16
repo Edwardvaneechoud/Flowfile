@@ -8,7 +8,7 @@ import re
 import tokenize
 
 import polars as pl
-from polars_expr_transformer import PolarsCodeGenError, to_flowframe_code
+from polars_expr_transformer import PolarsCodeGenError, to_flowframe_code, to_polars_code
 
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.code_generator.chain_fusion import NodeEmission, render_pipeline
@@ -109,6 +109,40 @@ def _try_translate_to_ff_code(formula: str) -> str | None:
     return generated if isinstance(result, FlowFrameExpr) else None
 
 
+def _try_translate_to_polars_code(formula: str) -> str | None:
+    """Translate a flowfile formula into native ``pl.``-prefixed Polars expression code.
+
+    Returns the validated code string, or None so callers fall back to the
+    ``simple_function_to_expr`` runtime emission (always correct, but it keeps
+    the exported script dependent on polars_expr_transformer). Validation evals
+    the snippet with the modules a generated expression may reference.
+    """
+    try:
+        generated = to_polars_code(formula)
+    except PolarsCodeGenError:
+        return None
+    except Exception as e:
+        logger.debug(f"to_polars_code failed for {formula!r}: {e}")
+        return None
+    if not generated:
+        return None
+    import datetime
+    import hashlib
+
+    try:
+        result = eval(generated, {"__builtins__": {}}, {"pl": pl, "datetime": datetime, "hashlib": hashlib})  # noqa: S307
+    except Exception as e:
+        logger.debug(f"Generated polars code failed validation for {formula!r}: {e}")
+        return None
+    return generated if isinstance(result, pl.Expr) else None
+
+
+def _polars_code_header(settings: input_schema.NodePolarsCode) -> str:
+    """Comment naming a Polars-code node by its description, so the exported function is recognisable."""
+    description = (settings.description or "").strip().splitlines()
+    return f"# Custom Polars code: {description[0]}" if description else "# Custom Polars code"
+
+
 def _eval_in_validation_namespace(code: str):
     """Eval generated ff code in the restricted namespace used for validation.
 
@@ -129,6 +163,7 @@ def _eval_in_validation_namespace(code: str):
 # appended only when a label is shared by several boundaries (see _plan_boundary_names).
 NODE_TYPE_VAR_LABEL: dict[str, str] = {
     "read": "source",
+    "list_files": "source",
     "csv_read": "source",
     "excel_read": "source",
     "manual_input": "source",
@@ -900,6 +935,16 @@ class FlowGraphCodeConverter(
                 return col.data_type
         return None
 
+    def _advanced_filter_predicate(self, formula: str) -> str:
+        """Polars source for an advanced-filter formula: the native ``pl`` expression
+        when polars_expr_transformer can translate it, else a ``simple_function_to_expr`` call."""
+        pl_code = _try_translate_to_polars_code(formula)
+        if pl_code:
+            self._register_expr_stdlib_imports(pl_code)
+            return pl_code
+        self.imports.add("from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr")
+        return f"simple_function_to_expr({self._py_str(formula)})"
+
     def _handle_filter(self, settings: input_schema.NodeFilter, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle filter nodes."""
         input_df = input_vars.get("main", "df")
@@ -909,12 +954,8 @@ class FlowGraphCodeConverter(
             return
 
         if settings.filter_input.is_advanced():
-            self.imports.add(
-                "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
-            )
-            self._add_code(f"{var_name} = {input_df}.filter(")
-            self._add_code(f"simple_function_to_expr({self._py_str(settings.filter_input.advanced_filter)})")
-            self._add_code(")")
+            predicate = self._advanced_filter_predicate(settings.filter_input.advanced_filter)
+            self._add_code(f"{var_name} = {input_df}.filter({predicate})")
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
@@ -935,11 +976,7 @@ class FlowGraphCodeConverter(
         node_id = settings.node_id
         pred_var = f"_filter_{node_id}_pred"
         if settings.filter_input.is_advanced():
-            self.imports.add(
-                "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
-            )
-            adv = self._py_str(settings.filter_input.advanced_filter)
-            self._add_code(f"{pred_var} = simple_function_to_expr({adv})")
+            self._add_code(f"{pred_var} = {self._advanced_filter_predicate(settings.filter_input.advanced_filter)}")
         else:
             basic = settings.filter_input.basic_filter
             if basic is not None and basic.field:
@@ -1113,9 +1150,50 @@ class FlowGraphCodeConverter(
         self._add_code("")
         self.imports.add("from polars_grouper import graph_solver")
 
+    def _input_column_names(self, node_id: int) -> list[str] | None:
+        """Column names on the single main input of ``node_id``, or None when unavailable."""
+        try:
+            node = self.flow_graph.get_node(node_id)
+            inputs = node.node_inputs.main_inputs or []
+            if len(inputs) != 1:
+                return None
+            schema = inputs[0].get_predicted_schema()
+        except Exception:
+            return None
+        return [c.column_name for c in schema] if schema else None
+
+    def _drop_shaped_select(self, settings: input_schema.NodeSelect) -> list[str] | None:
+        """Columns to drop when a select node only unchecks columns — no rename, cast or
+        reorder, unlisted columns kept — so it exports as ``.drop([...])``; else None."""
+        if not settings.keep_missing or settings.sorted_by not in (None, "none"):
+            return None
+        rows = sorted(settings.select_input, key=lambda r: 0 if r.position is None else r.position)
+        kept: list[str] = []
+        dropped: list[str] = []
+        for row in rows:
+            if row.is_altered or row.data_type_change or row.new_name not in (None, row.old_name):
+                return None
+            (kept if row.keep else dropped).append(row.old_name)
+        if not dropped:
+            return None
+        input_names = self._input_column_names(settings.node_id)
+        if input_names is None:
+            return None
+        dropped = [c for c in dropped if c in input_names]
+        kept = [c for c in kept if c in input_names]
+        listed = set(kept) | set(dropped)
+        if kept + [c for c in input_names if c not in listed] != [c for c in input_names if c not in dropped]:
+            return None
+        return dropped or None
+
     def _handle_select(self, settings: input_schema.NodeSelect, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle select/rename nodes."""
         input_df = input_vars.get("main", "df")
+        drop_cols = self._drop_shaped_select(settings)
+        if drop_cols:
+            self._add_code(f"{var_name} = {input_df}.drop([{', '.join(self._py_str(c) for c in drop_cols)}])")
+            self._add_code("")
+            return
         select_exprs = []
         for select_input in settings.select_input:
             if select_input.keep and select_input.is_available:
@@ -1200,7 +1278,7 @@ class FlowGraphCodeConverter(
 
         is_expression = "output_df" not in code
 
-        self._add_code("# Custom Polars code")
+        self._add_code(_polars_code_header(settings))
         self._add_code(f"def _polars_code_{settings.node_id}({params}):")
 
         if is_expression:
@@ -1824,12 +1902,13 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         The validation namespace includes ``pl`` and ``datetime``, so generated
         snippets may reference them (e.g. ``today()`` translates to
         ``ff.lit(datetime.datetime.today())``); the emitted script must import
-        whatever the snippet uses or it fails with NameError at runtime.
+        whatever the snippet uses or it fails with NameError at runtime. Hashing
+        functions reference ``hashlib`` from inside a ``map_elements`` lambda, whose
+        body never runs during validation — so only the emitted import catches it.
         """
         ff_code = _try_translate_to_ff_code(formula)
         if ff_code:
-            if re.search(r"\bdatetime\.", ff_code):
-                self.imports.add("import datetime")
+            self._register_expr_stdlib_imports(ff_code)
             if re.search(r"\bpl\.", ff_code):
                 self.imports.add("import polars as pl")
         return ff_code
@@ -2230,7 +2309,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
 
         is_expression = "output_df" not in code
 
-        self._add_code("# Custom Polars code")
+        self._add_code(_polars_code_header(settings))
         self._add_code(f"def _polars_code_{settings.node_id}({params}):")
 
         if is_expression:

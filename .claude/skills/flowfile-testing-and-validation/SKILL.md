@@ -76,7 +76,7 @@ All commands run from the repo root through the single Poetry env; there is **no
 | frontend E2E | `cd flowfile_frontend && npm run test:web` (web-flow only) or `npm run test:all` (adds canvas-overlays) | **No `webServer` block in `playwright.config.ts`** — core (:63578) and a Vite server must already be running. `npx playwright install chromium` first. Single worker, 2 retries in CI. |
 | frontend E2E orchestrated | `make test_e2e` / `make test_e2e_dev` | Builds/starts core + preview(:4173) or dev(:8080), runs `web-flow.spec.ts`, then `make stop_servers`. **The make target itself never fails on test failure** (`|| true` after the playwright call) — read the Playwright output, not the make exit code. |
 | wasm JS | `cd flowfile_wasm && npm run test:run` | Vitest, happy-dom, globals on. ~348 cases. |
-| wasm Python engine | `cd flowfile_wasm && pip install -r tests/python/requirements.txt && python -m pytest tests/python` | Own `pytest.ini`. **Pins polars==1.18.0 / pydantic==2.10.5 / polars-expr-transformer==0.5.6 — the exact Pyodide 0.27.7 versions.** Running through the monorepo Poetry env resolves a different Polars; use the pinned env for parity. ~85 test fns. |
+| wasm Python engine | `cd flowfile_wasm && pip install -r tests/python/requirements.txt && python -m pytest tests/python` | Own `pytest.ini`. **Pins polars==1.18.0 / pydantic==2.10.5 / polars-expr-transformer==0.6.0 — the exact Pyodide 0.27.7 versions.** Running through the monorepo Poetry env resolves a different Polars; use the pinned env for parity. ~85 test fns. |
 | wasm Pyodide smoke | `cd flowfile_wasm && npm install --no-save pyodide@0.27.7 parquet-wasm@0.7.1 && node tests/pyodide-smoke/smoke.cjs` | The only guard for browser-namespace/bootstrap breakage — CPython tests can't catch it. |
 
 Worked example — run only core tests, isolated from any other pytest session, without needing a worker:
@@ -212,25 +212,22 @@ A green run is only as strong as what actually executed. Docker-gated suites **s
 
 ## 7. xfail / XPASS discipline
 
-Current inventory (verified live 2026-07-03, v0.12.7 — **re-run before trusting**, see §9):
+Current inventory (verified live 2026-09-12 — **re-run before trusting**, see §9):
 
 | Location | What it claims | Live status |
 |---|---|---|
-| `flowfile_core/tests/flowfile/test_code_generator_edge_cases.py:201` (`test_in_operator_numeric`) | Flow's IN filter mishandles numeric-string quoting vs. codegen | **STALE — XPASS.** The bug was fixed elsewhere (filter logic moved to `filter_expressions.py`); the marker is dead weight. |
-| `test_code_generator_edge_cases.py:459` (`test_unique_without_columns`) | Flow's `unique(columns=[])` errors via an internal `group_by` needing ≥1 key; generated code is correct | Still **xfail** — real bug, flow is the buggy side. |
-| `test_code_generator_edge_cases.py:766` (`test_groupby_with_concat_aggregation`) | Delimiter mismatch: generated `str.concat()` defaults to `-`, flow uses `,` | Still **xfail** — real bug, codegen side. |
-| `flowfile_core/tests/flowfile/node_designer/test_node_designer.py:516` (`TestNumericStringAliasBug`) | `data_types="numeric"` string alias maps to Decimal only | **STALE — XPASS.** Already fixed; the test class + its "workaround" sibling test now document a bug that no longer exists. |
+| `flowfile_wasm/tests/python/test_build_helpers.py::test_filter_advanced_expr_does_not_evaluate_python` | polars-expr-transformer `eval`s a crafted formula (`standardize_quotes` requotes `'a"b'` unescaped, `Classifier.get_pl_func` evals it; `to_polars_code`'s `_validate_polars_code` is a second sink) | **xfail(strict) — real upstream bug.** Verified 2026-09-12 that 0.5.7 and 0.6.0 ship byte-identical `standardize_quotes` and the same `eval`, so a pin bump does not close it; the fix belongs in the upstream library (same maintainer). |
 
-None of these four markers use `strict=True`, so CI shows XPASS silently and nobody notices.
+Closed on 2026-09-12 (markers deleted, root causes fixed, branch `fix/xfails`): the three codegen markers in `test_code_generator_edge_cases.py` — `test_in_operator_numeric` (stale XPASS), `test_unique_without_columns` (engine `make_unique` now treats `columns=[]` as all-columns and keeps `keep=strategy`), `test_groupby_with_concat_aggregation` (emitter emits `str.join(',')` via the shared `transform_schema.STRING_CONCAT_DELIMITER`) — plus the two `xfail(strict)` scanner evasions in `community_nodes/test_security_scan.py` (scanner hardened: cross-method `self.<attr>` decode taint, `operator.attrgetter`/`methodcaller` rule; fixtures promoted from `evade/` into `deny/`). The node-designer `TestNumericStringAliasBug` marker was already gone.
 
 **Rule for this repo: XPASS means the xfail is stale. Delete the marker (and the outdated bug description) — never leave it, never "celebrate" the pass.** When you add a new xfail for a real known bug, prefer `@pytest.mark.xfail(reason=..., strict=True)` so a future fix turns into a hard CI failure demanding the marker's removal, instead of a silent XPASS nobody notices.
 
-Verification recipe (isolated DB, do **not** pair with `FLOWFILE_SKIP_STARTUP_MIGRATION=1` — see §4):
+Verification recipe (the remaining marker lives in the DB-free WASM engine tests):
 ```bash
-FLOWFILE_DB_PATH=/tmp/xfail_probe.db poetry run pytest \
-  "flowfile_core/tests/flowfile/test_code_generator_edge_cases.py::TestBasicFilterOperators::test_in_operator_numeric" \
+poetry run pytest \
+  "flowfile_wasm/tests/python/test_build_helpers.py::test_filter_advanced_expr_does_not_evaluate_python" \
   -q -p no:cacheprovider -rX
-# → "1 xpassed" confirms staleness
+# → "1 xfailed"; an XPASS means the upstream fix landed — raise the pin everywhere and delete the marker
 ```
 
 Other skip inventory:
@@ -302,13 +299,10 @@ Volatile facts below need periodic re-verification — commands are copy-pasteab
 - **`SKIP_WORKER_TESTS` wiring**: `grep -n "SKIP_WORKER_TESTS\|def flowfile_worker" flowfile_core/tests/conftest.py`
 - **Docker fixture ports**: `grep -n "_PORT = int(os.environ.get" test_utils/*/fixtures.py`
 - **Test-utils Poetry scripts**: `grep -n '^start_\|^stop_' pyproject.toml`
-- **xfail inventory + live status** (re-run periodically — bugs get fixed and markers go stale silently, that's the whole point of §7):
+- **xfail inventory + live status** (re-run periodically — bugs get fixed and markers go stale silently, that's the whole point of §7; `grep -rn "pytest.mark.xfail" --include=*.py . | grep -v "/.claude/"` lists every marker):
   ```bash
-  FLOWFILE_DB_PATH=/tmp/xfail_probe.db poetry run pytest \
-    "flowfile_core/tests/flowfile/test_code_generator_edge_cases.py::TestBasicFilterOperators::test_in_operator_numeric" \
-    "flowfile_core/tests/flowfile/test_code_generator_edge_cases.py::TestUniqueOperationVariations::test_unique_without_columns" \
-    "flowfile_core/tests/flowfile/test_code_generator_edge_cases.py::TestGroupByEdgeCases::test_groupby_with_concat_aggregation" \
-    "flowfile_core/tests/flowfile/node_designer/test_node_designer.py::TestNumericStringAliasBug" \
+  poetry run pytest \
+    "flowfile_wasm/tests/python/test_build_helpers.py::test_filter_advanced_expr_does_not_evaluate_python" \
     -q -p no:cacheprovider -rX
   ```
 - **Collect counts** (~5,079 core / ~311 worker / ~620 frame / ~13 scheduler as of 2026-07-03): `poetry run pytest flowfile_core/tests --collect-only -q | tail -3` (repeat per package)

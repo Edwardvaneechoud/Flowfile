@@ -7727,6 +7727,19 @@ def test_a_bare_reference_to_a_column_the_chain_just_wrote_resolves(tmp_path: Pa
 
 
 # A hashed column and an encoded one, neither of which any corpus tool uses.
+CAVEAT_SENTENCE = "exact on ASCII input and different above it; check a non-ASCII value against Designer"
+
+
+@pytest.fixture
+def caveated_md5(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No shipped FunctionSpec carries a caveat, so the demotion is pinned on a patched one."""
+    from flowfile_core.flowfile.converters.alteryx import expression
+
+    monkeypatch.setitem(
+        expression.FUNCTION_MAP, "md5_utf8", expression.FunctionSpec("MD5_UTF8", "md5", 1, 1, caveat=CAVEAT_SENTENCE)
+    )
+
+
 HASHING_AND_ENCODING_IN_A_FORMULA = b"""<?xml version="1.0"?>
 <AlteryxDocument yxmdVer="2021.4">
   <Nodes>
@@ -7737,7 +7750,7 @@ HASHING_AND_ENCODING_IN_A_FORMULA = b"""<?xml version="1.0"?>
       </Configuration></Properties></Node>
     <Node ToolID="912"><GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula" />
       <Properties><Configuration><FormulaFields>
-        <FormulaField field="digest" type="V_String" size="32" expression="MD5_ASCII([grower])" />
+        <FormulaField field="digest" type="V_String" size="32" expression="MD5_UTF8([grower])" />
         <FormulaField field="packed" type="V_String" size="64" expression="Base64Encode([grower])" />
       </FormulaFields></Configuration></Properties></Node>
     <Node ToolID="913"><GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula" />
@@ -7746,13 +7759,13 @@ HASHING_AND_ENCODING_IN_A_FORMULA = b"""<?xml version="1.0"?>
       </FormulaFields></Configuration></Properties></Node>
     <Node ToolID="914"><GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter" />
       <Properties><Configuration>
-        <Expression>MD5_ASCII([grower]) = "x"</Expression>
+        <Expression>MD5_UTF8([grower]) = "x"</Expression>
         <Mode>Custom</Mode>
       </Configuration></Properties></Node>
     <Node ToolID="915"><GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename" />
       <Properties><Configuration>
         <RenameMode>Formula</RenameMode>
-        <Expression>MD5_ASCII([_CurrentField_])</Expression>
+        <Expression>MD5_UTF8([_CurrentField_])</Expression>
         <Fields><Field name="grower" /></Fields>
       </Configuration></Properties></Node>
     <Node ToolID="916"><GuiSettings Plugin="AlteryxBasePluginsGui.MultiFieldFormula.MultiFieldFormula" />
@@ -7761,7 +7774,7 @@ HASHING_AND_ENCODING_IN_A_FORMULA = b"""<?xml version="1.0"?>
         <Fields><Field name="grower" /></Fields>
         <CopyOutput value="False" />
         <ChangeFieldType value="False" />
-        <Expression>MD5_ASCII([_CurrentField_])</Expression>
+        <Expression>MD5_UTF8([_CurrentField_])</Expression>
       </Configuration></Properties></Node>
   </Nodes>
   <Connections>
@@ -7780,17 +7793,16 @@ HASHING_AND_ENCODING_IN_A_FORMULA = b"""<?xml version="1.0"?>
 """
 
 
-def test_a_caveated_function_costs_the_row_its_green_badge(tmp_path: Path):
-    """The mapping is exact for ASCII and different for everything else, so it is not `converted`.
+def test_a_caveated_function_costs_the_row_its_green_badge(tmp_path: Path, caveated_md5: None):
+    """A mapping that is exact on some inputs and different on others is not `converted`.
 
-    No corpus tool uses either function, which is exactly why the badge matters: the first user to
-    hash a name with an accent in it has nothing but this row to tell them the digests differ.
+    No shipped FunctionSpec carries a caveat today (MD5_UTF8 is exact, the other MD5 variants are
+    refused), so the demotion is pinned on a caveat patched onto MD5_UTF8 for the test.
     """
     result = convert_yxmd(HASHING_AND_ENCODING_IN_A_FORMULA, source_name="hashing.yxmd")
     hashed = report_row(result, 912)
     assert (hashed.status, hashed.reason) == ("partial", "option_unsupported")
-    assert any("hashes the UTF-8 bytes" in message for message in hashed.messages)
-    assert any("encodes the UTF-8 bytes" in message for message in hashed.messages)
+    assert any(CAVEAT_SENTENCE in message for message in hashed.messages)
 
     # The formula beside it promises nothing extra, so it keeps its green badge.
     plain = report_row(result, 913)
@@ -8320,7 +8332,7 @@ def test_a_null_drops_the_pair_in_the_rank_correlation(tmp_path: Path):
 # --- W6.10: the cheap pins ---
 
 
-def test_every_caveat_call_site_costs_its_row_the_green_badge(tmp_path: Path):
+def test_every_caveat_call_site_costs_its_row_the_green_badge(tmp_path: Path, caveated_md5: None):
     """`_caveated` was pinned at the Formula site only; three other callers used it untested.
 
     A custom-mode Filter, a Dynamic Rename formula and a Multi-Field Formula all run an Alteryx
@@ -8331,7 +8343,7 @@ def test_every_caveat_call_site_costs_its_row_the_green_badge(tmp_path: Path):
     for tool_id in (914, 915, 916):
         row = report_row(result, tool_id)
         assert (row.status, row.reason) == ("partial", "option_unsupported"), tool_id
-        assert any("hashes the UTF-8 bytes" in message for message in row.messages), tool_id
+        assert any(CAVEAT_SENTENCE in message for message in row.messages), tool_id
 
 
 DETOUR_END_WITH_TWO_WIRES_ON_ONE_ANCHOR = b"""<?xml version="1.0"?>

@@ -34,7 +34,7 @@ class TransformHandlersMixin(ConverterMixinBase):
                 agg_func = self._get_agg_function(agg_col.agg)
                 old = self._py_str(agg_col.old_name)
                 new = self._py_str(agg_col.new_name)
-                expr = f"{self.framework}.col({old}).{agg_func}().alias({new})"
+                expr = f"{self.framework}.col({old}).{agg_func}.alias({new})"
                 agg_exprs.append(expr)
 
         if has_renamed_key:
@@ -69,6 +69,7 @@ class TransformHandlersMixin(ConverterMixinBase):
         # (b) post-process the expression to replace `pl.` with `{self.framework}.`, or
         # (c) make to_polars_code() accept a framework prefix parameter.
         if can_convert_to_pl_code:
+            self._register_expr_stdlib_imports(pl_code)
             expr_str = f"({pl_code}).alias({self._py_str(col_name)})"
             if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
                 output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
@@ -291,7 +292,7 @@ class TransformHandlersMixin(ConverterMixinBase):
             if behavior == "fill_zero":
                 base = f"{base}.fill_null(0)"
             return f"{over(base)}.alias({self._py_str(w.new_column_name)})"
-        if func.startswith("cum_"):
+        if func.startswith("cum_") or transform_schema.is_aggregate_window_function(func):
             base = f"{fw}.col({self._py_str(w.column)}).{func}()"
             return f"{over(base)}.alias({self._py_str(w.new_column_name)})"
         if func == "rank":
@@ -325,7 +326,7 @@ class TransformHandlersMixin(ConverterMixinBase):
     def _handle_window_functions(
         self, settings: input_schema.NodeWindowFunctions, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """Handle window function nodes (rolling, cumulative, rank, tile)."""
+        """Handle window function nodes (rolling, cumulative, rank, tile, partition aggregates)."""
         input_df = input_vars.get("main", "df")
         window_input = settings.window_input
 

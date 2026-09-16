@@ -1609,7 +1609,7 @@ def _caveated(
     """Put a translation's caveats on the row and stop calling it ``converted``.
 
     A caveat is a function whose Flowfile equivalent agrees with Alteryx on some inputs and not on
-    others — MD5_ASCII() over non-ASCII text, an encoding whose byte set no workflow states. Dropping
+    others (a hash whose byte encoding differs above ASCII, say). Dropping
     the sentence would leave a green badge on a column that quietly differs, which is the one outcome
     this importer is built not to produce. A row that is already worse than converted keeps its own
     status: a caveat cannot improve anything.

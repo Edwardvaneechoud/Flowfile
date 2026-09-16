@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin
 import polars as pl
 from pl_fuzzy_frame_match import FuzzyMapping
 from polars._typing import CsvEncoding, FrameInitTypes, Orientation, SchemaDefinition, SchemaDict
+from polars_expr_transformer import simple_function_to_expr
 
 if TYPE_CHECKING:
     from flowfile_frame.catalog_reference import SchemaReference
@@ -20,6 +21,7 @@ from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_map
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.schemas import GroupColor
+from flowfile_frame.callable_utils import process_callable_args
 from flowfile_frame.cloud_storage.frame_helpers import add_write_ff_to_cloud_storage
 from flowfile_frame.config import logger
 from flowfile_frame.expr import Column, Expr, col, lit
@@ -50,6 +52,61 @@ def can_be_expr(param: inspect.Parameter) -> bool:
 
 def _contains_lambda_pattern(text: str) -> bool:
     return "<lambda> at" in text
+
+
+def _formula_parses(formula: str) -> bool:
+    """Whether core's formula parser accepts ``formula``.
+
+    Lowering onto a native Formula/Filter node is only safe when the generated
+    formula parses: a Filter node silently keeps no rows on a parse error, so an
+    unparseable formula stays on the Polars-code path instead.
+    """
+    try:
+        simple_function_to_expr(formula)
+    except Exception:
+        return False
+    return True
+
+
+def _filter_exprs_to_formula(exprs: list[Expr]) -> str | None:
+    """AND-join the formula forms of filter predicates; None when any predicate lacks one."""
+    if not exprs or any(e._ff_repr is None or e._function_sources for e in exprs):
+        return None
+    formula = " and ".join(e._ff_repr for e in exprs)
+    return formula if _formula_parses(formula) else None
+
+
+_POLARS_CODE_LABELS = {
+    "with_columns": "Add columns",
+    "select": "Select columns",
+    "filter": "Filter on",
+    "sort": "Sort by",
+    "group_by": "Group by",
+}
+
+
+def _describe_polars_code(method_name: str | None, exprs: Any) -> str | None:
+    """Canvas label for a Polars-code node emitted without a description.
+
+    Names the operation and the columns its expressions produce (or, for a
+    filter, test) instead of the first line of generated code, which the UI
+    would otherwise show truncated.
+    """
+    if method_name is None:
+        return None
+    label = _POLARS_CODE_LABELS.get(method_name, f"{method_name.replace('_', ' ').capitalize()} (Polars code)")
+    names: list[str] = []
+    for expr in ensure_inputs_as_iterable(exprs) if exprs is not None else []:
+        try:
+            name = expr.meta.output_name()
+        except Exception:
+            continue
+        if name and name not in names:
+            names.append(name)
+    if not names:
+        return label
+    shown = ", ".join(names[:3]) + (f" (+{len(names) - 3} more)" if len(names) > 3 else "")
+    return f"{label}: {shown}"
 
 
 def _try_translate_flowfile_formulas(
@@ -672,6 +729,8 @@ class FlowFrame:
                 precomputed = result_lazyframe_or_expr
         else:
             polars_code_for_node = code
+        if description is None:
+            description = _describe_polars_code(method_name, group_expr if group_expr is not None else polars_expr)
         polars_code_settings = input_schema.NodePolarsCode(
             flow_id=self.flow_graph.flow_id,
             node_id=new_node_id,
@@ -1030,7 +1089,8 @@ class FlowFrame:
         if (
             len(columns_iterable) == 1
             and isinstance(columns_iterable[0], Expr)
-            and str(columns_iterable[0]) == "pl.Expr(len()).alias('number_of_records')"
+            and str(columns_iterable[0])
+            in ("pl.len().alias('number_of_records')", "pl.Expr(len()).alias('number_of_records')")
         ):
             return self._add_number_of_records(new_node_id, description)
 
@@ -1126,6 +1186,55 @@ class FlowFrame:
 
         return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
+    def drop(
+        self,
+        *columns: str | Column | Selector | Iterable[str | Column | Selector],
+        strict: bool = True,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """Remove columns from the frame.
+
+        Plain column names lower onto a native Select node with those columns
+        unchecked (``keep=False``) and every other column kept, so the drop is
+        editable on the canvas. Selectors, or a column missing under
+        ``strict=True``, take the Polars-code path — the latter raises
+        ``ColumnNotFoundError`` when the schema resolves, as Polars does.
+        """
+        names: list[str] = []
+        can_use_native = True
+        for item in _parse_inputs_as_iterable(columns):
+            if isinstance(item, str):
+                names.append(item)
+            elif isinstance(item, Column) and not item._select_input.is_altered:
+                names.append(item.column_name)
+            else:
+                can_use_native = False
+        existing_columns = self.columns
+        if strict and any(name not in existing_columns for name in names):
+            can_use_native = False
+
+        new_node_id = generate_node_id()
+        if can_use_native:
+            dropped = set(names)
+            select_settings = input_schema.NodeSelect(
+                flow_id=self.flow_graph.flow_id,
+                node_id=new_node_id,
+                select_input=[transform_schema.SelectInput(c, keep=c not in dropped) for c in existing_columns],
+                keep_missing=True,
+                pos_x=200,
+                pos_y=100,
+                is_setup=True,
+                depending_on_id=self.node_id,
+                description=description,
+            )
+            self.flow_graph.add_select(select_settings)
+        else:
+            processed = process_callable_args(columns, {} if strict else {"strict": strict})
+            self._add_polars_code(
+                new_node_id, f"output_df = input_df.drop({processed.params_repr})", description or "Drop operation"
+            )
+        return self._create_child_frame(new_node_id)
+
     def filter(
         self,
         *predicates: Expr | Any,
@@ -1133,49 +1242,31 @@ class FlowFrame:
         description: str | None = None,
         **constraints: Any,
     ) -> FlowFrame:
-        """
-        Filter rows based on a predicate.
+        """Filter rows based on a predicate.
+
+        Predicates with a flowfile-formula form (comparisons, ``&``/``|``/``~``,
+        ``is_in``, ``is_null``, and the string/date helpers with a formula
+        equivalent) lower onto a native Filter node whose advanced expression is
+        that formula, so the condition is readable and editable on the canvas.
+        Anything else — lambdas, methods without a formula mapping — emits a
+        Polars-code node.
         """
         if (len(predicates) > 0 or len(constraints) > 0) and flowfile_formula:
             raise ValueError("You can only use one of the following: predicates, constraints or flowfile_formula")
-        available_columns = self.columns
         new_node_id = generate_node_id()
         if len(predicates) > 0 or len(constraints) > 0:
-            all_input_expr_objects: list[Expr] = []
+            all_input_expr_objects = self._collect_filter_exprs(predicates, constraints)
+            formula = _filter_exprs_to_formula(all_input_expr_objects)
+            if formula is not None:
+                self._add_native_filter(new_node_id, formula, description)
+                return self._create_child_frame(new_node_id)
+
             pure_polars_expr_strings: list[str] = []
             collected_raw_definitions: list[str] = []
-
-            processed_predicates = []
-            for pred_item in predicates:
-                if isinstance(pred_item, tuple | list | Iterator):
-                    processed_predicates.extend(list(pred_item))
-                else:
-                    processed_predicates.append(pred_item)
-
-            for pred_input in processed_predicates:
-                current_expr_obj = None
-                if isinstance(pred_input, Expr):
-                    current_expr_obj = pred_input
-                elif isinstance(pred_input, str) and pred_input in available_columns:
-                    current_expr_obj = col(pred_input)
-                else:
-                    current_expr_obj = lit(pred_input)
-
-                all_input_expr_objects.append(current_expr_obj)
-
+            for current_expr_obj in all_input_expr_objects:
                 pure_expr_str, raw_defs_str = _extract_expr_parts(current_expr_obj)
                 pure_polars_expr_strings.append(f"({pure_expr_str})")
                 if raw_defs_str and raw_defs_str not in collected_raw_definitions:
-                    collected_raw_definitions.append(raw_defs_str)
-
-            for k, v_val in constraints.items():
-                constraint_expr_obj = col(k) == lit(v_val)
-                all_input_expr_objects.append(constraint_expr_obj)
-                pure_expr_str, raw_defs_str = _extract_expr_parts(
-                    constraint_expr_obj
-                )  # Constraint exprs are unlikely to have defs
-                pure_polars_expr_strings.append(f"({pure_expr_str})")
-                if raw_defs_str and raw_defs_str not in collected_raw_definitions:  # Should be rare here
                     collected_raw_definitions.append(raw_defs_str)
 
             filter_conditions_str = " & ".join(pure_polars_expr_strings) if pure_polars_expr_strings else "pl.lit(True)"
@@ -1207,17 +1298,7 @@ class FlowFrame:
             )
         elif flowfile_formula:
             precomputed = None
-            filter_settings = input_schema.NodeFilter(
-                flow_id=self.flow_graph.flow_id,
-                node_id=new_node_id,
-                filter_input=transform_schema.FilterInput(advanced_filter=flowfile_formula, filter_type="advanced"),
-                pos_x=200,
-                pos_y=150,
-                is_setup=True,
-                depending_on_id=self.node_id,
-                description=description,
-            )
-            self.flow_graph.add_filter(filter_settings)
+            self._add_native_filter(new_node_id, flowfile_formula, description)
         else:
             logger.info("Filter called with no arguments; creating a pass-through Polars code node.")
             precomputed = self._add_polars_code(
@@ -1226,14 +1307,9 @@ class FlowFrame:
 
         return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
-    def _build_filter_expression_string(self, predicates: tuple, constraints: dict) -> str:
-        """Collapse predicates and constraints into a single Polars expression
-        string suitable for ``FilterInput.advanced_filter``. Mirrors the
-        assembly logic in ``filter()`` but returns the bare conditions string
-        (without the surrounding ``input_df.filter(...)`` wrapper)."""
+    def _collect_filter_exprs(self, predicates: tuple, constraints: dict) -> list[Expr]:
+        """Normalise filter arguments (nested iterables, column-name strings, literals, kwargs) to Exprs."""
         available_columns = self.columns
-        pure_polars_expr_strings: list[str] = []
-
         processed_predicates = []
         for pred_item in predicates:
             if isinstance(pred_item, tuple | list | Iterator):
@@ -1241,22 +1317,51 @@ class FlowFrame:
             else:
                 processed_predicates.append(pred_item)
 
+        exprs: list[Expr] = []
         for pred_input in processed_predicates:
             if isinstance(pred_input, Expr):
-                current_expr_obj = pred_input
+                exprs.append(pred_input)
             elif isinstance(pred_input, str) and pred_input in available_columns:
-                current_expr_obj = col(pred_input)
+                exprs.append(col(pred_input))
             else:
-                current_expr_obj = lit(pred_input)
-            pure_expr_str, _ = _extract_expr_parts(current_expr_obj)
-            pure_polars_expr_strings.append(f"({pure_expr_str})")
-
+                exprs.append(lit(pred_input))
         for k, v_val in constraints.items():
-            constraint_expr_obj = col(k) == lit(v_val)
-            pure_expr_str, _ = _extract_expr_parts(constraint_expr_obj)
-            pure_polars_expr_strings.append(f"({pure_expr_str})")
+            exprs.append(col(k) == lit(v_val))
+        return exprs
 
-        return " & ".join(pure_polars_expr_strings) if pure_polars_expr_strings else "pl.lit(True)"
+    def _add_native_filter(
+        self, new_node_id: int, advanced_filter: str, description: str | None, *, split_mode: bool = False
+    ) -> None:
+        filter_settings = input_schema.NodeFilter(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            filter_input=transform_schema.FilterInput(advanced_filter=advanced_filter, filter_type="advanced"),
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description,
+            split_mode=split_mode,
+        )
+        self.flow_graph.add_filter(filter_settings)
+
+    def _build_filter_expression_string(self, predicates: tuple, constraints: dict) -> str:
+        """Formula text for a split filter's ``advanced_filter``; raises when a predicate has none.
+
+        The split filter is one two-output node with no Polars-code fallback, and the
+        engine turns an expression it cannot parse into "keep nothing" with only a
+        warning, so an untranslatable predicate must fail here instead of silently
+        emptying the pass output.
+        """
+        exprs = self._collect_filter_exprs(predicates, constraints)
+        formula = _filter_exprs_to_formula(exprs)
+        if formula is None:
+            raise ValueError(
+                "filter_split predicates must have a flowfile-formula form (comparisons, and/or/not, is_in, "
+                "is_null, ...); lambdas and unmapped methods are not supported. Pass flowfile_formula=... "
+                "or use filter() twice instead."
+            )
+        return formula
 
     def filter_split(
         self,
@@ -1274,6 +1379,9 @@ class FlowFrame:
         Args mirror :meth:`filter` — accept either positional polars
         expressions, a ``flowfile_formula`` string, or keyword constraints.
         Combinations of predicates and constraints are AND-ed together.
+        Predicates must have a flowfile-formula form (see :meth:`filter`);
+        others raise ``ValueError`` because the split node has no Polars-code
+        fallback.
         """
         if (len(predicates) > 0 or len(constraints) > 0) and flowfile_formula:
             raise ValueError("You can only use one of the following: predicates, constraints or flowfile_formula")
@@ -1286,21 +1394,7 @@ class FlowFrame:
             raise ValueError("filter_split requires at least one predicate, constraint, or flowfile_formula")
 
         new_node_id = generate_node_id()
-        filter_settings = input_schema.NodeFilter(
-            flow_id=self.flow_graph.flow_id,
-            node_id=new_node_id,
-            filter_input=transform_schema.FilterInput(
-                advanced_filter=advanced_expr,
-                filter_type="advanced",
-            ),
-            pos_x=200,
-            pos_y=150,
-            is_setup=True,
-            depending_on_id=self.node_id,
-            description=description,
-            split_mode=True,
-        )
-        self.flow_graph.add_filter(filter_settings)
+        self._add_native_filter(new_node_id, advanced_expr, description, split_mode=True)
         self._add_connection(
             self.node_id,
             new_node_id,
@@ -3321,13 +3415,20 @@ class FlowFrame:
 
             # Try flowfile formula conversion (all-or-nothing)
             if all(
-                isinstance(e, Expr) and e._ff_repr is not None and e.column_name is not None
+                isinstance(e, Expr)
+                and e._ff_repr is not None
+                and e.column_name is not None
+                and _formula_parses(e._ff_repr)
                 for e in actual_exprs_to_process
             ):
                 ff = self
                 for expr_obj in actual_exprs_to_process:
                     ff = ff._with_flowfile_formula(expr_obj._ff_repr, expr_obj.column_name, description)
                 return ff
+
+            window_frame = self._try_native_window_functions(actual_exprs_to_process, new_node_id, description)
+            if window_frame is not None:
+                return window_frame
 
             for current_expr_obj in actual_exprs_to_process:
                 all_input_expr_objects.append(current_expr_obj)
@@ -3393,6 +3494,41 @@ class FlowFrame:
             return ff
         else:
             raise ValueError("Either exprs/named_exprs or flowfile_formulas with output_column_names must be provided")
+
+    def _try_native_window_functions(
+        self, exprs: list[Expr], new_node_id: int, description: str | None
+    ) -> FlowFrame | None:
+        """Emits one Window Functions node when every expression is a partition
+        aggregate (``col(x).<agg>().over(g).alias(name)``) and all share the same
+        partition columns. Returns ``None`` when the call does not fit, so the
+        caller falls back to a Polars-code node.
+        """
+        specs = [getattr(e, "_window_spec", None) for e in exprs]
+        if not specs or any(spec is None for spec in specs):
+            return None
+        partition_by = specs[0]["partition_by"]
+        if any(spec["partition_by"] != partition_by for spec in specs):
+            return None
+        window_functions = []
+        for expr_obj, spec in zip(exprs, specs, strict=True):
+            if expr_obj.column_name is None or expr_obj.column_name == spec["column"]:
+                return None
+            window_functions.append(
+                transform_schema.WindowFunctionInput(
+                    column=spec["column"], function=spec["function"], new_column_name=expr_obj.column_name
+                )
+            )
+        settings = input_schema.NodeWindowFunctions(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            depending_on_id=self.node_id,
+            window_input=transform_schema.WindowFunctionsInput(
+                partition_by=partition_by, window_functions=window_functions
+            ),
+            description=description,
+        )
+        self.flow_graph.add_window_functions(settings)
+        return self._create_child_frame(new_node_id)
 
     def with_row_index(self, name: str = "index", offset: int = 0, description: str = None) -> FlowFrame:
         """

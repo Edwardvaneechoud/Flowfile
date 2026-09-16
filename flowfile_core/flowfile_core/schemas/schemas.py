@@ -57,6 +57,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "output": input_schema.NodeOutput,
     "api_response": input_schema.NodeApiResponse,
     "read": input_schema.NodeRead,
+    "list_files": input_schema.NodeListFiles,
     "database_reader": input_schema.NodeDatabaseReader,
     "database_writer": input_schema.NodeDatabaseWriter,
     "cloud_storage_reader": input_schema.NodeCloudStorageReader,
@@ -443,6 +444,10 @@ class NodeTag(str, Enum):
     EXPORT = "export"
     SAVE = "save"
     DELTA = "delta"
+    FOLDER = "folder"
+    DIRECTORY = "directory"
+    LIST_FILES = "list files"
+    METADATA = "metadata"
 
     # Connectivity & APIs
     API = "api"

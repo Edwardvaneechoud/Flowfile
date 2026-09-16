@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.17.4"
+version = "0.17.6"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -48,7 +48,7 @@ loky = "~3.4.1"
 fastexcel = "~0.12.0"
 openpyxl = "~3.1.2"
 polars-distance = ">=0.4.3"
-polars-expr-transformer = ">=0.6.0"
+polars-expr-transformer = ">=0.6.1"
 polars-grouper = ">=0.5.0"
 polars-ds = ">=0.11.0"
 aiofiles = "^24.1.0"

@@ -9,6 +9,10 @@ import type { AccessInfo } from "./sharing.types";
 
 type DataTypeGroup = "Numeric" | "String" | "Date" | "Other" | "Boolean" | "Binary" | "Complex";
 
+// What the values mean beyond their storage dtype; core derives it from a declared
+// dtype only (a GeoArrow extension), never from sampled values.
+export type SemanticType = "geometry";
+
 // Column and Table Types
 
 // The statistics fields are null until actually computed — either never
@@ -26,6 +30,7 @@ export interface FileColumn {
   number_of_unique_values: number | null;
   size: number | null;
   data_type_group: DataTypeGroup;
+  semantic_type?: SemanticType | null;
 }
 
 export interface TableExample {
@@ -497,7 +502,14 @@ export type WindowFunctionName =
   | "cum_min"
   | "cum_max"
   | "rank"
-  | "tile";
+  | "tile"
+  | "mean"
+  | "sum"
+  | "min"
+  | "max"
+  | "count"
+  | "std"
+  | "median";
 
 export type RankMethod = "ordinal" | "dense" | "min" | "max" | "average";
 
@@ -1077,6 +1089,17 @@ export interface NodeSample extends NodeBase {
   sample_size: number;
   fraction: number;
   seed: number | null;
+}
+
+export interface NodeListFiles extends NodeBase {
+  path: string;
+  file_types: string[];
+  recursive: boolean;
+  max_depth: number;
+  include_hidden: boolean;
+  include_files: boolean;
+  include_directories: boolean;
+  max_files: number | null;
 }
 
 export interface RandomSplitGroup {

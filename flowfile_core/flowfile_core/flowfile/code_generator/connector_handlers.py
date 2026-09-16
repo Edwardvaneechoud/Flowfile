@@ -60,6 +60,41 @@ class ConnectorHandlersMixin(ConverterMixinBase):
             )
         )
 
+    def _handle_list_files(
+        self, settings: input_schema.NodeListFiles, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Emit ``ff.list_files``, like the other Flowfile-native sources.
+
+        There is no Polars equivalent for a directory listing, so the Polars dialect
+        borrows the same call and unwraps the FlowFrame — exactly what the database
+        and catalog readers do.
+        """
+        if not settings.path:
+            self.unsupported_nodes.append((settings.node_id, "list_files", "List Files node has no folder selected"))
+            return
+
+        self.imports.add("import flowfile as ff")
+        suffix = ".data" if self.framework == "pl" else ""
+
+        self._add_code(f"{var_name} = ff.list_files(")
+        self._add_code(f"    {self._py_str(settings.path)},")
+        if settings.file_types:
+            self._add_code(f"    file_types={settings.file_types!r},")
+        if settings.recursive:
+            self._add_code("    recursive=True,")
+            if settings.max_depth != 5:
+                self._add_code(f"    max_depth={settings.max_depth},")
+        if settings.include_hidden:
+            self._add_code("    include_hidden=True,")
+        if not settings.include_files:
+            self._add_code("    include_files=False,")
+        if settings.include_directories:
+            self._add_code("    include_directories=True,")
+        if settings.max_files is not None:
+            self._add_code(f"    max_files={settings.max_files},")
+        self._add_code(f"){suffix}")
+        self._add_code("")
+
     def _handle_database_reader(
         self, settings: input_schema.NodeDatabaseReader, var_name: str, input_vars: dict[str, str]
     ) -> None:

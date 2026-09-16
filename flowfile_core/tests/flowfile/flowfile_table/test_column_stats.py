@@ -238,3 +238,12 @@ def test_known_record_count_is_free_only():
         eager.number_of_records = -1
         assert eager.known_record_count() == 3, "eager height is free"
     mock_count.assert_not_called()
+
+
+def test_binary_min_max_use_the_preview_hex_encoding():
+    """Bounds and preview cells must agree on how a WKB blob looks on the wire."""
+    short, long = bytes.fromhex("0102"), bytes.fromhex("0101000000EE5A423EE8991340F1F44A5986304A40")
+    stats = compute_column_stats(FlowDataEngine(pl.DataFrame({"g": [long, short]})), "g")
+    # Bytes order lexicographically: 0x0101… sorts before 0x0102.
+    assert stats.min_value == "0x0101000000EE5A423EE8991340F1F44A\u2026 (21 bytes)"
+    assert stats.max_value == "0x0102"

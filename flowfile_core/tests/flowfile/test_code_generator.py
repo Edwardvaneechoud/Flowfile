@@ -1157,6 +1157,37 @@ def test_window_functions_rolling_and_cumulative(export_func):
 
 
 @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_window_functions_partition_aggregate(export_func):
+    """Test window-functions node generating partition-wide aggregate columns (no order_by)."""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+
+    window_node = input_schema.NodeWindowFunctions(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        window_input=transform_schema.WindowFunctionsInput(
+            partition_by=["region"],
+            window_functions=[
+                transform_schema.WindowFunctionInput(column="quantity", function="mean", new_column_name="qty_mean"),
+                transform_schema.WindowFunctionInput(column="price", function="count", new_column_name="n_rows"),
+            ],
+        ),
+    )
+    flow.add_window_functions(window_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    if export_func is export_flow_to_polars:
+        verify_code_contains(code, 'pl.col("quantity").mean().over([\'region\'])', 'pl.col("price").count().over([\'region\'])')
+    assert ".sort(" not in code
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df, check_row_order=False, check_column_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
 def test_window_functions_tile(export_func):
     """Test window-functions node generating a tile column."""
     flow = create_basic_flow()
@@ -1571,6 +1602,55 @@ def test_flowframe_formula_datetime_emission_is_runnable():
         verify_code_contains(code, "import datetime")
     # The result is time-dependent, so only assert the script runs.
     verify_if_execute(code)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_formula_hashing_function_imports_hashlib(export_func):
+    """A hashing formula emits a `hashlib.<algo>` lambda, so the export must import hashlib."""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+    formula_node = input_schema.NodeFormula(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="product_hash", data_type="Auto"),
+            function="md5([product])"
+        )
+    )
+    flow.add_formula(formula_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    assert "hashlib." in code, f"expected a hashlib call in the generated code:\n{code}"
+    verify_code_contains(code, "import hashlib")
+
+    result = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_formula_encoding_function_round_trips(export_func):
+    """encode/decode translate to native str.encode/str.decode, so they need no stdlib import."""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+    formula_node = input_schema.NodeFormula(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="product_b64", data_type="Auto"),
+            function="base64_encode([product])"
+        )
+    )
+    flow.add_formula(formula_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
 
 
 def test_native_cast_type_rendering():
@@ -5100,8 +5180,8 @@ def test_filter_advanced_mode(export_func):
 
     code = export_func(flow)
     if export_func is export_flow_to_polars:
-        verify_code_contains(code, "simple_function_to_expr")
-        verify_code_contains(code, "[age] > 25 AND [salary] > 60000")
+        verify_code_contains(code, 'pl.col("age") > pl.lit(25)', 'pl.col("salary") > pl.lit(60000)')
+        assert "simple_function_to_expr" not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
@@ -5148,7 +5228,7 @@ def test_unique_without_columns(export_func):
 
 
 def test_select_with_no_columns_kept():
-    """Test select node where no columns are marked as keep."""
+    """A select that unchecks every listed column keeps the unlisted ones (keep_missing), so it is a drop."""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)
 
@@ -5165,8 +5245,84 @@ def test_select_with_no_columns_kept():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     code = export_flow_to_polars(flow)
-    assert "df_2" not in code  # empty select elided; source passes through
-    verify_code_contains(code, "source = pl.LazyFrame")
+    verify_code_contains(code, '.drop(["id", "name"])')
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_drop_shaped_select_exports_as_drop(export_func):
+    """A select that only unchecks columns — what FlowFrame.drop emits — exports as ``.drop([...])``."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    select_node = input_schema.NodeSelect(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        select_input=[
+            transform_schema.SelectInput("id"),
+            transform_schema.SelectInput("name", keep=False),
+            transform_schema.SelectInput("age"),
+            transform_schema.SelectInput("city", keep=False),
+            transform_schema.SelectInput("salary"),
+        ],
+        keep_missing=True,
+    )
+    flow.add_select(select_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_func(flow)
+    verify_code_contains(code, '.drop(["name", "city"])')
+    assert ".select(" not in code
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert_frame_equal(result_df, expected_df)
+
+
+def test_reordering_select_is_not_exported_as_drop():
+    """Kept columns listed out of input order are a reorder, so the node stays a select."""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    select_node = input_schema.NodeSelect(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        select_input=[
+            transform_schema.SelectInput("salary"),
+            transform_schema.SelectInput("name", keep=False),
+            transform_schema.SelectInput("id"),
+        ],
+        keep_missing=True,
+    )
+    flow.add_select(select_node)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    assert ".drop(" not in code
+    verify_code_contains(code, ".select(")
+
+
+def test_polars_code_description_names_the_exported_function():
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    flow.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=1,
+            node_id=2,
+            depending_on_ids=[1],
+            polars_code_input=transform_schema.PolarsCodeInput(
+                polars_code="input_df.with_columns((pl.col('age') * 2).alias('double_age'))"
+            ),
+            description="Double the age",
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    verify_code_contains(code, "# Custom Polars code: Double the age")
     verify_if_execute(code)
 
 
@@ -5192,7 +5348,7 @@ def test_group_by_concat_aggregation(export_func):
 
     code = export_func(flow)
     if export_func is export_flow_to_polars:
-        verify_code_contains(code, 'pl.col("region").str.concat().alias("all_regions")')
+        verify_code_contains(code, 'pl.col("region").str.join(\',\').alias("all_regions")')
     verify_if_execute(code)
 
 

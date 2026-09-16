@@ -22,6 +22,14 @@ const { loadPyodide } = require('pyodide');
 const ENGINE_DIR = path.resolve(__dirname, '../../src/pyodide/engine');
 const ROOT = '/flowfile_engine';
 
+// Source the expr-transformer pin from src/ so this test can never drift from the app.
+const EXPR_TRANSFORMER_PACKAGE = (() => {
+  const src = fs.readFileSync(path.resolve(__dirname, '../../src/composables/useFormulaTranslation.ts'), 'utf8');
+  const m = src.match(/EXPR_TRANSFORMER_PACKAGE\s*=\s*'([^']+)'/);
+  if (!m) throw new Error('could not read EXPR_TRANSFORMER_PACKAGE from useFormulaTranslation.ts');
+  return m[1];
+})();
+
 // Mirror flow-store.ts toPythonJson(): double-encode so json.loads(<literal>) works.
 const j = (o) => JSON.stringify(JSON.stringify(o));
 
@@ -235,7 +243,7 @@ execute_output(11, 10, json.loads(${j({ output_settings: { name: 'out.xlsx', fil
   // --- Formula + parity nodes (Phase 4) ---
   await run('micropip install polars-expr-transformer (pinned)', `
 import micropip
-await micropip.install(['polars-expr-transformer==0.5.6'])
+await micropip.install([${JSON.stringify(EXPR_TRANSFORMER_PACKAGE)}])
 `);
   const formulaRes = await run('execute_formula', `
 import json

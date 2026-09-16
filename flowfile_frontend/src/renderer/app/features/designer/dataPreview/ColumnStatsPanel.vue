@@ -7,7 +7,17 @@
   >
     <div class="csp-header">
       <span class="csp-title" :title="columnName">{{ columnName }}</span>
-      <span v-if="dataType" class="csp-dtype" :title="dataType">{{ dataType }}</span>
+      <span
+        v-if="dataType"
+        class="csp-dtype"
+        :class="{ 'csp-dtype--geometry': isGeometry }"
+        :title="isGeometry ? geometryTitle(dataType) : dataType"
+      >
+        <span v-if="isGeometry" class="csp-dtype__icon material-icons" aria-hidden="true">
+          {{ GEOMETRY_ICON }}
+        </span>
+        <span class="csp-dtype__text">{{ displayDataType(dataType) }}</span>
+      </span>
       <button class="csp-close" type="button" aria-label="Close" @click="emit('close')">
         <span class="material-icons" aria-hidden="true">close</span>
       </button>
@@ -104,7 +114,13 @@
 // columnQuality.ts. Placement is derived from the click-captured anchor rect
 // alone (placement.ts) — never measured — so the first paint is the final one.
 import { computed } from "vue";
-import type { FileColumn } from "../../../types/node.types";
+import type { FileColumn, SemanticType } from "../../../types/node.types";
+import {
+  GEOMETRY_ICON,
+  displayDataType,
+  geometryTitle,
+  isGeometryColumn,
+} from "../../../utils/geometry";
 import { PANEL_WIDTH, computePlacement } from "./placement";
 import {
   formatCount,
@@ -119,6 +135,7 @@ import {
 const props = defineProps<{
   columnName: string;
   dataType?: string;
+  semanticType?: SemanticType | null;
   stats: FileColumn | null;
   loading: boolean;
   errorKind: "not-run" | "error" | null;
@@ -128,6 +145,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ close: []; retry: [] }>();
+
+const isGeometry = computed(() => isGeometryColumn({ semantic_type: props.semanticType }));
 
 const badges = computed(() => (props.stats ? qualityBadges(props.stats) : []));
 const nullPct = computed(() => (props.stats ? pctNull(props.stats) : null));
@@ -192,17 +211,34 @@ const panelStyle = computed<Record<string, string>>(() => {
 .csp-dtype {
   /* Polars types get long (Datetime(time_unit='us', time_zone='UTC')); an
      unshrinkable pill pushed the header past the panel edge. */
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   flex-shrink: 1;
   min-width: 0;
   max-width: 45%;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   padding: 1px 6px;
   border-radius: 4px;
   background: var(--color-background-secondary);
   color: var(--color-text-secondary);
   font-size: 10px;
+}
+
+.csp-dtype__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.csp-dtype--geometry {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent-dark);
+}
+
+.csp-dtype__icon {
+  font-size: 11px;
+  flex-shrink: 0;
 }
 
 .csp-close {

@@ -7,7 +7,6 @@ import polars as pl
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import AVAILABLE_RAM
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
-from flowfile_core.utils.utils import standardize_col_dtype
 from shared.excel_writer import write_excel_output
 
 
@@ -161,22 +160,6 @@ def local_write_output(
             write_mode=write_mode,
             compression=compression,
         )
-
-
-def create_pl_df_type_save(raw_data: Iterable[Iterable], orient: str = "row") -> pl.DataFrame:
-    """
-        orient : {'col', 'row'}, default None
-        Whether to interpret two-dimensional data as columns or as rows. If None,
-        the orientation is inferred by matching the columns and data dimensions. If
-        this does not yield conclusive results, column orientation is used.
-    :param raw_data: iterables with values
-    :param orient:
-    :return: polars dataframe
-    """
-    if orient == "row":
-        raw_data = zip(*raw_data, strict=False)
-    raw_data = [standardize_col_dtype(values) for values in raw_data]
-    return pl.DataFrame(raw_data, orient="col")
 
 
 def find_first_positions(lst: list[str]) -> dict[str, int]:

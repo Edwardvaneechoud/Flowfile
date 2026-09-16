@@ -41,6 +41,15 @@ class TextInputState(_ComponentBase):
     placeholder: str | None = None
 
 
+class FilePickerState(_ComponentBase):
+    component_type: Literal["FilePicker"] = "FilePicker"
+    default: str | None = None
+    placeholder: str | None = None
+    mode: Literal["open", "create"] = "open"
+    file_types: list[str] = []
+    allow_directory: bool = False
+
+
 class NumericInputState(_ComponentBase):
     component_type: Literal["NumericInput"] = "NumericInput"
     default: float | None = None
@@ -109,6 +118,7 @@ class ColumnActionInputState(_ComponentBase):
 
 ComponentState = Annotated[
     TextInputState
+    | FilePickerState
     | NumericInputState
     | SliderInputState
     | ToggleSwitchState

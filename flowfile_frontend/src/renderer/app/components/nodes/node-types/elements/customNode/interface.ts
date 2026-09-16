@@ -17,6 +17,14 @@ export interface TextInputComponent extends BaseComponent {
   placeholder?: string;
 }
 
+export interface FilePickerComponent extends BaseComponent {
+  component_type: "FilePicker";
+  placeholder?: string;
+  mode?: "open" | "create";
+  file_types?: string[];
+  allow_directory?: boolean;
+}
+
 // Marker for artifact-populated selects; scope/type_filter omitted at defaults.
 export interface AvailableArtifactsMarker {
   __type__: "AvailableArtifacts";
@@ -135,6 +143,7 @@ export interface SettingsSchema {
 
 export type UIComponent =
   | TextInputComponent
+  | FilePickerComponent
   | MultiSelectComponent
   | ToggleSwitchComponent
   | NumericInputComponent

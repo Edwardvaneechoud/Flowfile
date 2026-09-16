@@ -38,6 +38,13 @@
           @update:model-value="setValue(sectionKey.toString(), componentKey.toString(), $event)"
         />
 
+        <FilePicker
+          v-else-if="component.component_type === 'FilePicker'"
+          :model-value="formData[sectionKey]?.[componentKey]"
+          :schema="component"
+          @update:model-value="setValue(sectionKey.toString(), componentKey.toString(), $event)"
+        />
+
         <NumericInput
           v-else-if="component.component_type === 'NumericInput'"
           :model-value="formData[sectionKey]?.[componentKey]"
@@ -130,6 +137,7 @@ import type { FileColumn } from "../../../baseNode/nodeInterfaces";
 import MultiSelect from "./components/MultiSelect.vue";
 import ToggleSwitch from "./components/ToggleSwitch.vue";
 import TextInput from "./components/TextInput.vue";
+import FilePicker from "./components/FilePicker.vue";
 import NumericInput from "./components/NumericInput.vue";
 import SliderInput from "./components/SliderInput.vue";
 import SingleSelect from "./components/SingleSelect.vue";

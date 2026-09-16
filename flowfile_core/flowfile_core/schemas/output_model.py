@@ -1,10 +1,15 @@
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
+from datetime import time as time_of_day
+from decimal import Decimal
+from enum import Enum
 from typing import Any, Literal
+from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup, SemanticType
+from shared.delta_utils import format_binary_preview
 
 
 class NodeResult(BaseModel):
@@ -63,11 +68,17 @@ class FileColumn(BaseModel):
     The statistics fields are None until they are actually computed — either
     never (plain schema previews) or exactly, on demand, via the column-stats
     endpoint writing into the node's ``FlowfileColumn``.
+
+    ``semantic_type`` says what the values mean beyond their storage dtype
+    (``data_type`` stays the castable truth). It is derived from a declared
+    dtype only — today a GeoArrow extension — never from sampled values, so
+    the frontend can label every surface from this one field.
     """
 
     name: str
     data_type: str
     data_type_group: ReadableDataTypeGroup = "Other"
+    semantic_type: SemanticType | None = None
     is_unique: bool = False
     max_value: str | None = None
     min_value: str | None = None
@@ -76,6 +87,57 @@ class FileColumn(BaseModel):
     number_of_filled_values: int | None = None
     number_of_unique_values: int | None = None
     size: int | None = None
+
+
+# Coerce by value, not dtype: pl.Object reports group "Other", so a dtype guard misses it.
+_JSON_NATIVE = bool | int | float | str
+_MAX_NESTING = 32
+_MAX_OBJECT_CHARS = 1000
+
+
+def _object_repr(value: Any) -> str:
+    """str() of an arbitrary pl.Object payload: never raises, never unbounded."""
+    try:
+        text = str(value)
+    except Exception:
+        return f"<unrepresentable {type(value).__name__}>"
+    if len(text) <= _MAX_OBJECT_CHARS:
+        return text
+    return f"{text[:_MAX_OBJECT_CHARS]}\u2026 ({len(text)} chars)"
+
+
+def _key_repr(key: Any) -> str:
+    if isinstance(key, str):
+        return key
+    if isinstance(key, bytes | bytearray | memoryview):
+        return format_binary_preview(key)
+    return _object_repr(key)
+
+
+def make_preview_cell_json_safe(value: Any, _depth: int = 0) -> Any:
+    """Coerce one preview cell to a JSON-serializable value, recursing into containers.
+
+    Lists and structs are preserved as lists/dicts so the frontend keeps rendering
+    them as JSON; only genuinely unserializable leaves are replaced. A pl.Object
+    cell can hold anything Python can build, so the fallback must not raise
+    (one bad cell used to hide every column) and nesting is bounded so a
+    self-referential or absurdly deep object cannot recurse forever.
+    """
+    if value is None or isinstance(value, _JSON_NATIVE):
+        return value
+    if isinstance(value, bytes | bytearray | memoryview):
+        return format_binary_preview(value)
+    if _depth >= _MAX_NESTING:
+        return "<nested too deep>"
+    if isinstance(value, dict):
+        return {_key_repr(k): make_preview_cell_json_safe(v, _depth + 1) for k, v in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [make_preview_cell_json_safe(v, _depth + 1) for v in value]
+    if isinstance(value, Enum):
+        return make_preview_cell_json_safe(value.value, _depth + 1)
+    if isinstance(value, datetime | date | time_of_day | timedelta | Decimal | UUID):
+        return value
+    return _object_repr(value)
 
 
 class TableExample(BaseModel):
@@ -94,6 +156,13 @@ class TableExample(BaseModel):
     data: list[dict] | None = None
     has_example_data: bool = False
     has_run_with_current_setup: bool = False
+
+    @field_validator("data")
+    @classmethod
+    def _sanitize_preview_rows(cls, rows: list[dict] | None) -> list[dict] | None:
+        if not rows:
+            return rows
+        return [{k: make_preview_cell_json_safe(v) for k, v in row.items()} for row in rows]
 
 
 class NodeInputNameInfo(BaseModel):

@@ -29,10 +29,28 @@ NO_VERSIONS_HASH = "noversions"
 # JSON serialisation helpers
 
 
+BINARY_PREVIEW_BYTES = 16
+
+
+def format_binary_preview(raw: bytes | bytearray | memoryview) -> str:
+    """Render bytes as GIS-conventional uppercase hex, truncated with a byte count.
+
+    The one encoding every preview surface uses for a binary cell or bound
+    (node data previews, column stats, catalog previews), so the same WKB blob
+    never shows up as ``0x…`` in one place and ``b'…'`` in another.
+    """
+    head = bytes(raw[:BINARY_PREVIEW_BYTES]).hex().upper()
+    if len(raw) <= BINARY_PREVIEW_BYTES:
+        return f"0x{head}"
+    return f"0x{head}\u2026 ({len(raw)} bytes)"
+
+
 def make_json_safe(val: object) -> object:
     """Coerce *val* to a JSON-native Python type."""
     if val is None or isinstance(val, bool | int | float | str):
         return val
+    if isinstance(val, bytes | bytearray | memoryview):
+        return format_binary_preview(val)
     return str(val)
 
 

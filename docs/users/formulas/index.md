@@ -16,7 +16,7 @@ Every formula compiles to a native [Polars](https://pola.rs) expression before i
 | [Formula node](../visual-editor/nodes/transform.md#formula) | Create or replace a column with a formula. |
 | [Multi-Field Formula node](../visual-editor/nodes/transform.md#multi-field-formula) | Apply one formula to many columns at once; `[_CurrentField_]`, `[_CurrentFieldName_]` and `[_CurrentFieldType_]` bind to each selected column. |
 | [Filter node](../visual-editor/nodes/transform.md#filter-data) (advanced mode) | Keep rows where a formula evaluates to `true`; split mode routes passing and failing rows to separate outputs. |
-| [Python API](../python-api/concepts/formulas.md) | Pass formula strings to `with_columns(flowfile_formulas=...)`, `multi_field_formula(formula, ...)`, `filter(flowfile_formula=...)`, and `filter_split(flowfile_formula=...)`. |
+| [Python API](../python-api/concepts/formulas.md) | Pass formula strings to `with_columns(flowfile_formulas=...)`, `multi_field_formula(formula, ...)`, `filter(flowfile_formula=...)`, and `filter_split(flowfile_formula=...)`. Fluent expressions with a formula equivalent — `filter(ff.col("a") > 1)`, `ff.when(...)` chains, `is_in` — lower onto the same Filter and Formula nodes; see [which operations become which node](../python-api/concepts/design-concepts.md#which-operations-become-which-node). |
 
 ---
 
@@ -50,12 +50,21 @@ true   false
 | `=` `==` `!=` | Equality (`=` and `==` are equivalent) |
 | `>` `>=` `<` `<=` | Comparison |
 | `and` `or` | Boolean logic |
+| `not( )` | Boolean negation |
+| `in ( )` `not in ( )` | Membership in a list of literals |
 | `( )` | Grouping |
 
 Use parentheses to control evaluation order:
 
 ```text
 [price] * (1 - [discount])
+```
+
+Membership compares a value against a parenthesised, comma-separated list of literals:
+
+```text
+[team] in ("DS", "DE")
+[status] not in ("cancelled", "refunded")
 ```
 
 !!! warning "Use `and` / `or`, not `&&` / `||`"
@@ -73,7 +82,8 @@ else "C" endif
 
 ### Functions
 
-There are 95 built-in functions for logic, strings, math, dates, and type conversion — see the [function reference](functions.md). Calls can be nested.
+--8<-- "docs/users/formulas/function_summary.snippet:total"
+Calls can be nested.
 
 ```text
 uppercase(left([last_name], 3))
@@ -114,17 +124,21 @@ concat(titlecase([first_name]), " ", titlecase([last_name]))
 date_diff_days(today(), [hire_date])
 ```
 
+Replace an email with a stable fingerprint so rows can still be grouped and joined, and encode a field for transport:
+
+```text
+sha256([email])
+```
+
+```text
+base64_encode([notes])
+```
+
 ---
 
 ## Function reference
 
-| Category | Functions | Examples |
-|----------|-----------|----------|
-| [Logic & Nulls](functions.md#logic-nulls) | 13 | `coalesce`, `ifnull`, `between`, `is_empty` |
-| [String](functions.md#string) | 23 | `concat`, `uppercase`, `trim`, `replace`, `split` |
-| [Math](functions.md#math) | 23 | `round`, `abs`, `floor`, `power`, `log` |
-| [Date & Time](functions.md#date-time) | 28 | `year`, `add_days`, `date_diff_days`, `format_date` |
-| [Type Conversion](functions.md#type-conversion) | 8 | `to_string`, `to_integer`, `to_date`, `to_boolean` |
+--8<-- "docs/users/formulas/function_summary.snippet:table"
 
 ---
 

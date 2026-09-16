@@ -182,7 +182,7 @@ def _build_window_expr(
             expr = expr.fill_null(0)
         return over(expr).alias(w.new_column_name)
 
-    if func.startswith("cum_"):
+    if func.startswith("cum_") or transform_schemas.is_aggregate_window_function(func):
         expr = getattr(pl.col(w.column), func)()
         return over(expr).alias(w.new_column_name)
 
@@ -1061,7 +1061,7 @@ class FlowDataEngine:
     def do_window_functions(
         self, settings: transform_schemas.WindowFunctionsInput, calculate_schema_stats: bool = False
     ) -> FlowDataEngine:
-        """Applies window functions (rolling, cumulative, rank, tile) to the data.
+        """Applies window functions (rolling, cumulative, rank, tile, partition aggregates) to the data.
 
         When ``settings.order_by`` is provided, rows are sorted first so that
         rolling and tile operations have a deterministic order; the sort is
@@ -1119,7 +1119,8 @@ class FlowDataEngine:
             if transform.data_type is not None
         )
 
-        actual_transforms = [c for c in idx_mapping if c[2] != dtypes[c[1]]]
+        # Compare base types: an Extension instance never equals its own class.
+        actual_transforms = [c for c in idx_mapping if c[2].base_type() != dtypes[c[1]]]
         transformations = [
             utils.define_pl_col_transformation(
                 col_name=transform[0], col_type=transform[2], source_type=dtypes[transform[1]]
@@ -1248,7 +1249,7 @@ class FlowDataEngine:
         return cls(df, schema=schema, calculate_schema_stats=False, number_of_records=0)
 
     @classmethod
-    def create_from_path(cls, received_table: input_schema.ReceivedTable) -> FlowDataEngine:
+    def create_from_path(cls, received_table: input_schema.ReceivedTable, node_logger=None) -> FlowDataEngine:
         """Creates a FlowDataEngine from a local file path.
 
         Supports various file types like CSV, Parquet, and Excel.
@@ -1256,6 +1257,7 @@ class FlowDataEngine:
         Args:
             received_table: A `ReceivedTableBase` object containing the file path
                 and format details.
+            node_logger: Optional node logger, so a reader can report into the flow log.
 
         Returns:
             A new `FlowDataEngine` instance with data from the file.
@@ -1280,7 +1282,9 @@ class FlowDataEngine:
         if not handler:
             raise Exception(f"Cannot create from {received_table.file_type}")
 
-        flow_file = cls(handler(received_table))
+        # Only the excel reader reports which engine it used; the rest take the table alone.
+        extra = {"logger": node_logger} if received_table.file_type == "excel" else {}
+        flow_file = cls(handler(received_table, **extra))
         if received_table.file_type == "parquet":
             count = create_funcs.parquet_row_count(received_table)
             if count is not None:
@@ -3075,8 +3079,10 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance with unique rows.
         """
-        if unique_input is None or unique_input.columns is None:
+        if unique_input is None:
             return FlowDataEngine(self.data_frame.unique())
+        if not unique_input.columns:
+            return FlowDataEngine(self.data_frame.unique(keep=unique_input.strategy))
         return FlowDataEngine(self.data_frame.unique(unique_input.columns, keep=unique_input.strategy))
 
     def concat(self, other: Iterable[FlowDataEngine] | FlowDataEngine) -> FlowDataEngine:

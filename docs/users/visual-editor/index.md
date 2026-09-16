@@ -7,7 +7,7 @@ Build data pipelines by dragging nodes onto a canvas and connecting them — no 
 
 ## Three concepts
 
-- **Nodes** — operations, grouped into six palette categories: [Input](nodes/input.md), [Transform](nodes/transform.md), [Combine](nodes/combine.md), [Aggregate](nodes/aggregate.md), [Output](nodes/output.md), and [Machine Learning](nodes/ml.md).
+- **Nodes** — one data action each, grouped into the six palette categories: [Input Sources](nodes/input.md), [Transformations](nodes/transform.md), [Combine Operations](nodes/combine.md), [Aggregations](nodes/aggregate.md), [Machine Learning](nodes/ml.md) and [Output Operations](nodes/output.md). [Data Actions](nodes/index.md) lists all 48 in one table.
 - **Connections** — drag between node handles to define how data flows, left to right.
 - **Execution modes** — **Development** materializes every node so you can preview all intermediate data; **Performance** executes only what outputs need, with query optimization across nodes.
 
@@ -29,11 +29,11 @@ If you haven't built a flow yet, the [Quickstart](../../quickstart.md#your-first
 
     The Excel-like expression language used in Formula and Filter nodes.
 
--   :material-graph-outline: **[Node Reference](nodes/index.md)**
+-   :material-graph-outline: **[Data Actions](nodes/index.md)**
 
     ---
 
-    Every node, per category, with configuration tables.
+    Every action Flowfile can perform on your data, A to Z, with a lookup by what you want to do.
 
 -   :material-language-python: **[Sandboxed Python](kernels.md)**
 

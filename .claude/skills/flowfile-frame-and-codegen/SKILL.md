@@ -82,7 +82,7 @@ for n in out.flow_graph.nodes:
 ```
 ```
 1 manual_input NodeManualInput
-2 polars_code  NodePolarsCode      # filter — Expr predicates are never native (see 3d)
+2 filter       NodeFilter          # filter — the predicate's formula form lowers onto the Filter node (see 3d)
 4 formula      NodeFormula         # with_columns via _ff_repr, one native node per expr
 5 select       NodeSelect
 6 sort         NodeSort
@@ -115,7 +115,7 @@ Node id `3` never appears — `with_columns` burned an id internally before dele
 - `.agg(...)` tries to convert every aggregation to a native `transform_schema.AggColl` row (`agg="groupby"` for the grouping keys). Conversion requires `maintain_order=False`, no complex expressions, no `Selector`s, and every `agg_func` in the fixed set `_NATIVE_AGG_FUNCS = {sum, max, mean, median, min, count, n_unique, first, last, std, var, concat}` (`group_frame.py:20`). Named aggs also accept `name=("col", "aggstr")` tuples. Success → `NodeGroupBy`; anything outside the set → polars-code `input_df.group_by([...], maintain_order=…).agg(...)`.
 - Direct `.sum()/.mean()/.median()` generate `…agg(cs.numeric().sum())` and aggregate **numeric columns only** — a deliberate deviation from Polars' `GroupBy.sum()`, which aggregates everything it can (`_NUMERIC_ONLY_METHODS`, `group_frame.py:235`). `.len()/.count()/.head()/.tail()/.first()/.last()/.min()/.max()` map straight to `.group_by(...).method(...)`.
 
-Also note `filter` (`flow_frame.py:1129`): predicate-based filtering is **never native** — any `Expr` predicate always emits a polars-code `input_df.filter(...)` node. The **only** native filter path is the `flowfile_formula: str` kwarg, which builds a `NodeFilter(advanced)`. Verified by reading `filter`'s body: the predicate branch (len(predicates) > 0 or constraints) unconditionally calls `self._add_polars_code(...)`.
+Also note `filter`: when every predicate (and `**constraints` equality) has an `_ff_repr` — comparisons, `&`/`|`/`~`, `is_in`, `is_null`, the mapped `.str`/`.dt` helpers — the predicates are joined with `and`, checked with `_formula_parses`, and emitted as a native `NodeFilter(advanced)` whose expression is that formula (the `flowfile_formula: str` kwarg is always native). Lambdas, unmapped methods, or a formula core cannot parse fall back to a polars-code `input_df.filter(...)` node. `filter_split` builds its predicate the same way but raises `ValueError` when no formula form exists — the engine turns an unparseable `advanced_filter` into "keep nothing" with only a warning, and a two-output node has no Polars-code fallback. `drop` is hand-written too: plain names lower onto `NodeSelect` with `keep=False` (see §9).
 
 ---
 
@@ -130,7 +130,7 @@ Every `Expr` carries **two parallel representations plus metadata** (`expr.py:42
 
 ### Subclasses & namespaces
 - `Column(Expr)` — `pl.col(name)` plus a `transform_schema.SelectInput`; `.alias()`/`.cast()` return new `Column`s with `is_altered`/`data_type_change` flags so `select`/`sort`/`unique` can stay native when nothing structural changed.
-- `When(Expr)` — `when().then()` mutate in place; `.otherwise()` returns a plain `Expr` carrying the full `pl.when(...).then(...).otherwise(...)` repr.
+- `When(Expr)` — `when().then()` mutate in place; `.otherwise()` returns a plain `Expr` carrying the full `pl.when(...).then(...).otherwise(...)` repr **and** an `if c1 then v1 elseif c2 then v2 else v endif` `_ff_repr` when every branch has one (a chain without `otherwise` renders `else null`), which is what lets `with_columns` lower a fluent `when` onto a Formula node.
 - `.str` → `StringMethods`, `.dt` → `DateTimeMethods` (hand-written), `.list` → `ExprListNameSpace`, `.name` → `ExprNameNameSpace`.
 - `lit(value)` uses `pl.lit(value, allow_object=True)` and `repr(value)`; module-level `@agg_function`-decorated functions (`max/min/first/last/mean/count/implode/explode/sum/corr/cov`) render as `pl.sum('a')`-style calls and set `agg_func`.
 
@@ -138,7 +138,7 @@ Every `Expr` carries **two parallel representations plus metadata** (`expr.py:42
 - **`add_expr_methods(Expr)`**, invoked at `expr.py:1403` (module import time). For every callable on `pl.Expr` not already defined on `Expr` and not a dunder/property, it installs a wrapper (`adding_expr.py`) that calls the real Polars method for schema/error-checking (failures set `result_expr=None` and log at debug level, not raise), classifies the call via hard-coded `agg_methods`/`complex_methods` sets, and appends it to `_repr_str`. `PASSTHROUGH_METHODS = {"map_elements", "map_batches"}` (`adding_expr.py:16`) get callable-source extraction; an unresolvable callable sets `convertable_to_code=False` with a logged warning.
 - **`@add_lazyframe_methods`** on `FlowFrame` (`lazy_methods.py:136`, applied at `flow_frame.py` class definition). Explicitly hand-defined methods always win over the injected ones. Injected `pl.LazyFrame` methods split in two:
   - `PASSTHROUGH_METHODS` (`lazy_methods.py:9-26`) — `collect, collect_async, profile, describe, explain, show_graph, fetch, collect_schema, columns, dtypes, schema, width, estimated_size, n_chunks, is_empty, chunk_lengths, get_meta` — delegate **straight to `self.data`, no node added**. Calling `describe()` really executes on the underlying `LazyFrame` right there.
-  - Everything else → a generic wrapper emitting `output_df = input_df.<method>(<repr'd args>)` as a polars-code node (verified: `df.drop("y")` → `output_df = input_df.drop('y')`). Every injected method also gains an extra `description: str | None` kwarg.
+  - Everything else → a generic wrapper emitting `output_df = input_df.<method>(<repr'd args>)` as a polars-code node (verified: `df.tail(2)` → `output_df = input_df.tail(2)`; `drop` used to be one of these but is now hand-written). Every injected method also gains an extra `description: str | None` kwarg.
   - `lazy_methods.py:108-110`: if any argument has `convertable_to_code=False`, the wrapper short-circuits into a *new source frame* built from the eagerly-computed result — graph lineage is severed at that point (a genuine edge case, not exercised in the test suite as of this writing).
 
 ### Lambda / function source extraction (`flowfile_frame/flowfile_frame/callable_utils.py`)
@@ -231,7 +231,8 @@ All of these persist through `flowfile_core`'s storage layer (the shared SQLite 
 | Operation | Native-node condition | Fallback |
 |---|---|---|
 | `select` | strings + (aliased/cast) `Column`s only | polars-code `input_df.select([...])` |
-| `filter(*predicates)` | **never native** for `Expr` predicates | `flowfile_formula=` kwarg → native `NodeFilter(advanced)` |
+| `filter(*predicates, **constraints)` | every predicate has a formula form (`_ff_repr`) and the `and`-joined formula parses → `NodeFilter(advanced)`; `flowfile_formula=` always native | polars-code `input_df.filter(...)` for lambdas, unmapped methods, or unparseable formulas |
+| `drop` | plain names / unaltered `Column`s (a missing name only with `strict=False`) → `NodeSelect` with those columns `keep=False`, `keep_missing=True` | polars-code for selectors or a missing name under `strict=True` |
 | `sort` | plain columns, no `nulls_last`/`maintain_order`, `multithreaded=True` | polars-code |
 | `join` | equality joins, default suffix, no `validate`/`nulls_equal`/`coalesce`/`maintain_order`; `how="cross"` always native | polars-code join |
 | `group_by().agg` | simple exprs, aggs in the fixed `_NATIVE_AGG_FUNCS` set, no `maintain_order`/`Selector` | polars-code |
@@ -239,11 +240,11 @@ All of these persist through `flowfile_core`'s storage layer (the shared SQLite 
 | `unpivot` | plain columns, default variable/value names | polars-code |
 | `unique` | string/unaltered-`Column` subset, no `maintain_order` | polars-code |
 | `concat` | **only** `how="diagonal_relaxed"` + parallel + `!rechunk` + no duplicate sources → `NodeUnion(mode="relaxed")` | default `how="vertical"` goes to polars-code `pl.concat([...])` |
-| `with_columns` | every expr `_ff_repr`-convertible → chain of native `NodeFormula` nodes (one per expr); `flowfile_formulas=` kwarg can also auto-upgrade via `polars_expr_transformer.to_flowframe_code` (≥0.5.4) | polars-code `input_df.with_columns([...])` |
+| `with_columns` | every expr `_ff_repr`-convertible **and parseable by core** → chain of native `NodeFormula` nodes (one per expr) — this includes `when().then()…otherwise()` chains (→ `if/elseif/else/endif`), `is_in` (→ `in (...)`) and `~` (→ `not(...)`); `flowfile_formulas=` kwarg can also auto-upgrade via `polars_expr_transformer.to_flowframe_code` (≥0.5.4) | polars-code `input_df.with_columns([...])` |
 | `with_row_index` | `name == "record_id"`, or (`offset == 1` and `name != "index"`) → `NodeRecordId`; also detects `cum_count().over(...)` patterns | polars-code |
 | `head`/`limit` | `NodeSample`, always | — |
 | `rename` | implemented via `select(..., _keep_missing=True)` | — |
-| everything else on `pl.LazyFrame` (`drop`, `tail`, `slice`, `shift`, `reverse`, `fill_null`, `quantile`, …) | injected generic wrapper → polars-code | passthroughs (§5) add no node at all |
+| everything else on `pl.LazyFrame` (`tail`, `slice`, `shift`, `reverse`, `fill_null`, `quantile`, …) | injected generic wrapper → polars-code | passthroughs (§5) add no node at all |
 
 **Flowfile-only extensions with no Polars equivalent:** `filter_split` (→ `(pass, fail)` frames on output handles 0/1), `random_split(splits, seed)` (→ N frames), the ML verbs `train_model`/`apply_model`/`evaluate_model`/`wait_for`, `fuzzy_join`, `text_to_rows`, `solve_graph` (graph connected-components), `dynamic_rename` (prefix/suffix/formula/first-row renaming), the visual-grouping context manager `with df.group("name"):` + `set_group` (organizational only, no data effect), `write_catalog_table`, the cloud/DB writers, `to_graph`/`save_graph`.
 

@@ -1552,7 +1552,10 @@ class FlowNode:
                 self.results.errors = "Error with creating the lazy frame, most likely due to invalid graph"
                 raise RemoteExecutionError("get_resulting_data returned None")
         except Exception as e:
-            self.results.errors = "Error with creating the lazy frame, most likely due to invalid graph"
+            # A cancelled node is not a broken one: the executor reclassifies this as a
+            # clean cancel, so don't leave a misleading "invalid graph" on the result.
+            if not self._execution_state.is_canceled:
+                self.results.errors = "Error with creating the lazy frame, most likely due to invalid graph"
             raise e
 
         if not performance_mode:

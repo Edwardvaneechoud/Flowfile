@@ -130,41 +130,11 @@ FUNCTION_MAP: dict[str, FunctionSpec] = {
     # type conversion
     "tonumber": _spec("ToNumber", "to_number", 1),
     "tostring": _spec("ToString", "to_string", 1),
-    # hashing / encoding
-    "md5_ascii": FunctionSpec(
-        "MD5_ASCII",
-        "md5",
-        1,
-        1,
-        caveat=(
-            "Alteryx's MD5_ASCII() hashes the ASCII bytes of its input and Flowfile's md5() hashes the "
-            "UTF-8 bytes. Those are the same bytes for ASCII text and different ones for anything else, "
-            "so a value with an accent, a currency sign or an emoji in it hashes to a different digest "
-            "in the two tools."
-        ),
-    ),
-    "base64encode": FunctionSpec(
-        "Base64Encode",
-        "base64_encode",
-        1,
-        1,
-        caveat=(
-            "Flowfile's base64_encode() encodes the UTF-8 bytes of its input. Which bytes Alteryx's "
-            "Base64Encode() encodes is not stated in any workflow here and no corpus tool uses it, so "
-            "check a non-ASCII value against Designer before trusting this column."
-        ),
-    ),
-    "base64decode": FunctionSpec(
-        "Base64Decode",
-        "base64_decode",
-        1,
-        1,
-        caveat=(
-            "Flowfile's base64_decode() reads the decoded bytes back as UTF-8 and yields null when they "
-            "are not valid UTF-8. Which encoding Alteryx's Base64Decode() assumes is not stated in any "
-            "workflow here and no corpus tool uses it, so check a non-ASCII value against Designer."
-        ),
-    ),
+    # hashing; md5() hashes UTF-8 bytes, so only Alteryx's UTF8 variant produces the same digest
+    "md5_utf8": _spec("MD5_UTF8", "md5", 1),
+    # base64 over the UTF-8 bytes of the text, both directions; identical for ASCII under any encoding
+    "base64encode": _spec("Base64Encode", "base64_encode", 1),
+    "base64decode": _spec("Base64Decode", "base64_decode", 1),
     # math
     "abs": _spec("Abs", "abs", 1),
     "ceil": _spec("Ceil", "ceil", 1),
@@ -218,9 +188,13 @@ REJECTED_FUNCTIONS: dict[str, str] = {
     "spellnumber": "SpellNumber() has no Flowfile formula equivalent",
     "randint": "RandInt() is non-deterministic and has no verified Flowfile equivalent",
     "rand": "Rand() is non-deterministic and has no verified Flowfile equivalent",
+    "md5_ascii": (
+        "MD5_ASCII() hashes the ASCII bytes of the text while Flowfile's md5() hashes UTF-8 bytes; "
+        "the digests differ for any non-ASCII character, so use MD5_UTF8() instead"
+    ),
     "md5_unicode": (
-        "MD5_Unicode() hashes UTF-16LE bytes and Flowfile's md5() hashes UTF-8 bytes, which is a "
-        "different digest for every input longer than nothing (use MD5_ASCII() for ASCII text)"
+        "MD5_UNICODE() hashes the UTF-16LE bytes of the text while Flowfile's md5() hashes UTF-8 bytes; "
+        "the digests never match, so use MD5_UTF8() instead"
     ),
 }
 
