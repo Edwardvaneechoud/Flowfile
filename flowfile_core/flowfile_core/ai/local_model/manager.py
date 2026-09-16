@@ -25,7 +25,7 @@ from shared.storage_config import storage
 
 logger = logging.getLogger(__name__)
 
-# in the catalog below.
+# The GGUF wire format is stable, so one pinned server build serves every model below.
 LLAMACPP_REPO = "ggml-org/llama.cpp"
 LLAMACPP_BUILD = "b9305"
 
