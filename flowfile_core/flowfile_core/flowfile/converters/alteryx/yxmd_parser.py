@@ -91,14 +91,17 @@ def _tool_id(value: str | None, where: str, at: str = "") -> int:
     every other spelling are refused, because Alteryx numbers tools from one and anything else is a
     claim about identity this parser will not guess at.
 
-    An absent attribute is refused on the same ground, at a node and at both ends of a wire: an
-    identity the parser cannot read is the same claim however it fails to read it, and dropping the
-    node silently took every wire naming it along with it. Every one of the 3610 ``<Node>`` elements
-    this parser visits across the 137 corpus files carries a ToolID, the 632 inside ``<ChildNodes>``
-    included, so a canvas node without one is not a shape Designer writes. The six that have none
-    (three in each of `07 Reporting/Report_Header.yxmd` and `Report_Footer.yxmd`) are
-    ``LayoutFields/Layout`` configuration inside a tool's ``<Properties>``, which ``_collect_tools``
-    never descends into.
+    An absent attribute is refused on the same ground, at a node, at a tool container and at both
+    ends of a wire: an identity the parser cannot read is the same claim however it fails to read
+    it, and dropping the node silently took every wire naming it along with it. A container used to
+    be the exception — ``_collect_tools`` skipped it before this ran — so an id-less one vanished
+    while an id-less canvas tool was refused.
+
+    Every one of the 3610 ``<Node>`` elements this parser visits across the 137 corpus files carries
+    a ToolID: the 632 inside ``<ChildNodes>`` and the 120 containers included, so a node without one
+    is not a shape Designer writes. The six ``<Node>`` elements in the corpus that have none (three
+    in each of `07 Reporting/Report_Header.yxmd` and `Report_Footer.yxmd`) are inside a tool's own
+    ``Properties/Configuration/LayoutFields/Layout``, which ``_collect_tools`` never descends into.
     """
     if value is None:
         raise YxmdParseError(f"{where} is absent{at}.")
@@ -181,6 +184,10 @@ def _collect_tools(
         plugin = gui_settings.get("Plugin", "") if gui_settings is not None else ""
         child_nodes = node.find("ChildNodes")
         if child_nodes is not None or plugin.endswith(CONTAINER_SUFFIX):
+            # A container carries no tool of its own but is still a node a wire can name, and it is
+            # refused for an unreadable ToolID on the same ground as a canvas tool: dropping it
+            # silently is how the id-less case became invisible everywhere except a canvas tool.
+            _tool_id(node.get("ToolID"), "A tool container's ToolID", at)
             if child_nodes is not None:
                 position = _collect_tools(child_nodes, tools, text_boxes, position)
             continue
@@ -197,13 +204,14 @@ def _parse_connections(root: ET.Element) -> list[AlteryxConnection]:
     holder = root.find("Connections")
     if holder is None:
         return connections
-    for connection in holder.findall("Connection"):
+    for position, connection in enumerate(holder.findall("Connection")):
+        at = f" (the <Connection> at document position {position})"
         origin = connection.find("Origin")
         destination = connection.find("Destination")
         if origin is None or destination is None:
             continue
-        origin_id = _tool_id(origin.get("ToolID"), "A connection's origin ToolID")
-        dest_id = _tool_id(destination.get("ToolID"), "A connection's destination ToolID")
+        origin_id = _tool_id(origin.get("ToolID"), "A connection's origin ToolID", at)
+        dest_id = _tool_id(destination.get("ToolID"), "A connection's destination ToolID", at)
         connections.append(
             AlteryxConnection(
                 origin_tool_id=origin_id,

@@ -399,6 +399,33 @@ def test_the_document_position_counts_every_node_the_parser_visits():
 
 
 @pytest.mark.parametrize(
+    "container",
+    [
+        '<Node><GuiSettings Plugin="AlteryxGuiToolkit.ToolContainer.ToolContainer" /></Node>',
+        '<Node><GuiSettings Plugin="AlteryxGuiToolkit.ToolContainer.ToolContainer" /><ChildNodes /></Node>',
+    ],
+    ids=["by_plugin", "by_child_nodes"],
+)
+def test_a_tool_container_without_a_tool_id_is_refused_like_a_tool(container: str):
+    """W6 pre-flight: `_collect_tools` skipped a container before `_tool_id` could look at it.
+
+    An id-less container was therefore dropped in silence while an id-less canvas tool beside it was
+    refused — two answers to one question. All 120 containers in the corpus carry a ToolID, so this
+    tolerates nothing real either way.
+    """
+    document = f"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" /></Node>
+    {container}
+  </Nodes>
+</AlteryxDocument>
+""".encode()
+    with pytest.raises(YxmdParseError, match=r"container's ToolID is absent \(the <Node> at document position 1\)"):
+        parse_yxmd(document)
+
+
+@pytest.mark.parametrize(
     ("end", "wire"),
     [
         ("origin", '<Origin /><Destination ToolID="2" />'),
@@ -409,4 +436,29 @@ def test_a_connection_end_without_a_tool_id_is_refused(end: str, wire: str):
     """A wire whose end has no name was dropped whole; an id nobody wrote is still an id nobody reads."""
     document = MINIMAL_WITHOUT_ANCHORS.replace(b'<Origin ToolID="1" /><Destination ToolID="2" />', wire.encode())
     with pytest.raises(YxmdParseError, match=f"{end} ToolID is absent"):
+        parse_yxmd(document)
+
+
+def test_a_connection_end_refusal_names_which_connection_it_was():
+    """The message said which end was absent but not which wire, so a file with many said nothing.
+
+    A node's refusal has carried its document position since W5.12; a wire's did not, and a
+    `<Connection>` has no other name to be called by.
+    """
+    document = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" /></Node>
+    <Node ToolID="2"><GuiSettings Plugin="AlteryxBasePluginsGui.Sort.Sort" /></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" /><Destination ToolID="2" /></Connection>
+    <Connection><Origin ToolID="1" /><Destination /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+    with pytest.raises(
+        YxmdParseError,
+        match=r"destination ToolID is absent \(the <Connection> at document position 1\)",
+    ):
         parse_yxmd(document)

@@ -16,6 +16,7 @@ import yaml
 from flowfile_core.flowfile.converters.alteryx.mappers import (
     DEFAULT_INPUT_ANCHOR,
     DEFAULT_OUTPUT_ANCHOR,
+    MAIN,
     POS_SCALE,
     RIGHT,
     EmitContext,
@@ -24,6 +25,8 @@ from flowfile_core.flowfile.converters.alteryx.mappers import (
     comment_text,
     full_input_message,
     get_mapper,
+    main_capacity,
+    multi_stream_read_message,
     rewrite_placeholder_bodies,
     tool_label,
     uncarried_wire_message,
@@ -160,6 +163,68 @@ def _report_both_ends(rows: dict[int, ToolReportRow], connection: AlteryxConnect
         _report_dropped_connection(rows.get(tool_id), message)
 
 
+def _resolved_origin(ctx: EmitContext, connection: AlteryxConnection) -> tuple[int, str] | None:
+    """The Flowfile (node, output handle) a wire leaves from, or ``None`` when it leaves from nowhere.
+
+    An anchor a mapper did not register falls back to the tool's default output — but not one it
+    declared empty. A Field Summary's rendered-report anchors carry data in Alteryx that Flowfile
+    cannot produce, and the fallback would hand their consumers the profile table instead: a wire
+    that looks connected and is answering a different question.
+    """
+    source = ctx.resolve_output(connection.origin_tool_id, connection.origin_anchor)
+    if source is None:
+        return None
+    origin = ctx.output_map.get(source)
+    if origin is None and source not in ctx.inactive_outputs:
+        origin = ctx.output_map.get((source[0], DEFAULT_OUTPUT_ANCHOR))
+    return origin
+
+
+def _main_anchor_targets(ctx: EmitContext, workflow: AlteryxWorkflow) -> dict[int, set[tuple[int, str]]]:
+    """Which Alteryx anchors really put a wire on each node's main slot.
+
+    The share :func:`accepts_another_input` gives an anchor is computed from this, so an anchor
+    that lays no edge must not appear: ``register_all_inputs`` registers the default ``Input`` on
+    every node whether or not anything arrives there, and counting those would shrink the share of
+    the anchors that are actually wired. Wires a no-op carries onward and anchors a mapper resolved
+    at import time are left out for the same reason — neither becomes an edge.
+
+    So is an anchor whose every wire leaves from nowhere: a Detour's dead side, an output the tool
+    declared empty, an ``<Origin>`` naming a ToolID that is not in ``<Nodes>``. Those wires reach
+    :func:`_wire` and are reported dropped, so reserving a port for the anchor they arrive on holds
+    it for a stream that never comes — and refuses the last port to the anchor that could use it.
+    The resolution is the same one :func:`_wire` performs, which is what keeps the two in step.
+    """
+    anchors: dict[int, set[tuple[int, str]]] = {}
+    for connection in workflow.connections:
+        if ctx.carries(connection):
+            continue
+        key = (connection.dest_tool_id, connection.dest_anchor)
+        if key in ctx.suppressed_inputs:
+            continue
+        if _resolved_origin(ctx, connection) is None:
+            continue
+        targets = ctx.input_map.get(key) or ctx.input_map.get((connection.dest_tool_id, DEFAULT_INPUT_ANCHOR))
+        for node_id, kind in targets or []:
+            if kind != RIGHT:
+                anchors.setdefault(node_id, set()).add(key)
+    return anchors
+
+
+def _starving_anchors(
+    main_anchors: dict[int, set[tuple[int, str]]],
+    anchor_wired: dict[tuple[int, str, int, str], int],
+    node_id: int,
+    anchor_key: tuple[int, str],
+) -> int:
+    """How many *other* Alteryx anchors on this node's main slot still hold no port at all."""
+    return sum(
+        1
+        for key in main_anchors.get(node_id, ())
+        if key != anchor_key and not anchor_wired.get((node_id, MAIN, *key), 0)
+    )
+
+
 def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolReportRow]) -> None:
     """Translate Alteryx wires into Flowfile edges via the anchor registries.
 
@@ -175,13 +240,19 @@ def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolRepor
     nodes — a Unique and its Dupes branch — and they have to agree about what reached them.
     Fullness is asked of the slot the wire resolves to, not of the node: a second wire onto a
     Join's right-hand anchor would overwrite the first silently, and two wires onto its left anchor
-    would fill both ports and leave the real right-hand wire reported as the dropped one.
+    would fill both ports and leave the real right-hand wire reported as the dropped one. The main
+    slot is asked per Alteryx anchor for the same reason — several anchors can register ``main`` on
+    one node, and one budget for all of them hands every port to whichever anchor document order
+    reached first.
     """
     nodes = {node.id: node for node in ctx.nodes}
     # nodes a mapper gave a right-hand slot, so their main slot is one port smaller than the template
     right_ports = {node_id for pairs in ctx.input_map.values() for node_id, kind in pairs if kind == RIGHT}
-    # (flowfile node id) -> the Alteryx tools already feeding it, so a refusal can name them
-    wired_from: dict[int, list[int]] = {}
+    main_anchors = _main_anchor_targets(ctx, workflow)
+    # (flowfile node id, slot) -> the (Alteryx tool, anchor) pairs already in that slot, to name them
+    wired_from: dict[tuple[int, str], list[tuple[int, str]]] = {}
+    # (flowfile node id, slot, dest tool, dest anchor) -> ports that anchor already holds in that slot
+    anchor_wired: dict[tuple[int, str, int, str], int] = {}
     seen: set[tuple[int, str, int, str]] = set()
     for connection in workflow.connections:
         if ctx.carries(connection):
@@ -195,12 +266,7 @@ def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolRepor
                 )
                 _report_both_ends(rows, connection, message)
             continue
-        source = ctx.resolve_output(connection.origin_tool_id, connection.origin_anchor)
-        origin = (
-            ctx.output_map.get(source) or ctx.output_map.get((source[0], DEFAULT_OUTPUT_ANCHOR))
-            if source is not None
-            else None
-        )
+        origin = _resolved_origin(ctx, connection)
         targets = ctx.input_map.get((connection.dest_tool_id, connection.dest_anchor)) or ctx.input_map.get(
             (connection.dest_tool_id, DEFAULT_INPUT_ANCHOR)
         )
@@ -225,13 +291,26 @@ def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolRepor
         for pair in targets:
             if (source_id, handle, *pair) not in seen and pair not in fresh:
                 fresh.append(pair)
+        anchor_key = (connection.dest_tool_id, connection.dest_anchor)
         full = [
-            target_id
+            (target_id, kind)
             for target_id, kind in fresh
-            if not accepts_another_input(nodes[target_id], kind, right_port=target_id in right_ports)
+            if not accepts_another_input(
+                nodes[target_id],
+                kind,
+                right_port=target_id in right_ports,
+                anchor_wired=anchor_wired.get((target_id, kind, *anchor_key), 0),
+                starving_anchors=_starving_anchors(main_anchors, anchor_wired, target_id, anchor_key),
+            )
         ]
         if full:
-            for target_id in full:
+            for target_id, kind in full:
+                held = wired_from.get((target_id, kind), [])
+                if kind == RIGHT:
+                    capacity, anchor_count = 1, 1
+                else:
+                    capacity = main_capacity(nodes[target_id], right_port=target_id in right_ports)
+                    anchor_count = len(main_anchors.get(target_id, ())) or 1
                 _report_both_ends(
                     rows,
                     connection,
@@ -239,7 +318,15 @@ def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolRepor
                         ctx.tools[connection.dest_tool_id],
                         connection,
                         nodes[target_id].type,
-                        wired_from.get(target_id, []),
+                        held,
+                        slot=kind,
+                        capacity=capacity,
+                        anchor_count=anchor_count,
+                        starving_anchors=_starving_anchors(main_anchors, anchor_wired, target_id, anchor_key),
+                        # A Union upstream only answers the Alteryx shape: more streams on this one
+                        # anchor than the slot holds. When another anchor holds the ports, merging
+                        # them is precisely what the workflow did not ask for.
+                        own_anchor_full=bool(held) and all(anchor == connection.dest_anchor for _, anchor in held),
                     ),
                 )
             continue
@@ -250,7 +337,9 @@ def _wire(ctx: EmitContext, workflow: AlteryxWorkflow, rows: dict[int, ToolRepor
                 target.right_input_id = source_id
             else:
                 target.input_ids.append(source_id)
-            wired_from.setdefault(target_id, []).append(connection.origin_tool_id)
+            held_key = (target_id, kind, *anchor_key)
+            anchor_wired[held_key] = anchor_wired.get(held_key, 0) + 1
+            wired_from.setdefault((target_id, kind), []).append((connection.origin_tool_id, connection.dest_anchor))
             nodes[source_id].outputs.append(target_id)
             nodes[source_id].output_handles.append(handle)
 
@@ -333,6 +422,26 @@ def dump_flow_yaml(flow_data: schemas.FlowfileData, handle: TextIO) -> None:
     )
 
 
+def _report_multi_stream_reads(ctx: EmitContext, rows: dict[int, ToolReportRow]) -> None:
+    """Tell each tool which streams made the anchor it read unanswerable.
+
+    The status is left alone on purpose. What the several streams made unknown is what arrives at
+    the tool, and the mapper has already fallen back — refusing, or freezing to the columns it can
+    see — so the row's own status is whatever that fallback earned. A tool that converted correctly
+    while merely passing an unknown column set downstream is not partial for a fact about its input;
+    the tool that cannot work without those columns is where the refusal lands, as it already does.
+    """
+    for tool_id, anchors in ctx.multi_stream_reads.items():
+        row = rows.get(tool_id)
+        tool = ctx.tools.get(tool_id)
+        if row is None or tool is None:
+            continue
+        for anchor, origins in anchors.items():
+            message = multi_stream_read_message(tool, anchor, origins)
+            if message not in row.messages:
+                row.messages.append(message)
+
+
 def emit_tools(workflow: AlteryxWorkflow) -> tuple[EmitContext, dict[int, ToolReportRow]]:
     """Run every tool mapper in document order and hand back the shared state they wrote.
 
@@ -342,6 +451,7 @@ def emit_tools(workflow: AlteryxWorkflow) -> tuple[EmitContext, dict[int, ToolRe
     workflow.connections = _order_connections(workflow.connections)
     ctx = _build_context(workflow)
     rows_by_tool = {tool.tool_id: get_mapper(tool)(tool, ctx) for tool in workflow.tools}
+    _report_multi_stream_reads(ctx, rows_by_tool)
     return ctx, rows_by_tool
 
 

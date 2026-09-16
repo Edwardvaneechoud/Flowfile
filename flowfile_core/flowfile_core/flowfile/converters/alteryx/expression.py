@@ -10,17 +10,32 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+import polars as pl
 from polars_expr_transformer import simple_function_to_expr
 
-__all__ = ["TranslationOutcome", "try_translate", "FUNCTION_MAP", "REJECTED_FUNCTIONS"]
+__all__ = ["TranslationOutcome", "try_translate", "FUNCTION_MAP", "REJECTED_FUNCTIONS", "regex_rejection"]
 
 
 @dataclass
 class TranslationOutcome:
-    """Result of a translation attempt. ``translated is None`` means untranslatable and ``reason`` is set."""
+    """Result of a translation attempt. ``translated is None`` means untranslatable and ``reason`` is set.
+
+    ``caveats`` are the sentences a *successful* translation still owes its reader: a function whose
+    Flowfile equivalent agrees with Alteryx on some inputs and not on others. Every caller has to put
+    them on its row and stop calling the tool ``converted``, which is why they travel with the result
+    rather than being written into the formula as a comment nobody reads.
+
+    ``fields`` are the column names the expression reads, bracketed and bare alike. A caller that
+    knows the types of its input columns needs them to decide what the expression will compute in;
+    it cannot get them from the rendered text, where a column name and a string literal look alike.
+    It is only filled in on a successful translation — a refusal stops part-way through the tree,
+    so the set it would carry is the answer to a different question.
+    """
 
     translated: str | None = None
     reason: str | None = None
+    caveats: list[str] = field(default_factory=list)
+    fields: frozenset[str] = frozenset()
 
 
 class _Untranslatable(Exception):
@@ -29,15 +44,37 @@ class _Untranslatable(Exception):
         self.reason = reason
 
 
+# Caveats collected while emitting the expression currently being translated. A module-level list
+# because `_emit` is a plain recursive function and threading a collector through every emitter
+# would touch each of them for one feature; `try_translate` owns the reset and the read.
+_CAVEATS: list[str] = []
+# The column names that expression reads, and the ones the caller asked to be read as Float64.
+# Same reason, same owner: `try_translate` resets both and reads them back.
+_FIELDS: set[str] = set()
+_FLOAT_FIELDS: frozenset[str] = frozenset()
+
+# Alteryx evaluates a whole expression in the type it declares for the output, so an assignment
+# declared Double computes in floating point even where every operand is an integer column. The
+# caller names the integer columns and this wraps each reference, because a cast applied to the
+# finished value is too late: `-20 * pow(x, 7)` has already wrapped in Int64 by then.
+FLOAT_CAST = "to_number"
+
+
 @dataclass(frozen=True)
 class FunctionSpec:
-    """One verified Alteryx -> Flowfile function mapping."""
+    """One verified Alteryx -> Flowfile function mapping.
+
+    ``caveat`` marks a mapping that is exact on some inputs and not on others. It is not a hedge:
+    a mapping whose answer is simply different is refused instead, and one that always agrees
+    carries no caveat at all.
+    """
 
     alteryx_name: str
     target: str | None
     min_args: int
     max_args: int | None
     special: str | None = None
+    caveat: str | None = None
 
 
 def _spec(alteryx_name: str, target: str, args: int) -> FunctionSpec:
@@ -60,6 +97,7 @@ FUNCTION_MAP: dict[str, FunctionSpec] = {
     "trimright": _spec("TrimRight", "right_trim", 1),
     "length": _spec("Length", "length", 1),
     "contains": FunctionSpec("Contains", "contains", 2, 2, special="search"),
+    "regex_match": FunctionSpec("REGEX_Match", "contains", 2, 3, special="regexmatch"),
     "startswith": FunctionSpec("StartsWith", "starts_with", 2, 2, special="search"),
     "endswith": FunctionSpec("EndsWith", "ends_with", 2, 2, special="search"),
     "findstring": _spec("FindString", "find_position", 2),
@@ -74,6 +112,41 @@ FUNCTION_MAP: dict[str, FunctionSpec] = {
     # type conversion
     "tonumber": _spec("ToNumber", "to_number", 1),
     "tostring": _spec("ToString", "to_string", 1),
+    # hashing / encoding
+    "md5_ascii": FunctionSpec(
+        "MD5_ASCII",
+        "md5",
+        1,
+        1,
+        caveat=(
+            "Alteryx's MD5_ASCII() hashes the ASCII bytes of its input and Flowfile's md5() hashes the "
+            "UTF-8 bytes. Those are the same bytes for ASCII text and different ones for anything else, "
+            "so a value with an accent, a currency sign or an emoji in it hashes to a different digest "
+            "in the two tools."
+        ),
+    ),
+    "base64encode": FunctionSpec(
+        "Base64Encode",
+        "base64_encode",
+        1,
+        1,
+        caveat=(
+            "Flowfile's base64_encode() encodes the UTF-8 bytes of its input. Which bytes Alteryx's "
+            "Base64Encode() encodes is not stated in any workflow here and no corpus tool uses it, so "
+            "check a non-ASCII value against Designer before trusting this column."
+        ),
+    ),
+    "base64decode": FunctionSpec(
+        "Base64Decode",
+        "base64_decode",
+        1,
+        1,
+        caveat=(
+            "Flowfile's base64_decode() reads the decoded bytes back as UTF-8 and yields null when they "
+            "are not valid UTF-8. Which encoding Alteryx's Base64Decode() assumes is not stated in any "
+            "workflow here and no corpus tool uses it, so check a non-ASCII value against Designer."
+        ),
+    ),
     # math
     "abs": _spec("Abs", "abs", 1),
     "ceil": _spec("Ceil", "ceil", 1),
@@ -127,6 +200,10 @@ REJECTED_FUNCTIONS: dict[str, str] = {
     "spellnumber": "SpellNumber() has no Flowfile formula equivalent",
     "randint": "RandInt() is non-deterministic and has no verified Flowfile equivalent",
     "rand": "Rand() is non-deterministic and has no verified Flowfile equivalent",
+    "md5_unicode": (
+        "MD5_Unicode() hashes UTF-16LE bytes and Flowfile's md5() hashes UTF-8 bytes, which is a "
+        "different digest for every input longer than nothing (use MD5_ASCII() for ASCII text)"
+    ),
 }
 
 _DATETIME_ADD_UNITS = {
@@ -154,6 +231,33 @@ _PARSE_TIME_CODES = frozenset("HIMSp")
 # Regex metacharacters, split by whether a one-character class can neutralise them.
 _REGEX_META = "$()*+.?{|"
 _REGEX_UNESCAPABLE = "[^"
+
+# Constructs Polars' regex engine (Rust `regex`) has no support for, and the dunder shape the
+# polars_code node rejects. They live here because REGEX_Match() below screens a pattern with them;
+# `mappers.py` imports them back, because it imports this module and never the other way round.
+REGEX_UNSUPPORTED = (("(?=", "lookahead"), ("(?!", "negative lookahead"), ("(?<", "lookbehind"))
+DUNDER_RE = re.compile(r"__\w+__")
+
+
+def regex_rejection(pattern: str) -> str | None:
+    """Polars' own complaint about a pattern, or ``None`` when its regex engine accepts it.
+
+    The three tokens above are the constructs a reader is likeliest to write and they keep a sentence
+    that names them. Everything else the engine lacks is only known to the engine: `(?>ab)c` (atomic
+    group) and `(?#c)abc` (inline comment) are legal Perl, pass a substring blocklist, convert green
+    and then raise `ComputeError: unrecognized flag` the first time the flow collects. Asking the
+    engine at import time is the only screen that cannot be out of date with it.
+
+    The pattern handed here is the *finished* one — anchors, inline flags and all — because that is
+    the string `str.contains` will be given, and a wrapper can be what the engine rejects.
+    """
+    try:
+        pl.DataFrame({"_": [""]}).select(pl.col("_").str.contains(pattern))
+    except Exception as exc:
+        # Polars appends the whole `col("_").str.contains(...)` expression; the complaint is the head.
+        return _clean_reason(str(exc).split("This error occurred in the following expression")[0])
+    return None
+
 
 # Keys whose translation provably returns a non-string; IsEmpty() drops its '= ""' arm for these.
 _NON_STRING_FUNCTIONS = frozenset(
@@ -382,10 +486,16 @@ _CMP_OPS = {"=": "=", "==": "=", "!=": "!=", "<>": "!=", ">": ">", "<": "<", ">=
 
 
 class _Parser:
-    def __init__(self, tokens: list[_Token], allowed_specials: frozenset[str] = frozenset()) -> None:
+    def __init__(
+        self,
+        tokens: list[_Token],
+        allowed_specials: frozenset[str] = frozenset(),
+        known_columns: frozenset[str] = frozenset(),
+    ) -> None:
         self._tokens = tokens
         self._i = 0
         self._allowed_specials = frozenset(special.lower() for special in allowed_specials)
+        self._known_columns = known_columns
 
     def parse(self) -> _Node:
         node = self._expr()
@@ -510,11 +620,27 @@ class _Parser:
         if following is None or following.kind != "lparen":
             if low == "null":
                 raise _Untranslatable(REJECTED_FUNCTIONS["null"])
+            if self._resolves_to_a_column(tok.value):
+                self._i += 1
+                return _Field(_check_field_name(tok.value, self._allowed_specials))
             raise _Untranslatable(
                 f"unbracketed field reference {tok.value!r} at position {tok.pos + 1}; "
                 "Alteryx field references must be written as [Field] to be converted"
             )
         return self._call(tok)
+
+    def _resolves_to_a_column(self, name: str) -> bool:
+        """Whether a bare identifier is a column the caller can vouch for, not a guess at one.
+
+        Alteryx accepts an unbracketed field name — `EXP(x/2)` — and the corpus writes it, so the
+        blanket refusal cost real conversions. It is resolved only against the exact column names the
+        caller passed in, and only when nothing in the function table wears that name: `Min` is a
+        function whether or not a column is called Min, and reading it as a column would change the
+        expression rather than fail to convert it. Case is not folded, because a column name's case
+        is part of its identity in Polars.
+        """
+        low = name.lower()
+        return name in self._known_columns and low not in FUNCTION_MAP and low not in REJECTED_FUNCTIONS
 
     def _call(self, name_tok: _Token) -> _Node:
         self._i += 2  # name + '('
@@ -576,6 +702,9 @@ def _emit(node: _Node) -> tuple[str, int]:
     if isinstance(node, _Literal):
         return node.text, _PREC_ATOM
     if isinstance(node, _Field):
+        _FIELDS.add(node.name)
+        if node.name in _FLOAT_FIELDS:
+            return f"{FLOAT_CAST}([{node.name}])", _PREC_ATOM
         return f"[{node.name}]", _PREC_ATOM
     if isinstance(node, _Unary):
         return f"-{_emit_child(node.operand, _PREC_UNARY)}", _PREC_UNARY
@@ -609,7 +738,7 @@ def _emit_child(node: _Node, parent_prec: int, right: bool = False) -> str:
 
 def _emit_call(node: _Call) -> tuple[str, int]:
     low = node.name.lower()
-    if low.startswith("regex_"):
+    if low.startswith("regex_") and low not in FUNCTION_MAP:
         raise _Untranslatable(f"regular-expression function {node.name}() has no Flowfile formula equivalent")
     if low in REJECTED_FUNCTIONS:
         raise _Untranslatable(REJECTED_FUNCTIONS[low])
@@ -619,6 +748,8 @@ def _emit_call(node: _Call) -> tuple[str, int]:
     count = len(node.args)
     if count < spec.min_args or (spec.max_args is not None and count > spec.max_args):
         raise _Untranslatable(f"Alteryx function {spec.alteryx_name}() expects {_arity_text(spec)} but got {count}")
+    if spec.caveat is not None and spec.caveat not in _CAVEATS:
+        _CAVEATS.append(spec.caveat)
     if spec.special == "iif":
         condition, when_true, when_false = node.args
         return (
@@ -631,6 +762,8 @@ def _emit_call(node: _Call) -> tuple[str, int]:
         return _emit_replace_char(node), _PREC_ATOM
     if spec.special == "search":
         return _emit_search(node, spec), _PREC_ATOM
+    if spec.special == "regexmatch":
+        return _emit_regex_match(node), _PREC_ATOM
     if spec.special == "firstofmonth":
         return "start_of_month(today())", _PREC_ATOM
     if spec.special == "lastofmonth":
@@ -752,6 +885,56 @@ def _emit_search(node: _Call, spec: FunctionSpec) -> str:
     return f"{spec.target}({text}, lowercase({_emit_child(search, _PREC_IF)}))"
 
 
+def _emit_regex_match(node: _Call) -> str:
+    """REGEX_Match(text, pattern[, case_insensitive]) is an *anchored* match, unlike Contains().
+
+    Alteryx returns true only when the whole value matches, so the pattern is wrapped as
+    ``^(?:pat)$`` — a non-capturing group, because ``^a|b$`` would otherwise anchor only one arm.
+    The pattern is emitted verbatim rather than through ``_escape_regex``: here it really is a
+    regular expression and neutralising its metacharacters would change what it matches. That is
+    only safe because the tokenizer refuses any backslash inside a string literal, so no escape and
+    no backreference can reach this at all — which leaves lookaround as the one unsupported
+    construct a pattern could still spell out, and that is screened below.
+
+    The text operand is *not* folded to lower case the way Contains() folds it. Alteryx documents
+    ``REGEX_Match(String, pattern, icase)`` with "By default icase=1 (meaning ignore case)"
+    (help.alteryx.com, string functions), so the match ignores case unless the third argument is a
+    literal false or 0 — and that is expressed as the inline ``(?i)`` flag rather than by folding
+    both operands, because folding would also change what the pattern's own character classes mean.
+    """
+    pattern_node = node.args[1]
+    if not (isinstance(pattern_node, _Literal) and pattern_node.text.startswith('"')):
+        raise _Untranslatable(
+            "REGEX_Match() can only be converted when the pattern is a literal string, because a "
+            "pattern built at run time cannot be checked for constructs Polars' regex engine lacks"
+        )
+    pattern = pattern_node.text[1:-1]
+    for token, label in REGEX_UNSUPPORTED:
+        if token in pattern:
+            raise _Untranslatable(
+                f"the REGEX_Match() pattern uses {label}, which Polars' regex engine does not support"
+            )
+    if DUNDER_RE.search(pattern):
+        raise _Untranslatable("the REGEX_Match() pattern contains a dunder pattern, which is rejected")
+    ignore_case = True
+    if len(node.args) == 3:
+        case_insensitive = node.args[2]
+        if not (isinstance(case_insensitive, _Literal) and case_insensitive.text.strip().lower() in _BOOLEAN_LITERALS):
+            raise _Untranslatable(
+                "REGEX_Match() can only be converted when its case-sensitivity argument is a literal true or false"
+            )
+        ignore_case = _BOOLEAN_LITERALS[case_insensitive.text.strip().lower()]
+    flags = "(?i)" if ignore_case else ""
+    anchored = f"{flags}^(?:{pattern})$"
+    rejection = regex_rejection(anchored)
+    if rejection is not None:
+        raise _Untranslatable(f"Polars' regex engine rejected the REGEX_Match() pattern: {rejection}")
+    return f'contains({_emit_child(node.args[0], _PREC_IF)}, "{anchored}")'
+
+
+_BOOLEAN_LITERALS = {"1": True, "0": False, "true": True, "false": False, '"true"': True, '"false"': False}
+
+
 def _emit_round(node: _Call) -> str:
     multiple = node.args[1]
     if not isinstance(multiple, _Literal):
@@ -867,20 +1050,39 @@ def _clean_reason(reason: str) -> str:
     return collapsed[:297] + "..." if len(collapsed) > 300 else collapsed
 
 
-def try_translate(alteryx_expr: str, *, allowed_specials: frozenset[str] = frozenset()) -> TranslationOutcome:
+def try_translate(
+    alteryx_expr: str,
+    *,
+    allowed_specials: frozenset[str] = frozenset(),
+    known_columns: frozenset[str] = frozenset(),
+    float_fields: frozenset[str] = frozenset(),
+) -> TranslationOutcome:
     """Translate an Alteryx expression, or explain why it cannot be translated.
 
     ``allowed_specials`` names the `_..._` field references the caller binds itself — the
     Multi-Field Formula placeholders, which stay in the rendered formula as written instead
     of being rejected. Every other special field reference is still refused.
+
+    ``known_columns`` are the column names the caller can vouch for, which is what lets an
+    unbracketed field reference — Alteryx accepts `EXP(x/2)` for `EXP([x]/2)` — be resolved instead
+    of refused. An empty set keeps the refusal, so a caller that does not know its input columns
+    cannot accidentally turn a misspelled function name into a column.
+
+    ``float_fields`` are the columns to read as Float64, for a caller whose tool declares a floating
+    output type. Only a caller that knows a column really is numeric may name it: the cast is strict,
+    so a text column in this set stops the flow at run time instead of computing something else.
     """
+    global _FLOAT_FIELDS
     if not isinstance(alteryx_expr, str) or not alteryx_expr.strip():
         return TranslationOutcome(None, "the Alteryx expression is empty")
+    _CAVEATS.clear()
+    _FIELDS.clear()
+    _FLOAT_FIELDS = frozenset(float_fields)
     try:
         tokens = _tokenize(alteryx_expr)
         if not tokens:
             return TranslationOutcome(None, "the Alteryx expression is empty")
-        rendered, _ = _emit(_Parser(tokens, allowed_specials).parse())
+        rendered, _ = _emit(_Parser(tokens, allowed_specials, frozenset(known_columns)).parse())
     except _Untranslatable as exc:
         return TranslationOutcome(None, _clean_reason(exc.reason))
     except RecursionError:
@@ -894,4 +1096,4 @@ def try_translate(alteryx_expr: str, *, allowed_specials: frozenset[str] = froze
             None,
             _clean_reason(f"the converted formula {rendered!r} was rejected by the Flowfile formula parser: {exc}"),
         )
-    return TranslationOutcome(rendered, None)
+    return TranslationOutcome(rendered, None, list(_CAVEATS), frozenset(_FIELDS))

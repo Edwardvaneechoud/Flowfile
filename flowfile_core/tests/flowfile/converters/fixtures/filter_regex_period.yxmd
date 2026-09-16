@@ -1,0 +1,331 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="500">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="40" y="460" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <NumRows value="3" />
+        <Fields>
+          <Field name="orchard" />
+          <Field name="picked_on" />
+          <Field name="pattern" />
+        </Fields>
+        <Data>
+          <r><c>Okonjo</c><c>2017-12-01</c><c>Ok.*</c></r>
+          <r><c>Redondo</c><c>2400-06-01</c><c>Re.*</c></r>
+          <r><c>Salgado</c><c>1999-01-01</c><c>Sa.*</c></r>
+        </Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="505">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula">
+        <Position x="140" y="460" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <FormulaFields>
+          <FormulaField field="picked" type="Date" size="10" expression="DateTimeParse([picked_on], &quot;%Y-%m-%d&quot;)" />
+        </FormulaFields>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="510">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Expression>REGEX_Match([orchard], &quot;.*ondo&quot;)</Expression>
+        <Mode>Custom</Mode>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="520">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Expression>REGEX_Match([orchard], &quot;.*ONDO&quot;, 1)</Expression>
+        <Mode>Custom</Mode>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="515">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="60" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Expression>REGEX_Match([orchard], &quot;.*ONDO&quot;)</Expression>
+        <Mode>Custom</Mode>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="525">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="160" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Expression>REGEX_Match([orchard], &quot;.*ONDO&quot;, 0)</Expression>
+        <Mode>Custom</Mode>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="530">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="210" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Expression>REGEX_Match([orchard], &quot;(?=Ok).*&quot;)</Expression>
+        <Mode>Custom</Mode>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="540">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="310" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Expression>REGEX_Match([orchard], [pattern])</Expression>
+        <Mode>Custom</Mode>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="550">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="410" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Mode>Simple</Mode>
+        <Simple>
+          <Field>picked</Field>
+          <Operator>PeriodAfter</Operator>
+          <Operands>
+            <DateType>today</DateType>
+            <PeriodType>days</PeriodType>
+            <PeriodCount>2</PeriodCount>
+            <Operand>2017-12-29</Operand>
+          </Operands>
+        </Simple>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="560">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="510" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Mode>Simple</Mode>
+        <Simple>
+          <Field>picked</Field>
+          <Operator>PeriodBefore</Operator>
+          <Operands>
+            <DateType>today</DateType>
+            <PeriodType>weeks</PeriodType>
+            <PeriodCount>1</PeriodCount>
+            <Operand>2017-12-29</Operand>
+          </Operands>
+        </Simple>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="570">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="610" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Mode>Simple</Mode>
+        <Simple>
+          <Field>picked</Field>
+          <Operator>&lt;=</Operator>
+          <Operands>
+            <DateType>tomorrow</DateType>
+            <Operand>2017-12-29</Operand>
+          </Operands>
+        </Simple>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="580">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="710" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Mode>Simple</Mode>
+        <Simple>
+          <Field>picked_on</Field>
+          <Operator>&lt;=</Operator>
+          <Operands>
+            <DateType>fixed</DateType>
+            <Operand>2017-12-29</Operand>
+          </Operands>
+        </Simple>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="590">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="810" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Mode>Simple</Mode>
+        <Simple>
+          <Field>picked</Field>
+          <Operator>PeriodAfter</Operator>
+          <Operands>
+            <DateType>today</DateType>
+            <PeriodType>fortnights</PeriodType>
+            <PeriodCount>2</PeriodCount>
+            <Operand>2017-12-29</Operand>
+          </Operands>
+        </Simple>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="600">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="910" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Mode>Simple</Mode>
+        <Simple>
+          <Field>picked</Field>
+          <Operator>PeriodAfter</Operator>
+          <Operands>
+            <DateType>fixed</DateType>
+            <PeriodType>days</PeriodType>
+            <PeriodCount>2</PeriodCount>
+            <Operand>2017-12-29</Operand>
+          </Operands>
+        </Simple>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="610">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="1010" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Mode>Simple</Mode>
+        <Simple>
+          <Field>picked</Field>
+          <Operator>&lt;=</Operator>
+          <Operands>
+            <DateType>next tuesday</DateType>
+            <Operand>2017-12-29</Operand>
+          </Operands>
+        </Simple>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="620">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="1010" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Mode>Simple</Mode>
+        <Simple>
+          <Field>orchard</Field>
+          <Operator>StartsWith</Operator>
+          <Operands>
+            <DateType>tomorrow</DateType>
+            <Operand>Ok</Operand>
+          </Operands>
+        </Simple>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="630">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="1110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Mode>Simple</Mode>
+        <Simple>
+          <Field>picked</Field>
+          <Operator>PeriodAfter</Operator>
+          <Operands>
+            <DateType>tomorrow</DateType>
+            <PeriodType>days</PeriodType>
+            <PeriodCount>3</PeriodCount>
+            <Operand>2017-12-29</Operand>
+          </Operands>
+        </Simple>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="640">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="1210" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Mode>Simple</Mode>
+        <Simple>
+          <Field>picked</Field>
+          <Operator>PeriodBefore</Operator>
+          <Operands>
+            <DateType>yesterday</DateType>
+            <PeriodType>days</PeriodType>
+            <PeriodCount>1</PeriodCount>
+            <Operand>2017-12-29</Operand>
+          </Operands>
+        </Simple>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="650">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="240" y="1310" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Mode>Simple</Mode>
+        <Simple>
+          <Field>orchard</Field>
+          <Operator>StartsWith</Operator>
+          <Operands>
+            <DateType>fixed</DateType>
+            <Operand>Ok</Operand>
+          </Operands>
+        </Simple>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="500" Connection="Output" />
+      <Destination ToolID="505" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="500" Connection="Output" />
+      <Destination ToolID="510" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="500" Connection="Output" />
+      <Destination ToolID="520" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="500" Connection="Output" />
+      <Destination ToolID="530" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="500" Connection="Output" />
+      <Destination ToolID="540" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="505" Connection="Output" />
+      <Destination ToolID="550" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="505" Connection="Output" />
+      <Destination ToolID="560" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="505" Connection="Output" />
+      <Destination ToolID="570" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="505" Connection="Output" />
+      <Destination ToolID="580" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="505" Connection="Output" />
+      <Destination ToolID="590" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="505" Connection="Output" />
+      <Destination ToolID="600" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="505" Connection="Output" />
+      <Destination ToolID="610" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="500" Connection="Output" />
+      <Destination ToolID="515" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="500" Connection="Output" />
+      <Destination ToolID="525" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="500" Connection="Output" />
+      <Destination ToolID="620" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="505" Connection="Output" />
+      <Destination ToolID="630" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="505" Connection="Output" />
+      <Destination ToolID="640" Connection="Input" /></Connection>
+    <Connection>
+      <Origin ToolID="500" Connection="Output" />
+      <Destination ToolID="650" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
