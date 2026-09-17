@@ -1204,7 +1204,7 @@ def test_pick_type_prompt_warns_against_palette_labels() -> None:
     """
     text = assemble_system_prompt("agent_staged", stage="pick_type")
     assert "## Important: enum is" in text, (
-        "v1.12B disambiguation block missing from pick_type system prompt"
+        "disambiguation block missing from pick_type system prompt"
     )
     # Two of the failure modes the user dogfooded — must be listed.
     assert "sort_data" in text and "``sort``" in text
@@ -1221,7 +1221,7 @@ def test_classify_stage_includes_multi_step_discipline_section() -> None:
     """
     text = assemble_system_prompt("agent_staged", stage="classify")
     assert "## Multi-step discipline" in text, (
-        "v2.9B: classify prompt missing the multi-step discipline section"
+        "classify prompt missing the multi-step discipline section"
     )
     text_lower = text.lower()
     # The "don't pick `other` until all steps done" rule.
@@ -1261,7 +1261,7 @@ def test_classify_stage_now_includes_palette_disambiguation() -> None:
     """
     text = assemble_system_prompt("agent_staged", stage="classify")
     assert "## Important: enum is" in text, (
-        "v1.14A.3: classify stage system prompt must include the "
+        "classify stage system prompt must include the "
         "palette-label disambiguation block (bypass-path defense)"
     )
     assert "sort_data" in text and "``sort``" in text
@@ -1397,14 +1397,14 @@ def test_pick_type_prompt_includes_tool_selection_rules() -> None:
     """
     text = assemble_system_prompt("agent_staged", stage="pick_type")
     assert "## Tool selection rules" in text, (
-        "v1.13A: pick_type system prompt missing the tool-selection-rules block"
+        "pick_type system prompt missing the tool-selection-rules block"
     )
     for label in ("record_count", "group_by", "formula", "polars_code"):
-        assert label in text, f"v1.13A rules block missing reference to {label!r}"
+        assert label in text, f"rules block missing reference to {label!r}"
     # The "row-wise only" assertion must appear AGAIN here (the rules
     # block reinforces the long_description's lead constraint).
     assert "row-wise" in text.lower(), (
-        "v1.13A rules block must reiterate that formula is row-wise only"
+        "rules block must reiterate that formula is row-wise only"
     )
 
 
@@ -1425,7 +1425,7 @@ def test_pick_node_type_spec_description_carries_disambiguation() -> None:
     spec = next(s for s in META_OPS_TOOLS if s.name == PICK_NODE_TYPE_TOOL_NAME)
     # Headline disambiguation note in the tool description.
     assert "snake-case the palette label" in spec.description.lower() or "palette label" in spec.description.lower(), (
-        f"v1.14A.1: pick_node_type description missing palette-label warning; got: {spec.description!r}"
+        f"pick_node_type description missing palette-label warning; got: {spec.description!r}"
     )
     # Detailed do/don't list inside the node_type parameter description.
     nt_desc = spec.parameters["properties"]["node_type"]["description"]
@@ -1446,7 +1446,7 @@ def test_catalog_headers_inline_node_type_for_add_tools() -> None:
     for nt in ("sort", "select", "unique", "sample"):
         marker = f"### flowfile.graph.add_{nt}  (node_type: `{nt}`)"
         assert marker in text, (
-            f"v1.14A.2: catalog header for {nt!r} missing inline node_type marker. "
+            f"catalog header for {nt!r} missing inline node_type marker. "
             f"Expected to find: {marker!r}"
         )
 
@@ -1476,12 +1476,12 @@ def test_pick_upstream_spec_requires_right_input_for_join_shaped_types() -> None
         )
         required = spec.parameters.get("required", [])
         assert "right_input_node_id" in required, (
-            f"v1.14B: right_input_node_id must be required for {nt!r}; "
+            f"right_input_node_id must be required for {nt!r}; "
             f"got required={required}"
         )
         rfield = spec.parameters["properties"]["right_input_node_id"]
         assert rfield["type"] == "integer", (
-            f"v1.14B: right_input_node_id type for {nt!r} must be plain "
+            f"right_input_node_id type for {nt!r} must be plain "
             f"integer (no null); got {rfield['type']!r}"
         )
 
@@ -1683,7 +1683,7 @@ def test_pick_type_prompt_includes_join_vs_cross_join_section() -> None:
     """
     text = assemble_system_prompt("agent_staged", stage="pick_type")
     assert "## Join vs cross_join" in text, (
-        "v2.2: pick_type prompt missing the dedicated join-vs-cross_join section"
+        "pick_type prompt missing the dedicated join-vs-cross_join section"
     )
     # Both node types named.
     assert "`join`" in text and "`cross_join`" in text
@@ -1726,7 +1726,7 @@ def test_pick_upstream_prompt_includes_worked_example_for_joins() -> None:
     """
     text = assemble_system_prompt("agent_staged", stage="pick_upstream")
     assert "## Worked examples for join-shaped types" in text, (
-        "v1.15C: pick_upstream prompt missing the worked-examples section"
+        "pick_upstream prompt missing the worked-examples section"
     )
     # Both the asymmetric (join) and symmetric (cross_join) examples
     # must be present and use the new field names.
@@ -1747,19 +1747,19 @@ def test_formula_fill_settings_prompt_includes_function_reference() -> None:
         "agent_staged", stage="fill_settings", picked_node_type="formula"
     )
     assert "Formula functions" in formula_prompt, (
-        "v1.12C: formula fill_settings prompt missing the function reference block"
+        "formula fill_settings prompt missing the function reference block"
     )
 
     group_by_prompt = assemble_system_prompt(
         "agent_staged", stage="fill_settings", picked_node_type="group_by"
     )
     assert "Formula functions" not in group_by_prompt, (
-        "v1.12C: function reference block leaked into a non-formula fill_settings prompt"
+        "function reference block leaked into a non-formula fill_settings prompt"
     )
 
     pick_type_prompt = assemble_system_prompt("agent_staged", stage="pick_type")
     assert "Formula functions" not in pick_type_prompt, (
-        "v1.12C: function reference must not appear in the pick_type catalog "
+        "function reference must not appear in the pick_type catalog "
         "(it would cost tokens on every pick_type round)"
     )
 
@@ -1827,7 +1827,7 @@ def test_verify_completion_stage_prompt_renders() -> None:
     # tool-catalog separation).
     classify_prompt = assemble_system_prompt("agent_staged", stage="classify")
     assert "verify plan completion" not in classify_prompt.lower(), (
-        "v2.12: verify_completion prompt content leaked into the classify "
+        "verify_completion prompt content leaked into the classify "
         "stage system prompt"
     )
 

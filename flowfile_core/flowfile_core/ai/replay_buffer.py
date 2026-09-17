@@ -235,7 +235,7 @@ class ReplayBuffer:
         Cursor matched on the integer step suffix (``"{sid}.<step>"``); the
         session-id portion is intentionally **ignored** for cross-restart
         resumes where the cursor's session id is identical-by-construction
-        but a future workstream might want a stricter match.
+        but a stricter match may be worth adding later.
         """
         key = self._key(flow_id, session_id)
         with self._lock_for(key):

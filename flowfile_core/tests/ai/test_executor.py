@@ -658,7 +658,7 @@ def test_delete_connection_idempotent_when_already_removed(call_kwargs: dict[str
         **call_kwargs,
     )
     assert result2.status == "applied", (
-        "v2.8A: deleting an already-absent connection must be a silent no-op, "
+        "deleting an already-absent connection must be a silent no-op, "
         f"not a refusal; got status={result2.status} detail={result2.refusal_detail}"
     )
     assert flow.get_node(2).node_inputs.main_inputs == []
@@ -706,7 +706,7 @@ def test_delete_connection_accepts_arrow_id_shape(call_kwargs: dict[str, Any]) -
         **call_kwargs,
     )
     assert result.status == "applied", (
-        f"v2.8C: connection_id arrow shape must coerce to from/to_node_id; "
+        f"connection_id arrow shape must coerce to from/to_node_id; "
         f"got status={result.status} detail={result.refusal_detail}"
     )
     assert flow.get_node(2).node_inputs.main_inputs == []

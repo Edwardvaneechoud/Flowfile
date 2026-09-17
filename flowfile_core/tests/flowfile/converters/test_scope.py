@@ -21,11 +21,11 @@ from flowfile_core.flowfile.converters.alteryx.scope import (
 )
 from flowfile_core.flowfile.converters.alteryx.yxmd_parser import AlteryxTool
 
-LEARNING = Path(__file__).resolve().parents[5]
-SCOPE_JSON = LEARNING / "tools" / "alteryx_scope.json"
-CENSUS_JSON = LEARNING / "tools" / "census_out" / "census.json"
+PRIVATE_CORPUS_ROOT = Path(__file__).resolve().parents[5]
+SCOPE_JSON = PRIVATE_CORPUS_ROOT / "tools" / "alteryx_scope.json"
+CENSUS_JSON = PRIVATE_CORPUS_ROOT / "tools" / "census_out" / "census.json"
 
-# Only the drift tests need the private folder; the rest hold wherever the repo is checked out.
+# Only the drift tests need the private corpus; the rest hold wherever the repo is checked out.
 needs_corpus = pytest.mark.skipif(
     not (SCOPE_JSON.exists() and CENSUS_JSON.exists()),
     reason=f"corpus taxonomy or census not present ({SCOPE_JSON}, {CENSUS_JSON})",

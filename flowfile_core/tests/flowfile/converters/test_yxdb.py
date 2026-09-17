@@ -1,7 +1,7 @@
 """Tests for the Alteryx .yxdb -> Parquet converter.
 
 No `.yxdb` fixture is checked in: the format has no writer outside Alteryx, and Alteryx's own
-sample files must not be redistributed. These tests therefore run against Edward's private
+sample files must not be redistributed. These tests therefore run against a private
 corpus in `alteryx_nodes_data/` (a sibling of the repo) and skip cleanly when it is absent.
 
 Four files were picked for dtype coverage (a fifth, `Presidents_and_VPs.yxdb`, is the only

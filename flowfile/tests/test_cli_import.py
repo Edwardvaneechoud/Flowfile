@@ -17,9 +17,11 @@ import yaml
 from flowfile.__main__ import main
 
 FIXTURES = Path(__file__).resolve().parents[2] / "flowfile_core" / "tests" / "flowfile" / "converters" / "fixtures"
-LEARNING = Path(__file__).resolve().parents[3]
-CORPUS = LEARNING / "alteryx_nodes"
-CENSUS_SCRIPT = LEARNING / "tools" / "alteryx_census.py"
+# A private Alteryx corpus and its census script, kept beside the repo. Every test that
+# needs them skips cleanly when they are absent.
+PRIVATE_CORPUS_ROOT = Path(__file__).resolve().parents[3]
+CORPUS = PRIVATE_CORPUS_ROOT / "alteryx_nodes"
+CENSUS_SCRIPT = PRIVATE_CORPUS_ROOT / "tools" / "alteryx_census.py"
 
 
 def run_cli(*argv: str) -> int:
@@ -209,7 +211,7 @@ def test_the_generated_table_counts_what_the_census_counts(name: str, tmp_path: 
 
 
 def _load_census_module():
-    """Import `tools/alteryx_census.py` by path; it reads sys.argv[2] at import time."""
+    """Import the census script by path; it reads sys.argv[2] at import time."""
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("alteryx_census_for_test", CENSUS_SCRIPT)

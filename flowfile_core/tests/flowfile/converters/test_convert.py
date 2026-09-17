@@ -28,8 +28,8 @@ ENVELOPE_KEYS = schemas.FlowfileNode._setting_input_exclude
 
 # Alteryx's own sample workflows are proprietary, so none of them is committed here. A test that
 # needs a real one reads it from the private corpus beside the repo and skips where that is absent.
-LEARNING = Path(__file__).resolve().parents[5]
-CORPUS_MULTI_FIELD_FORMULA = LEARNING / "alteryx_nodes" / "02 Preparation" / "Multi-Field_Formula.yxmd"
+PRIVATE_CORPUS_ROOT = Path(__file__).resolve().parents[5]
+CORPUS_MULTI_FIELD_FORMULA = PRIVATE_CORPUS_ROOT / "alteryx_nodes" / "02 Preparation" / "Multi-Field_Formula.yxmd"
 needs_corpus = pytest.mark.skipif(
     not CORPUS_MULTI_FIELD_FORMULA.exists(),
     reason=f"Alteryx corpus workflow not present ({CORPUS_MULTI_FIELD_FORMULA})",
@@ -7326,7 +7326,7 @@ def test_a_grid_that_cannot_be_built_is_refused(pearson: ConversionResult, tool_
 
 # --- Spearman Rank Correlation ---
 
-CORPUS_SPEARMAN = LEARNING / "alteryx_nodes" / "11 Data Investigation" / "Spearman_Correlation.yxmd"
+CORPUS_SPEARMAN = PRIVATE_CORPUS_ROOT / "alteryx_nodes" / "11 Data Investigation" / "Spearman_Correlation.yxmd"
 needs_spearman_corpus = pytest.mark.skipif(
     not CORPUS_SPEARMAN.exists(), reason=f"Alteryx corpus workflow not present ({CORPUS_SPEARMAN})"
 )
@@ -8144,7 +8144,7 @@ def test_a_wire_onto_an_anchor_the_field_summary_macro_does_not_have_is_dropped(
 
 
 def test_a_fixed_date_filter_on_a_real_date_column_raises_when_the_flow_runs(tmp_path: Path):
-    """Documents today's behaviour, which §6 decision 6 is about and will change.
+    """Documents today's behaviour; the column-identity gap behind it is unresolved and may change.
 
     Tool 580 filters `picked_on`, the string the Text Input holds, so its `<= "2017-12-29"` is a
     string-to-string comparison that cannot raise. Pointed at `picked` — the Date the Formula at 505
@@ -8168,7 +8168,7 @@ def test_a_fixed_date_filter_on_a_real_date_column_raises_when_the_flow_runs(tmp
     assert any("cannot compare 'date/datetime/time' to a string value" in (error or "") for error in errors), errors
 
 
-CORPUS_PEARSON = LEARNING / "alteryx_nodes" / "11 Data Investigation" / "Pearson_Correlation.yxmd"
+CORPUS_PEARSON = PRIVATE_CORPUS_ROOT / "alteryx_nodes" / "11 Data Investigation" / "Pearson_Correlation.yxmd"
 needs_pearson_corpus = pytest.mark.skipif(
     not CORPUS_PEARSON.exists(), reason=f"Alteryx corpus workflow not present ({CORPUS_PEARSON})"
 )

@@ -1,9 +1,9 @@
 """Pytest setup for the in-browser Pyodide engine.
 
-`src/pyodide/engine.py` is the exact Python that ships into the app as text via a
-`?raw` import (see src/stores/pyodide-store.ts). It imports only polars/pydantic
-plus stdlib and touches no Pyodide-specific API, so we import it here as a normal
-module and exercise the real, shipped code under CPython.
+`src/pyodide/engine/` is the exact Python package that ships into the app as text
+via `?raw` imports of each module (see src/stores/pyodide-store.ts). It imports only
+polars/pydantic plus stdlib and touches no Pyodide-specific API, so we import it here
+as a normal package and exercise the real, shipped code under CPython.
 """
 import sys
 from pathlib import Path

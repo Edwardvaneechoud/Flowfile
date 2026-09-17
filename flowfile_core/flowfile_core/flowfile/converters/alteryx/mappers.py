@@ -3562,7 +3562,7 @@ def map_rank(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     own comment boxes call Standard "Equal items share the lowest possible rank" (1,2,2,4) and
     Modified Competition "The next item receives the following rank, regardless of the number of
     ties" (1,3,3,4) — two different answers, one polars argument apart. Which polars method each one
-    is remains Edward's call under decision 3; until it is ruled, guessing is a silent data change.
+    is has not been settled; until it is, guessing is a silent data change.
     """
     config = _config(tool)
     modes = [element.get("value") or "" for element in config.findall("RankingModes/Mode")]

@@ -125,7 +125,7 @@ def census_tool_name(tool: AlteryxTool) -> str:
 
     Macros carry no ``tool_name`` — the plugin string holds the ``Macro`` attribute instead,
     sometimes with a directory (``Precision Match\\Precision_Match.yxmc``), so only the
-    basename identifies the macro. This is the key ``tools/alteryx_census.py`` groups by, which
+    basename identifies the macro. This is the key the corpus census groups by, which
     is what makes the census and this registry comparable.
     """
     if tool.tool_name:

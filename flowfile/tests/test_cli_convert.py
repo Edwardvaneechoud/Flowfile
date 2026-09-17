@@ -3,7 +3,7 @@
 Run with:
     pytest flowfile/tests/test_cli_convert.py -v
 
-Needs Edward's private Alteryx sample corpus next to the repo; skips cleanly without it.
+Needs a private Alteryx sample corpus next to the repo; skips cleanly without it.
 """
 
 from pathlib import Path
