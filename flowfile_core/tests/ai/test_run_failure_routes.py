@@ -446,7 +446,7 @@ def test_explain_run_failure_validates_required_fields(
 def test_lazy_litellm_import_for_run_failure_routes() -> None:
     """``import flowfile_core.ai.run_failure_routes`` mustn't pull litellm.
 
-    Same contract as W11/W12/W13/W20 — the module sits behind the BYOK
+    Same contract as the other AI routers — the module sits behind the BYOK
     seam, not the ``provider_factory`` bootstrap, so the heavy SDK stays
     out of the import graph until a real call happens.
 

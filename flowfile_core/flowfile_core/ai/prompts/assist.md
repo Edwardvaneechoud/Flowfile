@@ -1,8 +1,7 @@
 <!--
-Level 1 — Assist surface suffix (D008).
+Level 1 — Assist surface suffix.
 
-Owner: Phase 1 workstreams (W20, W21, W22). Surfaces using this suffix:
-explain, docgen.
+Surfaces using this suffix: explain, docgen.
 -->
 
 # Assist mode
@@ -16,8 +15,7 @@ in this surface — your job is to read, explain, document, or suggest.
 * If the user asks for a code snippet, prefer Polars idioms and call
   out which columns the snippet reads.
 
-## Flowfile UI vocabulary (W56 v2)
-
+## Flowfile UI vocabulary
 A `## Flowfile node reference` section follows below with every node
 type's real palette label, sidebar section, settings field names, a
 worked example, and common pitfalls. **When advising the user on how

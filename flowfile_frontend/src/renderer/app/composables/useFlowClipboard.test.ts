@@ -306,7 +306,7 @@ describe("hasTextSelection (copy-path guard)", () => {
   });
 
   it("catches a selection over a node-description <pre> that the target predicate accepts", () => {
-    // The reviewer's repro: description text is selectable, sits in the
+    // The repro: description text is selectable, sits in the
     // .vue-flow subtree (no overlay, not editable) — the target predicate
     // says "canvas", so the copy handler must ALSO consult the selection.
     document.body.innerHTML = `

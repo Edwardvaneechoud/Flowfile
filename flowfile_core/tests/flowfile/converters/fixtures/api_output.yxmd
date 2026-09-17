@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="54" y="54" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <NumRows value="2" />
+          <Fields>
+            <Field name="CrateId" />
+            <Field name="Grower" />
+          </Fields>
+          <Data>
+            <r>
+              <c>1</c>
+              <c>Okonjo</c>
+            </r>
+            <r>
+              <c>2</c>
+              <c>Salgado</c>
+            </r>
+          </Data>
+        </Configuration>
+      </Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.APIOutput.APIOutput">
+        <Position x="198" y="54" />
+      </GuiSettings>
+      <Properties>
+        <Configuration />
+      </Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="2" Connection="Input" />
+    </Connection>
+  </Connections>
+  <Properties>
+    <MetaInfo>
+      <Name>API Output</Name>
+    </MetaInfo>
+  </Properties>
+</AlteryxDocument>

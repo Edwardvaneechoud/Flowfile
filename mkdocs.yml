@@ -119,6 +119,7 @@ nav:
       - Build Flows Visually: users/build-flows-visually.md
       - Analyze Your Data: users/analyze-your-data.md
       - Your Data Lives Elsewhere: users/data-elsewhere.md
+      - Coming from Alteryx: users/coming-from-alteryx.md
       - Write Python: users/write-python.md
       - Run Flowfile for a Team: users/deploy-for-a-team.md
 

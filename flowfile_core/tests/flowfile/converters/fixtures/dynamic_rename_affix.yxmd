@@ -1,0 +1,131 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="10" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Fields><Field name="CrateName" /><Field name="TeamName" /><Field name="Units" /><Field name="Weight" /></Fields>
+        <Data>
+          <r><c>alpha</c><c>reds</c><c>4</c><c>11</c></r>
+          <r><c>bravo</c><c>blues</c><c>7</c><c>12</c></r>
+        </Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename">
+        <Position x="110" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <RenameMode>Add</RenameMode>
+        <Fields orderChanged="False">
+          <Field name="Units" />
+          <Field name="CrateName" selected="False" />
+          <Field name="TeamName" selected="False" />
+          <Field name="Weight" selected="False" />
+          <Field name="*Unknown" selected="False" />
+        </Fields>
+        <Expression />
+        <AddPrefixSuffix><Type>Prefix</Type><Text>Total_</Text></AddPrefixSuffix>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename">
+        <Position x="210" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <RenameMode>Add</RenameMode>
+        <Fields orderChanged="False">
+          <Field name="CrateName" />
+          <Field name="TeamName" selected="False" />
+          <Field name="Total_Units" selected="False" />
+          <Field name="Weight" selected="False" />
+          <Field name="*Unknown" selected="False" />
+        </Fields>
+        <Expression />
+        <AddPrefixSuffix><Type>Suffix</Type><Text> (raw)</Text></AddPrefixSuffix>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename">
+        <Position x="310" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <RenameMode>Remove</RenameMode>
+        <Fields orderChanged="False">
+          <Field name="TeamName" />
+          <Field name="CrateName (raw)" selected="False" />
+          <Field name="Total_Units" selected="False" />
+          <Field name="Weight" selected="False" />
+          <Field name="*Unknown" selected="False" />
+        </Fields>
+        <Expression />
+        <RemovePrefixSuffix><Type>Suffix</Type><Text>Name</Text><OnError>Warn</OnError></RemovePrefixSuffix>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename">
+        <Position x="410" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <RenameMode>Remove</RenameMode>
+        <Fields orderChanged="False">
+          <Field name="Total_Units" />
+          <Field name="CrateName (raw)" selected="False" />
+          <Field name="Team" selected="False" />
+          <Field name="Weight" selected="False" />
+          <Field name="*Unknown" selected="False" />
+        </Fields>
+        <Expression />
+        <RemovePrefixSuffix><Type>Prefix</Type><Text>Total_</Text></RemovePrefixSuffix>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="6">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="410" y="140" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <NumRows value="4" />
+        <Fields><Field name="New" /><Field name="Old" /></Fields>
+        <Data>
+          <r><c>Team</c><c>Team</c></r>
+          <r><c>Crate</c><c>CrateName (raw)</c></r>
+          <r><c>Boxes</c><c>Units</c></r>
+          <r><c>Phantom</c><c>Ghost</c></r>
+        </Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="7">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DynamicRename.DynamicRename">
+        <Position x="510" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <RenameMode>RightInputRows</RenameMode>
+        <Fields orderChanged="False">
+          <Field name="Team" />
+          <Field name="CrateName (raw)" />
+          <Field name="Units" />
+          <Field name="Weight" />
+          <Field name="*Unknown" />
+        </Fields>
+        <Expression />
+        <NamesFromRows>
+          <OnError>Warn</OnError>
+          <InputMode>Mapped</InputMode>
+          <OldName>Old</OldName>
+          <NewName>New</NewName>
+        </NamesFromRows>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Targets" /></Connection>
+    <Connection><Origin ToolID="2" Connection="Output" /><Destination ToolID="3" Connection="Targets" /></Connection>
+    <Connection><Origin ToolID="3" Connection="Output" /><Destination ToolID="4" Connection="Targets" /></Connection>
+    <Connection><Origin ToolID="4" Connection="Output" /><Destination ToolID="5" Connection="Targets" /></Connection>
+    <Connection><Origin ToolID="5" Connection="Output" /><Destination ToolID="7" Connection="Targets" /></Connection>
+    <Connection><Origin ToolID="6" Connection="Output" /><Destination ToolID="7" Connection="Source" /></Connection>
+  </Connections>
+  <Properties><MetaInfo><Name>Dynamic rename affixes and a mapped table</Name></MetaInfo></Properties>
+</AlteryxDocument>

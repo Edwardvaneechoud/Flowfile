@@ -1,0 +1,170 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="400">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="40" y="260" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <NumRows value="4" />
+        <Fields>
+          <Field name="orchard" />
+          <Field name="depth_m" />
+          <Field name="orchard outline" />
+        </Fields>
+        <Data>
+          <r><c>Okonjo</c><c>1</c><c>north</c></r>
+          <r><c>Okonjo</c><c>2</c><c>north</c></r>
+          <r><c>Salgado</c><c></c><c>south</c></r>
+          <r><c>Salgado</c><c>4</c><c>south</c></r>
+        </Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="410">
+      <GuiSettings>
+        <Position x="270" y="10" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Value name="Select Fields">depth_m=True,orchard=True,orchard outline=True</Value>
+          <Value name="Sample Data">False</Value>
+          <Value name="Number">True</Value>
+          <Value name="NNumber">5000</Value>
+          <Value name="Percent">False</Value>
+          <Value name="NPercent">10</Value>
+        </Configuration>
+      </Properties>
+      <EngineSettings Macro="Predictive Tools\Field_Summary_Report.yxmc" />
+    </Node>
+    <Node ToolID="420">
+      <GuiSettings>
+        <Position x="270" y="110" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Value name="Select Fields">depth_m=True,orchard=False,orchard outline=False</Value>
+          <Value name="Sample Data">False</Value>
+          <Value name="Number">True</Value>
+          <Value name="NNumber">5000</Value>
+          <Value name="Percent">False</Value>
+          <Value name="NPercent">10</Value>
+        </Configuration>
+      </Properties>
+      <EngineSettings Macro="Predictive Tools\Field_Summary_Report.yxmc" />
+    </Node>
+    <Node ToolID="430">
+      <GuiSettings>
+        <Position x="270" y="210" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Value name="Select Fields">depth_m=True,orchard=True,orchard outline=True</Value>
+          <Value name="Sample Data">True</Value>
+          <Value name="Number">False</Value>
+          <Value name="NNumber">5000</Value>
+          <Value name="Percent">True</Value>
+          <Value name="NPercent">10</Value>
+        </Configuration>
+      </Properties>
+      <EngineSettings Macro="Predictive Tools\Field_Summary_Report.yxmc" />
+    </Node>
+    <Node ToolID="440">
+      <GuiSettings>
+        <Position x="270" y="310" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Value name="Select Fields">depth_m=True,orchard=True,orchard outline=True</Value>
+          <Value name="Sample Data">True</Value>
+          <Value name="Number">True</Value>
+          <Value name="NNumber">5000</Value>
+          <Value name="Percent">True</Value>
+          <Value name="NPercent">10</Value>
+        </Configuration>
+      </Properties>
+      <EngineSettings Macro="Predictive Tools\Field_Summary_Report.yxmc" />
+    </Node>
+    <Node ToolID="450">
+      <GuiSettings>
+        <Position x="270" y="410" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Value name="Select Fields">depth_m=False,orchard=False,orchard outline=False</Value>
+          <Value name="Sample Data">False</Value>
+          <Value name="Number">True</Value>
+          <Value name="NNumber">5000</Value>
+          <Value name="Percent">False</Value>
+          <Value name="NPercent">10</Value>
+        </Configuration>
+      </Properties>
+      <EngineSettings Macro="Predictive Tools\Field_Summary_Report.yxmc" />
+    </Node>
+    <Node ToolID="460">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.BrowseV2.BrowseV2">
+        <Position x="470" y="10" />
+      </GuiSettings>
+      <Properties><Configuration /></Properties>
+    </Node>
+    <Node ToolID="470">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.BasicDataProfile.BasicDataProfile">
+        <Position x="270" y="510" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Limit_UniqueCount>10000</Limit_UniqueCount>
+        <Limit_UniqueValuesSize>1000</Limit_UniqueValuesSize>
+        <IsMetric value="False" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="480">
+      <GuiSettings>
+        <Position x="270" y="510" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Value name="Select Fields">depth_m=True,orchard=True,orchard outline=True</Value>
+          <Value name="Sample Data">True</Value>
+          <Value name="Number">False</Value>
+          <Value name="NNumber">5000</Value>
+          <Value name="Percent">False</Value>
+          <Value name="NPercent">10</Value>
+        </Configuration>
+      </Properties>
+      <EngineSettings Macro="Predictive Tools\Field_Summary_Report.yxmc" />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="400" Connection="Output" />
+      <Destination ToolID="410" Connection="Field Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="400" Connection="Output" />
+      <Destination ToolID="420" Connection="Field Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="400" Connection="Output" />
+      <Destination ToolID="430" Connection="Field Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="400" Connection="Output" />
+      <Destination ToolID="440" Connection="Field Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="400" Connection="Output" />
+      <Destination ToolID="450" Connection="Field Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="400" Connection="Output" />
+      <Destination ToolID="470" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="410" Connection="Reports" />
+      <Destination ToolID="460" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="400" Connection="Output" />
+      <Destination ToolID="480" Connection="Field Input" />
+    </Connection>
+  </Connections>
+</AlteryxDocument>

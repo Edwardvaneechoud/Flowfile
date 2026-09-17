@@ -24,7 +24,7 @@ Cases:
   ``sys.modules``. cases:
 
 * ``test_chat_stream_prepends_assist_prompt_for_surface_explain`` — when
-  ``surface="explain"``, the provider sees ``[system (W22 assist), user]``.
+  ``surface="explain"``, the provider sees ``[system (assist prompt), user]``.
 * ``test_chat_stream_prepends_default_prompt_when_surface_missing`` — no
   ``surface`` field → falls back to the default surface (``"explain"`` →
   ``assist`` per's ``SURFACE_TO_LEVEL``).
@@ -485,8 +485,8 @@ def test_chat_stream_calls_render_prompt_context_when_flow_id_set(
     registered_flow_for_w28: FlowGraph,
 ) -> None:
     """POST with ``flow_id`` set → backend calls's
-    ``render_prompt_context``; provider receives ``[system (W22 layered
-    prompt), user (W22 user-context block), user (question)]``.
+    ``render_prompt_context``; provider receives ``[system (layered
+    prompt), user (user-context block), user (question)]``.
 
     The user block must reference the actual node names from the
     flow. This is the test that fails if the smoke-test scenario regresses
@@ -611,7 +611,7 @@ def test_chat_stream_mentions_forwarded_to_render_prompt_context(
     patch_get_configured_provider: FakeProvider,
     registered_flow_for_w28: FlowGraph,
 ) -> None:
-    """when the client provides parsed ``mentions`` (W24's output),
+    """when the client provides parsed ``mentions``,
     they reach ``render_prompt_context`` as a single space-joined string
     for ``_coerce_mentions`` to parse server-side. Multiple mentions
     keep their order so node-id resolution is deterministic.
@@ -786,7 +786,7 @@ def test_chat_stream_user_block_contains_columns_for_un_run_static_upstream(
 def test_lazy_litellm_import_for_chat_routes() -> None:
     """``import flowfile_core.ai.chat_routes`` mustn't drag in litellm.
 
-    Same contract as W11/W12/W13 — the module sits behind the BYOK seam,
+    Same contract as the other AI routers — the module sits behind the BYOK seam,
     not the provider_factory bootstrap, so the heavy SDK stays out of the
     import graph until a real call happens.
 

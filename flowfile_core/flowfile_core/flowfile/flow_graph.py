@@ -3422,6 +3422,12 @@ class FlowGraph:
             setting_input=filter_settings,
             input_node_ids=[filter_settings.depending_on_id],
         )
+        from flowfile_core.flowfile.settings_validation import node_expression_issue
+
+        issue = node_expression_issue(self.get_node(filter_settings.node_id), allow_prediction=True)
+        if issue is not None and issue.kind in ("type", "parse"):
+            return False, issue.message
+        return True, ""
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_record_count(self, node_number_of_records: input_schema.NodeRecordCount):
@@ -3632,7 +3638,6 @@ class FlowGraph:
             function_settings: The settings for the formula operation.
         """
 
-        error = ""
         if function_settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
             output_type = cast_str_to_polars_type(function_settings.function.field.data_type)
         else:
@@ -3660,12 +3665,12 @@ class FlowGraph:
             setting_input=function_settings,
             input_node_ids=[function_settings.depending_on_id],
         )
-        if error != "":
-            node = self.get_node(function_settings.node_id)
-            node.results.errors = error
-            return False, error
-        else:
-            return True, ""
+        from flowfile_core.flowfile.settings_validation import node_expression_issue
+
+        issue = node_expression_issue(self.get_node(function_settings.node_id), allow_prediction=True)
+        if issue is not None and issue.kind in ("type", "parse"):
+            return False, issue.message
+        return True, ""
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cross_join(self, cross_join_settings: input_schema.NodeCrossJoin) -> "FlowGraph":

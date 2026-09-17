@@ -1,5 +1,5 @@
 <!--
-W71 — Stage 1 of the agent_staged state machine (add path).
+Stage 1 of the agent_staged state machine (add path).
 Owner: planner agent. Loaded by ``assemble_system_prompt`` when
 ``surface="agent_staged"`` and ``stage="pick_type"``.
 -->

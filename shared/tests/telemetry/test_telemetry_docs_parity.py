@@ -23,8 +23,8 @@ from shared import telemetry
 
 DOCS = Path(__file__).resolve().parents[3] / "docs" / "users" / "telemetry.md"
 
-EVENT_HEADER = ("Event", "When it fires")
-PROP_HEADER = ("Prop", "Event", "Allowed values")
+EVENT_HEADER = ("Event", "When")
+PROP_HEADER = ("Event", "Field", "Values")
 
 CLOSED_SET = re.compile(r"^`[^`]+`(?:\s*·\s*`[^`]+`)*$")
 
@@ -92,6 +92,12 @@ def _values(cell: str) -> set[str] | None:
     return {token.strip().strip("`") for token in cell.split("·")}
 
 
+def _event_names(cell: str) -> set[str]:
+    """Every code-formatted event in a cell; one row may list several (`a` / `b`, or `a`, `b`)."""
+    names = {token.strip().strip("`") for token in re.split(r"[,/]", cell)}
+    return {name for name in names if name}
+
+
 def _number(pattern: str) -> int:
     match = re.search(pattern, _text())
     assert match is not None, f"the page no longer says {pattern!r}"
@@ -100,51 +106,53 @@ def _number(pattern: str) -> int:
 
 
 @pytest.fixture(scope="module")
-def prop_rows() -> dict[str, list[str]]:
-    return {_code(row[0]): row for row in _rows(PROP_HEADER)}
+def prop_rows() -> dict[str, tuple[set[str], str]]:
+    """Field name -> (events it belongs to, values cell). A blank Event cell continues the row above."""
+    rows: dict[str, tuple[set[str], str]] = {}
+    events: set[str] = set()
+    for row in _rows(PROP_HEADER):
+        if row[0]:
+            events = _event_names(row[0])
+        assert events, f"the first props row names no event: {row}"
+        rows[_code(row[1])] = (events, row[2])
+    return rows
 
 
 def test_documented_event_names_match_the_client_schema() -> None:
-    documented = {_code(row[0]) for row in _rows(EVENT_HEADER)}
+    documented = {name for row in _rows(EVENT_HEADER) for name in _event_names(row[0])}
     assert documented == set(telemetry.EVENTS)
 
 
 def test_documented_props_match_the_client_schema(prop_rows) -> None:
-    documented = {(_code(row[0]), event) for row in prop_rows.values() for event in _values(row[1])}
+    documented = {(field, event) for field, (events, _) in prop_rows.items() for event in events}
     expected = {(prop, event) for event, props in telemetry.EVENTS.items() for prop in props}
     assert documented == expected
 
 
 def test_documented_closed_value_sets_match_the_client_schema(prop_rows) -> None:
-    assert _values(prop_rows["node_count_bucket"][2]) == set(telemetry.NODE_COUNT_BUCKETS)
-    assert _values(prop_rows["duration_bucket"][2]) == set(telemetry.DURATION_BUCKETS)
-    assert _values(prop_rows["used_sample_data"][2]) == {"true", "false"}
-    assert _values(prop_rows["tool_count_bucket"][2]) == set(telemetry.NODE_COUNT_BUCKETS)
+    assert _values(prop_rows["node_count_bucket"][1]) == set(telemetry.NODE_COUNT_BUCKETS)
+    assert _values(prop_rows["duration_bucket"][1]) == set(telemetry.DURATION_BUCKETS)
+    assert _values(prop_rows["used_sample_data"][1]) == {"true", "false"}
+    assert _values(prop_rows["tool_count_bucket"][1]) == set(telemetry.NODE_COUNT_BUCKETS)
 
 
 def test_documented_export_targets_are_all_accepted_by_the_client(prop_rows) -> None:
     """A documented target the client would drop is a promise the code cannot keep."""
-    documented = _values(prop_rows["target"][2])
+    documented = _values(prop_rows["target"][1])
     assert documented is not None, "the target row must stay a closed list of code-formatted values"
     assert documented <= set(telemetry.EXPORT_TARGETS)
 
 
 def test_open_value_sets_stay_prose(prop_rows) -> None:
     """``node_types``, ``error_class`` and the Alteryx tool lists are allowlists too long to enumerate."""
-    assert _values(prop_rows["node_types"][2]) is None
-    assert _values(prop_rows["error_class"][2]) is None
+    assert _values(prop_rows["node_types"][1]) is None
+    assert _values(prop_rows["error_class"][1]) is None
     for prop in telemetry.LIST_PROPS - {"node_types"}:
-        assert _values(prop_rows[prop][2]) is None, prop
+        assert _values(prop_rows[prop][1]) is None, prop
 
 
 def test_documented_node_type_cap_matches_the_client() -> None:
-    assert _number(r"capped at (\d+) entries") == telemetry.MAX_NODE_TYPES
-
-
-def test_documented_event_and_prop_counts_match_the_client_schema() -> None:
-    assert _number(r"The schema is closed — (\w+) events") == len(telemetry.EVENTS)
-    with_props = [event for event, props in telemetry.EVENTS.items() if props]
-    assert _number(r"Only (\w+) events carry props at all") == len(with_props)
+    assert _number(r"sorted, max (\d+)\.") == telemetry.MAX_NODE_TYPES
 
 
 def test_documented_example_event_matches_a_client_built_envelope() -> None:

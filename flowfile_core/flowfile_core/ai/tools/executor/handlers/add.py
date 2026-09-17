@@ -274,7 +274,7 @@ def _handle_add_node(
         )
 
     # --- Refusal stage 1.5: upstream sink validation ---
-    # The Tier-6 resolver fallback already filters sinks (see planner.py).
+    # The Tier-6 resolver fallback already filters sinks (see agents/planner/insertion.py).
     # This guard catches the explicit case where the LLM named a sink in
     # ``upstream_node_ids`` directly (Tier 1) — the resolver respects
     # explicit intent, so the only place to refuse is here.

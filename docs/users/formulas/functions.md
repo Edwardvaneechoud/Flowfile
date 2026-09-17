@@ -383,123 +383,123 @@ All 106 built-in functions of the [Flowfile formula language](index.md). This re
 <section class="fn-category" id="date-time" data-cat="date-time">
 <h2>Date &amp; Time <span class="fn-count">(28)</span></h2>
 <div class="fn-grid">
-<article class="fn-card" id="add_days" data-text="add_days(date_value, days) adds a number of days to a date. date &amp; time">
+<article class="fn-card" id="add_days" data-text="add_days(date_value, days) adds a number of days to a date. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">add_days(date_value, days)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=add_days%28%5Bhire_date%5D%2C%205%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Adds a number of days to a date.</p>
+<p class="fn-desc">Adds a number of days to a date. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>add_days([hire_date], 5)</code> <span class="fn-arrow">→</span> <code class="fn-result">2021-03-20</code><span class="fn-ctx">when [hire_date] is 2021-03-15</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to add days to</li><li><code>days</code> — How many days to add</li><li><strong>Returns</strong> — The new date</li></ul></details>
 </article>
-<article class="fn-card" id="add_hours" data-text="add_hours(date_value, hours) adds a number of hours to a datetime. date &amp; time">
+<article class="fn-card" id="add_hours" data-text="add_hours(date_value, hours) adds a number of hours to a datetime. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">add_hours(date_value, hours)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=orders&amp;expr=add_hours%28%5Border_date%5D%2C%203%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Adds a number of hours to a datetime.</p>
+<p class="fn-desc">Adds a number of hours to a datetime. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>add_hours([order_date], 3)</code> <span class="fn-arrow">→</span> <span class="fn-result">2024-01-15 13:30:00</span><span class="fn-ctx">when [order_date] is 2024-01-15 10:30:00</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The datetime column or expression to add hours to</li><li><code>hours</code> — How many hours to add</li><li><strong>Returns</strong> — The new date and time</li></ul></details>
 </article>
-<article class="fn-card" id="add_minutes" data-text="add_minutes(date_value, minutes) adds a number of minutes to a datetime. date &amp; time">
+<article class="fn-card" id="add_minutes" data-text="add_minutes(date_value, minutes) adds a number of minutes to a datetime. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">add_minutes(date_value, minutes)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=orders&amp;expr=add_minutes%28%5Border_date%5D%2C%2015%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Adds a number of minutes to a datetime.</p>
+<p class="fn-desc">Adds a number of minutes to a datetime. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>add_minutes([order_date], 15)</code> <span class="fn-arrow">→</span> <span class="fn-result">2024-01-15 10:45:00</span><span class="fn-ctx">when [order_date] is 2024-01-15 10:30:00</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The datetime column or expression to add minutes to</li><li><code>minutes</code> — How many minutes to add</li><li><strong>Returns</strong> — The new date and time</li></ul></details>
 </article>
-<article class="fn-card" id="add_months" data-text="add_months(date_value, months) adds a number of months to a date. date &amp; time">
+<article class="fn-card" id="add_months" data-text="add_months(date_value, months) adds a number of months to a date. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">add_months(date_value, months)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=add_months%28%5Bhire_date%5D%2C%202%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Adds a number of months to a date.</p>
+<p class="fn-desc">Adds a number of months to a date. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>add_months([hire_date], 2)</code> <span class="fn-arrow">→</span> <code class="fn-result">2021-05-15</code><span class="fn-ctx">when [hire_date] is 2021-03-15</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to add months to</li><li><code>months</code> — How many months to add</li><li><strong>Returns</strong> — The new date</li></ul></details>
 </article>
-<article class="fn-card" id="add_seconds" data-text="add_seconds(date_value, seconds) adds a number of seconds to a datetime. date &amp; time">
+<article class="fn-card" id="add_seconds" data-text="add_seconds(date_value, seconds) adds a number of seconds to a datetime. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">add_seconds(date_value, seconds)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=orders&amp;expr=add_seconds%28%5Border_date%5D%2C%2030%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Adds a number of seconds to a datetime.</p>
+<p class="fn-desc">Adds a number of seconds to a datetime. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>add_seconds([order_date], 30)</code> <span class="fn-arrow">→</span> <span class="fn-result">2024-01-15 10:30:30</span><span class="fn-ctx">when [order_date] is 2024-01-15 10:30:00</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The datetime column or expression to add seconds to</li><li><code>seconds</code> — How many seconds to add</li><li><strong>Returns</strong> — The new date and time</li></ul></details>
 </article>
-<article class="fn-card" id="add_weeks" data-text="add_weeks(date_value, weeks) adds a number of weeks to a date. date &amp; time">
+<article class="fn-card" id="add_weeks" data-text="add_weeks(date_value, weeks) adds a number of weeks to a date. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">add_weeks(date_value, weeks)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=add_weeks%28%5Bhire_date%5D%2C%202%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Adds a number of weeks to a date.</p>
+<p class="fn-desc">Adds a number of weeks to a date. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>add_weeks([hire_date], 2)</code> <span class="fn-arrow">→</span> <code class="fn-result">2021-03-29</code><span class="fn-ctx">when [hire_date] is 2021-03-15</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to add weeks to</li><li><code>weeks</code> — How many weeks to add</li><li><strong>Returns</strong> — The new date</li></ul></details>
 </article>
-<article class="fn-card" id="add_years" data-text="add_years(date_value, years) adds a number of years to a date. date &amp; time">
+<article class="fn-card" id="add_years" data-text="add_years(date_value, years) adds a number of years to a date. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">add_years(date_value, years)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=add_years%28%5Bhire_date%5D%2C%201%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Adds a number of years to a date.</p>
+<p class="fn-desc">Adds a number of years to a date. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>add_years([hire_date], 1)</code> <span class="fn-arrow">→</span> <code class="fn-result">2022-03-15</code><span class="fn-ctx">when [hire_date] is 2021-03-15</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to add years to</li><li><code>years</code> — How many years to add</li><li><strong>Returns</strong> — The new date</li></ul></details>
 </article>
-<article class="fn-card" id="date_diff_days" data-text="date_diff_days(date1, date2) calculates the number of days between two dates (the first minus the second). date &amp; time">
+<article class="fn-card" id="date_diff_days" data-text="date_diff_days(date1, date2) calculates the number of days between two dates (the first minus the second). iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">date_diff_days(date1, date2)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=date_diff_days%28today%28%29%2C%20%5Bhire_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Calculates the number of days between two dates (the first minus the second).</p>
+<p class="fn-desc">Calculates the number of days between two dates (the first minus the second). ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>date_diff_days(today(), [hire_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">30</code><span class="fn-ctx">when [hire_date] is 30 days before today</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date1</code> — The date column or expression to subtract from</li><li><code>date2</code> — The date column or expression to subtract</li><li><strong>Returns</strong> — The number of days between the two dates</li></ul></details>
 </article>
-<article class="fn-card" id="date_trim" data-text="date_trim(date_value, part) removes the smaller parts of a date or time. date &amp; time">
+<article class="fn-card" id="date_trim" data-text="date_trim(date_value, part) removes the smaller parts of a date or time. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">date_trim(date_value, part)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=orders&amp;expr=date_trim%28%5Border_date%5D%2C%20%22day%22%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Removes the smaller parts of a date or time.</p>
+<p class="fn-desc">Removes the smaller parts of a date or time. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>date_trim([order_date], &quot;day&quot;)</code> <span class="fn-arrow">→</span> <span class="fn-result">2024-01-15 00:00:00</span><span class="fn-ctx">when [order_date] is 2024-01-15 10:30:45</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The datetime column or expression to trim</li><li><code>part</code> — Which part to keep (&#x27;year&#x27;, &#x27;month&#x27;, &#x27;day&#x27;, &#x27;hour&#x27;, &#x27;minute&#x27;, or &#x27;second&#x27;)</li><li><strong>Returns</strong> — The trimmed date and time</li></ul></details>
 </article>
-<article class="fn-card" id="date_truncate" data-text="date_truncate(date_value, truncate_by) rounds a date down to the nearest specified unit. date &amp; time">
+<article class="fn-card" id="date_truncate" data-text="date_truncate(date_value, truncate_by) rounds a date down to the nearest specified unit. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">date_truncate(date_value, truncate_by)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=orders&amp;expr=date_truncate%28%5Border_date%5D%2C%20%221d%22%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Rounds a date down to the nearest specified unit.</p>
+<p class="fn-desc">Rounds a date down to the nearest specified unit. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>date_truncate([order_date], &quot;1d&quot;)</code> <span class="fn-arrow">→</span> <span class="fn-result">2024-01-15 00:00:00</span><span class="fn-ctx">when [order_date] is 2024-01-15 10:30:45</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The datetime column or expression to truncate</li><li><code>truncate_by</code> — The time unit to round down to (like &quot;1d&quot;, &quot;2h&quot;, &quot;15m&quot;)</li><li><strong>Returns</strong> — The truncated date and time</li></ul></details>
 </article>
-<article class="fn-card" id="datetime_diff_nanoseconds" data-text="datetime_diff_nanoseconds(date1, date2) calculates the number of nanoseconds between two datetimes (the first minus the second), for very precise time measurements. date &amp; time">
+<article class="fn-card" id="datetime_diff_nanoseconds" data-text="datetime_diff_nanoseconds(date1, date2) calculates the number of nanoseconds between two datetimes (the first minus the second), for very precise time measurements. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">datetime_diff_nanoseconds(date1, date2)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=events&amp;expr=datetime_diff_nanoseconds%28%5Bend%5D%2C%20%5Bstart%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Calculates the number of nanoseconds between two datetimes (the first minus the second), for very precise time measurements.</p>
+<p class="fn-desc">Calculates the number of nanoseconds between two datetimes (the first minus the second), for very precise time measurements. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>datetime_diff_nanoseconds([end], [start])</code> <span class="fn-arrow">→</span> <code class="fn-result">1000000000</code><span class="fn-ctx">when [start] is 2024-01-15 10:00:00 and [end] is 2024-01-15 10:00:01</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date1</code> — The datetime column or expression to subtract from</li><li><code>date2</code> — The datetime column or expression to subtract</li><li><strong>Returns</strong> — The number of nanoseconds between the two datetimes</li></ul></details>
 </article>
-<article class="fn-card" id="datetime_diff_seconds" data-text="datetime_diff_seconds(date1, date2) calculates the number of seconds between two datetimes (the first minus the second). date &amp; time">
+<article class="fn-card" id="datetime_diff_seconds" data-text="datetime_diff_seconds(date1, date2) calculates the number of seconds between two datetimes (the first minus the second). iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">datetime_diff_seconds(date1, date2)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=events&amp;expr=datetime_diff_seconds%28%5Bend%5D%2C%20%5Bstart%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Calculates the number of seconds between two datetimes (the first minus the second).</p>
+<p class="fn-desc">Calculates the number of seconds between two datetimes (the first minus the second). ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>datetime_diff_seconds([end], [start])</code> <span class="fn-arrow">→</span> <code class="fn-result">3600</code><span class="fn-ctx">when [start] is 2024-01-15 10:00:00 and [end] is 2024-01-15 11:00:00</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date1</code> — The datetime column or expression to subtract from</li><li><code>date2</code> — The datetime column or expression to subtract</li><li><strong>Returns</strong> — The number of seconds between the two datetimes</li></ul></details>
 </article>
-<article class="fn-card" id="day" data-text="day(date_value) gets the day of the month from a date. date &amp; time">
+<article class="fn-card" id="day" data-text="day(date_value) gets the day of the month from a date. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">day(date_value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=day%28%5Bhire_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Gets the day of the month from a date.</p>
+<p class="fn-desc">Gets the day of the month from a date. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>day([hire_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">15</code><span class="fn-ctx">when [hire_date] is 2021-03-15</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to extract the day from</li><li><strong>Returns</strong> — The day of the month as a number (1-31)</li></ul></details>
 </article>
-<article class="fn-card" id="dayofweek" data-text="dayofweek(date_value) gets the day of the week from a date (alias for weekday, 1=monday, 7=sunday). date &amp; time">
+<article class="fn-card" id="dayofweek" data-text="dayofweek(date_value) gets the day of the week from a date (alias for weekday, 1=monday, 7=sunday). iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">dayofweek(date_value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=dayofweek%28%5Bhire_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Gets the day of the week from a date (alias for weekday, 1=Monday, 7=Sunday).</p>
+<p class="fn-desc">Gets the day of the week from a date (alias for weekday, 1=Monday, 7=Sunday). ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>dayofweek([hire_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">1</code><span class="fn-ctx">when [hire_date] is 2021-03-15, a Monday</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to extract the day of week from</li><li><strong>Returns</strong> — The day of the week as a number (1-7)</li></ul></details>
 </article>
-<article class="fn-card" id="dayofyear" data-text="dayofyear(date_value) gets the day of the year from a date (1-366). date &amp; time">
+<article class="fn-card" id="dayofyear" data-text="dayofyear(date_value) gets the day of the year from a date (1-366). iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">dayofyear(date_value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=dayofyear%28%5Bhire_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Gets the day of the year from a date (1-366).</p>
+<p class="fn-desc">Gets the day of the year from a date (1-366). ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>dayofyear([hire_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">74</code><span class="fn-ctx">when [hire_date] is 2021-03-15</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to extract the day of year from</li><li><strong>Returns</strong> — The day of the year as a number (1-366)</li></ul></details>
 </article>
-<article class="fn-card" id="end_of_month" data-text="end_of_month(date_value) gets the last day of the month for a given date. date &amp; time">
+<article class="fn-card" id="end_of_month" data-text="end_of_month(date_value) gets the last day of the month for a given date. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">end_of_month(date_value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=end_of_month%28%5Bhire_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Gets the last day of the month for a given date.</p>
+<p class="fn-desc">Gets the last day of the month for a given date. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>end_of_month([hire_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">2021-03-31</code><span class="fn-ctx">when [hire_date] is 2021-03-15</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to get the end of month for</li><li><strong>Returns</strong> — The last day of the month</li></ul></details>
 </article>
-<article class="fn-card" id="format_date" data-text="format_date(date_value, date_format=&#x27;%y-%m-%d&#x27;) formats a date as text using a specified format. date &amp; time">
+<article class="fn-card" id="format_date" data-text="format_date(date_value, date_format=&#x27;%y-%m-%d&#x27;) formats a date as text using a specified format. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">format_date(date_value, date_format=&#x27;%Y-%m-%d&#x27;)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=format_date%28%5Bhire_date%5D%2C%20%22%25B%20%25d%2C%20%25Y%22%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Formats a date as text using a specified format.</p>
+<p class="fn-desc">Formats a date as text using a specified format. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>format_date([hire_date], &quot;%B %d, %Y&quot;)</code> <span class="fn-arrow">→</span> <code class="fn-result">&quot;March 15, 2021&quot;</code><span class="fn-ctx">when [hire_date] is 2021-03-15</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to format</li><li><code>date_format</code> — The output format string (default is year-month-day)</li><li><strong>Returns</strong> — The formatted date as text</li></ul></details>
 </article>
-<article class="fn-card" id="hour" data-text="hour(date_value) gets the hour from a datetime. date &amp; time">
+<article class="fn-card" id="hour" data-text="hour(date_value) gets the hour from a datetime. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">hour(date_value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=orders&amp;expr=hour%28%5Border_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Gets the hour from a datetime.</p>
+<p class="fn-desc">Gets the hour from a datetime. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>hour([order_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">10</code><span class="fn-ctx">when [order_date] is 2024-01-15 10:30:45</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The datetime column or expression to extract the hour from</li><li><strong>Returns</strong> — The hour as a number (0-23)</li></ul></details>
 </article>
-<article class="fn-card" id="minute" data-text="minute(date_value) gets the minute from a datetime. date &amp; time">
+<article class="fn-card" id="minute" data-text="minute(date_value) gets the minute from a datetime. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">minute(date_value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=orders&amp;expr=minute%28%5Border_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Gets the minute from a datetime.</p>
+<p class="fn-desc">Gets the minute from a datetime. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>minute([order_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">30</code><span class="fn-ctx">when [order_date] is 2024-01-15 10:30:45</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The datetime column or expression to extract the minute from</li><li><strong>Returns</strong> — The minute as a number (0-59)</li></ul></details>
 </article>
-<article class="fn-card" id="month" data-text="month(date_value) gets the month from a date. date &amp; time">
+<article class="fn-card" id="month" data-text="month(date_value) gets the month from a date. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">month(date_value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=month%28%5Bhire_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Gets the month from a date.</p>
+<p class="fn-desc">Gets the month from a date. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>month([hire_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">3</code><span class="fn-ctx">when [hire_date] is 2021-03-15</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to extract the month from</li><li><strong>Returns</strong> — The month as a number (1-12)</li></ul></details>
 </article>
@@ -509,21 +509,21 @@ All 106 built-in functions of the [Flowfile formula language](index.md). This re
 <div class="fn-example"><code>now()</code> <span class="fn-arrow">→</span> <span class="fn-result">the current date and time</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><strong>Returns</strong> — The current date and time</li></ul></details>
 </article>
-<article class="fn-card" id="quarter" data-text="quarter(date_value) gets the quarter from a date (1-4). date &amp; time">
+<article class="fn-card" id="quarter" data-text="quarter(date_value) gets the quarter from a date (1-4). iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">quarter(date_value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=quarter%28%5Bhire_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Gets the quarter from a date (1-4).</p>
+<p class="fn-desc">Gets the quarter from a date (1-4). ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>quarter([hire_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">1</code><span class="fn-ctx">when [hire_date] is 2021-03-15</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to extract the quarter from</li><li><strong>Returns</strong> — The quarter as a number (1-4)</li></ul></details>
 </article>
-<article class="fn-card" id="second" data-text="second(date_value) gets the second from a datetime. date &amp; time">
+<article class="fn-card" id="second" data-text="second(date_value) gets the second from a datetime. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">second(date_value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=orders&amp;expr=second%28%5Border_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Gets the second from a datetime.</p>
+<p class="fn-desc">Gets the second from a datetime. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>second([order_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">45</code><span class="fn-ctx">when [order_date] is 2024-01-15 10:30:45</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The datetime column or expression to extract the second from</li><li><strong>Returns</strong> — The second as a number (0-59)</li></ul></details>
 </article>
-<article class="fn-card" id="start_of_month" data-text="start_of_month(date_value) gets the first day of the month for a given date. date &amp; time">
+<article class="fn-card" id="start_of_month" data-text="start_of_month(date_value) gets the first day of the month for a given date. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">start_of_month(date_value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=start_of_month%28%5Bhire_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Gets the first day of the month for a given date.</p>
+<p class="fn-desc">Gets the first day of the month for a given date. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>start_of_month([hire_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">2021-03-01</code><span class="fn-ctx">when [hire_date] is 2021-03-15</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to get the start of month for</li><li><strong>Returns</strong> — The first day of the month</li></ul></details>
 </article>
@@ -533,21 +533,21 @@ All 106 built-in functions of the [Flowfile formula language](index.md). This re
 <div class="fn-example"><code>today()</code> <span class="fn-arrow">→</span> <span class="fn-result">the current date</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><strong>Returns</strong> — The current date</li></ul></details>
 </article>
-<article class="fn-card" id="week" data-text="week(date_value) gets the iso week number from a date (1-53). date &amp; time">
+<article class="fn-card" id="week" data-text="week(date_value) gets the iso week number from a date (1-53). iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">week(date_value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=week%28%5Bhire_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Gets the ISO week number from a date (1-53).</p>
+<p class="fn-desc">Gets the ISO week number from a date (1-53). ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>week([hire_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">11</code><span class="fn-ctx">when [hire_date] is 2021-03-15</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to extract the week from</li><li><strong>Returns</strong> — The week number as a number (1-53)</li></ul></details>
 </article>
-<article class="fn-card" id="weekday" data-text="weekday(date_value) gets the day of the week from a date (1=monday, 7=sunday). date &amp; time">
+<article class="fn-card" id="weekday" data-text="weekday(date_value) gets the day of the week from a date (1=monday, 7=sunday). iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">weekday(date_value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=weekday%28%5Bhire_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Gets the day of the week from a date (1=Monday, 7=Sunday).</p>
+<p class="fn-desc">Gets the day of the week from a date (1=Monday, 7=Sunday). ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>weekday([hire_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">1</code><span class="fn-ctx">when [hire_date] is 2021-03-15, a Monday</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to extract the weekday from</li><li><strong>Returns</strong> — The day of the week as a number (1-7)</li></ul></details>
 </article>
-<article class="fn-card" id="year" data-text="year(date_value) gets the year from a date. date &amp; time">
+<article class="fn-card" id="year" data-text="year(date_value) gets the year from a date. iso text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first. date &amp; time">
 <header><code class="fn-sig">year(date_value)</code><a class="fn-try" href="https://edwardvaneechoud.github.io/polars_expr_transformer/#ds=employees&amp;expr=year%28%5Bhire_date%5D%29" target="_blank" rel="noopener">Try it ▸</a></header>
-<p class="fn-desc">Gets the year from a date.</p>
+<p class="fn-desc">Gets the year from a date. ISO text dates like &quot;2021-03-15&quot; are parsed automatically when the column type is known; for other layouts, convert with to_date first.</p>
 <div class="fn-example"><code>year([hire_date])</code> <span class="fn-arrow">→</span> <code class="fn-result">2021</code><span class="fn-ctx">when [hire_date] is 2021-03-15</span></div>
 <details class="fn-params"><summary><span class="fn-toggle">▸</span> Parameters &amp; return value</summary><ul><li><code>date_value</code> — The date column or expression to extract the year from</li><li><strong>Returns</strong> — The year as a number</li></ul></details>
 </article>

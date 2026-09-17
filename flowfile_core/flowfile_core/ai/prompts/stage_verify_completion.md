@@ -1,5 +1,5 @@
 <!--
-W71 v2.12 — Optional verify-completion stage. Loaded by
+Optional verify-completion stage. Loaded by
 ``assemble_system_prompt`` when ``surface="agent_staged"`` and
 ``stage="verify_completion"``. Runs ONCE after classify picks
 ``op_kind="other"`` AND ``session.verify_plan_completion=true``.
