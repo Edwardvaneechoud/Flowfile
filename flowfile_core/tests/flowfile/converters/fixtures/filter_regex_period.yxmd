@@ -13,9 +13,9 @@
           <Field name="pattern" />
         </Fields>
         <Data>
-          <r><c>Okonjo</c><c>2017-12-01</c><c>Ok.*</c></r>
-          <r><c>Redondo</c><c>2400-06-01</c><c>Re.*</c></r>
-          <r><c>Salgado</c><c>1999-01-01</c><c>Sa.*</c></r>
+          <r><c>Okonjo</c><c>2017/12/01</c><c>Ok.*</c></r>
+          <r><c>Redondo</c><c>2400/06/01</c><c>Re.*</c></r>
+          <r><c>Salgado</c><c>1999/01/01</c><c>Sa.*</c></r>
         </Data>
       </Configuration></Properties>
     </Node>
@@ -25,7 +25,7 @@
       </GuiSettings>
       <Properties><Configuration>
         <FormulaFields>
-          <FormulaField field="picked" type="Date" size="10" expression="DateTimeParse([picked_on], &quot;%Y-%m-%d&quot;)" />
+          <FormulaField field="picked" type="Date" size="10" expression="DateTimeParse([picked_on], &quot;%Y/%m/%d&quot;)" />
         </FormulaFields>
       </Configuration></Properties>
     </Node>

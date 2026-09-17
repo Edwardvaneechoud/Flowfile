@@ -9,6 +9,7 @@ Flowfile edges without knowing anything about individual tools.
 from __future__ import annotations
 
 import copy
+import datetime
 import re
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -1295,23 +1296,102 @@ def _parse_number(value: str) -> tuple[bool, bool]:
         return False, False
 
 
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ISO_DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+_ISO_TIME_RE = re.compile(r"^\d{2}:\d{2}:\d{2}$")
+
+
+def _iso_date(value: str | None) -> datetime.date | None:
+    """The date a cell holds when it is exactly ``yyyy-MM-dd`` and a real calendar date, else None."""
+    if value is None or not _ISO_DATE_RE.match(value.strip()):
+        return None
+    try:
+        return datetime.datetime.strptime(value.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _iso_datetime(value: str | None) -> datetime.datetime | None:
+    """The datetime a cell holds when it is exactly ``yyyy-MM-dd HH:mm:ss`` and real, else None."""
+    if value is None or not _ISO_DATETIME_RE.match(value.strip()):
+        return None
+    try:
+        return datetime.datetime.strptime(value.strip(), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def _is_iso_time(value: str | None) -> bool:
+    """Whether a cell is exactly ``HH:mm:ss`` and a real time — Alteryx types such a column as Time."""
+    if value is None or not _ISO_TIME_RE.match(value.strip()):
+        return False
+    try:
+        datetime.datetime.strptime(value.strip(), "%H:%M:%S")
+        return True
+    except ValueError:
+        return False
+
+
+def _temporal_values(raw: list[str | None], parser: Callable[[str | None], object]) -> list | None:
+    """Parsed objects for a column when every filled cell is that shape, else None.
+
+    Empty cells stay null. None is returned — the caller then leaves the column as text — for a cell
+    that is not the shape or a column with no filled cell, so a value is never dropped by a bad parse.
+    """
+    values: list = []
+    seen = False
+    for cell in raw:
+        if cell is None or cell.strip() == "":
+            values.append(None)
+            continue
+        parsed = parser(cell)
+        if parsed is None:
+            return None
+        values.append(parsed)
+        seen = True
+    return values if seen else None
+
+
 def _column_values(raw: list[str | None], declared: str | None) -> tuple[str, list]:
-    """Type a Text Input column, preferring the declared Alteryx type over inference."""
-    if declared in ("String", "Date", "Datetime", "Time", "Boolean"):
+    """Type a Text Input column, preferring the declared Alteryx type over inference.
+
+    Alteryx stores every cell as text but auto-types a column of all-ISO values: ``yyyy-MM-dd`` is a
+    Date and ``yyyy-MM-dd HH:mm:ss`` a Datetime. Both are inferred here after the number checks and
+    converted to real ``datetime`` objects, so the ``manual_input`` node builds a temporal column
+    rather than a text one. A mixed column, a non-ISO shape (``09-15/2015``) and an all-empty column
+    stay String; ``HH:mm:ss`` stays String too — Flowfile has no Time column — named on the row.
+    """
+    if declared == "Date":
+        values = _temporal_values(raw, _iso_date)
+        return "Date", values if values is not None else [value for value in raw]
+    if declared == "Datetime":
+        values = _temporal_values(raw, _iso_datetime)
+        return "Datetime", values if values is not None else [value for value in raw]
+    if declared in ("String", "Time", "Boolean"):
         return declared, [value for value in raw]
     filled = [value for value in raw if value is not None and value.strip() != ""]
     if filled and all(_parse_number(value)[0] for value in filled):
         return "Int64", [int(value.strip()) if value and value.strip() else None for value in raw]
     if filled and all(_parse_number(value)[1] for value in filled):
         return "Float64", [float(value.strip()) if value and value.strip() else None for value in raw]
+    date_values = _temporal_values(raw, _iso_date)
+    if date_values is not None:
+        return "Date", date_values
+    datetime_values = _temporal_values(raw, _iso_datetime)
+    if datetime_values is not None:
+        return "Datetime", datetime_values
     return "String", [value for value in raw]
 
 
-def _text_input_columns(tool: AlteryxTool) -> tuple[list[str], list[str], list[list], list[str]]:
-    """A Text Input as Flowfile builds it: column names, types, values, and which types were inferred.
+def _text_input_columns(
+    tool: AlteryxTool,
+) -> tuple[list[str], list[str], list[list], list[tuple[str, str]], list[str]]:
+    """A Text Input as Flowfile builds it: names, types, values, which types were inferred, Time ones.
 
     One authority, because a mapper that types the column and a consumer that asks what type it has
-    must not answer differently.
+    must not answer differently. ``inferred`` is (name, Flowfile type) for each undeclared column that
+    became something other than String; ``time_columns`` names the undeclared ``HH:mm:ss`` columns
+    Flowfile keeps as text because it has no Time column.
     """
     config = _config(tool)
     fields = config.findall("Fields/Field")
@@ -1324,18 +1404,29 @@ def _text_input_columns(tool: AlteryxTool) -> tuple[list[str], list[str], list[l
 
     types: list[str] = []
     data: list[list] = []
-    inferred: list[str] = []
+    inferred: list[tuple[str, str]] = []
+    time_columns: list[str] = []
     for index, name in enumerate(names):
-        data_type, values = _column_values([row[index] for row in rows], declared[index])
-        if declared[index] is None and data_type != "String":
-            inferred.append(name)
+        cells = [row[index] for row in rows]
+        data_type, values = _column_values(cells, declared[index])
+        if declared[index] is None:
+            if data_type != "String":
+                inferred.append((name, data_type))
+            elif _all_iso_time(cells):
+                time_columns.append(name)
         types.append(data_type)
         data.append(values)
-    return names, types, data, inferred
+    return names, types, data, inferred, time_columns
+
+
+def _all_iso_time(cells: list[str | None]) -> bool:
+    """Whether every filled cell is ``HH:mm:ss`` — the shape Alteryx types as Time."""
+    filled = [cell for cell in cells if cell is not None and cell.strip() != ""]
+    return bool(filled) and all(_is_iso_time(cell) for cell in filled)
 
 
 def map_text_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
-    names, types, data, inferred = _text_input_columns(tool)
+    names, types, data, inferred, time_columns = _text_input_columns(tool)
     columns = [input_schema.MinimalFieldInfo(name=name, data_type=types[index]) for index, name in enumerate(names)]
     settings = input_schema.NodeManualInput(
         flow_id=ctx.flow_id,
@@ -1349,8 +1440,11 @@ def map_text_input(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     if inferred:
         messages.append(
             "Column types were inferred from the entered values (Alteryx stores Text Input cells as text): "
-            + ", ".join(inferred)
+            + ", ".join(f"{name} → {data_type}" for name, data_type in inferred)
         )
+    if time_columns:
+        listed = ", ".join(f"'{name}'" for name in time_columns)
+        messages.append(f"Alteryx types {listed} as Time; Flowfile has no Time column, so it keeps them as text.")
     return _row(tool, "converted", [node_id], "manual_input", messages, reason="converted")
 
 
@@ -1930,9 +2024,10 @@ def map_date_time(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     row = _emit_formula_chain(tool, ctx, [_Assignment(target=target, expression=expression)])
     if row.status != "converted":
         return row
-    if to_string:
-        # Measured on the corpus: every one of these reads a Text Input column, which Alteryx stores
-        # as text and Flowfile therefore types as String, and the generated `format_date` raises on it.
+    if to_string and _input_column_type(ctx, tool.tool_id, source) not in ("Date", "Datetime"):
+        # `format_date` compiles to `.dt.to_string()`, which raises on a String. It is fine only when
+        # the column reaching this node is provably a real Date or Datetime — a Text Input all-ISO-date
+        # column now is one; a String or an unsettled type is not, so the row stays a caveat.
         row.status, row.reason = "partial", "option_unsupported"
         row.messages.append(
             f"Alteryx keeps a date as text and formats it from there; Flowfile's formula needs a real Date "
@@ -3027,7 +3122,7 @@ def _declared_column_types(tool: AlteryxTool | None) -> dict[str, str]:
     if tool is None:
         return {}
     if tool.tool_name == "TextInput":
-        names, types, _, _ = _text_input_columns(tool)
+        names, types, _, _, _ = _text_input_columns(tool)
         occurrences = Counter(names)
         return {name: data_type for name, data_type in zip(names, types, strict=True) if occurrences[name] == 1}
     if tool.tool_name == "DbFileInput" and _reads_typed_file(tool):
@@ -6981,6 +7076,38 @@ def map_basic_data_profile(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow
     return _row(tool, "partial", [node_id], "polars_code", messages, reason="option_unsupported")
 
 
+def map_fuzzy_match(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
+    """A placeholder whose message is the recipe for rebuilding the tool with Flowfile's own node.
+
+    Alteryx's Fuzzy Match is a one-input tool that pre-processes the text (stop words, phonetic
+    keys) and scores with word-rarity-weighted JaroTFIDF; Flowfile's ``fuzzy_match`` node is a
+    two-input join scored by plain Jaro-style similarity. The two match different row sets at the
+    same threshold, so no node is emitted. What can be carried over is spelled out instead.
+    """
+    config = _config(tool)
+    fields = [
+        (_text(field, "FieldName"), _text(field, "Style/Match/MatchFunction") or "(default)")
+        for field in config.iter("MatchField")
+    ]
+    threshold_element = config.find("MatchThreshold")
+    threshold = threshold_element.get("value", "") if threshold_element is not None else ""
+    merge = _flag(config, "MergeMode") is True
+    source_field = _text(config, "SourceIdField")
+    mode = (
+        f"Merge mode: split the stream on '{source_field}' and feed one side per source"
+        if merge
+        else "Purge mode: connect the same stream to both inputs"
+    )
+    field_words = ", ".join(f"'{name}' ({function})" for name, function in fields) or "(no match field)"
+    message = (
+        f"Alteryx Fuzzy Match is not converted; rebuild it with Flowfile's Fuzzy Match node. "
+        f"{mode}; match {field_words} to itself with 'jaro' at threshold {threshold or '?'}/100. "
+        "Expect a different match set: Alteryx strips stop words, keys on phonetics and weights "
+        "words by rarity (JaroTFIDF) before scoring; Flowfile's node does none of that."
+    )
+    return _placeholder_row(tool, ctx, [message], reason="unmapped_tool")
+
+
 TOOL_MAPPERS: dict[str, ToolMapper] = {
     "TextInput": map_text_input,
     "AlteryxSelect": map_select,
@@ -7016,6 +7143,7 @@ TOOL_MAPPERS: dict[str, ToolMapper] = {
     "APIOutput": map_api_output,
     "FieldInfo": map_field_info,
     "MakeGroup": map_make_group,
+    "FuzzyMatch": map_fuzzy_match,
     "MapInput": map_map_input,
     "DataCleansePro": map_data_cleanse_pro,
     "DateTime": map_date_time,

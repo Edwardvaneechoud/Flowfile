@@ -5548,15 +5548,13 @@ def test_a_time_only_parse_is_partial_because_flowfile_has_no_time_column(dateti
 
 
 @pytest.mark.parametrize("tool_id", [4, 5])
-def test_formatting_a_date_is_partial_because_alteryx_keeps_dates_as_text(
-    datetime_tokens: ConversionResult, tool_id: int
-):
-    """`format_date` compiles to `.dt.to_string()`, which raises on the String an Alteryx Text
-    Input becomes — three of the six corpus instances do exactly that, so this is not theoretical."""
+def test_formatting_a_typed_date_converts_without_a_demotion(datetime_tokens: ConversionResult, tool_id: int):
+    """`format_date` compiles to `.dt.to_string()`, which raises on a String but runs on a real Date.
+    These two format the Text Input's declared Date/Datetime columns, so the row is `converted` and
+    carries no 'has to be a real Date' caveat — the demotion is only for a source Flowfile cannot type."""
     row = report_row(datetime_tokens, tool_id)
-    assert (row.status, row.reason) == ("partial", "option_unsupported")
-    assert any("has to be one by the time this node runs" in message for message in row.messages), row.messages
-    assert report_row(datetime_tokens, 2).status == "converted"
+    assert (row.status, row.reason) == ("converted", "converted")
+    assert not any("has to be one by the time this node runs" in message for message in row.messages), row.messages
 
 
 def test_the_datetime_flow_runs_and_reproduces_the_alteryx_values(tmp_path: Path, datetime_tokens: ConversionResult):
@@ -5574,6 +5572,171 @@ def test_the_datetime_flow_runs_and_reproduces_the_alteryx_values(tmp_path: Path
     assert frames[3]["Gate moment"].to_list() == [datetime(1, 1, 1, 8, 15), datetime(1, 1, 1, 16, 40, 30)]
     assert frames[4]["Picked label"].to_list() == ["March 05, 2024", "November 21, 2024"]
     assert frames[5]["Weighed label"].to_list() == ["Tuesday, 05 March, 2024", "Thursday, 21 November, 2024"]
+
+
+# --- Text Input date auto-typing (W8): Alteryx types an all-ISO-date column as Date/Datetime ---
+
+DATETIME_SIX_COLUMNS = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields>
+          <Field name="Customer ID" /><Field name="Join Date" /><Field name="DOB" />
+          <Field name="Last save date" /><Field name="Last login datetime" /><Field name="Last login time" />
+        </Fields>
+        <Data>
+          <r><c>1</c><c>2020-06-15</c><c>March 03, 1990</c>
+            <c>06-15/2020</c><c>2020-06-15 09:30:00</c><c>09:30:00</c></r>
+          <r><c>2</c><c>2021-12-31</c><c>July 06, 1988</c><c /><c /><c /></r>
+        </Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DateTime.DateTime" />
+      <Properties><Configuration>
+        <IsFrom value="True" />
+        <InputFieldName>Join Date</InputFieldName>
+        <Language>English</Language>
+        <Format>day, Month dd, yyyy</Format>
+        <OutputFieldName>Join Date_New</OutputFieldName>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_the_six_text_input_date_shapes_type_and_run(tmp_path: Path):
+    """The six DateTime.yxmd column shapes: an all-ISO-date column becomes Date, an all-ISO-datetime
+    one Datetime, a number Int64, and a non-ISO date, an empty-or-non-ISO column and a time stay
+    String. The manual_input builds those types and the flow runs — the proof a string-cell fallback
+    would not give, because `format_date` downstream raises on a String."""
+    result = convert_yxmd(DATETIME_SIX_COLUMNS, source_name="six.yxmd")
+    row = report_row(result, 1)
+    columns = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["raw_data_format"]["columns"]
+    assert {column["name"]: column["data_type"] for column in columns} == {
+        "Customer ID": "Int64",
+        "Join Date": "Date",
+        "DOB": "String",
+        "Last save date": "String",
+        "Last login datetime": "Datetime",
+        "Last login time": "String",
+    }
+    flow = open_flow(write_flow(result, tmp_path / "six.yaml"))
+    info = flow.run_graph()
+    assert info.success, [step.error for step in info.node_step_result if not step.success]
+    assert report_row(result, 2).status == "converted"
+
+
+def test_the_text_input_row_names_the_inferred_types_and_the_time_column():
+    """The row lists each inferred column with the type it took, and names the Time column separately."""
+    result = convert_yxmd(DATETIME_SIX_COLUMNS, source_name="six.yxmd")
+    row = report_row(result, 1)
+    assert row.status == "converted"
+    inferred = next(message for message in row.messages if "inferred" in message)
+    assert "Customer ID → Int64" in inferred
+    assert "Join Date → Date" in inferred
+    assert "Last login datetime → Datetime" in inferred
+    time_message = next(message for message in row.messages if "as Time" in message)
+    assert "'Last login time'" in time_message
+    assert "keeps them as text" in time_message
+
+
+DATETIME_EDGE_COLUMNS = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="slashed" /><Field name="mixed" /><Field name="clock" /></Fields>
+        <Data>
+          <r><c>09-15/2015</c><c>2005-01-10</c><c>12:25:31</c></r>
+          <r><c>09-11/2015</c><c>2015-09-15 12:25:31</c><c>03:42:06</c></r>
+        </Data>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections></Connections>
+</AlteryxDocument>
+"""
+
+
+def test_a_non_iso_a_mixed_and_a_time_column_stay_string():
+    """`09-15/2015` is not an ISO shape; a column mixing a date and a datetime shape is neither shape;
+    a `HH:mm:ss` column is a Time Flowfile has no type for. All three stay String — nothing was typed,
+    so there is no 'inferred' line — and only the time column is named on the row."""
+    result = convert_yxmd(DATETIME_EDGE_COLUMNS, source_name="edge.yxmd")
+    row = report_row(result, 1)
+    columns = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["raw_data_format"]["columns"]
+    assert {column["name"]: column["data_type"] for column in columns} == {
+        "slashed": "String",
+        "mixed": "String",
+        "clock": "String",
+    }
+    assert not any("inferred" in message for message in row.messages)
+    assert any("'clock'" in message and "as Time" in message for message in row.messages)
+
+
+DATETIME_TO_STRING_OVER_TEXT = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="label" /></Fields>
+        <Data><r><c>not a date</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DateTime.DateTime" />
+      <Properties><Configuration>
+        <IsFrom value="True" />
+        <InputFieldName>label</InputFieldName>
+        <Language>English</Language>
+        <Format>yyyy-MM-dd</Format>
+        <OutputFieldName>label_out</OutputFieldName>
+      </Configuration></Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_a_to_string_over_a_text_column_stays_partial():
+    """When the source is not a provable Date or Datetime — here a String — the to-string tool keeps
+    the W5.4 caveat: `format_date` would raise on it, so the row is `partial` and says so."""
+    result = convert_yxmd(DATETIME_TO_STRING_OVER_TEXT, source_name="to_str.yxmd")
+    row = report_row(result, 2)
+    assert (row.status, row.reason) == ("partial", "option_unsupported")
+    assert any("has to be one by the time this node runs" in message for message in row.messages), row.messages
+
+
+CORPUS_DATETIME = PRIVATE_CORPUS_ROOT / "alteryx_nodes" / "04 Parse" / "DateTime.yxmd"
+needs_datetime_corpus = pytest.mark.skipif(
+    not CORPUS_DATETIME.exists(), reason=f"Alteryx corpus workflow not present ({CORPUS_DATETIME})"
+)
+
+
+@needs_datetime_corpus
+def test_the_datetime_corpus_formats_a_typed_join_date_end_to_end(tmp_path: Path):
+    """`DateTime.yxmd` tool 159 writes the Text Input's `Join Date` (all-ISO, now a real Date) out as
+    a label; the value matches the shape comment box 166 states: Monday, January 10, 2005."""
+    result = convert_yxmd(CORPUS_DATETIME.read_bytes(), source_name="DateTime.yxmd")
+    row = report_row(result, 159)
+    assert (row.status, row.reason) == ("converted", "converted")
+    flow = open_flow(write_flow(result, tmp_path / "datetime.yaml"))
+    info = flow.run_graph()
+    assert info.success, [step.error for step in info.node_step_result if not step.success]
+    frame = flow.get_node(row.flowfile_node_ids[-1]).get_resulting_data().data_frame.collect()
+    assert frame["Join Date_New"].to_list()[0] == "Monday, January 10, 2005"
 
 
 @pytest.mark.parametrize(
@@ -8146,9 +8309,10 @@ def test_a_wire_onto_an_anchor_the_field_summary_macro_does_not_have_is_dropped(
 def test_a_fixed_date_filter_on_a_real_date_column_raises_when_the_flow_runs(tmp_path: Path):
     """Documents today's behaviour; the column-identity gap behind it is unresolved and may change.
 
-    Tool 580 filters `picked_on`, the string the Text Input holds, so its `<= "2017-12-29"` is a
-    string-to-string comparison that cannot raise. Pointed at `picked` — the Date the Formula at 505
-    parses — the same emitted expression compares a date with a string literal and Polars refuses.
+    Tool 580 filters `picked_on`, the string the Text Input holds — a non-ISO ``yyyy/MM/dd`` shape
+    the W8 date inference deliberately leaves as text — so its `<= "2017-12-29"` is a string-to-string
+    comparison that cannot raise. Pointed at `picked` — the Date the Formula at 505 parses — the same
+    emitted expression compares a date with a string literal and Polars refuses.
 
     The row is still `converted` with no message: nothing in `<DateType>fixed</DateType>` tells the
     importer which of the two columns it is looking at, which is exactly decision 6. When that
@@ -9236,3 +9400,47 @@ def test_an_input_row_whose_loop_never_runs_is_dropped_not_kept_as_a_null_row(tm
     frame = flow.get_node(row.flowfile_node_ids[-1]).get_resulting_data().data_frame.collect()
     assert frame["table"].to_list() == ["window", "window"]
     assert frame["Seat"].to_list() == [1, 2]
+
+
+FUZZY_MATCH_PURGE = b"""<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="970"><GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput" />
+      <Properties><Configuration>
+        <Fields><Field name="acct_holder" /></Fields>
+        <Data><r><c>Acme Inc</c></r><r><c>ACME, Inc.</c></r></Data>
+      </Configuration></Properties></Node>
+    <Node ToolID="971"><GuiSettings Plugin="AlteryxBasePluginsGui.FuzzyMatch.FuzzyMatch" />
+      <Properties><Configuration>
+        <RecordIdField>acct_holder</RecordIdField>
+        <MatchThreshold value="80" />
+        <MatchFields><MatchField>
+          <FieldName>acct_holder</FieldName>
+          <Style Name="Company Name"><Match><MatchFunction>JaroTFIDF</MatchFunction></Match></Style>
+        </MatchField></MatchFields>
+        <MergeMode value="False" />
+        <SourceIdField />
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="970" Connection="Output" /><Destination ToolID="971" Connection="Input" /></Connection>
+  </Connections>
+</AlteryxDocument>
+"""
+
+
+def test_fuzzy_match_placeholder_tells_the_user_how_to_rebuild_it_with_flowfiles_node():
+    """The tool is not converted; the report row and the node comments carry the rebuild recipe
+    (mode, field, function, threshold) and the honest warning that the match set will differ."""
+    result = convert_yxmd(FUZZY_MATCH_PURGE, source_name="fuzzy.yxmd")
+    row = report_row(result, 971)
+    assert (row.status, row.reason) == ("placeholder", "unmapped_tool")
+    message = row.messages[0]
+    assert "Flowfile's Fuzzy Match node" in message
+    assert "Purge mode: connect the same stream to both inputs" in message
+    assert "'acct_holder' (JaroTFIDF)" in message
+    assert "'jaro' at threshold 80/100" in message
+    assert "Alteryx strips stop words" in message
+    code = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
+    assert "Flowfile's Fuzzy Match node" in code
+    assert code.endswith("output_df = input_df")

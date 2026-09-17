@@ -93,7 +93,7 @@ The importer is measured on Alteryx's sample workflows, not on production ones. 
 - **A fixed date in a simple-mode Filter** is compared as text. On a real date column that raises at run time. Fix: use a formula filter, or convert the column first.
 - **Rank tie rules (Standard, Competition) and Sample's Random and First-N-percent modes** are not built; the sample workflows describe their behaviour and the nodes are refused until built.
 - **Cross Tab** column names: Alteryx replaces special characters with underscores; Flowfile keeps the raw values. No golden output has been compared yet.
-- **Fuzzy Match** is not built. Alteryx's default JaroTFIDF weights words by rarity and strips stop words; Flowfile's fuzzy node does not, so when it lands it will be marked `partial`.
+- **Fuzzy Match** is not built. The placeholder tells you how to rebuild it with Flowfile's Fuzzy Match node (mode, field, threshold), and warns that the matches will differ: Alteryx's default JaroTFIDF weights words by rarity and strips stop words; Flowfile's node does not.
 - **Regex** patterns are compiled by Polars' engine at import time; lookaround and backreferences are refused, everything else is shown for you to verify.
 - **MD5 and Base64.** `MD5_UTF8` and both Base64 functions map exactly; `MD5_ASCII` and `MD5_UNICODE` hash different bytes and are refused.
 - **Macros and wizards** (`.yxmc`, `.yxwz`) are imported for their data tools; control wires and questions are not reproduced.
