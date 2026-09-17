@@ -231,6 +231,31 @@ class TestResolveLocalImage:
         )
         assert result == "flowfile-kernel-base:local"
 
+    def test_skips_local_retag_of_older_release(self):
+        """A :local tag that is a retag of an older release must not shadow the newer pin."""
+        client = MagicMock()
+        client.images.get.side_effect = docker.errors.ImageNotFound("nope")
+        stale = MagicMock()
+        stale.tags = ["edwardvaneechoud/flowfile-kernel-lite:0.3.2", "flowfile-kernel-lite:local"]
+        stale.attrs = {"Created": "2026-06-06T14:50:09Z"}
+        client.images.list.return_value = [stale]
+        result = _resolve_local_image(
+            ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.5.4"
+        )
+        assert result is None
+
+    def test_keeps_local_retag_of_newer_release(self):
+        client = MagicMock()
+        client.images.get.side_effect = docker.errors.ImageNotFound("nope")
+        fresh = MagicMock()
+        fresh.tags = ["edwardvaneechoud/flowfile-kernel-lite:0.6.0", "flowfile-kernel-lite:local"]
+        fresh.attrs = {"Created": "2026-09-01T00:00:00Z"}
+        client.images.list.return_value = [fresh]
+        result = _resolve_local_image(
+            ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.5.4"
+        )
+        assert result == "flowfile-kernel-lite:local"
+
     def test_falls_back_to_newest_when_no_local_tag(self):
         client = MagicMock()
         client.images.get.side_effect = docker.errors.ImageNotFound("nope")
