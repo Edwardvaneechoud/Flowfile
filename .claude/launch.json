@@ -111,6 +111,18 @@
         "FLOWFILE_CORE_PORT=63590 npm run dev:web --prefix flowfile_frontend -- --port 8084"
       ],
       "port": 8084
+    },
+    {
+      "name": "landing-dist",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4322",
+        "--directory",
+        "/Users/edwardvaneechoud/flowfile-landing/dist"
+      ],
+      "port": 4322
     }
   ]
 }
