@@ -11,7 +11,7 @@ The **Settings** gear icon in the left sidebar opens the Settings menu, grouped 
 | **Connections** | **All connections**: Overview, Database, Cloud Storage, Kafka, Google Analytics, Secrets | Opens the [Connections](connections.md) page on **Overview**; the other names are its in-page tabs. [Secrets](catalog/secrets.md) covers encrypted credential storage. |
 | **AI** | Providers; Assistant | Providers holds the API keys per LLM provider and the optional on-device model; Assistant holds the default model and agent behaviour — see [Provider Setup](../../ai/providers.md) and [AI Assistant](../../ai/index.md). |
 | **Execution** | Python Kernels; Performance | Python Kernels manages the containers described in [Kernel Execution](kernels.md). **Performance** is admin-only in Docker. |
-| **Preferences** | Privacy; Backups | Privacy holds the telemetry consent described in [Telemetry & Privacy](../telemetry.md). **Backups** is admin-only in Docker — see [Database backups](../deployment/backups.md). |
+| **Preferences** | Privacy; Backups | Privacy holds the telemetry consent described in [Privacy & Telemetry](../telemetry.md). **Backups** is admin-only in Docker — see [Database backups](../deployment/backups.md). |
 | **Extensions** | Node Designer, Custom Nodes, Community Nodes | [Node Designer](node-designer.md) authors and publishes nodes; [Community Nodes](community-nodes.md) browses and installs shared ones. |
 | **Workspace** | Project; File Manager, User Groups, User Management | Project is [project tracking](../projects.md). File Manager, User Groups and User Management are Docker only; User Management is also admin-only. [Sharing](../deployment/sharing.md) covers groups and grants. |
 
@@ -70,10 +70,10 @@ Flow definitions are preserved.
 
 ## Usage telemetry
 
-Flowfile can send anonymous usage events — opt-in, off by default, and never enabled without your explicit consent. Manage your answer any time under **Settings → Preferences → Privacy**; the one-time consent dialog never asks again after you decline. [Telemetry & Privacy](../telemetry.md) documents every event and field that can be sent.
+Flowfile can send anonymous usage statistics, which the maintainers use to see how the platform is used and what to improve. It is off by default. A one-time dialog asks for consent, and you can change your answer under **Settings → Preferences → Privacy**. [Privacy & Telemetry](../telemetry.md) lists what is sent.
 
 ## Related
 
 - [Secrets](catalog/secrets.md) - Encrypted credential storage
 - [Docker](../deployment/docker.md) - Docker deployment
-- [Telemetry & Privacy](../telemetry.md) - What anonymous usage telemetry sends, and how to turn it off
+- [Privacy & Telemetry](../telemetry.md) - What usage statistics are sent, and how to turn them off
