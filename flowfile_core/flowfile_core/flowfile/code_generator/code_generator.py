@@ -30,7 +30,6 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import Flowfi
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.flowfile.formula_dependencies import entries_are_independent
 from flowfile_core.flowfile.param_types import coerce_param_value
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
 from flowfile_core.flowfile.util.skip_rules import uses_any_rule
@@ -2120,13 +2119,11 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
     def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle formula nodes, preferring native ff expressions over the flowfile_formulas parameter.
 
-        A single entry emits exactly the one-liner it always has; zero active entries is a
-        pass-through assignment. Several entries emit exactly one `with_columns` call, never a
-        chain: `flowfile_frame.with_columns` re-imports each native call as its own Formula
-        node, so a chain would round-trip a single N-entry node back as N nodes. Independent
-        entries that all translate natively therefore share one call's argument list; anything
-        else uses the `flowfile_formulas=` keyword form, whose documented contract is
-        sequential evaluation inside one node — the same semantics the node itself has.
+        Entries always emit one chained `with_columns` call each, in order, never the
+        `flowfile_formulas=` list form for a whole node: a later entry may read a column an
+        earlier one writes, and a chain says so where a keyword form whose evaluation is
+        silently sequential does not. A single entry emits exactly the one-liner it always has;
+        zero active entries is a pass-through assignment.
         """
         input_df = input_vars.get("main", "df")
         entries = [entry for _, entry in settings.active_entries()]
@@ -2135,7 +2132,10 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         elif len(entries) == 1:
             self._add_code(f"{var_name} = {input_df}{self._formula_entry_call(entries[0])}")
         else:
-            self._add_code(f"{var_name} = {input_df}{self._formula_entries_call(entries)}")
+            self._add_code(f"{var_name} = ({input_df}")
+            for entry in entries:
+                self._add_code(f"    {self._formula_entry_call(entry)}")
+            self._add_code(")")
         self._add_code("")
 
     def _formula_entry_native_expr(self, entry: transform_schema.FunctionInput) -> str | None:
@@ -2168,23 +2168,6 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
                 f"output_column_datatypes=[{repr(data_type)}])"
             )
         return f".with_columns(flowfile_formulas=[{repr(formula)}], output_column_names=[{repr(col_name)}])"
-
-    def _formula_entries_call(self, entries: list[transform_schema.FunctionInput]) -> str:
-        """The single `.with_columns(...)` call several formula entries emit."""
-        if entries_are_independent([(entry.field.name, entry.function) for entry in entries]):
-            native = [self._formula_entry_native_expr(entry) for entry in entries]
-            if all(native):
-                return f".with_columns({', '.join(native)})"
-        formulas = [entry.function for entry in entries]
-        names = [entry.field.name for entry in entries]
-        data_types = [entry.field.data_type for entry in entries]
-        if all(data_type in (None, transform_schema.AUTO_DATA_TYPE) for data_type in data_types):
-            return f".with_columns(flowfile_formulas={formulas!r}, output_column_names={names!r})"
-        rendered = [transform_schema.AUTO_DATA_TYPE if data_type is None else data_type for data_type in data_types]
-        return (
-            f".with_columns(flowfile_formulas={formulas!r}, output_column_names={names!r}, "
-            f"output_column_datatypes={rendered!r})"
-        )
 
     def _handle_graph_solver(self, settings: input_schema.NodeGraphSolver, var_name: str, input_vars: dict[str, str]):
         input_df = input_vars.get("main", "df")

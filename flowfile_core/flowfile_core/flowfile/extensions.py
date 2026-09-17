@@ -4,19 +4,21 @@ from functools import lru_cache
 import polars as pl
 
 from flowfile_core.flowfile._extensions.real_time_interface import (
-    ChainEntry,
-    apply_chain_prefix,
     check_expression_chain,
-    entry_label,
     get_realtime_func_results,
+)
+from flowfile_core.flowfile.flow_data_engine.formula_entries import (
+    FormulaEntryError,
+    apply_formula_entries,
+    formula_entry,
 )
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.parameter_resolver import resolve_expression_parameters
+from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas.output_model import (
     FormulaChainCheckResponse,
     FormulaChainColumn,
-    FormulaChainEntryInput,
     FormulaChainEntryResult,
     FormulaChainIssue,
     InstantFuncResult,
@@ -113,8 +115,11 @@ def get_instant_func_results(node_step: FlowNode, func_string: str) -> InstantFu
     return _evaluate_preview_expression(node_step, df, _resolve_params(node_step, func_string))
 
 
-def _chain_entries(node_step: FlowNode, entries: Sequence[FormulaChainEntryInput]) -> list[ChainEntry]:
-    return [ChainEntry(e.name or "", e.data_type, _resolve_params(node_step, e.function or "")) for e in entries]
+def _resolved_entries(
+    node_step: FlowNode, entries: Sequence[transform_schema.FunctionInput]
+) -> list[transform_schema.FunctionInput]:
+    """Copies of *entries* with their ``${param}`` references substituted; the originals stand."""
+    return [e.model_copy(update={"function": _resolve_params(node_step, e.function or "")}) for e in entries]
 
 
 def _chain_columns(schema: dict) -> list[FormulaChainColumn]:
@@ -122,7 +127,7 @@ def _chain_columns(schema: dict) -> list[FormulaChainColumn]:
 
 
 def get_formula_chain_check(
-    node_step: FlowNode, entries: Sequence[FormulaChainEntryInput]
+    node_step: FlowNode, entries: Sequence[transform_schema.FunctionInput]
 ) -> FormulaChainCheckResponse:
     """Validate the editor's formula entries against the schema each one will actually see.
 
@@ -136,7 +141,7 @@ def get_formula_chain_check(
         return FormulaChainCheckResponse(
             available=False, base_columns=[], entries=[FormulaChainEntryResult() for _ in entries]
         )
-    result = check_expression_chain(pl_schema, _chain_entries(node_step, entries))
+    result = check_expression_chain(pl_schema, _resolved_entries(node_step, entries))
     return FormulaChainCheckResponse(
         available=True,
         base_columns=_chain_columns(result.base_schema),
@@ -151,19 +156,20 @@ def get_formula_chain_check(
 
 
 def get_formula_chain_instant_result(
-    node_step: FlowNode, entries: Sequence[FormulaChainEntryInput], index: int
+    node_step: FlowNode, entries: Sequence[transform_schema.FunctionInput], index: int
 ) -> InstantFuncResult:
     """Evaluate entry *index* on the preview row, with the entries above it applied first."""
     if index < 0 or index >= len(entries):
         return InstantFuncResult(result="No formula selected, so cannot evaluate the result", success=None)
-    chain = _chain_entries(node_step, entries)
-    if not chain[index].expression.strip():
+    chain = _resolved_entries(node_step, entries)
+    if not chain[index].function.strip():
         return InstantFuncResult(result="", success=None)  # a blank row is skipped, never evaluated
     df, failure = _resolve_preview_frame(node_step)
     if failure is not None:
         return failure
-    frame, failed_position, detail = apply_chain_prefix(df, chain[:index])
-    if failed_position is not None:
-        label = entry_label(failed_position, chain[failed_position - 1].output_name)
-        return InstantFuncResult(result=f"{label}: {detail}", success=False)
-    return _evaluate_preview_expression(node_step, frame, chain[index].expression)
+    prefix = [formula_entry(position, fn) for position, fn in enumerate(chain[:index], start=1) if fn.function.strip()]
+    try:
+        frame = apply_formula_entries(df.lazy(), prefix).collect()
+    except FormulaEntryError as exc:
+        return InstantFuncResult(result=str(exc), success=False)
+    return _evaluate_preview_expression(node_step, frame, chain[index].function)

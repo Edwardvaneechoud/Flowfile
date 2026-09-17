@@ -57,8 +57,8 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     execute_polars_code,
     execute_sql_query,
 )
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, cast_str_to_polars_type
-from flowfile_core.flowfile.flow_data_engine.formula_entries import FormulaEntry
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.formula_entries import formula_entry
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
     get_calamine_xlsx_data_types,
@@ -3635,19 +3635,14 @@ class FlowGraph:
         Args:
             function_settings: The settings for the formula operation.
         """
-        entries: list[FormulaEntry] = []
+        entries = [formula_entry(position, item) for position, item in function_settings.active_entries()]
         new_cols: dict[str, FlowfileColumn] = {}
-        for position, item in function_settings.active_entries():
-            if item.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
-                output_type = cast_str_to_polars_type(item.field.data_type)
-            else:
-                output_type = None
-            entries.append(FormulaEntry(position, item.field.name, item.function, output_type))
+        for entry in entries:
             # Overwriting an existing name keeps its first position, like polars with_columns.
-            new_cols[item.field.name] = (
-                FlowfileColumn.from_input(column_name=item.field.name, data_type=str(output_type))
-                if output_type is not None
-                else FlowfileColumn.from_input(item.field.name, "String")
+            new_cols[entry.output_name] = (
+                FlowfileColumn.from_input(column_name=entry.output_name, data_type=str(entry.output_data_type))
+                if entry.output_data_type is not None
+                else FlowfileColumn.from_input(entry.output_name, "String")
             )
 
         def _func(fl: FlowDataEngine):

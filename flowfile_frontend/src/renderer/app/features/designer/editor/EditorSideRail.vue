@@ -59,7 +59,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed } from "vue";
+import { ref, computed, onBeforeUnmount } from "vue";
 import ColumnSelector from "./ColumnSelector/columnsSelector.vue";
 import ParamSelector from "./ParamSelector/ParamSelector.vue";
 import Sidebar from "./Sidebar/Sidebar.vue";
@@ -115,7 +115,7 @@ const parameters = computed(() => props.parameters ?? []);
 const resizeWidth = (event: MouseEvent) => {
   const deltaX = event.clientX - startX.value;
   const newWidth = startWidth.value + deltaX;
-  treeNodeWidth.value = Math.min(newWidth, 300) + "px";
+  treeNodeWidth.value = Math.max(50, Math.min(newWidth, 300)) + "px";
 };
 
 const initResize = (event: MouseEvent) => {
@@ -129,12 +129,14 @@ const stopResize = () => {
   document.removeEventListener("mousemove", resizeWidth);
   document.removeEventListener("mouseup", stopResize);
 };
+onBeforeUnmount(stopResize);
 </script>
 
 <style scoped>
 .selector {
-  overflow-y: scroll;
-  max-height: 300px;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
 }
 
 .rail-strip {
@@ -178,6 +180,8 @@ const stopResize = () => {
 }
 
 .options-container {
+  display: flex;
+  flex-direction: column;
   flex-shrink: 0;
   min-width: 50px;
   max-height: 300px;
@@ -203,6 +207,7 @@ const stopResize = () => {
 }
 
 .search-box {
+  flex-shrink: 0;
   position: relative;
   display: flex;
   align-items: center;

@@ -2074,7 +2074,7 @@ def test_instant_function_result_fail():
 
 
 def _chain_entry(name: str, function: str, data_type: str | None = None) -> dict:
-    return {"name": name, "data_type": data_type, "function": function}
+    return {"field": {"name": name, "data_type": data_type}, "function": function}
 
 
 def _formula_chain_flow() -> FlowId:

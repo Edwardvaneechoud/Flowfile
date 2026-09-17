@@ -105,9 +105,9 @@ async function reopenNodeSettings(page: Page, nodeId: string, viaNodeId: string)
 
 const rows = (page: Page) => page.locator(".formula-entry");
 
-/** The row header line IS the output-name field. */
+/** The row header line IS the output-name field (an el-autocomplete wrapper). */
 const nameField = (page: Page, rowIndex: number) =>
-  rows(page).nth(rowIndex).locator("input.entry-name");
+  rows(page).nth(rowIndex).locator(".entry-name input");
 
 const outputNames = (page: Page) => nameField(page, 0).inputValue();
 
@@ -217,8 +217,8 @@ test.describe("Formula entries", () => {
     await expect(first.locator(".entry-expr")).toHaveText(original);
     await expect(nameField(page, 0)).toHaveValue(FIRST_OUTPUT);
 
-    // Clicking the collapsed header (not a reorder button) expands it again.
-    await first.locator(".entry-expr").click();
+    // The chevron is the expand affordance; the summary line sits outside the header.
+    await first.locator(".entry-chevron").click();
     await expect(first.locator(".entry-editor")).toBeVisible();
     await expect(editor).toHaveText(original);
   });
@@ -276,8 +276,9 @@ test.describe("Formula entries", () => {
     await expect(nameField(page, 0)).toHaveValue(SECOND_OUTPUT);
     await expect(nameField(page, 1)).toHaveValue(FIRST_OUTPUT);
 
-    // The reorder went through; the broken reference is reported on the row.
-    const issue = rows(page).nth(0).locator(".entry-issue");
+    // The reorder went through; the broken reference stays in the results area.
+    await expect(rows(page).nth(0).locator(".entry-flag.is-error")).toBeVisible();
+    const issue = page.locator(".instant-function-results .result-content.error");
     await expect(issue).toBeVisible({ timeout: 15000 });
     await expect(issue).toContainText(FIRST_OUTPUT);
 

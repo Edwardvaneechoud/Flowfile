@@ -1,14 +1,18 @@
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from typing import Literal, NamedTuple
+from dataclasses import dataclass, replace
+from typing import Literal
 
 import polars as pl
 from polars.exceptions import ColumnNotFoundError, PolarsError
 from polars_expr_transformer import simple_function_to_expr
 
 from flowfile_core.configs import logger
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
-from flowfile_core.flowfile.flow_data_engine.formula_entries import missing_column_detail
+from flowfile_core.flowfile.flow_data_engine.formula_entries import (
+    FormulaEntryError,
+    apply_formula_entries,
+    formula_entry,
+)
+from flowfile_core.schemas import transform_schema
 
 
 @dataclass
@@ -115,17 +119,6 @@ def check_expression(
     return None
 
 
-AUTO_DATA_TYPE = "Auto"
-
-
-class ChainEntry(NamedTuple):
-    """One formula-node row as the editor holds it, before any schema is known."""
-
-    output_name: str
-    data_type: str | None
-    expression: str
-
-
 @dataclass(frozen=True)
 class ChainResult:
     """Per-entry verdicts and the schema each entry leaves behind.
@@ -139,61 +132,19 @@ class ChainResult:
     schemas: list[dict[str, pl.DataType]]
 
 
-def entry_label(position: int, output_name: str) -> str:
-    """The row prefix a run-time ``FormulaEntryError`` carries, so both messages read the same."""
-    return f'Formula {position} ("{output_name}")' if output_name else f"Formula {position}"
-
-
-def _declared_type(data_type: str | None) -> pl.DataType | None:
-    """The entry's cast target, or None when it is Auto/blank (no cast, like the engine)."""
-    if data_type in (None, "", AUTO_DATA_TYPE):
-        return None
-    try:
-        return cast_str_to_polars_type(data_type)
-    except Exception:
-        return None
-
-
-def _apply_chain_entry(
-    current: dict[str, pl.DataType],
-    output_name: str,
-    declared: pl.DataType | None,
-    expression: str,
-) -> tuple[ExpressionIssue | None, dict[str, pl.DataType]]:
-    """Resolve one entry against *current*, returning its issue and the schema that follows it.
-
-    A failing entry still contributes its declared output column (String under Auto) so the
-    entries below it are validated against the schema the user is building, not a truncated
-    one — one broken row must not light up every row under it.
-    """
-    fallback = {**current, output_name: declared if declared is not None else pl.String}
-    try:
-        expr = simple_function_to_expr(expression)
-    except Exception as exc:
-        return ExpressionIssue(_first_line(exc), "parse"), fallback
-    if declared is not None:
-        expr = expr.cast(declared)
-    try:
-        resolved = dict(pl.LazyFrame(schema=current).with_columns(expr.alias(output_name)).collect_schema())
-    except ColumnNotFoundError as exc:
-        return ExpressionIssue(missing_column_detail(str(exc))[:_MAX_ISSUE_LENGTH], "missing_column"), fallback
-    except PolarsError as exc:
-        return ExpressionIssue(_first_line(exc), "type"), fallback
-    except Exception:
-        logger.debug("Formula chain entry check skipped for %r", expression, exc_info=True)
-        return None, fallback
-    return None, resolved
-
-
 def check_expression_chain(
     schema: Mapping[str, pl.DataType],
-    entries: Sequence[ChainEntry],
+    entries: Sequence[transform_schema.FunctionInput],
 ) -> ChainResult:
-    """Validate formula entries the way ``FlowDataEngine.apply_sql_formulas`` evaluates them.
+    """Validate formula entries by running the engine's own step against an empty frame.
 
     Entry N is resolved against the base schema plus the outputs of entries 1..N-1, so a
     reference to an earlier entry's column is correct and a reference to a later one is not.
     Data-free: every step resolves against an empty LazyFrame.
+
+    A failing entry still contributes its declared output column (String under Auto) so the
+    entries below it are validated against the schema the user is building, not a truncated
+    one — one broken row must not light up every row under it.
 
     Messages are bare details (no row prefix) — callers add ``entry_label`` where the row is
     not already obvious. Blank expressions yield no issue and contribute no column; a blank
@@ -205,10 +156,9 @@ def check_expression_chain(
     issues: list[ExpressionIssue | None] = []
     schemas: list[dict[str, pl.DataType]] = []
     produced: dict[str, int] = {}
-    for position, entry in enumerate(entries, start=1):
-        output_name = (entry.output_name or "").strip()
-        expression = entry.expression or ""
-        if not expression.strip():
+    for position, fn in enumerate(entries, start=1):
+        output_name = (fn.field.name or "").strip()
+        if not (fn.function or "").strip():
             issues.append(None)
             schemas.append(dict(current))
             continue
@@ -216,7 +166,18 @@ def check_expression_chain(
             issues.append(ExpressionIssue("output column name is empty", "config"))
             schemas.append(dict(current))
             continue
-        issue, current = _apply_chain_entry(current, output_name, _declared_type(entry.data_type), expression)
+        entry = replace(formula_entry(position, fn), output_name=output_name)
+        declared = entry.output_data_type if entry.output_data_type is not None else pl.String
+        fallback = {**current, output_name: declared}
+        issue: ExpressionIssue | None = None
+        try:
+            current = dict(apply_formula_entries(pl.LazyFrame(schema=current), [entry]).collect_schema())
+        except FormulaEntryError as exc:
+            issue = ExpressionIssue(exc.detail[:_MAX_ISSUE_LENGTH], exc.kind)
+            current = fallback
+        except Exception:
+            logger.debug("Formula chain entry check skipped for %r", fn.function, exc_info=True)
+            current = fallback
         if issue is None and output_name in produced:
             issue = ExpressionIssue(
                 f"output column '{output_name}' is also produced by formula {produced[output_name]}",
@@ -226,31 +187,3 @@ def check_expression_chain(
         issues.append(issue)
         schemas.append(dict(current))
     return ChainResult(base, issues, schemas)
-
-
-def apply_chain_prefix(
-    df: pl.DataFrame,
-    entries: Sequence[ChainEntry],
-) -> tuple[pl.DataFrame, int | None, str]:
-    """Evaluate *entries* in order on a preview frame, stopping at the first that fails.
-
-    Returns the frame reached, the 1-based position of the failing entry (None when all
-    succeeded) and its detail message. Blank expressions are skipped, as at run time.
-    """
-    frame = df
-    for position, entry in enumerate(entries, start=1):
-        expression = entry.expression or ""
-        if not expression.strip():
-            continue
-        output_name = (entry.output_name or "").strip()
-        if not output_name:
-            return frame, position, "output column name is empty"
-        declared = _declared_type(entry.data_type)
-        try:
-            expr = simple_function_to_expr(expression)
-            if declared is not None:
-                expr = expr.cast(declared)
-            frame = frame.with_columns(expr.alias(output_name))
-        except Exception as exc:
-            return frame, position, _first_line(exc)
-    return frame, None, ""

@@ -39,12 +39,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import (
     cast_str_to_polars_type,
     get_polars_type,
 )
-from flowfile_core.flowfile.flow_data_engine.formula_entries import (
-    FormulaEntry,
-    FormulaEntryError,
-    first_line,
-    missing_column_detail,
-)
+from flowfile_core.flowfile.flow_data_engine.formula_entries import FormulaEntry, apply_formula_entries
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.flowfile.flow_data_engine.join import (
     get_col_name_to_delete,
@@ -3045,52 +3040,18 @@ class FlowDataEngine:
         return FlowDataEngine(df, number_of_records=self.number_of_records)
 
     def apply_sql_formulas(self, entries: list[FormulaEntry]) -> FlowDataEngine:
-        """Applies formula entries SEQUENTIALLY, one `with_columns` step per entry.
+        """Applies the formula node's entries, chained (see `apply_formula_entries`).
 
-        Entry N sees the base columns plus every column entries 1..N-1 produced — exactly
-        equivalent to N chained single-formula nodes. This is the deliberate opposite of
-        `build_multi_field_formula_expressions`, which builds a SINGLE `with_columns` call so
-        that every expression reads the ORIGINAL input values.
-
-        Each step's schema is resolved eagerly (`collect_schema`, schema-only — no data, the
-        same thing settings validation does) so a parse error, an unknown column or a type
-        error is attributed to the row that caused it. Data-dependent strict-cast failures
-        cannot be attributed this way: they surface only when the frame is collected (in the
-        worker), carrying Polars' own "conversion from ... failed" text and no entry position.
-
-        Args:
-            entries: The entries to apply, in evaluation order. Entries with a blank
-                expression must already be filtered out by the caller.
-
-        Returns:
-            A new `FlowDataEngine` over the chained frame; the frame is unchanged when
-            `entries` is empty.
+        This is the deliberate opposite of `build_multi_field_formula_expressions`, which
+        builds a SINGLE `with_columns` call so that every expression reads the ORIGINAL
+        input values.
 
         Raises:
             FormulaEntryError: Naming the failing entry's position and output column.
         """
         df = self.data_frame
-        if isinstance(df, pl.DataFrame):
-            df = df.lazy()  # eager frames raise inside with_columns, bypassing per-entry attribution
-        for entry in entries:
-            if not entry.output_name.strip():
-                raise FormulaEntryError(entry.position, "", "output column name is empty", "config")
-            try:
-                expr = to_expr(entry.expression)
-            except Exception as e:
-                raise FormulaEntryError(entry.position, entry.output_name, first_line(str(e)), "parse") from e
-            if entry.output_data_type not in (None, transform_schemas.AUTO_DATA_TYPE):
-                expr = expr.cast(entry.output_data_type)
-            df = df.with_columns(expr.alias(entry.output_name))
-            try:
-                df.collect_schema()
-            except pl.exceptions.ColumnNotFoundError as e:
-                raise FormulaEntryError(
-                    entry.position, entry.output_name, missing_column_detail(str(e)), "missing_column"
-                ) from e
-            except pl.exceptions.PolarsError as e:
-                raise FormulaEntryError(entry.position, entry.output_name, first_line(str(e)), "type") from e
-        return FlowDataEngine(df, number_of_records=self.number_of_records)
+        lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+        return FlowDataEngine(apply_formula_entries(lf, entries), number_of_records=self.number_of_records)
 
     def output(
         self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str, execute_remote: bool = False

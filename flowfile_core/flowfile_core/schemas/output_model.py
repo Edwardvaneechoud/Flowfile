@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup, SemanticType
+from flowfile_core.schemas import transform_schema
 from shared.delta_utils import format_binary_preview
 
 
@@ -253,20 +254,12 @@ class InstantFuncResult(BaseModel):
     result: str
 
 
-class FormulaChainEntryInput(BaseModel):
-    """One formula row as the editor holds it, before any schema is known."""
-
-    name: str = ""
-    data_type: str | None = None
-    function: str = ""
-
-
 class FormulaChainRequest(BaseModel):
     """The formula entries currently in a node's editor, which may differ from the saved node."""
 
     flow_id: int
     node_id: int
-    entries: list[FormulaChainEntryInput] = []
+    entries: list[transform_schema.FunctionInput] = []
 
 
 class FormulaChainInstantRequest(FormulaChainRequest):

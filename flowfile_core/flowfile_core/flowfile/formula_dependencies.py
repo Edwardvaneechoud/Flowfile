@@ -2,9 +2,10 @@
 
 A formula node evaluates its entries sequentially — entry N sees the outputs of entries
 1..N-1 — but when no entry reads a column another entry writes, the sequential and the
-parallel evaluation produce the same frame. Code generation uses that to collapse a chain of
-``with_columns`` steps into a single call, and ``flowfile_frame.with_columns`` uses it to
+parallel evaluation produce the same frame. ``flowfile_frame.with_columns`` uses that to
 decide whether Polars' parallel semantics can be represented by one Formula node at all.
+Code generation deliberately does not use it: an exported node always chains one
+``with_columns`` step per entry, so the reader sees the evaluation order.
 
 The predicate fails closed: an expression whose column references cannot be determined is
 treated as conflicting with every other entry.

@@ -1,5 +1,5 @@
 <template>
-  <div class="container">
+  <div class="expression-editor-layout">
     <editor-side-rail
       :table-schema="activeInput?.table_schema"
       :parameters="parameters"
@@ -101,12 +101,12 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.container {
+.expression-editor-layout {
   display: flex;
   border: 1px solid var(--color-border-primary);
   border-radius: 5px;
   overflow: hidden;
-  height: 100%;
+  height: 252px;
   cursor: auto;
   background-color: var(--color-background-primary);
 }
@@ -120,7 +120,7 @@ onMounted(async () => {
 
 .prism-editor-ref {
   flex: 1;
-  padding: 1px;
+  padding: 0;
   min-height: 0px;
 }
 

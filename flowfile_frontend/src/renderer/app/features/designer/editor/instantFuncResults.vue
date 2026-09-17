@@ -1,6 +1,12 @@
 <template>
-  <div class="container">
-    <div v-if="!hasInput" class="result-content loading">
+  <div class="instant-function-results">
+    <div v-if="validationErrors.length" class="result-content error" role="status">
+      <div class="label">Validation error</div>
+      <div class="content">
+        <div v-for="(message, index) in validationErrors" :key="index">{{ message }}</div>
+      </div>
+    </div>
+    <div v-else-if="!hasInput" class="result-content loading">
       <div class="label">Waiting for input</div>
       <div class="content"></div>
     </div>
@@ -31,6 +37,7 @@ const hasInput = ref<boolean>(false);
 
 const props = defineProps({
   nodeId: { type: Number, required: true },
+  validationErrors: { type: Array as PropType<string[]>, default: () => [] },
   // Supplied by hosts that evaluate something other than a lone expression (the
   // formula node's chain). Without it the single-expression endpoint is used.
   fetcher: {
@@ -76,7 +83,7 @@ defineExpose({ getInstantFuncResults });
 </script>
 
 <style scoped>
-.container {
+.instant-function-results {
   width: 100%;
   margin: 12px 0 0 0;
   font-family:

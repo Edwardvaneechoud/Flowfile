@@ -4,15 +4,17 @@ import polars as pl
 import pytest
 
 from flowfile_core.flowfile._extensions.real_time_interface import (
-    ChainEntry,
-    apply_chain_prefix,
     check_expression,
     check_expression_chain,
-    entry_label,
 )
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
-from flowfile_core.flowfile.flow_data_engine.formula_entries import FormulaEntry, FormulaEntryError
+from flowfile_core.flowfile.flow_data_engine.formula_entries import (
+    FormulaEntryError,
+    apply_formula_entries,
+    entry_label,
+    formula_entry,
+)
+from flowfile_core.schemas import transform_schema
 
 SCHEMA = {"number": pl.Int32, "text2": pl.Utf8, "moment": pl.Date}
 
@@ -88,8 +90,11 @@ def test_empty_schema_still_reports_missing_columns():
 CHAIN_SCHEMA = {"First": pl.Utf8, "Last": pl.Utf8, "Email": pl.Utf8, "Amount": pl.Int64}
 
 
-def entry(name: str, expression: str, data_type: str | None = None) -> ChainEntry:
-    return ChainEntry(name, data_type, expression)
+def entry(name: str, expression: str, data_type: str | None = None) -> transform_schema.FunctionInput:
+    return transform_schema.FunctionInput(
+        field=transform_schema.FieldInput(name=name, data_type=data_type),
+        function=expression,
+    )
 
 
 def test_entry_may_reference_the_entry_above_it():
@@ -226,7 +231,7 @@ def test_chain_check_agrees_with_apply_sql_formulas(label, rows, expected):
     schema = {"Amount": pl.Int64}
 
     engine_entries = [
-        FormulaEntry(position, name, expression, None if dt is None else cast_str_to_polars_type(dt))
+        formula_entry(position, entry(name, expression, dt))
         for position, (name, expression, dt) in enumerate(rows, start=1)
         if expression.strip()
     ]
@@ -238,7 +243,7 @@ def test_chain_check_agrees_with_apply_sql_formulas(label, rows, expected):
         engine_failure = (exc.position, exc.kind)
         engine_schema = None
 
-    result = check_expression_chain(schema, [ChainEntry(n, dt, e) for n, e, dt in rows])
+    result = check_expression_chain(schema, [entry(n, e, dt) for n, e, dt in rows])
     first = next(
         ((position, issue.kind) for position, issue in enumerate(result.issues, start=1) if issue is not None),
         None,
@@ -253,25 +258,25 @@ def test_accumulated_schema_after_each_entry_matches_the_engine_step_by_step():
     """criterion 24: every intermediate schema, not just the last one."""
     rows = [("A", "[Amount] * 2", None), ("B", '[A] + 1', None), ("C", "[B]", "String")]
     base = pl.LazyFrame({"Amount": [1, 2, 3]})
-    result = check_expression_chain({"Amount": pl.Int64}, [ChainEntry(n, dt, e) for n, e, dt in rows])
+    result = check_expression_chain({"Amount": pl.Int64}, [entry(n, e, dt) for n, e, dt in rows])
     for step in range(1, len(rows) + 1):
         entries = [
-            FormulaEntry(position, n, e, None if dt is None else cast_str_to_polars_type(dt))
-            for position, (n, e, dt) in enumerate(rows[:step], start=1)
+            formula_entry(position, entry(n, e, dt)) for position, (n, e, dt) in enumerate(rows[:step], start=1)
         ]
         engine = FlowDataEngine(base).apply_sql_formulas(entries)
         assert result.schemas[step - 1] == dict(engine.data_frame.collect_schema())
 
 
-def test_apply_chain_prefix_runs_entries_in_order():
-    df = pl.DataFrame({"Amount": [5]})
-    frame, failed, detail = apply_chain_prefix(df, [entry("A", "[Amount] * 2"), entry("B", "[A] + 1")])
-    assert (failed, detail) == (None, "")
-    assert frame.item(0, "B") == 11
+def test_apply_formula_entries_runs_entries_in_order():
+    lf = pl.LazyFrame({"Amount": [5]})
+    entries = [formula_entry(1, entry("A", "[Amount] * 2")), formula_entry(2, entry("B", "[A] + 1"))]
+    assert apply_formula_entries(lf, entries).collect().item(0, "B") == 11
 
 
-def test_apply_chain_prefix_reports_the_failing_position():
-    df = pl.DataFrame({"Amount": [5]})
-    frame, failed, detail = apply_chain_prefix(df, [entry("A", "[Amount] * 2"), entry("B", "[Nope] + 1")])
-    assert failed == 2
-    assert detail
+def test_apply_formula_entries_reports_the_failing_position():
+    lf = pl.LazyFrame({"Amount": [5]})
+    entries = [formula_entry(1, entry("A", "[Amount] * 2")), formula_entry(2, entry("B", "[Nope] + 1"))]
+    with pytest.raises(FormulaEntryError) as failure:
+        apply_formula_entries(lf, entries)
+    assert failure.value.position == 2
+    assert failure.value.kind == "missing_column"

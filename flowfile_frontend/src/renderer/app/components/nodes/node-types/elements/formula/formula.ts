@@ -5,13 +5,7 @@
  * output columns of every non-blank entry before it. Kept free of Vue, DOM and
  * axios imports so it runs under vitest's `node` environment.
  */
-import type { FieldInput, FormulaChainEntry, FormulaInput, NodeFormula } from "@/types/node.types";
-import {
-  applyReorder,
-  moveItems,
-  type ReorderCommand,
-} from "../../../baseNode/selectComponents/columnSelection";
-
+import type { FieldInput, FormulaInput, NodeFormula } from "@/types/node.types";
 /** Minimal column shape the editor needs: a name and, when known, a data type. */
 export interface FormulaColumn {
   name: string;
@@ -122,26 +116,6 @@ export const duplicateOutputPositions = (entries: readonly FormulaInput[]): numb
   }, []);
 };
 
-/** Move one entry to an insertion gap in `0..entries.length`. Keeps object identity. */
-export const moveEntryTo = (
-  entries: readonly FormulaInput[],
-  from: number,
-  insertIndex: number,
-): FormulaInput[] => moveItems(entries, [from], insertIndex).items;
-
-export const moveEntryByCommand = (
-  entries: readonly FormulaInput[],
-  index: number,
-  command: ReorderCommand,
-): FormulaInput[] => applyReorder(entries, [index], command).items;
-
-export const toChainEntries = (entries: readonly FormulaInput[]): FormulaChainEntry[] =>
-  entries.map((entry) => ({
-    name: entry.field.name,
-    data_type: entry.field.data_type ?? null,
-    function: entry.function,
-  }));
-
 const entryUids = new WeakMap<FormulaInput, string>();
 let uidCounter = 0;
 
@@ -178,41 +152,6 @@ export const entrySummary = (entry: FormulaInput): EntrySummary => {
   if (expression) return { text: expression, placeholder: false };
   return { text: entry.field.name.trim() ? "skipped" : "empty", placeholder: true };
 };
-
-export const toggledUid = (uids: ReadonlySet<string>, uid: string): Set<string> => {
-  const next = new Set(uids);
-  if (!next.delete(uid)) next.add(uid);
-  return next;
-};
-
-/** Expanding is idempotent, which is what makes "focus expands the row" safe to call always. */
-export const withoutUid = (uids: ReadonlySet<string>, uid: string): Set<string> => {
-  const next = new Set(uids);
-  next.delete(uid);
-  return next;
-};
-
-/** Every row collapsed except `keepExpanded` — backs both "Collapse all" and the open-time fold. */
-export const collapsedUidsFor = (
-  entries: readonly FormulaInput[],
-  keepExpanded?: string,
-): Set<string> => {
-  const uids = entries.map(entryUid).filter((uid) => uid !== keepExpanded);
-  return new Set(uids);
-};
-
-/**
- * Whether the field rail starts folded. A list needs the width more than the rail
- * does, but an explicit fold/unfold outranks that for the rest of the session.
- */
-export const resolveRailCollapsed = (preference: boolean | null, entryCount: number): boolean =>
-  preference ?? entryCount > 1;
-
-/**
- * Session-scoped, deliberately module-level: the settings drawer remounts the
- * component per node, so an instance ref would forget the choice on every switch.
- */
-export const railFoldPreference: { value: boolean | null } = { value: null };
 
 /**
  * IN-PLACE: drops the legacy `function` key so a save only ever ships

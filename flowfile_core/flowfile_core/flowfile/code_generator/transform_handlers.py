@@ -5,7 +5,6 @@ from flowfile_core.configs import logger
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
-from flowfile_core.flowfile.formula_dependencies import entries_are_independent
 from flowfile_core.schemas import input_schema, transform_schema
 
 
@@ -50,26 +49,20 @@ class TransformHandlersMixin(ConverterMixinBase):
     def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle formula/expression nodes.
 
-        Independent entries — no entry reads a column another writes — collapse into a single
-        `with_columns` call, which Polars evaluates in parallel with the same result. Entries
-        that do depend on each other stay chained, one step each in order, reproducing the
-        node's sequential semantics. A single entry emits exactly the one-liner it always has;
-        zero active entries is a pass-through assignment.
+        Entries always emit one chained `with_columns` step each, in order, never a fused call:
+        a later entry may read a column an earlier one writes, and chaining shows that instead
+        of leaving the reader to work out which form is sequential. A single entry emits exactly
+        the one-liner it always has; zero active entries is a pass-through assignment.
         """
         input_df = input_vars.get("main", "df")
         entries = [entry for _, entry in settings.active_entries()]
         if not entries:
             self._add_code(f"{var_name} = {input_df}")
-            self._add_code("")
-            return
-        if len(entries) == 1:
+        elif len(entries) == 1:
             lines = self._formula_entry_lines(entries[0])
             self._add_code(f"{var_name} = {input_df}{lines[0]}")
             for line in lines[1:]:
                 self._add_code(line)
-        elif entries_are_independent([(entry.field.name, entry.function) for entry in entries]):
-            exprs = ", ".join(self._formula_entry_expr(entry) for entry in entries)
-            self._add_code(f"{var_name} = {input_df}.with_columns([{exprs}])")
         else:
             self._add_code(f"{var_name} = ({input_df}")
             for entry in entries:
@@ -131,15 +124,6 @@ class TransformHandlersMixin(ConverterMixinBase):
             lines.append(f"    .cast({output_type})")
         lines.append("])")
         return lines
-
-    def _formula_entry_expr(self, entry: transform_schema.FunctionInput) -> str:
-        """One formula entry as a single element of a shared `with_columns([...])` list."""
-        pl_code, col_name, output_type = self._formula_entry_parts(entry)
-        if pl_code:
-            expr_str = f"({pl_code}).alias({self._py_str(col_name)})"
-        else:
-            expr_str = f"simple_function_to_expr({entry.function!r}).alias({self._py_str(col_name)})"
-        return expr_str + (f".cast({output_type})" if output_type else "")
 
     def _handle_pivot_no_index(self, settings: input_schema.NodePivot, var_name: str, input_df: str, agg_func: str):
         pivot_input = settings.pivot_input

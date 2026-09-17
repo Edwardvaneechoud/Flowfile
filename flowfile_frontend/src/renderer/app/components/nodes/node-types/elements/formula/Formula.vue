@@ -33,7 +33,6 @@
               :drop-after="dropIndex === entries.length && index === entries.length - 1"
               :collapsed="collapsedUids.has(entryUid(entry))"
               :autofocus="entries.length === 1"
-              :editor-height="entries.length === 1 ? '250px' : 'auto'"
               @focus="focusRow(index)"
               @update-name="updateName(index, $event)"
               @update-data-type="updateDataType(index, $event)"
@@ -66,12 +65,19 @@
           ref="instantResultsRef"
           :node-id="nodeId"
           :fetcher="fetchInstantResult"
+          :validation-errors="validationErrors"
         />
       </div>
     </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
+
+<script lang="ts">
+// Session-scoped on purpose: the settings drawer remounts this component on every
+// node switch, so an instance ref would forget the user's fold choice each time.
+let railFoldPreference: boolean | null = null;
+</script>
 
 <script lang="ts" setup>
 import { computed, nextTick, ref, watch } from "vue";
@@ -87,28 +93,16 @@ import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import FormulaEntryRow from "./FormulaEntryRow.vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import type { FlowParameter } from "../../../../../types/flow.types";
-import type {
-  FormulaChainIssue,
-  FormulaInput,
-  InstantFuncResult,
-  NodeFormula,
-} from "../../../../../types";
+import type { FormulaChainIssue, InstantFuncResult, NodeFormula } from "../../../../../types";
+import { applyReorder, moveItems } from "../../../baseNode/selectComponents/columnSelection";
 import {
   AUTO_COLLAPSE_THRESHOLD,
   accumulatedColumnsAt,
-  collapsedUidsFor,
   createFormulaInput,
   createFormulaNode,
   duplicateOutputPositions,
   entryUid,
-  moveEntryByCommand,
-  moveEntryTo,
   normalizeNodeFormula,
-  railFoldPreference,
-  resolveRailCollapsed,
-  toChainEntries,
-  toggledUid,
-  withoutUid,
   toSavePayload,
   type FormulaColumn,
 } from "./formula";
@@ -128,13 +122,21 @@ const draggingIndex = ref<number | null>(null);
 const dropIndex = ref<number | null>(null);
 const issues = ref<(FormulaChainIssue | null)[]>([]);
 /** UI-only, keyed by row uid: never saved, never persisted across drawer opens. */
-const collapsedUids = ref<ReadonlySet<string>>(new Set());
+const collapsedUids = ref(new Set<string>());
 const railCollapsed = ref(false);
 
-/** Data types the chain validator resolved, keyed by column name. */
-const resolvedTypes = ref<Record<string, string>>({});
-
 const rowRefs = new Map<string, InstanceType<typeof FormulaEntryRow>>();
+// Both chain validation and preview errors share the same results area.
+const validationErrors = computed(() =>
+  issues.value.flatMap((issue, index) =>
+    issue && issue.kind !== "duplicate"
+      ? [
+          `Formula ${index + 1}${entries.value[index]?.field.name ? ` (${entries.value[index].field.name})` : ""}: ${issue.message}`,
+        ]
+      : [],
+  ),
+);
+
 const instantResultsRef = ref<InstanceType<typeof InstantFuncResults> | null>(null);
 
 const entries = computed(() => nodeFormula.value?.functions ?? []);
@@ -148,26 +150,14 @@ const baseColumns = computed<FormulaColumn[]>(() =>
 
 const duplicates = computed(() => duplicateOutputPositions(entries.value));
 
-// Names come from the local accumulation so autocomplete is instant; the
-// validator only fills in the types it managed to resolve.
 const columnsFor = (index: number): FormulaColumn[] =>
-  accumulatedColumnsAt(baseColumns.value, entries.value, index).map((column) => ({
-    name: column.name,
-    data_type: column.data_type || (resolvedTypes.value[column.name] ?? ""),
-  }));
+  accumulatedColumnsAt(baseColumns.value, entries.value, index);
 
 const railSchema = computed(() => columnsFor(activeIndex.value));
 
-const applyRailDefault = () => {
-  railCollapsed.value = resolveRailCollapsed(railFoldPreference.value, entries.value.length);
-};
-
 watch(railCollapsed, (value) => {
-  if (value !== resolveRailCollapsed(railFoldPreference.value, entries.value.length)) {
-    railFoldPreference.value = value;
-  }
+  railFoldPreference = value;
 });
-watch(() => entries.value.length, applyRailDefault);
 
 const allCollapsed = computed(
   () =>
@@ -176,12 +166,9 @@ const allCollapsed = computed(
 
 const expandRow = async (index: number) => {
   const entry = entries.value[index];
-  if (!entry) return;
-  const uid = entryUid(entry);
-  if (!collapsedUids.value.has(uid)) return;
-  collapsedUids.value = withoutUid(collapsedUids.value, uid);
+  if (!entry || !collapsedUids.value.delete(entryUid(entry))) return;
   await nextTick();
-  rowRefs.get(uid)?.refreshEditor();
+  rowRefs.get(entryUid(entry))?.refreshEditor();
 };
 
 /** Focusing a row always expands it, so the rail and the editor can never target a hidden row. */
@@ -194,16 +181,16 @@ const toggleCollapsed = (index: number) => {
   const entry = entries.value[index];
   if (!entry) return;
   const uid = entryUid(entry);
-  collapsedUids.value = toggledUid(collapsedUids.value, uid);
-  if (!collapsedUids.value.has(uid)) void focusRow(index);
+  if (collapsedUids.value.has(uid)) void focusRow(index);
+  else collapsedUids.value.add(uid);
 };
 
 const collapseAll = () => {
-  collapsedUids.value = collapsedUidsFor(entries.value);
+  for (const entry of entries.value) collapsedUids.value.add(entryUid(entry));
 };
 
 const expandAll = async () => {
-  collapsedUids.value = new Set();
+  collapsedUids.value.clear();
   await nextTick();
   for (const entry of entries.value) rowRefs.get(entryUid(entry))?.refreshEditor();
 };
@@ -232,10 +219,6 @@ const updateExpression = (index: number, expression: string) => {
   entries.value[index].function = expression;
 };
 
-const commitEntries = (next: FormulaInput[]) => {
-  if (nodeFormula.value) nodeFormula.value.functions = next;
-};
-
 const addEntry = () => {
   if (!nodeFormula.value) return;
   nodeFormula.value.functions = [...entries.value, createFormulaInput()];
@@ -250,8 +233,9 @@ const removeEntry = (index: number) => {
 
 /** A reorder is never blocked: a forward reference it creates surfaces as a row issue. */
 const moveEntry = (index: number, command: "up" | "down") => {
+  if (!nodeFormula.value) return;
   const moved = entries.value[index];
-  commitEntries(moveEntryByCommand(entries.value, index, command));
+  nodeFormula.value.functions = applyReorder(entries.value, [index], command).items;
   activeIndex.value = entries.value.indexOf(moved);
 };
 
@@ -269,9 +253,13 @@ const handleDragOver = (index: number, event: DragEvent) => {
 };
 
 const handleDrop = () => {
-  if (draggingIndex.value !== null && dropIndex.value !== null) {
+  if (nodeFormula.value && draggingIndex.value !== null && dropIndex.value !== null) {
     const moved = entries.value[draggingIndex.value];
-    commitEntries(moveEntryTo(entries.value, draggingIndex.value, dropIndex.value));
+    nodeFormula.value.functions = moveItems(
+      entries.value,
+      [draggingIndex.value],
+      dropIndex.value,
+    ).items;
     activeIndex.value = entries.value.indexOf(moved);
   }
   handleDragEnd();
@@ -286,7 +274,7 @@ const fetchInstantResult = (): Promise<InstantFuncResult> =>
   NodeApi.getFormulaChainInstantResult(
     Number(nodeStore.flow_id),
     nodeId.value,
-    toChainEntries(entries.value),
+    entries.value,
     activeIndex.value,
   );
 
@@ -303,16 +291,10 @@ const runChainCheck = async () => {
     const result = await NodeApi.checkFormulaChain(
       Number(nodeStore.flow_id),
       nodeId.value,
-      toChainEntries(entries.value),
+      entries.value,
     );
     if (seq !== chainCheckSeq) return;
     issues.value = result.entries.map((entry) => entry.issue ?? null);
-    const types: Record<string, string> = {};
-    for (const column of result.base_columns) types[column.name] = column.data_type;
-    for (const entry of result.entries) {
-      for (const column of entry.columns) types[column.name] = column.data_type;
-    }
-    resolvedTypes.value = types;
   } catch {
     // An older core has no chain validator; the drawer stays usable without it.
     if (seq === chainCheckSeq) issues.value = new Array(count).fill(null);
@@ -355,12 +337,12 @@ const loadNodeData = async (id: number) => {
   }
   activeIndex.value = 0;
   issues.value = [];
-  applyRailDefault();
+  railCollapsed.value = railFoldPreference ?? false;
   // A long chain opens folded down to the row in focus; a short one opens flat.
-  collapsedUids.value =
-    entries.value.length >= AUTO_COLLAPSE_THRESHOLD
-      ? collapsedUidsFor(entries.value, entryUid(entries.value[0]))
-      : new Set();
+  collapsedUids.value.clear();
+  if (entries.value.length >= AUTO_COLLAPSE_THRESHOLD) {
+    for (const entry of entries.value.slice(1)) collapsedUids.value.add(entryUid(entry));
+  }
   dataLoaded.value = true;
   await nextTick();
   void runChainCheck();
@@ -380,11 +362,15 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 }
 
 .formula-entries {
+  display: flex;
+  flex-direction: column;
+  min-height: 300px;
   flex-grow: 1;
   min-width: 0;
 }
 
 .formula-footer {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;

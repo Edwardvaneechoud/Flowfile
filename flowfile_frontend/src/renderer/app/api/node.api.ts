@@ -4,7 +4,7 @@ import type {
   FileColumn,
   TableExample,
   NodeDescriptionResponse,
-  FormulaChainEntry,
+  FormulaInput,
   FormulaChainCheck,
   InstantFuncResult,
 } from "../types";
@@ -169,7 +169,7 @@ export class NodeApi {
   static async checkFormulaChain(
     flowId: number,
     nodeId: number,
-    entries: FormulaChainEntry[],
+    entries: FormulaInput[],
   ): Promise<FormulaChainCheck> {
     const response = await axios.post<FormulaChainCheck>(
       "/custom_functions/formula_chain_check",
@@ -184,7 +184,7 @@ export class NodeApi {
   static async getFormulaChainInstantResult(
     flowId: number,
     nodeId: number,
-    entries: FormulaChainEntry[],
+    entries: FormulaInput[],
     index: number,
   ): Promise<InstantFuncResult> {
     const response = await axios.post<InstantFuncResult>(

@@ -400,35 +400,27 @@ def _formula_chain_issues(node: "FlowNode", allow_prediction: bool) -> list[Sett
     message keeps the node-level ``Invalid formula`` label (there is no row to disambiguate);
     with several it carries the run-time ``Formula N ("name")`` prefix.
     """
-    from flowfile_core.flowfile._extensions.real_time_interface import ChainEntry, check_expression_chain, entry_label
+    from flowfile_core.flowfile._extensions.real_time_interface import check_expression_chain
+    from flowfile_core.flowfile.flow_data_engine.formula_entries import entry_label
 
-    settings = node.setting_input
-    entries = getattr(settings, "entries", None)
-    if not node.is_setup or not entries:
+    if not node.is_setup or not node.setting_input.entries:
         return []
     pl_schema = _main_input_polars_schema(node, allow_prediction)
     if pl_schema is None:
         return []
-    chain: list[ChainEntry] = []
-    for entry in entries:
-        field = getattr(entry, "field", None)
-        expression = _resolved_expression(node, getattr(entry, "function", "") or "")
-        chain.append(
-            ChainEntry(
-                getattr(field, "name", "") or "",
-                getattr(field, "data_type", None),
-                # An unresolvable ${param} leaves the entry blank: it contributes no column
-                # and raises no issue, the same silence the single-expression probe keeps.
-                expression or "",
-            )
-        )
+    # An unresolvable ${param} leaves the entry blank: it contributes no column and raises no
+    # issue, the same silence the single-expression probe keeps.
+    chain = [
+        entry.model_copy(update={"function": _resolved_expression(node, entry.function or "") or ""})
+        for entry in node.setting_input.entries
+    ]
     result = check_expression_chain(pl_schema, chain)
-    single = len(entries) == 1
+    single = len(chain) == 1
     issues: list[SettingsValidationIssue] = []
     for position, (issue, entry) in enumerate(zip(result.issues, chain, strict=True), start=1):
         if issue is None or issue.kind == "missing_column":
             continue
-        label = "Invalid formula" if single else entry_label(position, entry.output_name)
+        label = "Invalid formula" if single else entry_label(position, entry.field.name)
         issues.append(
             SettingsValidationIssue(
                 kind="duplicate_output" if issue.kind == "duplicate" else "invalid_expression",

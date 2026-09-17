@@ -22,54 +22,65 @@
         >
       </template>
 
-      <input
-        :value="entry.field.name"
-        class="entry-name"
-        type="text"
-        :style="{ width: nameWidth }"
-        placeholder="column name"
-        :list="columnListId"
-        v-bind="NO_AUTOFILL"
-        @input="emit('update-name', ($event.target as HTMLInputElement).value)"
-      />
-      <datalist :id="columnListId">
-        <option v-for="name in columnNames" :key="name" :value="name" />
-      </datalist>
+      <label class="entry-name">
+        <span class="entry-control-label">Output column</span>
+        <el-autocomplete
+          :model-value="entry.field.name"
+          class="entry-name-input"
+          placeholder="Output column"
+          aria-label="Output column name"
+          title="Edit the output column name or choose an existing column"
+          :fetch-suggestions="suggestColumns"
+          :debounce="0"
+          v-bind="NO_AUTOFILL"
+          @focus="nameEdited = false"
+          @input="updateName"
+          @select="emit('update-name', String($event.value))"
+        >
+          <template #suffix
+            ><el-icon class="entry-control-chevron"><ArrowDown /></el-icon
+          ></template>
+        </el-autocomplete>
+      </label>
 
-      <span
-        v-if="isCollapsed"
-        class="entry-expr"
-        :class="{ 'is-placeholder': summary.placeholder }"
-        :title="summary.placeholder ? undefined : summary.text"
-        >{{ summary.text }}</span
-      >
+      <label class="entry-type-field">
+        <span class="entry-control-label">Data type</span>
+        <el-select
+          class="entry-type"
+          :suffix-icon="ArrowDown"
+          aria-label="Output data type"
+          :model-value="entry.field.data_type ?? AUTO_DATA_TYPE"
+          :title="`Data type: ${entry.field.data_type ?? AUTO_DATA_TYPE}`"
+          @change="emit('update-data-type', $event)"
+        >
+          <el-option
+            v-for="dataType in dataTypes"
+            :key="dataType"
+            :value="dataType"
+            :label="dataType"
+          />
+        </el-select>
+      </label>
 
-      <select
-        class="entry-type"
-        :class="{ 'is-auto': !badgeType }"
-        :style="{ width: typeWidth }"
-        :value="entry.field.data_type ?? AUTO_DATA_TYPE"
-        :title="`Data type: ${entry.field.data_type ?? AUTO_DATA_TYPE}`"
-        @change="emit('update-data-type', ($event.target as HTMLSelectElement).value)"
-      >
-        <option v-for="dataType in dataTypes" :key="dataType" :value="dataType">
-          {{ dataType }}
-        </option>
-      </select>
-
-      <span
-        v-if="issue"
-        class="entry-flag"
-        :class="issue.kind === 'duplicate' ? 'is-warning' : 'is-error'"
-        :title="issue.message"
-        >{{ issue.kind === "duplicate" ? "⚠" : "●" }}</span
-      >
-      <span
-        v-else-if="duplicateWarning"
-        class="entry-flag is-warning"
-        title="Another formula writes to this column too; the last one wins."
-        >⚠</span
-      >
+      <span class="entry-status">
+        <el-tooltip
+          v-if="statusMessage"
+          :content="statusMessage"
+          :trigger="['hover', 'focus']"
+          placement="top"
+          :show-after="150"
+        >
+          <button
+            type="button"
+            class="entry-flag"
+            :class="issue && issue.kind !== 'duplicate' ? 'is-error' : 'is-warning'"
+            :aria-label="statusMessage"
+            @click.stop
+          >
+            {{ issue && issue.kind !== "duplicate" ? "●" : "⚠" }}
+          </button>
+        </el-tooltip>
+      </span>
 
       <template v-if="reorderable">
         <span class="entry-tools">
@@ -116,6 +127,14 @@
       </template>
     </div>
 
+    <span
+      v-if="isCollapsed"
+      class="entry-expr"
+      :class="{ 'is-placeholder': summary.placeholder }"
+      :title="summary.placeholder ? undefined : summary.text"
+      >{{ summary.text }}</span
+    >
+
     <div v-show="!isCollapsed" class="entry-editor">
       <FunctionEditor
         ref="functionEditor"
@@ -124,10 +143,12 @@
         :column-types="columnTypes"
         :parameters="parameters"
         :autofocus="autofocus"
-        :height="editorHeight"
+        height="auto"
+        min-height="96px"
+        max-height="400px"
         @update-editor-string="emit('update-expression', $event)"
       />
-      <div v-if="issue" :class="issue.kind === 'duplicate' ? 'entry-warning' : 'entry-issue'">
+      <div v-if="issue?.kind === 'duplicate'" class="entry-warning">
         {{ issue.message }}
       </div>
       <div v-else-if="duplicateWarning" class="entry-warning">
@@ -139,6 +160,8 @@
 
 <script lang="ts" setup>
 import { computed, ref } from "vue";
+import { ElAutocomplete, ElTooltip, ElSelect, ElOption, ElIcon } from "element-plus";
+import { ArrowDown } from "@element-plus/icons-vue";
 import FunctionEditor from "../../../../../features/designer/editor/FunctionEditor.vue";
 import { NO_AUTOFILL } from "../../../../../utils/noAutofill";
 import type { FlowParameter } from "../../../../../types/flow.types";
@@ -161,7 +184,6 @@ const props = defineProps<{
   dropAfter: boolean;
   collapsed: boolean;
   autofocus: boolean;
-  editorHeight: string;
 }>();
 
 const emit = defineEmits<{
@@ -177,8 +199,19 @@ const emit = defineEmits<{
   (event: "expand"): void;
 }>();
 
-const PLACEHOLDER_CHARS = 11;
-const MIN_NAME_CHARS = 8;
+const nameEdited = ref(false);
+const updateName = (value: string | number) => {
+  nameEdited.value = true;
+  emit("update-name", String(value));
+};
+const suggestColumns = (query: string, done: (items: { value: string }[]) => void) => {
+  const search = nameEdited.value ? query.toLowerCase() : "";
+  done(
+    columnNames.value
+      .filter((name) => name.toLowerCase().includes(search))
+      .map((value) => ({ value })),
+  );
+};
 
 const functionEditor = ref<InstanceType<typeof FunctionEditor> | null>(null);
 
@@ -186,7 +219,6 @@ const functionEditor = ref<InstanceType<typeof FunctionEditor> | null>(null);
 const reorderable = computed(() => props.count > 1);
 const isCollapsed = computed(() => props.collapsed && reorderable.value);
 
-const columnListId = computed(() => `formula-columns-${props.index}`);
 const columnNames = computed(() => props.columns.map((column) => column.name));
 
 const columnTypes = computed<Record<string, string>>(() => {
@@ -197,25 +229,12 @@ const columnTypes = computed<Record<string, string>>(() => {
   return map;
 });
 
-// Sized to its content: a fixed-width input would eat the row and leave the
-// collapsed expression with nothing to render into.
-const nameWidth = computed(() => {
-  const chars = Math.max(props.entry.field.name.length || PLACEHOLDER_CHARS, MIN_NAME_CHARS);
-  return `clamp(90px, calc(${chars}ch + 14px), 200px)`;
-});
-
-// A native select is as wide as its widest option; size it to the current one.
-const typeWidth = computed(() => {
-  const value = props.entry.field.data_type ?? AUTO_DATA_TYPE;
-  return `calc(${value.length}ch + 18px)`;
-});
-
 const summary = computed(() => entrySummary(props.entry));
-
-const badgeType = computed(() => {
-  const dataType = props.entry.field.data_type;
-  return !dataType || dataType === AUTO_DATA_TYPE ? "" : dataType;
-});
+const statusMessage = computed(
+  () =>
+    props.issue?.message ||
+    (props.duplicateWarning ? "Another formula writes to this column too; the last one wins." : ""),
+);
 
 const onHeadClick = () => {
   if (isCollapsed.value) emit("expand");
@@ -231,8 +250,15 @@ defineExpose({ insertTextAtCursor, refreshEditor });
 
 <style scoped>
 .formula-entry {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
   border-top: 1px solid var(--color-border-primary);
   padding: 4px 12px;
+}
+
+.formula-entry.is-collapsed {
+  flex-grow: 0;
 }
 
 .formula-entry:first-child {
@@ -259,7 +285,9 @@ defineExpose({ insertTextAtCursor, refreshEditor });
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 38px;
+  flex-wrap: wrap;
+  min-height: 60px;
+  padding: 6px 0;
 }
 
 .entry-index {
@@ -283,33 +311,74 @@ defineExpose({ insertTextAtCursor, refreshEditor });
 }
 
 .entry-name {
-  flex: 0 0 auto;
-  min-width: 0;
-  padding: 2px 0;
-  font-size: 13px;
-  line-height: 1.5;
-  font-weight: 500;
-  color: var(--color-text-primary);
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid transparent;
-  outline: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 160px;
+  width: 240px;
+  max-width: 240px;
+  min-width: 120px;
 }
 
-.entry-name::placeholder {
-  font-weight: 400;
+.entry-name-input {
+  width: 100%;
+}
+
+.entry-control-label {
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--color-text-secondary);
+}
+
+.entry-type-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 112px;
+}
+
+.entry-name :deep(.el-input__wrapper),
+.entry-type :deep(.el-select__wrapper) {
+  box-sizing: border-box;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 4px;
+  background: var(--color-background-secondary);
+  box-shadow: 0 0 0 1px var(--color-border-primary) inset;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.entry-name :deep(.el-input__inner),
+.entry-type :deep(.el-select__selected-item) {
+  height: 26px;
+  line-height: 26px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.entry-name :deep(.el-input__wrapper:hover),
+.entry-type :deep(.el-select__wrapper:hover) {
+  box-shadow: 0 0 0 1px var(--color-text-muted) inset;
+}
+
+.entry-name :deep(.el-input__wrapper.is-focus),
+.entry-type :deep(.el-select__wrapper.is-focused) {
+  box-shadow: 0 0 0 1px var(--color-accent) inset;
+}
+
+.entry-control-chevron,
+.entry-type :deep(.el-select__caret) {
+  font-size: 12px;
   color: var(--color-text-muted);
 }
 
-.entry-name:hover {
-  border-bottom-color: var(--color-border-primary);
-}
-
-.entry-name:focus {
-  border-bottom-color: var(--color-accent);
-}
-
 .entry-expr {
+  display: block;
+  margin: 6px 0 10px;
   flex: 1 1 0;
   min-width: 0;
   font-size: 13px;
@@ -327,30 +396,20 @@ defineExpose({ insertTextAtCursor, refreshEditor });
 }
 
 .entry-type {
-  flex-shrink: 0;
-  padding: 1px 4px;
-  font-size: 0.7rem;
-  color: var(--color-text-secondary);
-  background: var(--color-background-tertiary);
-  border: 1px solid transparent;
-  border-radius: 3px;
-  appearance: none;
-  cursor: pointer;
+  width: 100%;
 }
 
-.entry-type:hover {
-  border-color: var(--color-border-primary);
-}
-
-.entry-type.is-auto {
-  color: var(--color-text-muted);
-  background: transparent;
+.entry-status {
+  flex: 0 0 12px;
 }
 
 .entry-flag {
   flex-shrink: 0;
   font-size: 0.75rem;
-  cursor: help;
+  cursor: default;
+  padding: 0;
+  border: none;
+  background: transparent;
 }
 
 .entry-flag.is-error {
@@ -362,6 +421,7 @@ defineExpose({ insertTextAtCursor, refreshEditor });
 }
 
 .entry-tools {
+  margin-left: auto;
   display: flex;
   flex-shrink: 0;
   gap: 2px;
@@ -375,22 +435,6 @@ defineExpose({ insertTextAtCursor, refreshEditor });
 .formula-entry.is-active .entry-grip,
 .entry-tools:focus-within {
   opacity: 1;
-}
-
-/* A collapsed row gives its width to the expression: the idle tools take none,
-   and a long name yields rather than squeezing the summary out of the line. */
-.formula-entry.is-collapsed .entry-tools {
-  display: none;
-}
-
-.formula-entry.is-collapsed .entry-name {
-  flex: 0 1 auto;
-  max-width: 45%;
-}
-
-.formula-entry.is-collapsed:hover .entry-tools,
-.formula-entry.is-collapsed.is-active .entry-tools {
-  display: flex;
 }
 
 .entry-button {
@@ -426,19 +470,21 @@ defineExpose({ insertTextAtCursor, refreshEditor });
 }
 
 .entry-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
   margin: 6px 0 10px 0;
 }
 
 .entry-editor :deep(.function-editor-root) {
+  flex: 1;
   border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   overflow: hidden;
 }
 
-.entry-issue {
-  margin-top: 6px;
-  font-size: 0.75rem;
-  color: var(--color-danger);
+.entry-editor :deep(.cm-editor) {
+  flex: 1;
 }
 
 .entry-warning {

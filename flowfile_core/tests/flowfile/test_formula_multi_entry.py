@@ -449,8 +449,7 @@ def test_multi_entry_emission_chains_and_matches_the_engine(dialect):
     expected = run_and_collect(graph, 2)
     exporter = export_flow_to_polars if dialect == "polars" else export_flow_to_flowframe
     code = exporter(graph)
-    # Dependent chain: polars emits N chained calls, ff emits one sequential kwarg-form call.
-    assert code.count(".with_columns(") == (len(WORKED_EXAMPLE) if dialect == "polars" else 1)
+    assert code.count(".with_columns(") == len(WORKED_EXAMPLE)
 
     exec_globals: dict = {}
     exec(code, exec_globals)

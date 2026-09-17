@@ -356,13 +356,6 @@ export interface FormulaInput {
   function: string;
 }
 
-/** One entry of a formula chain as sent to the chain validator. */
-export interface FormulaChainEntry {
-  name: string;
-  data_type: string | null;
-  function: string;
-}
-
 export interface FormulaChainIssue {
   message: string;
   kind: string;

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import type { NodeFormula } from "@/types/node.types";
+import { applyReorder } from "../../../baseNode/selectComponents/columnSelection";
 import {
   accumulatedColumnsAt,
-  collapsedUidsFor,
   createFormulaInput,
   createFormulaNode,
   duplicateOutputPositions,
@@ -11,14 +11,8 @@ import {
   entryUid,
   flattenExpression,
   isBlankEntry,
-  moveEntryByCommand,
-  moveEntryTo,
   normalizeNodeFormula,
-  resolveRailCollapsed,
-  toChainEntries,
   toSavePayload,
-  toggledUid,
-  withoutUid,
   type FormulaColumn,
 } from "./formula";
 
@@ -140,46 +134,12 @@ describe("duplicateOutputPositions", () => {
 });
 
 describe("reordering", () => {
-  it("keeps the same objects so editor state travels with the row", () => {
-    const entries = [
-      createFormulaInput("one", "Auto", "1"),
-      createFormulaInput("two", "Auto", "2"),
-    ];
-    const moved = moveEntryTo(entries, 1, 0);
-    expect(moved[0]).toBe(entries[1]);
-    expect(moved[1]).toBe(entries[0]);
-  });
-
-  it("moves a row up and down by command", () => {
-    const entries = [
-      createFormulaInput("one", "Auto", "1"),
-      createFormulaInput("two", "Auto", "2"),
-      createFormulaInput("three", "Auto", "3"),
-    ];
-    expect(moveEntryByCommand(entries, 2, "up").map((e) => e.field.name)).toEqual([
-      "one",
-      "three",
-      "two",
-    ]);
-    expect(moveEntryByCommand(entries, 0, "down").map((e) => e.field.name)).toEqual([
-      "two",
-      "one",
-      "three",
-    ]);
-  });
-
-  it("is a no-op at the edges", () => {
-    const entries = [createFormulaInput("one"), createFormulaInput("two")];
-    expect(moveEntryByCommand(entries, 0, "up").map((e) => e.field.name)).toEqual(["one", "two"]);
-    expect(moveEntryByCommand(entries, 1, "down").map((e) => e.field.name)).toEqual(["one", "two"]);
-  });
-
   it("allows a reorder that creates a forward reference", () => {
     const entries = [
       createFormulaInput("total", "Auto", "[a] + [b]"),
       createFormulaInput("double", "Auto", "[total] * 2"),
     ];
-    const swapped = moveEntryByCommand(entries, 1, "up");
+    const swapped = applyReorder(entries, [1], "up").items;
     // The now-first entry references a column it can no longer see; that is a
     // validation issue on the row, never a blocked reorder.
     expect(accumulatedColumnsAt(base, swapped, 0).map((c) => c.name)).toEqual(["a", "b"]);
@@ -192,14 +152,6 @@ describe("entryUid", () => {
     const two = createFormulaInput("two");
     expect(entryUid(one)).toBe(entryUid(one));
     expect(entryUid(one)).not.toBe(entryUid(two));
-  });
-});
-
-describe("toChainEntries", () => {
-  it("flattens entries into the validator's wire shape", () => {
-    expect(toChainEntries([createFormulaInput("total", "Int64", "[a]")])).toEqual([
-      { name: "total", data_type: "Int64", function: "[a]" },
-    ]);
   });
 });
 
@@ -223,54 +175,6 @@ describe("entrySummary", () => {
       placeholder: true,
     });
     expect(entrySummary(createFormulaInput())).toEqual({ text: "empty", placeholder: true });
-  });
-});
-
-describe("collapsed-set helpers", () => {
-  const entries = [
-    createFormulaInput("one", "Auto", "1"),
-    createFormulaInput("two", "Auto", "2"),
-    createFormulaInput("three", "Auto", "3"),
-  ];
-
-  it("toggles a uid in and out without touching the input set", () => {
-    const start = new Set(["a"]);
-    const added = toggledUid(start, "b");
-    expect([...added].sort()).toEqual(["a", "b"]);
-    expect(toggledUid(added, "a")).toEqual(new Set(["b"]));
-    expect(start).toEqual(new Set(["a"]));
-  });
-
-  it("expands idempotently", () => {
-    expect(withoutUid(new Set(["a", "b"]), "a")).toEqual(new Set(["b"]));
-    expect(withoutUid(new Set(["b"]), "a")).toEqual(new Set(["b"]));
-  });
-
-  it("collapses every row, optionally keeping one expanded", () => {
-    expect(collapsedUidsFor(entries).size).toBe(3);
-    const keep = entryUid(entries[1]);
-    const collapsed = collapsedUidsFor(entries, keep);
-    expect(collapsed.has(keep)).toBe(false);
-    expect(collapsed.size).toBe(2);
-  });
-
-  it("follows the row, not the position, through a reorder", () => {
-    const collapsed = collapsedUidsFor(entries, entryUid(entries[0]));
-    const moved = moveEntryByCommand(entries, 2, "up");
-    expect(collapsed.has(entryUid(moved[0]))).toBe(false);
-    expect(collapsed.has(entryUid(moved[1]))).toBe(true);
-  });
-});
-
-describe("resolveRailCollapsed", () => {
-  it("folds the rail for a list and keeps it open for a lone formula", () => {
-    expect(resolveRailCollapsed(null, 1)).toBe(false);
-    expect(resolveRailCollapsed(null, 2)).toBe(true);
-  });
-
-  it("lets an explicit choice outrank the entry count", () => {
-    expect(resolveRailCollapsed(false, 5)).toBe(false);
-    expect(resolveRailCollapsed(true, 1)).toBe(true);
   });
 });
 

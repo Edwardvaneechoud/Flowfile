@@ -140,20 +140,37 @@ def _reimport(frame: ff.FlowFrame) -> ff.FlowFrame:
 
 
 @pytest.mark.parametrize(
-    ("formulas", "names"),
+    ("formulas", "names", "expected"),
     [
-        (["[a] * 10", "[doubled] + 1", "[next] * 2"], ["doubled", "next", "tripled"]),
-        (["[a] * 10", "[b] + 1", "[a] - [b]"], ["p", "q", "r"]),
+        (
+            ["[a] * 10", "[doubled] + 1", "[next] * 2"],
+            ["doubled", "next", "tripled"],
+            [("doubled", "([a] * 10)"), ("next", "([doubled] + 1)"), ("tripled", "([next] * 2)")],
+        ),
+        (
+            ["[a] * 10", "[b] + 1", "[a] - [b]"],
+            ["p", "q", "r"],
+            [("p", "([a] * 10)"), ("q", "([b] + 1)"), ("r", "([a] - [b])")],
+        ),
     ],
     ids=["dependent", "independent"],
 )
-def test_multi_entry_node_round_trips_as_one_node(formulas, names):
+def test_multi_entry_node_round_trips_as_one_node_per_entry(formulas, names, expected):
+    """Export always chains, so the node comes back as N single-entry nodes in the same order.
+
+    The expressions come back parenthesised: exporting them as native ff expressions and
+    re-lowering those is what normalises the text, not the chaining.
+    """
     original = _frame().with_columns(flowfile_formulas=formulas, output_column_names=names)
     rebuilt = _reimport(original)
 
-    formula_nodes = [node for node in rebuilt.flow_graph.nodes if node.node_type == "formula"]
-    assert len(formula_nodes) == 1
-    assert [entry.field.name for entry in formula_nodes[0].setting_input.entries] == names
+    formula_nodes = sorted(
+        (node for node in rebuilt.flow_graph.nodes if node.node_type == "formula"),
+        key=lambda node: node.node_id,
+    )
+    assert len(formula_nodes) == len(names)
+    rebuilt_entries = [entry for node in formula_nodes for entry in node.setting_input.entries]
+    assert [(entry.field.name, entry.function) for entry in rebuilt_entries] == expected
     assert_frame_equal(rebuilt.collect(), original.collect())
 
 
