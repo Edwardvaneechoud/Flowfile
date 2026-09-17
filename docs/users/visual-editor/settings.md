@@ -70,7 +70,7 @@ Flow definitions are preserved.
 
 ## Usage telemetry
 
-Flowfile can send anonymous usage statistics so we can see how the platform is used and what to improve. It is off by default. A one-time dialog asks for consent, and you can change your answer under **Settings → Preferences → Privacy**. [Privacy & Telemetry](../telemetry.md) lists what is sent.
+Flowfile can send anonymous usage statistics, which the maintainers use to see how the platform is used and what to improve. It is off by default. A one-time dialog asks for consent, and you can change your answer under **Settings → Preferences → Privacy**. [Privacy & Telemetry](../telemetry.md) lists what is sent.
 
 ## Related
 

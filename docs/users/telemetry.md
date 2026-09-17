@@ -4,7 +4,7 @@ description: What usage data Flowfile sends, when, and how to turn it off.
 
 # Privacy & Telemetry
 
-Flowfile can send anonymous usage statistics. We use them to see how the platform is used and what to improve. It is off by default and needs your consent.
+Flowfile can send anonymous usage statistics. The maintainers use them to see how the platform is used and what to improve. It is off by default and needs your consent.
 
 ## Turning it on or off
 
