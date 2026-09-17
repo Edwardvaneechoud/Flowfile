@@ -1,5 +1,5 @@
 <!--
-W71 — Stage 3 of the agent_staged state machine (add path).
+Stage 3 of the agent_staged state machine (add path).
 Owner: planner agent. Loaded by ``assemble_system_prompt`` when
 ``surface="agent_staged"`` and ``stage="fill_settings"``.
 -->
@@ -31,7 +31,7 @@ Shape rules:
   Pydantic class — don't re-derive it from the JSON Schema, your
   re-derivation will likely miss a nested-object envelope.
 
-Step narration (W38):
+Step narration:
 
 Write a single short sentence (≤20 words) BEFORE the tool call, in
 plain English. Describe the EFFECT, not the mechanism. **Good**:

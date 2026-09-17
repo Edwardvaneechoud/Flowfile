@@ -458,7 +458,7 @@ def test_alteryx_import_reports_only_alteryx_names(sent, subscribed) -> None:
         "tool_count_bucket": "4-7",
         "converted_tools": ["DbFileOutput", "TextInput"],
         "partial_tools": [],
-        "placeholder_tools": ["DateTime", "user_macro"],
+        "placeholder_tools": ["XMLParse", "user_macro"],
     }
     blob = json.dumps(emitted)
     assert "Something" not in blob, "the user macro's filename leaked"
@@ -747,9 +747,14 @@ def test_documented_export_targets_are_exactly_the_ones_routes_emit() -> None:
     against the route table rather than against the schema enum.
     """
     docs = Path(__file__).resolve().parents[2] / "docs" / "users" / "telemetry.md"
-    rows = [line for line in docs.read_text(encoding="utf-8").splitlines() if line.startswith("| `target` |")]
-    assert len(rows) == 1, "expected exactly one documented `target` row"
-    cell = rows[0].strip().strip("|").split("|")[2]
+    table_rows = [
+        [cell.strip() for cell in line.strip().strip("|").split("|")]
+        for line in docs.read_text(encoding="utf-8").splitlines()
+        if line.startswith("|")
+    ]
+    rows = [cells for cells in table_rows if len(cells) == 3 and cells[1] == "`target`"]
+    assert len(rows) == 1, "expected exactly one documented `target` row (Event | Field | Values)"
+    cell = rows[0][2]
     documented = {token.strip().strip("`") for token in cell.split("·")}
     emitted = {props["target"] for _, props in glue.ROUTE_EVENTS.values() if props and "target" in props}
     assert documented == emitted

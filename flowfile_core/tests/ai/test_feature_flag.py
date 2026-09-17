@@ -122,7 +122,7 @@ def test_health_returns_200_when_flag_on(flag_on: None) -> None:
 
 
 def test_byok_route_inherits_gate_when_flag_off(flag_off: None) -> None:
-    """W12's BYOK sub-router is mounted via ``router.include_router(byok_router)``.
+    """The BYOK sub-router is mounted via ``router.include_router(byok_router)``.
 
     FastAPI propagates the parent's constructor ``dependencies`` to every
     included child route, so the gate covers BYOK without per-leaf wiring.

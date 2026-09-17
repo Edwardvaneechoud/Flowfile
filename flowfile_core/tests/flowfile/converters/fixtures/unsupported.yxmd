@@ -35,24 +35,23 @@
       <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxTextInput" />
     </Node>
     <Node ToolID="2">
-      <GuiSettings Plugin="AlteryxBasePluginsGui.DateTime.DateTime">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.XMLParse.XMLParse">
         <Position x="198" y="54" />
       </GuiSettings>
       <Properties>
         <Configuration>
-          <IsFrom value="True" />
-          <InputFieldName>a</InputFieldName>
-          <Format>yyyy-MM-dd</Format>
-          <OutputFieldName>DateTime_Out</OutputFieldName>
+          <Field>a</Field>
+          <ChildValues value="True" />
+          <OutputFieldName>XMLParse_Out</OutputFieldName>
         </Configuration>
         <Annotation DisplayMode="0">
           <Name />
           <DefaultAnnotationText />
-          <AnnotationText>Parse the date column</AnnotationText>
+          <AnnotationText>Parse the payload column</AnnotationText>
           <Left value="False" />
         </Annotation>
       </Properties>
-      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDateTime" />
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxXMLParse" />
     </Node>
     <Node ToolID="3">
       <GuiSettings>

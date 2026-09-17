@@ -94,7 +94,7 @@ class RateLimitHint:
 class RetryPolicy:
     """Controls the exponential-backoff schedule of ``with_provider_retry``.
 
-    Defaults match plan §5.1: ``2s, 4s, 8s, 16s`` (4 retries on top of the
+    Defaults are ``2s, 4s, 8s, 16s`` (4 retries on top of the
     initial attempt) with ±25 % jitter. ``max_delay`` clamps the deterministic
     factor; jitter is then applied within ``[0, max_delay]``.
     """

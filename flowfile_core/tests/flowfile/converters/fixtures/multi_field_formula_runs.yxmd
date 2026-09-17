@@ -83,7 +83,7 @@
           <Field name="*Unknown" selected="False" />
         </Fields>
         <CopyOutput value="False" />
-        <Expression>REGEX_Match([_CurrentField_], "^A.*")</Expression>
+        <Expression>REGEX_Match([_CurrentField_], "^(?=A).*")</Expression>
         <ChangeFieldType value="False" />
       </Configuration></Properties>
     </Node>
@@ -130,7 +130,7 @@
           <Field name="*Unknown" selected="False" />
         </Fields>
         <CopyOutput value="False" />
-        <Expression>REGEX_Match([_CurrentField_], "^R.*")</Expression>
+        <Expression>REGEX_Match([_CurrentField_], "^(?=R).*")</Expression>
         <ChangeFieldType value="True" />
         <OutputFieldType type="Int32" size="4" scale="0" />
       </Configuration></Properties>

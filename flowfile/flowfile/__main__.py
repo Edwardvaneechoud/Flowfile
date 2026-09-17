@@ -182,6 +182,152 @@ def _complete_run_if_needed(
         print(f"Warning: Notification processing failed: {e}", file=sys.stderr)
 
 
+CONVERT_USAGE = "Usage: flowfile convert yxdb <file-or-dir> [--out DIR] [--csv] [--overwrite]"
+
+
+def _run_convert_command(component: str | None, target: str | None, out: str | None, csv: bool, overwrite: bool) -> int:
+    """Convert Alteryx `.yxdb` data files the importer cannot read from an uploaded workflow."""
+    if component != "yxdb":
+        print(CONVERT_USAGE, file=sys.stderr)
+        return 1
+    if not target:
+        print(CONVERT_USAGE, file=sys.stderr)
+        return 1
+
+    source = Path(target)
+    if not source.exists():
+        print(f"Error: File not found: {target}", file=sys.stderr)
+        return 1
+
+    from flowfile_core.flowfile.converters.alteryx.yxdb import ConversionStats, convert_tree, convert_yxdb
+
+    out_dir = Path(out) if out else None
+    suffix = ".csv" if csv else ".parquet"
+    if source.is_dir():
+        results = convert_tree(source, out_dir, csv=csv, overwrite=overwrite)
+    else:
+        destination = out_dir / source.with_suffix(suffix).name if out_dir else None
+        try:
+            results = [convert_yxdb(source, destination, csv=csv, overwrite=overwrite)]
+        except Exception as exc:
+            results = [ConversionStats(source=source, error=str(exc))]
+
+    if not results:
+        print(f"No .yxdb files found under {source}")
+        return 0
+
+    failed = 0
+    skipped = 0
+    for stats in results:
+        if not stats.ok:
+            failed += 1
+            print(f"FAILED  {stats.source}: {stats.error}", file=sys.stderr)
+        elif stats.skipped:
+            skipped += 1
+            print(f"skipped {stats.source} -> {stats.destination} already exists (use --overwrite)")
+        else:
+            print(
+                f"{stats.source} -> {stats.destination}  {stats.rows} rows x {stats.columns} cols  {stats.seconds:.2f}s"
+            )
+        for warning in stats.warnings:
+            print(f"        warning: {warning}")
+
+    converted = len(results) - failed - skipped
+    print(f"{converted} converted, {skipped} skipped, {failed} failed")
+    return 1 if failed else 0
+
+
+IMPORT_USAGE = "Usage: flowfile import alteryx <file-or-dir> [--inspect] [--format md|json] [--out DIR] [--overwrite]"
+
+
+def _import_reports(source: Path) -> tuple[list, list[str]]:
+    """Convert every workflow under *source*, returning the results and the files that would not parse."""
+    from flowfile_core.flowfile.converters.alteryx import YxmdParseError, convert_yxmd
+
+    files = sorted(source.rglob("*.yxmd")) if source.is_dir() else [source]
+    results, failures = [], []
+    for path in files:
+        try:
+            results.append((path, convert_yxmd(path.read_bytes(), source_name=path.name)))
+        except YxmdParseError as exc:
+            failures.append(f"{path}: {exc}")
+        except Exception as exc:
+            failures.append(f"{path}: {type(exc).__name__}: {exc}")
+    return results, failures
+
+
+def _import_destination(path: Path, source: Path, out_dir: Path | None) -> Path:
+    """Where a converted workflow is written: beside the source, or mirrored under ``--out``."""
+    if out_dir is None:
+        return path.with_suffix(".yaml")
+    if source.is_dir():
+        return out_dir / path.relative_to(source).with_suffix(".yaml")
+    return out_dir / path.with_suffix(".yaml").name
+
+
+def _run_import_command(
+    component: str | None,
+    target: str | None,
+    inspect: bool,
+    fmt: str,
+    out: str | None,
+    overwrite: bool = False,
+) -> int:
+    """Convert Alteryx workflows to Flowfile flows, or just report what the conversion would do."""
+    if component != "alteryx" or not target:
+        print(IMPORT_USAGE, file=sys.stderr)
+        return 1
+
+    source = Path(target)
+    if not source.exists():
+        print(f"Error: File not found: {target}", file=sys.stderr)
+        return 1
+
+    from flowfile_core.flowfile.converters.alteryx import build_report, dump_flow_yaml
+
+    results, failures = _import_reports(source)
+    for failure in failures:
+        print(f"FAILED  {failure}", file=sys.stderr)
+    if not results:
+        if not failures:
+            print(f"No .yxmd workflows found under {source}", file=sys.stderr)
+        return 1
+
+    if inspect:
+        # One pooled report over a directory, so the table describes the whole corpus.
+        if source.is_dir():
+            rows = [row for _, result in results for row in result.report.rows]
+            report = build_report(source.resolve().name, rows)
+        else:
+            report = results[0][1].report
+        rendered = (
+            report.to_markdown()
+            if fmt == "md"
+            else json.dumps(report.model_dump(mode="json"), indent=2, ensure_ascii=False) + "\n"
+        )
+        if out:
+            Path(out).write_text(rendered, encoding="utf-8")
+            print(f"{len(results)} workflow(s) inspected -> {out}")
+        else:
+            print(rendered, end="")
+        return 1 if failures else 0
+
+    out_dir = Path(out) if out else None
+    skipped = 0
+    for path, result in results:
+        destination = _import_destination(path, source, out_dir)
+        if destination.exists() and not overwrite:
+            skipped += 1
+            print(f"skipped {path} -> {destination} already exists (use --overwrite)")
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("w", encoding="utf-8") as handle:
+            dump_flow_yaml(result.flow_data, handle)
+        coverage = result.report.coverage
+        print(f"{path} -> {destination}  {coverage.mapped}/{coverage.tools} tools mapped")
+    return 1 if failures or skipped else 0
+
+
 def _run_project_command(action: str | None, arg: str | None) -> None:
     """Headless project init/open/save — the proof that build-from-scratch works without the UI."""
     from fastapi import HTTPException
@@ -235,15 +381,20 @@ def main():
 
     parser = argparse.ArgumentParser(description="FlowFile: A visual ETL tool with a Polars-like API")
     parser.add_argument(
-        "command", nargs="?", choices=["run", "seed-demo", "remove-demo", "project"], help="Command to execute"
+        "command",
+        nargs="?",
+        choices=["run", "seed-demo", "remove-demo", "project", "convert", "import"],
+        help="Command to execute",
     )
     parser.add_argument(
         "component",
         nargs="?",
-        choices=["ui", "core", "worker", "flow", "init", "open", "save"],
-        help="Component to run, or project sub-command (init/open/save)",
+        choices=["ui", "core", "worker", "flow", "init", "open", "save", "yxdb", "alteryx"],
+        help="Component to run, project sub-command (init/open/save), convert format (yxdb) or import format (alteryx)",
     )
-    parser.add_argument("file_path", nargs="?", help="Flow file path, project folder, or version message")
+    parser.add_argument(
+        "file_path", nargs="?", help="Flow file path, project folder, version message, or file/dir to convert"
+    )
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server to")
     parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
@@ -255,6 +406,16 @@ def main():
         help="Override a flow parameter (can be used multiple times): --param input_dir=/data --param threshold=100",
     )
     parser.add_argument("--run-id", type=int, default=None, help="Pre-created run ID for scheduled runs")
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Output directory for convert and import, or the file an --inspect report goes to "
+        "(default: beside the source)",
+    )
+    parser.add_argument("--inspect", action="store_true", help="Report what an import would do without writing a flow")
+    parser.add_argument("--format", default="md", choices=["md", "json"], help="Format of the --inspect report")
+    parser.add_argument("--csv", action="store_true", help="Convert to CSV instead of Parquet")
+    parser.add_argument("--overwrite", action="store_true", help="Replace existing converted files or flows")
 
     args = parser.parse_args()
 
@@ -282,6 +443,16 @@ def main():
                 print("Usage: flowfile run flow <path-to-flow-file>", file=sys.stderr)
                 sys.exit(1)
             sys.exit(run_flow(args.file_path, param_overrides=args.params, run_id=args.run_id))
+    elif args.command == "convert":
+        sys.exit(
+            _run_convert_command(args.component, args.file_path, out=args.out, csv=args.csv, overwrite=args.overwrite)
+        )
+    elif args.command == "import":
+        sys.exit(
+            _run_import_command(
+                args.component, args.file_path, args.inspect, args.format, args.out, overwrite=args.overwrite
+            )
+        )
     elif args.command == "project":
         _run_project_command(args.component, args.file_path)
     elif args.command in ("seed-demo", "remove-demo"):
@@ -302,6 +473,14 @@ def main():
         print("")
         print("  # Run a flow from a file")
         print("  flowfile run flow my_pipeline.yaml")
+        print("")
+        print("  # Convert Alteryx .yxdb data files to Parquet (needs: pip install 'flowfile[alteryx]')")
+        print("  flowfile convert yxdb my_data.yxdb")
+        print("  flowfile convert yxdb ./alteryx_data --out ./parquet_data")
+        print("")
+        print("  # Import Alteryx workflows, or report what the conversion would do")
+        print("  flowfile import alteryx my_workflow.yxmd")
+        print("  flowfile import alteryx ./workflows --inspect --format md --out coverage.md")
         print("")
         print("  # Load or remove the optional demo catalog")
         print("  flowfile seed-demo")

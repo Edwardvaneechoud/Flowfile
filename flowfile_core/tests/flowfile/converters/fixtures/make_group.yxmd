@@ -1,0 +1,108 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="54" y="54" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <NumRows value="4" />
+          <Fields>
+            <Field name="Grower" />
+            <Field name="Buyer" />
+          </Fields>
+          <Data>
+            <r>
+              <c>Okonjo</c>
+              <c>Salgado</c>
+            </r>
+            <r>
+              <c>Salgado</c>
+              <c>Vetle</c>
+            </r>
+            <r>
+              <c>Petrova</c>
+              <c>Nakamura</c>
+            </r>
+            <r>
+              <c>Ibarra</c>
+              <c>Ibarra</c>
+            </r>
+          </Data>
+        </Configuration>
+      </Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MakeGroup.MakeGroup">
+        <Position x="198" y="54" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Key1st>Grower</Key1st>
+          <Key2nd>Buyer</Key2nd>
+        </Configuration>
+      </Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect">
+        <Position x="342" y="54" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <SelectFields>
+            <SelectField field="Key" selected="True" />
+            <SelectField field="Group" selected="True" />
+            <SelectField field="*Unknown" selected="False" />
+          </SelectFields>
+        </Configuration>
+      </Properties>
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MakeGroup.MakeGroup">
+        <Position x="198" y="198" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Key1st>Grower</Key1st>
+          <Key2nd />
+        </Configuration>
+      </Properties>
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MakeGroup.MakeGroup">
+        <Position x="198" y="342" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Key1st>Grower</Key1st>
+          <Key2nd>Buyer</Key2nd>
+          <CaseSensitive value="True" />
+        </Configuration>
+      </Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="2" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="2" Connection="Output" />
+      <Destination ToolID="3" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="4" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="5" Connection="Input" />
+    </Connection>
+  </Connections>
+  <Properties>
+    <MetaInfo>
+      <Name>Make Group</Name>
+    </MetaInfo>
+  </Properties>
+</AlteryxDocument>

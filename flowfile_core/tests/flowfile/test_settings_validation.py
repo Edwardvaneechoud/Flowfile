@@ -602,3 +602,169 @@ def test_scd2_generated_partition_column_does_not_warn(scd2_namespace):
     graph = _scd2_writer_graph(scd2_namespace, "scd2_partitioned", drop_target=False, partition_by=["is_current"])
     assert validate_flow_settings(graph).nodes == []
     assert graph.run_graph().success
+
+
+TEXT_DATE_DATA = [{"d": "2005-01-10", "n": 1}, {"d": "2015-03-14", "n": 2}]
+
+
+def text_date_graph(node_type: str, add_settings) -> FlowGraph:
+    graph = create_graph()
+    add_manual_input(graph, TEXT_DATE_DATA, node_id=1)
+    add_promise(graph, node_type, 2)
+    connect(graph, 1, 2)
+    add_settings(graph)
+    return graph
+
+
+def formula_over_text_date(expression: str) -> FlowGraph:
+    return text_date_graph("formula", lambda g: g.add_formula(input_schema.NodeFormula(
+        flow_id=g.flow_id, node_id=2,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="out"), function=expression))))
+
+
+def filter_over_text_date(expression: str) -> FlowGraph:
+    return text_date_graph("filter", lambda g: g.add_filter(input_schema.NodeFilter(
+        flow_id=g.flow_id, node_id=2,
+        filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter=expression))))
+
+
+def add_parquet_output(graph: FlowGraph, directory, node_id: int = 3) -> None:
+    """A sink, so the expression is actually collected: a leaf node is never materialized."""
+    add_promise(graph, "output", node_id)
+    connect(graph, node_id - 1, node_id)
+    graph.add_output(input_schema.NodeOutput(
+        flow_id=graph.flow_id, node_id=node_id,
+        output_settings=input_schema.OutputSettings(
+            name="validated.parquet", directory=str(directory), file_type="parquet",
+            write_mode="overwrite", table_settings=input_schema.OutputParquetTable())))
+
+
+def test_formula_date_function_on_text_warns_and_fails(tmp_path):
+    graph = formula_over_text_date('format_date([d], "%A, %d %B, %Y")')
+    issues = issues_by_node(validate_flow_settings(graph))
+    assert set(issues) == {2}
+    (issue,) = issues[2]
+    assert issue.kind == "invalid_expression"
+    assert issue.input_handle == "main"
+    assert issue.message == (
+        "Invalid formula: format_date needs a Date or Datetime column; 'd' is text "
+        '— wrap it in to_date([d], "%Y-%m-%d")'
+    )
+    add_parquet_output(graph, tmp_path)
+    assert not graph.run_graph().success
+
+
+def test_formula_date_function_on_a_parsed_date_stays_silent_and_runs(tmp_path):
+    graph = formula_over_text_date('format_date(to_date([d], "%Y-%m-%d"), "%A, %d %B, %Y")')
+    assert validate_flow_settings(graph).nodes == []
+    add_parquet_output(graph, tmp_path)
+    assert graph.run_graph().success
+
+
+def test_filter_date_function_on_text_warns_and_fails(tmp_path):
+    graph = filter_over_text_date("year([d]) > 2010")
+    issues = issues_by_node(validate_flow_settings(graph))
+    assert set(issues) == {2}
+    (issue,) = issues[2]
+    assert issue.kind == "invalid_expression"
+    assert issue.message.startswith("Invalid filter expression: year needs a Date or Datetime column")
+    add_parquet_output(graph, tmp_path)
+    assert not graph.run_graph().success
+
+
+def test_filter_date_function_on_a_parsed_date_stays_silent_and_runs(tmp_path):
+    graph = filter_over_text_date('year(to_date([d], "%Y-%m-%d")) > 2010')
+    assert validate_flow_settings(graph).nodes == []
+    add_parquet_output(graph, tmp_path)
+    assert graph.run_graph().success
+
+
+def _node_result(info, node_id):
+    return next((r for r in info.node_step_result if r.node_id == node_id), None)
+
+
+def test_leaf_formula_dtype_error_fails_the_run_and_blames_the_formula():
+    # No sink: the run must still fail, and the formula node owns the error (not a green leaf).
+    graph = formula_over_text_date('format_date([d], "%Y")')
+    info = graph.run_graph()
+    assert info.success is False
+    node2 = _node_result(info, 2)
+    assert node2.success is False
+    assert node2.skipped is False
+    assert "format_date needs a Date or Datetime column" in node2.error
+
+
+def test_leaf_formula_valid_dtype_runs_green():
+    graph = formula_over_text_date('format_date(to_date([d], "%Y-%m-%d"), "%Y")')
+    assert graph.run_graph().success
+
+
+def test_formula_dtype_error_blames_the_formula_not_the_downstream_sink(tmp_path):
+    graph = formula_over_text_date('format_date([d], "%Y")')
+    add_parquet_output(graph, tmp_path)
+    info = graph.run_graph()
+    assert info.success is False
+    node2 = _node_result(info, 2)
+    assert node2.success is False
+    assert "format_date needs a Date or Datetime column" in node2.error
+    # the sink is skipped, never blamed for the formula's error
+    node3 = _node_result(info, 3)
+    assert node3 is None or node3.success is not True
+
+
+def test_leaf_filter_dtype_error_fails_the_run_and_blames_the_filter():
+    graph = filter_over_text_date("year([d]) > 2010")
+    info = graph.run_graph()
+    assert info.success is False
+    node2 = _node_result(info, 2)
+    assert node2.success is False
+    assert "year needs a Date or Datetime column" in node2.error
+
+
+def test_leaf_filter_valid_dtype_runs_green():
+    graph = filter_over_text_date('year(to_date([d], "%Y-%m-%d")) > 2010')
+    assert graph.run_graph().success
+
+
+def _formula_input_graph() -> FlowGraph:
+    graph = create_graph()
+    add_manual_input(graph, TEXT_DATE_DATA, node_id=1)
+    add_promise(graph, "formula", 2)
+    connect(graph, 1, 2)
+    return graph
+
+
+def test_add_formula_returns_the_dtype_error():
+    graph = _formula_input_graph()
+    valid, msg = graph.add_formula(input_schema.NodeFormula(
+        flow_id=graph.flow_id, node_id=2,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="out"), function='format_date([d], "%Y")')))
+    assert valid is False
+    assert msg == (
+        "format_date needs a Date or Datetime column; 'd' is text "
+        '— wrap it in to_date([d], "%Y-%m-%d")'
+    )
+
+
+def test_add_formula_valid_expression_returns_true():
+    graph = _formula_input_graph()
+    valid, msg = graph.add_formula(input_schema.NodeFormula(
+        flow_id=graph.flow_id, node_id=2,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="out"),
+            function='format_date(to_date([d], "%Y-%m-%d"), "%Y")')))
+    assert (valid, msg) == (True, "")
+
+
+def test_add_filter_returns_the_dtype_error():
+    graph = create_graph()
+    add_manual_input(graph, TEXT_DATE_DATA, node_id=1)
+    add_promise(graph, "filter", 2)
+    connect(graph, 1, 2)
+    valid, msg = graph.add_filter(input_schema.NodeFilter(
+        flow_id=graph.flow_id, node_id=2,
+        filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="year([d]) > 2010")))
+    assert valid is False
+    assert "year needs a Date or Datetime column" in msg

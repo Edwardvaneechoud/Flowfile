@@ -1,0 +1,102 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxSpatialPluginsGui.MapInput.MapInput">
+        <Position x="54" y="54" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Mode>Draw</Mode>
+          <ReferenceFile />
+          <NumRows value="1" />
+          <Fields>
+            <Field name="Marker" />
+            <Field name="Shape" />
+          </Fields>
+          <Data>
+            <r>
+              <c>Weigh bridge</c>
+              <c>{"type":"point","coordinates":[4.895168,52.370216]}</c>
+            </r>
+          </Data>
+          <BaseMap>Latest:CloudMade</BaseMap>
+        </Configuration>
+      </Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxSpatialPluginsGui.MapInput.MapInput">
+        <Position x="54" y="198" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Mode>Draw</Mode>
+          <ReferenceFile>D:\Orchard\Maps\plots.yxdb</ReferenceFile>
+          <NumRows value="3" />
+          <Fields>
+            <Field name="Marker" />
+            <Field name="Shape" />
+          </Fields>
+          <Data>
+            <r>
+              <c>Weigh bridge</c>
+              <c>{"type":"point","coordinates":[4.895168,52.370216]}</c>
+            </r>
+            <r>
+              <c>Cold store</c>
+              <c>{"type":"polygon","coordinates":[[[4.893,52.371],[4.897,52.371],[4.897,52.369],[4.893,52.369],[4.893,52.371]]]}</c>
+            </r>
+          </Data>
+        </Configuration>
+      </Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxSpatialPluginsGui.MapInput.MapInput">
+        <Position x="54" y="342" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Mode>Draw</Mode>
+          <ReferenceFile />
+          <NumRows value="2" />
+          <Fields>
+            <Field name="PlotCode" />
+            <Field name="Grower" />
+          </Fields>
+          <Data>
+            <r>
+              <c>00123</c>
+              <c>Okonjo</c>
+            </r>
+            <r>
+              <c>00124</c>
+            </r>
+          </Data>
+        </Configuration>
+      </Properties>
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxSpatialPluginsGui.MapInput.MapInput">
+        <Position x="54" y="486" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Mode>Select</Mode>
+          <ReferenceFile>D:\Orchard\Maps\plots.yxdb</ReferenceFile>
+          <NumRows value="0" />
+          <Data>
+            <r>
+              <c />
+            </r>
+          </Data>
+          <SelectionStack />
+        </Configuration>
+      </Properties>
+    </Node>
+  </Nodes>
+  <Properties>
+    <MetaInfo>
+      <Name>Map Input</Name>
+    </MetaInfo>
+  </Properties>
+</AlteryxDocument>

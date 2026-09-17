@@ -1,0 +1,95 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="741">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Join.Join"><Position x="330" y="70" /></GuiSettings>
+      <Properties><Configuration joinByRecordPos="False">
+        <JoinInfo connection="Left"><Field field="CrateId" /></JoinInfo>
+        <JoinInfo connection="Right"><Field field="CrateId" /></JoinInfo>
+        <SelectConfiguration><Configuration outputConnection="Join">
+          <OrderChanged value="False" />
+          <SelectFields>
+            <SelectField field="Right_CrateId" selected="True" rename="Right_CrateId" />
+            <SelectField field="*Unknown" selected="True" />
+          </SelectFields>
+        </Configuration></SelectConfiguration>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="742">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Join.Join"><Position x="330" y="210" /></GuiSettings>
+      <Properties><Configuration joinByRecordPos="False">
+        <JoinInfo connection="Left"><Field field="Grower" /><Field field="Variety" /></JoinInfo>
+        <JoinInfo connection="Right"><Field field="Grower" /><Field field="Variety" /></JoinInfo>
+        <SelectConfiguration><Configuration outputConnection="Join">
+          <SelectFields>
+            <SelectField field="Right_Grower" selected="False" rename="Right_Grower" />
+            <SelectField field="Right_Variety" selected="False" rename="Right_Variety" />
+            <SelectField field="*Unknown" selected="True" />
+          </SelectFields>
+        </Configuration></SelectConfiguration>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="743">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Join.Join"><Position x="330" y="350" /></GuiSettings>
+      <Properties><Configuration joinByRecordPos="True">
+        <SelectConfiguration><Configuration outputConnection="Join">
+          <SelectFields><SelectField field="*Unknown" selected="True" /></SelectFields>
+        </Configuration></SelectConfiguration>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="744">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Join.Join"><Position x="330" y="490" /></GuiSettings>
+      <Properties><Configuration joinByRecordPos="False">
+        <JoinInfo connection="Left"><Field field="CrateId" /></JoinInfo>
+        <JoinInfo connection="Right"><Field field="CrateId" /></JoinInfo>
+        <SelectConfiguration><Configuration outputConnection="Join">
+          <SelectFields>
+            <SelectField field="Right_CrateId" selected="True" rename="Right_CrateId" />
+            <SelectField field="*Unknown" selected="True" />
+          </SelectFields>
+        </Configuration></SelectConfiguration>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="745">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Sort.Sort"><Position x="470" y="490" /></GuiSettings>
+      <Properties><Configuration>
+        <SortInfo locale="0"><Field field="CrateId" order="Asc" /></SortInfo>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="751">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput"><Position x="60" y="70" /></GuiSettings>
+      <Properties><Configuration>
+        <NumRows value="1" />
+        <Fields><Field name="CrateId" /><Field name="Grower" /><Field name="Variety" /></Fields>
+        <Data><r><c>4</c><c>Okonjo</c><c>Gala</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="752">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput"><Position x="60" y="210" /></GuiSettings>
+      <Properties><Configuration>
+        <NumRows value="1" />
+        <Fields><Field name="CrateId" /><Field name="PickedOn" /></Fields>
+        <Data><r><c>4</c><c>2024-09-02</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="753">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput"><Position x="60" y="350" /></GuiSettings>
+      <Properties><Configuration>
+        <NumRows value="1" />
+        <Fields><Field name="Grower" /><Field name="Variety" /><Field name="Packhouse" /></Fields>
+        <Data><r><c>Okonjo</c><c>Gala</c><c>Shed 2</c></r></Data>
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection name="#1"><Origin ToolID="751" Connection="Output" /><Destination ToolID="741" Connection="Left" /></Connection>
+    <Connection name="#2"><Origin ToolID="752" Connection="Output" /><Destination ToolID="741" Connection="Right" /></Connection>
+    <Connection name="#1"><Origin ToolID="751" Connection="Output" /><Destination ToolID="742" Connection="Left" /></Connection>
+    <Connection name="#2"><Origin ToolID="753" Connection="Output" /><Destination ToolID="742" Connection="Right" /></Connection>
+    <Connection name="#1"><Origin ToolID="751" Connection="Output" /><Destination ToolID="743" Connection="Left" /></Connection>
+    <Connection name="#2"><Origin ToolID="753" Connection="Output" /><Destination ToolID="743" Connection="Right" /></Connection>
+    <Connection name="#1"><Origin ToolID="751" Connection="Output" /><Destination ToolID="744" Connection="Left" /></Connection>
+    <Connection name="#2"><Origin ToolID="752" Connection="Output" /><Destination ToolID="744" Connection="Right" /></Connection>
+    <Connection name="#1"><Origin ToolID="744" Connection="Left" /><Destination ToolID="745" Connection="Input" /></Connection>
+  </Connections>
+  <Properties><MetaInfo><Name>Join field selection</Name></MetaInfo></Properties>
+</AlteryxDocument>

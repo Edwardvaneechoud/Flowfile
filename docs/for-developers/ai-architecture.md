@@ -259,7 +259,7 @@ Per-vendor subclasses override class-level fields:
 5. `cls.surface_models[surface]` (class-level per-surface default).
 6. `cls.default_model` (terminal fallback).
 
-Steps 3 and 4 (added in workstream W29) make multi-model curation work for OpenRouter and similar providers — users can pin a list of free-tier models and still get sensible per-surface routing when one of those models matches the surface preference.
+Steps 3 and 4 make multi-model curation work for OpenRouter and similar providers — users can pin a list of free-tier models and still get sensible per-surface routing when one of those models matches the surface preference.
 
 **Env-var fallback.** If no credential row exists, `provider_factory(name)` is called with no `api_key` / `api_base`; litellm picks up the standard env var (e.g., `ANTHROPIC_API_KEY`). `detect_env_fallback(provider)` exists separately so `GET /ai/providers` can show users the distinction between "configured via key" and "configured via env" in the UI.
 

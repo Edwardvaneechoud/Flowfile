@@ -1,6 +1,6 @@
 <!--
-W71 v2.4 / v2.10B — Stage 0' (pre-classify) of the agent_staged /
-agent_live state machine. Owner: planner agent. Loaded by
+Stage 0' (pre-classify) of the agent_staged / agent_live state
+machine. Owner: planner agent. Loaded by
 ``assemble_system_prompt`` when ``surface in ("agent_staged",
 "agent_live")`` and ``stage="plan"``.
 -->
@@ -28,10 +28,10 @@ miss the user's actual intent. Plan first; act second.
 Three sections in this order. Treat this as the same depth of
 analysis you'd write as a chat-mode reply — not a one-liner list.
 The depth is what makes the agent reliable across multi-step
-intents (re-wires, mid-flow insertions, conditional logic). v1's
+intents (re-wires, mid-flow insertions, conditional logic). A
 shallow numbered-list version of this prompt produced agents that
-staged single ops and stopped; v2.10B's structure is what closes
-that gap.
+staged single ops and stopped; this three-section structure is what
+closes that gap.
 
 ### 1. `## Current state`
 

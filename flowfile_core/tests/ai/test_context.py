@@ -9,7 +9,7 @@ Covers the public surface of :mod:`flowfile_core.ai.context`:
 * mention parsing + resolution (``parse_mentions``, ``resolve_mentions``)
 * end-to-end ``render_prompt_context`` over a real :class:`FlowGraph`
 
-The lazy-import contract follows W11/W13's pattern: importing
+The lazy-import contract follows the other AI modules' pattern: importing
 ``flowfile_core.ai.context.builder`` must not pull ``litellm`` itself.
 """
 
@@ -749,7 +749,7 @@ def test_render_prompt_context_d012_clean(
     import polars as pl
 
     def _refuse_collect(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("D012 violation — render_prompt_context invoked LazyFrame.collect")
+        raise AssertionError("render_prompt_context must not invoke LazyFrame.collect")
 
     monkeypatch.setattr(pl.LazyFrame, "collect", _refuse_collect)
 
@@ -811,12 +811,12 @@ def test_budget_report_dataclass_defaults() -> None:
 # per-node-type catalog block in assemble_system_prompt
 
 
-_W56_CATALOG_HEADER = "## Tool catalog"
+_CATALOG_HEADER = "## Tool catalog"
 
 # Three representative node-type tool headings the agent surface must show
-# (AC2). Picked across categories so a regression in one category doesn't
+# Picked across categories so a regression in one category doesn't
 # silently pass.
-_W56_REPRESENTATIVE_NODE_TOOLS = (
+_REPRESENTATIVE_NODE_TOOLS = (
     "### flowfile.graph.add_filter",
     "### flowfile.graph.add_join",
     "### flowfile.graph.add_group_by",
@@ -825,23 +825,23 @@ _W56_REPRESENTATIVE_NODE_TOOLS = (
 
 @pytest.mark.parametrize("surface", ["agent_complex"])
 def test_w56_agent_surfaces_include_catalog_block(surface: SurfaceLiteral) -> None:
-    """AC2 — agent_complex prompt includes the catalog header plus
+    """agent_complex prompt includes the catalog header plus
     several representative node-type sections so the model sees
-    narrative grounding for each tool. (W71 — legacy ``"agent"``
-    surface removed; ``agent_staged`` only renders the catalog at the
+    narrative grounding for each tool. (The legacy ``"agent"``
+    surface has been removed; ``agent_staged`` only renders the catalog at the
     ``pick_type`` stage, which is exercised by ``test_planner_staged.py``.)"""
     text = assemble_system_prompt(surface)
-    assert _W56_CATALOG_HEADER in text, f"catalog header missing for {surface}"
-    for heading in _W56_REPRESENTATIVE_NODE_TOOLS:
+    assert _CATALOG_HEADER in text, f"catalog header missing for {surface}"
+    for heading in _REPRESENTATIVE_NODE_TOOLS:
         assert heading in text, f"{heading} missing from {surface} prompt"
 
 
 def test_w56_cmd_k_only_includes_preset_tools_in_catalog() -> None:
-    """AC3 — cmd_k narrows the catalog to its preset's tools."""
+    """cmd_k narrows the catalog to its preset's tools."""
     from flowfile_core.ai.tools.registry import SURFACE_PRESETS
 
     text = assemble_system_prompt("cmd_k")
-    assert _W56_CATALOG_HEADER in text
+    assert _CATALOG_HEADER in text
 
     cmd_k_preset = SURFACE_PRESETS["cmd_k"]
     # Tools in the preset must appear; tools outside it must not.
@@ -854,11 +854,11 @@ def test_w56_cmd_k_only_includes_preset_tools_in_catalog() -> None:
 
 
 def test_w56_ghost_node_only_includes_preset_tools_in_catalog() -> None:
-    """AC3 — ghost_node narrows the catalog to its preset's tools."""
+    """ghost_node narrows the catalog to its preset's tools."""
     from flowfile_core.ai.tools.registry import SURFACE_PRESETS
 
     text = assemble_system_prompt("ghost_node")
-    assert _W56_CATALOG_HEADER in text
+    assert _CATALOG_HEADER in text
 
     ghost_preset = SURFACE_PRESETS["ghost_node"]
     for tool_name in ghost_preset:
@@ -871,10 +871,10 @@ def test_w56_ghost_node_only_includes_preset_tools_in_catalog() -> None:
 
 @pytest.mark.parametrize("surface", ["explain", "lineage", "docgen", "settings_autocomplete"])
 def test_w56_read_only_surfaces_do_not_get_tool_catalog(surface: SurfaceLiteral) -> None:
-    """AC4 — read-only surfaces never see the agent-shaped Tool catalog
+    """Read-only surfaces never see the agent-shaped Tool catalog
     block (it'd be misleading — they can't call tools)."""
     text = assemble_system_prompt(surface)
-    assert _W56_CATALOG_HEADER not in text, f"{surface} should not include the agent-shaped Tool catalog block"
+    assert _CATALOG_HEADER not in text, f"{surface} should not include the agent-shaped Tool catalog block"
 
 
 # v2 — node-reference block on read-only / advisory surfaces
@@ -887,7 +887,7 @@ def test_w56_read_only_surfaces_do_not_get_tool_catalog(surface: SurfaceLiteral)
 # from each ToolSpec.user_instructions so the chat answer cites real
 # palette labels and settings field names.
 
-_W56_NODE_REFERENCE_HEADER = "## Flowfile node reference"
+_NODE_REFERENCE_HEADER = "## Flowfile node reference"
 
 
 @pytest.mark.parametrize("surface", ["explain", "lineage", "docgen"])
@@ -900,7 +900,7 @@ def test_w56_advisory_surfaces_include_node_reference_block(surface: SurfaceLite
     field names so the model can answer "how do I X" correctly.
     """
     text = assemble_system_prompt(surface)
-    assert _W56_NODE_REFERENCE_HEADER in text, f"{surface} should include the user-shaped node reference block"
+    assert _NODE_REFERENCE_HEADER in text, f"{surface} should include the user-shaped node reference block"
 
 
 @pytest.mark.parametrize("surface", ["explain", "lineage", "docgen"])
@@ -964,14 +964,14 @@ def test_w56_settings_autocomplete_skips_both_blocks() -> None:
     """v2 — settings_autocomplete is constrained-JSON output only;
     it doesn't need either narrative block."""
     text = assemble_system_prompt("settings_autocomplete")
-    assert _W56_CATALOG_HEADER not in text
-    assert _W56_NODE_REFERENCE_HEADER not in text
+    assert _CATALOG_HEADER not in text
+    assert _NODE_REFERENCE_HEADER not in text
 
 
 def test_w56_node_reference_sorted_for_cache_stability() -> None:
     """v2 — node-reference headings are alphabetical (cache hygiene)."""
     text = assemble_system_prompt("explain")
-    block_start = text.find(_W56_NODE_REFERENCE_HEADER)
+    block_start = text.find(_NODE_REFERENCE_HEADER)
     assert block_start >= 0
     block = text[block_start:]
     # Headings are bare node_type names (e.g. "### group_by"), not the
@@ -998,7 +998,9 @@ def test_w56_explain_surface_token_budget_reasonable() -> None:
 
 
 def test_w56_agent_surface_token_budget_under_70_pct_of_agent_budget() -> None:
-    """AC6 — full-catalog agent prompt fits inside the per-call budget. — legacy ``"agent"`` surface removed; the equivalent
+    """Full-catalog agent prompt fits inside the per-call budget.
+
+    The legacy ``"agent"`` surface has been removed; the equivalent
     full-catalog prompt now lives on ``agent_complex`` (96K budget).
     The static prompt has to carry the catalog plus the layered base +
     planner suffix and still leave room for the per-call user message
@@ -1011,7 +1013,7 @@ def test_w56_agent_surface_token_budget_under_70_pct_of_agent_budget() -> None:
     cap = int(96_000 * 0.7)
     assert estimated_tokens <= cap, (
         f"agent_complex system prompt is {estimated_tokens} tokens (chars/4); "
-        f"AC6 caps it at {cap} (70% of 96K)"
+        f"the cap is {cap} (70% of 96K)"
     )
 
 
@@ -1178,7 +1180,7 @@ def test_render_prompt_context_no_lazyframe_collect_on_random_split_upstream(
         node.get_predicted_schema()
 
     def _refuse_collect(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("D012 violation — render_prompt_context invoked LazyFrame.collect")
+        raise AssertionError("render_prompt_context must not invoke LazyFrame.collect")
 
     monkeypatch.setattr(pl.LazyFrame, "collect", _refuse_collect)
 
@@ -1202,7 +1204,7 @@ def test_pick_type_prompt_warns_against_palette_labels() -> None:
     """
     text = assemble_system_prompt("agent_staged", stage="pick_type")
     assert "## Important: enum is" in text, (
-        "v1.12B disambiguation block missing from pick_type system prompt"
+        "disambiguation block missing from pick_type system prompt"
     )
     # Two of the failure modes the user dogfooded — must be listed.
     assert "sort_data" in text and "``sort``" in text
@@ -1219,7 +1221,7 @@ def test_classify_stage_includes_multi_step_discipline_section() -> None:
     """
     text = assemble_system_prompt("agent_staged", stage="classify")
     assert "## Multi-step discipline" in text, (
-        "v2.9B: classify prompt missing the multi-step discipline section"
+        "classify prompt missing the multi-step discipline section"
     )
     text_lower = text.lower()
     # The "don't pick `other` until all steps done" rule.
@@ -1259,7 +1261,7 @@ def test_classify_stage_now_includes_palette_disambiguation() -> None:
     """
     text = assemble_system_prompt("agent_staged", stage="classify")
     assert "## Important: enum is" in text, (
-        "v1.14A.3: classify stage system prompt must include the "
+        "classify stage system prompt must include the "
         "palette-label disambiguation block (bypass-path defense)"
     )
     assert "sort_data" in text and "``sort``" in text
@@ -1395,14 +1397,14 @@ def test_pick_type_prompt_includes_tool_selection_rules() -> None:
     """
     text = assemble_system_prompt("agent_staged", stage="pick_type")
     assert "## Tool selection rules" in text, (
-        "v1.13A: pick_type system prompt missing the tool-selection-rules block"
+        "pick_type system prompt missing the tool-selection-rules block"
     )
     for label in ("record_count", "group_by", "formula", "polars_code"):
-        assert label in text, f"v1.13A rules block missing reference to {label!r}"
+        assert label in text, f"rules block missing reference to {label!r}"
     # The "row-wise only" assertion must appear AGAIN here (the rules
     # block reinforces the long_description's lead constraint).
     assert "row-wise" in text.lower(), (
-        "v1.13A rules block must reiterate that formula is row-wise only"
+        "rules block must reiterate that formula is row-wise only"
     )
 
 
@@ -1423,7 +1425,7 @@ def test_pick_node_type_spec_description_carries_disambiguation() -> None:
     spec = next(s for s in META_OPS_TOOLS if s.name == PICK_NODE_TYPE_TOOL_NAME)
     # Headline disambiguation note in the tool description.
     assert "snake-case the palette label" in spec.description.lower() or "palette label" in spec.description.lower(), (
-        f"v1.14A.1: pick_node_type description missing palette-label warning; got: {spec.description!r}"
+        f"pick_node_type description missing palette-label warning; got: {spec.description!r}"
     )
     # Detailed do/don't list inside the node_type parameter description.
     nt_desc = spec.parameters["properties"]["node_type"]["description"]
@@ -1444,7 +1446,7 @@ def test_catalog_headers_inline_node_type_for_add_tools() -> None:
     for nt in ("sort", "select", "unique", "sample"):
         marker = f"### flowfile.graph.add_{nt}  (node_type: `{nt}`)"
         assert marker in text, (
-            f"v1.14A.2: catalog header for {nt!r} missing inline node_type marker. "
+            f"catalog header for {nt!r} missing inline node_type marker. "
             f"Expected to find: {marker!r}"
         )
 
@@ -1474,12 +1476,12 @@ def test_pick_upstream_spec_requires_right_input_for_join_shaped_types() -> None
         )
         required = spec.parameters.get("required", [])
         assert "right_input_node_id" in required, (
-            f"v1.14B: right_input_node_id must be required for {nt!r}; "
+            f"right_input_node_id must be required for {nt!r}; "
             f"got required={required}"
         )
         rfield = spec.parameters["properties"]["right_input_node_id"]
         assert rfield["type"] == "integer", (
-            f"v1.14B: right_input_node_id type for {nt!r} must be plain "
+            f"right_input_node_id type for {nt!r} must be plain "
             f"integer (no null); got {rfield['type']!r}"
         )
 
@@ -1681,7 +1683,7 @@ def test_pick_type_prompt_includes_join_vs_cross_join_section() -> None:
     """
     text = assemble_system_prompt("agent_staged", stage="pick_type")
     assert "## Join vs cross_join" in text, (
-        "v2.2: pick_type prompt missing the dedicated join-vs-cross_join section"
+        "pick_type prompt missing the dedicated join-vs-cross_join section"
     )
     # Both node types named.
     assert "`join`" in text and "`cross_join`" in text
@@ -1724,7 +1726,7 @@ def test_pick_upstream_prompt_includes_worked_example_for_joins() -> None:
     """
     text = assemble_system_prompt("agent_staged", stage="pick_upstream")
     assert "## Worked examples for join-shaped types" in text, (
-        "v1.15C: pick_upstream prompt missing the worked-examples section"
+        "pick_upstream prompt missing the worked-examples section"
     )
     # Both the asymmetric (join) and symmetric (cross_join) examples
     # must be present and use the new field names.
@@ -1745,19 +1747,19 @@ def test_formula_fill_settings_prompt_includes_function_reference() -> None:
         "agent_staged", stage="fill_settings", picked_node_type="formula"
     )
     assert "Formula functions" in formula_prompt, (
-        "v1.12C: formula fill_settings prompt missing the function reference block"
+        "formula fill_settings prompt missing the function reference block"
     )
 
     group_by_prompt = assemble_system_prompt(
         "agent_staged", stage="fill_settings", picked_node_type="group_by"
     )
     assert "Formula functions" not in group_by_prompt, (
-        "v1.12C: function reference block leaked into a non-formula fill_settings prompt"
+        "function reference block leaked into a non-formula fill_settings prompt"
     )
 
     pick_type_prompt = assemble_system_prompt("agent_staged", stage="pick_type")
     assert "Formula functions" not in pick_type_prompt, (
-        "v1.12C: function reference must not appear in the pick_type catalog "
+        "function reference must not appear in the pick_type catalog "
         "(it would cost tokens on every pick_type round)"
     )
 
@@ -1825,7 +1827,7 @@ def test_verify_completion_stage_prompt_renders() -> None:
     # tool-catalog separation).
     classify_prompt = assemble_system_prompt("agent_staged", stage="classify")
     assert "verify plan completion" not in classify_prompt.lower(), (
-        "v2.12: verify_completion prompt content leaked into the classify "
+        "verify_completion prompt content leaked into the classify "
         "stage system prompt"
     )
 

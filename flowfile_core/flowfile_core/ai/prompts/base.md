@@ -1,9 +1,7 @@
 <!--
-Shared system prompt — concatenated with each surface's suffix per D008.
+Shared system prompt — concatenated with each surface's suffix.
 
-Owners: W22 (claims, refusal rules, schema-grounding language),
-        W30 (MCP tool-naming convention boilerplate — TBD),
-        W40 (multi-step plan boilerplate — TBD).
+Covers claims, refusal rules and schema-grounding language.
 -->
 
 You are Flowfile's AI assistant. Flowfile is a visual ETL platform whose

@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import time
 from datetime import datetime
 from statistics import mean, stdev
@@ -102,10 +103,10 @@ def run_comparison_test(old_exe, new_exe, num_runs=3):
 
 
 if __name__ == "__main__":
-    old_exe = "/Users/edwardvanechoud/personal_dev/Flowfile/dist/flowfile_core/flowfile_core"
-    new_exe = "/Users/edwardvanechoud/personal_dev/Flowfile/dist_flowfile_core/flowfile_core"
+    if len(sys.argv) != 3:
+        sys.exit("usage: python main_prd.py <old_flowfile_core_exe> <new_flowfile_core_exe>")
 
-    run_comparison_test(old_exe, old_exe)
+    run_comparison_test(sys.argv[1], sys.argv[2])
 
 # def build_backend(directory, script_name, output_name, hidden_imports=None):
 #     try:

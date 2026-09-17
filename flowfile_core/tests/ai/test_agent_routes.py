@@ -281,7 +281,7 @@ def test_start_persists_selected_node_ids_on_session(
     session = sessions.get_session("w57-selected-roundtrip", user_id=1)
     assert session is not None
     assert session.selected_node_ids == [1, 2]
-    # Pinned defaults to empty until a future workstream wires it.
+    # Pinned defaults to empty until it is wired up.
     assert session.pinned_node_ids == []
 
 

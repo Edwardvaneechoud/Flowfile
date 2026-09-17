@@ -178,8 +178,8 @@ def test_single_input_with_settings(tmp_path):
 
 
 def test_node_with_author_version_tags_executes(tmp_path):
-    # Proves the worker exec path accepts the Workstream-A subclass fields
-    # (author/version/tags) that community nodes carry.
+    # Proves the worker exec path accepts the author/version/tags subclass
+    # fields that community nodes carry.
     df = pl.DataFrame({"name": ["alice"]})
     progress, error, payload, file_path = run_task(
         tmp_path, METADATA_NODE_SOURCE, inputs=[serialize_input(df)],

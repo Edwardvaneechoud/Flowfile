@@ -24,7 +24,7 @@ scenarios:
 * ``test_unknown_schema_on_disk_returns_404`` — corrupted disk file with
   bad schema tag → repo returns None → route returns 404.
 * ``test_resume_action_discard_pops_session`` — discard works on a
-  ``paused_user_action`` session (W42 expanded the resumable set).
+  ``paused_user_action`` session — part of the resumable set.
 """
 
 from __future__ import annotations
@@ -264,7 +264,7 @@ def test_running_session_survives_restart(
     assert state["status"] == "paused_user_action"
     assert state["pause_reason"] == "cold_start"
 
-    # Resume?action=continue should now succeed (W42 expanded the
+    # Resume?action=continue should now succeed (the resumable set covers the
     # resumable set to include paused_user_action).
     resume_resp = authed_client.post(
         f"/ai/agent/{sid}/resume",

@@ -1,6 +1,7 @@
 """AST-vs-exec template parity: the palette template built exec-free at scan time
 (``manifest_to_template(scan_node_source(src))``) must equal the one the exec'd
 class produces (``to_node_template()``) for every healthy fixture node."""
+import os
 from pathlib import Path
 
 import pytest
@@ -12,14 +13,17 @@ from shared.node_designer.loading import find_custom_node_class, load_node_modul
 
 CORPUS = Path(__file__).parent / "corpus"
 BUNDLE_VALID = Path(__file__).parent.parent / "community_nodes" / "bundle_corpus" / "valid" / "node.py"
-COMMUNITY_REPO_NODES = Path("/Users/edwardvaneechoud/flowfile_backup/flowfile-community-nodes/nodes")
+# Optional: point at a checkout of the community-nodes repo to widen the parity sweep
+# over its published nodes. Unset (the default) simply runs the in-repo fixtures.
+_COMMUNITY_REPO_ENV = os.environ.get("FLOWFILE_COMMUNITY_NODES_DIR")
+COMMUNITY_REPO_NODES = Path(_COMMUNITY_REPO_ENV) if _COMMUNITY_REPO_ENV else None
 
 HEALTHY_SOURCES = sorted(CORPUS.glob("insubset_*.py")) + [
     CORPUS / "codeonly_section_builder.py",
     CORPUS / "codeonly_dynamic_kwargs.py",
     BUNDLE_VALID,
 ]
-if COMMUNITY_REPO_NODES.is_dir():
+if COMMUNITY_REPO_NODES and COMMUNITY_REPO_NODES.is_dir():
     HEALTHY_SOURCES += sorted(COMMUNITY_REPO_NODES.glob("*/node.py"))
 
 

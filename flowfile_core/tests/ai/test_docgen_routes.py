@@ -463,7 +463,7 @@ def test_generate_documentation_samples_mode_forwarded(
 def test_lazy_litellm_import_for_docgen_routes() -> None:
     """``import flowfile_core.ai.docgen_routes`` mustn't pull litellm.
 
-    Same contract as W11/W12/W13/W20/W23 — the module sits behind the
+    Same contract as the other AI routers — the module sits behind the
     BYOK seam, not the ``provider_factory`` bootstrap, so the heavy SDK
     stays out of the import graph until a real call happens.
 
