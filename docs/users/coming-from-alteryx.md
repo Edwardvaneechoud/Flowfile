@@ -98,5 +98,6 @@ The importer is measured on Alteryx's sample workflows, not on production ones. 
 - **MD5 and Base64.** `MD5_UTF8` and both Base64 functions map exactly; `MD5_ASCII` and `MD5_UNICODE` hash different bytes and are refused.
 - **Macros and wizards** (`.yxmc`, `.yxwz`) are imported for their data tools; control wires and questions are not reproduced.
 - **Comments** travel as text only; colours, fonts and shapes are dropped.
+- **Text Input dates.** A Text Input column whose cells are all `yyyy-MM-dd` or `yyyy-MM-dd HH:mm:ss` is typed Date or Datetime, as Alteryx does. Padded cells are trimmed first, a code column that happens to hold dates is typed too, and `HH:mm:ss` stays text because Flowfile has no Time column. A Formula that parses such a column with `DateTimeParse` raises, because the column is already a date.
 
 If you hit something not on this list, that is the report we want: open an issue with the report row and, if you can, the tool's configuration.
