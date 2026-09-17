@@ -7,13 +7,15 @@ Kept out of `flow_data_engine` so `flow_graph`, `settings_validation` and the ed
 reach the mechanism without importing that (very large) module.
 """
 
+import difflib
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 import polars as pl
 from polars_expr_transformer import simple_function_to_expr as to_expr
+from polars_expr_transformer.exceptions import ExpressionSyntaxError
 
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.schemas import transform_schema
@@ -49,12 +51,29 @@ class FormulaEntryError(Exception):
     error raised while resolving the step's schema).
     """
 
-    def __init__(self, position: int, output_name: str, detail: str, kind: FormulaErrorKind):
+    def __init__(
+        self,
+        position: int,
+        output_name: str,
+        detail: str,
+        kind: FormulaErrorKind,
+        suggestion: "ColumnSuggestion | None" = None,
+    ):
         self.position = position
         self.output_name = output_name
         self.detail = detail
         self.kind = kind
+        self.suggestion = suggestion
+        """The near-match fix a ``missing_column`` error may carry; already worded into ``detail``."""
         super().__init__(f"{entry_label(position, output_name)}: {detail}")
+
+
+@dataclass(frozen=True)
+class ColumnSuggestion:
+    """A one-click fix for a ``missing_column`` error: replace ``[from_name]`` with ``[to_name]``."""
+
+    from_name: str
+    to_name: str
 
 
 def first_line(message: str) -> str:
@@ -65,10 +84,72 @@ def first_line(message: str) -> str:
     return str(message).strip()
 
 
-def missing_column_detail(message: str) -> str:
-    """Name the column Polars could not find, falling back to its own first line."""
+def missing_column_name(message: str) -> str | None:
+    """The column Polars could not find, when its message names one."""
     match = _MISSING_COLUMN_RE.search(str(message))
-    return f"column '{match.group(1)}' not found" if match else first_line(message)
+    return match.group(1) if match else None
+
+
+def missing_column_detail(message: str, suggestion: ColumnSuggestion | None = None) -> str:
+    """Name the column Polars could not find, falling back to its own first line."""
+    name = missing_column_name(message)
+    if name is None:
+        return first_line(message)
+    hint = f", did you mean '{suggestion.to_name}'?" if suggestion else ""
+    return f"column '{name}' not found{hint}"
+
+
+def parse_detail(expression: str, exc: Exception) -> str:
+    """The one-line reason an expression did not parse.
+
+    The parser's own ``ExpressionSyntaxError`` messages are worth showing as they are. Anything
+    else is an internal failure whose text must not reach the user: the tokenizer raises a bare
+    ``IndexError`` ("string index out of range") on an unclosed ``[``, and a dangling operator
+    surfaces as a ``TypeError`` from Polars' operator overloads.
+    """
+    if isinstance(exc, ExpressionSyntaxError):
+        return first_line(str(exc))
+    if expression.count("[") > expression.count("]"):
+        return "column reference is not closed, add ]"
+    return "expression could not be parsed"
+
+
+def suggest_column(name: str, columns: Iterable[str]) -> str | None:
+    """The closest existing column to a misspelled reference, or None when nothing is close."""
+    matches = difflib.get_close_matches(name, list(columns), n=1, cutoff=0.6)
+    return matches[0] if matches else None
+
+
+def build_expression(entry: FormulaEntry) -> pl.Expr:
+    """Parse the entry's expression, attributing a failure to its row.
+
+    Raises:
+        FormulaEntryError: With ``kind="parse"``.
+    """
+    try:
+        return to_expr(entry.expression)
+    except Exception as e:
+        raise FormulaEntryError(entry.position, entry.output_name, parse_detail(entry.expression, e), "parse") from e
+
+
+def classify_polars_error(
+    entry: FormulaEntry, exc: pl.exceptions.PolarsError, columns: Iterable[str] = ()
+) -> FormulaEntryError:
+    """The typed error for a Polars failure raised while resolving or evaluating *entry*.
+
+    Shared by the schema-only chain walk and the sampled preview so both describe the same
+    failure with the same words. *columns* is what the entry could have referenced; a missing
+    column close to one of them gets a "did you mean" hint and a structured suggestion.
+    """
+    if isinstance(exc, pl.exceptions.ColumnNotFoundError):
+        message = str(exc)
+        name = missing_column_name(message)
+        match = suggest_column(name, columns) if name is not None else None
+        suggestion = None if match is None else ColumnSuggestion(name, match)
+        return FormulaEntryError(
+            entry.position, entry.output_name, missing_column_detail(message, suggestion), "missing_column", suggestion
+        )
+    return FormulaEntryError(entry.position, entry.output_name, first_line(str(exc)), "type")
 
 
 def formula_entry(position: int, fn: transform_schema.FunctionInput) -> FormulaEntry:
@@ -108,19 +189,13 @@ def apply_formula_entries(lf: pl.LazyFrame, entries: Sequence[FormulaEntry]) -> 
     for entry in entries:
         if not entry.output_name.strip():
             raise FormulaEntryError(entry.position, "", "output column name is empty", "config")
-        try:
-            expr = to_expr(entry.expression)
-        except Exception as e:
-            raise FormulaEntryError(entry.position, entry.output_name, first_line(str(e)), "parse") from e
+        expr = build_expression(entry)
         if entry.output_data_type is not None:
             expr = expr.cast(entry.output_data_type)
+        before = lf
         lf = lf.with_columns(expr.alias(entry.output_name))
         try:
             lf.collect_schema()
-        except pl.exceptions.ColumnNotFoundError as e:
-            raise FormulaEntryError(
-                entry.position, entry.output_name, missing_column_detail(str(e)), "missing_column"
-            ) from e
         except pl.exceptions.PolarsError as e:
-            raise FormulaEntryError(entry.position, entry.output_name, first_line(str(e)), "type") from e
+            raise classify_polars_error(entry, e, before.collect_schema().names()) from e
     return lf

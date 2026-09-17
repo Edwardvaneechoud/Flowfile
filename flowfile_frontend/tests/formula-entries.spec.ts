@@ -276,11 +276,11 @@ test.describe("Formula entries", () => {
     await expect(nameField(page, 0)).toHaveValue(SECOND_OUTPUT);
     await expect(nameField(page, 1)).toHaveValue(FIRST_OUTPUT);
 
-    // The reorder went through; the broken reference stays in the results area.
+    // The reorder went through; the broken reference sits under the row's editor.
     await expect(rows(page).nth(0).locator(".entry-flag.is-error")).toBeVisible();
-    const issue = page.locator(".instant-function-results .result-content.error");
+    const issue = rows(page).nth(0).locator(".entry-diagnostic.is-error");
     await expect(issue).toBeVisible({ timeout: 15000 });
-    await expect(issue).toContainText(FIRST_OUTPUT);
+    await expect(issue).toContainText(`column '${FIRST_OUTPUT}' not found`);
 
     await apply(page);
     const settings = await readSettings(request, authToken, flowId, formulaNodeId);

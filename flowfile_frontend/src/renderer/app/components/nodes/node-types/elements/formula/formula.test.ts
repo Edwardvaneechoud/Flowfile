@@ -6,12 +6,13 @@ import {
   accumulatedColumnsAt,
   createFormulaInput,
   createFormulaNode,
-  duplicateOutputPositions,
+  overwrittenOutputs,
   entrySummary,
   entryUid,
   flattenExpression,
   isBlankEntry,
   normalizeNodeFormula,
+  replaceColumnReference,
   toSavePayload,
   type FormulaColumn,
 } from "./formula";
@@ -117,19 +118,35 @@ describe("accumulatedColumnsAt", () => {
   });
 });
 
-describe("duplicateOutputPositions", () => {
-  it("flags every row sharing an output name", () => {
+describe("overwrittenOutputs", () => {
+  it("notes only the overwriting row, pointing at the first producer", () => {
     const entries = [
       createFormulaInput("x", "Auto", "1"),
       createFormulaInput("y", "Auto", "2"),
       createFormulaInput("x", "Auto", "3"),
+      createFormulaInput("x", "Auto", "4"),
     ];
-    expect(duplicateOutputPositions(entries)).toEqual([0, 2]);
+    expect([...overwrittenOutputs(entries)]).toEqual([
+      [2, 1],
+      [3, 1],
+    ]);
   });
 
   it("ignores blank names", () => {
     const entries = [createFormulaInput("", "Auto", "1"), createFormulaInput("", "Auto", "2")];
-    expect(duplicateOutputPositions(entries)).toEqual([]);
+    expect(overwrittenOutputs(entries).size).toBe(0);
+  });
+});
+
+describe("replaceColumnReference", () => {
+  it("swaps every bracketed reference and nothing else", () => {
+    expect(replaceColumnReference("[regiOn] + [regiOn_code] + [regiOn]", "regiOn", "region")).toBe(
+      "[region] + [regiOn_code] + [region]",
+    );
+  });
+
+  it("leaves an expression without the reference untouched", () => {
+    expect(replaceColumnReference("[a] + 1", "b", "c")).toBe("[a] + 1");
   });
 });
 

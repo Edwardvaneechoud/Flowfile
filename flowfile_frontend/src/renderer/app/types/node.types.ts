@@ -356,9 +356,18 @@ export interface FormulaInput {
   function: string;
 }
 
+/** A one-click fix offered beside an issue: swap `[from]` for `[to]` in the expression. */
+export interface FormulaChainSuggestion {
+  kind: "replace_column";
+  from: string;
+  to: string;
+}
+
 export interface FormulaChainIssue {
   message: string;
   kind: string;
+  /** Absent on an older core. */
+  suggestion?: FormulaChainSuggestion | null;
 }
 
 export interface FormulaChainEntryResult {

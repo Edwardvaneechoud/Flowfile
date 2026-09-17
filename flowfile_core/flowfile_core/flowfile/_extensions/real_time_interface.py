@@ -8,9 +8,11 @@ from polars_expr_transformer import simple_function_to_expr
 
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_data_engine.formula_entries import (
+    ColumnSuggestion,
     FormulaEntryError,
     apply_formula_entries,
     formula_entry,
+    parse_detail,
 )
 from flowfile_core.schemas import transform_schema
 
@@ -54,12 +56,17 @@ def get_realtime_func_results(df: pl.DataFrame | pl.LazyFrame, func_string: str,
     df = pl.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6], 'c': [1, 2, 3], 'names': ['ham', 'spam', 'eggs']})
     print(get_first_result_of_function('year(today())', df))
     """
+    return get_realtime_expr_results(df, simple_function_to_expr(func_string), sample)
+
+
+def get_realtime_expr_results(df: pl.DataFrame | pl.LazyFrame, expr: pl.Expr, sample: int = 1) -> RealTimeResult:
+    """The first result of an already-parsed expression, so a caller can classify parse failures itself."""
     if isinstance(df, pl.LazyFrame):
         logger.warning(
             "Performance in this case can be " "improved by using polars.DataFrame to ensure it returns instantly"
         )
         df = df.head(sample).collect()
-    result = df.head(1).select(simple_function_to_expr(func_string))
+    result = df.head(1).select(expr)
     return RealTimeResult(result, result.dtypes[0])
 
 
@@ -69,10 +76,12 @@ class ExpressionIssue:
 
     ``config`` and ``duplicate`` only arise in a formula chain: a blank output name, and an
     output name a later entry overwrites. ``duplicate`` is a warning — the run still succeeds.
+    ``suggestion`` accompanies a ``missing_column`` whose name is close to an existing column.
     """
 
     message: str
     kind: Literal["parse", "missing_column", "type", "config", "duplicate"]
+    suggestion: ColumnSuggestion | None = None
 
 
 _MAX_ISSUE_LENGTH = 200
@@ -104,7 +113,7 @@ def check_expression(
     try:
         expr = simple_function_to_expr(func_string)
     except Exception as exc:
-        return ExpressionIssue(_first_line(exc), "parse")
+        return ExpressionIssue(parse_detail(func_string, exc)[:_MAX_ISSUE_LENGTH], "parse")
     try:
         lf = pl.LazyFrame(schema=schema)
         frame = lf.filter(expr) if as_predicate else lf.with_columns(expr.alias(_PROBE_ALIAS))
@@ -173,7 +182,7 @@ def check_expression_chain(
         try:
             current = dict(apply_formula_entries(pl.LazyFrame(schema=current), [entry]).collect_schema())
         except FormulaEntryError as exc:
-            issue = ExpressionIssue(exc.detail[:_MAX_ISSUE_LENGTH], exc.kind)
+            issue = ExpressionIssue(exc.detail[:_MAX_ISSUE_LENGTH], exc.kind, exc.suggestion)
             current = fallback
         except Exception:
             logger.debug("Formula chain entry check skipped for %r", fn.function, exc_info=True)

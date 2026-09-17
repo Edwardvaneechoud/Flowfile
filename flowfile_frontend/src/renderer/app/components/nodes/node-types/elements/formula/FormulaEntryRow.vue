@@ -1,8 +1,10 @@
 <template>
   <div
+    ref="root"
     class="formula-entry"
     :class="{
       'is-active': active,
+      'has-error': !!diagnostic,
       'is-collapsed': isCollapsed,
       'is-dragging': dragging,
       'is-drop-before': dropBefore,
@@ -62,25 +64,17 @@
         </el-select>
       </label>
 
-      <span class="entry-status">
-        <el-tooltip
-          v-if="statusMessage"
-          :content="statusMessage"
-          :trigger="['hover', 'focus']"
-          placement="top"
-          :show-after="150"
-        >
-          <button
-            type="button"
-            class="entry-flag"
-            :class="issue && issue.kind !== 'duplicate' ? 'is-error' : 'is-warning'"
-            :aria-label="statusMessage"
-            @click.stop
-          >
-            {{ issue && issue.kind !== "duplicate" ? "●" : "⚠" }}
-          </button>
-        </el-tooltip>
-      </span>
+      <button
+        v-if="diagnostic"
+        type="button"
+        class="entry-flag is-error"
+        :title="diagnostic.message"
+        :aria-label="diagnostic.message"
+        @mousedown.prevent
+        @click.stop="emit('expand')"
+      >
+        1 error
+      </button>
 
       <template v-if="reorderable">
         <span class="entry-tools">
@@ -130,12 +124,12 @@
     <span
       v-if="isCollapsed"
       class="entry-expr"
-      :class="{ 'is-placeholder': summary.placeholder }"
+      :class="{ 'is-placeholder': summary.placeholder, 'has-error': !!diagnostic }"
       :title="summary.placeholder ? undefined : summary.text"
       >{{ summary.text }}</span
     >
 
-    <div v-show="!isCollapsed" class="entry-editor">
+    <div v-show="!isCollapsed" class="entry-editor" :class="{ 'has-error': !!diagnostic }">
       <FunctionEditor
         ref="functionEditor"
         :editor-string="entry.function"
@@ -148,11 +142,24 @@
         max-height="400px"
         @update-editor-string="emit('update-expression', $event)"
       />
-      <div v-if="issue?.kind === 'duplicate'" class="entry-warning">
-        {{ issue.message }}
-      </div>
-      <div v-else-if="duplicateWarning" class="entry-warning">
-        Another formula writes to this column too; the last one wins.
+      <transition name="entry-diagnostic">
+        <div v-if="diagnostic" class="entry-diagnostic is-error" role="status">
+          <el-icon class="entry-diagnostic-icon"><WarningFilled /></el-icon>
+          <span class="entry-diagnostic-message">{{ diagnostic.message }}</span>
+          <button
+            v-if="diagnostic.suggestion"
+            type="button"
+            class="entry-diagnostic-fix"
+            :title="`Replace [${diagnostic.suggestion.from}] with [${diagnostic.suggestion.to}]`"
+            @mousedown.prevent
+            @click="applySuggestion(diagnostic.suggestion)"
+          >
+            Use [{{ diagnostic.suggestion.to }}]
+          </button>
+        </div>
+      </transition>
+      <div v-if="overwrites" class="entry-note">
+        Overwrites <code>{{ entry.field.name.trim() }}</code> from formula {{ overwrites }}
       </div>
     </div>
   </div>
@@ -160,13 +167,22 @@
 
 <script lang="ts" setup>
 import { computed, ref } from "vue";
-import { ElAutocomplete, ElTooltip, ElSelect, ElOption, ElIcon } from "element-plus";
-import { ArrowDown } from "@element-plus/icons-vue";
+import { ElAutocomplete, ElSelect, ElOption, ElIcon } from "element-plus";
+import { ArrowDown, WarningFilled } from "@element-plus/icons-vue";
 import FunctionEditor from "../../../../../features/designer/editor/FunctionEditor.vue";
 import { NO_AUTOFILL } from "../../../../../utils/noAutofill";
 import type { FlowParameter } from "../../../../../types/flow.types";
-import type { FormulaChainIssue, FormulaInput } from "../../../../../types/node.types";
-import { AUTO_DATA_TYPE, entrySummary, type FormulaColumn } from "./formula";
+import type {
+  FormulaChainIssue,
+  FormulaChainSuggestion,
+  FormulaInput,
+} from "../../../../../types/node.types";
+import {
+  AUTO_DATA_TYPE,
+  entrySummary,
+  replaceColumnReference,
+  type FormulaColumn,
+} from "./formula";
 
 const props = defineProps<{
   entry: FormulaInput;
@@ -177,7 +193,8 @@ const props = defineProps<{
   dataTypes: string[];
   parameters: FlowParameter[];
   issue: FormulaChainIssue | null;
-  duplicateWarning: boolean;
+  /** 1-based number of the earlier formula whose output column this row overwrites. */
+  overwrites: number | null;
   active: boolean;
   dragging: boolean;
   dropBefore: boolean;
@@ -230,11 +247,22 @@ const columnTypes = computed<Record<string, string>>(() => {
 });
 
 const summary = computed(() => entrySummary(props.entry));
-const statusMessage = computed(
-  () =>
-    props.issue?.message ||
-    (props.duplicateWarning ? "Another formula writes to this column too; the last one wins." : ""),
+
+// A duplicate output is a deliberate overwrite, noted quietly via `overwrites`, never an error.
+const diagnostic = computed(() =>
+  props.issue && props.issue.kind !== "duplicate"
+    ? { message: props.issue.message, suggestion: props.issue.suggestion ?? null }
+    : null,
 );
+
+/** Goes through the editor so the fix is one undo step; the string path covers a missing view. */
+const applySuggestion = ({ from, to }: FormulaChainSuggestion) => {
+  if (functionEditor.value) functionEditor.value.replaceText(`[${from}]`, `[${to}]`);
+  else emit("update-expression", replaceColumnReference(props.entry.function, from, to));
+};
+
+const root = ref<HTMLElement | null>(null);
+const scrollIntoView = () => root.value?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 
 const onHeadClick = () => {
   if (isCollapsed.value) emit("expand");
@@ -245,7 +273,7 @@ const insertTextAtCursor = (text: string) => functionEditor.value?.insertTextAtC
 /** CodeMirror measures as zero-sized while hidden, so re-measure after an expand. */
 const refreshEditor = () => functionEditor.value?.requestMeasure();
 
-defineExpose({ insertTextAtCursor, refreshEditor });
+defineExpose({ insertTextAtCursor, refreshEditor, scrollIntoView });
 </script>
 
 <style scoped>
@@ -267,6 +295,10 @@ defineExpose({ insertTextAtCursor, refreshEditor });
 
 .formula-entry.is-active {
   box-shadow: inset 2px 0 0 0 var(--color-accent);
+}
+
+.formula-entry.has-error {
+  box-shadow: inset 2px 0 0 0 var(--color-danger);
 }
 
 .formula-entry.is-dragging {
@@ -395,29 +427,31 @@ defineExpose({ insertTextAtCursor, refreshEditor });
   color: var(--color-text-muted);
 }
 
+.entry-expr.has-error {
+  color: var(--color-danger);
+}
+
 .entry-type {
   width: 100%;
 }
 
-.entry-status {
-  flex: 0 0 12px;
-}
-
 .entry-flag {
   flex-shrink: 0;
-  font-size: 0.75rem;
-  cursor: default;
-  padding: 0;
+  margin-left: auto;
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 500;
+  white-space: nowrap;
   border: none;
-  background: transparent;
+  border-radius: 10px;
+  cursor: pointer;
 }
 
+/* The token tints (red-100 / amber-100) wash out on a white drawer; mix a stronger band locally. */
 .entry-flag.is-error {
-  color: var(--color-danger);
-}
-
-.entry-flag.is-warning {
-  color: var(--color-text-secondary);
+  color: var(--color-danger-dark);
+  background: color-mix(in srgb, var(--color-danger) 20%, var(--color-background-primary));
 }
 
 .entry-tools {
@@ -435,6 +469,10 @@ defineExpose({ insertTextAtCursor, refreshEditor });
 .formula-entry.is-active .entry-grip,
 .entry-tools:focus-within {
   opacity: 1;
+}
+
+.entry-flag + .entry-tools {
+  margin-left: 0;
 }
 
 .entry-button {
@@ -487,9 +525,92 @@ defineExpose({ insertTextAtCursor, refreshEditor });
   flex: 1;
 }
 
-.entry-warning {
+/* The strip hangs off the editor's bottom edge, so the editor gives up its lower corners. */
+.entry-editor.has-error :deep(.function-editor-root) {
+  border-color: var(--color-danger);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.entry-diagnostic {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: -1px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  border: 1px solid;
+  border-radius: 0 0 4px 4px;
+  overflow: hidden;
+}
+
+.entry-diagnostic.is-error {
+  color: var(--color-danger-dark);
+  background: color-mix(in srgb, var(--color-danger) 20%, var(--color-background-primary));
+  border-color: var(--color-danger);
+}
+
+.entry-diagnostic-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.entry-diagnostic.is-error .entry-diagnostic-icon {
+  color: var(--color-danger);
+}
+
+.entry-note {
   margin-top: 6px;
-  font-size: 0.75rem;
-  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+}
+
+.entry-note code {
+  font-family: var(--font-family-mono, monospace);
+  color: var(--color-text-tertiary);
+}
+
+.entry-diagnostic-message {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.entry-diagnostic-fix {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-family-mono, monospace);
+  white-space: nowrap;
+  color: var(--color-danger-dark);
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-danger);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.entry-diagnostic-fix:hover {
+  color: var(--color-background-primary);
+  background: var(--color-danger);
+}
+
+.entry-diagnostic-enter-active,
+.entry-diagnostic-leave-active {
+  max-height: 120px;
+  transition:
+    max-height var(--transition-normal, 200ms) var(--transition-timing, ease),
+    opacity var(--transition-normal, 200ms) var(--transition-timing, ease),
+    padding var(--transition-normal, 200ms) var(--transition-timing, ease);
+}
+
+.entry-diagnostic-enter-from,
+.entry-diagnostic-leave-to {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
 }
 </style>

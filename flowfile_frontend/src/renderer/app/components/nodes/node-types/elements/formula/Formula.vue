@@ -26,7 +26,7 @@
               :data-types="dataTypes"
               :parameters="parameters"
               :issue="issues[index] ?? null"
-              :duplicate-warning="duplicates.includes(index)"
+              :overwrites="overwrites.get(index) ?? null"
               :active="index === activeIndex"
               :dragging="index === draggingIndex"
               :drop-before="index === dropIndex"
@@ -50,14 +50,24 @@
               <button type="button" class="formula-quiet-button formula-add-row" @click="addEntry">
                 + Add formula
               </button>
-              <button
-                v-if="entries.length > 1"
-                type="button"
-                class="formula-quiet-button formula-collapse-toggle"
-                @click="allCollapsed ? expandAll() : collapseAll()"
-              >
-                {{ allCollapsed ? "Expand all" : "Collapse all" }}
-              </button>
+              <div class="formula-footer-tools">
+                <button
+                  v-if="issueRows.length"
+                  type="button"
+                  class="formula-quiet-button formula-issue-jump"
+                  @click="jumpToIssue"
+                >
+                  {{ issueSummary }}
+                </button>
+                <button
+                  v-if="entries.length > 1"
+                  type="button"
+                  class="formula-quiet-button formula-collapse-toggle"
+                  @click="allCollapsed ? expandAll() : collapseAll()"
+                >
+                  {{ allCollapsed ? "Expand all" : "Collapse all" }}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -65,7 +75,7 @@
           ref="instantResultsRef"
           :node-id="nodeId"
           :fetcher="fetchInstantResult"
-          :validation-errors="validationErrors"
+          :label="entries[activeIndex]?.field.name"
         />
       </div>
     </generic-node-settings>
@@ -100,7 +110,7 @@ import {
   accumulatedColumnsAt,
   createFormulaInput,
   createFormulaNode,
-  duplicateOutputPositions,
+  overwrittenOutputs,
   entryUid,
   normalizeNodeFormula,
   toSavePayload,
@@ -126,16 +136,6 @@ const collapsedUids = ref(new Set<string>());
 const railCollapsed = ref(false);
 
 const rowRefs = new Map<string, InstanceType<typeof FormulaEntryRow>>();
-// Both chain validation and preview errors share the same results area.
-const validationErrors = computed(() =>
-  issues.value.flatMap((issue, index) =>
-    issue && issue.kind !== "duplicate"
-      ? [
-          `Formula ${index + 1}${entries.value[index]?.field.name ? ` (${entries.value[index].field.name})` : ""}: ${issue.message}`,
-        ]
-      : [],
-  ),
-);
 
 const instantResultsRef = ref<InstanceType<typeof InstantFuncResults> | null>(null);
 
@@ -148,12 +148,25 @@ const baseColumns = computed<FormulaColumn[]>(() =>
   })),
 );
 
-const duplicates = computed(() => duplicateOutputPositions(entries.value));
+const overwrites = computed(() => overwrittenOutputs(entries.value));
 
 const columnsFor = (index: number): FormulaColumn[] =>
   accumulatedColumnsAt(baseColumns.value, entries.value, index);
 
 const railSchema = computed(() => columnsFor(activeIndex.value));
+
+/** Rows with an error, in order; the footer offers a jump through them. Overwrites don't count. */
+const issueRows = computed(() =>
+  entries.value.flatMap((_, index) => {
+    const issue = issues.value[index];
+    return issue && issue.kind !== "duplicate" ? [index] : [];
+  }),
+);
+
+const issueSummary = computed(() => {
+  const count = issueRows.value.length;
+  return count === 1 ? "1 error · jump to it" : `${count} errors · jump to next`;
+});
 
 watch(railCollapsed, (value) => {
   railFoldPreference = value;
@@ -175,6 +188,14 @@ const expandRow = async (index: number) => {
 const focusRow = async (index: number) => {
   activeIndex.value = index;
   await expandRow(index);
+};
+
+const jumpToIssue = async () => {
+  const rows = issueRows.value;
+  const index = rows.find((row) => row > activeIndex.value) ?? rows[0];
+  if (index === undefined) return;
+  await focusRow(index);
+  rowRefs.get(entryUid(entries.value[index]))?.scrollIntoView();
 };
 
 const toggleCollapsed = (index: number) => {
@@ -393,5 +414,16 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
 .formula-quiet-button:hover {
   color: var(--color-text-primary);
   background: var(--color-background-tertiary);
+}
+
+.formula-footer-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.formula-issue-jump,
+.formula-issue-jump:hover {
+  color: var(--color-danger);
 }
 </style>

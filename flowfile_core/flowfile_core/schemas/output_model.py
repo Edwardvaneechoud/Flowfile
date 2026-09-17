@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup, SemanticType
 from flowfile_core.schemas import transform_schema
@@ -272,9 +272,23 @@ class FormulaChainColumn(BaseModel):
     data_type: str
 
 
+class FormulaChainSuggestion(BaseModel):
+    """A one-click fix the editor can offer beside an issue.
+
+    Serialised as ``{"kind", "from", "to"}``; ``from`` is a Python keyword, hence the alias.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: Literal["replace_column"] = "replace_column"
+    from_column: str = Field(serialization_alias="from", validation_alias=AliasChoices("from", "from_column"))
+    to: str
+
+
 class FormulaChainIssue(BaseModel):
     message: str
     kind: str
+    suggestion: FormulaChainSuggestion | None = None
 
 
 class FormulaChainEntryResult(BaseModel):

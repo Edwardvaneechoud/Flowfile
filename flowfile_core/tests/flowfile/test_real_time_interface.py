@@ -7,8 +7,10 @@ from flowfile_core.flowfile._extensions.real_time_interface import (
     check_expression,
     check_expression_chain,
 )
+from flowfile_core.flowfile.extensions import evaluate_preview_entry
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.formula_entries import (
+    ColumnSuggestion,
     FormulaEntryError,
     apply_formula_entries,
     entry_label,
@@ -67,6 +69,15 @@ def test_unparseable_expressions_are_parse_issues(expression):
 def test_missing_column_is_classified_separately():
     issue = check_expression(SCHEMA, "[gone] + 1")
     assert issue.kind == "missing_column"
+
+
+@pytest.mark.parametrize("expression", ["[number", "[number] + [text2", "1 +"])
+def test_internal_parser_failures_never_leak_their_text(expression):
+    """The tokenizer raises a bare IndexError on an unclosed `[`; a dangling operator a TypeError."""
+    issue = check_expression(SCHEMA, expression)
+    assert issue.kind == "parse"
+    assert issue.message in ("column reference is not closed, add ]", "expression could not be parsed")
+    assert "index out of range" not in issue.message
 
 
 def test_predicate_mode_requires_a_boolean_result():
@@ -159,6 +170,52 @@ def test_blank_output_name_with_an_expression_is_a_config_issue():
     assert result.issues[0].kind == "config"
     assert result.issues[0].message == "output column name is empty"
     assert result.schemas[0] == CHAIN_SCHEMA
+
+
+def test_unclosed_column_reference_gets_curated_copy():
+    result = check_expression_chain(CHAIN_SCHEMA, [entry("X", "[First")])
+    assert result.issues[0].kind == "parse"
+    assert result.issues[0].message == "column reference is not closed, add ]"
+
+
+def test_dangling_operator_gets_generic_copy():
+    result = check_expression_chain(CHAIN_SCHEMA, [entry("X", "[Amount] +")])
+    assert result.issues[0].kind == "parse"
+    assert result.issues[0].message == "expression could not be parsed"
+
+
+def test_parser_syntax_errors_pass_through():
+    result = check_expression_chain(CHAIN_SCHEMA, [entry("X", "upper([First]")])
+    assert result.issues[0].kind == "parse"
+    assert result.issues[0].message.startswith("Unbalanced parentheses")
+
+
+def test_missing_column_close_to_an_existing_one_carries_a_suggestion():
+    result = check_expression_chain(CHAIN_SCHEMA, [entry("X", "[Amunt] * 2")])
+    issue = result.issues[0]
+    assert issue.kind == "missing_column"
+    assert issue.message == "column 'Amunt' not found, did you mean 'Amount'?"
+    assert issue.suggestion == ColumnSuggestion("Amunt", "Amount")
+
+
+def test_suggestion_is_judged_against_the_schema_at_that_position():
+    """An earlier entry's output is a candidate; a later entry's output is not."""
+    result = check_expression_chain(CHAIN_SCHEMA, [
+        entry("Greeting", '"hi"'),
+        entry("Uses", "[Greting]"),
+        entry("Early", "[Farewel]"),
+        entry("Farewell", '"bye"'),
+    ])
+    assert result.issues[1].suggestion == ColumnSuggestion("Greting", "Greeting")
+    assert result.issues[2].kind == "missing_column"
+    assert result.issues[2].suggestion is None
+    assert result.issues[2].message == "column 'Farewel' not found"
+
+
+def test_no_suggestion_when_nothing_is_close():
+    result = check_expression_chain(CHAIN_SCHEMA, [entry("X", "[Zzzz]")])
+    assert result.issues[0].suggestion is None
+    assert result.issues[0].message == "column 'Zzzz' not found"
 
 
 def test_duplicate_output_names_warn_on_the_later_entry():
@@ -280,3 +337,39 @@ def test_apply_formula_entries_reports_the_failing_position():
         apply_formula_entries(lf, entries)
     assert failure.value.position == 2
     assert failure.value.kind == "missing_column"
+
+
+# --- strip / preview parity --------------------------------------------------
+
+PARITY_CASES = [
+    ("unclosed bracket", "[Amount"),
+    ("dangling operator", "[Amount] +"),
+    ("syntax error", "upper([First]"),
+    ("missing column", "[Nope]"),
+    ("missing column with a near match", "[Amunt] + 1"),
+    ("type error", '[Amount] + "x"'),
+]
+
+
+@pytest.mark.parametrize("label,expression", PARITY_CASES, ids=[c[0] for c in PARITY_CASES])
+def test_preview_describes_a_failure_with_the_chain_checks_words(label, expression):
+    """The row strip (schema-only) and the preview banner (sampled) must never disagree."""
+    df = pl.DataFrame({"First": ["a"], "Last": ["b"], "Email": ["c"], "Amount": [1]})
+    strip = check_expression_chain(CHAIN_SCHEMA, [entry("X", expression)]).issues[0]
+    preview = evaluate_preview_entry(df, formula_entry(1, entry("X", expression)))
+    assert strip is not None and preview.success is False, label
+    assert preview.result == strip.message, label
+
+
+def test_preview_keeps_the_predicate_check_as_its_own_message():
+    df = pl.DataFrame({"First": ["a"]})
+    preview = evaluate_preview_entry(df, formula_entry(1, entry("", "[First]")), as_predicate=True)
+    assert preview.success is False
+    assert preview.result.startswith("Result is not filterable")
+
+
+def test_preview_returns_the_value_when_the_expression_runs():
+    df = pl.DataFrame({"Amount": [5]})
+    preview = evaluate_preview_entry(df, formula_entry(1, entry("X", "[Amount] * 2")))
+    assert preview == evaluate_preview_entry(df, formula_entry(1, entry("X", "[Amount] * 2")))
+    assert (preview.success, preview.result) == (True, "10")

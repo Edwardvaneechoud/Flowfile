@@ -101,20 +101,27 @@ export const accumulatedColumnsAt = (
   return [...byName.values()];
 };
 
-/** Indices of every entry whose output name is claimed by another entry too. */
-export const duplicateOutputPositions = (entries: readonly FormulaInput[]): number[] => {
-  const counts = new Map<string, number>();
-  for (const entry of entries) {
+/**
+ * Entry index → 1-based number of the earlier formula whose output it overwrites.
+ * Only the overwriting row is listed: writing a column twice is deliberate, so the first
+ * producer is not at fault and gets no note.
+ */
+export const overwrittenOutputs = (entries: readonly FormulaInput[]): Map<number, number> => {
+  const firstProducer = new Map<string, number>();
+  const overwrites = new Map<number, number>();
+  entries.forEach((entry, index) => {
     const name = entry.field.name.trim();
-    if (!name) continue;
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-  }
-  return entries.reduce<number[]>((acc, entry, index) => {
-    const name = entry.field.name.trim();
-    if (name && (counts.get(name) ?? 0) > 1) acc.push(index);
-    return acc;
-  }, []);
+    if (!name) return;
+    const first = firstProducer.get(name);
+    if (first === undefined) firstProducer.set(name, index);
+    else overwrites.set(index, first + 1);
+  });
+  return overwrites;
 };
+
+/** Every `[from]` in the expression becomes `[to]`; the bracket-bound match never touches a longer name. */
+export const replaceColumnReference = (expression: string, from: string, to: string): string =>
+  expression.split(`[${from}]`).join(`[${to}]`);
 
 const entryUids = new WeakMap<FormulaInput, string>();
 let uidCounter = 0;

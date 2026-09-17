@@ -260,6 +260,17 @@ def test_missing_column_and_parse_failures_are_distinguishable():
         engine.apply_sql_formulas([FormulaEntry(1, "X", "[First] +* ", None)])
     assert parse.value.kind == "parse"
 
+    with pytest.raises(FormulaEntryError) as unclosed:
+        engine.apply_sql_formulas([FormulaEntry(1, "X", "[First", None)])
+    assert unclosed.value.kind == "parse"
+    assert str(unclosed.value) == 'Formula 1 ("X"): column reference is not closed, add ]'
+
+    with pytest.raises(FormulaEntryError) as near_miss:
+        engine.apply_sql_formulas([FormulaEntry(1, "X", "[Frist]", None)])
+    assert near_miss.value.kind == "missing_column"
+    assert near_miss.value.suggestion.to_name == "First"
+    assert str(near_miss.value) == "Formula 1 (\"X\"): column 'Frist' not found, did you mean 'First'?"
+
     with pytest.raises(FormulaEntryError) as config:
         engine.apply_sql_formulas([FormulaEntry(3, "  ", "1", None)])
     assert config.value.kind == "config"

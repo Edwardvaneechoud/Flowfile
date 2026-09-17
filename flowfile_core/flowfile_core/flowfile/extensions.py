@@ -4,12 +4,16 @@ from functools import lru_cache
 import polars as pl
 
 from flowfile_core.flowfile._extensions.real_time_interface import (
+    ExpressionIssue,
     check_expression_chain,
-    get_realtime_func_results,
+    get_realtime_expr_results,
 )
 from flowfile_core.flowfile.flow_data_engine.formula_entries import (
+    FormulaEntry,
     FormulaEntryError,
     apply_formula_entries,
+    build_expression,
+    classify_polars_error,
     formula_entry,
 )
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -21,6 +25,7 @@ from flowfile_core.schemas.output_model import (
     FormulaChainColumn,
     FormulaChainEntryResult,
     FormulaChainIssue,
+    FormulaChainSuggestion,
     InstantFuncResult,
 )
 from flowfile_core.utils.arrow_reader import read_top_n
@@ -95,24 +100,36 @@ def _resolve_params(node_step: FlowNode, func_string: str) -> str:
     return func_string
 
 
-def _evaluate_preview_expression(node_step: FlowNode, df: pl.DataFrame, func_string: str) -> InstantFuncResult:
+def evaluate_preview_entry(df: pl.DataFrame, entry: FormulaEntry, *, as_predicate: bool = False) -> InstantFuncResult:
+    """Evaluate one entry on the preview row, describing a failure exactly as the chain check would.
+
+    Parse, missing-column and type failures go through the same classifier as
+    `apply_formula_entries`, so the preview strip and the row diagnostic never disagree. What
+    remains the preview's own: a non-boolean result for a predicate, and data-dependent
+    failures (a strict cast on real values) that a schema-only check cannot see.
+    """
     try:
-        real_time_result = get_realtime_func_results(df=df, func_string=func_string)
-        if node_step.name == "filter" and not real_time_result.is_filterable_result():
-            return InstantFuncResult(
-                result="Result is not filterable," " make sure the function results in a true or false output",
-                success=False,
-            )
-        return InstantFuncResult(result=real_time_result.readable_result, success=real_time_result.success)
-    except Exception as e:
-        return InstantFuncResult(result=str(e), success=False)
+        real_time_result = get_realtime_expr_results(df, build_expression(entry))
+    except FormulaEntryError as exc:
+        return InstantFuncResult(result=exc.detail, success=False)
+    except pl.exceptions.PolarsError as exc:
+        return InstantFuncResult(result=classify_polars_error(entry, exc, df.columns).detail, success=False)
+    except Exception:
+        return InstantFuncResult(result="expression could not be evaluated", success=False)
+    if as_predicate and not real_time_result.is_filterable_result():
+        return InstantFuncResult(
+            result="Result is not filterable, make sure the function results in a true or false output",
+            success=False,
+        )
+    return InstantFuncResult(result=real_time_result.readable_result, success=real_time_result.success)
 
 
 def get_instant_func_results(node_step: FlowNode, func_string: str) -> InstantFuncResult:
     df, failure = _resolve_preview_frame(node_step)
     if failure is not None:
         return failure
-    return _evaluate_preview_expression(node_step, df, _resolve_params(node_step, func_string))
+    entry = FormulaEntry(1, "", _resolve_params(node_step, func_string))
+    return evaluate_preview_entry(df, entry, as_predicate=node_step.name == "filter")
 
 
 def _resolved_entries(
@@ -124,6 +141,17 @@ def _resolved_entries(
 
 def _chain_columns(schema: dict) -> list[FormulaChainColumn]:
     return [FormulaChainColumn(name=name, data_type=str(dtype)) for name, dtype in schema.items()]
+
+
+def _chain_issue(issue: ExpressionIssue) -> FormulaChainIssue:
+    suggestion = issue.suggestion
+    return FormulaChainIssue(
+        message=issue.message,
+        kind=issue.kind,
+        suggestion=None
+        if suggestion is None
+        else FormulaChainSuggestion(from_column=suggestion.from_name, to=suggestion.to_name),
+    )
 
 
 def get_formula_chain_check(
@@ -147,7 +175,7 @@ def get_formula_chain_check(
         base_columns=_chain_columns(result.base_schema),
         entries=[
             FormulaChainEntryResult(
-                issue=None if issue is None else FormulaChainIssue(message=issue.message, kind=issue.kind),
+                issue=None if issue is None else _chain_issue(issue),
                 columns=_chain_columns(schema),
             )
             for issue, schema in zip(result.issues, result.schemas, strict=True)
@@ -172,4 +200,4 @@ def get_formula_chain_instant_result(
         frame = apply_formula_entries(df.lazy(), prefix).collect()
     except FormulaEntryError as exc:
         return InstantFuncResult(result=str(exc), success=False)
-    return _evaluate_preview_expression(node_step, frame, chain[index].function)
+    return evaluate_preview_entry(frame, formula_entry(index + 1, chain[index]))

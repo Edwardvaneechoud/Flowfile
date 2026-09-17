@@ -248,6 +248,17 @@ const insertTextAtCursor = (text: string) => {
   }
 };
 
+/** Replaces every occurrence of `search` in one transaction, so a single undo reverts it. */
+const replaceText = (search: string, replacement: string) => {
+  if (!view.value || !search) return;
+  const doc = view.value.state.doc.toString();
+  const changes: { from: number; to: number; insert: string }[] = [];
+  for (let at = doc.indexOf(search); at !== -1; at = doc.indexOf(search, at + search.length)) {
+    changes.push({ from: at, to: at + search.length, insert: replacement });
+  }
+  if (changes.length) view.value.dispatch({ changes });
+};
+
 const code = ref(props.editorString);
 const view = shallowRef<EditorView | null>(null);
 
@@ -662,7 +673,7 @@ watch(
 // caches a zero-height measurement taken while it was display:none.
 const requestMeasure = () => view.value?.requestMeasure();
 
-defineExpose({ insertTextAtCursor, requestMeasure });
+defineExpose({ insertTextAtCursor, replaceText, requestMeasure });
 </script>
 
 <style>

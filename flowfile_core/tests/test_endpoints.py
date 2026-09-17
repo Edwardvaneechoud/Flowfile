@@ -2121,10 +2121,31 @@ def test_formula_chain_check_flags_a_forward_reference():
     assert response.status_code == 200, response.text
     entries = response.json()["entries"]
     assert entries[0]["issue"]["kind"] == "missing_column"
-    assert "late" in entries[0]["issue"]["message"]
+    assert entries[0]["issue"]["message"] == "column 'late' not found"
+    assert entries[0]["issue"]["suggestion"] is None
     assert entries[1]["issue"] is None
     # cascade suppression: the broken entry still contributes its column
     assert "early" in [c["name"] for c in entries[0]["columns"]]
+
+
+def test_formula_chain_check_suggests_a_near_match():
+    flow_id = _formula_chain_flow()
+    response = client.post(
+        "/custom_functions/formula_chain_check",
+        json={"flow_id": flow_id, "node_id": 2, "entries": [_chain_entry("x", "[nam] + \"!\""), _chain_entry("y", "[cty")]},
+    )
+    assert response.status_code == 200, response.text
+    entries = response.json()["entries"]
+    assert entries[0]["issue"] == {
+        "message": "column 'nam' not found, did you mean 'name'?",
+        "kind": "missing_column",
+        "suggestion": {"kind": "replace_column", "from": "nam", "to": "name"},
+    }
+    assert entries[1]["issue"] == {
+        "message": "column reference is not closed, add ]",
+        "kind": "parse",
+        "suggestion": None,
+    }
 
 
 def test_formula_chain_check_is_unavailable_without_an_upstream():
@@ -2185,6 +2206,20 @@ def test_formula_chain_instant_result_returns_the_chained_value_after_a_run():
     )
     assert response.status_code == 200, response.text
     assert response.json() == {"success": True, "result": "hi John!"}
+
+
+def test_formula_chain_instant_result_uses_the_chain_checks_words_for_the_active_row():
+    flow_id = _formula_chain_flow()
+    for expression, detail in [
+        ("[nam]", "column 'nam' not found, did you mean 'name'?"),
+        ("[name", "column reference is not closed, add ]"),
+    ]:
+        response = client.post(
+            "/custom_functions/formula_chain_instant_result",
+            json={"flow_id": flow_id, "node_id": 2, "entries": [_chain_entry("x", expression)], "index": 0},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json() == {"result": detail, "success": False}
 
 
 def test_formula_chain_instant_result_attributes_an_earlier_failure():
