@@ -20,7 +20,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted } from "vue";
+import { ref, onMounted, type PropType } from "vue";
 import axios from "axios";
 import { InstantFuncResult } from "./types";
 import { useNodeStore } from "../../../stores/column-store";
@@ -31,6 +31,12 @@ const hasInput = ref<boolean>(false);
 
 const props = defineProps({
   nodeId: { type: Number, required: true },
+  // Supplied by hosts that evaluate something other than a lone expression (the
+  // formula node's chain). Without it the single-expression endpoint is used.
+  fetcher: {
+    type: Function as PropType<(funcString: string) => Promise<InstantFuncResult>>,
+    default: null,
+  },
 });
 
 const instantFuncResult = ref<InstantFuncResult>({
@@ -41,6 +47,10 @@ const instantFuncResult = ref<InstantFuncResult>({
 const getInstantFuncResults = async (funcString: string, flowId: number) => {
   if (funcString !== "") {
     hasInput.value = true;
+    if (props.fetcher) {
+      instantFuncResult.value = await props.fetcher(funcString);
+      return;
+    }
     const response = await axios.get("/custom_functions/instant_result", {
       params: {
         node_id: props.nodeId,
@@ -49,14 +59,14 @@ const getInstantFuncResults = async (funcString: string, flowId: number) => {
       },
     });
     instantFuncResult.value = response.data;
-    console.log(instantFuncResult.value.result);
   } else {
     hasInput.value = false;
   }
 };
 
 onMounted(() => {
-  if (nodeStore.inputCode !== "") {
+  // The global input-code buffer belongs to the single-expression hosts only.
+  if (!props.fetcher && nodeStore.inputCode !== "") {
     hasInput.value = true;
     getInstantFuncResults(nodeStore.inputCode, nodeStore.flow_id);
   }

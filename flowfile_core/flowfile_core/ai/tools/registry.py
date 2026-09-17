@@ -269,6 +269,9 @@ def _resolve_inner_input_field(settings_cls: type) -> tuple[str, type] | None:
 
     Multi-field types (``NodeFilter`` has ``filter_input + split_mode``,
     ``NodeGate`` has ``gate_input + else_output``,
+    ``NodeFormula`` has ``function + functions`` — the legacy single
+    entry and the ordered multi-entry list, both deliberately visible so
+    the planner can emit a chained formula node,
     ``NodeJoin`` has ``join_input + auto_keep_*`` etc.), empty types
     (``NodeRecordCount``, ``NodeWaitFor``), and types whose only
     type-specific field is a primitive (``NodeSample.sample_size: int``)

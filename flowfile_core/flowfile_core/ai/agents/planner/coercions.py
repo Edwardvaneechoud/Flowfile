@@ -71,9 +71,10 @@ def _coerce_formula_bare_string_args(
       extraction of *"as <name>"* / *"a <name> column"*); falls
       back to ``"derived"`` so the user can rename in the diff
       review.
-    * The caller still wraps the result under the inner-input
-      ``function`` field name; this helper only fixes the SHAPE
-      under the wrapper.
+    * The result is the OUTER envelope (``{"function": {...}}``).
+      ``NodeFormula`` exposes both ``function`` and ``functions`` at
+      stage 3, so it is a multi-field type and the planner performs
+      no inner-input wrap for it.
 
     Returns ``tool_args`` unchanged when the coercion doesn't apply.
     Defensive: a future LLM that does emit the right shape sails
@@ -92,10 +93,12 @@ def _coerce_formula_bare_string_args(
         return tool_args
 
     derived_name = _derive_formula_output_column_name(user_prompt)
-    return {
+    coerced = dict(tool_args)
+    coerced["function"] = {
         "field": {"name": derived_name, "data_type": "String"},
         "function": candidate,
     }
+    return coerced
 
 
 def _looks_like_outer_envelope_value(value: Any) -> bool:

@@ -1,5 +1,13 @@
 import axios from "../services/axios.config";
-import type { NodeData, FileColumn, TableExample, NodeDescriptionResponse } from "../types";
+import type {
+  NodeData,
+  FileColumn,
+  TableExample,
+  NodeDescriptionResponse,
+  FormulaChainEntry,
+  FormulaChainCheck,
+  InstantFuncResult,
+} from "../types";
 
 export class NodeApi {
   /**
@@ -151,6 +159,37 @@ export class NodeApi {
       {
         params: { flow_id: flowId, node_id: nodeId, reference },
       },
+    );
+    return response.data;
+  }
+
+  /**
+   * Validate a formula chain: per-entry issues plus the schema each entry sees.
+   */
+  static async checkFormulaChain(
+    flowId: number,
+    nodeId: number,
+    entries: FormulaChainEntry[],
+  ): Promise<FormulaChainCheck> {
+    const response = await axios.post<FormulaChainCheck>(
+      "/custom_functions/formula_chain_check",
+      { flow_id: flowId, node_id: nodeId, entries },
+    );
+    return response.data;
+  }
+
+  /**
+   * Evaluate one entry of a formula chain against the schema its predecessors build.
+   */
+  static async getFormulaChainInstantResult(
+    flowId: number,
+    nodeId: number,
+    entries: FormulaChainEntry[],
+    index: number,
+  ): Promise<InstantFuncResult> {
+    const response = await axios.post<InstantFuncResult>(
+      "/custom_functions/formula_chain_instant_result",
+      { flow_id: flowId, node_id: nodeId, entries, index },
     );
     return response.data;
   }

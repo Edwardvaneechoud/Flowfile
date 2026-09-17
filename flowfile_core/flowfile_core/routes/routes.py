@@ -83,7 +83,11 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_database_connection,
     update_database_connection,
 )
-from flowfile_core.flowfile.extensions import get_instant_func_results
+from flowfile_core.flowfile.extensions import (
+    get_formula_chain_check,
+    get_formula_chain_instant_result,
+    get_instant_func_results,
+)
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
@@ -2486,6 +2490,30 @@ async def get_instant_function_result(flow_id: int, node_id: int, func_string: s
         node = flow_file_handler.get_node(flow_id, node_id)
         result = await asyncio.to_thread(get_instant_func_results, node, func_string)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/custom_functions/formula_chain_check", tags=[])
+async def check_formula_chain(
+    request: output_model.FormulaChainRequest,
+) -> output_model.FormulaChainCheckResponse:
+    """Validates a formula node's entries, each against the schema its predecessors leave behind."""
+    try:
+        node = flow_file_handler.get_node(request.flow_id, request.node_id)
+        return await asyncio.to_thread(get_formula_chain_check, node, request.entries)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/custom_functions/formula_chain_instant_result", tags=[])
+async def get_formula_chain_instant_function_result(
+    request: output_model.FormulaChainInstantRequest,
+) -> output_model.InstantFuncResult:
+    """Evaluates one formula entry on a preview row, with the entries above it applied first."""
+    try:
+        node = flow_file_handler.get_node(request.flow_id, request.node_id)
+        return await asyncio.to_thread(get_formula_chain_instant_result, node, request.entries, request.index)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

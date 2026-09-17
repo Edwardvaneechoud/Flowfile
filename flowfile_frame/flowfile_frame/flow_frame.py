@@ -19,6 +19,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_mapping
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.formula_dependencies import entries_are_independent
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.schemas import GroupColor
 from flowfile_frame.callable_utils import process_callable_args
@@ -2616,6 +2617,34 @@ class FlowFrame:
         self.flow_graph.add_formula(function_settings)
         return self._create_child_frame(new_node_id)
 
+    def _with_flowfile_formulas(
+        self,
+        entries: list[tuple[str, str, str]],
+        description: str = None,
+    ) -> FlowFrame:
+        """One Formula node holding every ``(output_column_name, formula, data_type)`` entry.
+
+        The node evaluates its entries sequentially — entry N sees the outputs of entries
+        1..N-1 — so callers that need Polars' parallel semantics must check independence
+        first (:func:`entries_are_independent`).
+        """
+        new_node_id = generate_node_id()
+        function_settings = input_schema.NodeFormula(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            depending_on_id=self.node_id,
+            functions=[
+                transform_schema.FunctionInput(
+                    function=formula,
+                    field=transform_schema.FieldInput(name=output_column_name, data_type=data_type),
+                )
+                for output_column_name, formula, data_type in entries
+            ],
+            description=description,
+        )
+        self.flow_graph.add_formula(function_settings)
+        return self._create_child_frame(new_node_id)
+
     def head(self, n: int, description: str = None):
         new_node_id = generate_node_id()
         settings = input_schema.NodeSample(
@@ -3387,6 +3416,18 @@ class FlowFrame:
     ) -> FlowFrame:
         """
         Add or replace columns in the DataFrame.
+
+        Node emission follows Polars' parallel semantics: expressions read the frame as it was
+        before the call, never each other's output. Expressions that all have a flowfile-formula
+        form and are independent (no expression reads a column another writes) become ONE
+        Formula node with one entry per expression, in argument order. Dependent expressions —
+        ``(col("x") + 1).alias("x")`` alongside ``(col("x") * 2).alias("y")`` — cannot be a
+        Formula node, whose entries evaluate sequentially, so they emit a Polars-code node
+        instead and keep Polars' semantics.
+
+        ``flowfile_formulas=`` is the opposite contract: its formulas evaluate SEQUENTIALLY, so
+        a later formula may reference an earlier one's output column. They always become one
+        Formula node holding every formula as an entry.
         """
         new_node_id = generate_node_id()
 
@@ -3421,10 +3462,15 @@ class FlowFrame:
                 and _formula_parses(e._ff_repr)
                 for e in actual_exprs_to_process
             ):
-                ff = self
-                for expr_obj in actual_exprs_to_process:
-                    ff = ff._with_flowfile_formula(expr_obj._ff_repr, expr_obj.column_name, description)
-                return ff
+                formula_entries = [(e.column_name, e._ff_repr) for e in actual_exprs_to_process]
+                if len(formula_entries) == 1:
+                    return self._with_flowfile_formula(formula_entries[0][1], formula_entries[0][0], description)
+                # A Formula node evaluates sequentially; only independent expressions mean the
+                # same thing there as they do in a single parallel Polars with_columns call.
+                if entries_are_independent(formula_entries):
+                    return self._with_flowfile_formulas(
+                        [(name, formula, "Auto") for name, formula in formula_entries], description
+                    )
 
             window_frame = self._try_native_window_functions(actual_exprs_to_process, new_node_id, description)
             if window_frame is not None:
@@ -3474,7 +3520,12 @@ class FlowFrame:
             # upgrade flowfile formulas to native polars/flowframe expressions
             # for a more efficient node type. Falls back transparently when
             # the upstream translator can't handle a given formula.
-            if output_column_datatypes is None:
+            # Only independent formulas may take the translated route: it re-enters
+            # with_columns, whose expression path assumes parallel semantics.
+            independent = entries_are_independent(
+                list(zip(output_column_names, flowfile_formulas, strict=False))
+            )
+            if output_column_datatypes is None and independent:
                 translated = _try_translate_flowfile_formulas(flowfile_formulas, output_column_names)
                 if translated is not None:
                     return self.with_columns(*translated, description=description)
@@ -3484,14 +3535,9 @@ class FlowFrame:
                 return self._with_flowfile_formula(
                     flowfile_formulas[0], output_column_names[0], description, output_column_datatype=datatypes[0]
                 )
-            ff = self
-            for i, (flowfile_formula, output_column_name, datatype) in enumerate(
-                zip(flowfile_formulas, output_column_names, datatypes, strict=False)
-            ):
-                ff = ff._with_flowfile_formula(
-                    flowfile_formula, output_column_name, f"{i}: {description}", output_column_datatype=datatype
-                )
-            return ff
+            return self._with_flowfile_formulas(
+                list(zip(output_column_names, flowfile_formulas, datatypes, strict=False)), description
+            )
         else:
             raise ValueError("Either exprs/named_exprs or flowfile_formulas with output_column_names must be provided")
 

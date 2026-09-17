@@ -68,6 +68,14 @@ SUPPORTED_CASES = [
     ("csv read", "read", {"received_file": {"file_type": "csv", "scan_mode": "single_file"}}),
     ("parquet write", "output", {"output_settings": {"file_type": "parquet"}}),
     ("sort", "sort", {"sort_input": [{"column": "a"}]}),
+    (
+        "single-entry formula",
+        "formula",
+        {
+            "function": {"field": {"name": "total", "data_type": "Auto"}, "function": "[a] + 1"},
+            "functions": [{"field": {"name": "total", "data_type": "Auto"}, "function": "[a] + 1"}],
+        },
+    ),
     ("manual input", "manual_input", {"raw_data_format": {"columns": [], "data": []}}),
 ]
 
@@ -136,6 +144,18 @@ PLACEHOLDER_CASES = [
         {"received_file": {"file_type": "csv", "scan_mode": "directory"}},
         "whole directory",
     ),
+    (
+        "two-entry formula",
+        "formula",
+        {
+            "functions": [
+                {"field": {"name": "total", "data_type": "Auto"}, "function": "[a] + 1"},
+                {"field": {"name": "doubled", "data_type": "Auto"}, "function": "[total] * 2"},
+            ]
+        },
+        "exactly one expression",
+    ),
+    ("zero-entry formula", "formula", {"functions": []}, "exactly one expression"),
     ("json write", "output", {"output_settings": {"file_type": "json"}}, "cannot write json"),
 ]
 
@@ -169,7 +189,7 @@ def test_n_unique_splits_group_by_from_pivot():
 
 
 def test_missing_settings_never_crash_a_predicate():
-    for node_type in ("filter", "join", "select", "record_id", "group_by", "pivot", "read", "output"):
+    for node_type in ("filter", "formula", "join", "select", "record_id", "group_by", "pivot", "read", "output"):
         assert _classify(node_type, None).status in {"supported", "placeholder"}
 
 

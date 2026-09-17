@@ -58,6 +58,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     execute_sql_query,
 )
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, cast_str_to_polars_type
+from flowfile_core.flowfile.flow_data_engine.formula_entries import FormulaEntry
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
     get_calamine_xlsx_data_types,
@@ -3626,46 +3627,42 @@ class FlowGraph:
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_formula(self, function_settings: input_schema.NodeFormula):
-        """Adds a node that applies a formula to create or modify a column.
+        """Adds a node that applies an ordered list of formulas to create or modify columns.
+
+        The entries are chained, so entry N can reference the columns entries 1..N-1 produced.
+        Entries with a blank expression are skipped; zero active entries is a pass-through.
 
         Args:
             function_settings: The settings for the formula operation.
         """
-
-        error = ""
-        if function_settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
-            output_type = cast_str_to_polars_type(function_settings.function.field.data_type)
-        else:
-            output_type = None
-        if output_type not in (None, transform_schema.AUTO_DATA_TYPE):
-            new_col = [
-                FlowfileColumn.from_input(column_name=function_settings.function.field.name, data_type=str(output_type))
-            ]
-        else:
-            new_col = [FlowfileColumn.from_input(function_settings.function.field.name, "String")]
+        entries: list[FormulaEntry] = []
+        new_cols: dict[str, FlowfileColumn] = {}
+        for position, item in function_settings.active_entries():
+            if item.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
+                output_type = cast_str_to_polars_type(item.field.data_type)
+            else:
+                output_type = None
+            entries.append(FormulaEntry(position, item.field.name, item.function, output_type))
+            # Overwriting an existing name keeps its first position, like polars with_columns.
+            new_cols[item.field.name] = (
+                FlowfileColumn.from_input(column_name=item.field.name, data_type=str(output_type))
+                if output_type is not None
+                else FlowfileColumn.from_input(item.field.name, "String")
+            )
 
         def _func(fl: FlowDataEngine):
-            return fl.apply_sql_formula(
-                func=function_settings.function.function,
-                col_name=function_settings.function.field.name,
-                output_data_type=output_type,
-            )
+            return fl.apply_sql_formulas(entries)
 
         self.add_node_step(
             function_settings.node_id,
             _func,
-            output_schema=new_col,
+            output_schema=list(new_cols.values()),
             node_type="formula",
             renew_schema=False,
             setting_input=function_settings,
             input_node_ids=[function_settings.depending_on_id],
         )
-        if error != "":
-            node = self.get_node(function_settings.node_id)
-            node.results.errors = error
-            return False, error
-        else:
-            return True, ""
+        return True, ""
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cross_join(self, cross_join_settings: input_schema.NodeCrossJoin) -> "FlowGraph":

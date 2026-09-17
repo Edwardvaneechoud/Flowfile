@@ -1437,6 +1437,127 @@ def test_flowframe_formula_native_cast():
     assert_frame_equal(result_df, expected_df)
 
 
+def _add_multi_entry_formula_node(flow: FlowGraph, specs: list[tuple[str, str, str]]) -> FlowGraph:
+    """One formula node (id 2) holding every ``(name, formula, data_type)`` spec as an entry."""
+    flow.add_formula(input_schema.NodeFormula(
+        flow_id=flow.flow_id,
+        node_id=2,
+        depending_on_id=1,
+        functions=[
+            transform_schema.FunctionInput(
+                field=transform_schema.FieldInput(name=name, data_type=data_type),
+                function=formula,
+            )
+            for name, formula, data_type in specs
+        ],
+    ))
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+    return flow
+
+
+INDEPENDENT_ENTRIES = [
+    ("total", "[price] * [quantity]", "Auto"),
+    ("region_upper", "uppercase([region])", "String"),
+    ("marker", "1", "Integer"),
+]
+
+# Each entry reads the previous entry's output, so the node's sequential semantics are load-bearing.
+DEPENDENT_ENTRIES = [
+    ("base", "[price] * [quantity]", "Auto"),
+    ("with_tax", "[base] * 1.21", "Auto"),
+    ("rounded", "round([with_tax], 0)", "Auto"),
+]
+
+MIXED_INDEPENDENT_ENTRIES = [
+    ("total", "[price] * [quantity]", "Auto"),
+    ("sim", "string_similarity([region], 'Noorden')", "Double"),
+]
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_independent_formula_entries_emit_one_with_columns_call(export_func):
+    """Independent entries collapse into a single with_columns call, in argument order."""
+    flow = _add_multi_entry_formula_node(create_sales_dataframe_node(create_basic_flow()), INDEPENDENT_ENTRIES)
+    code = export_func(flow)
+
+    assert code.count(".with_columns(") == 1
+    if export_func is export_flow_to_polars:
+        verify_code_contains(
+            code,
+            '.with_columns([(pl.col("price") * pl.col("quantity")).alias("total"), '
+            '(pl.col("region").str.to_uppercase()).alias("region_upper").cast(pl.String), '
+            '(pl.lit(1)).alias("marker").cast(pl.Int64)])',
+        )
+    else:
+        verify_code_contains(
+            code,
+            '.with_columns((ff.col("price") * ff.col("quantity")).alias("total"), '
+            '(ff.col("region").str.to_uppercase()).alias("region_upper").cast(ff.String), '
+            '(ff.lit(1)).alias("marker").cast(ff.Int64))',
+        )
+        assert "flowfile_formulas" not in code
+
+    verify_if_execute(code)
+    assert_frame_equal(
+        normalize_result(get_result_from_generated_code(code)),
+        normalize_result(flow.get_node(2).get_resulting_data().data_frame),
+    )
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_dependent_formula_entries_keep_sequential_semantics(export_func):
+    """Polars chains one step per entry; FlowFrame uses the sequential flowfile_formulas form."""
+    flow = _add_multi_entry_formula_node(create_sales_dataframe_node(create_basic_flow()), DEPENDENT_ENTRIES)
+    code = export_func(flow)
+
+    if export_func is export_flow_to_polars:
+        assert code.count(".with_columns(") == len(DEPENDENT_ENTRIES)
+    else:
+        # One node in, one node back out: a chain of native calls would re-import as N nodes.
+        assert code.count(".with_columns(") == 1
+        verify_code_contains(
+            code,
+            ".with_columns(flowfile_formulas=['[price] * [quantity]', '[base] * 1.21', "
+            "'round([with_tax], 0)'], output_column_names=['base', 'with_tax', 'rounded'])",
+        )
+
+    verify_if_execute(code)
+    assert_frame_equal(
+        normalize_result(get_result_from_generated_code(code)),
+        normalize_result(flow.get_node(2).get_resulting_data().data_frame),
+    )
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_independent_entries_mixing_native_and_fallback(export_func):
+    """Polars mixes the simple_function_to_expr fallback into the shared list; ff needs the kwarg form."""
+    flow = _add_multi_entry_formula_node(create_sales_dataframe_node(create_basic_flow()), MIXED_INDEPENDENT_ENTRIES)
+    flow.get_node(1).get_resulting_data().collect()
+    code = export_func(flow)
+
+    assert code.count(".with_columns(") == 1
+    if export_func is export_flow_to_polars:
+        verify_code_contains(
+            code,
+            '.with_columns([(pl.col("price") * pl.col("quantity")).alias("total"), '
+            "simple_function_to_expr(\"string_similarity([region], 'Noorden')\").alias(\"sim\")"
+            ".cast(pl.Float64)])",
+        )
+    else:
+        verify_code_contains(
+            code,
+            ".with_columns(flowfile_formulas=['[price] * [quantity]', "
+            "\"string_similarity([region], 'Noorden')\"], output_column_names=['total', 'sim'], "
+            "output_column_datatypes=['Auto', 'Double'])",
+        )
+
+    verify_if_execute(code)
+    assert_frame_equal(
+        normalize_result(get_result_from_generated_code(code)),
+        normalize_result(flow.get_node(2).get_resulting_data().data_frame),
+    )
+
+
 def test_flowframe_formula_fallback_untranslatable():
     """Untranslatable formulas fall back to the flowfile_formulas parameter."""
     flow = create_basic_flow()

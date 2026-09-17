@@ -27,8 +27,8 @@ def sample_ff():
 
 
 def _is_formula_node(node_settings) -> bool:
-    """Check if a node is a NodeFormula (has function attribute)."""
-    return hasattr(node_settings.setting_input, "function") and node_settings.setting_input.function is not None
+    """Check if a node is a NodeFormula (multi-entry nodes have `function` None, so test `entries`)."""
+    return bool(getattr(node_settings.setting_input, "entries", None))
 
 
 def _is_polars_code_node(node_settings) -> bool:

@@ -144,6 +144,9 @@ class FlowFrame:
 
     def _with_flowfile_formula(self, flowfile_formula: str, output_column_name: str, output_column_datatype: str = 'Auto', description: str = None) -> 'FlowFrame': ...
 
+    # One Formula node holding every ``(output_column_name, formula, data_type)`` entry.
+    def _with_flowfile_formulas(self, entries: list[tuple[str, str, str]], description: str = None) -> 'FlowFrame': ...
+
     # Shared implementation for option-light file writers (ipc/ndjson/avro).
     def _write_simple_file(self, path: str | os.PathLike, file_type: str, table_settings: Any, fallback_code_template: str, compression: str | None = None, convert_to_absolute_path: bool = True, description: str = None, **kwargs) -> 'FlowFrame': ...
 

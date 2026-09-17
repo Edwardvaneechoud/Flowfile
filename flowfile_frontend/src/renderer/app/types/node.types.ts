@@ -356,6 +356,31 @@ export interface FormulaInput {
   function: string;
 }
 
+/** One entry of a formula chain as sent to the chain validator. */
+export interface FormulaChainEntry {
+  name: string;
+  data_type: string | null;
+  function: string;
+}
+
+export interface FormulaChainIssue {
+  message: string;
+  kind: string;
+}
+
+export interface FormulaChainEntryResult {
+  issue: FormulaChainIssue | null;
+  /** Accumulated schema AFTER this entry. */
+  columns: MinimalFieldInput[];
+}
+
+export interface FormulaChainCheck {
+  /** False when the input schema is unknown; issues are then all null. */
+  available: boolean;
+  base_columns: MinimalFieldInput[];
+  entries: FormulaChainEntryResult[];
+}
+
 // Filter Types
 
 /**
@@ -1148,7 +1173,9 @@ export interface NodeUserDefined extends NodeMultiInput {
 }
 
 export interface NodeFormula extends NodeSingleInput {
-  function: FormulaInput;
+  /** Legacy single-entry field; the backend only emits it when there is exactly one entry. */
+  function?: FormulaInput | null;
+  functions: FormulaInput[];
 }
 
 export interface NodeUnion extends NodeBase {

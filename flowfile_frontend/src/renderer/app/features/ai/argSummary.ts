@@ -119,7 +119,15 @@ const _summaryForAddNode = (nodeType: string, args: Record<string, unknown>): st
     nodeType === "python_script" ||
     nodeType === "sql_query"
   ) {
-    const target = settings.function ?? settings.output_column;
+    // A formula node holds an ordered list; `function` is only the legacy single entry.
+    const entries = settings.functions;
+    if (Array.isArray(entries) && entries.length > 1) {
+      return `Adding ${prettyType} → ${entries.length} columns`;
+    }
+    const target =
+      (Array.isArray(entries) ? entries[0] : undefined) ??
+      settings.function ??
+      settings.output_column;
     if (_isRecord(target)) {
       const field = target.field ?? target.column;
       if (typeof field === "string" && field) {

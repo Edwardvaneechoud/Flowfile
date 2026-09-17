@@ -253,6 +253,56 @@ class InstantFuncResult(BaseModel):
     result: str
 
 
+class FormulaChainEntryInput(BaseModel):
+    """One formula row as the editor holds it, before any schema is known."""
+
+    name: str = ""
+    data_type: str | None = None
+    function: str = ""
+
+
+class FormulaChainRequest(BaseModel):
+    """The formula entries currently in a node's editor, which may differ from the saved node."""
+
+    flow_id: int
+    node_id: int
+    entries: list[FormulaChainEntryInput] = []
+
+
+class FormulaChainInstantRequest(FormulaChainRequest):
+    index: int
+    """0-based entry to evaluate; the entries above it run first."""
+
+
+class FormulaChainColumn(BaseModel):
+    name: str
+    data_type: str
+
+
+class FormulaChainIssue(BaseModel):
+    message: str
+    kind: str
+
+
+class FormulaChainEntryResult(BaseModel):
+    """One entry's verdict and the schema it leaves behind."""
+
+    issue: FormulaChainIssue | None = None
+    columns: list[FormulaChainColumn] = []
+
+
+class FormulaChainCheckResponse(BaseModel):
+    """Per-entry validation of a formula chain against its input schema.
+
+    ``available`` is False when the input schema cannot be resolved (no upstream, blocked
+    prediction); every issue is then null and every column list empty — silence over guessing.
+    """
+
+    available: bool
+    base_columns: list[FormulaChainColumn] = []
+    entries: list[FormulaChainEntryResult] = []
+
+
 class NodeDescriptionResponse(BaseModel):
     """Response model for the node description endpoint."""
 
