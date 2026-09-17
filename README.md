@@ -190,7 +190,7 @@ npm install && npm run dev:web  # :8080
 
 </details>
 
-> **Note:** Windows installers aren't code-signed yet — SmartScreen will warn; click "More info" → "Run anyway". On macOS, if the app shows as damaged after download: `find /Applications/Flowfile.app -exec xattr -c {} \;`
+> **Note:** Windows installers aren't code-signed yet — SmartScreen will warn; click "More info" → "Run anyway".
 
 ---
 

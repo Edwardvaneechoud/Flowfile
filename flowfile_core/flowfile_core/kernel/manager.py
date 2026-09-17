@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -63,6 +64,21 @@ _KERNEL_DOWN_MSG = (
 _CELL_EXECUTION_TIMEOUT = 86_400.0
 
 
+@functools.lru_cache(maxsize=1)
+def _http_ssl_context():
+    # httpx builds a fresh SSL context per client (~250ms on Windows: cert-bundle parse);
+    # kernel calls are plain http, so one shared context serves every short-lived client.
+    return httpx.create_ssl_context()
+
+
+def _async_client(timeout: float) -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=httpx.Timeout(timeout), verify=_http_ssl_context())
+
+
+def _sync_client(timeout: float) -> httpx.Client:
+    return httpx.Client(timeout=httpx.Timeout(timeout), verify=_http_ssl_context())
+
+
 def _resolve_image(
     flavour: ImageFlavour,
     custom_image: str | None,
@@ -115,6 +131,21 @@ def _resolve_local_image(
     if not images:
         return None
 
+    # A stale dev build or retag must not shadow a newer pinned release: drop any
+    # candidate a sibling release tag proves older (unknown versions stay trusted).
+    pinned = parse_image_version(registry_default)
+    if pinned is not None:
+        kept = []
+        for img in images:
+            known = _image_version(img, repo_name)
+            if known is not None and known < pinned:
+                logger.info("Ignoring local image %s: older than pinned %s", img.tags, registry_default)
+                continue
+            kept.append(img)
+        images = kept
+        if not images:
+            return None
+
     preferred_tag = f"{repo_name}:local"
     for img in images:
         if preferred_tag in (img.tags or ()):
@@ -131,6 +162,18 @@ def _resolve_local_image(
             if tag.startswith(f"{repo_name}:"):
                 return tag
     return None
+
+
+def _image_version(img, repo_name: str) -> tuple[int, ...] | None:
+    """Highest dotted version among an image's ``*/flowfile-kernel-<flavour>`` tags, if any."""
+    versions = []
+    for tag in img.tags or ():
+        repo = tag.rsplit(":", 1)[0]
+        if repo == repo_name or repo.endswith(f"/{repo_name}"):
+            version = parse_image_version(tag)
+            if version is not None:
+                versions.append(version)
+    return max(versions) if versions else None
 
 
 def newest_installed_version(repo: str, docker_client) -> tuple[str, tuple[int, ...]] | None:
@@ -395,6 +438,8 @@ class KernelManager:
         # a network call (the actual pull runs on a thread without the lock).
         self._pull_state: dict[str, str] = {}
         self._pull_state_lock = threading.Lock()
+        # Kernels already warned about for lacking the /lsp endpoint (old runtime image).
+        self._lsp_unsupported_warned: set[str] = set()
         # Single-flight starts: kernel_id -> Future shared by concurrent callers.
         self._start_flights: dict[str, Future] = {}
         self._start_flights_lock = threading.Lock()
@@ -1973,7 +2018,7 @@ class KernelManager:
 
             if cancel_event is None:
                 # Simple blocking call (no cancellation support)
-                with httpx.Client(timeout=httpx.Timeout(_CELL_EXECUTION_TIMEOUT)) as client:
+                with _sync_client(_CELL_EXECUTION_TIMEOUT) as client:
                     response = client.post(url, json=request.model_dump())
                     response.raise_for_status()
                     return ExecuteResult(**response.json())
@@ -1984,7 +2029,7 @@ class KernelManager:
 
             def _post() -> None:
                 try:
-                    with httpx.Client(timeout=httpx.Timeout(_CELL_EXECUTION_TIMEOUT)) as client:
+                    with _sync_client(_CELL_EXECUTION_TIMEOUT) as client:
                         resp = client.post(url, json=request.model_dump())
                         resp.raise_for_status()
                         result_holder[0] = ExecuteResult(**resp.json())
@@ -2075,7 +2120,7 @@ class KernelManager:
         if should_try_http:
             try:
                 url = f"{self._kernel_url(kernel)}/interrupt"
-                with httpx.Client(timeout=httpx.Timeout(5.0)) as client:
+                with _sync_client(5.0) as client:
                     resp = client.post(url, json={"exec_token": exec_token or ""})
                     if resp.status_code == 200:
                         logger.info("Interrupted kernel '%s' via HTTP", kernel_id)
@@ -2106,7 +2151,7 @@ class KernelManager:
             await self._ensure_running(kernel_id)
 
         url = f"{self._kernel_url(kernel)}/clear"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with _async_client(30.0) as client:
             response = await client.post(url)
             response.raise_for_status()
 
@@ -2117,7 +2162,7 @@ class KernelManager:
             self._ensure_running_sync(kernel_id)
 
         url = f"{self._kernel_url(kernel)}/clear"
-        with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
+        with _sync_client(30.0) as client:
             response = client.post(url)
             response.raise_for_status()
 
@@ -2136,7 +2181,7 @@ class KernelManager:
         payload: dict = {"node_ids": node_ids}
         if flow_id is not None:
             payload["flow_id"] = flow_id
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with _async_client(30.0) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             return ClearNodeArtifactsResult(**response.json())
@@ -2157,7 +2202,7 @@ class KernelManager:
         payload: dict = {"node_ids": node_ids}
         if flow_id is not None:
             payload["flow_id"] = flow_id
-        with httpx.Client(timeout=httpx.Timeout(30.0)) as client:
+        with _sync_client(30.0) as client:
             response = client.post(url, json=payload)
             response.raise_for_status()
             return ClearNodeArtifactsResult(**response.json())
@@ -2169,7 +2214,7 @@ class KernelManager:
             await self._ensure_running(kernel_id)
 
         url = f"{self._kernel_url(kernel)}/clear_namespace"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with _async_client(30.0) as client:
             response = await client.post(url, params={"flow_id": flow_id})
             response.raise_for_status()
 
@@ -2180,7 +2225,7 @@ class KernelManager:
             await self._ensure_running(kernel_id)
 
         url = f"{self._kernel_url(kernel)}/artifacts/node/{node_id}"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with _async_client(30.0) as client:
             response = await client.get(url)
             response.raise_for_status()
             return response.json()
@@ -2201,10 +2246,24 @@ class KernelManager:
             return {}
         url = f"{self._kernel_url(kernel)}/lsp/{op}"
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+            async with _async_client(5.0) as client:
                 response = await client.post(url, json=payload)
                 response.raise_for_status()
                 return response.json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404 and kernel_id not in self._lsp_unsupported_warned:
+                self._lsp_unsupported_warned.add(kernel_id)
+                logger.warning(
+                    "Kernel '%s' (runtime %s, image '%s') has no code-intelligence endpoint; notebook "
+                    "completions fall back to client-side sources. Pull %s and restart the kernel.",
+                    kernel_id,
+                    kernel.kernel_version,
+                    kernel.image,
+                    _flavour_images().get(kernel.image_flavour, "a current kernel image"),
+                )
+            else:
+                logger.debug("kernel lsp/%s failed: %s", op, exc)
+            return {}
         except (httpx.HTTPError, OSError) as exc:
             logger.debug("kernel lsp/%s failed: %s", op, exc)
             return {}
@@ -2216,7 +2275,7 @@ class KernelManager:
             await self._ensure_running(kernel_id)
 
         url = f"{self._kernel_url(kernel)}/display_outputs"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with _async_client(30.0) as client:
             response = await client.get(url, params={"flow_id": flow_id, "node_id": node_id})
             response.raise_for_status()
             return response.json()
@@ -2228,7 +2287,7 @@ class KernelManager:
             await self._ensure_running(kernel_id)
 
         url = f"{self._kernel_url(kernel)}/artifact_preview"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with _async_client(30.0) as client:
             response = await client.get(url, params={"flow_id": flow_id, "name": name})
             response.raise_for_status()
             return response.json()
@@ -2242,7 +2301,7 @@ class KernelManager:
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
         url = f"{self._kernel_url(kernel)}/recover"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+        async with _async_client(120.0) as client:
             response = await client.post(url)
             response.raise_for_status()
             return RecoveryStatus(**response.json())
@@ -2254,7 +2313,7 @@ class KernelManager:
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
         url = f"{self._kernel_url(kernel)}/recovery-status"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with _async_client(30.0) as client:
             response = await client.get(url)
             response.raise_for_status()
             return RecoveryStatus(**response.json())
@@ -2266,7 +2325,7 @@ class KernelManager:
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
         url = f"{self._kernel_url(kernel)}/cleanup"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
+        async with _async_client(60.0) as client:
             response = await client.post(url, json=request.model_dump())
             response.raise_for_status()
             return CleanupResult(**response.json())
@@ -2278,7 +2337,7 @@ class KernelManager:
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
         url = f"{self._kernel_url(kernel)}/persistence"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with _async_client(30.0) as client:
             response = await client.get(url)
             response.raise_for_status()
             return ArtifactPersistenceInfo(**response.json())
@@ -2291,7 +2350,7 @@ class KernelManager:
 
         url = f"{self._kernel_url(kernel)}/memory"
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+            async with _async_client(5.0) as client:
                 response = await client.get(url)
                 response.raise_for_status()
                 return KernelMemoryInfo(**response.json())
@@ -2305,7 +2364,7 @@ class KernelManager:
             raise RuntimeError(f"Kernel '{kernel_id}' is not running (state: {kernel.state})")
 
         url = f"{self._kernel_url(kernel)}/artifacts"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with _async_client(30.0) as client:
             response = await client.get(url)
             response.raise_for_status()
             return response.json()
@@ -2381,7 +2440,7 @@ class KernelManager:
 
         while time.monotonic() < deadline:
             try:
-                with httpx.Client(timeout=httpx.Timeout(5.0)) as client:
+                with _sync_client(5.0) as client:
                     response = client.get(url)
                     if response.status_code == 200:
                         data = response.json()
