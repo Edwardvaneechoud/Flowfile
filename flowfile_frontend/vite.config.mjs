@@ -30,7 +30,9 @@ export default defineConfig({
     // `tauri dev` invoking `npm run dev:web` as `beforeDevCommand`).
     cacheDir: Path.join(__dirname, 'node_modules', '.vite'),
     server: {
-        host: '0.0.0.0',
+        // Listen dual-stack (::), not 0.0.0.0: browsers try ::1 first for `localhost`, and
+        // Windows silently drops SYNs to unbound loopback ports, costing ~300ms per new socket.
+        host: true,
         port: 8080,
         // Don't silently jump to 8082 when 8080/8081 are busy — fail fast so
         // Tauri's hard-coded devUrl doesn't end up pointing at the wrong port.
