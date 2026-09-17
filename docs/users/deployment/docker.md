@@ -138,8 +138,8 @@ volumes:
 | `WORKER_HOST` | Worker hostname | `flowfile-worker` |
 | `CORE_HOST` | Core hostname | `flowfile-core` |
 | `FLOWFILE_KERNEL_IMAGE` | Override the base kernel image for Python-script nodes | Registry default (unset ⇒ the tag in `kernel/images.py`) |
-| `FLOWFILE_TELEMETRY` | Kill switch for anonymous usage telemetry. A falsy value (`0`/`false`/`no`/`off`) hard-disables it before any prompt or send; any other value grants nothing by itself. | `0` in the bundled compose |
-| `FLOWFILE_TELEMETRY_ENDPOINT` | Collector URL for anonymous usage telemetry, used verbatim; overrides the built-in default `https://events.flowfile.app/events`. Unset or empty ⇒ that default, so blanking it does not disable telemetry. | Empty in the bundled compose ⇒ the built-in collector |
+| `FLOWFILE_TELEMETRY` | Disables usage telemetry for the whole deployment when set to `0`/`false`/`no`/`off`. Other values have no effect; users still have to opt in. | `0` in the bundled compose |
+| `FLOWFILE_TELEMETRY_ENDPOINT` | Send telemetry to a different collector URL. Unset or empty means the default `https://events.flowfile.app/events`. Blanking it does not disable telemetry. | Empty in the bundled compose ⇒ the built-in collector |
 
 ### Git project tracking
 
@@ -147,7 +147,7 @@ When `FLOWFILE_ENABLE_PROJECTS` is on, Flowfile can mirror your flows, connectio
 
 ### Anonymous usage telemetry
 
-Flowfile's opt-in usage telemetry is hard-off in the bundled compose: it ships `FLOWFILE_TELEMETRY=0`, which disables everything before any consent prompt, file read, or send. To allow it, set `FLOWFILE_TELEMETRY=1` in your `.env` and have an administrator turn it on in the UI — no endpoint configuration is needed, because events go to the Flowfile project's collector at `events.flowfile.app` by default. To keep them in-house instead, set `FLOWFILE_TELEMETRY_ENDPOINT` to your own collector URL; note that the bundled compose passes that variable through as an empty value, which falls back to the built-in default, so leaving it blank is not a way to switch telemetry off. Consent here is not a per-user choice: it is one deployment-wide setting an administrator grants on behalf of every user of that server, so other users never see the consent dialog and view the state read-only under **Settings → Preferences → Privacy**. [Telemetry & Privacy](../telemetry.md) documents every event and field that can be sent.
+Flowfile's opt-in usage telemetry is hard-off in the bundled compose: it ships `FLOWFILE_TELEMETRY=0`, which disables everything before any consent prompt, file read, or send. To allow it, set `FLOWFILE_TELEMETRY=1` in your `.env` and have an administrator turn it on in the UI — no endpoint configuration is needed, because events go to the Flowfile project's collector at `events.flowfile.app` by default. To keep them in-house instead, set `FLOWFILE_TELEMETRY_ENDPOINT` to your own collector URL; note that the bundled compose passes that variable through as an empty value, which falls back to the built-in default, so leaving it blank is not a way to switch telemetry off. Consent here is not a per-user choice: it is one deployment-wide setting an administrator grants on behalf of every user of that server, so other users never see the consent dialog and view the state read-only under **Settings → Preferences → Privacy**. [Privacy & Telemetry](../telemetry.md) documents every event and field that can be sent.
 
 ## .env Example
 
