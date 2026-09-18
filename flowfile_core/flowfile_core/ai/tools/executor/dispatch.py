@@ -262,7 +262,7 @@ def _handle_graph(
     # autonomous run-node is unsafe (worker collects, user code,
     # external systems); propose_subgraph is redundant with the
     # planner's per-step staging. This rejection branch stays as
-    # defence-in-depth in case a future workstream re-adds either before
+    # defence-in-depth in case either is re-added before
     # wiring an implementation.
     return _reject_and_audit(
         tool_name=tool_name,

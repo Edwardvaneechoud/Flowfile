@@ -53,6 +53,14 @@ class RemoteExecutionError(Exception):
         self.original_class = original_class
 
 
+class InvalidExpressionError(Exception):
+    """A formula/advanced-filter node's expression cannot run against its input schema.
+
+    Raised by the execution gate from a data-free check, so the offending node fails with
+    a readable message before anything downstream collects its lazy plan and steals the blame.
+    """
+
+
 def recover_error_class(cause: BaseException | None = None, description: str | None = None) -> str | None:
     """Best available original exception class name for a worker-side failure.
 

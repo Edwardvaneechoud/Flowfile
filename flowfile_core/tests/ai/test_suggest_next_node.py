@@ -197,7 +197,7 @@ def test_ghost_node_surface_in_lockstep() -> None:
     assert "ghost_node" in ctx_builder.SURFACE_TO_LEVEL
     assert ctx_builder.SURFACE_TO_LEVEL["ghost_node"] == "copilot"
     assert "ghost_node" in tool_registry.SURFACE_PRESETS
-    # Preset is a non-empty frozenset (W30 invariant).
+    # Preset is a non-empty frozenset.
     assert tool_registry.SURFACE_PRESETS["ghost_node"]
     tool_registry._check_preset_coverage()  # must not raise
 

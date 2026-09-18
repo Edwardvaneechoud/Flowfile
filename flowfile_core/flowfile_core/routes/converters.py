@@ -11,7 +11,6 @@ import os
 import re
 from pathlib import Path
 
-import yaml
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
@@ -19,7 +18,12 @@ from flowfile_core import events, flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.flowfile import node_requests
-from flowfile_core.flowfile.converters.alteryx import ConversionReport, YxmdParseError, convert_yxmd
+from flowfile_core.flowfile.converters.alteryx import (
+    ConversionReport,
+    YxmdParseError,
+    convert_yxmd,
+    dump_flow_yaml,
+)
 from flowfile_core.routes.file_manager import _open_unique
 from shared.storage_config import storage
 
@@ -91,13 +95,7 @@ async def import_alteryx_workflow(
 
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            yaml.dump(
-                result.flow_data.model_dump(mode="json"),
-                handle,
-                default_flow_style=False,
-                sort_keys=False,
-                allow_unicode=True,
-            )
+            dump_flow_yaml(result.flow_data, handle)
     except BaseException:
         flow_path.unlink(missing_ok=True)
         raise

@@ -9,7 +9,7 @@ reach the mechanism without importing that (very large) module.
 
 import difflib
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -23,6 +23,7 @@ from flowfile_core.schemas import transform_schema
 FormulaErrorKind = Literal["config", "parse", "missing_column", "type"]
 
 _MISSING_COLUMN_RE = re.compile(r'unable to find column "(.*?)"')
+MAX_ISSUE_LENGTH = 200
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,74 @@ def first_line(message: str) -> str:
     return str(message).strip()
 
 
+# Date functions whose input must already be temporal; the second set also needs a time component.
+_DATE_INPUT_FUNCTIONS = frozenset(
+    {
+        "year",
+        "month",
+        "day",
+        "week",
+        "weekday",
+        "dayofweek",
+        "quarter",
+        "dayofyear",
+        "format_date",
+        "end_of_month",
+        "start_of_month",
+        "date_trim",
+        "date_truncate",
+        "add_days",
+        "add_years",
+        "add_months",
+        "add_weeks",
+        "date_diff_days",
+    }
+)
+_DATETIME_INPUT_FUNCTIONS = frozenset(
+    {
+        "hour",
+        "minute",
+        "second",
+        "add_hours",
+        "add_minutes",
+        "add_seconds",
+        "datetime_diff_seconds",
+        "datetime_diff_nanoseconds",
+    }
+)
+_TEMPORAL_FUNCTIONS = _DATE_INPUT_FUNCTIONS | _DATETIME_INPUT_FUNCTIONS
+
+_UNSUPPORTED_TEXT_DTYPE = re.compile(r"`\w+` operation not supported for dtype `str`")
+_STRING_LITERAL = re.compile(r"\"[^\"]*\"|'[^']*'")
+_COLUMN_REF = re.compile(r"\[([^\[\]]+)\]")
+_CALL = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+
+
+def text_dtype_hint(schema: Mapping[str, pl.DataType], func_string: str, message: str) -> str | None:
+    """A message naming the text column and the cast that fixes it, or None to keep polars' wording.
+
+    Polars reports its own method name and dtype ("`to_string` operation not supported for dtype
+    `str`"), which names neither the user's function nor their column. This rewrites only the one
+    shape it can read with certainty — a date function applied to exactly one String column —
+    and returns None for anything less certain, so the caller falls back to polars' own line.
+    """
+    if not _UNSUPPORTED_TEXT_DTYPE.search(message):
+        return None
+    bare = _STRING_LITERAL.sub('""', func_string)
+    columns = [c for c in dict.fromkeys(_COLUMN_REF.findall(bare)) if schema.get(c) == pl.String]
+    calls = list(dict.fromkeys(c for c in _CALL.findall(bare) if c in _TEMPORAL_FUNCTIONS))
+    if len(columns) != 1 or not calls:
+        return None
+    column = columns[0]
+    if any(c in _DATETIME_INPUT_FUNCTIONS for c in calls):
+        wanted, wrap = "a Datetime", f'to_datetime([{column}], "%Y-%m-%d %H:%M:%S")'
+    else:
+        wanted, wrap = "a Date or Datetime", f'to_date([{column}], "%Y-%m-%d")'
+    subject = calls[0] if len(calls) == 1 else "this date function"
+    hint = f"{subject} needs {wanted} column; '{column}' is text — wrap it in {wrap}"
+    return hint[:MAX_ISSUE_LENGTH]
+
+
 def missing_column_name(message: str) -> str | None:
     """The column Polars could not find, when its message names one."""
     match = _MISSING_COLUMN_RE.search(str(message))
@@ -133,13 +202,17 @@ def build_expression(entry: FormulaEntry) -> pl.Expr:
 
 
 def classify_polars_error(
-    entry: FormulaEntry, exc: pl.exceptions.PolarsError, columns: Iterable[str] = ()
+    entry: FormulaEntry,
+    exc: pl.exceptions.PolarsError,
+    columns: Iterable[str] = (),
+    schema: Mapping[str, pl.DataType] | None = None,
 ) -> FormulaEntryError:
     """The typed error for a Polars failure raised while resolving or evaluating *entry*.
 
     Shared by the schema-only chain walk and the sampled preview so both describe the same
     failure with the same words. *columns* is what the entry could have referenced; a missing
-    column close to one of them gets a "did you mean" hint and a structured suggestion.
+    column close to one of them gets a "did you mean" hint and a structured suggestion. With
+    *schema* a type error can also name the text column and the cast that fixes it.
     """
     if isinstance(exc, pl.exceptions.ColumnNotFoundError):
         message = str(exc)
@@ -149,7 +222,10 @@ def classify_polars_error(
         return FormulaEntryError(
             entry.position, entry.output_name, missing_column_detail(message, suggestion), "missing_column", suggestion
         )
-    return FormulaEntryError(entry.position, entry.output_name, first_line(str(exc)), "type")
+    detail = first_line(str(exc))
+    if schema is not None:
+        detail = text_dtype_hint(schema, entry.expression, detail) or detail
+    return FormulaEntryError(entry.position, entry.output_name, detail, "type")
 
 
 def formula_entry(position: int, fn: transform_schema.FunctionInput) -> FormulaEntry:
@@ -197,5 +273,6 @@ def apply_formula_entries(lf: pl.LazyFrame, entries: Sequence[FormulaEntry]) -> 
         try:
             lf.collect_schema()
         except pl.exceptions.PolarsError as e:
-            raise classify_polars_error(entry, e, before.collect_schema().names()) from e
+            schema_before = before.collect_schema()
+            raise classify_polars_error(entry, e, schema_before.names(), dict(schema_before)) from e
     return lf

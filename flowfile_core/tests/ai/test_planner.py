@@ -675,7 +675,7 @@ async def test_three_consecutive_rejections_fail() -> None:
 
 @pytest.mark.asyncio
 async def test_drift_mid_stream_pauses_session() -> None:
-    """External addition mid-stream → drift fires (W45 — id-set only)."""
+    """External addition mid-stream → drift fires (id-set only)."""
     flow = _make_flow()
     sess = _make_session(flow, surface="agent_complex")
 
@@ -1241,7 +1241,7 @@ async def test_w38_rejected_event_carries_op_kind_for_ui_styling() -> None:
 
 @pytest.mark.asyncio
 async def test_allocate_id_collides_with_resolved_upstream_is_refused() -> None:
-    """AC1 — proposed ``node_id`` ∈ resolved upstream → ``self_loop_prevented``.
+    """Proposed ``node_id`` ∈ resolved upstream → ``self_loop_prevented``.
 
     Reproduces the user's transcript root cause via the LLM-collision path:
     LLM emits ``add_filter(node_id=3, upstream_node_ids=[3])``. The planner-
@@ -1311,7 +1311,7 @@ async def test_allocate_id_collides_with_resolved_upstream_is_refused() -> None:
 
 @pytest.mark.asyncio
 async def test_resume_drops_stale_staged_results_referencing_dead_upstream() -> None:
-    """AC3 — pre-pause stale upstream reference is dropped on resume; next add chains cleanly."""
+    """Pre-pause stale upstream reference is dropped on resume; next add chains cleanly."""
     flow = _make_flow()  # contains node 1 only
     sess = _make_session(flow, surface="agent_complex")
     # Simulate: pre-pause the agent staged node 7 chained off node 5; user
@@ -1373,7 +1373,7 @@ async def test_resume_drops_stale_staged_results_referencing_dead_upstream() -> 
 
 @pytest.mark.asyncio
 async def test_resume_drops_stale_staged_results_with_now_live_id() -> None:
-    """AC4 — pre-pause staged ``node_id`` is now live → entry dropped, audit row written."""
+    """Pre-pause staged ``node_id`` is now live → entry dropped, audit row written."""
     flow = _make_flow()  # node 1
     # User manually added a node that got id 3 during the pause.
     _add_orders(flow, node_id=3)
@@ -1425,7 +1425,7 @@ async def test_resume_drops_stale_staged_results_with_now_live_id() -> None:
 
 @pytest.mark.asyncio
 async def test_audit_row_for_add_includes_node_id_instrumentation() -> None:
-    """AC5 — happy-path ``add_*`` audit row carries ``__planner_meta__`` instrumentation."""
+    """Happy-path ``add_*`` audit row carries ``__planner_meta__`` instrumentation."""
     flow = _make_flow()
     sess = _make_session(flow, surface="agent_complex")
     provider = _ScriptedProvider(
@@ -1512,9 +1512,9 @@ def test_w70_planner_prompt_warns_against_redundant_connect() -> None:
     # ``single_stage_op`` stage of ``agent_staged`` (both surfaces use
     # the legacy ``planner.md`` suffix).
     prompt = assemble_system_prompt("agent_complex")
-    assert "## Connection discipline" in prompt, "W70 connection-discipline header missing"
-    assert "Do NOT emit a follow-up" in prompt, "W70 redundant-connect refusal phrase missing"
-    assert "never invent a fresh integer" in prompt, "W70 invent-id refusal phrase missing"
+    assert "## Connection discipline" in prompt, "connection-discipline header missing"
+    assert "Do NOT emit a follow-up" in prompt, "redundant-connect refusal phrase missing"
+    assert "never invent a fresh integer" in prompt, "invent-id refusal phrase missing"
 
     prompt_staged_single_op = assemble_system_prompt(
         "agent_staged", stage="single_stage_op"
@@ -1854,7 +1854,7 @@ async def test_planner_stages_modification_with_existing_node_target() -> None:
     """planner dispatches a single ``update_node_settings`` call,
     stages the modification, and the bundled diff has 1 modification, 0
     additions. ``staged_node_ids`` is unchanged because modifications
-    target *existing* node ids (W45 drift-detection invariant).
+    target *existing* node ids (drift-detection invariant).
     """
     from flowfile_core.schemas import transform_schema
 

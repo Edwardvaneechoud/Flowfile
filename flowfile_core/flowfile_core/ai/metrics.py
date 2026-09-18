@@ -25,7 +25,7 @@ prompt-logging is enabled (the JSONL log is opt-in; basic call
 traffic counters are always-on so dashboards don't go dark when
 logging is off). The implementation is a plain
 ``collections.Counter`` — no Prometheus client dep gets pulled in;
-a future workstream can swap it for the proper metric backend
+a later change can swap it for a proper metric backend
 without changing the call signature.
 """
 

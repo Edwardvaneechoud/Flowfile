@@ -1023,7 +1023,7 @@ def test_fill_settings_formula_bare_string_coerces_to_function_input() -> None:
     asyncio.run(_drain(run_planner_session(session=sess, flow=flow, provider=provider, scheduler=_no_wait_scheduler())))
 
     assert len(sess.staged_results) == 1, (
-        "v1.13B: bare-string formula must auto-coerce to a valid "
+        "bare-string formula must auto-coerce to a valid "
         f"FunctionInput envelope; got {sess.staged_results}"
     )
     payload = sess.staged_results[0].staged_node_payload or {}
@@ -1075,7 +1075,7 @@ def test_fill_settings_formula_refusal_text_disambiguates_function_field() -> No
     assert "[column_name]" in text or "[col" in text, text
     # The misread-prone phrasing is gone for this branch.
     assert "JSON-encoded string" not in text, (
-        "v1.13B: FunctionInput refusal must drop the ambiguous "
+        "FunctionInput refusal must drop the ambiguous "
         f"'not as a JSON-encoded string' clause; got: {text!r}"
     )
 
@@ -1466,7 +1466,7 @@ def test_pick_upstream_user_message_includes_staged_session_block() -> None:
     assert cycle2_pick_up_call["tools"][0].name == PICK_UPSTREAM_TOOL_NAME
     user_msg = cycle2_pick_up_call["messages"][1].content or ""
     assert "## Staged this session" in user_msg, (
-        "v1.12A: pick_upstream user message must include the staged-this-session "
+        "pick_upstream user message must include the staged-this-session "
         f"block on cycle 2; got: {user_msg!r}"
     )
     # The staged filter (node 2) and at least one of its predicted columns
@@ -1530,7 +1530,7 @@ def test_pick_upstream_user_message_unchanged_when_no_staged_results() -> None:
     assert cycle1_pick_up_call["tools"][0].name == PICK_UPSTREAM_TOOL_NAME
     user_msg = cycle1_pick_up_call["messages"][1].content or ""
     assert "## Staged this session" not in user_msg, (
-        "v1.12A: addendum must not appear when no add_* has been staged this session"
+        "addendum must not appear when no add_* has been staged this session"
     )
 
 

@@ -582,7 +582,7 @@ def test_inline_action_tools_none_invariant(
 def test_lazy_litellm_import_for_inline_action_routes() -> None:
     """``import flowfile_core.ai.inline_action_routes`` mustn't pull litellm.
 
-    Same contract as W11/W12/W13/W20/W23/W50 — the module sits behind
+    Same contract as the other AI routers — the module sits behind
     the BYOK seam, not the ``provider_factory`` bootstrap, so the heavy
     SDK stays out of the import graph until a real call happens.
 

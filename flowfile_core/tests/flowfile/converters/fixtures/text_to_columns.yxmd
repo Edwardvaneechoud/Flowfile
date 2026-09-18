@@ -1,0 +1,94 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2021.4">
+  <Nodes>
+    <Node ToolID="811">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput"><Position x="60" y="60" /></GuiSettings>
+      <Properties><Configuration>
+        <NumRows value="1" />
+        <Fields><Field name="BatchNo" /><Field name="Blend" /></Fields>
+        <Data><r><c>7</c><c>oat;barley;rye</c></r></Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="812">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextToColumns.TextToColumns"><Position x="180" y="60" /></GuiSettings>
+      <Properties><Configuration>
+        <Field>Blend</Field>
+        <ErrorHandling>Last</ErrorHandling>
+        <RootName>Blend</RootName>
+        <Delimeters value=";" />
+        <NumFields value="3" />
+        <Flags value="0" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="813">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextToColumns.TextToColumns"><Position x="300" y="60" /></GuiSettings>
+      <Properties><Configuration>
+        <Field>Blend3</Field>
+        <ErrorHandling>Last</ErrorHandling>
+        <RootName>Portion</RootName>
+        <Delimeters value="\s/" />
+        <NumFields value="3" />
+        <Flags value="0" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="814">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextToColumns.TextToColumns"><Position x="420" y="60" /></GuiSettings>
+      <Properties><Configuration>
+        <Field>Portion1</Field>
+        <ErrorHandling>Last</ErrorHandling>
+        <RootName>Portion1</RootName>
+        <Delimeters value="~" />
+        <NumFields value="2" />
+        <Flags value="8" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="815">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextToColumns.TextToColumns"><Position x="540" y="60" /></GuiSettings>
+      <Properties><Configuration>
+        <Field>Portion2</Field>
+        <Delimeters value="\t" />
+        <NumFields value="1" />
+        <Flags value="0" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="816">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextToColumns.TextToColumns"><Position x="660" y="60" /></GuiSettings>
+      <Properties><Configuration>
+        <Field>Portion3</Field>
+        <RootName>Leftover</RootName>
+        <Delimeters value="~\s{}" />
+        <NumFields value="1" />
+        <Flags value="0" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="817">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextToColumns.TextToColumns"><Position x="780" y="60" /></GuiSettings>
+      <Properties><Configuration>
+        <Field>Portion3</Field>
+        <Delimeters value="~\s{}" />
+        <NumFields value="1" />
+        <Flags value="24" />
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="818">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextToColumns.TextToColumns"><Position x="900" y="60" /></GuiSettings>
+      <Properties><Configuration>
+        <Field>Portion3</Field>
+        <ErrorHandling>Last</ErrorHandling>
+        <RootName></RootName>
+        <Delimeters value=";" />
+        <NumFields value="4" />
+        <Flags value="0" />
+      </Configuration></Properties></Node>
+  </Nodes>
+  <Connections>
+    <Connection name="#1"><Origin ToolID="811" Connection="Output" /><Destination ToolID="812" Connection="Input" /></Connection>
+    <Connection name="#1"><Origin ToolID="812" Connection="Output" /><Destination ToolID="813" Connection="Input" /></Connection>
+    <Connection name="#1"><Origin ToolID="813" Connection="Output" /><Destination ToolID="814" Connection="Input" /></Connection>
+    <Connection name="#1"><Origin ToolID="814" Connection="Output" /><Destination ToolID="815" Connection="Input" /></Connection>
+    <Connection name="#1"><Origin ToolID="815" Connection="Output" /><Destination ToolID="816" Connection="Input" /></Connection>
+    <Connection name="#1"><Origin ToolID="816" Connection="Output" /><Destination ToolID="817" Connection="Input" /></Connection>
+    <Connection name="#1"><Origin ToolID="817" Connection="Output" /><Destination ToolID="818" Connection="Input" /></Connection>
+  </Connections>
+  <Properties><MetaInfo><Name>Text To Columns modes</Name></MetaInfo></Properties>
+</AlteryxDocument>

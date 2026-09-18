@@ -3,17 +3,17 @@
 Two tables that together back the BYOK + audit infrastructure for the
 LLM-integration feature.
 
-``ai_audit_events`` — per plan §9.4 ("Every AI action recorded"). Source for
+``ai_audit_events`` — every AI action recorded. Source for
 the §13 success metrics — tool-call validation pass rate, diff accept rate,
 token / cost roll-ups — plus the future ``GET /ai/audit/{flow_id}`` route.
 ``flow_id`` is a plain integer (not an FK to ``flow_registrations``) because
 draft flows aren't registered yet but still produce auditable AI actions.
 
-``ai_provider_credentials`` — per plan §6.5 / §8. BYOK API keys live in a
+``ai_provider_credentials`` — BYOK API keys live in a
 typed connection row that references the existing ``secrets`` table for the
 encrypted blob, mirroring ``cloud_storage_connections``. Per-user uniqueness
 on ``(user_id, provider)`` so re-saving a credential is idempotent on the
-natural key. The ``models`` column (per W29) holds a JSON-encoded list so a
+natural key. The ``models`` column holds a JSON-encoded list so a
 single API key (OpenRouter, Groq, …) can advertise its curated model set
 without a re-typing loop in the chat-drawer picker; stored as nullable
 ``Text`` to match the project's existing pattern for JSON-shaped data

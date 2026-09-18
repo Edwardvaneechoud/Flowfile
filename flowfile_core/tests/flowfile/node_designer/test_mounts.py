@@ -1,4 +1,4 @@
-"""Tests for custom-node mounts (workstream J):
+"""Tests for custom-node mounts:
 
 - mount persistence (add/remove/load) in mounts.json next to the default dir
 - validation: absolute, exists, is dir, not the default dir, no nesting

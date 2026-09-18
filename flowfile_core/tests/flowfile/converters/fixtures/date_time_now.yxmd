@@ -1,0 +1,60 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="DateTimeNow">
+        <Position x="10" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="Language">English</Value>
+        <Value name="OutputFormat">yyyy-MM-dd</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="DateTimeNow\Supporting_Macros\DTNEngine.yxmc" EngineDll="Macro" />
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect">
+        <Position x="110" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <SelectFields>
+          <SelectField field="DateTimeNow" selected="True" rename="RunDate" />
+          <SelectField field="*Unknown" selected="True" />
+        </SelectFields>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="DateTimeNow">
+        <Position x="10" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="Language">English</Value>
+        <Value name="OutputFormat">HH:mm:ss</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="DateTimeNow\Supporting_Macros\DTNEngine.yxmc" EngineDll="Macro" />
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="DateTimeNow">
+        <Position x="10" y="210" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="Language">French</Value>
+        <Value name="OutputFormat">yyyy-MM-dd</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="DateTimeNow\Supporting_Macros\DTNEngine.yxmc" EngineDll="Macro" />
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings Plugin="DateTimeNow">
+        <Position x="10" y="310" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="Language">English</Value>
+        <Value name="OutputFormat">yyyy-MM-ddTHH:mm</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="DateTimeNow\Supporting_Macros\DTNEngine.yxmc" EngineDll="Macro" />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="DTN" /><Destination ToolID="2" Connection="Input" /></Connection>
+  </Connections>
+  <Properties><MetaInfo><Name>Date Time Now</Name></MetaInfo></Properties>
+</AlteryxDocument>

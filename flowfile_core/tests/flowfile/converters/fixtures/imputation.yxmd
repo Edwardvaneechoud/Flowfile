@@ -1,0 +1,216 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="10" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <NumRows value="5" />
+        <Fields><Field name="Crate" /><Field name="Units" /><Field name="Weight" /></Fields>
+        <Data>
+          <r><c>alpha</c><c>4</c><c>11</c></r>
+          <r><c>bravo</c><c /><c>13</c></r>
+          <r><c>charlie</c><c>8</c><c /></r>
+          <r><c>delta</c><c>4</c><c>16</c></r>
+        </Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="11">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.TextInput.TextInput">
+        <Position x="810" y="10" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <NumRows value="3" />
+        <Fields><Field name="Units" /><Field name="Units_Indicator" /></Fields>
+        <Data>
+          <r><c>4</c><c>kept</c></r>
+          <r><c /><c>kept</c></r>
+        </Data>
+      </Configuration></Properties>
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings>
+        <Position x="110" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="listbox Select Incoming Fields">"Units","Weight"</Value>
+        <Value name="radio Null Value">True</Value>
+        <Value name="radio User Specified Replace From Value">False</Value>
+        <Value name="updown User Replace Value">0.00000</Value>
+        <Value name="radio Mean">False</Value>
+        <Value name="radio Median">False</Value>
+        <Value name="radio Mode">False</Value>
+        <Value name="radio User Specified Replace With Value">True</Value>
+        <Value name="updown User Replace With Value">0.00000</Value>
+        <Value name="checkbox Impute Indicator">False</Value>
+        <Value name="checkbox Imputed Values Separate Field">False</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="Imputation_v3.yxmc" EngineDll="Macro" />
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings>
+        <Position x="210" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="listbox Select Incoming Fields">"Units","Weight"</Value>
+        <Value name="radio Null Value">True</Value>
+        <Value name="radio User Specified Replace From Value">False</Value>
+        <Value name="updown User Replace Value">0.00000</Value>
+        <Value name="radio Mean">False</Value>
+        <Value name="radio Median">False</Value>
+        <Value name="radio Mode">False</Value>
+        <Value name="radio User Specified Replace With Value">True</Value>
+        <Value name="updown User Replace With Value">0.00000</Value>
+        <Value name="checkbox Impute Indicator">False</Value>
+        <Value name="checkbox Imputed Values Separate Field">True</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="Imputation_v3.yxmc" EngineDll="Macro" />
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings>
+        <Position x="310" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="listbox Select Incoming Fields">"Units","Weight"</Value>
+        <Value name="radio Null Value">True</Value>
+        <Value name="radio User Specified Replace From Value">False</Value>
+        <Value name="updown User Replace Value">0.00000</Value>
+        <Value name="radio Mean">False</Value>
+        <Value name="radio Median">False</Value>
+        <Value name="radio Mode">False</Value>
+        <Value name="radio User Specified Replace With Value">True</Value>
+        <Value name="updown User Replace With Value">0.00000</Value>
+        <Value name="checkbox Impute Indicator">True</Value>
+        <Value name="checkbox Imputed Values Separate Field">False</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="Imputation_v3.yxmc" EngineDll="Macro" />
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings>
+        <Position x="410" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="listbox Select Incoming Fields">"Units","Weight"</Value>
+        <Value name="radio Null Value">True</Value>
+        <Value name="radio User Specified Replace From Value">False</Value>
+        <Value name="updown User Replace Value">0.00000</Value>
+        <Value name="radio Mean">True</Value>
+        <Value name="radio Median">False</Value>
+        <Value name="radio Mode">False</Value>
+        <Value name="radio User Specified Replace With Value">False</Value>
+        <Value name="updown User Replace With Value">99.00000</Value>
+        <Value name="checkbox Impute Indicator">False</Value>
+        <Value name="checkbox Imputed Values Separate Field">False</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="Imputation_v3.yxmc" EngineDll="Macro" />
+    </Node>
+    <Node ToolID="6">
+      <GuiSettings>
+        <Position x="510" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="listbox Select Incoming Fields">"Units","Weight"</Value>
+        <Value name="radio Null Value">True</Value>
+        <Value name="radio User Specified Replace From Value">False</Value>
+        <Value name="updown User Replace Value">0.00000</Value>
+        <Value name="radio Mean">False</Value>
+        <Value name="radio Median">False</Value>
+        <Value name="radio Mode">True</Value>
+        <Value name="radio User Specified Replace With Value">False</Value>
+        <Value name="updown User Replace With Value">0.00000</Value>
+        <Value name="checkbox Impute Indicator">False</Value>
+        <Value name="checkbox Imputed Values Separate Field">False</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="Imputation_v3.yxmc" EngineDll="Macro" />
+    </Node>
+    <Node ToolID="7">
+      <GuiSettings>
+        <Position x="610" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="listbox Select Incoming Fields">"Crate"</Value>
+        <Value name="radio Null Value">True</Value>
+        <Value name="radio User Specified Replace From Value">False</Value>
+        <Value name="updown User Replace Value">0.00000</Value>
+        <Value name="radio Mean">False</Value>
+        <Value name="radio Median">True</Value>
+        <Value name="radio Mode">False</Value>
+        <Value name="radio User Specified Replace With Value">False</Value>
+        <Value name="updown User Replace With Value">0.00000</Value>
+        <Value name="checkbox Impute Indicator">False</Value>
+        <Value name="checkbox Imputed Values Separate Field">False</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="Imputation_v3.yxmc" EngineDll="Macro" />
+    </Node>
+    <Node ToolID="8">
+      <GuiSettings>
+        <Position x="710" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="listbox Select Incoming Fields">"Units","Weight"</Value>
+        <Value name="radio Null Value">True</Value>
+        <Value name="radio User Specified Replace From Value">False</Value>
+        <Value name="updown User Replace Value">0.00000</Value>
+        <Value name="radio Mean">True</Value>
+        <Value name="radio Median">False</Value>
+        <Value name="radio Mode">False</Value>
+        <Value name="radio User Specified Replace With Value">True</Value>
+        <Value name="updown User Replace With Value">0.00000</Value>
+        <Value name="checkbox Impute Indicator">False</Value>
+        <Value name="checkbox Imputed Values Separate Field">False</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="Imputation_v3.yxmc" EngineDll="Macro" />
+    </Node>
+    <Node ToolID="9">
+      <GuiSettings>
+        <Position x="810" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="listbox Select Incoming Fields">"Units","Weight"</Value>
+        <Value name="radio Null Value">False</Value>
+        <Value name="radio User Specified Replace From Value">True</Value>
+        <Value name="updown User Replace Value">4.00000</Value>
+        <Value name="radio Mean">False</Value>
+        <Value name="radio Median">True</Value>
+        <Value name="radio Mode">False</Value>
+        <Value name="radio User Specified Replace With Value">False</Value>
+        <Value name="updown User Replace With Value">0.00000</Value>
+        <Value name="checkbox Impute Indicator">True</Value>
+        <Value name="checkbox Imputed Values Separate Field">False</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="Imputation_v3.yxmc" EngineDll="Macro" />
+    </Node>
+    <Node ToolID="10">
+      <GuiSettings>
+        <Position x="910" y="110" />
+      </GuiSettings>
+      <Properties><Configuration>
+        <Value name="listbox Select Incoming Fields">"Units"</Value>
+        <Value name="radio Null Value">True</Value>
+        <Value name="radio User Specified Replace From Value">False</Value>
+        <Value name="updown User Replace Value">0.00000</Value>
+        <Value name="radio Mean">False</Value>
+        <Value name="radio Median">False</Value>
+        <Value name="radio Mode">False</Value>
+        <Value name="radio User Specified Replace With Value">True</Value>
+        <Value name="updown User Replace With Value">0.00000</Value>
+        <Value name="checkbox Impute Indicator">True</Value>
+        <Value name="checkbox Imputed Values Separate Field">False</Value>
+      </Configuration></Properties>
+      <EngineSettings Macro="Imputation_v3.yxmc" EngineDll="Macro" />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="2" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="3" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="4" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="5" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="6" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="7" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="8" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="1" Connection="Output" /><Destination ToolID="9" Connection="Input" /></Connection>
+    <Connection><Origin ToolID="11" Connection="Output" /><Destination ToolID="10" Connection="Input" /></Connection>
+  </Connections>
+  <Properties><MetaInfo><Name>Imputation macro</Name></MetaInfo></Properties>
+</AlteryxDocument>

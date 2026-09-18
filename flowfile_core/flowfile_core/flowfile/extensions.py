@@ -113,7 +113,7 @@ def evaluate_preview_entry(df: pl.DataFrame, entry: FormulaEntry, *, as_predicat
     except FormulaEntryError as exc:
         return InstantFuncResult(result=exc.detail, success=False)
     except pl.exceptions.PolarsError as exc:
-        return InstantFuncResult(result=classify_polars_error(entry, exc, df.columns).detail, success=False)
+        return InstantFuncResult(result=classify_polars_error(entry, exc, df.columns, df.schema).detail, success=False)
     except Exception:
         return InstantFuncResult(result="expression could not be evaluated", success=False)
     if as_predicate and not real_time_result.is_filterable_result():

@@ -3423,6 +3423,12 @@ class FlowGraph:
             setting_input=filter_settings,
             input_node_ids=[filter_settings.depending_on_id],
         )
+        from flowfile_core.flowfile.settings_validation import node_expression_issue
+
+        issue = node_expression_issue(self.get_node(filter_settings.node_id), allow_prediction=True)
+        if issue is not None and issue.kind in ("type", "parse"):
+            return False, issue.message
+        return True, ""
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_record_count(self, node_number_of_records: input_schema.NodeRecordCount):
@@ -3635,9 +3641,9 @@ class FlowGraph:
         Args:
             function_settings: The settings for the formula operation.
         """
-        entries = [formula_entry(position, item) for position, item in function_settings.active_entries()]
         new_cols: dict[str, FlowfileColumn] = {}
-        for entry in entries:
+        for _, item in function_settings.active_entries():
+            entry = formula_entry(1, item)
             # Overwriting an existing name keeps its first position, like polars with_columns.
             new_cols[entry.output_name] = (
                 FlowfileColumn.from_input(column_name=entry.output_name, data_type=str(entry.output_data_type))
@@ -3646,6 +3652,8 @@ class FlowGraph:
             )
 
         def _func(fl: FlowDataEngine):
+            # Read the settings at call time: the run substitutes ${param} refs in place first.
+            entries = [formula_entry(position, item) for position, item in function_settings.active_entries()]
             return fl.apply_sql_formulas(entries)
 
         self.add_node_step(
@@ -3657,6 +3665,11 @@ class FlowGraph:
             setting_input=function_settings,
             input_node_ids=[function_settings.depending_on_id],
         )
+        from flowfile_core.flowfile.settings_validation import node_formula_chain_issue
+
+        message = node_formula_chain_issue(self.get_node(function_settings.node_id), allow_prediction=True)
+        if message is not None:
+            return False, message
         return True, ""
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)

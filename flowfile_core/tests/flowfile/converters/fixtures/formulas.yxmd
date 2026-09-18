@@ -48,7 +48,7 @@
           <FormulaFields>
             <FormulaField expression="[amount] * 2" field="total" size="8" type="Double" />
             <FormulaField expression="Uppercase([name])" field="name" size="254" type="V_WString" />
-            <FormulaField expression="REGEX_Match([name], &quot;^a.*&quot;)" field="name_flag" size="1" type="Bool" />
+            <FormulaField expression="REGEX_Match([name], &quot;^(?=a).*&quot;)" field="name_flag" size="1" type="Bool" />
             <FormulaField expression="ToNumber(REGEX_Replace(ToString([amount]), &quot;[^0-9]&quot;, &quot;&quot;))" field="amount" size="8" type="Double" />
           </FormulaFields>
         </Configuration>

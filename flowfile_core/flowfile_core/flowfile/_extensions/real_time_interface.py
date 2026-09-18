@@ -8,11 +8,14 @@ from polars_expr_transformer import simple_function_to_expr
 
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_data_engine.formula_entries import (
+    MAX_ISSUE_LENGTH,
     ColumnSuggestion,
     FormulaEntryError,
     apply_formula_entries,
+    classify_polars_error,
     formula_entry,
     parse_detail,
+    text_dtype_hint,
 )
 from flowfile_core.schemas import transform_schema
 
@@ -84,7 +87,7 @@ class ExpressionIssue:
     suggestion: ColumnSuggestion | None = None
 
 
-_MAX_ISSUE_LENGTH = 200
+_MAX_ISSUE_LENGTH = MAX_ISSUE_LENGTH
 _PROBE_ALIAS = "__ff_probe__"
 
 
@@ -103,9 +106,11 @@ def check_expression(
 ) -> ExpressionIssue | None:
     """Why *func_string* cannot run against *schema*, or None when it resolves.
 
-    Data-free: the expression is resolved against an empty LazyFrame, so no row is ever read
-    or collected. Uses the same parser as execution (``simple_function_to_expr``), and applies
-    it the same way execution does — ``filter`` for a predicate, ``with_columns`` otherwise.
+    Data-free: the expression runs against a zero-row LazyFrame built from *schema* alone — no
+    source, no rows — so the collect type-checks every namespace (``.dt``, ``.str``, ``.list``)
+    without reading data. ``collect_schema`` alone answers those without type-checking them.
+    Uses the same parser as execution (``simple_function_to_expr``), and applies it the same way
+    execution does — ``filter`` for a predicate, ``with_columns`` otherwise.
     Returns None for a blank expression and for anything it cannot classify: silence over guessing.
     """
     if not func_string or not func_string.strip():
@@ -117,11 +122,12 @@ def check_expression(
     try:
         lf = pl.LazyFrame(schema=schema)
         frame = lf.filter(expr) if as_predicate else lf.with_columns(expr.alias(_PROBE_ALIAS))
-        frame.collect_schema()
+        frame.collect()
     except ColumnNotFoundError as exc:
         return ExpressionIssue(_first_line(exc), "missing_column")
     except PolarsError as exc:
-        return ExpressionIssue(_first_line(exc), "type")
+        message = _first_line(exc)
+        return ExpressionIssue(text_dtype_hint(schema, func_string, message) or message, "type")
     except Exception:
         logger.debug("Expression check skipped for %r", func_string, exc_info=True)
         return None
@@ -149,7 +155,9 @@ def check_expression_chain(
 
     Entry N is resolved against the base schema plus the outputs of entries 1..N-1, so a
     reference to an earlier entry's column is correct and a reference to a later one is not.
-    Data-free: every step resolves against an empty LazyFrame.
+    Data-free: every step resolves AND collects against an empty LazyFrame — the collect is
+    what type-checks the ``.dt``/``.str``/``.list`` namespaces the engine's schema resolution
+    accepts unexamined, exactly as ``check_expression`` does for a single expression.
 
     A failing entry still contributes its declared output column (String under Auto) so the
     entries below it are validated against the schema the user is building, not a truncated
@@ -180,9 +188,18 @@ def check_expression_chain(
         fallback = {**current, output_name: declared}
         issue: ExpressionIssue | None = None
         try:
-            current = dict(apply_formula_entries(pl.LazyFrame(schema=current), [entry]).collect_schema())
+            stepped = apply_formula_entries(pl.LazyFrame(schema=current), [entry])
+            # The engine step resolves the schema only; the collect also type-checks the
+            # namespaces (.dt, .str, .list) that schema resolution accepts unexamined.
+            stepped.collect()
+            current = dict(stepped.collect_schema())
         except FormulaEntryError as exc:
             issue = ExpressionIssue(exc.detail[:_MAX_ISSUE_LENGTH], exc.kind, exc.suggestion)
+            current = fallback
+        except PolarsError as exc:
+            # The collect's own failure, classified by the same words the engine step uses.
+            failure = classify_polars_error(entry, exc, list(current), current)
+            issue = ExpressionIssue(failure.detail[:_MAX_ISSUE_LENGTH], failure.kind, failure.suggestion)
             current = fallback
         except Exception:
             logger.debug("Formula chain entry check skipped for %r", fn.function, exc_info=True)

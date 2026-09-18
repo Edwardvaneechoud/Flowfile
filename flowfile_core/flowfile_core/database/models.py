@@ -805,7 +805,7 @@ class DbInfo(Base):
 
 
 class AiAuditEvent(Base):
-    """One row per AI-driven action (plan §9.4).
+    """One row per AI-driven action.
 
     Records what the agent did on the user's behalf so the user can inspect
     after the fact. Source for the §13 success metrics (tool-call validation
@@ -838,7 +838,7 @@ class AiAuditEvent(Base):
 
 
 class AiProviderCredential(Base):
-    """One row per (user, provider) BYOK credential (plan §6.5, §8).
+    """One row per (user, provider) BYOK credential.
 
     Mirrors ``cloud_storage_connections``: plaintext metadata in the row,
     encrypted ``api_key`` blob via FK to the ``secrets`` table. Deletion of a

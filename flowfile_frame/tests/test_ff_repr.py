@@ -459,10 +459,10 @@ class TestWithColumnsFormulaConversion:
         )
 
     def test_flowfile_formulas_untranslatable_falls_back(self, sample_ff):
-        """When the translator can't handle a formula (e.g. to_date with a
-        format string), the legacy formula path is used as fallback."""
+        """When the translator can't handle a formula (``concat`` has no
+        FlowFrame code emitter), the legacy formula path is used as fallback."""
         result = sample_ff.with_columns(
-            flowfile_formulas=['to_date([name], "%Y-%m-%d")'],
+            flowfile_formulas=['concat([name], "x")'],
             output_column_names=["d"],
         )
         node = result.get_node_settings()

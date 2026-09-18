@@ -276,8 +276,8 @@ def test_response_shape_is_stable(
 
     ``persisted`` is intentionally always ``False`` in; cross-restart
     persistence is the user's responsibility (set ``FEATURE_FLAG_AI=true`` in
-    ``.env``). If a future workstream adds a write-to-disk path, that change
-    should be opt-in via a separate field rather than flipping this one.
+    ``.env``). If a write-to-disk path is added later, that change should be
+    opt-in via a separate field rather than flipping this one.
     """
     response = admin_client.post("/system/feature_flags/ai", json={"enabled": True})
     body = response.json()

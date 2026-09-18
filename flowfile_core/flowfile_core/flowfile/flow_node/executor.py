@@ -16,6 +16,7 @@ from flowfile_core.flowfile.flow_node.models import (
     ExecutionDecision,
     ExecutionStrategy,
     InvalidationReason,
+    InvalidExpressionError,
 )
 from flowfile_core.flowfile.flow_node.state import NodeExecutionState, SourceFileInfo
 from flowfile_core.schemas import schemas
@@ -144,6 +145,7 @@ class NodeExecutor:
         pending_source_info = self._pending_source_snapshot()
 
         try:
+            self._raise_on_invalid_expression()
             self._execute_with_strategy(state, decision.strategy, effective_performance_mode, node_logger)
             if pending_source_info is not None:
                 state.source_file_info = pending_source_info
@@ -176,6 +178,27 @@ class NodeExecutor:
         ):
             return ExecutionDecision(True, ExecutionStrategy.REMOTE, decision.reason)
         return decision
+
+    def _raise_on_invalid_expression(self) -> None:
+        """Fail a formula/advanced-filter node whose expression cannot run against its input.
+
+        The check is data-free (a zero-row collect). Running it here, before the strategy builds
+        the lazy plan, makes a leaf node's bad expression surface at all and attributes it to this
+        node instead of whichever downstream sink would otherwise be the first to collect it.
+
+        A formula node's own ``collect_schema`` step does not type-check the temporal/string
+        namespaces, so the chain check is what catches those — it is not redundant with it.
+        """
+        from flowfile_core.flowfile.settings_validation import node_expression_issue, node_formula_chain_issue
+
+        if self.node.node_type == "formula":
+            message = node_formula_chain_issue(self.node, allow_prediction=False)
+            if message is not None:
+                raise InvalidExpressionError(message)
+            return
+        issue = node_expression_issue(self.node, allow_prediction=False)
+        if issue is not None and issue.kind in ("type", "parse"):
+            raise InvalidExpressionError(issue.message)
 
     def _decide_execution(
         self,
