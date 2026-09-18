@@ -106,6 +106,10 @@
 
     <template #footer>
       <div class="ax-footer">
+        <span class="ax-disclaimer">
+          Alteryx is a trademark of Alteryx, Inc. Flowfile is not affiliated with or endorsed by
+          Alteryx.
+        </span>
         <template v-if="phase === 'converting'">
           <el-button @click="controller.cancel">Cancel</el-button>
         </template>
@@ -448,5 +452,12 @@ watch(
   align-items: center;
   justify-content: flex-end;
   gap: var(--spacing-3);
+}
+
+.ax-disclaimer {
+  margin-right: auto;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  text-align: left;
 }
 </style>

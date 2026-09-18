@@ -101,3 +101,7 @@ The importer is measured on Alteryx's sample workflows, not on production ones. 
 - **Text Input dates.** A Text Input column whose cells are all `yyyy-MM-dd` or `yyyy-MM-dd HH:mm:ss` is typed Date or Datetime, as Alteryx does. Padded cells are trimmed first, a code column that happens to hold dates is typed too, and `HH:mm:ss` stays text because Flowfile has no Time column. A Formula that parses such a column with `DateTimeParse` raises, because the column is already a date.
 
 If you hit something not on this list, that is the report we want: open an issue with the report row and, if you can, the tool's configuration.
+
+---
+
+*Alteryx is a trademark of Alteryx, Inc. Flowfile is an independent project and is not affiliated with, sponsored by or endorsed by Alteryx, Inc. The importer reads workflow files you own; it contains no Alteryx software.*
