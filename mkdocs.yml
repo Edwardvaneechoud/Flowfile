@@ -4,6 +4,7 @@ site_name: Flowfile
 site_description: A visual ETL tool combining drag-and-drop workflow building with Polars dataframes
 site_url: https://edwardvaneechoud.github.io/Flowfile/
 repo_url: https://github.com/edwardvaneechoud/Flowfile
+copyright: Flowfile is MIT-licensed. Alteryx is a trademark of Alteryx, Inc.; KNIME is a trademark of KNIME AG. Flowfile is not affiliated with or endorsed by either.
 
 
 # Explicitly set the URL style for consistency and planning

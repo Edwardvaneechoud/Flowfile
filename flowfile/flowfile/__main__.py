@@ -481,6 +481,7 @@ def main():
         print("  # Import Alteryx workflows, or report what the conversion would do")
         print("  flowfile import alteryx my_workflow.yxmd")
         print("  flowfile import alteryx ./workflows --inspect --format md --out coverage.md")
+        print("  # Alteryx is a trademark of Alteryx, Inc.; Flowfile is not affiliated with or endorsed by Alteryx.")
         print("")
         print("  # Load or remove the optional demo catalog")
         print("  flowfile seed-demo")

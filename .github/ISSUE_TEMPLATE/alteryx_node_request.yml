@@ -7,6 +7,8 @@ body:
     attributes:
       value: |
         Keep the title as `[Alteryx node] <ToolName>`. Flowfile's importer matches open requests by that title, so everyone who hits the same tool lands on this issue and can 👍 it instead of opening a duplicate.
+
+        Alteryx is a trademark of Alteryx, Inc. Flowfile is an independent project, not affiliated with or endorsed by Alteryx, Inc.
   - type: input
     id: tool
     attributes:
