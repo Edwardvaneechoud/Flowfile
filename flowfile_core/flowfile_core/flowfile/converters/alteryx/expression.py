@@ -832,7 +832,7 @@ def _emit_switch(node: _Call) -> str:
     """Switch(v, default, c1, r1, ...) becomes an if/elseif chain.
 
     A null value makes every emitted '=' comparison null, which falls through to the
-    ELSE default — exactly Alteryx's 'null matches no case' behaviour.
+    ELSE default — the null-matches-no-case behaviour the sample workflows show for Switch.
     """
     value, default, *pairs = node.args
     if len(pairs) % 2:
@@ -847,9 +847,9 @@ def _emit_switch(node: _Call) -> str:
 def _emit_replace_char(node: _Call) -> str:
     """ReplaceChar(x, chars, repl) nests one literal replace() per character.
 
-    Alteryx replaces every character in ``chars`` with the *first* character of ``repl``
-    (an empty ``repl`` deletes). Because all characters map to the same single target,
-    the nested sequential replaces are equivalent to Alteryx's simultaneous pass.
+    ReplaceChar is documented as replacing every character in ``chars`` with the *first* character
+    of ``repl`` (an empty ``repl`` deletes). Because all characters map to the same single target,
+    the nested sequential replaces give the same result as a single pass.
     """
     chars = _literal_string(node.args[1], "ReplaceChar", "second")
     replacement = _literal_string(node.args[2], "ReplaceChar", "third")[:1]
@@ -916,9 +916,9 @@ def _emit_regex_match(node: _Call) -> str:
     no backreference can reach this at all — which leaves lookaround as the one unsupported
     construct a pattern could still spell out, and the engine below is what screens it.
 
-    The text operand is *not* folded to lower case the way Contains() folds it. Alteryx documents
-    ``REGEX_Match(String, pattern, icase)`` with "By default icase=1 (meaning ignore case)"
-    (help.alteryx.com, string functions), so the match ignores case unless the third argument is a
+    The text operand is *not* folded to lower case the way Contains() folds it. Alteryx's string
+    function reference documents the third argument of ``REGEX_Match(String, pattern, icase)`` as
+    defaulting to 1, ignore case, so the match ignores case unless the third argument is a
     literal false or 0 — and that is expressed as the inline ``(?i)`` flag rather than by folding
     both operands, because folding would also change what the pattern's own character classes mean.
     """
@@ -1062,7 +1062,7 @@ def _emit_datetime_parse(node: _Call) -> str:
     """DateTimeParse reaches to_datetime() only when the format carries a time part, else to_date().
 
     Both targets pass ``strict=False`` down to ``str.to_date``/``str.to_datetime``, so a value the
-    format does not match becomes null — which is what Alteryx's DateTimeParse does too.
+    format does not match becomes null — which is what Alteryx documents DateTimeParse as doing too.
     """
     fmt, codes = _check_format_string(node.args[1], "DateTimeParse", for_parse=True)
     target = "to_datetime" if codes & _PARSE_TIME_CODES else "to_date"

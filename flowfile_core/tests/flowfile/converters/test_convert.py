@@ -6050,9 +6050,9 @@ def test_the_sample_mode_table(sample_modes: ConversionResult, tool_id: int, nod
 
 
 SAMPLE_GROUP_SORT_SENTENCE = (
-    "Alteryx's classic engine also sorts a grouped Sample's output by the grouping column, which this "
-    "node does not; the rows keep the order they arrived in, as they do under Alteryx's AMP engine, so "
-    "sort on the grouping column downstream if that order matters."
+    "The sample workflow notes that Alteryx's classic engine sorts a grouped Sample's output by the "
+    "grouping column while its AMP engine keeps arrival order. This node keeps the order the rows "
+    "arrived in, so sort on the grouping column downstream if that order matters."
 )
 
 
@@ -7412,13 +7412,13 @@ def test_a_correlation_row_says_the_two_things_flowfile_chose(pearson: Conversio
     """The grid's shape is Alteryx's; the name column and the row order are the import's.
 
     The null rule rides beside them — not a layout choice, but the third thing about this
-    grid that the workflow does not state and a Designer run would settle.
+    grid that the workflow does not state and a run in Alteryx Designer would settle.
     """
     row = report_row(pearson, 210)
     assert (row.status, row.reason) == ("partial", "option_unsupported")
     assert row.messages[0] == (
         "Two things about this grid are Flowfile's choice, not Alteryx's, and are worth checking against "
-        "a Designer run: the name of the leading variable column ('Variable' here — Alteryx's own name for "
+        "a run in Alteryx Designer: the name of the leading variable column ('Variable' here — Alteryx's own name for "
         "it is not recorded in the workflow), and the order of the rows, which follows the field list."
     )
     assert len(row.messages) == 2
@@ -7740,12 +7740,12 @@ def _filter_expression(result: ConversionResult, tool_id: int) -> str:
 def test_the_filter_expression_each_option_really_stands_for(filter_regex_period, tool_id: int, expected: str):
     """REGEX_Match anchors, the Period operators are windows, and a dynamic date is not <Operand>.
 
-    Box 150 of `Filter.yxmd` states the window: "Rows that are within a period of 2 days from Today's
-    date are True", and box 135 names the dynamic dates — Today, Tomorrow, Yesterday, or a Fixed one.
+    Box 150 of `Filter.yxmd` describes the period operators as a window of N days around today, and
+    box 135 names the dynamic dates — Today, Tomorrow, Yesterday, or a Fixed one.
 
-    Alteryx documents `REGEX_Match(String, pattern, icase)` with "By default icase=1 (meaning ignore
-    case)", so the flag is on unless the third argument is a literal false — which is the reading
-    the spec had backwards.
+    Alteryx's string function reference documents the `icase` argument of `REGEX_Match` as
+    defaulting to 1 (ignore case), so the flag is on unless the third argument is a literal false —
+    which is the reading the spec had backwards.
     """
     row = report_row(filter_regex_period, tool_id)
     assert (row.status, row.reason) == ("converted", "converted")
@@ -8911,7 +8911,7 @@ def date_time_now() -> ConversionResult:
 
 
 def test_date_time_now_is_a_start_node_holding_one_formatted_row(date_time_now: ConversionResult, tmp_path: Path):
-    """`DateTimeNow.yxmd`'s comment box 94: "A single row is returned with the date time data"."""
+    """`DateTimeNow.yxmd`'s comment box 94 describes the output as a single row holding the date time."""
     row = report_row(date_time_now, 1)
     assert (row.status, row.reason, row.flowfile_node_type) == ("partial", "option_unsupported", "polars_code")
     node = dumped_nodes(date_time_now)[row.flowfile_node_ids[0]]
@@ -9310,7 +9310,7 @@ def test_generate_rows_refuses_every_shape_that_is_not_a_range(generate_rows: Co
         "The Alteryx Generate Rows was not converted because it caps the run at 3 records, and this "
         "workflow does not state what Alteryx counts towards that cap."
     ]
-    # Box 170 of Generate_Rows.yxmd: `[date]+1` "would not have worked" on a date column.
+    # Box 170 of Generate_Rows.yxmd notes that `[date]+1` does not work on a date column.
     assert refusals[9].messages == [
         "The Alteryx Generate Rows was not converted because its loop expression '[Wrong] + 1' is not a "
         "DateTimeAdd of a fixed amount to 'Wrong'."
@@ -9440,7 +9440,7 @@ def test_fuzzy_match_placeholder_tells_the_user_how_to_rebuild_it_with_flowfiles
     assert "Purge mode: connect the same stream to both inputs" in message
     assert "'acct_holder' (JaroTFIDF)" in message
     assert "'jaro' at threshold 80/100" in message
-    assert "Alteryx strips stop words" in message
+    assert "TF-IDF-weighted scorer" in message
     code = dumped_nodes(result)[row.flowfile_node_ids[0]]["setting_input"]["polars_code_input"]["polars_code"]
     assert "Flowfile's Fuzzy Match node" in code
     assert code.endswith("output_df = input_df")

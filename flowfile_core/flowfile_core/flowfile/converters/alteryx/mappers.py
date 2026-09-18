@@ -579,9 +579,9 @@ _WINDOWS_ABSOLUTE_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 
 EXCEL_HEADER_OPTIONS_MESSAGE = (
     "This Excel read carries both of Alteryx's header settings — FirstRowData={first_row_data} and "
-    "HeaderRow={header_row} — and only FirstRowData was applied, because that is the one Alteryx's "
-    "own Excel options use. If the two disagree, the imported node follows FirstRowData; check the "
-    "first row of the sheet against a Designer run."
+    "HeaderRow={header_row} — and only FirstRowData was applied, which is the setting Alteryx's Excel "
+    "options appear to use. If the two disagree, the imported node follows FirstRowData; check the "
+    "first row of the sheet against a run in Alteryx Designer."
 )
 
 
@@ -1091,7 +1091,7 @@ def _no_op_verdict(tool: AlteryxTool) -> ScopeVerdict | None:
 
 
 def _detour_active_anchor(tool: AlteryxTool) -> str:
-    """The Detour anchor the records leave by; Alteryx detours left unless told otherwise."""
+    """The Detour anchor the records leave by: left unless ``DetourRight`` is set, as the samples show."""
     return DETOUR_RIGHT if _flag(_config(tool), "DetourRight") else DETOUR_LEFT
 
 
@@ -1523,8 +1523,7 @@ _SIMPLE_FILTER_TEMPLATES: dict[str, tuple[str, int]] = {
 
 # The dynamic dates Alteryx offers beside a fixed one, as the expression each stands for. Written in
 # the Alteryx dialect so they go through the same fail-closed translator as everything else.
-# `Filter.yxmd`'s comment box 135 names exactly this set: "Today, Tomorrow, Yesterday; you can also
-# filter by selecting a Fixed Date".
+# `Filter.yxmd`'s comment box 135 lists the same three relative dates beside the fixed one.
 _FILTER_RELATIVE_DATES: dict[str, str] = {
     "today": "DateTimeToday()",
     "tomorrow": 'DateTimeAdd(DateTimeToday(), 1, "days")',
@@ -1533,9 +1532,8 @@ _FILTER_RELATIVE_DATES: dict[str, str] = {
 _FILTER_FIXED_DATE = "fixed"
 
 # Alteryx's "Start date and periods after" / "End date and periods before" are *ranges*, not
-# one-sided comparisons: `Filter.yxmd`'s comment box 150 reads "Rows that are within a period of
-# 2 days from Today's date are True". Each entry is (the bound the anchor date itself is, the sign
-# of the period).
+# one-sided comparisons: `Filter.yxmd`'s comment box 150 describes them as a window of N days
+# around today. Each entry is (the bound the anchor date itself is, the sign of the period).
 _FILTER_PERIOD_OPERATORS: dict[str, tuple[str, int]] = {
     "periodafter": (">=", 1),
     "periodbefore": ("<=", -1),
@@ -2051,9 +2049,9 @@ def map_date_time_now(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
 
     The tool is implemented as a supporting macro (`DTNEngine.yxmc`) but Alteryx writes its plugin
     name on the node, so it dispatches like any other tool. Its output is a string, not a date —
-    comment box 79 of `DateTimeNow.yxmd` says the tool "inputs the current date and time … in the
-    format you choose", and the format goes through the same token table the Date Time tool uses,
-    so an unmapped token refuses here as it does there.
+    comment box 79 of `DateTimeNow.yxmd` describes it as the current date and time written in a
+    chosen format, and the format goes through the same token table the Date Time tool uses, so an
+    unmapped token refuses here as it does there.
     """
     config = _config(tool)
     values = _macro_values(config)
@@ -2368,8 +2366,8 @@ def _mapped_rename_to_select(
     """`InputMode=Mapped`: the side table names both the old and the new column, so order is free.
 
     Positional pairs the two lists by position, which is exactly what this mode exists to avoid —
-    `Dynamic_Rename.yxmd`'s own comment box 28 says the table is mapped "to account for the fact
-    that Field12 and Field11 are out of order".
+    `Dynamic_Rename.yxmd`'s own comment box 28 explains the mapped table is there because its two
+    name fields arrive out of order.
     """
     old_column = _text(names_from_rows, "OldName")
     new_column = _text(names_from_rows, "NewName")
@@ -3397,11 +3395,12 @@ SAMPLE_ORDER_MESSAGE = (
     "Which rows this keeps depends on the order they arrive in, which this workflow does not state; "
     "sort the rows upstream if the order matters."
 )
-# `Sample.yxmd`'s comment box at tool 96, beside the grouped Sample at tool 99, states both halves.
+# `Sample.yxmd`'s comment box at tool 96, beside the grouped Sample at tool 99, describes both engines;
+# neither has been verified against a run in Alteryx Designer, so the message attributes the claim to the sample.
 SAMPLE_GROUP_SORT_MESSAGE = (
-    "Alteryx's classic engine also sorts a grouped Sample's output by the grouping column, which this "
-    "node does not; the rows keep the order they arrived in, as they do under Alteryx's AMP engine, so "
-    "sort on the grouping column downstream if that order matters."
+    "The sample workflow notes that Alteryx's classic engine sorts a grouped Sample's output by the "
+    "grouping column while its AMP engine keeps arrival order. This node keeps the order the rows "
+    "arrived in, so sort on the grouping column downstream if that order matters."
 )
 # Alteryx Sample modes that pick a fixed slice, as (whole-frame method, per-group row predicate).
 # The group form is a filter on the row's position inside its group, because polars has no
@@ -3654,10 +3653,10 @@ def map_rank(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     last (measured on polars 1.43.2); the message says so, because SQL users expect the opposite.
 
     Standard and Competition are blocked, and not because the two agree. `02 Preparation/Rank.yxmd`'s
-    own comment boxes call Standard "Equal items share the lowest possible rank" (1,2,2,4) and
-    Modified Competition "The next item receives the following rank, regardless of the number of
-    ties" (1,3,3,4) — two different answers, one polars argument apart. Which polars method each one
-    is has not been settled; until it is, guessing is a silent data change.
+    own comment boxes describe Standard as ties sharing the lowest rank (1,2,2,4) and Modified
+    Competition as the next item taking the following rank whatever the tie count (1,3,3,4) — two
+    different answers, one polars argument apart. Which polars method each one is has not been
+    settled; until it is, guessing is a silent data change.
     """
     config = _config(tool)
     modes = [element.get("value") or "" for element in config.findall("RankingModes/Mode")]
@@ -3918,10 +3917,10 @@ def _emit_text_to_rows(
 ) -> ToolReportRow:
     """Split to rows: the native node for one delimiter, generated code for a set of them.
 
-    The split column keeps its own name whichever branch runs. Alteryx's help, quoted in its own
-    Text To Columns example, says split-to-rows leaves "the output columns the same as the input
-    columns", and none of the rows-mode configurations carries a ``<RootName>`` at all — it is a
-    split-to-columns setting. One that is present and different is reported, never applied.
+    The split column keeps its own name whichever branch runs. Alteryx's own Text To Columns example
+    describes split-to-rows as keeping the input columns unchanged, and none of the rows-mode
+    configurations carries a ``<RootName>`` at all — it is a split-to-columns setting. One that is
+    present and different is reported, never applied.
     """
     messages: list[str] = []
     if root_name and root_name != column:
@@ -4302,7 +4301,7 @@ def _parquet_sibling(path: str, filename: str) -> tuple[str, str]:
 def _map_yxdb_input(tool: AlteryxTool, ctx: EmitContext, path: str, directory: str, filename: str) -> ToolReportRow:
     """Read the Parquet sibling that ``flowfile convert yxdb`` writes next to a ``.yxdb``.
 
-    The importer never parses ``.yxdb`` itself — an upload cannot reach the user's data, so
+    The importer never decodes ``.yxdb`` records itself — an upload cannot reach the user's data, so
     conversion is a CLI step on the machine that holds it. The node is pointed at the file that
     step produces and stays ``partial`` because nothing here can prove the file exists yet.
     """
@@ -5802,7 +5801,7 @@ def map_create_samples(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     """Create_Samples.yxmc splits rows into an estimation, a validation and a holdout sample.
 
     Comment box 94 of `CreateSamples.yxmd` states the arithmetic: the two percentages are named and
-    "if the combined total is less than 100%, the remaining rows are returned in the holdout sample".
+    whatever is left under 100% goes to the holdout sample.
     `NodeRandomSplit` refuses a split of zero and requires the splits to sum to 100, so a holdout of
     nothing is left out of the node and the anchor is declared empty instead.
     """
@@ -5943,7 +5942,7 @@ def _generate_rows_step(loop: str, field: str, flowfile_type: str) -> tuple[str,
 
     An Alteryx loop expression is a recurrence, and only the ones that add a fixed amount to the
     generated column are a range. The declared type picks which shape is allowed: box 170 of
-    `Generate_Rows.yxmd` says `[date]+1` "would not have worked" on a date, and `DateTimeAdd` on an
+    `Generate_Rows.yxmd` notes that `[date]+1` does not work on a date, and `DateTimeAdd` on an
     integer column is the same mismatch the other way round.
     """
     if flowfile_type in _GENERATE_ROWS_INTEGER_TYPES:
@@ -6540,7 +6539,7 @@ CORRELATION_VARIABLE_COLUMN = "Variable"
 _NUMERIC_TYPES = frozenset({"Int16", "Int32", "Int64", "Float32", "Float64"})
 CORRELATION_LAYOUT_MESSAGE = (
     "Two things about this grid are Flowfile's choice, not Alteryx's, and are worth checking against "
-    "a Designer run: the name of the leading variable column ({column!r} here — Alteryx's own name for "
+    "a run in Alteryx Designer: the name of the leading variable column ({column!r} here — Alteryx's own name for "
     "it is not recorded in the workflow), and the order of the rows, which follows the field list."
 )
 # What a null does is a third thing worth checking, and it is not a layout choice: one XML flag
@@ -6552,7 +6551,7 @@ CORRELATION_NULL_MESSAGE = (
     "The correlation grid is computed the way numpy's corrcoef computes it, so a single null anywhere "
     "in a variable makes that whole variable's row and column NaN — its own diagonal included — while "
     "the Covariance option drops the affected pair of rows instead. Alteryx's own null rule is stated "
-    "nowhere in this workflow, so check any column holding nulls against a Designer run."
+    "nowhere in this workflow, so check any column holding nulls against a run in Alteryx Designer."
 )
 COVARIANCE_MESSAGE = (
     "Alteryx's Covariance option replaces the correlation with the covariance rather than adding it "
@@ -6712,7 +6711,7 @@ _SPEARMAN_VARIABLES = ("Variable1", "Variable2")
 SPEARMAN_LAYOUT_MESSAGE = (
     "The shape of this output is Flowfile's choice, not Alteryx's: one row holding the coefficient in "
     "a column named {column!r}{grouped}. The macro does not record what it calls its own output "
-    "columns, so check them against a Designer run before anything downstream reads them by name. A "
+    "columns, so check them against a run in Alteryx Designer before anything downstream reads them by name. A "
     "null in either variable drops that pair of rows rather than the whole column — the opposite of "
     "the Pearson grid, where one null makes a whole row and column NaN — and the macro states no null "
     "rule of its own either."
@@ -6851,7 +6850,7 @@ _FIELD_SUMMARY_KEYS = ("Select Fields", "Sample Data", "Number", "NNumber", "Per
 PROFILE_COLUMN_SET_MESSAGE = (
     "Alteryx's own comment boxes name only two of this table's columns — Percent Missing and Unique "
     "Values — so the column set and their names here ({columns}) are Flowfile's, not Alteryx's. "
-    "Check them against a Designer run before anything downstream reads them by name. "
+    "Check them against a run in Alteryx Designer before anything downstream reads them by name. "
     "'PercentMissing' counts nulls and nothing else: an empty string is a value here, and whether "
     "Alteryx counts one as missing is stated nowhere in the workflow."
 )
@@ -7079,10 +7078,10 @@ def map_basic_data_profile(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow
 def map_fuzzy_match(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     """A placeholder whose message is the recipe for rebuilding the tool with Flowfile's own node.
 
-    Alteryx's Fuzzy Match is a one-input tool that pre-processes the text (stop words, phonetic
-    keys) and scores with word-rarity-weighted JaroTFIDF; Flowfile's ``fuzzy_match`` node is a
-    two-input join scored by plain Jaro-style similarity. The two match different row sets at the
-    same threshold, so no node is emitted. What can be carried over is spelled out instead.
+    Alteryx's Fuzzy Match is a one-input tool with its own text pre-processing and a TF-IDF-weighted
+    default match style (Alteryx names it JaroTFIDF); Flowfile's ``fuzzy_match`` node is a two-input
+    join scored by plain Jaro-style similarity. The two are expected to match different row sets at
+    the same threshold, so no node is emitted. What can be carried over is spelled out instead.
     """
     config = _config(tool)
     fields = [
@@ -7102,8 +7101,8 @@ def map_fuzzy_match(tool: AlteryxTool, ctx: EmitContext) -> ToolReportRow:
     message = (
         f"Alteryx Fuzzy Match is not converted; rebuild it with Flowfile's Fuzzy Match node. "
         f"{mode}; match {field_words} to itself with 'jaro' at threshold {threshold or '?'}/100. "
-        "Expect a different match set: Alteryx strips stop words, keys on phonetics and weights "
-        "words by rarity (JaroTFIDF) before scoring; Flowfile's node does none of that."
+        "Expect a different match set: Alteryx's default match style is a TF-IDF-weighted scorer with "
+        "its own text pre-processing, while Flowfile's node scores plain Jaro similarity."
     )
     return _placeholder_row(tool, ctx, [message], reason="unmapped_tool")
 

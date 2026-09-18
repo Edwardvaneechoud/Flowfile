@@ -15,7 +15,7 @@
         </button>
         <button type="button" class="empty-btn" @click="emit('import-flow')">
           <span class="material-icons btn-icon">upload_file</span>
-          <span>Import Alteryx</span>
+          <span>Import Alteryx workflow</span>
           <span class="beta-badge">Beta</span>
         </button>
       </div>

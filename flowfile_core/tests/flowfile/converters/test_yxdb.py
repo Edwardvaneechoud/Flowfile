@@ -24,7 +24,7 @@ from flowfile_core.flowfile.converters.alteryx.yxdb import convert_tree, convert
 DATA_DIR = Path(__file__).resolve().parents[5] / "alteryx_nodes_data"
 CORPUS_DIR = Path(__file__).resolve().parents[5] / "alteryx_nodes"
 
-pytest.importorskip("yxdb", reason="optional extra: pip install 'flowfile[alteryx]'")
+pytest.importorskip("yxdb", reason="optional extra: pip install 'flowfile[yxdb]'")
 pytestmark = pytest.mark.skipif(not DATA_DIR.is_dir(), reason=f"Alteryx sample data not present at {DATA_DIR}")
 
 # (file, rows Alteryx recorded in the .yxdb header)
