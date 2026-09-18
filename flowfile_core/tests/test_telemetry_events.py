@@ -909,7 +909,7 @@ def test_a_panic_publishes_a_crash_and_still_propagates(sent, subscribed, monkey
 
 def test_a_failure_before_the_node_ran_reports_no_stale_class(sent, subscribed, monkeypatch) -> None:
     """Failing at parameter resolution must not report the class of an earlier run."""
-    from flowfile_core.flowfile import flow_graph as flow_graph_module
+    from flowfile_core.flowfile import parameter_resolver as parameter_resolver_module
     from flowfile_core.flowfile.param_types import FlowParameter
     from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
@@ -921,7 +921,7 @@ def test_a_failure_before_the_node_ran_reports_no_stale_class(sent, subscribed, 
     def _unresolved(*args, **kwargs):
         raise ValueError("Unresolved parameter references in node settings")
 
-    monkeypatch.setattr(flow_graph_module, "apply_parameters_in_place", _unresolved)
+    monkeypatch.setattr(parameter_resolver_module, "apply_parameters_in_place", _unresolved)
     run_info = graph.run_graph()
 
     assert run_info.success is False
