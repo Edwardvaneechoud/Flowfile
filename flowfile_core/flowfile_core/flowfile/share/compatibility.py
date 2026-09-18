@@ -149,6 +149,15 @@ def _output_reason(settings: dict) -> str | None:
     return None
 
 
+def _formula_reason(settings: dict) -> str | None:
+    # The browser formula node reads settings["function"] alone and silently passes the
+    # frame through when it is absent, so a multi-entry node would run green-and-wrong.
+    functions = settings.get("functions")
+    if not isinstance(functions, list) or len(functions) != 1 or not isinstance(settings.get("function"), dict):
+        return "The browser formula node runs exactly one expression"
+    return None
+
+
 def _record_id_reason(settings: dict) -> str | None:
     if _dict(settings.get("record_id_input")).get("group_by") is True:
         return "Per-group record IDs are not available in the browser version"
@@ -157,6 +166,7 @@ def _record_id_reason(settings: dict) -> str | None:
 
 _SETTINGS_PREDICATES = {
     "filter": _filter_reason,
+    "formula": _formula_reason,
     "join": _join_reason,
     "select": _select_reason,
     "record_id": _record_id_reason,

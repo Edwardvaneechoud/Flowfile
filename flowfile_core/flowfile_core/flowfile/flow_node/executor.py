@@ -19,6 +19,7 @@ from flowfile_core.flowfile.flow_node.models import (
     InvalidExpressionError,
 )
 from flowfile_core.flowfile.flow_node.state import NodeExecutionState, SourceFileInfo
+from flowfile_core.flowfile.parameter_resolver import node_parameters_resolved
 from flowfile_core.schemas import schemas
 from shared.path_utils import is_url
 
@@ -185,9 +186,17 @@ class NodeExecutor:
         The check is data-free (a zero-row collect). Running it here, before the strategy builds
         the lazy plan, makes a leaf node's bad expression surface at all and attributes it to this
         node instead of whichever downstream sink would otherwise be the first to collect it.
-        """
-        from flowfile_core.flowfile.settings_validation import node_expression_issue
 
+        A formula node's own ``collect_schema`` step does not type-check the temporal/string
+        namespaces, so the chain check is what catches those — it is not redundant with it.
+        """
+        from flowfile_core.flowfile.settings_validation import node_expression_issue, node_formula_chain_issue
+
+        if self.node.node_type == "formula":
+            message = node_formula_chain_issue(self.node, allow_prediction=False)
+            if message is not None:
+                raise InvalidExpressionError(message)
+            return
         issue = node_expression_issue(self.node, allow_prediction=False)
         if issue is not None and issue.kind in ("type", "parse"):
             raise InvalidExpressionError(issue.message)
@@ -445,13 +454,18 @@ class NodeExecutor:
         if "No such file or directory (os error" in error_str and retry:
             node_logger.warning("Input file missing, retrying upstream nodes...")
             for node_input in self.node.node_inputs.get_all_inputs():
-                node_input.execute_node(
-                    run_location=run_location,
-                    performance_mode=performance_mode,
-                    retry=True,
-                    reset_cache=True,
-                    node_logger=node_logger,
-                )
+                # The run loop substitutes only into the node it is about to run.
+                try:
+                    with node_parameters_resolved(node_input):
+                        node_input.execute_node(
+                            run_location=run_location,
+                            performance_mode=performance_mode,
+                            retry=True,
+                            reset_cache=True,
+                            node_logger=node_logger,
+                        )
+                except ValueError as e:
+                    node_logger.error(f"Could not retry upstream node {node_input.node_id}: {e}")
             # Retry this node once (no further retries)
             self.execute(
                 run_location=run_location,

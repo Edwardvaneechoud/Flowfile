@@ -185,9 +185,17 @@ def _arg_summary_for_add(node_type: str, settings: dict[str, Any]) -> str:
         # These either have a code/expression body or a target column; show
         # the target name when present so the user sees "Adding amount_usd"
         # rather than the raw expression.
-        target = settings_dict.get("function") or settings_dict.get("output_column")
+        functions = settings_dict.get("functions")
+        if node_type == "formula" and isinstance(functions, list) and len(functions) > 1:
+            return f"Adding {pretty_type} → {len(functions)} columns"
+        if not functions and isinstance(functions, list):
+            return f"Adding {pretty_type}"
+        target = settings_dict.get("function") or (functions[0] if functions else None)
+        target = target or settings_dict.get("output_column")
         if isinstance(target, dict):
             field = target.get("field") or target.get("column")
+            if isinstance(field, dict):
+                field = field.get("name")
             if isinstance(field, str) and field:
                 return f"Adding {pretty_type} → `{field}`"
         return f"Adding {pretty_type}"

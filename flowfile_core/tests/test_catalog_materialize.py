@@ -30,7 +30,8 @@ from flowfile_core.catalog.services import virtual_tables as virtual_tables_modu
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogTable
 from flowfile_core.schemas import input_schema
-from flowfile_core.schemas.transform_schema import BasicFilter, FilterInput
+from flowfile_core.schemas.schemas import FlowParameter
+from flowfile_core.schemas.transform_schema import BasicFilter, FieldInput, FilterInput, FunctionInput
 from shared.storage_config import storage
 from tests.flowfile.conftest import (
     CATALOG_SAMPLE_DATA as SAMPLE_DATA,
@@ -196,6 +197,47 @@ def _seed_optimized_flow_virtual(ns_id: int, table_name: str = "adults_virtual")
         return next(t.id for t in repo.list_tables(namespace_id=ns_id) if t.name == table_name)
 
 
+def _seed_parameterized_flow_virtual(ns_id: int, table_name: str = "labelled_virtual") -> int:
+    """Register a saved (never-run) producer flow whose formula reads ${label}."""
+    with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+        flow_path = f.name
+    reg_id = _create_flow_registration(ns_id, name=f"prod_{table_name}", path=flow_path)
+    graph = _create_graph(source_registration_id=reg_id)
+    graph.flow_settings.parameters = [FlowParameter(name="label", default_value="v2", type="string")]
+    _add_manual_input(graph, SAMPLE_DATA, node_id=1)
+    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="formula"))
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            function=FunctionInput(field=FieldInput(name="label", data_type="Auto"), function="${label}"),
+        )
+    )
+    from flowfile_core.flowfile.flow_graph import add_connection
+
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+    _add_catalog_writer(
+        graph, node_id=3, depending_on_id=2, table_name=table_name, namespace_id=ns_id, write_mode="virtual"
+    )
+    graph.save_flow(flow_path)
+
+    with get_db_context() as db:
+        table = CatalogTable(
+            name=table_name,
+            namespace_id=ns_id,
+            owner_id=1,
+            file_path=None,
+            storage_format="delta",
+            table_type="virtual",
+            producer_registration_id=reg_id,
+        )
+        db.add(table)
+        db.commit()
+        db.refresh(table)
+        return table.id
+
+
 # Service-level tests
 
 
@@ -230,6 +272,15 @@ class TestMaterializeService:
         assert result.row_count == 2
         df = pl.read_ipc(result.path)
         assert set(df["name"].to_list()) == {"Alice", "Charlie"}
+
+    def test_parameterized_producer_flow(self, catalog_service, fake_worker):
+        """Re-executing a producer flow resolves its ${name} refs (writer node and upstream)."""
+        ns_id = _create_namespace()
+        vt_id = _seed_parameterized_flow_virtual(ns_id)
+
+        lf = catalog_service.resolve_virtual_flow_table(vt_id)
+
+        assert lf.collect()["label"].unique().to_list() == ["v2"]
 
     def test_physical_table_raises(self, catalog_service, fake_worker):
         ns_id = _create_namespace()

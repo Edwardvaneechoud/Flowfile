@@ -356,6 +356,33 @@ export interface FormulaInput {
   function: string;
 }
 
+/** A one-click fix offered beside an issue: swap `[from]` for `[to]` in the expression. */
+export interface FormulaChainSuggestion {
+  kind: "replace_column";
+  from: string;
+  to: string;
+}
+
+export interface FormulaChainIssue {
+  message: string;
+  kind: string;
+  /** Absent on an older core. */
+  suggestion?: FormulaChainSuggestion | null;
+}
+
+export interface FormulaChainEntryResult {
+  issue: FormulaChainIssue | null;
+  /** Accumulated schema AFTER this entry. */
+  columns: MinimalFieldInput[];
+}
+
+export interface FormulaChainCheck {
+  /** False when the input schema is unknown; issues are then all null. */
+  available: boolean;
+  base_columns: MinimalFieldInput[];
+  entries: FormulaChainEntryResult[];
+}
+
 // Filter Types
 
 /**
@@ -1148,7 +1175,9 @@ export interface NodeUserDefined extends NodeMultiInput {
 }
 
 export interface NodeFormula extends NodeSingleInput {
-  function: FormulaInput;
+  /** Legacy single-entry field; the backend only emits it when there is exactly one entry. */
+  function?: FormulaInput | null;
+  functions: FormulaInput[];
 }
 
 export interface NodeUnion extends NodeBase {

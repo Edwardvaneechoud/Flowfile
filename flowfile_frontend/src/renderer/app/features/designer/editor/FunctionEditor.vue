@@ -1,10 +1,10 @@
 <template>
-  <div class="function-editor-root">
+  <div class="function-editor-root" :class="{ 'is-auto-height': autoHeight }" :style="rootStyle">
     <codemirror
       v-model="code"
       placeholder="Code goes here..."
-      :style="{ height: '250px' }"
-      :autofocus="true"
+      :style="autoHeight ? undefined : { height: props.height }"
+      :autofocus="props.autofocus"
       :indent-with-tab="true"
       :tab-size="2"
       :extensions="extensions"
@@ -32,12 +32,14 @@ import {
   CompletionSource,
   CompletionContext,
 } from "@codemirror/autocomplete";
-import axios from "axios";
 
+import { ExpressionsApi } from "@/api/expressions.api";
+import { useNodeStore } from "@/stores/node-store";
 import { bodyTooltips } from "@/utils/codemirrorTooltips";
 import type { FlowParameter } from "@/types/flow.types";
 import { findParamSpans, paramInsertText, shortType, PARAM_INSERT_VARIANT } from "./paramTokens";
 import { isInsideStringOrComment } from "./formulaText";
+import { formulaKeywordCompletions } from "./formulaKeywordCompletions";
 
 interface Props {
   editorString: string;
@@ -48,6 +50,12 @@ interface Props {
   parameters?: FlowParameter[];
   // Render ${name} references as atomic pills (default); false = colored text only.
   renderParamPills?: boolean;
+  // Off for stacked editors, where grabbing focus on mount would fight the user.
+  autofocus?: boolean;
+  // A fixed CSS length, or "auto" to grow with the content between min and max.
+  height?: string;
+  minHeight?: string;
+  maxHeight?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -55,7 +63,18 @@ const props = withDefaults(defineProps<Props>(), {
   columnTypes: () => ({}),
   parameters: () => [],
   renderParamPills: true,
+  autofocus: true,
+  height: "250px",
+  minHeight: "48px",
+  maxHeight: "160px",
 });
+
+const autoHeight = computed(() => props.height === "auto");
+const rootStyle = computed(() =>
+  autoHeight.value
+    ? { "--ff-editor-min-height": props.minHeight, "--ff-editor-max-height": props.maxHeight }
+    : undefined,
+);
 
 const knownParamNames = computed(() => new Set(props.parameters.map((p) => p.name)));
 const paramByName = computed(() => {
@@ -66,33 +85,28 @@ const paramByName = computed(() => {
 
 const emit = defineEmits(["update-editor-string"]);
 
+const nodeStore = useNodeStore();
 const expressionsList = ref<string[]>([]);
 const expressionDocs = ref<Record<string, string>>({});
 
+// Both lists are process-wide constants, so they go through the shared caches:
+// a stack of N editors must not issue 2N identical requests.
 const fetchExpressions = async () => {
   try {
-    const response = await axios.get("editor/expressions");
-    expressionsList.value = response.data;
+    expressionsList.value = await ExpressionsApi.getExpressionNames();
   } catch (error) {
     console.error("Failed to fetch expressions:", error);
   }
 };
 
 const fetchExpressionDocs = async () => {
-  try {
-    const response = await axios.get("editor/expression_doc");
-    const docsMap: Record<string, string> = {};
-
-    response.data.forEach((category: any) => {
-      category.expressions.forEach((expr: any) => {
-        docsMap[expr.name] = expr.doc;
-      });
-    });
-
-    expressionDocs.value = docsMap;
-  } catch (error) {
-    console.error("Failed to fetch expression docs:", error);
+  const docsMap: Record<string, string> = {};
+  for (const category of await nodeStore.getExpressionsOverview()) {
+    for (const expr of category.expressions) {
+      docsMap[expr.name] = expr.doc;
+    }
   }
+  expressionDocs.value = docsMap;
 };
 
 onMounted(() => {
@@ -233,6 +247,17 @@ const insertTextAtCursor = (text: string) => {
     // would otherwise keep it, sending the user's next keystrokes elsewhere.
     view.value.focus();
   }
+};
+
+/** Replaces every occurrence of `search` in one transaction, so a single undo reverts it. */
+const replaceText = (search: string, replacement: string) => {
+  if (!view.value || !search) return;
+  const doc = view.value.state.doc.toString();
+  const changes: { from: number; to: number; insert: string }[] = [];
+  for (let at = doc.indexOf(search); at !== -1; at = doc.indexOf(search, at + search.length)) {
+    changes.push({ from: at, to: at + search.length, insert: replacement });
+  }
+  if (changes.length) view.value.dispatch({ changes });
 };
 
 const code = ref(props.editorString);
@@ -609,7 +634,7 @@ const extensions: Extension[] = [
   }),
   EditorState.tabSize.of(2),
   autocompletion({
-    override: [polarsCompletions, paramCompletions],
+    override: [polarsCompletions, paramCompletions, formulaKeywordCompletions],
     defaultKeymap: true,
     activateOnTyping: true,
     icons: false,
@@ -629,6 +654,15 @@ watch(code, (newCode: string) => {
   emit("update-editor-string", newCode);
 });
 
+// A reordered stack of editors hands each instance its neighbour's text; adopt it
+// only when it really differs, so a round-tripped keystroke never resets the caret.
+watch(
+  () => props.editorString,
+  (incoming: string) => {
+    if (incoming !== code.value) code.value = incoming;
+  },
+);
+
 // Rebuild param decorations when the flow's parameter list arrives/changes.
 watch(
   () => props.parameters,
@@ -636,13 +670,36 @@ watch(
   { deep: true },
 );
 
-defineExpose({ insertTextAtCursor });
+// A host that hides this editor (v-show) must call this on re-show: CodeMirror
+// caches a zero-height measurement taken while it was display:none.
+const requestMeasure = () => view.value?.requestMeasure();
+
+defineExpose({ insertTextAtCursor, replaceText, requestMeasure });
 </script>
 
 <style>
 .function-editor-root {
   display: flex;
   flex-direction: column;
+}
+
+/* Only the auto-height hosts opt in; fixed-height consumers keep CodeMirror's own sizing. */
+.function-editor-root.is-auto-height .cm-editor {
+  min-height: var(--ff-editor-min-height, 48px);
+  max-height: var(--ff-editor-max-height, 160px);
+}
+
+.function-editor-root.is-auto-height .cm-scroller {
+  overflow: auto;
+}
+
+/* A two-line expression does not need a `1 2` gutter, and it costs ~33px of width. */
+.function-editor-root.is-auto-height .cm-gutters {
+  display: none;
+}
+
+.function-editor-root.is-auto-height .cm-content {
+  padding: 8px 0 8px 10px;
 }
 /* Token colors are defined in the editor's EditorView.theme (cm-ff-*) so they
    stay scoped to this instance — see the extensions array above. */

@@ -22,7 +22,10 @@ A second phase checks whether a flowfile expression can run at all: ``@_expressi
 node types hand their expression to ``real_time_interface.check_expression``, which resolves it
 against an empty LazyFrame built from the predicted input schema (same parser as execution, no
 data touched). Only definite failures — a parse error, or a polars error raised while resolving
-the schema — are reported.
+the schema — are reported. The formula node takes a chained variant of the same phase
+(``check_expression_chain``): each entry is checked against the base schema plus the columns the
+entries above it produce, so a reference to an earlier output is correct and a forward reference
+is not.
 """
 
 from collections.abc import Callable, Sequence
@@ -41,7 +44,7 @@ if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
 InputHandle = Literal["main", "left", "right"]
-IssueKind = Literal["missing_columns", "invalid_expression"]
+IssueKind = Literal["missing_columns", "invalid_expression", "duplicate_output"]
 
 
 class SettingsValidationIssue(BaseModel):
@@ -138,11 +141,20 @@ def _filter(settings: input_schema.NodeFilter) -> ColumnReferences | None:
 
 @_extractor("formula")
 def _formula(settings: input_schema.NodeFormula) -> ColumnReferences | None:
-    if settings.function is None:
-        return None
-    refs = _expression_column_references(settings.function.function)
-    if refs is None:
-        return None
+    """Columns the formula node reads from its INPUT.
+
+    Entries are chained, so a reference an earlier entry produced is not an input column:
+    each entry contributes its references minus the output names of the entries before it.
+    An unparseable entry contributes nothing, never guessed-at references.
+    """
+    produced: set[str] = set()
+    refs: list[str] = []
+    for _, entry in settings.active_entries():
+        entry_refs = _expression_column_references(entry.function)
+        if entry_refs is not None:
+            refs.extend(ref for ref in entry_refs if ref not in produced)
+        if entry.field and entry.field.name:
+            produced.add(entry.field.name)
     return ColumnReferences(main=refs)
 
 
@@ -275,13 +287,6 @@ def _expression_probe(node_type: str):
     return wrap
 
 
-@_expression_probe("formula")
-def _formula_expression(settings: input_schema.NodeFormula) -> ExpressionProbe | None:
-    if settings.function is None:
-        return None
-    return ExpressionProbe(settings.function.function, False, "Invalid formula")
-
-
 @_expression_probe("filter")
 def _filter_expression(settings: input_schema.NodeFilter) -> ExpressionProbe | None:
     if not settings.filter_input.is_advanced():
@@ -371,13 +376,7 @@ def node_expression_issue(node: "FlowNode", *, allow_prediction: bool) -> "Expre
     expression = _resolved_expression(node, probe.expression)
     if expression is None:
         return None
-    input_node = _input_node(node, "main")
-    if input_node is None:
-        return None
-    schema = _resolved_schema(input_node, allow_prediction)
-    if schema is None:
-        return None
-    pl_schema = _polars_schema(schema)
+    pl_schema = _main_input_polars_schema(node, allow_prediction)
     if pl_schema is None:
         return None
     return check_expression(pl_schema, expression, as_predicate=probe.as_predicate)
@@ -397,8 +396,81 @@ def _expression_issues(node: "FlowNode", allow_prediction: bool) -> list[Setting
     ]
 
 
+def _main_input_polars_schema(node: "FlowNode", allow_prediction: bool) -> dict | None:
+    """The node's main-input schema as polars dtypes, or None when it is not confidently known."""
+    input_node = _input_node(node, "main")
+    if input_node is None:
+        return None
+    schema = _resolved_schema(input_node, allow_prediction)
+    return None if schema is None else _polars_schema(schema)
+
+
+def _formula_chain_entry_issues(
+    node: "FlowNode", allow_prediction: bool
+) -> list[tuple["ExpressionIssue", str | None]]:
+    """Each failing formula entry as ``(issue, row prefix)``, in entry order.
+
+    ``missing_column`` issues are dropped: the column phase reports those with exact names,
+    having already subtracted the columns earlier entries produce. The row prefix is None for
+    a single entry (there is no row to disambiguate) and the run-time ``Formula N ("name")``
+    label otherwise, so the editor and an ``add_formula`` return word a failure identically.
+    """
+    from flowfile_core.flowfile._extensions.real_time_interface import check_expression_chain
+    from flowfile_core.flowfile.flow_data_engine.formula_entries import entry_label
+
+    if not node.is_setup or not node.setting_input.entries:
+        return []
+    pl_schema = _main_input_polars_schema(node, allow_prediction)
+    if pl_schema is None:
+        return []
+    # An unresolvable ${param} leaves the entry blank: it contributes no column and raises no
+    # issue, the same silence the single-expression probe keeps.
+    chain = [
+        entry.model_copy(update={"function": _resolved_expression(node, entry.function or "") or ""})
+        for entry in node.setting_input.entries
+    ]
+    result = check_expression_chain(pl_schema, chain)
+    single = len(chain) == 1
+    out: list[tuple[ExpressionIssue, str | None]] = []
+    for position, (issue, entry) in enumerate(zip(result.issues, chain, strict=True), start=1):
+        if issue is None or issue.kind == "missing_column":
+            continue
+        out.append((issue, None if single else entry_label(position, entry.field.name)))
+    return out
+
+
+def node_formula_chain_issue(node: "FlowNode", *, allow_prediction: bool) -> str | None:
+    """The first formula entry that cannot run, as a ready-to-show message, or None.
+
+    The chain counterpart of ``node_expression_issue``: same ``type``/``parse`` gate, so a
+    formula node's save is refused on exactly what the editor flags.
+    """
+    for issue, prefix in _formula_chain_entry_issues(node, allow_prediction):
+        if issue.kind in ("type", "parse"):
+            return issue.message if prefix is None else f"{prefix}: {issue.message}"
+    return None
+
+
+def _formula_chain_issues(node: "FlowNode", allow_prediction: bool) -> list[SettingsValidationIssue]:
+    """Per-entry validation issues for a formula node (see ``_formula_chain_entry_issues``)."""
+    return [
+        SettingsValidationIssue(
+            kind="duplicate_output" if issue.kind == "duplicate" else "invalid_expression",
+            input_handle="main",
+            message=f"{prefix or 'Invalid formula'}: {issue.message}",
+        )
+        for issue, prefix in _formula_chain_entry_issues(node, allow_prediction)
+    ]
+
+
 def _validate_node(node: "FlowNode", allow_prediction: bool) -> list[SettingsValidationIssue]:
     issues = _column_issues(node, allow_prediction)
+    if node.node_type == "formula":
+        # Per-entry checks run alongside the column phase: suppressing them wholesale would
+        # hide entry 3's type error behind entry 1's missing column. Overlap is avoided by
+        # dropping missing_column issues instead.
+        issues.extend(_formula_chain_issues(node, allow_prediction))
+        return issues
     if not any(issue.input_handle == "main" for issue in issues):
         issues.extend(_expression_issues(node, allow_prediction))
     return issues

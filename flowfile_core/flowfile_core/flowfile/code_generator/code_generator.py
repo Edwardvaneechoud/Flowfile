@@ -2117,35 +2117,57 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         self._add_code("")
 
     def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle formula nodes, preferring native ff expressions over the flowfile_formulas parameter."""
-        input_df = input_vars.get("main", "df")
-        formula = settings.function.function
-        col_name = settings.function.field.name
-        data_type = settings.function.field.data_type
+        """Handle formula nodes, preferring native ff expressions over the flowfile_formulas parameter.
 
-        ff_code = self._translate_to_ff_code(formula)
+        Entries always emit one chained `with_columns` call each, in order, never the
+        `flowfile_formulas=` list form for a whole node: a later entry may read a column an
+        earlier one writes, and a chain says so where a keyword form whose evaluation is
+        silently sequential does not. A single entry emits exactly the one-liner it always has;
+        zero active entries is a pass-through assignment.
+        """
+        input_df = input_vars.get("main", "df")
+        entries = [entry for _, entry in settings.active_entries()]
+        if not entries:
+            self._add_code(f"{var_name} = {input_df}")
+        elif len(entries) == 1:
+            self._add_code(f"{var_name} = {input_df}{self._formula_entry_call(entries[0])}")
+        else:
+            self._add_code(f"{var_name} = ({input_df}")
+            for entry in entries:
+                self._add_code(f"    {self._formula_entry_call(entry)}")
+            self._add_code(")")
+        self._add_code("")
+
+    def _formula_entry_native_expr(self, entry: transform_schema.FunctionInput) -> str | None:
+        """One entry as a native ff expression, or None when only the keyword form can carry it."""
+        data_type = entry.field.data_type
+        ff_code = self._translate_to_ff_code(entry.function)
+        if not ff_code:
+            return None
         cast_type = None
-        if ff_code and data_type not in (None, transform_schema.AUTO_DATA_TYPE):
+        if data_type not in (None, transform_schema.AUTO_DATA_TYPE):
             cast_type = self._native_cast_type(data_type)
             if cast_type is None:
-                ff_code = None  # cast target not expressible natively; use the legacy emission
-        if ff_code:
-            expr_str = f'({ff_code}).alias("{col_name}")'
-            if cast_type:
-                expr_str += f".cast({cast_type})"
-            self._add_code(f"{var_name} = {input_df}.with_columns({expr_str})")
-        elif data_type not in (None, transform_schema.AUTO_DATA_TYPE):
-            self._add_code(
-                f"{var_name} = {input_df}.with_columns("
-                f"flowfile_formulas=[{repr(formula)}], output_column_names=[{repr(col_name)}], "
+                return None  # cast target not expressible natively; use the legacy emission
+        expr_str = f'({ff_code}).alias("{entry.field.name}")'
+        if cast_type:
+            expr_str += f".cast({cast_type})"
+        return expr_str
+
+    def _formula_entry_call(self, entry: transform_schema.FunctionInput) -> str:
+        """The `.with_columns(...)` method-chain call one formula entry emits."""
+        expr_str = self._formula_entry_native_expr(entry)
+        if expr_str:
+            return f".with_columns({expr_str})"
+        formula = entry.function
+        col_name = entry.field.name
+        data_type = entry.field.data_type
+        if data_type not in (None, transform_schema.AUTO_DATA_TYPE):
+            return (
+                f".with_columns(flowfile_formulas=[{repr(formula)}], output_column_names=[{repr(col_name)}], "
                 f"output_column_datatypes=[{repr(data_type)}])"
             )
-        else:
-            self._add_code(
-                f"{var_name} = {input_df}.with_columns("
-                f"flowfile_formulas=[{repr(formula)}], output_column_names=[{repr(col_name)}])"
-            )
-        self._add_code("")
+        return f".with_columns(flowfile_formulas=[{repr(formula)}], output_column_names=[{repr(col_name)}])"
 
     def _handle_graph_solver(self, settings: input_schema.NodeGraphSolver, var_name: str, input_vars: dict[str, str]):
         input_df = input_vars.get("main", "df")

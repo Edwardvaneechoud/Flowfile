@@ -2399,3 +2399,28 @@ def test_add_filter_basic_numeric_value_accepts_string(call_kwargs: dict[str, An
     )
     assert result.status != "rejected", result.refusal_detail
     assert "got int" not in (result.refusal_detail or "")
+
+
+def test_add_formula_accepts_a_multi_entry_functions_list(call_kwargs: dict[str, Any]) -> None:
+    """The planner must be able to stage a chained formula node, not just a single entry."""
+    flow = _flow_with_orders()
+    result = execute_tool_call(
+        flow_id=flow.flow_id,
+        tool_name="flowfile.graph.add_formula",
+        tool_args={
+            "flow_id": 1,
+            "node_id": 51,
+            "depending_on_id": 1,
+            "functions": [
+                {"field": {"name": "net_amount", "data_type": "Double"}, "function": "[amount] * 0.95"},
+                {"field": {"name": "rounded", "data_type": "Double"}, "function": "round([net_amount], 2)"},
+            ],
+        },
+        insertion_context=InsertionContext(upstream_node_ids=[1]),
+        flow=flow,
+        **call_kwargs,
+    )
+    assert result.status == "applied", result.refusal_detail or result.refusal_reason
+    entries = flow.get_node(51).setting_input.entries
+    assert [e.field.name for e in entries] == ["net_amount", "rounded"]
+    assert flow.get_node(51).setting_input.function is None, "two entries must not mirror onto `function`"
