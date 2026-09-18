@@ -39,6 +39,7 @@ import { bodyTooltips } from "@/utils/codemirrorTooltips";
 import type { FlowParameter } from "@/types/flow.types";
 import { findParamSpans, paramInsertText, shortType, PARAM_INSERT_VARIANT } from "./paramTokens";
 import { isInsideStringOrComment } from "./formulaText";
+import { formulaKeywordCompletions } from "./formulaKeywordCompletions";
 
 interface Props {
   editorString: string;
@@ -633,7 +634,7 @@ const extensions: Extension[] = [
   }),
   EditorState.tabSize.of(2),
   autocompletion({
-    override: [polarsCompletions, paramCompletions],
+    override: [polarsCompletions, paramCompletions, formulaKeywordCompletions],
     defaultKeymap: true,
     activateOnTyping: true,
     icons: false,
