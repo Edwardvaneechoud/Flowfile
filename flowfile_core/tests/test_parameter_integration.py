@@ -741,3 +741,119 @@ def test_formula_param_type_change_rerun(execution_location):
     graph.reset()
     run_and_assert_ok(graph)
     assert _column(graph, 2, "c") == [5]  # integer param -> bare literal -> int column
+
+
+# Single-node fetch ("get data" on one node)
+
+
+def test_trigger_fetch_node_resolves_parameters(execution_location):
+    """A single-node fetch substitutes ${name} the same way a full run does."""
+    graph = make_graph(211, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="param_value", default_value="hello", type="string")]
+    _manual_input(graph, 1, [{"name": "Alice"}])
+    _formula(graph, 2, 1, "output_field", "${param_value}")
+    run_and_assert_ok(graph)
+
+    graph.get_node(2).node_stats.has_run_with_current_setup = False
+    graph.trigger_fetch_node(2)
+
+    result = graph.latest_run_info.node_step_result[-1]
+    assert result.success, f"single-node fetch failed: {result.error}"
+    assert _column(graph, 2, "output_field") == ["hello"]
+
+
+def test_trigger_fetch_node_preserves_parameter_reference(execution_location):
+    """A single-node fetch restores the original ${name} text, so saving is lossless."""
+    graph = make_graph(212, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="param_value", default_value="hello", type="string")]
+    _manual_input(graph, 1, [{"name": "Alice"}])
+    _formula(graph, 2, 1, "output_field", "${param_value}")
+    run_and_assert_ok(graph)
+
+    graph.get_node(2).node_stats.has_run_with_current_setup = False
+    graph.trigger_fetch_node(2)
+
+    entries = graph.get_node(2).setting_input.entries
+    assert [e.function for e in entries] == ["${param_value}"]
+
+
+def test_trigger_fetch_node_multi_entry_formula_chain(execution_location):
+    """Multi-entry formulas resolve params and still chain entry-to-entry on a fetch."""
+    graph = make_graph(213, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="param_value", default_value="hello", type="string")]
+    _manual_input(graph, 1, [{"name": "Alice"}])
+    graph.add_node_promise(
+        input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="formula")
+    )
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            functions=[
+                transform_schema.FunctionInput(
+                    field=transform_schema.FieldInput(name="a", data_type="Auto"),
+                    function="${param_value}",
+                ),
+                transform_schema.FunctionInput(
+                    field=transform_schema.FieldInput(name="b", data_type="Auto"),
+                    function="concat([a], '!')",
+                ),
+            ],
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    run_and_assert_ok(graph)
+
+    graph.get_node(2).node_stats.has_run_with_current_setup = False
+    graph.trigger_fetch_node(2)
+
+    result = graph.latest_run_info.node_step_result[-1]
+    assert result.success, f"single-node fetch failed: {result.error}"
+    assert _column(graph, 2, "a") == ["hello"]
+    assert _column(graph, 2, "b") == ["hello!"]
+
+
+def test_trigger_fetch_node_unresolved_parameter_reports_error(execution_location):
+    """An undefined ${name} reports the parameter error, not a parse error."""
+    graph = make_graph(214, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="param_value", default_value="hello", type="string")]
+    _manual_input(graph, 1, [{"name": "Alice"}])
+    _formula(graph, 2, 1, "output_field", "${param_value}")
+    run_and_assert_ok(graph)
+
+    graph.flow_settings.parameters = [FlowParameter(name="other", default_value="x", type="string")]
+    graph.get_node(2).node_stats.has_run_with_current_setup = False
+    graph.trigger_fetch_node(2)
+
+    result = graph.latest_run_info.node_step_result[-1]
+    assert result.success is False
+    assert "Unresolved parameter references" in result.error
+    assert "param_value" in result.error
+
+
+# Retry-on-missing-file re-runs upstream nodes, which need their own parameters resolved
+
+
+def test_retry_upstream_resolves_parameters(execution_location):
+    """The missing-file retry substitutes ${name} into each upstream node it re-runs."""
+    graph = make_graph(215, execution_location=execution_location)
+    graph.flow_settings.parameters = [FlowParameter(name="param_value", default_value="hello", type="string")]
+    _manual_input(graph, 1, [{"name": "Alice"}])
+    _formula(graph, 2, 1, "output_field", "${param_value}")
+    _formula(graph, 3, 2, "downstream", "[output_field]")
+    run_and_assert_ok(graph)
+
+    upstream, node = graph.get_node(2), graph.get_node(3)
+    node.executor._handle_error(
+        node._execution_state,
+        Exception("No such file or directory (os error 2)"),
+        execution_location,
+        False,
+        True,
+        graph.flow_logger.get_node_logger(3),
+    )
+
+    assert upstream.results.errors is None
+    assert _column(graph, 2, "output_field") == ["hello"]
+    assert upstream.setting_input.entries[0].function == "${param_value}"

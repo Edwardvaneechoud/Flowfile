@@ -194,6 +194,8 @@ def _arg_summary_for_add(node_type: str, settings: dict[str, Any]) -> str:
         target = target or settings_dict.get("output_column")
         if isinstance(target, dict):
             field = target.get("field") or target.get("column")
+            if isinstance(field, dict):
+                field = field.get("name")
             if isinstance(field, str) and field:
                 return f"Adding {pretty_type} → `{field}`"
         return f"Adding {pretty_type}"

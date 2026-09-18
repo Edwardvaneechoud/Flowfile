@@ -34,6 +34,14 @@ class NodeResult(BaseModel):
     )
     is_running: bool = True
 
+    def finish(self, *, success: bool, error: str = "") -> None:
+        """Close this result out: record the outcome and stamp the elapsed time."""
+        self.success = success
+        self.error = error
+        self.end_timestamp = time.time()
+        self.run_time_ms = int((self.end_timestamp - self.start_timestamp) * 1000)
+        self.is_running = False
+
 
 class RunInformation(BaseModel):
     """Contains summary information about a complete FlowGraph execution."""

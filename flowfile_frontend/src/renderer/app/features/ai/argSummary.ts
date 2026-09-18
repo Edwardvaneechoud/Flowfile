@@ -129,7 +129,8 @@ const _summaryForAddNode = (nodeType: string, args: Record<string, unknown>): st
       settings.function ??
       settings.output_column;
     if (_isRecord(target)) {
-      const field = target.field ?? target.column;
+      const rawField = target.field ?? target.column;
+      const field = _isRecord(rawField) ? rawField.name : rawField;
       if (typeof field === "string" && field) {
         return `Adding ${prettyType} → \`${field}\``;
       }

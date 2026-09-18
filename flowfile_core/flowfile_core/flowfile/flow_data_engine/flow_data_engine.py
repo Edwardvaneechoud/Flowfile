@@ -3020,25 +3020,6 @@ class FlowDataEngine:
             return FlowDataEngine(new_df, streamable=self._streamable)
         return FlowDataEngine(new_df, number_of_records=self.number_of_records, streamable=self._streamable)
 
-    def apply_sql_formula(self, func: str, col_name: str, output_data_type: pl.DataType = None) -> FlowDataEngine:
-        """Applies an SQL-style formula using `pl.sql_expr`.
-
-        Args:
-            func: A string containing an SQL expression.
-            col_name: The name of the new or transformed column.
-            output_data_type: The desired Polars data type for the output column.
-
-        Returns:
-            A new `FlowDataEngine` instance with the applied formula.
-        """
-        expr = to_expr(func)
-        if output_data_type not in (None, transform_schemas.AUTO_DATA_TYPE):
-            df = self.data_frame.with_columns(expr.cast(output_data_type).alias(col_name))
-        else:
-            df = self.data_frame.with_columns(expr.alias(col_name))
-
-        return FlowDataEngine(df, number_of_records=self.number_of_records)
-
     def apply_sql_formulas(self, entries: list[FormulaEntry]) -> FlowDataEngine:
         """Applies the formula node's entries, chained (see `apply_formula_entries`).
 

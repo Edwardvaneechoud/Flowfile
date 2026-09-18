@@ -8,6 +8,7 @@ import re
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import ExitStack
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
@@ -97,11 +98,10 @@ from flowfile_core.flowfile.graph_tree.graph_tree import (
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
 from flowfile_core.flowfile.param_types import ParamValue
 from flowfile_core.flowfile.parameter_resolver import (
-    apply_parameters_in_place,
     find_unresolved_in_model,
+    node_parameters_resolved,
     resolve_expression_parameters,
     resolve_parameters,
-    restore_parameters,
 )
 from flowfile_core.flowfile.schema_callbacks import (
     calculate_cross_join_schema,
@@ -6394,35 +6394,26 @@ class FlowGraph:
             description=flow_node.get_node_information().description,
         )
         logger.info(f"Starting to run: node {flow_node.node_id}, start time: {node_result.start_timestamp}")
+        self.latest_run_info.node_step_result.append(node_result)
         try:
-            self.latest_run_info.node_step_result.append(node_result)
-            flow_node.execute_node(
-                run_location=self.flow_settings.execution_location,
-                performance_mode=performance_mode,
-                node_logger=node_logger,
-                optimize_for_downstream=False,
-                reset_cache=reset_cache,
-            )
-            node_result.error = str(flow_node.results.errors)
+            with node_parameters_resolved(flow_node):
+                flow_node.execute_node(
+                    run_location=self.flow_settings.execution_location,
+                    performance_mode=performance_mode,
+                    node_logger=node_logger,
+                    optimize_for_downstream=False,
+                    reset_cache=reset_cache,
+                )
+            errors = flow_node.results.errors
+            node_result.finish(success=errors is None, error="" if errors is None else str(errors))
             if self.flow_settings.is_canceled:
                 node_result.success = None
-                node_result.success = None
-                node_result.is_running = False
-            node_result.success = flow_node.results.errors is None
-            node_result.end_timestamp = time()
-            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
-            node_result.is_running = False
             self.latest_run_info.nodes_completed += 1
             self.latest_run_info.end_time = datetime.datetime.now()
-            self.release_run()
             return self.get_run_info()
         except Exception as e:
-            node_result.error = "Node did not run"
-            node_result.success = False
-            node_result.end_timestamp = time()
-            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
-            node_result.is_running = False
             node_logger.error(f"Error in node {flow_node.node_id}: {e}")
+            node_result.finish(success=False, error=str(e))
         finally:
             self.release_run()
 
@@ -6536,7 +6527,6 @@ class FlowGraph:
         node: FlowNode,
         performance_mode: bool,
         run_info_lock: threading.Lock,
-        params: dict[str, ParamValue] | None = None,
     ) -> tuple[NodeResult, FlowNode]:
         """Executes a single node, records its result, and returns both.
 
@@ -6546,7 +6536,6 @@ class FlowGraph:
             node: The node to execute.
             performance_mode: Whether to run in performance mode.
             run_info_lock: Lock protecting shared RunInformation state.
-            params: Optional parameter dict for ${name} substitution in node settings.
 
         Returns:
             A (NodeResult, FlowNode) tuple for post-stage failure propagation.
@@ -6561,62 +6550,33 @@ class FlowGraph:
         with run_info_lock:
             self.latest_run_info.node_step_result.append(node_result)
 
-        # Temporarily substitute parameters into node settings (in-place so closures see the values)
-        restorations = []
-        # Save the node's hash before substitution. executor.execute() calls node.reset()
-        # while setting_input is mutated, which recomputes _hash from the resolved path.
-        # After restore_parameters the path returns to the original ${...} form but _hash
-        # still holds the resolved-path hash → needs_reset() returns True on the next
-        # setting_input write → clears example_data_generator / has_completed_last_run.
-        # Restoring _hash after restore_parameters keeps the hash consistent with the
-        # restored setting_input and prevents that spurious reset.
-        saved_hash = node._hash
-        if params:
+        with ExitStack() as params_scope:
             try:
-                restorations = apply_parameters_in_place(node.setting_input, params)
+                params_scope.enter_context(node_parameters_resolved(node))
             except ValueError as e:
-                node_result.error = str(e)
-                node_result.success = False
-                node_result.end_timestamp = time()
-                node_result.run_time_ms = 0
-                node_result.is_running = False
                 # Never executed this run: a stale class must not describe this failure.
                 node._last_exception_class = None
                 node_logger.error(f"Parameter resolution failed for node {node.node_id}: {e}")
+                node_result.finish(success=False, error=str(e))
                 return node_result, node
 
-        logger.info(f"Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}")
-        try:
+            logger.info(f"Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}")
             node.execute_node(
                 run_location=self.flow_settings.execution_location,
                 performance_mode=performance_mode,
                 node_logger=node_logger,
             )
-        finally:
-            # Restore original ${...} refs so the saved flow is unchanged
-            if restorations:
-                restore_parameters(restorations)
-            # Restore the hash to match the restored setting_input so that
-            # subsequent get_node_data / setting_input writes don't trigger
-            # a spurious reset (and lose example_data_generator / has_completed_last_run).
-            node._hash = saved_hash
         try:
-            node_result.error = "" if node.results.errors is None else str(node.results.errors)
+            errors = node.results.errors
             if self.flow_settings.is_canceled:
+                node_result.error = "" if errors is None else str(errors)
                 node_result.success = None
                 node_result.is_running = False
                 return node_result, node
-            node_result.success = node.results.errors is None
-            node_result.end_timestamp = time()
-            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
-            node_result.is_running = False
+            node_result.finish(success=errors is None, error="" if errors is None else str(errors))
         except Exception as e:
-            node_result.error = "Node did not run"
-            node_result.success = False
-            node_result.end_timestamp = time()
-            node_result.run_time_ms = int((node_result.end_timestamp - node_result.start_timestamp) * 1000)
-            node_result.is_running = False
             node_logger.error(f"Error in node {node.node_id}: {e}")
+            node_result.finish(success=False, error=str(e))
 
         node_logger.info(f"Completed node with success: {node_result.success}")
         with run_info_lock:
@@ -6763,17 +6723,14 @@ class FlowGraph:
                 max_workers = 1 if is_local else self.flow_settings.max_parallel_workers
                 if len(nodes_to_run) == 1 or max_workers == 1:
                     stage_results = [
-                        self._execute_single_node(node, performance_mode, run_info_lock, params or None)
-                        for node in nodes_to_run
+                        self._execute_single_node(node, performance_mode, run_info_lock) for node in nodes_to_run
                     ]
                 else:
                     stage_results: list[tuple[NodeResult, FlowNode]] = []
                     workers = min(max_workers, len(nodes_to_run))
                     with ThreadPoolExecutor(max_workers=workers) as executor:
                         futures = {
-                            executor.submit(
-                                self._execute_single_node, node, performance_mode, run_info_lock, params or None
-                            ): node
+                            executor.submit(self._execute_single_node, node, performance_mode, run_info_lock): node
                             for node in nodes_to_run
                         }
                         for future in as_completed(futures):
