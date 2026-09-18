@@ -474,7 +474,7 @@ def main():
         print("  # Run a flow from a file")
         print("  flowfile run flow my_pipeline.yaml")
         print("")
-        print("  # Convert Alteryx .yxdb data files to Parquet (needs: pip install 'flowfile[alteryx]')")
+        print("  # Convert Alteryx .yxdb data files to Parquet (needs: pip install 'flowfile[yxdb]')")
         print("  flowfile convert yxdb my_data.yxdb")
         print("  flowfile convert yxdb ./alteryx_data --out ./parquet_data")
         print("")

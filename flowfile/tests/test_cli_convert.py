@@ -17,7 +17,7 @@ from flowfile.__main__ import main
 DATA_DIR = Path(__file__).resolve().parents[3] / "alteryx_nodes_data"
 SAMPLE = DATA_DIR / "OneToolData" / "ReportMapping1.yxdb"
 
-pytest.importorskip("yxdb", reason="optional extra: pip install 'flowfile[alteryx]'")
+pytest.importorskip("yxdb", reason="optional extra: pip install 'flowfile[yxdb]'")
 pytestmark = pytest.mark.skipif(not SAMPLE.exists(), reason=f"Alteryx sample data not present at {DATA_DIR}")
 
 

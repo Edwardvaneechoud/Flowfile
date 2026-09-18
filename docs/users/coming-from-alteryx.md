@@ -65,11 +65,11 @@ Measured on Alteryx's own 121 One Tool Example workflows (923 tools). Numbers as
 
     | Tool | Why partial |
     |---|---|
-    | Input Data (`.yxdb`) | Flowfile reads Parquet, not `.yxdb`. Convert the data first with `flowfile convert yxdb`; the node is pre-pointed at the Parquet path. |
+    | Input Data (`.yxdb`) | Flowfile reads Parquet, not `.yxdb`. Convert the data first with `flowfile convert yxdb` (needs `pip install 'flowfile[yxdb]'`); the node is pre-pointed at the Parquet path. |
     | Output Data | Same for `.yxdb` output; multi-file output is refused. |
     | Pearson Correlation, Spearman Correlation | The arithmetic is verified; the output layout and the name of the leading column are Flowfile's. |
     | Field Summary, Basic Data Profile | The profile columns are Flowfile's choice. The rendered-report anchors have no Flowfile equivalent. |
-    | Sample, Select Records, Running Total, Make Group, Rank | Order-dependent. Alteryx keeps arrival order; Flowfile only promises order after an explicit Sort. Converted cleanly when a Sort feeds them. |
+    | Sample, Select Records, Running Total, Make Group, Rank | Order-dependent. Alteryx's sample workflows rely on arrival order; Flowfile only promises order after an explicit Sort. Converted cleanly when a Sort feeds them. |
     | Summarize | `First`/`Last` are order-dependent; a few exotic aggregations are generated code. |
     | Join | Alteryx's join-select configuration is applied where the source columns are known; otherwise you are told. |
     | Union | By-position and manual modes carry a message; by-name converts. |
@@ -88,17 +88,17 @@ Measured on Alteryx's own 121 One Tool Example workflows (923 tools). Numbers as
 The importer is measured on Alteryx's sample workflows, not on production ones. These are the gaps we know about and have not closed:
 
 - **Numbers are checked against Alteryx's own comment boxes, not against Designer.** One real-world workflow has been verified frame-equal end to end. Where a sample workflow states an expected value, the converted flow reproduces it; where it does not, nothing has been compared.
-- **Row order.** Alteryx preserves arrival order; Flowfile does not promise it without a Sort. Tools that depend on it are marked `partial` unless a Sort feeds them.
+- **Row order.** Alteryx's sample workflows rely on arrival order; Flowfile does not promise it without a Sort. Tools that depend on it are marked `partial` unless a Sort feeds them.
 - **Nulls in correlations.** Pearson's grid turns a variable with any null into NaN; covariance and Spearman drop the pair. Alteryx's rule is not stated anywhere we could check. Covariance divides by n−1; Alteryx's divisor is unrecorded.
 - **A fixed date in a simple-mode Filter** is compared as text. On a real date column that raises at run time. Fix: use a formula filter, or convert the column first.
 - **Rank tie rules (Standard, Competition) and Sample's Random and First-N-percent modes** are not built; the sample workflows describe their behaviour and the nodes are refused until built.
-- **Cross Tab** column names: Alteryx replaces special characters with underscores; Flowfile keeps the raw values. No golden output has been compared yet.
-- **Fuzzy Match** is not built. The placeholder tells you how to rebuild it with Flowfile's Fuzzy Match node (mode, field, threshold), and warns that the matches will differ: Alteryx's default JaroTFIDF weights words by rarity and strips stop words; Flowfile's node does not.
+- **Cross Tab** column names: the sample workflows show Alteryx replacing special characters with underscores; Flowfile keeps the raw values. No golden output has been compared yet.
+- **Fuzzy Match** is not built. The placeholder tells you how to rebuild it with Flowfile's Fuzzy Match node (mode, field, threshold), and warns that the matches will differ: Alteryx's default match style is a TF-IDF-weighted scorer with its own text pre-processing, while Flowfile's node scores plain Jaro similarity.
 - **Regex** patterns are compiled by Polars' engine at import time; lookaround and backreferences are refused, everything else is shown for you to verify.
 - **MD5 and Base64.** `MD5_UTF8` and both Base64 functions map exactly; `MD5_ASCII` and `MD5_UNICODE` hash different bytes and are refused.
 - **Macros and wizards** (`.yxmc`, `.yxwz`) are imported for their data tools; control wires and questions are not reproduced.
 - **Comments** travel as text only; colours, fonts and shapes are dropped.
-- **Text Input dates.** A Text Input column whose cells are all `yyyy-MM-dd` or `yyyy-MM-dd HH:mm:ss` is typed Date or Datetime, as Alteryx does. Padded cells are trimmed first, a code column that happens to hold dates is typed too, and `HH:mm:ss` stays text because Flowfile has no Time column. A Formula that parses such a column with `DateTimeParse` raises, because the column is already a date.
+- **Text Input dates.** A Text Input column whose cells are all `yyyy-MM-dd` or `yyyy-MM-dd HH:mm:ss` is typed Date or Datetime, as the sample workflows show Alteryx doing. Padded cells are trimmed first, a code column that happens to hold dates is typed too, and `HH:mm:ss` stays text because Flowfile has no Time column. A Formula that parses such a column with `DateTimeParse` raises, because the column is already a date.
 
 If you hit something not on this list, that is the report we want: open an issue with the report row and, if you can, the tool's configuration.
 

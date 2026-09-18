@@ -46,7 +46,7 @@
         <span class="ax-file-name" :title="fileName">{{ fileName }}</span>
       </p>
       <p class="ax-note">
-        The workflow is uploaded to Flowfile, converted, and saved as a new flow.
+        The workflow is sent to your local Flowfile backend, converted, and saved as a new flow.
       </p>
     </div>
 

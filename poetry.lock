@@ -6449,4 +6449,4 @@ alteryx = ["yxdb"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.14"
-content-hash = "35cf2281faa5bd469b37f42fb0352c6ad67a24e84645d7b4a2849da5414af027"
+content-hash = "b3c8badb2c2c9bbccb35c62a51b39f25a441c9395e69f54d6739dc3839c48962"
