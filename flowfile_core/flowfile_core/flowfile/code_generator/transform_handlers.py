@@ -47,10 +47,36 @@ class TransformHandlersMixin(ConverterMixinBase):
         self._add_code("")
 
     def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle formula/expression nodes."""
+        """Handle formula/expression nodes.
+
+        Entries always emit one chained `with_columns` step each, in order, never a fused call:
+        a later entry may read a column an earlier one writes, and chaining shows that instead
+        of leaving the reader to work out which form is sequential. A single entry emits exactly
+        the one-liner it always has; zero active entries is a pass-through assignment.
+        """
         input_df = input_vars.get("main", "df")
-        formula = settings.function.function
-        col_name = settings.function.field.name
+        entries = [entry for _, entry in settings.active_entries()]
+        if not entries:
+            self._add_code(f"{var_name} = {input_df}")
+        elif len(entries) == 1:
+            lines = self._formula_entry_lines(entries[0])
+            self._add_code(f"{var_name} = {input_df}{lines[0]}")
+            for line in lines[1:]:
+                self._add_code(line)
+        else:
+            self._add_code(f"{var_name} = ({input_df}")
+            for entry in entries:
+                for line in self._formula_entry_lines(entry):
+                    self._add_code(f"    {line}" if line.strip() else "")
+            self._add_code(")")
+        self._add_code("")
+
+    def _formula_entry_parts(self, entry: transform_schema.FunctionInput) -> tuple[str | None, str, str | None]:
+        """One entry as (native polars expression or None, output column name, cast target or None).
+
+        Registers the imports the chosen branch needs, so callers only assemble text.
+        """
+        formula = entry.function
         can_convert_to_pl_code: bool = False
         pl_code: str | None = None
         try:
@@ -70,27 +96,34 @@ class TransformHandlersMixin(ConverterMixinBase):
         # (c) make to_polars_code() accept a framework prefix parameter.
         if can_convert_to_pl_code:
             self._register_expr_stdlib_imports(pl_code)
-            expr_str = f"({pl_code}).alias({self._py_str(col_name)})"
-            if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
-                output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
-                if output_type[:3] != f"{self.framework}.":
-                    output_type = f"{self.framework}." + output_type
-                expr_str += f".cast({output_type})"
-            self._add_code(f"{var_name} = {input_df}.with_columns([{expr_str}])")
-            self._add_code("")
         else:
+            pl_code = None
             self.imports.add(
                 "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
             )
-            self._add_code(f"{var_name} = {input_df}.with_columns([")
-            self._add_code(f"simple_function_to_expr({formula!r}).alias({self._py_str(col_name)})")
-            if settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
-                output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
-                if output_type[:3] != f"{self.framework}.":
-                    output_type = f"{self.framework}." + output_type
-                self._add_code(f"    .cast({output_type})")
-            self._add_code("])")
-            self._add_code("")
+        output_type = None
+        if entry.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
+            output_type = convert_pl_type_to_string(cast_str_to_polars_type(entry.field.data_type))
+            if output_type[:3] != f"{self.framework}.":
+                output_type = f"{self.framework}." + output_type
+        return pl_code, entry.field.name, output_type
+
+    def _formula_entry_lines(self, entry: transform_schema.FunctionInput) -> list[str]:
+        """The `.with_columns(...)` method-chain lines one formula entry emits."""
+        pl_code, col_name, output_type = self._formula_entry_parts(entry)
+        if pl_code:
+            expr_str = f"({pl_code}).alias({self._py_str(col_name)})"
+            if output_type:
+                expr_str += f".cast({output_type})"
+            return [f".with_columns([{expr_str}])"]
+        lines = [
+            ".with_columns([",
+            f"simple_function_to_expr({entry.function!r}).alias({self._py_str(col_name)})",
+        ]
+        if output_type:
+            lines.append(f"    .cast({output_type})")
+        lines.append("])")
+        return lines
 
     def _handle_pivot_no_index(self, settings: input_schema.NodePivot, var_name: str, input_df: str, agg_func: str):
         pivot_input = settings.pivot_input

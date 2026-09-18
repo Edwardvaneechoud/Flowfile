@@ -4,6 +4,8 @@ Resolves ${param_name} references in node settings at execution time.
 """
 
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from pydantic import BaseModel
@@ -111,6 +113,32 @@ def restore_parameters(restorations: _Restorations) -> None:
             object.__setattr__(obj, field, original)
         elif isinstance(obj, (dict | list)):
             obj[field] = original
+
+
+@contextmanager
+def node_parameters_resolved(node: Any) -> Iterator[None]:
+    """Substitute a node's flow ``${name}`` refs into its settings for the block.
+
+    The same substitute/restore contract the run loop uses, with parameters taken
+    from the node's own ``_params_getter``. ``_hash`` is pinned across the mutation
+    so the restored settings don't look changed and trigger a spurious reset.
+
+    Raises:
+        ValueError: If a referenced parameter is not defined on the flow.
+    """
+    params_getter = getattr(node, "_params_getter", None)
+    params = params_getter() if params_getter is not None else {}
+    if not params:
+        yield
+        return
+
+    saved_hash = node._hash
+    restorations = apply_parameters_in_place(node.setting_input, params)
+    try:
+        yield
+    finally:
+        restore_parameters(restorations)
+        node._hash = saved_hash
 
 
 def _apply_recursive(

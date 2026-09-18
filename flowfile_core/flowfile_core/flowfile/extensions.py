@@ -1,12 +1,33 @@
+from collections.abc import Sequence
 from functools import lru_cache
 
 import polars as pl
 
-from flowfile_core.flowfile._extensions.real_time_interface import get_realtime_func_results
+from flowfile_core.flowfile._extensions.real_time_interface import (
+    ExpressionIssue,
+    check_expression_chain,
+    get_realtime_expr_results,
+)
+from flowfile_core.flowfile.flow_data_engine.formula_entries import (
+    FormulaEntry,
+    FormulaEntryError,
+    apply_formula_entries,
+    build_expression,
+    classify_polars_error,
+    formula_entry,
+)
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.parameter_resolver import resolve_expression_parameters
-from flowfile_core.schemas.output_model import InstantFuncResult
+from flowfile_core.schemas import transform_schema
+from flowfile_core.schemas.output_model import (
+    FormulaChainCheckResponse,
+    FormulaChainColumn,
+    FormulaChainEntryResult,
+    FormulaChainIssue,
+    FormulaChainSuggestion,
+    InstantFuncResult,
+)
 from flowfile_core.utils.arrow_reader import read_top_n
 
 
@@ -55,32 +76,128 @@ def _first_preview_row(node_input: FlowNode, source_handle: str) -> pl.DataFrame
     return node_input.get_predicted_resulting_data(source_handle).data_frame.collect()
 
 
-def get_instant_func_results(node_step: FlowNode, func_string: str) -> InstantFuncResult:
+def _resolve_preview_frame(node_step: FlowNode) -> tuple[pl.DataFrame | None, InstantFuncResult | None]:
+    """The single preview row an edit-time evaluation runs on, or the result explaining why not."""
     control_source = _gate_control_source(node_step)
     if control_source is None and len(node_step.main_input) == 0:
-        return InstantFuncResult(result="No input data connected, so cannot evaluate the result", success=None)
-    # Resolve ${param} references so the preview matches what execution produces
-    # (typed literals: strings quoted, numbers/bools bare). Unknown refs are left
-    # as-is. Mirrors the expression-field substitution done at run time.
+        return None, InstantFuncResult(result="No input data connected, so cannot evaluate the result", success=None)
+    node_input, source_handle = control_source or (node_step.main_input[0], DEFAULT_OUTPUT_HANDLE)
+    try:
+        return _first_preview_row(node_input, source_handle), None
+    except Exception:
+        return None, InstantFuncResult(result="Could not get data from previous step", success=None)
+
+
+def _resolve_params(node_step: FlowNode, func_string: str) -> str:
+    """Substitute ``${param}`` references so the preview matches what execution produces.
+
+    Typed literals: strings quoted, numbers/bools bare. Unknown refs are left as-is. Mirrors
+    the expression-field substitution done at run time.
+    """
     params_getter = getattr(node_step, "_params_getter", None)
     if params_getter and "${" in func_string:
-        func_string = resolve_expression_parameters(func_string, params_getter())
-    if control_source is not None:
-        node_input, source_handle = control_source
-    else:
-        node_input, source_handle = node_step.main_input[0], DEFAULT_OUTPUT_HANDLE
+        return resolve_expression_parameters(func_string, params_getter())
+    return func_string
+
+
+def evaluate_preview_entry(df: pl.DataFrame, entry: FormulaEntry, *, as_predicate: bool = False) -> InstantFuncResult:
+    """Evaluate one entry on the preview row, describing a failure exactly as the chain check would.
+
+    Parse, missing-column and type failures go through the same classifier as
+    `apply_formula_entries`, so the preview strip and the row diagnostic never disagree. What
+    remains the preview's own: a non-boolean result for a predicate, and data-dependent
+    failures (a strict cast on real values) that a schema-only check cannot see.
+    """
     try:
-        df = _first_preview_row(node_input, source_handle)
+        real_time_result = get_realtime_expr_results(df, build_expression(entry))
+    except FormulaEntryError as exc:
+        return InstantFuncResult(result=exc.detail, success=False)
+    except pl.exceptions.PolarsError as exc:
+        return InstantFuncResult(result=classify_polars_error(entry, exc, df.columns, df.schema).detail, success=False)
     except Exception:
-        return InstantFuncResult(result="Could not get data from previous step", success=None)
-    try:
-        real_time_result = get_realtime_func_results(df=df, func_string=func_string)
-        if node_step.name == "filter" and not real_time_result.is_filterable_result():
-            return InstantFuncResult(
-                result="Result is not filterable," " make sure the function results in a true or false output",
-                success=False,
+        return InstantFuncResult(result="expression could not be evaluated", success=False)
+    if as_predicate and not real_time_result.is_filterable_result():
+        return InstantFuncResult(
+            result="Result is not filterable, make sure the function results in a true or false output",
+            success=False,
+        )
+    return InstantFuncResult(result=real_time_result.readable_result, success=real_time_result.success)
+
+
+def get_instant_func_results(node_step: FlowNode, func_string: str) -> InstantFuncResult:
+    df, failure = _resolve_preview_frame(node_step)
+    if failure is not None:
+        return failure
+    entry = FormulaEntry(1, "", _resolve_params(node_step, func_string))
+    return evaluate_preview_entry(df, entry, as_predicate=node_step.name == "filter")
+
+
+def _resolved_entries(
+    node_step: FlowNode, entries: Sequence[transform_schema.FunctionInput]
+) -> list[transform_schema.FunctionInput]:
+    """Copies of *entries* with their ``${param}`` references substituted; the originals stand."""
+    return [e.model_copy(update={"function": _resolve_params(node_step, e.function or "")}) for e in entries]
+
+
+def _chain_columns(schema: dict) -> list[FormulaChainColumn]:
+    return [FormulaChainColumn(name=name, data_type=str(dtype)) for name, dtype in schema.items()]
+
+
+def _chain_issue(issue: ExpressionIssue) -> FormulaChainIssue:
+    suggestion = issue.suggestion
+    return FormulaChainIssue(
+        message=issue.message,
+        kind=issue.kind,
+        suggestion=None
+        if suggestion is None
+        else FormulaChainSuggestion(from_column=suggestion.from_name, to=suggestion.to_name),
+    )
+
+
+def get_formula_chain_check(
+    node_step: FlowNode, entries: Sequence[transform_schema.FunctionInput]
+) -> FormulaChainCheckResponse:
+    """Validate the editor's formula entries against the schema each one will actually see.
+
+    Reads no data. ``available`` is False when the node's main-input schema is not confidently
+    known — the same "silence over guessing" rule the static settings validation follows.
+    """
+    from flowfile_core.flowfile.settings_validation import _main_input_polars_schema
+
+    pl_schema = _main_input_polars_schema(node_step, True)
+    if pl_schema is None:
+        return FormulaChainCheckResponse(
+            available=False, base_columns=[], entries=[FormulaChainEntryResult() for _ in entries]
+        )
+    result = check_expression_chain(pl_schema, _resolved_entries(node_step, entries))
+    return FormulaChainCheckResponse(
+        available=True,
+        base_columns=_chain_columns(result.base_schema),
+        entries=[
+            FormulaChainEntryResult(
+                issue=None if issue is None else _chain_issue(issue),
+                columns=_chain_columns(schema),
             )
-        r = InstantFuncResult(result=real_time_result.readable_result, success=real_time_result.success)
-    except Exception as e:
-        r = InstantFuncResult(result=str(e), success=False)
-    return r
+            for issue, schema in zip(result.issues, result.schemas, strict=True)
+        ],
+    )
+
+
+def get_formula_chain_instant_result(
+    node_step: FlowNode, entries: Sequence[transform_schema.FunctionInput], index: int
+) -> InstantFuncResult:
+    """Evaluate entry *index* on the preview row, with the entries above it applied first."""
+    if index < 0 or index >= len(entries):
+        return InstantFuncResult(result="No formula selected, so cannot evaluate the result", success=None)
+    chain = _resolved_entries(node_step, entries)
+    if not chain[index].function.strip():
+        return InstantFuncResult(result="", success=None)  # a blank row is skipped, never evaluated
+    df, failure = _resolve_preview_frame(node_step)
+    if failure is not None:
+        return failure
+    prefix = [formula_entry(position, fn) for position, fn in enumerate(chain[:index], start=1) if fn.function.strip()]
+    try:
+        frame = apply_formula_entries(df.lazy(), prefix).collect()
+    except FormulaEntryError as exc:
+        return InstantFuncResult(result=str(exc), success=False)
+    return evaluate_preview_entry(frame, formula_entry(index + 1, chain[index]))

@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import re
+from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -41,6 +42,7 @@ from flowfile_core.database.models import CatalogTable
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_resolve_virtual_table,
 )
+from flowfile_core.flowfile.parameter_resolver import node_parameters_resolved
 from flowfile_core.schemas.catalog_schema import CatalogTableMaterializeResult, CatalogTableOut
 from shared.delta_utils import validate_catalog_path
 from shared.storage_config import storage
@@ -465,13 +467,19 @@ class VirtualTableService:
 
         if selected_node is None:
             raise ValueError(f"No catalog_writer node for table '{table.name}' in flow '{producer.name}'")
-        selected_node.execute_node(
-            run_location=run_location,
-            reset_cache=True,
-            performance_mode=True,
-            optimize_for_downstream=False,
-            node_logger=node_logger,
-        )
+        # Running the writer directly bypasses the producer flow's run loop, so its own
+        # ${name} refs and those of the upstream nodes it pulls are still unresolved.
+        upstream = [flow.get_node(i) for i in flow._get_upstream_node_ids(selected_node.node_id)]
+        with ExitStack() as params:
+            for node in [selected_node, *upstream]:
+                params.enter_context(node_parameters_resolved(node))
+            selected_node.execute_node(
+                run_location=run_location,
+                reset_cache=True,
+                performance_mode=True,
+                optimize_for_downstream=False,
+                node_logger=node_logger,
+            )
 
         if selected_node.results.errors:
             raise ValueError(f"Flow errors for table '{table.name}': {selected_node.results.errors}")

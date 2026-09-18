@@ -6,9 +6,10 @@ from enum import Enum
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup, SemanticType
+from flowfile_core.schemas import transform_schema
 from shared.delta_utils import format_binary_preview
 
 
@@ -32,6 +33,14 @@ class NodeResult(BaseModel):
         validation_alias=AliasChoices("run_time_ms", "run_time"),
     )
     is_running: bool = True
+
+    def finish(self, *, success: bool, error: str = "") -> None:
+        """Close this result out: record the outcome and stamp the elapsed time."""
+        self.success = success
+        self.error = error
+        self.end_timestamp = time.time()
+        self.run_time_ms = int((self.end_timestamp - self.start_timestamp) * 1000)
+        self.is_running = False
 
 
 class RunInformation(BaseModel):
@@ -251,6 +260,62 @@ class InstantFuncResult(BaseModel):
 
     success: bool | None = None
     result: str
+
+
+class FormulaChainRequest(BaseModel):
+    """The formula entries currently in a node's editor, which may differ from the saved node."""
+
+    flow_id: int
+    node_id: int
+    entries: list[transform_schema.FunctionInput] = []
+
+
+class FormulaChainInstantRequest(FormulaChainRequest):
+    index: int
+    """0-based entry to evaluate; the entries above it run first."""
+
+
+class FormulaChainColumn(BaseModel):
+    name: str
+    data_type: str
+
+
+class FormulaChainSuggestion(BaseModel):
+    """A one-click fix the editor can offer beside an issue.
+
+    Serialised as ``{"kind", "from", "to"}``; ``from`` is a Python keyword, hence the alias.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: Literal["replace_column"] = "replace_column"
+    from_column: str = Field(serialization_alias="from", validation_alias=AliasChoices("from", "from_column"))
+    to: str
+
+
+class FormulaChainIssue(BaseModel):
+    message: str
+    kind: str
+    suggestion: FormulaChainSuggestion | None = None
+
+
+class FormulaChainEntryResult(BaseModel):
+    """One entry's verdict and the schema it leaves behind."""
+
+    issue: FormulaChainIssue | None = None
+    columns: list[FormulaChainColumn] = []
+
+
+class FormulaChainCheckResponse(BaseModel):
+    """Per-entry validation of a formula chain against its input schema.
+
+    ``available`` is False when the input schema cannot be resolved (no upstream, blocked
+    prediction); every issue is then null and every column list empty — silence over guessing.
+    """
+
+    available: bool
+    base_columns: list[FormulaChainColumn] = []
+    entries: list[FormulaChainEntryResult] = []
 
 
 class NodeDescriptionResponse(BaseModel):

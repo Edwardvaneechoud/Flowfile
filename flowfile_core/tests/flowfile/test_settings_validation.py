@@ -238,6 +238,80 @@ def test_missing_column_wins_over_expression_issue():
     assert issue.missing_columns == ["gone"]
 
 
+def multi_formula_graph(rows: list[tuple[str, str, str | None]]) -> FlowGraph:
+    """1 manual_input(a, b) -> 2 formula with the given (name, expression, data_type) entries."""
+    graph = create_graph()
+    add_manual_input(graph, BASE_DATA, node_id=1)
+    add_promise(graph, "formula", 2)
+    connect(graph, 1, 2)
+    graph.add_formula(input_schema.NodeFormula(
+        flow_id=graph.flow_id, node_id=2,
+        functions=[
+            transform_schema.FunctionInput(
+                field=transform_schema.FieldInput(name=name, data_type=data_type or "Auto"),
+                function=expression)
+            for name, expression, data_type in rows]))
+    return graph
+
+
+def test_multi_entry_reference_to_an_earlier_output_stays_silent():
+    graph = multi_formula_graph([("x", "[a] + 1", None), ("y", "[x] + 1", None)])
+    assert validate_flow_settings(graph).nodes == []
+    assert graph.run_graph().success
+
+
+def test_multi_entry_forward_reference_warns_on_the_referencing_entry():
+    graph = multi_formula_graph([("x", "[y] + 1", None), ("y", "[a] + 1", None)])
+    issues = issues_by_node(validate_flow_settings(graph))
+    # the column phase names the missing input column; the chain phase stays quiet about it
+    assert [i.kind for i in issues[2]] == ["missing_columns"]
+    assert issues[2][0].missing_columns == ["y"]
+
+
+def test_multi_entry_message_names_the_entry():
+    graph = multi_formula_graph([("x", "[a] + 1", None), ("y", '[x] + "z"', None)])
+    (issue,) = issues_by_node(validate_flow_settings(graph))[2]
+    assert issue.kind == "invalid_expression"
+    assert issue.message.startswith('Formula 2 ("y"): ')
+
+
+def test_single_entry_message_keeps_the_node_level_label():
+    (issue,) = issues_by_node(validate_flow_settings(formula_graph('[a] + "x"')))[2]
+    assert issue.message.startswith("Invalid formula: ")
+
+
+def test_multi_entry_broken_entry_does_not_cascade():
+    """A type error on entry 1 must not make entry 2's reference to its output an error too."""
+    graph = multi_formula_graph([("x", '[a] + "z"', None), ("y", '[x] + "!"', None)])
+    issues = issues_by_node(validate_flow_settings(graph))[2]
+    assert [i.message.split(":")[0] for i in issues] == ['Formula 1 ("x")']
+
+
+def test_multi_entry_reports_every_failing_entry():
+    graph = multi_formula_graph([("x", '[a] + "z"', None), ("y", "((( [a]", None)])
+    issues = issues_by_node(validate_flow_settings(graph))[2]
+    assert [i.message.split(":")[0] for i in issues] == ['Formula 1 ("x")', 'Formula 2 ("y")']
+
+
+def test_blank_entry_is_never_reported():
+    graph = multi_formula_graph([("x", "   ", None), ("y", "[a] + 1", None)])
+    assert validate_flow_settings(graph).nodes == []
+
+
+def test_duplicate_output_names_warn_without_blocking_the_run():
+    graph = multi_formula_graph([("x", "[a] + 1", None), ("x", "[a] + 2", None)])
+    (issue,) = issues_by_node(validate_flow_settings(graph))[2]
+    assert issue.kind == "duplicate_output"
+    assert "formula 1" in issue.message
+    assert graph.run_graph().success
+
+
+def test_blank_output_name_is_a_config_issue():
+    graph = multi_formula_graph([("a", "[a] + 1", None), ("", "[a] + 2", None)])
+    (issue,) = issues_by_node(validate_flow_settings(graph))[2]
+    assert issue.message == "Formula 2: output column name is empty"
+
+
 def test_formula_with_defined_parameter_is_resolved_then_checked():
     graph = formula_graph("[a] + ${bump}")
     graph.flow_settings.parameters = [FlowParameter(name="bump", type="integer", default_value="2")]
@@ -387,6 +461,15 @@ def _tolerance_cases():
             flow_id=fid, node_id=3,
             function=transform_schema.FunctionInput(
                 field=transform_schema.FieldInput(name="out"), function="[a] + 1"))),
+        # Entry 2 reads entry 1's output; dropping `a` breaks entry 1, so the node fails.
+        ("formula", "add_formula", "a", lambda fid: input_schema.NodeFormula(
+            flow_id=fid, node_id=3,
+            functions=[
+                transform_schema.FunctionInput(
+                    field=transform_schema.FieldInput(name="out", data_type="Int64"), function="[a] + 1"),
+                transform_schema.FunctionInput(
+                    field=transform_schema.FieldInput(name="out2"), function="[out] * 2"),
+            ])),
     ]
 
 

@@ -26,9 +26,8 @@
 
 <script lang="ts" setup>
 import { ref, computed, watch, onMounted, defineEmits } from "vue";
-import { MenuContents, ColumnSelectorInterface } from "./types";
+import { MenuContents, ColumnSelectorInterface, EditorSchemaColumn } from "./types";
 import { useNodeStore } from "../../../../stores/column-store";
-import { FileColumn } from "../../../../components/nodes/baseNode/nodeInterfaces";
 import {
   GEOMETRY_ICON,
   displayDataType,
@@ -38,7 +37,7 @@ import {
 
 // tableSchema overrides the store read (e.g. the gate's control input);
 // leaving it undefined keeps the default main-input behavior.
-const props = defineProps<{ filterText?: string; tableSchema?: FileColumn[] | null }>();
+const props = defineProps<{ filterText?: string; tableSchema?: EditorSchemaColumn[] | null }>();
 
 const emit = defineEmits<{
   (event: "value-selected", payload: string): void;
@@ -60,7 +59,7 @@ const filteredChildren = computed<ColumnSelectorInterface[]>(() => {
   return children.filter((c) => c.label.toLowerCase().includes(q));
 });
 
-const activeSchema = computed<FileColumn[] | undefined>(() =>
+const activeSchema = computed<EditorSchemaColumn[] | undefined>(() =>
   props.tableSchema !== undefined
     ? (props.tableSchema ?? undefined)
     : nodeStore.nodeData?.main_input?.table_schema,
@@ -102,7 +101,7 @@ const badgeClass = (column: ColumnSelectorInterface): string => {
   }
 };
 
-const updateColumnData = (columns: FileColumn[]) => {
+const updateColumnData = (columns: EditorSchemaColumn[]) => {
   const childrenNodes: ColumnSelectorInterface[] = columns.map((col) => ({
     label: col.name,
     hasAction: true,

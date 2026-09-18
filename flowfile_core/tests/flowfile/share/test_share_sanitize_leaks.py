@@ -15,9 +15,10 @@ import pytest
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.share import build_share_link
 from flowfile_core.flowfile.share.transform import build_share_envelope
-from flowfile_core.schemas import transform_schema
+from flowfile_core.flowfile.flow_graph import add_connection
+from flowfile_core.schemas import input_schema, transform_schema
 
-from tests.flowfile.share.conftest import CANARIES, add_filter, add_read, make_graph
+from tests.flowfile.share.conftest import CANARIES, add_filter, add_manual_input, add_read, make_graph
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FLOW_YAMLS = sorted((REPO_ROOT / "data" / "templates" / "flows").glob("*.yaml")) + sorted(
@@ -177,3 +178,45 @@ def test_shipped_flows_share_without_leaking(flow_path):
     response = build_share_link(graph)
     assert response.url is not None
     assert response.hash_chars > 0
+
+
+def _formula_graph(entries: list[tuple[str, str]]):
+    """manual_input -> formula with the given (output name, expression) entries."""
+    graph = make_graph(name="share_formula")
+    add_manual_input(graph, node_id=1)
+    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="formula"))
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            functions=[
+                transform_schema.FunctionInput(field=transform_schema.FieldInput(name=name), function=expression)
+                for name, expression in entries
+            ],
+        )
+    )
+    return graph
+
+
+def _formula_node(graph) -> dict:
+    envelope = build_share_envelope(graph).envelope
+    return next(node for node in envelope["flow"]["nodes"] if str(node["id"]) == "2")
+
+
+def test_single_entry_formula_travels_with_its_settings():
+    node = _formula_node(_formula_graph([("greeting", '"hi " + [city]')]))
+    assert not node["setting_input"].get("is_placeholder")
+    assert node["setting_input"]["function"]["function"] == '"hi " + [city]'
+
+
+@pytest.mark.parametrize(
+    "entries", [[("a", "[id] + 1"), ("b", "[a] + 1")], []], ids=["two entries", "zero entries"]
+)
+def test_formula_nodes_the_browser_cannot_chain_become_stripped_placeholders(entries):
+    node = _formula_node(_formula_graph(entries))
+    assert node["setting_input"]["is_placeholder"] is True
+    assert node["setting_input"]["original_type"] == "formula"
+    assert "function" not in node["setting_input"]
+    assert "functions" not in node["setting_input"]

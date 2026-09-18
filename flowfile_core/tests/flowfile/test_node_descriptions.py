@@ -197,6 +197,40 @@ class TestNodeFormulaDescription:
         assert len(desc) <= 70  # name + " = " + truncated
         assert "..." in desc
 
+    def test_formula_multiple_entries(self):
+        node = input_schema.NodeFormula(
+            **BASE_KWARGS,
+            functions=[
+                transform_schema.FunctionInput(
+                    field=transform_schema.FieldInput(name=name), function=expression
+                )
+                for name, expression in [
+                    ("FullName", '[First] + " " + [Last]'),
+                    ("Domain", "right([Email], 8)"),
+                    ("IsInternal", '[Domain] = "acme.com"'),
+                    ("Tenure", "year(today())"),
+                    ("Segment", '"x"'),
+                ]
+            ],
+        )
+        assert node.get_default_description() == (
+            'FullName = [First] + " " + [Last]; Domain = right([Email], 8); +3 more'
+        )
+
+    def test_formula_two_entries_has_no_more_suffix(self):
+        node = input_schema.NodeFormula(
+            **BASE_KWARGS,
+            functions=[
+                transform_schema.FunctionInput(
+                    field=transform_schema.FieldInput(name="a"), function="1"
+                ),
+                transform_schema.FunctionInput(
+                    field=transform_schema.FieldInput(name="b"), function="2"
+                ),
+            ],
+        )
+        assert node.get_default_description() == "a = 1; b = 2"
+
 
 # NodeMultiFieldFormula
 

@@ -39,6 +39,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import (
     cast_str_to_polars_type,
     get_polars_type,
 )
+from flowfile_core.flowfile.flow_data_engine.formula_entries import FormulaEntry, apply_formula_entries
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.flowfile.flow_data_engine.join import (
     get_col_name_to_delete,
@@ -2550,7 +2551,9 @@ class FlowDataEngine:
         SINGLE `with_columns` call. One call is what makes the operation well-defined when a
         target's formula references another target: every expression sees the ORIGINAL input
         values, so `[_CurrentField_] / [Total] * 100` reads the untouched `Total` even when
-        `Total` is itself being overwritten.
+        `Total` is itself being overwritten. This is the deliberate opposite of
+        `apply_sql_formulas`, where the formula node's entries are chained so entry N reads
+        the columns entries 1..N-1 produced.
 
         Column names listed in `selected_columns` that are absent from the schema are silently
         skipped, mirroring `_select_rename_targets` — stale UI state must not break a run. Zero
@@ -3017,24 +3020,19 @@ class FlowDataEngine:
             return FlowDataEngine(new_df, streamable=self._streamable)
         return FlowDataEngine(new_df, number_of_records=self.number_of_records, streamable=self._streamable)
 
-    def apply_sql_formula(self, func: str, col_name: str, output_data_type: pl.DataType = None) -> FlowDataEngine:
-        """Applies an SQL-style formula using `pl.sql_expr`.
+    def apply_sql_formulas(self, entries: list[FormulaEntry]) -> FlowDataEngine:
+        """Applies the formula node's entries, chained (see `apply_formula_entries`).
 
-        Args:
-            func: A string containing an SQL expression.
-            col_name: The name of the new or transformed column.
-            output_data_type: The desired Polars data type for the output column.
+        This is the deliberate opposite of `build_multi_field_formula_expressions`, which
+        builds a SINGLE `with_columns` call so that every expression reads the ORIGINAL
+        input values.
 
-        Returns:
-            A new `FlowDataEngine` instance with the applied formula.
+        Raises:
+            FormulaEntryError: Naming the failing entry's position and output column.
         """
-        expr = to_expr(func)
-        if output_data_type not in (None, transform_schemas.AUTO_DATA_TYPE):
-            df = self.data_frame.with_columns(expr.cast(output_data_type).alias(col_name))
-        else:
-            df = self.data_frame.with_columns(expr.alias(col_name))
-
-        return FlowDataEngine(df, number_of_records=self.number_of_records)
+        df = self.data_frame
+        lf = df.lazy() if isinstance(df, pl.DataFrame) else df
+        return FlowDataEngine(apply_formula_entries(lf, entries), number_of_records=self.number_of_records)
 
     def output(
         self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str, execute_remote: bool = False

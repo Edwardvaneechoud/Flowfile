@@ -1,40 +1,10 @@
 <template>
-  <div class="container">
-    <div v-if="showSideBar" class="options-container" :style="{ width: treeNodeWidth }">
-      <sidebar v-model="optionSelection" :options="radioOptions" />
-      <div class="divider" />
-      <div class="search-box">
-        <i class="fas fa-search search-icon" />
-        <input
-          v-model="filterText"
-          class="search-input"
-          type="text"
-          :placeholder="searchPlaceholder"
-        />
-        <i v-if="filterText" class="fas fa-times clear-icon" @click="filterText = ''" />
-      </div>
-      <div class="selector">
-        <column-selector
-          v-if="optionSelection === 'fields'"
-          :filter-text="filterText"
-          :table-schema="activeInput?.table_schema"
-          @value-selected="handleNodeSelected"
-        />
-        <param-selector
-          v-else-if="optionSelection === 'parameters'"
-          :filter-text="filterText"
-          :parameters="parameters"
-          @value-selected="handleNodeSelected"
-        />
-        <func-selector
-          v-else
-          ref="func-selector"
-          :filter-text="filterText"
-          @value-selected="handleNodeSelected"
-        />
-      </div>
-    </div>
-    <div class="resizer" @mousedown="initResize"></div>
+  <div class="expression-editor-layout">
+    <editor-side-rail
+      :table-schema="activeInput?.table_schema"
+      :parameters="parameters"
+      @value-selected="handleNodeSelected"
+    />
     <div ref="editorWrapper" class="editor-wrapper">
       <function-editor
         ref="functionEditor"
@@ -52,28 +22,17 @@
 
 <script lang="ts" setup>
 import { ref, Ref, watch, onMounted, nextTick, computed, type PropType } from "vue";
-import ColumnSelector from "./ColumnSelector/columnsSelector.vue";
-import ParamSelector from "./ParamSelector/ParamSelector.vue";
-import Sidebar from "./Sidebar/Sidebar.vue";
+import EditorSideRail from "./EditorSideRail.vue";
 import FunctionEditor from "./FunctionEditor.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useFlowStore } from "../../../stores/flow-store";
 import type { FlowParameter } from "../../../types/flow.types";
 import InstantFuncResults from "./instantFuncResults.vue";
 import debounce from "lodash/debounce";
-import FuncSelector from "./FuncSelector/FuncSelector.vue";
 
-const optionSelection = ref("fields");
-const filterText = ref("");
 const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
 const parameters = computed<FlowParameter[]>(() => flowStore.parameters);
-
-const radioOptions = [
-  { value: "fields", text: "Fields", icon: "fa fa-columns" },
-  { value: "functions", text: "Functions", icon: "fas fa-atom" },
-  { value: "parameters", text: "Parameters", icon: "fas fa-sliders-h" },
-];
 
 const props = defineProps({
   editorString: { type: String, required: true },
@@ -86,10 +45,6 @@ const activeInput = computed(() =>
   props.inputSource === "right" ? nodeStore.nodeData?.right_input : nodeStore.nodeData?.main_input,
 );
 
-const startX = ref(0);
-const startWidth = ref(0);
-const treeNodeWidth = ref("200px");
-
 const instantFuncResultsRef = ref<Ref<typeof InstantFuncResults> | null>(null);
 const code = ref(props.editorString);
 nodeStore.setInputCode(props.editorString);
@@ -99,14 +54,6 @@ const showTools: Ref<boolean> = ref(true);
 const showHideOptions = () => {
   showTools.value = !showTools.value;
 };
-
-const showSideBar = computed(() => parseInt(treeNodeWidth.value.replace("px", "")) > 50);
-
-const searchPlaceholder = computed(() => {
-  if (optionSelection.value === "fields") return "Filter fields";
-  if (optionSelection.value === "parameters") return "Filter parameters";
-  return "Filter functions";
-});
 
 const columnTypes = computed<Record<string, string>>(() => {
   const schema = activeInput.value?.table_schema ?? [];
@@ -120,12 +67,6 @@ const columnTypes = computed<Record<string, string>>(() => {
 const handleCodeChange = (newCode: string) => {
   code.value = newCode;
   nodeStore.setInputCode(newCode);
-};
-
-const resizeWidth = (event: MouseEvent) => {
-  const deltaX = event.clientX - startX.value;
-  const newWidth = startWidth.value + deltaX;
-  treeNodeWidth.value = Math.min(newWidth, 300) + "px";
 };
 
 watch(
@@ -157,54 +98,17 @@ onMounted(async () => {
     instantFuncResultsRef.value.getInstantFuncResults(props.editorString, nodeStore.flow_id);
   }
 });
-
-const initResize = (event: MouseEvent) => {
-  startX.value = event.clientX;
-  startWidth.value = parseInt(treeNodeWidth.value.replace("px", ""));
-  document.addEventListener("mousemove", resizeWidth);
-  document.addEventListener("mouseup", stopResize);
-};
-
-const stopResize = () => {
-  document.removeEventListener("mousemove", resizeWidth);
-  document.removeEventListener("mouseup", stopResize);
-};
 </script>
 
 <style scoped>
-.selector {
-  overflow-y: scroll;
-  max-height: 300px;
-}
-
-.container {
+.expression-editor-layout {
   display: flex;
   border: 1px solid var(--color-border-primary);
   border-radius: 5px;
   overflow: hidden;
-  height: 100%;
+  height: 252px;
   cursor: auto;
   background-color: var(--color-background-primary);
-}
-
-.options-container {
-  flex-shrink: 0;
-  min-width: 50px;
-  max-height: 300px;
-  padding-left: 5px;
-  padding-right: 5px;
-  z-index: 1;
-  overflow-y: auto;
-  background-color: var(--color-background-primary);
-  color: var(--color-text-primary);
-}
-
-.resizer {
-  width: 5px;
-  cursor: ew-resize;
-  background-color: var(--color-border-primary);
-  border-right: 0.5px solid var(--color-border-secondary);
-  flex-shrink: 0;
 }
 
 .editor-wrapper {
@@ -216,65 +120,12 @@ const stopResize = () => {
 
 .prism-editor-ref {
   flex: 1;
-  padding: 1px;
+  padding: 0;
   min-height: 0px;
 }
 
 .error-box-wrapper {
   overflow-y: auto;
   border-top: 1px solid var(--color-border-primary);
-}
-
-.divider {
-  border-top: 1px solid var(--color-border-primary);
-  padding-bottom: 10px;
-}
-
-.search-box {
-  position: relative;
-  display: flex;
-  align-items: center;
-  margin-bottom: 6px;
-}
-
-.search-box .search-icon {
-  position: absolute;
-  left: 7px;
-  font-size: 10px;
-  color: var(--color-text-muted);
-  pointer-events: none;
-}
-
-.search-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 4px 22px 4px 22px;
-  font-size: 12px;
-  color: var(--color-text-primary);
-  background-color: var(--color-background-secondary);
-  border: 1px solid var(--color-border-primary);
-  border-radius: 4px;
-  outline: none;
-}
-
-.search-input:focus {
-  border-color: var(--color-border-focus);
-  box-shadow: 0 0 0 2px var(--color-focus-ring-accent);
-}
-
-.search-input::placeholder {
-  color: var(--color-text-muted);
-}
-
-.search-box .clear-icon {
-  position: absolute;
-  right: 7px;
-  font-size: 10px;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-
-.search-box .clear-icon:hover {
-  color: var(--color-text-secondary);
 }
 </style>

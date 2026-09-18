@@ -2073,6 +2073,168 @@ def test_instant_function_result_fail():
     assert not response.json().get("success"), "Instant function result did not fail"
 
 
+def _chain_entry(name: str, function: str, data_type: str | None = None) -> dict:
+    return {"field": {"name": name, "data_type": data_type}, "function": function}
+
+
+def _formula_chain_flow() -> FlowId:
+    """manual_input(name, city) -> formula node 2, wired but with no settings saved yet."""
+    flow_id = create_flow_with_manual_input()
+    add_node(flow_id=flow_id, node_id=2, node_type="formula", pos_x=0, pos_y=0)
+    connect_node(flow_id, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    return flow_id
+
+
+def test_formula_chain_check_accumulates_columns():
+    flow_id = _formula_chain_flow()
+    response = client.post(
+        "/custom_functions/formula_chain_check",
+        json={
+            "flow_id": flow_id,
+            "node_id": 2,
+            "entries": [
+                _chain_entry("greeting", '"hi " + [name]'),
+                _chain_entry("shout", "[greeting] + \"!\""),
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["available"] is True
+    assert [c["name"] for c in body["base_columns"]] == ["name", "city"]
+    assert [e["issue"] for e in body["entries"]] == [None, None]
+    assert [c["name"] for c in body["entries"][0]["columns"]] == ["name", "city", "greeting"]
+    assert [c["name"] for c in body["entries"][1]["columns"]] == ["name", "city", "greeting", "shout"]
+    assert {c["data_type"] for c in body["entries"][1]["columns"]} == {"String"}
+
+
+def test_formula_chain_check_flags_a_forward_reference():
+    flow_id = _formula_chain_flow()
+    response = client.post(
+        "/custom_functions/formula_chain_check",
+        json={
+            "flow_id": flow_id,
+            "node_id": 2,
+            "entries": [_chain_entry("early", '"x" + [late]'), _chain_entry("late", "[name]")],
+        },
+    )
+    assert response.status_code == 200, response.text
+    entries = response.json()["entries"]
+    assert entries[0]["issue"]["kind"] == "missing_column"
+    assert entries[0]["issue"]["message"] == "column 'late' not found"
+    assert entries[0]["issue"]["suggestion"] is None
+    assert entries[1]["issue"] is None
+    # cascade suppression: the broken entry still contributes its column
+    assert "early" in [c["name"] for c in entries[0]["columns"]]
+
+
+def test_formula_chain_check_suggests_a_near_match():
+    flow_id = _formula_chain_flow()
+    response = client.post(
+        "/custom_functions/formula_chain_check",
+        json={"flow_id": flow_id, "node_id": 2, "entries": [_chain_entry("x", "[nam] + \"!\""), _chain_entry("y", "[cty")]},
+    )
+    assert response.status_code == 200, response.text
+    entries = response.json()["entries"]
+    assert entries[0]["issue"] == {
+        "message": "column 'nam' not found, did you mean 'name'?",
+        "kind": "missing_column",
+        "suggestion": {"kind": "replace_column", "from": "nam", "to": "name"},
+    }
+    assert entries[1]["issue"] == {
+        "message": "column reference is not closed, add ]",
+        "kind": "parse",
+        "suggestion": None,
+    }
+
+
+def test_formula_chain_check_is_unavailable_without_an_upstream():
+    flow_id = ensure_clean_flow()
+    add_node(flow_id=flow_id, node_id=2, node_type="formula", pos_x=0, pos_y=0)
+    response = client.post(
+        "/custom_functions/formula_chain_check",
+        json={"flow_id": flow_id, "node_id": 2, "entries": [_chain_entry("x", "[name]")]},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["available"] is False
+    assert body["base_columns"] == []
+    assert body["entries"] == [{"issue": None, "columns": []}]
+
+
+def test_formula_chain_instant_result_evaluates_the_chained_entry():
+    """Entry 1's column must exist while entry 2 is evaluated; the plain route is the control."""
+    flow_id = _formula_chain_flow()
+    entries = [_chain_entry("greeting", '"hi " + [name]'), _chain_entry("shout", "[greeting] + \"!\"")]
+    response = client.post(
+        "/custom_functions/formula_chain_instant_result",
+        json={"flow_id": flow_id, "node_id": 2, "entries": entries, "index": 1},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["success"] is not False, response.json()
+
+    unchained = client.get(
+        "/custom_functions/instant_result",
+        params={"flow_id": flow_id, "node_id": 2, "func_string": '[greeting] + "!"'},
+    )
+    assert unchained.json()["success"] is False, "control: without the chain 'greeting' does not exist"
+
+
+def test_formula_chain_instant_result_blank_entry_is_neutral():
+    """A whitespace-only expression (an empty editor with stray newlines) is skipped, not an error."""
+    flow_id = _formula_chain_flow()
+    entries = [_chain_entry("greeting", '"hi " + [name]'), _chain_entry("blank", "\n\n  \n")]
+    response = client.post(
+        "/custom_functions/formula_chain_instant_result",
+        json={"flow_id": flow_id, "node_id": 2, "entries": entries, "index": 1},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {"result": "", "success": None}
+
+
+def test_formula_chain_instant_result_returns_the_chained_value_after_a_run():
+    flow_id = _formula_chain_flow()
+    flow = flow_file_handler.get_flow(flow_id)
+    flow.flow_settings.execution_mode = "Development"
+    # The after-run branch reads the run's sampled artifact, which only worker-backed paths produce.
+    flow.execution_location = "remote"
+    flow.run_graph()
+    entries = [_chain_entry("greeting", '"hi " + [name]'), _chain_entry("shout", "[greeting] + \"!\"")]
+    response = client.post(
+        "/custom_functions/formula_chain_instant_result",
+        json={"flow_id": flow_id, "node_id": 2, "entries": entries, "index": 1},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {"success": True, "result": "hi John!"}
+
+
+def test_formula_chain_instant_result_uses_the_chain_checks_words_for_the_active_row():
+    flow_id = _formula_chain_flow()
+    for expression, detail in [
+        ("[nam]", "column 'nam' not found, did you mean 'name'?"),
+        ("[name", "column reference is not closed, add ]"),
+    ]:
+        response = client.post(
+            "/custom_functions/formula_chain_instant_result",
+            json={"flow_id": flow_id, "node_id": 2, "entries": [_chain_entry("x", expression)], "index": 0},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json() == {"result": detail, "success": False}
+
+
+def test_formula_chain_instant_result_attributes_an_earlier_failure():
+    flow_id = _formula_chain_flow()
+    entries = [_chain_entry("broken", "[nope] + 1"), _chain_entry("uses", "[broken]")]
+    response = client.post(
+        "/custom_functions/formula_chain_instant_result",
+        json={"flow_id": flow_id, "node_id": 2, "entries": entries, "index": 1},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["success"] is False
+    assert body["result"].startswith('Formula 1 ("broken"): ')
+
+
 def test_flow_run():
     flow_id = create_flow_with_manual_input()
     response = client.post("/flow/run/", params={"flow_id": flow_id})

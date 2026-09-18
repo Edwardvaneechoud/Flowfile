@@ -3001,3 +3001,38 @@ def test_source_add_backstop_wins_over_plan_nudge() -> None:
     assert sess.status == "completed"
     assert len(sess.staged_results) == 1
     assert sess.staged_results[0].tool_name == "flowfile.graph.add_manual_input"
+
+
+def test_fill_settings_formula_functions_list_survives_coercion_untouched() -> None:
+    """A correctly-shaped multi-entry payload must not be rewritten by the bare-string coercer."""
+    from flowfile_core.ai.agents.planner.coercions import _coerce_formula_bare_string_args
+    from flowfile_core.ai.tools.registry import get_staged_fill_inner_field_name
+
+    payload = {
+        "functions": [
+            {"field": {"name": "net", "data_type": "Double"}, "function": "[amount] * 0.95"},
+            {"field": {"name": "rounded", "data_type": "Double"}, "function": "round([net], 2)"},
+        ]
+    }
+    assert _coerce_formula_bare_string_args(payload, user_prompt="derive net then round it") is payload
+    # formula is a multi-field settings type, so the planner performs no inner-input wrap.
+    assert get_staged_fill_inner_field_name("formula") is None
+
+
+def test_fill_settings_formula_bare_string_coercion_emits_the_outer_envelope() -> None:
+    from flowfile_core.ai.agents.planner.coercions import _coerce_formula_bare_string_args
+
+    coerced = _coerce_formula_bare_string_args({"function": "[a] + 1"}, user_prompt="add a total column")
+    assert isinstance(coerced["function"], dict)
+    assert coerced["function"]["function"] == "[a] + 1"
+    assert coerced["function"]["field"]["name"]
+
+
+def test_stage_three_formula_tool_spec_exposes_both_shapes() -> None:
+    from flowfile_core.ai.tools.registry import build_staged_fill_tool_spec
+
+    spec = build_staged_fill_tool_spec("formula")
+    assert spec is not None
+    properties = spec.parameters["properties"]
+    assert "function" in properties and "functions" in properties
+    assert "flow_id" not in properties, "planner-injected fields stay hidden"

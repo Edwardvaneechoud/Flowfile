@@ -1,26 +1,14 @@
 <template>
-  <div class="container">
-    <div v-if="!hasInput" class="result-content loading">
-      <div class="label">Waiting for input</div>
-      <div class="content"></div>
-    </div>
-    <div v-else-if="instantFuncResult.success === null" class="result-content loading">
-      <div class="label">Processing</div>
-      <div class="content">Function valid, run process to see results</div>
-    </div>
-    <div v-else-if="instantFuncResult.success" class="result-content success">
-      <div class="label">Example result</div>
-      <div class="content">{{ instantFuncResult.result }}</div>
-    </div>
-    <div v-else class="result-content error">
-      <div class="label">Validation error</div>
-      <div class="content">{{ instantFuncResult.result }}</div>
+  <div class="instant-function-results">
+    <div class="result-content" :class="state" role="status">
+      <span class="result-label">{{ label }}</span>
+      <span class="result-value" :class="{ 'is-muted': muted }">{{ value }}</span>
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted } from "vue";
+import { computed, ref, onMounted, type PropType } from "vue";
 import axios from "axios";
 import { InstantFuncResult } from "./types";
 import { useNodeStore } from "../../../stores/column-store";
@@ -31,6 +19,14 @@ const hasInput = ref<boolean>(false);
 
 const props = defineProps({
   nodeId: { type: Number, required: true },
+  // Names what is being previewed (the formula node's active output column).
+  label: { type: String, default: "" },
+  // Supplied by hosts that evaluate something other than a lone expression (the
+  // formula node's chain). Without it the single-expression endpoint is used.
+  fetcher: {
+    type: Function as PropType<(funcString: string) => Promise<InstantFuncResult>>,
+    default: null,
+  },
 });
 
 const instantFuncResult = ref<InstantFuncResult>({
@@ -38,9 +34,32 @@ const instantFuncResult = ref<InstantFuncResult>({
   success: false,
 });
 
+const state = computed(() => {
+  if (!hasInput.value) return "idle";
+  if (instantFuncResult.value.success === null) return "loading";
+  return instantFuncResult.value.success ? "success" : "error";
+});
+
+const muted = computed(() => state.value === "idle" || state.value === "loading");
+
+const label = computed(() => {
+  const word = state.value === "error" ? "Error" : "Preview";
+  return props.label ? `${word} · ${props.label}` : word;
+});
+
+const value = computed(() => {
+  if (state.value === "idle") return "Type an expression to see an example result";
+  if (state.value === "loading") return "Expression valid, run the flow to see results";
+  return instantFuncResult.value.result;
+});
+
 const getInstantFuncResults = async (funcString: string, flowId: number) => {
   if (funcString !== "") {
     hasInput.value = true;
+    if (props.fetcher) {
+      instantFuncResult.value = await props.fetcher(funcString);
+      return;
+    }
     const response = await axios.get("/custom_functions/instant_result", {
       params: {
         node_id: props.nodeId,
@@ -49,14 +68,14 @@ const getInstantFuncResults = async (funcString: string, flowId: number) => {
       },
     });
     instantFuncResult.value = response.data;
-    console.log(instantFuncResult.value.result);
   } else {
     hasInput.value = false;
   }
 };
 
 onMounted(() => {
-  if (nodeStore.inputCode !== "") {
+  // The global input-code buffer belongs to the single-expression hosts only.
+  if (!props.fetcher && nodeStore.inputCode !== "") {
     hasInput.value = true;
     getInstantFuncResults(nodeStore.inputCode, nodeStore.flow_id);
   }
@@ -66,117 +85,62 @@ defineExpose({ getInstantFuncResults });
 </script>
 
 <style scoped>
-.container {
+.instant-function-results {
   width: 100%;
-  margin: 12px 0 0 0;
-  font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans",
-    "Helvetica Neue", sans-serif;
+  margin: 12px 0 0;
 }
 
 .result-content {
   display: flex;
-  width: 100%;
-  border-radius: 6px;
-  overflow: hidden;
-  height: auto;
-  min-height: 48px;
-}
-
-.result-content.success .label {
-  background: #1a202c;
-}
-
-.result-content.loading .label {
-  background: #1a202c;
-}
-
-.result-content.error .label {
-  background: #7f1d1d;
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.label {
-  flex: 0 0 150px;
-  padding: 14px 16px;
-  display: flex;
-  align-items: center;
-  font-weight: 500;
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.84);
-  position: relative;
-}
-
-.label::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  right: 0;
-  width: 1px;
-  height: 24px;
-  transform: translateY(-50%);
-  background-color: rgba(255, 255, 255, 0.1);
-}
-
-.content {
-  flex: 1;
-  padding: 14px 20px;
-  color: var(--color-text-primary);
-  font-size: 14px;
-  font-weight: 400;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 12px;
+  font-size: 12px;
   line-height: 1.5;
-  overflow-wrap: break-word;
-  word-break: break-word;
-  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+  border-left: 3px solid var(--color-text-muted);
+  border-radius: 0 4px 4px 0;
+  background: var(--color-background-primary);
+  transition: border-color var(--transition-normal, 200ms) var(--transition-timing, ease);
 }
 
-.result-content.error .content {
-  background-color: var(--color-background-primary);
+.result-content.loading {
+  border-left-color: var(--color-accent);
+}
+
+.result-content.success {
+  border-left-color: var(--color-success);
+}
+
+.result-content.error {
+  border-left-color: var(--color-danger);
+}
+
+.result-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+
+.result-content.error .result-label {
   color: var(--color-danger);
 }
 
-.result-content.loading .label {
-  display: flex;
-  align-items: center;
+.result-value {
+  min-width: 0;
+  font-family: var(--font-family-mono, monospace);
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.result-content .label::before {
-  content: "";
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  margin-right: 8px;
-  border-radius: 50%;
+.result-value.is-muted {
+  font-family: inherit;
+  color: var(--color-text-muted);
 }
 
-.result-content.success .label::before {
-  background-color: #10b981;
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.2);
-}
-
-.result-content.loading .label::before {
-  background-color: #8b5cf6;
-  box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.2);
-  animation: pulse 1.5s infinite ease-in-out;
-}
-
-.result-content.error .label::before {
-  background-color: #ef4444;
-  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.2);
-}
-
-@keyframes pulse {
-  0% {
-    opacity: 0.4;
-    transform: scale(0.8);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  100% {
-    opacity: 0.4;
-    transform: scale(0.8);
-  }
+.result-content.error .result-value {
+  font-family: inherit;
+  color: var(--color-danger);
 }
 </style>

@@ -13,6 +13,7 @@ from pydantic import (
     StringConstraints,
     ValidationInfo,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -1406,19 +1407,74 @@ class NodeRestApiReader(NodeBase):
 
 
 class NodeFormula(NodeSingleInput):
-    """Settings for a node that applies a formula to create/modify a column."""
+    """Settings for a node that applies an ordered list of formulas to create/modify columns.
 
-    function: transform_schema.FunctionInput = None
+    Entries are evaluated SEQUENTIALLY: entry N sees the base columns plus the outputs of
+    entries 1..N-1, exactly equivalent to N chained single-formula nodes. This is the
+    deliberate opposite of ``FlowDataEngine.build_multi_field_formula_expressions``, which
+    puts every expression in a SINGLE ``with_columns`` call so each one reads the ORIGINAL
+    input values.
+
+    ``function`` is the legacy single-entry field; ``functions`` is the ordered list and is
+    authoritative. Normalisation fills ``functions`` from ``function`` when only the legacy
+    field was given (so flows saved before multi-entry load unchanged), then mirrors it back
+    onto ``function`` — the SAME object, not a copy — only when there is exactly one entry.
+    On dump the ``function`` key is omitted entirely for zero or 2+ entries, so an older
+    Flowfile fails visibly on a multi-entry node instead of silently running only entry 1.
+    """
+
+    function: transform_schema.FunctionInput | None = None
+    functions: list[transform_schema.FunctionInput] | None = None
+
+    @model_validator(mode="after")
+    def _normalize_entries(self) -> "NodeFormula":
+        if self.functions is None:
+            self.functions = [self.function] if self.function is not None else []
+        self.function = self.functions[0] if len(self.functions) == 1 else None
+        return self
+
+    @model_serializer(mode="wrap")
+    def _serialize_entries(self, handler: Any, _info: Any) -> Any:
+        data = handler(self)
+        if isinstance(data, dict) and len(self.entries) != 1:
+            data.pop("function", None)
+        return data
+
+    @property
+    def entries(self) -> list[transform_schema.FunctionInput]:
+        """The ordered formula entries; empty when the node produces nothing."""
+        return self.functions or []
+
+    def active_entries(self) -> list[tuple[int, transform_schema.FunctionInput]]:
+        """The entries with a non-blank expression, each with its 1-based row position.
+
+        Positions count blank rows too, so an error message names the row the user sees.
+        Blank expressions are skipped entirely: no column, no error.
+        """
+        return [
+            (position, entry)
+            for position, entry in enumerate(self.entries, start=1)
+            if entry is not None and (entry.function or "").strip()
+        ]
+
+    @staticmethod
+    def _describe_entry(entry: transform_schema.FunctionInput, max_expression_length: int) -> str:
+        name = entry.field.name if entry.field else ""
+        expr = entry.function or ""
+        if len(expr) > max_expression_length:
+            expr = expr[: max_expression_length - 3] + "..."
+        return f"{name} = {expr}" if name else expr
 
     def get_default_description(self) -> str:
-        """Describes the formula being applied."""
-        if self.function is None:
+        """Describes the formula(s) being applied."""
+        entries = self.entries
+        if not entries:
             return ""
-        name = self.function.field.name if self.function.field else ""
-        expr = self.function.function or ""
-        if len(expr) > 60:
-            expr = expr[:57] + "..."
-        return f"{name} = {expr}" if name else expr
+        if len(entries) == 1:
+            return self._describe_entry(entries[0], 60)
+        description = "; ".join(self._describe_entry(entry, 24) for entry in entries[:2])
+        remaining = len(entries) - 2
+        return f"{description}; +{remaining} more" if remaining > 0 else description
 
 
 class NodeMultiFieldFormula(NodeSingleInput):
