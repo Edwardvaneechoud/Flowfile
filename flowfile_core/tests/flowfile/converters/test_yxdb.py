@@ -8,15 +8,10 @@ Four files were picked for dtype coverage (a fifth, `Presidents_and_VPs.yxdb`, i
 small file with real nulls). Between them they exercise 13 of the 16 Alteryx field types;
 `Bool`, `Blob` and `WString` appear nowhere in the 96-file corpus, so those three table rows
 stay unproven by data.
-
-The AMP-engine (E2) half of the module is a different reader (`sigilyx`, the `alteryx-amp`
-extra) and a guard, and has its own section at the end of this file. It is exercised against
-the corpus' three E2 files, plus one synthetic frame for the guard itself.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import xml.etree.ElementTree as ET
 from decimal import Decimal
 from pathlib import Path
@@ -24,17 +19,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flowfile_core.flowfile.converters.alteryx.yxdb import (
-    E1_MAGIC,
-    E2_MAGIC,
-    _all_null_rows,
-    _container,
-    _encoding_warnings,
-    _refuse_dropped_records,
-    convert_tree,
-    convert_yxdb,
-    read_yxdb,
-)
+from flowfile_core.flowfile.converters.alteryx.yxdb import convert_tree, convert_yxdb, read_yxdb
 
 DATA_DIR = Path(__file__).resolve().parents[5] / "alteryx_nodes_data"
 CORPUS_DIR = Path(__file__).resolve().parents[5] / "alteryx_nodes"
@@ -217,167 +202,11 @@ def test_an_unsupported_field_type_is_named_in_the_error(tmp_path: Path):
         convert_yxdb(source, tmp_path / "out.parquet")
 
 
-# --- AMP engine (Alteryx e2) -----------------------------------------------------------------
-
-# A module-level importorskip would take the E1 tests with it: the two readers are two extras.
-needs_amp = pytest.mark.skipif(
-    importlib.util.find_spec("sigilyx") is None, reason="optional extra: pip install 'flowfile[alteryx-amp]'"
-)
-
-# The three AMP files in the corpus; all three are spatial. (file, rows, columns)
-E2_FILES = [
-    ("SampleData/AdArea polygons.yxdb", 11, 3),
-    ("SampleData/Wyoming ZIPs.yxdb", 140, 5),
-    ("SampleData/Sample Streets.yxdb", 3598, 2),
-]
-
-
-@pytest.mark.parametrize(
-    "header, container",
-    [
-        (E1_MAGIC + b"\x00" * 8, "e1"),
-        (E2_MAGIC + b"\x00" * 8, "e2"),
-        (b"Alteryx Database", None),
-        (b"PAR1" + b"\x00" * 8, None),
-        (b"", None),
-    ],
-)
-def test_the_container_is_read_from_the_magic_string_alone(tmp_path: Path, header: bytes, container: str | None):
-    """Which reader a file gets is decided here and nowhere else."""
-    source = tmp_path / "header_only.yxdb"
-    source.write_bytes(header)
-    assert _container(source) == container
-
-
-@pytest.mark.parametrize("case, rows, columns", E2_FILES)
-@needs_amp
-def test_an_amp_engine_file_converts(tmp_path: Path, case: str, rows: int, columns: int):
-    """`yxdb` cannot open these at all; sigilyx can, and all three survive the guard."""
-    stats = convert_yxdb(DATA_DIR / case, tmp_path / "out.parquet")
-
-    assert stats.error is None
-    assert (stats.rows, stats.columns) == (rows, columns)
-    written = pl.read_parquet(stats.destination)
-    assert written.height == rows
-    assert written.schema["SpatialObj__spatial"] == pl.Binary
-    assert not any("refused" in warning for warning in stats.warnings)
-
-
-@pytest.mark.parametrize("case, rows, columns", E2_FILES)
-@needs_amp
-def test_no_amp_corpus_file_comes_back_with_a_blank_record(case: str, rows: int, columns: int):
-    """The guard's input, measured per file: every record decodes, so 0 rows are fully null."""
-    frame, _ = read_yxdb(DATA_DIR / case)
-
-    blank = frame.select(pl.all_horizontal(pl.all().is_null()).alias("blank"))["blank"].sum()
-    assert (frame.height, blank) == (rows, 0)
-
-
-def test_the_guard_refuses_a_file_whose_records_came_back_blank():
-    """Unit test of the guard on a synthetic tally: this is the shape Edward's real file returns."""
-    with pytest.raises(RuntimeError) as failure:
-        _refuse_dropped_records({"rows": 10_000, "columns": 24, "all_null_rows": 9_918})
-
-    message = str(failure.value)
-    assert "10000 record(s)" in message and "9918 are entirely null" in message
-    assert "experimental" in message and "nothing was written" in message
-
-    _refuse_dropped_records({"rows": 10_000, "columns": 24, "all_null_rows": 0})
-
-
-def test_a_narrow_string_column_that_lost_bytes_is_named_on_the_warnings():
-    """sigilyx reads Alteryx's single-byte String fields as UTF-8; no corpus AMP file has one."""
-    assert _encoding_warnings({"rows": 3, "columns": 2, "all_null_rows": 0}) == []
-
-    lost = _encoding_warnings({"rows": 3, "columns": 2, "all_null_rows": 0, "City": 66})[0]
-    assert "'City' (66 value(s))" in lost and "U+FFFD" in lost
-
-
-def test_the_guard_counts_fully_null_rows_and_not_merely_null_cells():
-    """A row with one null must not trip the guard; a row that is all null must."""
-    frame = pl.DataFrame({"a": [1, None, None], "b": ["x", "y", None], "c": [None, None, None]})
-
-    assert _all_null_rows(frame) == 1
-    assert _all_null_rows(frame.head(0)) == 0
-
-
-@needs_amp
-def test_a_refused_amp_file_writes_no_parquet(tmp_path: Path, monkeypatch):
-    """The refusal must leave nothing behind — not the output, not the .part file."""
-    monkeypatch.setattr(
-        "flowfile_core.flowfile.converters.alteryx.yxdb._all_null_rows", lambda batch: batch.height
-    )
-    destination = tmp_path / "out.parquet"
-
-    with pytest.raises(RuntimeError, match="entirely null"):
-        convert_yxdb(DATA_DIR / E2_FILES[0][0], destination)
-
-    assert not destination.exists()
-    assert list(tmp_path.iterdir()) == []
-
-
-@needs_amp
-def test_an_amp_engine_file_says_its_spatial_decoder_is_experimental(tmp_path: Path):
-    """sigilyx has never verified its E2 SpatialObj/Time/WString/Blob decoders against real files."""
-    stats = convert_yxdb(DATA_DIR / E2_FILES[1][0], tmp_path / "out.parquet")
-
-    experimental = next(warning for warning in stats.warnings if "experimental" in warning)
-    assert "AMP engine" in experimental
-    assert "SpatialObj column(s) ('SpatialObj')" in experimental
-
-
-@needs_amp
-def test_an_amp_engine_files_non_spatial_columns_round_trip():
-    """Alteryx's own cached RecordInfo for `Sample Streets.yxdb` is in the Spatial_Info workflow."""
-    if not CORPUS_DIR.is_dir():
-        pytest.skip("Alteryx .yxmd corpus not present")
-    workflow = CORPUS_DIR / "09 Spatial" / "Spatial_Info.yxmd"
-    cached = [
-        [(f.get("name"), f.get("type")) for f in record_info.iter("Field")]
-        for record_info in ET.fromstring(workflow.read_bytes()).iter("RecordInfo")
-    ]
-    assert [("NAME", "V_String"), ("SpatialObj", "SpatialObj")] in cached
-
-    frame, _ = read_yxdb(DATA_DIR / "SampleData" / "Sample Streets.yxdb")
-
-    assert frame.columns == ["NAME", "SpatialObj__spatial"]
-    assert frame["NAME"][:3].to_list() == ["Unnamed Street", "S Pine St", "S 2nd St"]
-
-
-@needs_amp
-def test_an_e2_file_that_cannot_be_decoded_is_refused_quoting_the_reader(tmp_path: Path):
-    """An E2 magic string is not a promise the body decodes; the refusal says which is which."""
+def test_an_amp_engine_yxdb_is_refused_with_the_way_out(tmp_path: Path):
+    """The AMP engine writes a different container ('e2'); the reader only knows the original one."""
     source = tmp_path / "liquor_sales.yxdb"
-    source.write_bytes(E2_MAGIC + b"\x00" * 600)
-
+    source.write_bytes(b"Alteryx e2 Database file" + b"\x00" * 600)
     results = convert_tree(tmp_path)
-
     assert results[0].error is not None
-    assert "AMP-engine (E2)" in results[0].error
-    assert "E2 file ID" in results[0].error, "sigilyx's own complaint must survive into the message"
-
-
-@needs_amp
-def test_an_amp_conversion_streams_instead_of_holding_the_whole_file(tmp_path: Path, monkeypatch):
-    """A 1.4 GB AMP file must not become one frame: the writer pulls batches from the reader."""
-    from flowfile_core.flowfile.converters.alteryx.yxdb import BATCH_ROWS
-
-    assert BATCH_ROWS == 65_536
-    monkeypatch.setattr("flowfile_core.flowfile.converters.alteryx.yxdb.BATCH_ROWS", 500)
-    seen: list[int] = []
-    import sigilyx
-
-    real_batches = sigilyx.read_yxdb_batches
-
-    def counting_batches(*args, **kwargs):
-        for batch in real_batches(*args, **kwargs):
-            seen.append(batch.height)
-            yield batch
-
-    monkeypatch.setattr(sigilyx, "read_yxdb_batches", counting_batches)
-
-    stats = convert_yxdb(DATA_DIR / E2_FILES[2][0], tmp_path / "out.parquet")
-
-    assert stats.rows == 3598
-    assert len(seen) == 8 and max(seen) == 500, "the reader was asked for batches, not for the file"
-    assert pl.read_parquet(stats.destination).height == 3598
+    assert "AMP engine" in results[0].error
+    assert "Use AMP Engine" in results[0].error
