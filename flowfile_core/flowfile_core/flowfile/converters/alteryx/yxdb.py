@@ -186,6 +186,13 @@ def _diagnose(src: Path) -> str:
     try:
         with src.open("rb") as handle:
             header = handle.read(512)
+            if header.startswith(b"Alteryx e2 Database file"):
+                return (
+                    "not a supported .yxdb: it was written by Alteryx's AMP engine (header says "
+                    "'Alteryx e2 Database file'), and Flowfile reads the original-engine format only. "
+                    "In Alteryx, turn off 'Use AMP Engine' in the workflow's Runtime settings and write "
+                    "the file again, or output CSV instead."
+                )
             if header[:21] != b"Alteryx Database File":
                 return f"not a supported .yxdb (header says {header[:24].decode('latin1').strip()!r})"
             meta = handle.read((int.from_bytes(header[80:84], "little") * 2) - 2).decode("utf_16_le")
