@@ -200,3 +200,13 @@ def test_an_unsupported_field_type_is_named_in_the_error(tmp_path: Path):
 
     with pytest.raises(RuntimeError, match="Time"):
         convert_yxdb(source, tmp_path / "out.parquet")
+
+
+def test_an_amp_engine_yxdb_is_refused_with_the_way_out(tmp_path: Path):
+    """The AMP engine writes a different container ('e2'); the reader only knows the original one."""
+    source = tmp_path / "liquor_sales.yxdb"
+    source.write_bytes(b"Alteryx e2 Database file" + b"\x00" * 600)
+    results = convert_tree(tmp_path)
+    assert results[0].error is not None
+    assert "AMP engine" in results[0].error
+    assert "Use AMP Engine" in results[0].error
