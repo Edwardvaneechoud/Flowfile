@@ -5454,6 +5454,28 @@ test = ["build[virtualenv] (>=1.0.3)", "filelock (>=3.4.0)", "ini2toml[lite] (>=
 type = ["importlib_metadata (>=7.0.2)", "jaraco.develop (>=7.21)", "mypy (==1.18.*)", "pytest-mypy (>=1.0.1)"]
 
 [[package]]
+name = "sigilyx"
+version = "0.4.0"
+description = "YXDB reader and writer for Python, backed by a Rust core."
+optional = true
+python-versions = ">=3.9"
+files = [
+    {file = "sigilyx-0.4.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:9090aa0a88b49645c39f797f3358eefad73107dea20ef6c433659654019d233f"},
+    {file = "sigilyx-0.4.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:fccf113099a18fb7f56e6298039bf1ba61306a70db2e956719b3cc85ef01f55b"},
+    {file = "sigilyx-0.4.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:acc5126ee860156e05a8d90aab51cf24000b44df1c72a95e385f76bd417701fc"},
+    {file = "sigilyx-0.4.0-cp39-abi3-win_amd64.whl", hash = "sha256:271974b4ede6d0203eae501f7e5b245d110fd0ddb8eb0723da3652354aaca747"},
+    {file = "sigilyx-0.4.0.tar.gz", hash = "sha256:5f69f25781df394a6d9b66f30d8a5ba53b36d8296ec42c6e7ae739f913978c7e"},
+]
+
+[package.dependencies]
+polars = ">=1.36.1"
+
+[package.extras]
+all = ["pandas (>=1.5)", "pyarrow (>=21.0)"]
+arrow = ["pyarrow (>=21.0)"]
+pandas = ["pandas (>=1.5)", "pyarrow (>=21.0)"]
+
+[[package]]
 name = "six"
 version = "1.17.0"
 description = "Python 2 and 3 compatibility utilities"
@@ -6445,8 +6467,10 @@ type = ["pytest-mypy (>=1.0.1)"]
 
 [extras]
 alteryx = ["yxdb"]
+alteryx-amp = ["sigilyx"]
+yxdb = ["yxdb"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.14"
-content-hash = "b3c8badb2c2c9bbccb35c62a51b39f25a441c9395e69f54d6739dc3839c48962"
+content-hash = "ec7e19dd4b92939f37a91380df776096f0d3efdec77f41e46a2afeb214304708"
