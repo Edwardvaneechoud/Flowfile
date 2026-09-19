@@ -6440,9 +6440,10 @@ test = ["big-O", "jaraco.functools", "jaraco.itertools", "jaraco.test", "more_it
 type = ["pytest-mypy (>=1.0.1)"]
 
 [extras]
+alteryx = ["yxdb"]
 yxdb = ["yxdb"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.14"
-content-hash = "4ca0797562d392fadb197c72cbb505565459c0b3061348293de9bc8d06d002f7"
+content-hash = "bd6686307399068d2ecf48d345bc9c0e2539faed5e0d93c407091c16b564c644"

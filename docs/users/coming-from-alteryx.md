@@ -97,6 +97,7 @@ The importer is measured on Alteryx's sample workflows, not on production ones. 
 - **Regex** patterns are compiled by Polars' engine at import time; lookaround and backreferences are refused, everything else is shown for you to verify.
 - **MD5 and Base64.** `MD5_UTF8` and both Base64 functions map exactly; `MD5_ASCII` and `MD5_UNICODE` hash different bytes and are refused.
 - **Macros and wizards** (`.yxmc`, `.yxwz`) are imported for their data tools; control wires and questions are not reproduced.
+- **`.yxdb` files written by the AMP engine** cannot be converted; only the original-engine format is read. Turn off *Use AMP Engine* in the workflow's Runtime settings and write the file again, or output CSV.
 - **Comments** travel as text only; colours, fonts and shapes are dropped.
 - **Text Input dates.** A Text Input column whose cells are all `yyyy-MM-dd` or `yyyy-MM-dd HH:mm:ss` is typed Date or Datetime, as the sample workflows show Alteryx doing. Padded cells are trimmed first, a code column that happens to hold dates is typed too, and `HH:mm:ss` stays text because Flowfile has no Time column. A Formula that parses such a column with `DateTimeParse` raises, because the column is already a date.
 
