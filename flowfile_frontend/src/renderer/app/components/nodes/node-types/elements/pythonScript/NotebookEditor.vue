@@ -15,18 +15,42 @@
       >
         <i class="fa-solid fa-rotate-right"></i> Restart
       </button>
+      <button
+        :disabled="structuralDisabled || !canUndo"
+        title="Undo cell action (insert, delete, move, duplicate)"
+        @click="undoCellAction"
+      >
+        <i class="fa-solid fa-arrow-rotate-left"></i> Undo
+      </button>
+      <button
+        :disabled="structuralDisabled || !canRedo"
+        title="Redo cell action"
+        @click="redoCellAction"
+      >
+        <i class="fa-solid fa-arrow-rotate-right"></i> Redo
+      </button>
       <span class="notebook-info">{{ cells.length }} cell{{ cells.length !== 1 ? "s" : "" }}</span>
     </div>
 
     <!-- Cell list -->
-    <div class="notebook-cells">
+    <div ref="hostRef" class="notebook-cells">
+      <div
+        v-if="drag.indicatorTop.value !== null"
+        class="nb-drop-line"
+        :style="{ top: `${drag.indicatorTop.value}px` }"
+        aria-hidden="true"
+      ></div>
       <template v-for="(cell, index) in cells" :key="cell.id">
         <NotebookCellComponent
+          :data-cell-id="cell.id"
           :cell="cell"
+          :owner-id="ownerId"
           :cell-index="index"
           :is-executing="executingCellId === cell.id"
           :is-last-cell="index === cells.length - 1"
           :cell-count="cells.length"
+          :structural-disabled="structuralDisabled"
+          :dragging="drag.draggingId.value === cell.id"
           :input-names="inputNames"
           :upstream-columns="upstreamColumns"
           :prior-cell-codes="cells.slice(0, index).map((c) => c.code)"
@@ -36,8 +60,10 @@
           @update:code="(code) => updateCellCode(cell.id, code)"
           @run-cell="() => runCell(cell.id)"
           @run-cell-and-advance="() => runCellAndAdvance(cell.id, index)"
-          @move-up="() => moveCell(index, -1)"
-          @move-down="() => moveCell(index, 1)"
+          @drag-start="(ev: PointerEvent) => drag.onHandlePointerDown(cell.id, ev)"
+          @move-key="(dir: -1 | 1) => onMoveKey(index, dir)"
+          @move-up="() => onMoveKey(index, -1)"
+          @move-down="() => onMoveKey(index, 1)"
           @delete="() => deleteCell(cell.id)"
         />
 
@@ -46,6 +72,7 @@
         <div
           v-if="index < cells.length - 1"
           class="nb-insert-zone"
+          :class="{ 'is-disabled': structuralDisabled }"
           title="Add cell here"
           @click="insertCellAt(index)"
         >
@@ -55,16 +82,31 @@
     </div>
 
     <!-- Add cell button -->
-    <button class="add-cell-button" @click="addCell">
+    <button class="add-cell-button" :disabled="structuralDisabled" @click="addCell">
       <i class="fa-solid fa-plus"></i> Add Cell
     </button>
+
+    <div class="nb-sr-only" role="status" aria-live="polite">{{ announcement }}</div>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed } from "vue";
+import { ref, computed, nextTick } from "vue";
 import { KernelApi } from "../../../../../api/kernel.api";
 import type { NotebookCell } from "../../../../../types/node.types";
+import {
+  applyOperation,
+  cellMoveAnnouncement,
+  insertCell,
+  moveCell as moveCellOp,
+  moveCellBy,
+  newCellId,
+  removeCell,
+  type OperationResult,
+} from "../../../../notebook/cellOperations";
+import { cellSelector, ownerIdForNode } from "../../../../notebook/editorViews";
+import { findScrollParent, useCellDrag } from "../../../../notebook/useCellDrag";
+import { getCellHistory } from "../../../../notebook/useCellHistory";
 import NotebookCellComponent from "./NotebookCell.vue";
 import type { UpstreamColumn } from "./useUpstreamColumns";
 
@@ -89,8 +131,40 @@ const emit = defineEmits<{
 const executingCellId = ref<string | null>(null);
 const executionCounter = ref(1);
 const isAnyExecuting = computed(() => executingCellId.value !== null);
+const hostRef = ref<HTMLElement | null>(null);
+const announcement = ref("");
+
+const ownerId = computed(() => ownerIdForNode(props.flowId, props.nodeId));
+// Change 3 swaps this for isBatchActive(ownerId).
+const structuralDisabled = computed(() => isAnyExecuting.value);
+const canUndo = computed(() => getCellHistory<NotebookCell>(ownerId.value).canUndo.value);
+const canRedo = computed(() => getCellHistory<NotebookCell>(ownerId.value).canRedo.value);
 
 // ─── Cell Operations ──────────────────────────────────────────────────────────
+
+interface MoveInfo {
+  from: number;
+  to: number;
+  total: number;
+}
+
+const makeCell = (): NotebookCell => ({ id: newCellId(), code: "", output: null });
+
+const applyStructural = (result: OperationResult<NotebookCell>) => {
+  emit("update:cells", result.cells);
+  getCellHistory<NotebookCell>(ownerId.value).push({ op: result.op, inverse: result.inverse });
+};
+
+const applyMove = (result: OperationResult<NotebookCell> | null): MoveInfo | null => {
+  if (!result || result.op.kind !== "move") return null;
+  applyStructural(result);
+  return { from: result.op.from, to: result.op.to, total: result.cells.length };
+};
+
+/** Keep the handle focused after a keyboard move so repeated Alt+↑/↓ keeps working. */
+const focusDragHandle = (cellId: string) => {
+  hostRef.value?.querySelector<HTMLElement>(`${cellSelector(cellId)} .nb-drag-handle`)?.focus();
+};
 
 const updateCellCode = (cellId: string, code: string) => {
   emit(
@@ -100,31 +174,72 @@ const updateCellCode = (cellId: string, code: string) => {
 };
 
 const addCell = () => {
-  emit("update:cells", [...props.cells, { id: crypto.randomUUID(), code: "", output: null }]);
+  if (structuralDisabled.value) return;
+  applyStructural(insertCell(props.cells, makeCell(), props.cells.length));
 };
 
 const insertCellAt = (afterIndex: number) => {
-  const newCells = [...props.cells];
-  newCells.splice(afterIndex + 1, 0, { id: crypto.randomUUID(), code: "", output: null });
-  emit("update:cells", newCells);
+  if (structuralDisabled.value) return;
+  applyStructural(insertCell(props.cells, makeCell(), afterIndex + 1));
 };
 
 const deleteCell = (cellId: string) => {
-  if (props.cells.length <= 1) return;
-  emit(
-    "update:cells",
-    props.cells.filter((c) => c.id !== cellId),
-  );
+  const result = removeCell(props.cells, cellId, { minCells: 1 });
+  if (!result) return;
+  applyStructural(result);
 };
 
-const moveCell = (index: number, direction: number) => {
-  const newIndex = index + direction;
-  if (newIndex < 0 || newIndex >= props.cells.length) return;
-  const newCells = [...props.cells];
-  const [cell] = newCells.splice(index, 1);
-  newCells.splice(newIndex, 0, cell);
-  emit("update:cells", newCells);
+const moveCell = (index: number, direction: -1 | 1): MoveInfo | null => {
+  const cellId = props.cells[index]?.id;
+  return cellId ? applyMove(moveCellBy(props.cells, cellId, direction)) : null;
 };
+
+const moveCellToIndex = (cellId: string, targetIndex: number): MoveInfo | null =>
+  applyMove(moveCellOp(props.cells, cellId, targetIndex));
+
+const undoCellAction = () => {
+  const history = getCellHistory<NotebookCell>(ownerId.value);
+  const entry = history.undo();
+  if (!entry) return;
+  const result = applyOperation(props.cells, entry.inverse);
+  if (!result) {
+    history.clear();
+    return;
+  }
+  emit("update:cells", result.cells);
+};
+
+const redoCellAction = () => {
+  const history = getCellHistory<NotebookCell>(ownerId.value);
+  const entry = history.redo();
+  if (!entry) return;
+  const result = applyOperation(props.cells, entry.op);
+  if (!result) {
+    history.clear();
+    return;
+  }
+  emit("update:cells", result.cells);
+};
+
+const onMoveKey = (index: number, direction: -1 | 1) => {
+  const cellId = props.cells[index]?.id;
+  if (!cellId) return;
+  const moved = moveCell(index, direction);
+  if (!moved) return;
+  announcement.value = cellMoveAnnouncement(moved.from, moved.to, moved.total);
+  nextTick(() => focusDragHandle(cellId));
+};
+
+const drag = useCellDrag({
+  getHost: () => hostRef.value,
+  // The node cell list is not its own scroller — the settings drawer / dialog body is.
+  getScrollContainer: () => findScrollParent(hostRef.value),
+  onCommit: (cellId, targetIndex) => {
+    const moved = moveCellToIndex(cellId, targetIndex);
+    if (moved) announcement.value = cellMoveAnnouncement(moved.from, moved.to, moved.total);
+  },
+  isDisabled: () => structuralDisabled.value,
+});
 
 const clearAllOutputs = () => {
   emit(
@@ -264,8 +379,31 @@ const restartKernel = async () => {
 }
 
 .notebook-cells {
+  position: relative;
   border-left: 1px solid var(--el-border-color-lighter);
   border-right: 1px solid var(--el-border-color-lighter);
+}
+
+.nb-drop-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--el-color-primary);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.nb-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  clip: rect(0 0 0 0);
 }
 
 /* Hover-to-insert zone between cells: a thin gap that reveals a centered "+"
@@ -309,6 +447,9 @@ const restartKernel = async () => {
 .nb-insert-zone:hover .nb-insert-plus {
   opacity: 0.85;
 }
+.nb-insert-zone.is-disabled {
+  pointer-events: none;
+}
 
 .add-cell-button {
   display: flex;
@@ -326,9 +467,14 @@ const restartKernel = async () => {
   transition: all 0.15s;
 }
 
-.add-cell-button:hover {
+.add-cell-button:hover:not(:disabled) {
   border-color: var(--el-color-primary);
   color: var(--el-color-primary);
   background: var(--el-color-primary-light-9);
+}
+
+.add-cell-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 </style>

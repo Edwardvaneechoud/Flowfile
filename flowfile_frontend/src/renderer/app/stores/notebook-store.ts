@@ -4,7 +4,26 @@ import { KernelApi } from "../api/kernel.api";
 import { NotebookApi } from "../api/notebook.api";
 import type { NotebookCellWire, NotebookSummary } from "../api/notebook.api";
 import type { CellType, NotebookCellModel } from "../components/notebook/types";
-import { getCellView } from "../components/notebook/editorViews";
+import {
+  disposeOwnerViews,
+  getCellView,
+  ownerIdForNotebook,
+} from "../components/notebook/editorViews";
+import {
+  applyOperation,
+  duplicateCell as duplicateCellOp,
+  insertCell,
+  moveCell as moveCellOp,
+  newCellId,
+  removeCell as removeCellOp,
+  type CellOperation,
+  type OperationResult,
+} from "../components/notebook/cellOperations";
+import {
+  disposeCellHistory,
+  getCellHistory,
+  type CellHistory,
+} from "../components/notebook/useCellHistory";
 import { sanitiseMarkdown } from "../features/ai/markdown";
 import {
   loadPersistedNotebooks,
@@ -37,7 +56,7 @@ function newEphemeralSessionId(): number {
 
 function newCell(cellType: CellType): NotebookCellModel {
   return {
-    id: uid("cell"),
+    id: newCellId(),
     cellType,
     code: "",
     metadata: {},
@@ -46,6 +65,11 @@ function newCell(cellType: CellType): NotebookCellModel {
     execState: "idle",
     editing: cellType === "markdown",
   };
+}
+
+/** renderedHtml/editing ride along so a duplicated markdown cell looks identical. */
+function cloneCell(src: NotebookCellModel, id: string): NotebookCellModel {
+  return { ...src, id, output: null, execState: "idle", cursor: undefined };
 }
 
 function fromWire(cells: NotebookCellWire[]): NotebookCellModel[] {
@@ -182,6 +206,16 @@ export const useNotebookStore = defineStore("notebook", {
       _persistTimer = setTimeout(() => persistNotebooks(snapshot), 400);
     },
 
+    _applyStructural(nb: OpenNotebook, result: OperationResult<NotebookCellModel>) {
+      nb.cells = result.cells;
+      getCellHistory<NotebookCellModel>(ownerIdForNotebook(nb.tabId)).push({
+        op: result.op,
+        inverse: result.inverse,
+      });
+      nb.dirty = true;
+      this._schedulePersist();
+    },
+
     /** Restore open tabs from browser storage on first use; start one blank
      * notebook if there's nothing persisted. Idempotent. */
     ensureHydrated() {
@@ -278,6 +312,8 @@ export const useNotebookStore = defineStore("notebook", {
         KernelApi.clearNamespace(tab.kernelId, tab.sessionFlowId).catch(() => undefined);
       }
       this.openNotebooks.splice(idx, 1);
+      disposeCellHistory(ownerIdForNotebook(tabId));
+      disposeOwnerViews(ownerIdForNotebook(tabId));
       if (this.activeTabId === tabId) {
         const next = this.openNotebooks[idx] ?? this.openNotebooks[idx - 1] ?? null;
         this.activeTabId = next?.tabId ?? null;
@@ -393,31 +429,85 @@ export const useNotebookStore = defineStore("notebook", {
       const nb = this.active;
       if (!nb) return;
       const cell = newCell(cellType);
-      if (afterIndex === undefined || afterIndex < 0) nb.cells.push(cell);
-      else nb.cells.splice(afterIndex + 1, 0, cell);
-      nb.dirty = true;
-      this._schedulePersist();
+      const at = afterIndex == null || afterIndex < 0 ? nb.cells.length : afterIndex + 1;
+      this._applyStructural(nb, insertCell(nb.cells, cell, at));
       return cell;
     },
 
-    removeCell(cellId: string) {
+    /** Returns the id to focus next, or `null` when the delete was refused. */
+    removeCell(cellId: string): string | null {
       const nb = this.active;
-      if (!nb) return;
-      nb.cells = ensureCells(nb.cells.filter((c) => c.id !== cellId));
-      nb.dirty = true;
-      this._schedulePersist();
+      if (!nb) return null;
+      const result = removeCellOp(nb.cells, cellId, { minCells: 1 });
+      if (!result) return null;
+      const idx = nb.cells.findIndex((c) => c.id === cellId);
+      const focusId = (nb.cells[idx + 1] ?? nb.cells[idx - 1])?.id ?? null;
+      this._applyStructural(nb, result);
+      return focusId;
     },
 
     moveCell(cellId: string, direction: -1 | 1) {
       const nb = this.active;
-      if (!nb) return;
+      if (!nb) return null;
       const idx = nb.cells.findIndex((c) => c.id === cellId);
-      const target = idx + direction;
-      if (idx < 0 || target < 0 || target >= nb.cells.length) return;
-      const [cell] = nb.cells.splice(idx, 1);
-      nb.cells.splice(target, 0, cell);
+      if (idx < 0) return null;
+      return this.moveCellToIndex(cellId, idx + direction);
+    },
+
+    /** `targetIndex` is the cell's final index; `null` means the move was a no-op. */
+    moveCellToIndex(cellId: string, targetIndex: number) {
+      const nb = this.active;
+      if (!nb) return null;
+      const result = moveCellOp(nb.cells, cellId, targetIndex);
+      if (!result) return null;
+      this._applyStructural(nb, result);
+      const op = result.op as Extract<CellOperation<NotebookCellModel>, { kind: "move" }>;
+      return { from: op.from, to: op.to, total: nb.cells.length };
+    },
+
+    duplicateCell(cellId: string) {
+      const nb = this.active;
+      if (!nb) return null;
+      const result = duplicateCellOp(nb.cells, cellId, cloneCell);
+      if (!result) return null;
+      this._applyStructural(nb, result);
+      const op = result.op as Extract<CellOperation<NotebookCellModel>, { kind: "duplicate" }>;
+      return op.cell;
+    },
+
+    undoCellAction() {
+      const nb = this.active;
+      if (!nb) return null;
+      const history = getCellHistory<NotebookCellModel>(ownerIdForNotebook(nb.tabId));
+      const entry = history.undo();
+      if (!entry) return null;
+      return this._replayCellAction(nb, history, entry.inverse);
+    },
+
+    redoCellAction() {
+      const nb = this.active;
+      if (!nb) return null;
+      const history = getCellHistory<NotebookCellModel>(ownerIdForNotebook(nb.tabId));
+      const entry = history.redo();
+      if (!entry) return null;
+      return this._replayCellAction(nb, history, entry.op);
+    },
+
+    /** Replays a recorded op without re-recording it — the history already moved the entry. */
+    _replayCellAction(
+      nb: OpenNotebook,
+      history: CellHistory<NotebookCellModel>,
+      op: CellOperation<NotebookCellModel>,
+    ) {
+      const result = applyOperation(nb.cells, op);
+      if (!result) {
+        history.clear();
+        return null;
+      }
+      nb.cells = result.cells;
       nb.dirty = true;
       this._schedulePersist();
+      return result.op;
     },
 
     setCellCursor(cellId: string, offset: number) {
@@ -438,7 +528,7 @@ export const useNotebookStore = defineStore("notebook", {
       const focused = nb.cells.find((c) => c.id === nb.focusedCellId);
       if (focused?.cellType === "python") {
         const { at, insert, cursor } = snippetInsertion(focused.code, focused.cursor ?? 0, snippet);
-        const view = getCellView(focused.id);
+        const view = getCellView(ownerIdForNotebook(nb.tabId), focused.id);
         if (view) {
           view.dispatch({ changes: { from: at, insert }, selection: { anchor: cursor } });
           view.focus();

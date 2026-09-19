@@ -17,6 +17,10 @@ Two cell types, mixable freely:
 
 Keybindings match Jupyter: **Shift+Enter** runs a cell (or renders a Markdown cell), **Cmd/Ctrl+Enter** runs it and moves to the next. In cell mode the last expression displays automatically, Jupyter-style, and the editor gives you code completions as you type.
 
+## Organizing cells
+
+Reorder cells by dragging the six-dot handle at the left of a cell's toolbar: an insertion line shows where the cell will land, and Escape cancels the drag. With the handle focused, **Alt+↑** and **Alt+↓** move the cell one position and announce the result for screen readers ("Cell 3 moved to position 2 of 7"). The toolbar's **Undo** and **Redo** buttons revert and replay cell inserts, deletes and moves — the last 50 of them, per open notebook, discarded when you close the notebook tab; `Cmd/Ctrl+Z` inside a cell still undoes code edits. Reordering, inserting and deleting are disabled while the notebook is running, and the last remaining cell cannot be deleted.
+
 ## Talking to the catalog
 
 Cells see the catalog through the same `flowfile_ctx` API that Python Script nodes use:

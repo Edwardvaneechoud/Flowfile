@@ -338,6 +338,9 @@ import { KernelApi } from "../../../../../api/kernel.api";
 import { NotebookApi, type NotebookSummary } from "../../../../../api/notebook.api";
 import { FlowApi } from "../../../../../api/flow.api";
 import { outputHandle } from "../../../../../utils/outputHandle";
+import { newCellId } from "../../../../notebook/cellOperations";
+import { disposeOwnerViews, ownerIdForNode } from "../../../../notebook/editorViews";
+import { disposeCellHistory } from "../../../../notebook/useCellHistory";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import AiGenerateCodeButton from "../../../../../features/designer/editor/AiGenerateCodeButton.vue";
 import { AI_GENERATE_CODE_ENABLED as aiGenerateEnabled } from "../../../../../stores/ai-code-generator-store";
@@ -699,7 +702,7 @@ const handleCellsUpdate = (updatedCells: NotebookCell[]) => {
 const applyGeneratedCode = (code: string) => {
   // Append the generated code as a new cell rather than overwriting existing
   // work, then sync the combined code back to the node.
-  cells.value = [...cells.value, { id: crypto.randomUUID(), code, output: null }];
+  cells.value = [...cells.value, { id: newCellId(), code, output: null }];
   syncCellsToNode();
 };
 
@@ -727,7 +730,7 @@ const loadFromNotebook = async (notebookId: number) => {
   try {
     const nb = await NotebookApi.get(notebookId);
     mapped = nb.cells.map((c) => ({
-      id: crypto.randomUUID(),
+      id: newCellId(),
       code: c.type === "markdown" ? commentMarkdown(c.source) : c.source,
       output: null,
     }));
@@ -787,6 +790,10 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 
 // ─── Lifecycle ──────────────────────────────────────────────────────────────
 
+// Owner-keyed state (cell history, editor views) is created by the two NotebookEditor
+// mounts but owned here — this component is the only holder of node identity.
+let currentOwnerId: string | null = null;
+
 const loadNodeData = async (nodeId: number) => {
   try {
     nodeData.value = await nodeStore.getNodeData(nodeId, false);
@@ -800,6 +807,16 @@ const loadNodeData = async (nodeId: number) => {
         ? nodeData.value.setting_input
         : createPythonScriptNode(nodeStore.flow_id, nodeStore.node_id);
 
+      const nextOwnerId = ownerIdForNode(
+        Number(nodePythonScript.value!.flow_id),
+        nodePythonScript.value!.node_id,
+      );
+      if (currentOwnerId && currentOwnerId !== nextOwnerId) {
+        disposeCellHistory(currentOwnerId);
+        disposeOwnerViews(currentOwnerId);
+      }
+      currentOwnerId = nextOwnerId;
+
       const input = nodePythonScript.value!.python_script_input;
       if (input.cells && input.cells.length > 0) {
         // Load from saved cells (output is runtime-only, not persisted)
@@ -812,7 +829,7 @@ const loadNodeData = async (nodeId: number) => {
         // Backward compat: create single cell from existing code
         cells.value = [
           {
-            id: crypto.randomUUID(),
+            id: newCellId(),
             code: input.code || DEFAULT_PYTHON_SCRIPT_CODE,
             output: null,
           },
@@ -847,6 +864,11 @@ const loadNodeData = async (nodeId: number) => {
 onUnmounted(() => {
   stopKernelPolling();
   stopMemoryPolling();
+  if (currentOwnerId) {
+    disposeCellHistory(currentOwnerId);
+    disposeOwnerViews(currentOwnerId);
+    currentOwnerId = null;
+  }
 });
 
 defineExpose({ loadNodeData, pushNodeData, saveSettings });

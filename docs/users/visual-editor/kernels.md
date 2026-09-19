@@ -131,6 +131,7 @@ The code editor uses a Jupyter-style notebook interface with multiple cells. Eac
 | **Run All** | Execute all cells in order |
 | **Clear** | Erase all cell outputs |
 | **Restart** | Clear all kernel variables for this flow |
+| **Undo** / **Redo** | Revert or replay a cell insert, delete or move (code edits still use Cmd/Ctrl+Z) |
 
 **Cell actions** (visible on hover):
 
@@ -138,6 +139,7 @@ The code editor uses a Jupyter-style notebook interface with multiple cells. Eac
 |--------|----------|-------------|
 | Run cell | `Shift+Enter` | Execute the cell |
 | Run and advance | `Cmd/Ctrl+Enter` | Execute and move to next cell |
+| Drag handle | `Alt+↑` / `Alt+↓` | Drag to reorder, or move with the keyboard while the handle is focused |
 | Move up/down | — | Reorder cells |
 | Delete | — | Remove the cell |
 
