@@ -96,8 +96,6 @@ yxdb = {version = ">=1.1.1", optional = true}
 
 [tool.poetry.extras]
 yxdb = ["yxdb"]
-# Deprecated alias for the `yxdb` extra; kept so existing installs keep working.
-alteryx = ["yxdb"]
 
 [tool.poetry.scripts]
 flowfile_worker = "flowfile_worker.cli:run"
