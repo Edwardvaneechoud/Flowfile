@@ -205,6 +205,8 @@ Flowfile is deliberately a one-machine tool: Polars in-process, no cluster. That
 | **Airflow / Dagster** | Orchestrators run pipelines; Flowfile is where the pipeline gets built. It has a small scheduler of its own, and exported scripts run fine under any orchestrator. |
 | **Plain Polars** | You keep Polars. Flowfile adds a canvas, a preview at every node, a catalog and a scheduler, and gets out of the way again when you export. |
 
+Alteryx is a trademark of Alteryx, Inc.; KNIME is a trademark of KNIME AG. Flowfile is not affiliated with or endorsed by either. The [Alteryx importer](https://edwardvaneechoud.github.io/Flowfile/users/coming-from-alteryx/) reads workflow files you own and contains no Alteryx software.
+
 ---
 
 ## Architecture

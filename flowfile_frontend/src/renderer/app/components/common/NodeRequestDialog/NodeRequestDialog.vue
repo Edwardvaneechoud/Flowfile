@@ -32,7 +32,7 @@
           class="status-badge nr-kind"
           :class="request.kind === 'alteryx' ? 'status-badge--info' : 'status-badge--muted'"
         >
-          {{ request.kind === "alteryx" ? "Alteryx" : "General" }}
+          {{ request.kind === "alteryx" ? "Alteryx tool" : "General" }}
         </span>
         <span class="nr-upvotes" title="Upvotes on GitHub">
           <span class="material-icons nr-upvote-icon">thumb_up</span>{{ request.upvotes }}

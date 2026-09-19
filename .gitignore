@@ -116,3 +116,15 @@ DOCS_DIAGRAMS_AGENT_PROMPT.md
 # Collected telemetry (the compose file bind-mounts this into the working tree)
 tools/telemetry_collector/data/
 /scratch/
+
+# Alteryx material: Designer samples, macros and data files are proprietary and must never be committed.
+# Hand-written .yxmd fixtures are allowed only in the converter test fixtures directory.
+*.yxmd
+!flowfile_core/tests/flowfile/converters/fixtures/*.yxmd
+*.yxmc
+*.yxwz
+*.yxdb
+*.yxzp
+*.yxi
+/alteryx_nodes/
+/alteryx_nodes_data/

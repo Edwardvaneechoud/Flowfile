@@ -1,9 +1,12 @@
 """Convert Alteryx ``.yxdb`` files into Parquet (or CSV).
 
-Reading is delegated to the ``yxdb`` package (PyPI ``yxdb`` 1.1.1, MIT, by Tom Larsen), an
-optional dependency installed with ``pip install 'flowfile[alteryx]'``.
+Reading is delegated to the ``yxdb`` package (PyPI ``yxdb`` 1.1.1, MIT, by Tom Larsen,
+https://github.com/tlarsendataguy-yxdb/yxdb-py), an optional dependency installed with
+``pip install 'flowfile[yxdb]'`` (``flowfile[alteryx]`` remains as an alias). This module decodes
+no records itself; ``_diagnose`` only sniffs the file header to name a failure the reader reports
+generically.
 
-Why this is a separate step: the importer never parses ``.yxdb`` itself. An uploaded ``.yxmd``
+Why this is a separate step: the importer never decodes ``.yxdb`` data itself. An uploaded ``.yxmd``
 carries paths, not data, so conversion runs on the user's own machine via
 ``flowfile convert yxdb``; the Input Data mapper then points at the Parquet sibling that this
 module writes next to the source (``<stem>.parquet``).
@@ -50,7 +53,7 @@ import polars as pl
 
 __all__ = ["ConversionStats", "convert_tree", "convert_yxdb", "read_yxdb"]
 
-INSTALL_HINT = "Reading .yxdb files needs the optional dependency: pip install 'flowfile[alteryx]'"
+INSTALL_HINT = "Reading .yxdb files needs the optional dependency: pip install 'flowfile[yxdb]'"
 SPATIAL_SUFFIX = "__spatial"
 
 _DTYPES: dict[str, pl.DataType] = {

@@ -72,14 +72,31 @@
    scrolled content stays readable underneath; cyan accents on it */
 .md-header,
 .md-tabs {
-    background: color-mix(in srgb, var(--ff-navy) 55%, transparent);
-    -webkit-backdrop-filter: blur(14px);
-    backdrop-filter: blur(14px);
     color: #fff;
 }
 
+.md-tabs {
+    background: color-mix(in srgb, var(--ff-navy) 55%, transparent);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+}
+
+/* The blur lives on a pseudo-element: a backdrop-filter on .md-header itself
+   would make it the containing block for Material's position:fixed mobile
+   search panel, collapsing it to the header bar. */
 .md-header {
+    background: transparent;
     box-shadow: none;
+}
+
+.md-header::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: color-mix(in srgb, var(--ff-navy) 55%, transparent);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
 }
 
 .md-tabs__link--active,
@@ -96,6 +113,18 @@
 .md-search__input::placeholder,
 .md-search__input + .md-search__icon {
     color: rgba(255, 255, 255, 0.75);
+}
+
+/* Open search sits on Material's --md-default-bg-color panel (white in light
+   mode), so the white-on-navy treatment above must not carry into that state */
+[data-md-toggle="search"]:checked ~ .md-header .md-search__input {
+    background-color: transparent;
+    color: var(--md-default-fg-color);
+}
+
+[data-md-toggle="search"]:checked ~ .md-header .md-search__input::placeholder,
+[data-md-toggle="search"]:checked ~ .md-header .md-search__input + .md-search__icon {
+    color: var(--md-default-fg-color--light);
 }
 
 /* Material grid cards: brand accent bar + hover lift */
