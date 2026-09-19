@@ -1267,19 +1267,19 @@ files = [
 
 [[package]]
 name = "deltalake"
-version = "1.6.4"
+version = "1.6.3"
 description = "Native Delta Lake Python binding based on delta-rs with Pandas integration"
 optional = false
 python-versions = ">=3.10"
 files = [
-    {file = "deltalake-1.6.4-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:d5cfc32f7fe2676f732e1e58d2cec8d783bdce9ad835fad0e4c673bb3b1ea9f7"},
-    {file = "deltalake-1.6.4-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:cbe9feba434d9c52f2f19a52d1c79f6e5c0803bca90e511b7afdf58012cadfb7"},
-    {file = "deltalake-1.6.4-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f26513d4ca8d95e1f7298197c7d870fdd18d600689f30859e7678f2632102194"},
-    {file = "deltalake-1.6.4-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:37765e4dffa7682c345a8398b7b18f768f13ab8861ca2a6e4631229cf840aabf"},
-    {file = "deltalake-1.6.4-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:f80861f0004ca2ffd8c78edb94f97ab27683b760cb876f4254c4d1dc6dc58572"},
-    {file = "deltalake-1.6.4-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:fc8587b769251dfafc2ca3786c1a631b45002dd1babb2fb2a9037e730d934c4a"},
-    {file = "deltalake-1.6.4-cp310-abi3-win_amd64.whl", hash = "sha256:8b125924995708578ff1610265e943d64b4230c69843deb58794e463056ea0f3"},
-    {file = "deltalake-1.6.4.tar.gz", hash = "sha256:ada75306e6bafdefd0f7fae97fada0f3dc463f9f6918b8b8299489b4b53c3e30"},
+    {file = "deltalake-1.6.3-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:c25928df2a30a19dec3f86ffd931fd59b7f175b5781ba998b34001eb4d49e1f7"},
+    {file = "deltalake-1.6.3-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:8cec745b5dff6581c0b26c5136e3f9eea7ac715a684fe4459b5c37c66407ae02"},
+    {file = "deltalake-1.6.3-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1a5163ed5550f5b83ba6f9a95b5e3dff09934a3165fb80ee0ab8e5919782ac6c"},
+    {file = "deltalake-1.6.3-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:d5aa5f89367deca941ed5e8496b6f6521b42ff0380609ff7a02f771ae9ae7abe"},
+    {file = "deltalake-1.6.3-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:8f2de230b5cd979b3b984db3b9a24bf14722d4b46a4d062b41fe3fd2e5bfbd68"},
+    {file = "deltalake-1.6.3-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:b51d0109b0a86b336c7254a01495536d69c72593663d8de0bc320aa4523c0502"},
+    {file = "deltalake-1.6.3-cp310-abi3-win_amd64.whl", hash = "sha256:7920a60510376f3c90feb62d182063b0202f117411e73ff9f23ffe969b800dce"},
+    {file = "deltalake-1.6.3.tar.gz", hash = "sha256:b7176c9d2a48b3ad339902e6216cdde813857b9628ef53e972889c71d2836fc4"},
 ]
 
 [package.dependencies]
@@ -6441,8 +6441,9 @@ type = ["pytest-mypy (>=1.0.1)"]
 
 [extras]
 alteryx = ["yxdb"]
+yxdb = ["yxdb"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.14"
-content-hash = "b3c8badb2c2c9bbccb35c62a51b39f25a441c9395e69f54d6739dc3839c48962"
+content-hash = "bd6686307399068d2ecf48d345bc9c0e2539faed5e0d93c407091c16b564c644"
