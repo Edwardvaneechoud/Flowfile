@@ -198,14 +198,14 @@ npm install && npm run dev:web  # :8080
 
 Flowfile is deliberately a one-machine tool: Polars in-process, no cluster. That's a limit and a feature at once — it's why the whole thing installs with `pip` and runs in a browser tab, and a surprising amount of data fits on one good machine.
 
-| Instead of | The difference |
+| Compared with | What Flowfile is |
 |---|---|
-| **Alteryx / KNIME** | The same canvas idea, but MIT-licensed, Polars underneath, and every pipeline exports to Python you can take with you. |
+| **KNIME and other visual ETL tools** | Flowfile is also a node-based canvas. It is MIT-licensed, built on Polars, and exports every pipeline as plain Python. |
 | **dbt** | dbt transforms data that's already in a warehouse. Flowfile works on files, databases and streams directly, no warehouse needed, and adds a visual layer. |
 | **Airflow / Dagster** | Orchestrators run pipelines; Flowfile is where the pipeline gets built. It has a small scheduler of its own, and exported scripts run fine under any orchestrator. |
 | **Plain Polars** | You keep Polars. Flowfile adds a canvas, a preview at every node, a catalog and a scheduler, and gets out of the way again when you export. |
 
-Alteryx is a trademark of Alteryx, Inc.; KNIME is a trademark of KNIME AG. Flowfile is not affiliated with or endorsed by either. The [Alteryx importer](https://edwardvaneechoud.github.io/Flowfile/users/coming-from-alteryx/) reads workflow files you own and contains no Alteryx software.
+KNIME is a trademark of KNIME AG. Flowfile is not affiliated with or endorsed by KNIME AG.
 
 ---
 
