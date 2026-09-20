@@ -5,6 +5,7 @@
       `nb-cell--${cell.cellType}`,
       {
         running: cell.execState === 'running',
+        queued: runtime?.status === 'queued',
         'is-dragging': dragging,
         'nb-cell--active': active,
       },
@@ -33,7 +34,7 @@
 
       <button
         class="nb-run"
-        :disabled="cell.execState === 'running'"
+        :disabled="busy || cell.execState === 'running'"
         :title="
           cell.cellType === 'markdown'
             ? 'Render and advance (Shift+Enter) · Render (Cmd/Ctrl+Enter)'
@@ -56,6 +57,11 @@
         <el-option v-for="t in allowedTypes" :key="t" :label="TYPE_LABELS[t]" :value="t" />
       </el-select>
       <span v-else class="nb-cell-type-badge">{{ TYPE_LABELS[cell.cellType] }}</span>
+
+      <CellStatusBadge
+        :runtime="runtime"
+        :has-output="cell.cellType === 'python' && !!cell.output"
+      />
 
       <div class="nb-cell-bar-spacer"></div>
 
@@ -160,6 +166,8 @@ import { EditorView } from "@codemirror/view";
 import { registerCellView, unregisterCellView } from "./editorViews";
 import { cellPresentation, toggleCodeCollapsed, toggleOutputCollapsed } from "./cellPresentation";
 import CellActionMenu from "./CellActionMenu.vue";
+import CellStatusBadge from "./CellStatusBadge.vue";
+import type { CellRuntime } from "./notebookRuntimeState";
 import CellOutput from "../nodes/node-types/elements/pythonScript/CellOutput.vue";
 import { buildNotebookEditorExtensions } from "../nodes/node-types/elements/pythonScript/notebookEditor";
 import type { CellType, NotebookCellModel } from "./types";
@@ -173,6 +181,10 @@ const props = defineProps<{
   allowedTypes?: CellType[];
   /** Structural edits (reorder, delete) are blocked while the notebook is running. */
   structuralDisabled?: boolean;
+  /** Execution identity + staleness for this cell; absent until it is first touched. */
+  runtime?: CellRuntime | null;
+  /** An execution batch is active in this notebook, so single runs are refused. */
+  busy?: boolean;
   /** The cell the caret last landed in — draws the active border. */
   active?: boolean;
   dragging?: boolean;
@@ -282,6 +294,9 @@ onBeforeUnmount(() => {
 .nb-cell.nb-cell--active {
   border-color: var(--el-color-primary, #409eff);
   box-shadow: inset 3px 0 0 var(--el-color-primary-light-5, #a0cfff);
+}
+.nb-cell.queued {
+  box-shadow: inset 3px 0 0 var(--el-border-color-dark, #d4d7de);
 }
 .nb-cell.running {
   border-color: var(--el-color-primary, #409eff);

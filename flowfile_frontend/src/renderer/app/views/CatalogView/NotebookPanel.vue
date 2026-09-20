@@ -143,11 +143,15 @@
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item @click="store.clearOutputs()">
+              <el-dropdown-item :disabled="batchBusy" @click="store.clearOutputs()">
                 <i class="fa-solid fa-eraser nb-menu-icon"></i> Clear outputs
               </el-dropdown-item>
-              <el-dropdown-item :disabled="!store.active?.kernelId" @click="store.restartKernel()">
-                <i class="fa-solid fa-rotate-right nb-menu-icon"></i> Restart kernel
+              <el-dropdown-item
+                :disabled="batchBusy || resetPending"
+                title="Clear this notebook's kernel variables; the kernel keeps running"
+                @click="onResetSession"
+              >
+                <i class="fa-solid fa-rotate-right nb-menu-icon"></i> Reset session
               </el-dropdown-item>
               <el-dropdown-item
                 v-if="kernelStatus.kind === 'stopped'"
@@ -198,14 +202,16 @@
           </el-dropdown>
         </div>
 
+        <span v-if="batchLabel" class="nb-batch-progress">{{ batchLabel }}</span>
+
         <el-button
           size="small"
           class="nb-run-all"
-          :loading="running"
-          :disabled="running"
-          @click="runAll"
+          :loading="batchBusy"
+          :disabled="batchBusy"
+          @click="store.runAll()"
         >
-          <i v-if="!running" class="fa-solid fa-forward" style="margin-right: 4px"></i> Run All
+          <i v-if="!batchBusy" class="fa-solid fa-forward" style="margin-right: 4px"></i> Run All
         </el-button>
       </div>
     </div>
@@ -272,6 +278,8 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           :flow-id="store.active.sessionFlowId"
           :node-id="cellNodeId(cell.id)"
           :structural-disabled="structuralDisabled"
+          :runtime="runtimeFor(cell.id)"
+          :busy="batchBusy"
           :active="cell.id === store.active.focusedCellId"
           :dragging="drag.draggingId.value === cell.id"
           @run="store.runCell(cell.id)"
@@ -365,6 +373,11 @@ import { cellSelector, focusCell, ownerIdForNotebook } from "../../components/no
 import { useCellDrag } from "../../components/notebook/useCellDrag";
 import { getCellHistory } from "../../components/notebook/useCellHistory";
 import {
+  batchProgress,
+  cellRuntime,
+  isBatchActive,
+} from "../../components/notebook/notebookRuntimeState";
+import {
   kernelStatusNeedsAttention,
   resolveNotebookKernelStatus,
 } from "../../components/notebook/notebookKernelStatus";
@@ -397,8 +410,8 @@ const defaultNamespaceId = computed<number | null>(() => {
 const kernels = ref<KernelInfo[]>([]);
 const kernelsLoaded = ref(false);
 const dockerAvailable = ref(true);
-const running = ref(false);
 const startingKernel = ref(false);
+const resetPending = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 const kernelStatus = computed(() =>
@@ -534,8 +547,23 @@ function priorCodes(idx: number): string[] {
 const hostRef = ref<HTMLElement | null>(null);
 const announcement = ref("");
 
-// Change 3 swaps this for isBatchActive(ownerId).
-const structuralDisabled = computed(() => running.value);
+const activeOwnerId = computed(() =>
+  store.activeTabId ? ownerIdForNotebook(store.activeTabId) : null,
+);
+
+const batchBusy = computed(() => !!activeOwnerId.value && isBatchActive(activeOwnerId.value));
+
+const batchLabel = computed(() => {
+  const progress = activeOwnerId.value ? batchProgress(activeOwnerId.value) : null;
+  if (!progress?.total) return "";
+  return `Running cell ${Math.min(progress.done + 1, progress.total)} of ${progress.total}`;
+});
+
+const structuralDisabled = computed(() => batchBusy.value);
+
+function runtimeFor(cellId: string) {
+  return activeOwnerId.value ? (cellRuntime(activeOwnerId.value, cellId) ?? null) : null;
+}
 
 const canUndo = computed(() =>
   store.activeTabId ? getCellHistory(ownerIdForNotebook(store.activeTabId)).canUndo.value : false,
@@ -661,12 +689,16 @@ onBeforeUnmount(() => {
   store.closeAllSessions();
 });
 
-async function runAll() {
-  running.value = true;
+async function onResetSession() {
+  if (resetPending.value) return;
+  resetPending.value = true;
   try {
-    await store.runAll();
+    await store.resetSession();
+    ElMessage.success("Session reset");
+  } catch (e: any) {
+    ElMessage.error(e?.message ?? "Failed to reset the session");
   } finally {
-    running.value = false;
+    resetPending.value = false;
   }
 }
 
@@ -821,6 +853,12 @@ async function onDelete() {
 .nb-toolbar > .nb-split,
 .nb-toolbar > .el-dropdown {
   margin-bottom: 6px;
+}
+.nb-batch-progress {
+  margin-bottom: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
 }
 /* Run All mirrors the designer header's Run button (accent purple). */
 .nb-run-all:not(:disabled) {

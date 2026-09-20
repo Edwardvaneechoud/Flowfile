@@ -37,6 +37,10 @@ export function toggleOutputCollapsed(ownerId: string, cellId: string): boolean 
   return presentation.outputCollapsed;
 }
 
+export function disposeCellPresentation(ownerId: string, cellId: string): void {
+  presentations.get(ownerId)?.delete(cellId);
+}
+
 export function disposeOwnerPresentation(ownerId: string): void {
   presentations.delete(ownerId);
 }

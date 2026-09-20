@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { computed, watchEffect } from "vue";
 import {
   cellPresentation,
+  disposeCellPresentation,
   disposeOwnerPresentation,
   toggleCodeCollapsed,
   toggleOutputCollapsed,
@@ -66,5 +67,14 @@ describe("cellPresentation", () => {
     const after = cellPresentation("owner-g", "c1");
     expect(after).not.toBe(before);
     expect(after).toEqual({ codeCollapsed: false, outputCollapsed: false });
+  });
+
+  it("forgets one cell's state without touching its siblings", () => {
+    toggleCodeCollapsed("owner-h", "c1");
+    toggleCodeCollapsed("owner-h", "c2");
+    disposeCellPresentation("owner-h", "c1");
+
+    expect(cellPresentation("owner-h", "c1").codeCollapsed).toBe(false);
+    expect(cellPresentation("owner-h", "c2").codeCollapsed).toBe(true);
   });
 });

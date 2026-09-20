@@ -24,7 +24,24 @@ import {
   getCellHistory,
   type CellHistory,
 } from "../components/notebook/useCellHistory";
-import { disposeOwnerPresentation } from "../components/notebook/cellPresentation";
+import {
+  disposeCellPresentation,
+  disposeOwnerPresentation,
+} from "../components/notebook/cellPresentation";
+import {
+  beginExecution,
+  bumpSessionEpoch,
+  bumpSourceRevision,
+  clearResults,
+  disposeOwner,
+  ensureOwner,
+  invalidateFrom,
+  markDownstreamStale,
+  runExecutionBatch,
+  settleExecution,
+  type RuntimeCellRef,
+  type SettledMeta,
+} from "../components/notebook/notebookRuntimeState";
 import { sanitiseMarkdown } from "../features/ai/markdown";
 import {
   loadPersistedNotebooks,
@@ -139,6 +156,30 @@ export interface OpenNotebook {
   focusedCellId: string | null; // transient: last cell the caret was in
 }
 
+const ownerOf = (nb: OpenNotebook): string => ownerIdForNotebook(nb.tabId);
+
+const refs = (nb: OpenNotebook): RuntimeCellRef[] =>
+  nb.cells.map((c) => ({ id: c.id, isPython: c.cellType === "python" }));
+
+/** First position a structural op can have invalidated; a move reaches back to its origin. */
+function affectedIndex(op: CellOperation<NotebookCellModel>): number {
+  return op.kind === "move" ? Math.min(op.from, op.to) : op.index;
+}
+
+/** The generation/revision stamp is optional on older kernels, so never assume it is there. */
+function settledMeta(res: unknown): SettledMeta {
+  const stamped = (res ?? {}) as { namespace_generation?: string | null; revision?: number | null };
+  return {
+    namespace_generation: stamped.namespace_generation ?? null,
+    revision: stamped.revision ?? null,
+  };
+}
+
+/** Re-resolve by id: the cells array may have been rebuilt while the request was out. */
+function settledCell(nb: OpenNotebook, cell: NotebookCellModel): NotebookCellModel {
+  return nb.cells.find((c) => c.id === cell.id) ?? cell;
+}
+
 function hydrateTab(p: PersistedNotebook): OpenNotebook {
   return {
     tabId: p.tabId,
@@ -209,10 +250,12 @@ export const useNotebookStore = defineStore("notebook", {
 
     _applyStructural(nb: OpenNotebook, result: OperationResult<NotebookCellModel>) {
       nb.cells = result.cells;
-      getCellHistory<NotebookCellModel>(ownerIdForNotebook(nb.tabId)).push({
+      if (result.op.kind === "remove") disposeCellPresentation(ownerOf(nb), result.op.cell.id);
+      getCellHistory<NotebookCellModel>(ownerOf(nb)).push({
         op: result.op,
         inverse: result.inverse,
       });
+      invalidateFrom(ownerOf(nb), refs(nb), affectedIndex(result.op), "upstream-changed");
       nb.dirty = true;
       this._schedulePersist();
     },
@@ -225,6 +268,7 @@ export const useNotebookStore = defineStore("notebook", {
       const persisted = loadPersistedNotebooks();
       if (persisted.openNotebooks.length) {
         this.openNotebooks = persisted.openNotebooks.map(hydrateTab);
+        for (const nb of this.openNotebooks) ensureOwner(ownerOf(nb));
         this.activeTabId =
           persisted.activeTabId && this.openNotebooks.some((n) => n.tabId === persisted.activeTabId)
             ? persisted.activeTabId
@@ -259,6 +303,7 @@ export const useNotebookStore = defineStore("notebook", {
         focusedCellId: null,
       };
       this.openNotebooks.push(tab);
+      ensureOwner(ownerOf(tab));
       this.activeTabId = tab.tabId;
       this._schedulePersist();
       return tab;
@@ -291,6 +336,7 @@ export const useNotebookStore = defineStore("notebook", {
           focusedCellId: null,
         };
         this.openNotebooks.push(tab);
+        ensureOwner(ownerOf(tab));
         this.activeTabId = tab.tabId;
         this._schedulePersist();
       } finally {
@@ -316,6 +362,7 @@ export const useNotebookStore = defineStore("notebook", {
       disposeCellHistory(ownerIdForNotebook(tabId));
       disposeOwnerViews(ownerIdForNotebook(tabId));
       disposeOwnerPresentation(ownerIdForNotebook(tabId));
+      disposeOwner(ownerIdForNotebook(tabId));
       if (this.activeTabId === tabId) {
         const next = this.openNotebooks[idx] ?? this.openNotebooks[idx - 1] ?? null;
         this.activeTabId = next?.tabId ?? null;
@@ -372,12 +419,8 @@ export const useNotebookStore = defineStore("notebook", {
 
     async deleteNotebook(id: number) {
       await NotebookApi.remove(id);
-      // Free the namespace + close any open tab pointing at this notebook so a
-      // future notebook reusing the id never inherits stale variables.
+      // closeTab frees the namespace, so a future notebook reusing the id never inherits stale variables.
       const open = this.openNotebooks.find((n) => n.persistedId === id);
-      if (open?.kernelId) {
-        await KernelApi.clearNamespace(open.kernelId, -id).catch(() => undefined);
-      }
       if (open) this.closeTab(open.tabId);
       await this.loadList();
     },
@@ -391,35 +434,45 @@ export const useNotebookStore = defineStore("notebook", {
       }
     },
 
+    /** A different kernel is a different session: retained results are from the previous one. */
     setKernel(kernelId: string | null) {
       const nb = this.active;
-      if (nb) {
-        nb.kernelId = kernelId;
-        nb.dirty = true;
-        this._schedulePersist();
-      }
+      if (!nb || nb.kernelId === kernelId) return;
+      nb.kernelId = kernelId;
+      nb.dirty = true;
+      bumpSessionEpoch(ownerOf(nb));
+      this._schedulePersist();
     },
 
     setCellCode(cellId: string, code: string) {
-      const cell = this.active?.cells.find((c) => c.id === cellId);
-      if (cell && this.active) {
-        cell.code = code;
-        this.active.dirty = true;
-        this._schedulePersist();
+      const nb = this.active;
+      const idx = nb ? nb.cells.findIndex((c) => c.id === cellId) : -1;
+      if (!nb || idx < 0) return;
+      const cell = nb.cells[idx];
+      cell.code = code;
+      nb.dirty = true;
+      // Markdown edits change only their own preview, so they invalidate nothing.
+      if (cell.cellType === "python") {
+        bumpSourceRevision(ownerOf(nb), cellId);
+        invalidateFrom(ownerOf(nb), refs(nb), idx + 1, "upstream-changed");
       }
+      this._schedulePersist();
     },
 
     setCellType(cellId: string, cellType: CellType) {
-      const cell = this.active?.cells.find((c) => c.id === cellId);
-      if (cell && this.active) {
-        cell.cellType = cellType;
-        cell.output = null;
-        cell.renderedHtml = null;
-        cell.execState = "idle";
-        cell.editing = cellType === "markdown";
-        this.active.dirty = true;
-        this._schedulePersist();
-      }
+      const nb = this.active;
+      const idx = nb ? nb.cells.findIndex((c) => c.id === cellId) : -1;
+      if (!nb || idx < 0) return;
+      const cell = nb.cells[idx];
+      cell.cellType = cellType;
+      cell.output = null;
+      cell.renderedHtml = null;
+      cell.execState = "idle";
+      cell.editing = cellType === "markdown";
+      nb.dirty = true;
+      bumpSourceRevision(ownerOf(nb), cellId);
+      invalidateFrom(ownerOf(nb), refs(nb), idx + 1, "upstream-changed");
+      this._schedulePersist();
     },
 
     setCellEditing(cellId: string, editing: boolean) {
@@ -489,7 +542,7 @@ export const useNotebookStore = defineStore("notebook", {
     undoCellAction() {
       const nb = this.active;
       if (!nb) return null;
-      const history = getCellHistory<NotebookCellModel>(ownerIdForNotebook(nb.tabId));
+      const history = getCellHistory<NotebookCellModel>(ownerOf(nb));
       const entry = history.undo();
       if (!entry) return null;
       return this._replayCellAction(nb, history, entry.inverse);
@@ -498,7 +551,7 @@ export const useNotebookStore = defineStore("notebook", {
     redoCellAction() {
       const nb = this.active;
       if (!nb) return null;
-      const history = getCellHistory<NotebookCellModel>(ownerIdForNotebook(nb.tabId));
+      const history = getCellHistory<NotebookCellModel>(ownerOf(nb));
       const entry = history.redo();
       if (!entry) return null;
       return this._replayCellAction(nb, history, entry.op);
@@ -516,6 +569,8 @@ export const useNotebookStore = defineStore("notebook", {
         return null;
       }
       nb.cells = result.cells;
+      if (result.op.kind === "remove") disposeCellPresentation(ownerOf(nb), result.op.cell.id);
+      invalidateFrom(ownerOf(nb), refs(nb), affectedIndex(result.op), "upstream-changed");
       nb.dirty = true;
       this._schedulePersist();
       return result.op;
@@ -570,13 +625,14 @@ export const useNotebookStore = defineStore("notebook", {
 
     /** Resolves false when the run was refused or failed (no kernel, kernel error, request error). */
     async runCell(cellId: string): Promise<boolean> {
-      const cell = this.active?.cells.find((c) => c.id === cellId);
-      if (!cell) return false;
+      const nb = this.active;
+      const cell = nb?.cells.find((c) => c.id === cellId);
+      if (!nb || !cell) return false;
       if (cell.cellType === "markdown") {
         this.runMarkdownCell(cell);
         return true;
       }
-      return this.runPythonCell(cell);
+      return this._runBatch(nb, [cell]);
     },
 
     runMarkdownCell(cell: NotebookCellModel) {
@@ -585,10 +641,8 @@ export const useNotebookStore = defineStore("notebook", {
       cell.execState = "idle";
     },
 
-    async runPythonCell(cell: NotebookCellModel, nb: OpenNotebook | null = null): Promise<boolean> {
-      nb = nb ?? this.active;
+    async runPythonCell(cell: NotebookCellModel, nb: OpenNotebook): Promise<boolean> {
       if (cell.execState === "running") return false; // re-entrancy guard (also covers Shift+Enter)
-      if (!nb) return false;
       if (!nb.kernelId) {
         cell.output = {
           stdout: "",
@@ -601,6 +655,10 @@ export const useNotebookStore = defineStore("notebook", {
         cell.execState = "error";
         return false;
       }
+      const ownerId = ownerOf(nb);
+      // Marked at submission: a cell that errors part-way has still mutated the namespace.
+      markDownstreamStale(ownerId, refs(nb), cell.id);
+      const ticket = beginExecution(ownerId, cell.id);
       cell.execState = "running";
       try {
         const res = await KernelApi.executeCell(nb.kernelId, {
@@ -608,8 +666,13 @@ export const useNotebookStore = defineStore("notebook", {
           code: cell.code,
           flow_id: nb.sessionFlowId, // negative session id: can't collide with positive flow ids
         });
+        if (settleExecution(ticket, settledMeta(res)) === "discard") {
+          cell.execState = "idle"; // nothing newer owns this cell (re-entrancy guard), so release it
+          return false;
+        }
+        const target = settledCell(nb, cell);
         nb.executionCount += 1;
-        cell.output = {
+        target.output = {
           stdout: res.stdout,
           stderr: res.stderr,
           display_outputs: res.display_outputs,
@@ -617,10 +680,15 @@ export const useNotebookStore = defineStore("notebook", {
           execution_time_ms: res.execution_time_ms,
           execution_count: nb.executionCount,
         };
-        cell.execState = res.error ? "error" : "idle";
+        target.execState = res.error ? "error" : "idle";
         return res.success && !res.error;
       } catch (e: any) {
-        cell.output = {
+        if (settleExecution(ticket) === "discard") {
+          cell.execState = "idle";
+          return false;
+        }
+        const target = settledCell(nb, cell);
+        target.output = {
           stdout: "",
           stderr: "",
           display_outputs: [],
@@ -628,28 +696,49 @@ export const useNotebookStore = defineStore("notebook", {
           execution_time_ms: 0,
           execution_count: nb.executionCount,
         };
-        cell.execState = "error";
+        target.execState = "error";
         return false;
       }
     },
 
-    /** Run the active notebook top-to-bottom. Markdown always renders; Python
-     * cells are skipped (not errored) when there's no kernel, so the notebook is
-     * usable on a default desktop install with no Docker. Stops on first error. */
+    /** One execution batch per notebook (a single run is a batch of one). Resolves
+     * false when the batch was refused as a duplicate, or when a cell failed. */
+    async _runBatch(
+      nb: OpenNotebook,
+      cells: NotebookCellModel[],
+      opts: { skipPythonWithoutKernel?: boolean } = {},
+    ): Promise<boolean> {
+      const runnable =
+        opts.skipPythonWithoutKernel && !nb.kernelId
+          ? cells.filter((c) => c.cellType !== "python")
+          : cells;
+      let ok = true;
+      const started = await runExecutionBatch({
+        ownerId: ownerOf(nb),
+        cells: runnable.map((c) => ({ id: c.id, isPython: c.cellType === "python" })),
+        runOne: async (cellId) => {
+          const cell = nb.cells.find((c) => c.id === cellId);
+          const result = cell ? await this.runPythonCell(cell, nb) : false;
+          if (!result) ok = false;
+          return { ok: result };
+        },
+        onMarkdown: (cellId) => {
+          const cell = nb.cells.find((c) => c.id === cellId);
+          if (cell) this.runMarkdownCell(cell);
+        },
+        stillPresent: (cellId) => nb.cells.some((c) => c.id === cellId),
+      });
+      return started && ok;
+    },
+
+    /** Run the notebook top-to-bottom. Markdown always renders; Python cells are
+     * skipped (not errored) when there's no kernel, so the notebook is usable on a
+     * default desktop install with no Docker. Stops on first error. The notebook is
+     * captured once, so a mid-run tab switch neither stops it nor redirects results. */
     async runAll() {
       const nb = this.active;
       if (!nb) return;
-      for (const cell of nb.cells) {
-        if (cell.cellType === "markdown") {
-          this.runMarkdownCell(cell);
-          continue;
-        }
-        if (!nb.kernelId) continue;
-        await this.runPythonCell(cell, nb);
-        // A mid-run tab switch must not let later cells render on the wrong tab.
-        if (this.active !== nb) break;
-        if (cell.execState === "error") break;
-      }
+      await this._runBatch(nb, nb.cells.slice(), { skipPythonWithoutKernel: true });
     },
 
     clearOutputs() {
@@ -659,22 +748,28 @@ export const useNotebookStore = defineStore("notebook", {
         cell.output = null;
         cell.execState = "idle";
       }
+      clearResults(ownerOf(nb));
     },
 
-    async restartKernel() {
+    /** Clear the kernel's variables for this notebook; the kernel keeps running. Rejects
+     * (outputs retained) when the namespace clear fails — a failed reset is not a reset. */
+    async resetSession() {
       const nb = this.active;
       if (!nb) return;
+      if (nb.kernelId) {
+        await KernelApi.clearNamespace(nb.kernelId, nb.sessionFlowId);
+      }
+      bumpSessionEpoch(ownerOf(nb));
       this.clearOutputs();
       nb.executionCount = 0;
-      if (nb.kernelId) {
-        await KernelApi.clearNamespace(nb.kernelId, nb.sessionFlowId).catch(() => undefined);
-      }
     },
 
     /** Free every open notebook's kernel namespace (don't leak them into the
      * 20-slot LRU shared with flow runs). Called when the panel unmounts. */
     async closeAllSessions() {
       for (const nb of this.openNotebooks) {
+        // The namespace is gone, so nothing still on screen can be current.
+        bumpSessionEpoch(ownerOf(nb));
         if (nb.kernelId) {
           await KernelApi.clearNamespace(nb.kernelId, nb.sessionFlowId).catch(() => undefined);
         }
