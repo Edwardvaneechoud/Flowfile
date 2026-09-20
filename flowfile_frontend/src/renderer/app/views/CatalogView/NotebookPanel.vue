@@ -110,6 +110,26 @@
         <el-button
           size="small"
           class="nb-overflow-btn"
+          title="Undo cell action (insert, delete, move, duplicate)"
+          :disabled="structuralDisabled || !canUndo"
+          @click="onUndoCellAction"
+        >
+          <i class="fa-solid fa-arrow-rotate-left"></i>
+        </el-button>
+
+        <el-button
+          size="small"
+          class="nb-overflow-btn"
+          title="Redo cell action"
+          :disabled="structuralDisabled || !canRedo"
+          @click="onRedoCellAction"
+        >
+          <i class="fa-solid fa-arrow-rotate-right"></i>
+        </el-button>
+
+        <el-button
+          size="small"
+          class="nb-overflow-btn"
           title="Notebook help"
           @click="showHelp = true"
         >
@@ -217,7 +237,14 @@
     </div>
 
     <!-- Cells of the active notebook -->
-    <div v-if="store.active" class="nb-cells">
+    <div v-if="store.active" ref="hostRef" class="nb-cells">
+      <div
+        v-if="drag.indicatorTop.value !== null"
+        class="nb-drop-line"
+        :style="{ top: `${drag.indicatorTop.value}px` }"
+        aria-hidden="true"
+      ></div>
+
       <!-- Quick-start primer, shown only while the notebook is empty. -->
       <div v-if="showPrimer" class="nb-primer">
         <div class="nb-primer-title"><i class="fa-solid fa-book"></i> New notebook</div>
@@ -236,17 +263,23 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
       <template v-for="(cell, idx) in store.active.cells" :key="cell.id">
         <CatalogNotebookCell
           :cell="cell"
+          :data-cell-id="cell.id"
+          :owner-id="store.active.tabId"
           :index="idx"
           :cell-count="store.active.cells.length"
           :prior-cell-codes="priorCodes(idx)"
           :kernel-id="store.active.kernelId"
           :flow-id="store.active.sessionFlowId"
           :node-id="cellNodeId(cell.id)"
+          :structural-disabled="structuralDisabled"
+          :dragging="drag.draggingId.value === cell.id"
           @run="store.runCell(cell.id)"
           @update:code="(code: string) => store.setCellCode(cell.id, code)"
           @update:type="(t: CellType) => store.setCellType(cell.id, t)"
           @update:editing="(e: boolean) => store.setCellEditing(cell.id, e)"
-          @move="(dir: -1 | 1) => store.moveCell(cell.id, dir)"
+          @move="(dir: -1 | 1) => onMoveKey(cell.id, dir)"
+          @move-key="(dir: -1 | 1) => onMoveKey(cell.id, dir)"
+          @drag-start="(ev: PointerEvent) => drag.onHandlePointerDown(cell.id, ev)"
           @remove="store.removeCell(cell.id)"
           @cursor="(pos: number) => store.setCellCursor(cell.id, pos)"
         />
@@ -256,6 +289,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
         <div
           v-if="idx < store.active.cells.length - 1"
           class="nb-insert-zone"
+          :class="{ 'nb-insert-zone--disabled': structuralDisabled }"
           title="Add cell here"
           @click="onAddCell('python', idx)"
         >
@@ -266,11 +300,18 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
       <!-- Add cell (centered). Adds a Python cell by default; switch to
            Markdown via the per-cell type selector. -->
       <div class="nb-add-row">
-        <el-button size="small" class="nb-add-btn" @click="onAddCell('python')">
+        <el-button
+          size="small"
+          class="nb-add-btn"
+          :disabled="structuralDisabled"
+          @click="onAddCell('python')"
+        >
           <i class="fa-solid fa-plus" style="margin-right: 4px"></i> Add cell
         </el-button>
       </div>
     </div>
+
+    <div class="nb-sr-only" role="status" aria-live="polite">{{ announcement }}</div>
 
     <!-- Save As: name + catalog namespace (so the notebook lands in the tree) -->
     <el-dialog v-model="saveAsVisible" title="Save notebook" width="420px" append-to-body>
@@ -312,11 +353,16 @@ import { catalogSaveErrorMessage } from "../../composables/saveError";
 import { KernelApi } from "../../api/kernel.api";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";
 import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
+import { cellMoveAnnouncement } from "../../components/notebook/cellOperations";
+import { cellSelector, ownerIdForNotebook } from "../../components/notebook/editorViews";
+import { useCellDrag } from "../../components/notebook/useCellDrag";
+import { getCellHistory } from "../../components/notebook/useCellHistory";
 import {
   kernelStatusNeedsAttention,
   resolveNotebookKernelStatus,
 } from "../../components/notebook/notebookKernelStatus";
-import type { CellType } from "../../components/notebook/types";
+import type { CellOperation } from "../../components/notebook/cellOperations";
+import type { CellType, NotebookCellModel } from "../../components/notebook/types";
 import type { KernelInfo } from "../../types/kernel.types";
 
 const KERNEL_POLL_MS = 5000;
@@ -478,6 +524,58 @@ function priorCodes(idx: number): string[] {
   return store.active ? store.active.cells.slice(0, idx).map((c) => c.code) : [];
 }
 
+const hostRef = ref<HTMLElement | null>(null);
+const announcement = ref("");
+
+// Change 3 swaps this for isBatchActive(ownerId).
+const structuralDisabled = computed(() => running.value);
+
+const canUndo = computed(() =>
+  store.activeTabId ? getCellHistory(ownerIdForNotebook(store.activeTabId)).canUndo.value : false,
+);
+const canRedo = computed(() =>
+  store.activeTabId ? getCellHistory(ownerIdForNotebook(store.activeTabId)).canRedo.value : false,
+);
+
+function announce(move: { from: number; to: number; total: number }) {
+  announcement.value = cellMoveAnnouncement(move.from, move.to, move.total);
+}
+
+function announceIfMove(op: CellOperation<NotebookCellModel> | null) {
+  if (op?.kind === "move") {
+    announce({ from: op.from, to: op.to, total: store.active?.cells.length ?? 0 });
+  }
+}
+
+function onDropCell(cellId: string, targetIndex: number) {
+  const r = store.moveCellToIndex(cellId, targetIndex);
+  if (r) announce(r);
+}
+
+const drag = useCellDrag({
+  getHost: () => hostRef.value,
+  onCommit: onDropCell,
+  isDisabled: () => structuralDisabled.value,
+});
+
+function onMoveKey(cellId: string, dir: -1 | 1) {
+  const r = store.moveCell(cellId, dir);
+  if (!r) return;
+  announce(r);
+  // The row re-renders, so re-focus the handle to keep repeated Alt+arrows working.
+  void nextTick(() => {
+    hostRef.value?.querySelector<HTMLElement>(`${cellSelector(cellId)} .nb-drag-handle`)?.focus();
+  });
+}
+
+function onUndoCellAction() {
+  announceIfMove(store.undoCellAction());
+}
+
+function onRedoCellAction() {
+  announceIfMove(store.redoCellAction());
+}
+
 async function loadKernels() {
   try {
     kernels.value = await KernelApi.getAll();
@@ -524,6 +622,7 @@ function onTabRemove(name: TabPaneName) {
 }
 
 function onAddCell(command: string, afterIndex?: number) {
+  if (structuralDisabled.value) return;
   store.addCell(command as CellType, afterIndex);
 }
 
@@ -913,9 +1012,28 @@ async function onDelete() {
   text-decoration: underline;
 }
 .nb-cells {
+  position: relative;
   flex: 1;
   overflow-y: auto;
   padding: 12px;
+}
+/* Drop indicator for a cell drag; the list itself never reorders mid-gesture. */
+.nb-drop-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  height: 2px;
+  background: var(--el-color-primary, #409eff);
+  pointer-events: none;
+}
+.nb-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 .nb-primer {
   margin-bottom: 12px;
@@ -1013,5 +1131,9 @@ async function onDelete() {
 }
 .nb-insert-zone:hover .nb-insert-plus {
   opacity: 0.85;
+}
+.nb-insert-zone--disabled {
+  pointer-events: none;
+  opacity: 0;
 }
 </style>

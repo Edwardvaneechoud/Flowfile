@@ -29,6 +29,7 @@ vi.mock("../features/ai/markdown", () => ({
 }));
 
 import { useNotebookStore, cellNodeId } from "./notebook-store";
+import { getCellHistory } from "../components/notebook/useCellHistory";
 
 const okExecResult = {
   success: true,
@@ -272,6 +273,124 @@ describe("run routing", () => {
     expect(mocks.executeCell).toHaveBeenCalledTimes(1);
     expect(c1.output).not.toBeNull();
     expect(c2.output).toBeNull();
+  });
+});
+
+describe("structural cell actions", () => {
+  /** Fresh tab with `n` python cells, dirty cleared so an assertion can see the next edit. */
+  function withCells(n: number) {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.active!.cells = [];
+    const cells = Array.from({ length: n }, () => store.addCell("python")!);
+    store.active!.dirty = false;
+    return { store, cells };
+  }
+
+  it("addCell appends without an index and inserts after the given one", () => {
+    const { store, cells } = withCells(2);
+    const appended = store.addCell("python")!;
+    expect(store.active!.cells.map((c) => c.id)).toEqual([cells[0].id, cells[1].id, appended.id]);
+    const inserted = store.addCell("markdown", 0)!;
+    expect(store.active!.cells.map((c) => c.id)).toEqual([
+      cells[0].id,
+      inserted.id,
+      cells[1].id,
+      appended.id,
+    ]);
+    expect(store.active!.dirty).toBe(true);
+  });
+
+  it("removeCell refuses to delete the last remaining cell", () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    const only = store.active!.cells[0];
+    expect(store.removeCell(only.id)).toBeNull();
+    expect(store.active!.cells).toHaveLength(1);
+    expect(store.active!.cells[0].id).toBe(only.id);
+    expect(store.active!.dirty).toBe(false);
+  });
+
+  it("removeCell returns the next surviving cell, else the previous one", () => {
+    const { store, cells } = withCells(3);
+    expect(store.removeCell(cells[0].id)).toBe(cells[1].id);
+    expect(store.removeCell(cells[2].id)).toBe(cells[1].id);
+    expect(store.active!.cells.map((c) => c.id)).toEqual([cells[1].id]);
+  });
+
+  it("moveCellToIndex no-ops without dirtying the notebook", () => {
+    const { store, cells } = withCells(3);
+    expect(store.moveCellToIndex(cells[0].id, 0)).toBeNull();
+    expect(store.moveCellToIndex("nope", 1)).toBeNull();
+    expect(store.active!.dirty).toBe(false);
+    expect(store.active!.cells.map((c) => c.id)).toEqual(cells.map((c) => c.id));
+  });
+
+  it("moveCellToIndex moves first to last and last to first", () => {
+    const { store, cells } = withCells(3);
+    expect(store.moveCellToIndex(cells[0].id, 2)).toEqual({ from: 0, to: 2, total: 3 });
+    expect(store.active!.cells.map((c) => c.id)).toEqual([cells[1].id, cells[2].id, cells[0].id]);
+    expect(store.moveCellToIndex(cells[0].id, 0)).toEqual({ from: 2, to: 0, total: 3 });
+    expect(store.active!.cells.map((c) => c.id)).toEqual(cells.map((c) => c.id));
+    expect(store.active!.dirty).toBe(true);
+  });
+
+  it("moveCell by direction still works", () => {
+    const { store, cells } = withCells(3);
+    expect(store.moveCell(cells[0].id, 1)).toEqual({ from: 0, to: 1, total: 3 });
+    expect(store.active!.cells.map((c) => c.id)).toEqual([cells[1].id, cells[0].id, cells[2].id]);
+  });
+
+  it("duplicateCell copies code and type below the source with a fresh id and no output", () => {
+    const { store, cells } = withCells(2);
+    store.setCellCode(cells[0].id, "print(1)");
+    store.active!.cells[0].output = { ...okExecResult, execution_count: 1 } as any;
+    const copy = store.duplicateCell(cells[0].id)!;
+    expect(copy.id).not.toBe(cells[0].id);
+    expect(copy.code).toBe("print(1)");
+    expect(copy.cellType).toBe("python");
+    expect(copy.output).toBeNull();
+    expect(store.active!.cells.map((c) => c.id)).toEqual([cells[0].id, copy.id, cells[1].id]);
+  });
+
+  it("undoCellAction reverses a delete (output included) and then the move before it", () => {
+    const { store, cells } = withCells(3);
+    store.active!.cells[1].output = { ...okExecResult, execution_count: 4 } as any;
+    const outputRef = store.active!.cells[1].output;
+    store.moveCellToIndex(cells[0].id, 2);
+    store.removeCell(cells[1].id);
+    expect(store.active!.cells.map((c) => c.id)).toEqual([cells[2].id, cells[0].id]);
+
+    store.undoCellAction();
+    expect(store.active!.cells.map((c) => c.id)).toEqual([cells[1].id, cells[2].id, cells[0].id]);
+    expect(store.active!.cells[0].output).toBe(outputRef);
+
+    store.undoCellAction();
+    expect(store.active!.cells.map((c) => c.id)).toEqual(cells.map((c) => c.id));
+  });
+
+  it("redoCellAction re-applies an undone move", () => {
+    const { store, cells } = withCells(3);
+    store.moveCellToIndex(cells[0].id, 2);
+    store.undoCellAction();
+    expect(store.active!.cells.map((c) => c.id)).toEqual(cells.map((c) => c.id));
+    store.redoCellAction();
+    expect(store.active!.cells.map((c) => c.id)).toEqual([cells[1].id, cells[2].id, cells[0].id]);
+  });
+
+  it("undoCellAction with nothing recorded returns null", () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    expect(store.undoCellAction()).toBeNull();
+    expect(store.redoCellAction()).toBeNull();
+  });
+
+  it("closeTab disposes the tab's cell history", () => {
+    const { store } = withCells(2);
+    const tabId = store.active!.tabId;
+    expect(getCellHistory(tabId).canUndo.value).toBe(true);
+    store.closeTab(tabId);
+    expect(getCellHistory(tabId).canUndo.value).toBe(false);
   });
 });
 

@@ -1,10 +1,27 @@
 <template>
   <div
     class="nb-cell"
-    :class="[`nb-cell--${cell.cellType}`, { running: cell.execState === 'running' }]"
+    :class="[
+      `nb-cell--${cell.cellType}`,
+      { running: cell.execState === 'running', 'is-dragging': dragging },
+    ]"
+    tabindex="-1"
   >
     <!-- Cell toolbar -->
     <div class="nb-cell-bar">
+      <button
+        type="button"
+        class="nb-drag-handle"
+        :aria-label="`Reorder cell ${index + 1} of ${cellCount}`"
+        title="Drag to reorder · Alt+↑/↓ to move"
+        :disabled="structuralDisabled"
+        @pointerdown="emit('drag-start', $event)"
+        @keydown.alt.up.prevent="emit('move-key', -1)"
+        @keydown.alt.down.prevent="emit('move-key', 1)"
+      >
+        <i class="fa-solid fa-grip-vertical"></i>
+      </button>
+
       <button
         class="nb-run"
         :disabled="cell.execState === 'running'"
@@ -30,18 +47,28 @@
       <div class="nb-cell-bar-spacer"></div>
 
       <div class="nb-cell-actions">
-        <button class="nb-act" :disabled="index === 0" title="Move up" @click="emit('move', -1)">
+        <button
+          class="nb-act"
+          :disabled="index === 0 || structuralDisabled"
+          title="Move up"
+          @click="emit('move', -1)"
+        >
           <i class="fa-solid fa-arrow-up"></i>
         </button>
         <button
           class="nb-act"
-          :disabled="index === cellCount - 1"
+          :disabled="index === cellCount - 1 || structuralDisabled"
           title="Move down"
           @click="emit('move', 1)"
         >
           <i class="fa-solid fa-arrow-down"></i>
         </button>
-        <button class="nb-act nb-act--danger" title="Delete cell" @click="emit('remove')">
+        <button
+          class="nb-act nb-act--danger"
+          :disabled="cellCount <= 1 || structuralDisabled"
+          title="Delete cell"
+          @click="emit('remove')"
+        >
           <i class="fa-solid fa-trash"></i>
         </button>
       </div>
@@ -97,9 +124,14 @@ import type { CellType, NotebookCellModel } from "./types";
 
 const props = defineProps<{
   cell: NotebookCellModel;
+  /** Identifies the open notebook this cell's editor view belongs to. */
+  ownerId: string;
   index: number;
   cellCount: number;
   allowedTypes?: CellType[];
+  /** Structural edits (reorder, delete) are blocked while the notebook is running. */
+  structuralDisabled?: boolean;
+  dragging?: boolean;
   /** Code of cells before this one, for scope/ref completions. */
   priorCellCodes?: string[];
   /** Kernel + namespace identity for Jedi code intelligence (sessionFlowId as flow_id). */
@@ -114,6 +146,8 @@ const emit = defineEmits<{
   (e: "update:type", cellType: CellType): void;
   (e: "update:editing", editing: boolean): void;
   (e: "move", direction: -1 | 1): void;
+  (e: "move-key", direction: -1 | 1): void;
+  (e: "drag-start", ev: PointerEvent): void;
   (e: "remove"): void;
   (e: "cursor", offset: number): void;
 }>();
@@ -143,11 +177,16 @@ const extensions = [
   }),
 ];
 
+let view: EditorView | null = null;
+
 function onReady(payload: { view: EditorView }) {
-  registerCellView(props.cell.id, payload.view);
+  view = payload.view;
+  registerCellView(props.ownerId, props.cell.id, view);
 }
 
-onBeforeUnmount(() => unregisterCellView(props.cell.id));
+onBeforeUnmount(() => {
+  if (view) unregisterCellView(props.ownerId, props.cell.id, view);
+});
 </script>
 
 <style scoped>
@@ -164,6 +203,9 @@ onBeforeUnmount(() => unregisterCellView(props.cell.id));
 .nb-cell:hover {
   border-color: var(--el-border-color, #dcdfe6);
 }
+.nb-cell.is-dragging {
+  opacity: 0.55;
+}
 .nb-cell.running {
   border-color: var(--el-color-primary, #409eff);
   box-shadow: inset 3px 0 0 var(--el-color-primary, #409eff);
@@ -178,6 +220,43 @@ onBeforeUnmount(() => unregisterCellView(props.cell.id));
 }
 .nb-cell-bar-spacer {
   flex: 1;
+}
+
+/* Six-dot reorder handle: always rendered (so it stays keyboard-reachable) but
+   faint until the cell is hovered or focused. */
+.nb-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--el-text-color-secondary, #909399);
+  font-size: 12px;
+  opacity: 0.35;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  transition:
+    background 0.12s,
+    opacity 0.12s;
+}
+.nb-cell:hover .nb-drag-handle,
+.nb-cell:focus-within .nb-drag-handle {
+  opacity: 1;
+}
+.nb-drag-handle:hover:not(:disabled) {
+  background: var(--el-fill-color, #f0f2f5);
+  color: var(--el-text-color-primary, #303133);
+}
+.nb-cell.is-dragging .nb-drag-handle {
+  cursor: grabbing;
+}
+.nb-drag-handle:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 /* Compact ghost run button (replaces the big primary button) */

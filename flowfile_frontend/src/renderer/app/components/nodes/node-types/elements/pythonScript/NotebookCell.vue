@@ -1,5 +1,5 @@
 <template>
-  <div class="cell-wrapper" :class="cellClasses">
+  <div class="cell-wrapper" :class="cellClasses" tabindex="-1">
     <!-- Gutter: execution count or cell index -->
     <div class="cell-gutter">[{{ cell.output?.execution_count ?? cellIndex + 1 }}]</div>
 
@@ -7,16 +7,40 @@
     <div class="cell-content">
       <!-- Toolbar (shown on hover/focus) -->
       <div class="cell-toolbar">
+        <button
+          type="button"
+          class="nb-drag-handle"
+          :aria-label="`Reorder cell ${cellIndex + 1} of ${cellCount}`"
+          title="Drag to reorder · Alt+↑/↓ to move"
+          :disabled="structuralDisabled"
+          @pointerdown="emit('drag-start', $event)"
+          @keydown.alt.up.prevent="emit('move-key', -1)"
+          @keydown.alt.down.prevent="emit('move-key', 1)"
+        >
+          <i class="fa-solid fa-grip-vertical"></i>
+        </button>
         <button :disabled="isExecuting" title="Run cell (Shift+Enter)" @click="emit('run-cell')">
           <i class="fa-solid fa-play"></i>
         </button>
-        <button :disabled="cellIndex === 0" title="Move up" @click="emit('move-up')">
+        <button
+          :disabled="cellIndex === 0 || structuralDisabled"
+          title="Move up"
+          @click="emit('move-up')"
+        >
           <i class="fa-solid fa-chevron-up"></i>
         </button>
-        <button :disabled="isLastCell" title="Move down" @click="emit('move-down')">
+        <button
+          :disabled="isLastCell || structuralDisabled"
+          title="Move down"
+          @click="emit('move-down')"
+        >
           <i class="fa-solid fa-chevron-down"></i>
         </button>
-        <button :disabled="cellCount <= 1" title="Delete cell" @click="emit('delete')">
+        <button
+          :disabled="cellCount <= 1 || structuralDisabled"
+          title="Delete cell"
+          @click="emit('delete')"
+        >
           <i class="fa-solid fa-xmark"></i>
         </button>
       </div>
@@ -30,6 +54,7 @@
           :indent-with-tab="false"
           :tab-size="4"
           :extensions="cellExtensions"
+          @ready="onReady"
           @update:model-value="(val: string) => emit('update:code', val)"
         />
       </div>
@@ -46,9 +71,11 @@
 </template>
 
 <script lang="ts" setup>
-import { computed } from "vue";
+import { computed, onBeforeUnmount } from "vue";
 import { Codemirror } from "vue-codemirror";
+import type { EditorView } from "@codemirror/view";
 
+import { registerCellView, unregisterCellView } from "../../../../notebook/editorViews";
 import type { NotebookCell } from "../../../../../types/node.types";
 import CellOutput from "./CellOutput.vue";
 import { buildNotebookEditorExtensions } from "./notebookEditor";
@@ -56,10 +83,15 @@ import type { UpstreamColumn } from "./useUpstreamColumns";
 
 interface Props {
   cell: NotebookCell;
+  /** Identifies the open notebook this cell's editor view belongs to. */
+  ownerId: string;
   cellIndex: number;
   isExecuting: boolean;
   isLastCell: boolean;
   cellCount: number;
+  /** Structural edits (reorder, insert, delete) are blocked while the notebook is running. */
+  structuralDisabled?: boolean;
+  dragging?: boolean;
   inputNames?: string[];
   upstreamColumns?: UpstreamColumn[];
   priorCellCodes?: string[];
@@ -69,6 +101,8 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  structuralDisabled: false,
+  dragging: false,
   inputNames: () => [],
   upstreamColumns: () => [],
   priorCellCodes: () => [],
@@ -83,12 +117,15 @@ const emit = defineEmits<{
   (e: "run-cell-and-advance"): void;
   (e: "move-up"): void;
   (e: "move-down"): void;
+  (e: "move-key", direction: -1 | 1): void;
+  (e: "drag-start", ev: PointerEvent): void;
   (e: "delete"): void;
 }>();
 
 const cellClasses = computed(() => ({
   "cell--executing": props.isExecuting,
   "cell--error": props.cell.output?.error,
+  "is-dragging": props.dragging,
 }));
 
 const cellExtensions = buildNotebookEditorExtensions({
@@ -100,6 +137,17 @@ const cellExtensions = buildNotebookEditorExtensions({
   getKernelId: () => props.kernelId,
   getFlowId: () => props.flowId,
   getNodeId: () => props.nodeId,
+});
+
+let view: EditorView | null = null;
+
+function onReady(payload: { view: EditorView }) {
+  view = payload.view;
+  registerCellView(props.ownerId, props.cell.id, view);
+}
+
+onBeforeUnmount(() => {
+  if (view) unregisterCellView(props.ownerId, props.cell.id, view);
 });
 </script>
 
@@ -124,6 +172,10 @@ const cellExtensions = buildNotebookEditorExtensions({
 
 .cell-wrapper.cell--error {
   border-left-color: var(--el-color-danger);
+}
+
+.cell-wrapper.is-dragging {
+  opacity: 0.55;
 }
 
 .cell-gutter {
@@ -177,6 +229,20 @@ const cellExtensions = buildNotebookEditorExtensions({
 
 .cell-toolbar button:disabled {
   opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.cell-toolbar .nb-drag-handle {
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+}
+
+.cell-wrapper.is-dragging .nb-drag-handle {
+  cursor: grabbing;
+}
+
+.cell-toolbar .nb-drag-handle:disabled {
   cursor: not-allowed;
 }
 

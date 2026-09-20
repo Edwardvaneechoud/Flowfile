@@ -82,6 +82,9 @@ jobs:
 
       # Start backend server in background
       - name: Start backend server
+        # Telemetry off: an undecided consent renders a modal over the designer.
+        env:
+          FLOWFILE_TELEMETRY: '0'
         run: |
           poetry run flowfile_core &
           echo "Waiting for backend to start..."
@@ -115,7 +118,7 @@ jobs:
         env:
           TEST_URL: http://localhost:4173
           API_URL: http://localhost:63578
-        run: npx playwright test tests/web-flow.spec.ts tests/tutorial.spec.ts tests/node-handle-labels.spec.ts tests/catalog-artifact-versions.spec.ts --reporter=html
+        run: npx playwright test tests/web-flow.spec.ts tests/tutorial.spec.ts tests/node-handle-labels.spec.ts tests/catalog-artifact-versions.spec.ts tests/notebook-interactions.spec.ts --reporter=html
 
       # Upload test results on failure
       - name: Upload Playwright report

@@ -25,6 +25,17 @@
               <p>Run the cell and move to the next one.</p>
             </div>
             <div class="api-item">
+              <code>Alt + ↑ / ↓</code>
+              <p>Move the cell up or down (with the drag handle focused); or drag the handle.</p>
+            </div>
+            <div class="api-item">
+              <code>Undo / Redo</code>
+              <p>
+                Toolbar buttons. Revert or replay cell inserts, deletes and moves. Cmd/Ctrl+Z inside
+                a cell still undoes text.
+              </p>
+            </div>
+            <div class="api-item">
               <code>df</code>
               <p>A bare value on the last line shows its repr (what the object is).</p>
             </div>
