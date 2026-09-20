@@ -82,6 +82,9 @@ jobs:
 
       # Start backend server in background
       - name: Start backend server
+        # Telemetry off: an undecided consent renders a modal over the designer.
+        env:
+          FLOWFILE_TELEMETRY: '0'
         run: |
           poetry run flowfile_core &
           echo "Waiting for backend to start..."
