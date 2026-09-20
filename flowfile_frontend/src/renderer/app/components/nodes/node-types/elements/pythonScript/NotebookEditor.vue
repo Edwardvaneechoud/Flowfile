@@ -347,16 +347,13 @@ const runAllCells = async () => {
   }
 };
 
-const runCellAndAdvance = async (cellId: string) => {
-  await runCell(cellId);
-  // Re-find the index: the list may have been reordered while the cell ran.
+const runCellAndAdvance = (cellId: string) => {
   const index = props.cells.findIndex((c) => c.id === cellId);
   if (index < 0) return;
-  if (index >= props.cells.length - 1) {
-    addCell();
-    return;
-  }
-  focusAfterTick(props.cells[index + 1].id);
+  // Advance on submit, Jupyter-style — before the run, whose executing-cell guard blocks inserts.
+  if (index >= props.cells.length - 1) addCell();
+  else focusAfterTick(props.cells[index + 1].id);
+  void runCell(cellId);
 };
 
 const restartKernel = async () => {

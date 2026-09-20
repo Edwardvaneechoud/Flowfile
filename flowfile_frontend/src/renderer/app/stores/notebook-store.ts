@@ -568,10 +568,14 @@ export const useNotebookStore = defineStore("notebook", {
       return cell;
     },
 
-    async runCell(cellId: string) {
+    /** Resolves false when the run was refused or failed (no kernel, kernel error, request error). */
+    async runCell(cellId: string): Promise<boolean> {
       const cell = this.active?.cells.find((c) => c.id === cellId);
-      if (!cell) return;
-      if (cell.cellType === "markdown") return this.runMarkdownCell(cell);
+      if (!cell) return false;
+      if (cell.cellType === "markdown") {
+        this.runMarkdownCell(cell);
+        return true;
+      }
       return this.runPythonCell(cell);
     },
 
@@ -581,10 +585,10 @@ export const useNotebookStore = defineStore("notebook", {
       cell.execState = "idle";
     },
 
-    async runPythonCell(cell: NotebookCellModel, nb: OpenNotebook | null = null) {
+    async runPythonCell(cell: NotebookCellModel, nb: OpenNotebook | null = null): Promise<boolean> {
       nb = nb ?? this.active;
-      if (cell.execState === "running") return; // re-entrancy guard (also covers Shift+Enter)
-      if (!nb) return;
+      if (cell.execState === "running") return false; // re-entrancy guard (also covers Shift+Enter)
+      if (!nb) return false;
       if (!nb.kernelId) {
         cell.output = {
           stdout: "",
@@ -595,7 +599,7 @@ export const useNotebookStore = defineStore("notebook", {
           execution_count: 0,
         };
         cell.execState = "error";
-        return;
+        return false;
       }
       cell.execState = "running";
       try {
@@ -614,6 +618,7 @@ export const useNotebookStore = defineStore("notebook", {
           execution_count: nb.executionCount,
         };
         cell.execState = res.error ? "error" : "idle";
+        return res.success && !res.error;
       } catch (e: any) {
         cell.output = {
           stdout: "",
@@ -624,6 +629,7 @@ export const useNotebookStore = defineStore("notebook", {
           execution_count: nb.executionCount,
         };
         cell.execState = "error";
+        return false;
       }
     },
 

@@ -594,19 +594,16 @@ function onEditingChange(cellId: string, editing: boolean) {
   if (editing && tab) focusAfterTick(tab, cellId);
 }
 
-async function onRunAdvance(cellId: string) {
+function onRunAdvance(cellId: string) {
   const tab = store.activeTabId;
   const nb = store.active;
   if (!tab || !nb || structuralDisabled.value) return;
-  await store.runCell(cellId);
   const idx = nb.cells.findIndex((c) => c.id === cellId);
   if (idx < 0) return;
-  if (idx < nb.cells.length - 1) {
-    focusAfterTick(tab, nb.cells[idx + 1].id);
-    return;
-  }
-  if (store.activeTabId !== tab) return;
-  focusAfterTick(tab, store.addCell("python")?.id ?? null);
+  // Advance on submit, Jupyter-style: the result is never waited for.
+  if (idx < nb.cells.length - 1) focusAfterTick(tab, nb.cells[idx + 1].id);
+  else focusAfterTick(tab, store.addCell("python")?.id ?? null);
+  void store.runCell(cellId);
 }
 
 function onDuplicate(cellId: string) {

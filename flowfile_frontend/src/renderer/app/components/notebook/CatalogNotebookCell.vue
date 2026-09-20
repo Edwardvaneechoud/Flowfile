@@ -12,9 +12,9 @@
     tabindex="-1"
     @focus="emit('activate')"
     @keydown.enter.self.exact.prevent="onRootEnter"
-    @keydown.shift.enter.self.prevent="emit('run')"
-    @keydown.meta.enter.self.prevent="emit('run-advance')"
-    @keydown.ctrl.enter.self.prevent="emit('run-advance')"
+    @keydown.shift.enter.self.prevent="emit('run-advance')"
+    @keydown.meta.enter.self.prevent="emit('run')"
+    @keydown.ctrl.enter.self.prevent="emit('run')"
   >
     <!-- Cell toolbar -->
     <div class="nb-cell-bar">
@@ -36,8 +36,8 @@
         :disabled="cell.execState === 'running'"
         :title="
           cell.cellType === 'markdown'
-            ? 'Render (Shift+Enter) · Render and advance (Cmd/Ctrl+Enter)'
-            : 'Run (Shift+Enter) · Run and advance (Cmd/Ctrl+Enter)'
+            ? 'Render and advance (Shift+Enter) · Render (Cmd/Ctrl+Enter)'
+            : 'Run and advance (Shift+Enter) · Run (Cmd/Ctrl+Enter)'
         "
         @click="emit('run')"
       >
@@ -110,18 +110,18 @@
         :model-value="cell.code"
         type="textarea"
         :autosize="{ minRows: 3 }"
-        placeholder="# Markdown — Render (Shift+Enter) to preview"
+        placeholder="# Markdown — Render (Cmd/Ctrl+Enter) to preview"
         @update:model-value="(v: string) => emit('update:code', v)"
         @focus="emit('activate')"
-        @keydown.shift.enter.prevent="emit('run')"
-        @keydown.meta.enter.prevent="emit('run-advance')"
-        @keydown.ctrl.enter.prevent="emit('run-advance')"
+        @keydown.shift.enter.prevent="emit('run-advance')"
+        @keydown.meta.enter.prevent="emit('run')"
+        @keydown.ctrl.enter.prevent="emit('run')"
       />
       <!-- Python code -->
       <codemirror
         v-else
         :model-value="cell.code"
-        placeholder="# Python — Shift+Enter to run"
+        placeholder="# Python — Cmd/Ctrl+Enter to run"
         :indent-with-tab="false"
         :tab-size="4"
         :extensions="extensions"

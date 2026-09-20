@@ -21,7 +21,7 @@
         </button>
         <button
           :disabled="isExecuting"
-          title="Run (Shift+Enter) · Run and advance (Cmd/Ctrl+Enter)"
+          title="Run and advance (Shift+Enter) · Run (Cmd/Ctrl+Enter)"
           @click="emit('run-cell')"
         >
           <i class="fa-solid fa-play"></i>

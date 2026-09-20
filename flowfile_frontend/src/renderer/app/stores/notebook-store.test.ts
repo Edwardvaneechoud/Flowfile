@@ -276,6 +276,64 @@ describe("run routing", () => {
   });
 });
 
+describe("runCell result", () => {
+  // Earlier describes leave unconsumed *Once entries queued on the shared mock.
+  beforeEach(() => {
+    mocks.executeCell.mockReset();
+    mocks.executeCell.mockResolvedValue(okExecResult);
+  });
+
+  it("resolves true for a markdown cell", async () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    const id = store.active!.cells[0].id;
+    store.setCellType(id, "markdown");
+    store.setCellCode(id, "# Title");
+    await expect(store.runCell(id)).resolves.toBe(true);
+    expect(store.active!.cells[0].renderedHtml).toBe("<md># Title</md>");
+  });
+
+  it("resolves false with no kernel and still writes the error output", async () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.active!.kernelId = null;
+    const cell = store.active!.cells[0];
+    await expect(store.runCell(cell.id)).resolves.toBe(false);
+    expect(cell.execState).toBe("error");
+    expect(cell.output?.error).toMatch(/kernel/i);
+  });
+
+  it("resolves false when the kernel reports success:false, output still written", async () => {
+    mocks.executeCell.mockResolvedValueOnce({ ...okExecResult, success: false, error: "boom" });
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.setKernel("kern-1");
+    const cell = store.active!.cells[0];
+    await expect(store.runCell(cell.id)).resolves.toBe(false);
+    expect(cell.execState).toBe("error");
+    expect(cell.output?.error).toBe("boom");
+  });
+
+  it("resolves false when executeCell rejects", async () => {
+    mocks.executeCell.mockRejectedValueOnce(new Error("kernel exploded"));
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.setKernel("kern-1");
+    const cell = store.active!.cells[0];
+    await expect(store.runCell(cell.id)).resolves.toBe(false);
+    expect(cell.output?.error).toBe("kernel exploded");
+  });
+
+  it("resolves true after a successful execute", async () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.setKernel("kern-1");
+    const cell = store.active!.cells[0];
+    await expect(store.runCell(cell.id)).resolves.toBe(true);
+    expect(cell.execState).toBe("idle");
+  });
+});
+
 describe("structural cell actions", () => {
   /** Fresh tab with `n` python cells, dirty cleared so an assertion can see the next edit. */
   function withCells(n: number) {

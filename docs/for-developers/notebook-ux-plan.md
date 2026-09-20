@@ -62,7 +62,7 @@ Tests: NEW `NB/cellOperations.test.ts`, `NB/useCellHistory.test.ts`; NEW `flowfi
 
 Each cell menu contains Insert above, Insert below, Duplicate, Collapse code, Collapse output, and Delete. The active cell has a visible border. Running with advance moves the caret to the next cell, creating a blank trailing cell when needed.
 
-Keep the current mappings for this release: Shift+Enter = run; Cmd/Ctrl+Enter = run and advance. Update all tooltips/help to match. Markdown follows the same advancement behavior in catalog notebooks.
+Shift+Enter = run and advance; Cmd/Ctrl+Enter = run in place, matching Jupyter and Databricks. Update all tooltips/help to match. Markdown follows the same advancement behavior in catalog notebooks.
 
 ### Implement
 

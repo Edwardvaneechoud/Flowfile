@@ -18,11 +18,11 @@
             </p>
             <div class="api-item">
               <code>Shift + Enter</code>
-              <p>Run the cell (render a Markdown cell).</p>
+              <p>Run the cell and move to the next one; a blank cell is added after the last.</p>
             </div>
             <div class="api-item">
               <code>Cmd / Ctrl + Enter</code>
-              <p>Run the cell and move to the next one; a blank cell is added after the last.</p>
+              <p>Run the cell in place (render a Markdown cell).</p>
             </div>
             <div class="api-item">
               <code>Enter on a rendered Markdown cell</code>
