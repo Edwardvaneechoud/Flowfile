@@ -2,18 +2,18 @@
   <div class="notebook-editor">
     <!-- Toolbar -->
     <div class="notebook-toolbar">
-      <button :disabled="!kernelId || isAnyExecuting" title="Run All Cells" @click="runAllCells">
+      <button :disabled="!kernelId || busy" title="Run All Cells" @click="runAllCells">
         <i class="fa-solid fa-play"></i> Run All
       </button>
-      <button title="Clear All Outputs" @click="clearAllOutputs">
+      <button :disabled="busy" title="Clear All Outputs" @click="clearAllOutputs">
         <i class="fa-solid fa-eraser"></i> Clear
       </button>
       <button
-        :disabled="!kernelId || isAnyExecuting"
-        title="Restart Kernel (clear all variables)"
-        @click="restartKernel"
+        :disabled="!kernelId || busy"
+        title="Reset session (clears variables; the kernel keeps running)"
+        @click="resetSession"
       >
-        <i class="fa-solid fa-rotate-right"></i> Restart
+        <i class="fa-solid fa-rotate-right"></i> Reset session
       </button>
       <button
         :disabled="structuralDisabled || !canUndo"
@@ -29,6 +29,7 @@
       >
         <i class="fa-solid fa-arrow-rotate-right"></i> Redo
       </button>
+      <span v-if="progressLabel" class="notebook-progress">{{ progressLabel }}</span>
       <span class="notebook-info">{{ cells.length }} cell{{ cells.length !== 1 ? "s" : "" }}</span>
     </div>
 
@@ -46,7 +47,8 @@
           :cell="cell"
           :owner-id="ownerId"
           :cell-index="index"
-          :is-executing="executingCellId === cell.id"
+          :runtime="cellRuntime(ownerId, cell.id)"
+          :busy="busy"
           :is-last-cell="index === cells.length - 1"
           :cell-count="cells.length"
           :structural-disabled="structuralDisabled"
@@ -97,7 +99,9 @@
 
 <script lang="ts" setup>
 import { ref, computed, nextTick } from "vue";
+import { ElMessage } from "element-plus";
 import { KernelApi } from "../../../../../api/kernel.api";
+import type { ExecuteResult } from "../../../../../types/kernel.types";
 import type { NotebookCell } from "../../../../../types/node.types";
 import {
   applyOperation,
@@ -108,10 +112,26 @@ import {
   moveCellBy,
   newCellId,
   removeCell,
+  type CellOperation,
   type OperationResult,
 } from "../../../../notebook/cellOperations";
-import { cellPresentation } from "../../../../notebook/cellPresentation";
+import { cellPresentation, disposeCellPresentation } from "../../../../notebook/cellPresentation";
 import { cellSelector, focusCell, ownerIdForNode } from "../../../../notebook/editorViews";
+import {
+  batchProgress,
+  beginExecution,
+  bumpSessionEpoch,
+  bumpSourceRevision,
+  cellRuntime,
+  clearResults,
+  invalidateFrom,
+  isBatchActive,
+  markDownstreamStale,
+  runExecutionBatch,
+  settleExecution,
+  type RuntimeCellRef,
+  type SettledMeta,
+} from "../../../../notebook/notebookRuntimeState";
 import { findScrollParent, useCellDrag } from "../../../../notebook/useCellDrag";
 import { getCellHistory } from "../../../../notebook/useCellHistory";
 import NotebookCellComponent from "./NotebookCell.vue";
@@ -135,16 +155,19 @@ const emit = defineEmits<{
   (e: "update:cells", cells: NotebookCell[]): void;
 }>();
 
-const executingCellId = ref<string | null>(null);
 const executionCounter = ref(1);
-const isAnyExecuting = computed(() => executingCellId.value !== null);
 const hostRef = ref<HTMLElement | null>(null);
 const announcement = ref("");
 const activeCellId = ref<string | null>(null);
 
 const ownerId = computed(() => ownerIdForNode(props.flowId, props.nodeId));
-// Change 3 swaps this for isBatchActive(ownerId).
-const structuralDisabled = computed(() => isAnyExecuting.value);
+const busy = computed(() => isBatchActive(ownerId.value));
+const structuralDisabled = computed(() => busy.value);
+const progressLabel = computed(() => {
+  const progress = batchProgress(ownerId.value);
+  if (!progress || progress.total < 1) return "";
+  return `Running cell ${Math.min(progress.done + 1, progress.total)} of ${progress.total}`;
+});
 const canUndo = computed(() => getCellHistory<NotebookCell>(ownerId.value).canUndo.value);
 const canRedo = computed(() => getCellHistory<NotebookCell>(ownerId.value).canRedo.value);
 
@@ -158,9 +181,22 @@ interface MoveInfo {
 
 const makeCell = (): NotebookCell => ({ id: newCellId(), code: "", output: null });
 
+// Every node cell is python, so runtime membership mirrors the cell list one for one.
+const runtimeRefs = (cells: NotebookCell[]): RuntimeCellRef[] =>
+  cells.map((c) => ({ id: c.id, isPython: true }));
+
+const affectedIndex = (op: CellOperation<NotebookCell>): number =>
+  op.kind === "move" ? Math.min(op.from, op.to) : op.index;
+
+const invalidateFromOp = (cells: NotebookCell[], op: CellOperation<NotebookCell>) => {
+  invalidateFrom(ownerId.value, runtimeRefs(cells), affectedIndex(op), "upstream-changed");
+};
+
 const applyStructural = (result: OperationResult<NotebookCell>) => {
   emit("update:cells", result.cells);
+  if (result.op.kind === "remove") disposeCellPresentation(ownerId.value, result.op.cell.id);
   getCellHistory<NotebookCell>(ownerId.value).push({ op: result.op, inverse: result.inverse });
+  invalidateFromOp(result.cells, result.op);
 };
 
 const applyMove = (result: OperationResult<NotebookCell> | null): MoveInfo | null => {
@@ -185,10 +221,12 @@ const focusAfterTick = (cellId: string | null) => {
 };
 
 const updateCellCode = (cellId: string, code: string) => {
-  emit(
-    "update:cells",
-    props.cells.map((c) => (c.id === cellId ? { ...c, code } : c)),
-  );
+  const index = props.cells.findIndex((c) => c.id === cellId);
+  if (index < 0) return;
+  const cells = props.cells.map((c) => (c.id === cellId ? { ...c, code } : c));
+  emit("update:cells", cells);
+  bumpSourceRevision(ownerId.value, cellId);
+  invalidateFrom(ownerId.value, runtimeRefs(cells), index + 1, "upstream-changed");
 };
 
 const insertAt = (index: number) => {
@@ -244,6 +282,8 @@ const undoCellAction = () => {
     return;
   }
   emit("update:cells", result.cells);
+  if (result.op.kind === "remove") disposeCellPresentation(ownerId.value, result.op.cell.id);
+  invalidateFromOp(result.cells, result.op);
 };
 
 const redoCellAction = () => {
@@ -256,6 +296,8 @@ const redoCellAction = () => {
     return;
   }
   emit("update:cells", result.cells);
+  if (result.op.kind === "remove") disposeCellPresentation(ownerId.value, result.op.cell.id);
+  invalidateFromOp(result.cells, result.op);
 };
 
 const onMoveKey = (index: number, direction: -1 | 1) => {
@@ -283,6 +325,7 @@ const clearAllOutputs = () => {
     "update:cells",
     props.cells.map((c) => ({ ...c, output: null })),
   );
+  clearResults(ownerId.value);
 };
 
 // ─── Execution ────────────────────────────────────────────────────────────────
@@ -294,9 +337,8 @@ const updateCellOutput = (cellId: string, output: NotebookCell["output"]) => {
   );
 };
 
-const runCell = async (cellId: string): Promise<boolean> => {
-  // One run at a time per notebook: overlapping runs would clobber the shared executingCellId.
-  if (!props.kernelId || isAnyExecuting.value) return false;
+const executeOne = async (cellId: string): Promise<boolean> => {
+  if (!props.kernelId) return false;
 
   // Capture code at start to avoid race conditions if cells change during execution
   const cell = props.cells.find((c) => c.id === cellId);
@@ -304,7 +346,10 @@ const runCell = async (cellId: string): Promise<boolean> => {
   const codeToRun = cell.code;
   if (!codeToRun.trim()) return true;
 
-  executingCellId.value = cellId;
+  // Marked at submission: a cell that fails part-way has still mutated the namespace.
+  markDownstreamStale(ownerId.value, runtimeRefs(props.cells), cellId);
+  const ticket = beginExecution(ownerId.value, cellId);
+
   try {
     // Send only logical identifiers — the backend resolves filesystem paths
     const result = await KernelApi.executeCell(props.kernelId, {
@@ -312,6 +357,14 @@ const runCell = async (cellId: string): Promise<boolean> => {
       code: codeToRun,
       flow_id: props.flowId,
     });
+
+    // Change 4 stamps namespace identity onto ExecuteResult; older runtimes send neither field.
+    const stamped = result as ExecuteResult & SettledMeta;
+    const verdict = settleExecution(ticket, {
+      namespace_generation: stamped.namespace_generation ?? null,
+      revision: stamped.revision ?? null,
+    });
+    if (verdict === "discard") return result.success;
 
     const execCount = executionCounter.value++;
     updateCellOutput(cellId, {
@@ -324,6 +377,7 @@ const runCell = async (cellId: string): Promise<boolean> => {
     });
     return result.success;
   } catch (error) {
+    if (settleExecution(ticket) === "discard") return false;
     const execCount = executionCounter.value++;
     updateCellOutput(cellId, {
       stdout: "",
@@ -334,38 +388,53 @@ const runCell = async (cellId: string): Promise<boolean> => {
       execution_count: execCount,
     });
     return false;
-  } finally {
-    executingCellId.value = null;
   }
 };
 
-const runAllCells = async () => {
-  // Sequential execution — MUST NOT use Promise.all
-  // Cells depend on state from earlier cells (variables, imports)
-  for (const cell of props.cells) {
-    const success = await runCell(cell.id);
-    if (!success) break; // stop on first error
-  }
+const stillPresent = (cellId: string) => props.cells.some((c) => c.id === cellId);
+
+/** A single run is a batch of one, so one busy flag covers every execution path. */
+const runCell = async (cellId: string): Promise<boolean> => {
+  let ok = false;
+  const started = await runExecutionBatch({
+    ownerId: ownerId.value,
+    cells: [{ id: cellId, isPython: true }],
+    runOne: async (id) => {
+      ok = await executeOne(id);
+      return { ok };
+    },
+    stillPresent,
+  });
+  return started && ok;
 };
+
+const runAllCells = () =>
+  runExecutionBatch({
+    ownerId: ownerId.value,
+    cells: runtimeRefs(props.cells),
+    runOne: async (id) => ({ ok: await executeOne(id) }),
+    stillPresent,
+  });
 
 const runCellAndAdvance = (cellId: string) => {
-  if (isAnyExecuting.value) return;
+  if (busy.value) return;
   const index = props.cells.findIndex((c) => c.id === cellId);
   if (index < 0) return;
-  // Advance on submit, Jupyter-style — before the run, whose executing-cell guard blocks inserts.
+  // Advance on submit, Jupyter-style — before the run, whose busy flag blocks inserts.
   if (index >= props.cells.length - 1) addCell();
   else focusAfterTick(props.cells[index + 1].id);
   void runCell(cellId);
 };
 
-const restartKernel = async () => {
+const resetSession = async () => {
   if (!props.kernelId) return;
   try {
     await KernelApi.clearNamespace(props.kernelId, props.flowId);
+    bumpSessionEpoch(ownerId.value);
     clearAllOutputs();
     executionCounter.value = 1;
   } catch (error) {
-    console.error("Failed to restart kernel:", error);
+    ElMessage.error(error instanceof Error ? error.message : "Failed to reset the session");
   }
 };
 </script>
@@ -409,6 +478,11 @@ const restartKernel = async () => {
 .notebook-toolbar button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.notebook-progress {
+  color: var(--el-color-warning);
+  font-size: 0.7rem;
 }
 
 .notebook-info {

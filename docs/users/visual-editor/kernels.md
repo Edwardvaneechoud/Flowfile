@@ -130,7 +130,7 @@ The code editor uses a Jupyter-style notebook interface with multiple cells. Eac
 |--------|-------------|
 | **Run All** | Execute all cells in order |
 | **Clear** | Erase all cell outputs |
-| **Restart** | Clear all kernel variables for this flow |
+| **Reset session** | Clear this flow's kernel variables; the kernel keeps running |
 | **Undo** / **Redo** | Revert or replay a cell insert, delete or move (code edits still use Cmd/Ctrl+Z) |
 
 **Cell actions** (visible on hover):
@@ -164,6 +164,8 @@ Output types rendered:
 - **HTML** — rendered in a sandboxed iframe
 - **Text** — plain text from `print()` statements or `flowfile_ctx.display()`
 - **Errors** — tracebacks displayed in a red block
+
+An output that is no longer current is labelled rather than removed: **Code changed — rerun** once you edit the cell, **Earlier cells changed — rerun** when a cell above it was edited, moved or run again, and **Previous session** when the result predates the kernel session you are in now — rerun the cell to refresh it.
 
 ### Expanded Editor
 

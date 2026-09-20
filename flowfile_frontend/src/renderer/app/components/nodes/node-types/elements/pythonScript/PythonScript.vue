@@ -341,6 +341,11 @@ import { outputHandle } from "../../../../../utils/outputHandle";
 import { newCellId } from "../../../../notebook/cellOperations";
 import { disposeOwnerPresentation } from "../../../../notebook/cellPresentation";
 import { disposeOwnerViews, ownerIdForNode } from "../../../../notebook/editorViews";
+import {
+  bumpSessionEpoch,
+  disposeOwner,
+  ensureOwner,
+} from "../../../../notebook/notebookRuntimeState";
 import { disposeCellHistory } from "../../../../notebook/useCellHistory";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import AiGenerateCodeButton from "../../../../../features/designer/editor/AiGenerateCodeButton.vue";
@@ -521,9 +526,13 @@ const stopKernelPolling = () => {
 };
 
 const handleKernelChange = (kernelId: string | null) => {
+  const previous = nodePythonScript.value?.python_script_input.kernel_id ?? null;
+  const next = kernelId ?? null;
   if (nodePythonScript.value) {
-    nodePythonScript.value.python_script_input.kernel_id = kernelId ?? null;
+    nodePythonScript.value.python_script_input.kernel_id = next;
   }
+  // Another kernel is another namespace, so results kept on screen belong to a previous session.
+  if (next !== previous && currentOwnerId) bumpSessionEpoch(currentOwnerId);
   loadArtifacts();
   if (kernelId) {
     startMemoryPolling();
@@ -816,8 +825,10 @@ const loadNodeData = async (nodeId: number) => {
         disposeCellHistory(currentOwnerId);
         disposeOwnerViews(currentOwnerId);
         disposeOwnerPresentation(currentOwnerId);
+        disposeOwner(currentOwnerId);
       }
       currentOwnerId = nextOwnerId;
+      ensureOwner(nextOwnerId);
 
       const input = nodePythonScript.value!.python_script_input;
       if (input.cells && input.cells.length > 0) {
@@ -870,6 +881,7 @@ onUnmounted(() => {
     disposeCellHistory(currentOwnerId);
     disposeOwnerViews(currentOwnerId);
     disposeOwnerPresentation(currentOwnerId);
+    disposeOwner(currentOwnerId);
     currentOwnerId = null;
   }
 });

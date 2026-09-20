@@ -110,10 +110,7 @@ Tests: extend `notebook-interactions.spec.ts`; add duplicate cases to `cellOpera
 
 ### Status
 
-Not started. There is no `NB/notebookRuntimeState.ts`, no source-revision,
-session-epoch or request-id bookkeeping anywhere in the notebook code, and none
-of the status copy described below exists.
-
+Shipped. `NB/notebookRuntimeState.ts` holds the owner-keyed runtime state (source/submitted revisions, execution tickets, session epochs, the batch coordinator) and `NB/CellStatusBadge.vue` renders the labels; both surfaces route every run through a batch (a single run is a batch of one), mark downstream cells at submission, settle responses against their ticket, and expose Reset session. Verified against a real kernel in the browser and by mocked-kernel Playwright races.
 ### User behavior
 
 Changing code keeps the previous output visible with “Code changed — rerun”. Affected later outputs show “Earlier cells changed — rerun”. Switching/resetting the kernel marks retained results “Previous session”. No result silently becomes current when undoing an edit.
@@ -132,11 +129,11 @@ Only one execution batch can be active per notebook. Repeated Run All clicks or 
 
 ### Done when
 
-- [ ] Run A then B; edit A: both results are labelled outdated. Rerun A: A is current and B remains outdated.
-- [ ] Edit a slow-running cell before completion: returned output is outdated.
-- [ ] Start Run All, switch notebook tabs: results stay with the original notebook and the batch continues there.
-- [ ] Reset/switch kernel while a response is in flight: that response cannot restore current state.
-- [ ] Rapid duplicate execution requests do not execute a batch twice.
+- [x] Run A then B; edit A: both results are labelled outdated. Rerun A: A is current and B remains outdated.
+- [x] Edit a slow-running cell before completion: returned output is outdated.
+- [x] Start Run All, switch notebook tabs: results stay with the original notebook and the batch continues there.
+- [x] Reset/switch kernel while a response is in flight: that response cannot restore current state.
+- [x] Rapid duplicate execution requests do not execute a batch twice.
 
 Tests: NEW `NB/notebookRuntimeState.test.ts`; extend `APP/stores/notebook-store.test.ts`; browser test edit-during-run and tab-switch races using controlled API responses.
 

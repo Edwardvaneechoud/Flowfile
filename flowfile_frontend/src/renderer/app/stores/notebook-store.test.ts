@@ -30,6 +30,8 @@ vi.mock("../features/ai/markdown", () => ({
 
 import { useNotebookStore, cellNodeId } from "./notebook-store";
 import { getCellHistory } from "../components/notebook/useCellHistory";
+import { ownerIdForNotebook } from "../components/notebook/editorViews";
+import { batchProgress, cellRuntime, getOwner } from "../components/notebook/notebookRuntimeState";
 
 const okExecResult = {
   success: true,
@@ -251,7 +253,7 @@ describe("run routing", () => {
     expect(cell.execState).toBe("idle");
   });
 
-  it("a mid-run tab switch keeps output on the originating tab (NB-04)", async () => {
+  it("a mid-run tab switch keeps the batch and its results on the origin tab (NB-04)", async () => {
     let resolve!: (v: unknown) => void;
     mocks.executeCell
       .mockReturnValueOnce(new Promise((r) => (resolve = r)))
@@ -269,10 +271,11 @@ describe("run routing", () => {
     store.setActiveTab(otherTab.tabId); // switch tabs mid-run
     resolve(okExecResult);
     await run;
-    // First cell finished before the switch; the second must not have executed.
-    expect(mocks.executeCell).toHaveBeenCalledTimes(1);
+    // The batch is bound to the captured notebook, so it runs to the end on the origin tab.
+    expect(mocks.executeCell).toHaveBeenCalledTimes(2);
     expect(c1.output).not.toBeNull();
-    expect(c2.output).toBeNull();
+    expect(c2.output).not.toBeNull();
+    expect(otherTab.cells.every((c) => c.output === null)).toBe(true);
   });
 });
 
@@ -331,6 +334,135 @@ describe("runCell result", () => {
     const cell = store.active!.cells[0];
     await expect(store.runCell(cell.id)).resolves.toBe(true);
     expect(cell.execState).toBe("idle");
+  });
+});
+
+describe("execution identity and staleness", () => {
+  // Earlier describes leave unconsumed *Once entries queued on the shared mock.
+  beforeEach(() => {
+    mocks.executeCell.mockReset();
+    mocks.executeCell.mockResolvedValue(okExecResult);
+    mocks.clearNamespace.mockReset();
+    mocks.clearNamespace.mockResolvedValue(undefined);
+  });
+
+  /** Fresh tab with `n` python cells and a kernel, plus its runtime owner id. */
+  function withKernel(n = 1) {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.active!.cells = [];
+    const cells = Array.from({ length: n }, () => store.addCell("python")!);
+    store.setKernel("kern-1");
+    return { store, cells, owner: ownerIdForNotebook(store.active!.tabId) };
+  }
+
+  it("a second runAll while one is active is refused, so each cell runs once", async () => {
+    let resolve!: (v: unknown) => void;
+    mocks.executeCell
+      .mockReturnValueOnce(new Promise((r) => (resolve = r)))
+      .mockResolvedValue(okExecResult);
+    const { store, owner } = withKernel(2);
+    const first = store.runAll();
+    const batchId = batchProgress(owner)!.id;
+    const second = store.runAll(); // duplicate click while the batch is active
+    expect(batchProgress(owner)!.id).toBe(batchId); // refused, not restarted
+    await second;
+    resolve(okExecResult);
+    await first;
+    expect(mocks.executeCell).toHaveBeenCalledTimes(2);
+  });
+
+  it("an edit during a run keeps the returned output and labels it code-changed", async () => {
+    let resolve!: (v: unknown) => void;
+    mocks.executeCell.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    const { store, cells, owner } = withKernel();
+    const run = store.runCell(cells[0].id);
+    store.setCellCode(cells[0].id, "print('edited')");
+    resolve(okExecResult);
+    await run;
+    expect(cells[0].output).not.toBeNull();
+    expect(cellRuntime(owner, cells[0].id)!.staleReason).toBe("code-changed");
+  });
+
+  it("editing A marks A and B; rerunning A clears only A", async () => {
+    const { store, cells, owner } = withKernel(2);
+    const [a, b] = cells;
+    await store.runCell(a.id);
+    await store.runCell(b.id);
+    expect(cellRuntime(owner, a.id)!.staleReason).toBeNull();
+    expect(cellRuntime(owner, b.id)!.staleReason).toBeNull();
+
+    store.setCellCode(a.id, "x = 2");
+    expect(cellRuntime(owner, a.id)!.staleReason).toBe("code-changed");
+    expect(cellRuntime(owner, b.id)!.staleReason).toBe("upstream-changed");
+
+    await store.runCell(a.id);
+    expect(cellRuntime(owner, a.id)!.staleReason).toBeNull();
+    expect(cellRuntime(owner, b.id)!.staleReason).toBe("upstream-changed");
+  });
+
+  it("clearOutputs also drops the stale marks", async () => {
+    const { store, cells, owner } = withKernel();
+    await store.runCell(cells[0].id);
+    store.setCellCode(cells[0].id, "x = 2");
+    expect(cellRuntime(owner, cells[0].id)!.staleReason).toBe("code-changed");
+    store.clearOutputs();
+    expect(cells[0].output).toBeNull();
+    expect(cellRuntime(owner, cells[0].id)!.staleReason).toBeNull();
+  });
+
+  it("a failed resetSession rejects, keeps outputs and leaves the session epoch alone", async () => {
+    const { store, cells, owner } = withKernel();
+    await store.runCell(cells[0].id);
+    const epoch = getOwner(owner)!.sessionEpoch;
+    mocks.clearNamespace.mockRejectedValueOnce(new Error("namespace busy"));
+    await expect(store.resetSession()).rejects.toThrow("namespace busy");
+    expect(cells[0].output).not.toBeNull();
+    expect(getOwner(owner)!.sessionEpoch).toBe(epoch);
+  });
+
+  it("a successful resetSession clears outputs and bumps the session epoch", async () => {
+    const { store, cells, owner } = withKernel();
+    await store.runCell(cells[0].id);
+    const epoch = getOwner(owner)!.sessionEpoch;
+    await store.resetSession();
+    expect(mocks.clearNamespace).toHaveBeenCalledWith("kern-1", store.active!.sessionFlowId);
+    expect(cells[0].output).toBeNull();
+    expect(store.active!.executionCount).toBe(0);
+    expect(getOwner(owner)!.sessionEpoch).toBe(epoch + 1);
+    expect(cellRuntime(owner, cells[0].id)!.staleReason).toBeNull();
+  });
+
+  it("setKernel ignores the same id and marks retained results previous-session", async () => {
+    const { store, cells, owner } = withKernel();
+    await store.runCell(cells[0].id);
+    const epoch = getOwner(owner)!.sessionEpoch;
+
+    store.setKernel("kern-1");
+    expect(getOwner(owner)!.sessionEpoch).toBe(epoch);
+    expect(cellRuntime(owner, cells[0].id)!.staleReason).toBeNull();
+
+    store.setKernel("kern-2");
+    expect(getOwner(owner)!.sessionEpoch).toBe(epoch + 1);
+    expect(cellRuntime(owner, cells[0].id)!.staleReason).toBe("previous-session");
+    expect(cells[0].output).not.toBeNull();
+  });
+
+  it("a response arriving after a kernel switch never writes its output", async () => {
+    let resolve!: (v: unknown) => void;
+    mocks.executeCell.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    const { store, cells } = withKernel();
+    const run = store.runCell(cells[0].id);
+    store.setKernel("kern-2");
+    resolve(okExecResult);
+    await expect(run).resolves.toBe(false);
+    expect(cells[0].output).toBeNull();
+    // The discarded run must release the cell, or it stays "running" and refuses every later run.
+    expect(cells[0].execState).toBe("idle");
+    const calls = mocks.executeCell.mock.calls.length;
+    await expect(store.runCell(cells[0].id)).resolves.toBe(true);
+    expect(mocks.executeCell.mock.calls.length).toBe(calls + 1);
+    expect(cells[0].output).not.toBeNull();
   });
 });
 
