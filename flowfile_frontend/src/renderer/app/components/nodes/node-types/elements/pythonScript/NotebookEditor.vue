@@ -115,7 +115,7 @@ import {
   type CellOperation,
   type OperationResult,
 } from "../../../../notebook/cellOperations";
-import { cellPresentation } from "../../../../notebook/cellPresentation";
+import { cellPresentation, disposeCellPresentation } from "../../../../notebook/cellPresentation";
 import { cellSelector, focusCell, ownerIdForNode } from "../../../../notebook/editorViews";
 import {
   batchProgress,
@@ -194,6 +194,7 @@ const invalidateFromOp = (cells: NotebookCell[], op: CellOperation<NotebookCell>
 
 const applyStructural = (result: OperationResult<NotebookCell>) => {
   emit("update:cells", result.cells);
+  if (result.op.kind === "remove") disposeCellPresentation(ownerId.value, result.op.cell.id);
   getCellHistory<NotebookCell>(ownerId.value).push({ op: result.op, inverse: result.inverse });
   invalidateFromOp(result.cells, result.op);
 };
@@ -281,6 +282,7 @@ const undoCellAction = () => {
     return;
   }
   emit("update:cells", result.cells);
+  if (result.op.kind === "remove") disposeCellPresentation(ownerId.value, result.op.cell.id);
   invalidateFromOp(result.cells, result.op);
 };
 
@@ -294,6 +296,7 @@ const redoCellAction = () => {
     return;
   }
   emit("update:cells", result.cells);
+  if (result.op.kind === "remove") disposeCellPresentation(ownerId.value, result.op.cell.id);
   invalidateFromOp(result.cells, result.op);
 };
 
