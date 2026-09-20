@@ -190,6 +190,16 @@ async function renderedVersions(page: Page): Promise<string[]> {
   return page.locator(".versions-row .col-version").allInnerTexts();
 }
 
+/**
+ * Same, but only once the fetch behind the rows settled: the pager renders
+ * "Page 2 of 2" while the request is still in flight and the loading
+ * placeholder has replaced every row, so a bare read can catch zero rows.
+ */
+async function settledVersions(page: Page, expected: number): Promise<string[]> {
+  await expect(page.locator(".versions-row")).toHaveCount(expected);
+  return renderedVersions(page);
+}
+
 test.describe("Catalog artifact versions", () => {
   let authToken: string;
   let seededA: Seeded;
@@ -224,8 +234,7 @@ test.describe("Catalog artifact versions", () => {
     );
 
     // First page: newest first, exactly one page worth of rows.
-    await expect(page.locator(".versions-row")).toHaveCount(PAGE_SIZE);
-    const firstPage = await renderedVersions(page);
+    const firstPage = await settledVersions(page, PAGE_SIZE);
     expect(firstPage[0]).toContain(`v${VERSIONS_IN_A}`);
     expect(firstPage[0]).toContain("latest");
 
@@ -244,7 +253,7 @@ test.describe("Catalog artifact versions", () => {
     await pager.locator(".page-btn").nth(3).click(); // next
     await expect(pager.locator(".page-info")).toHaveText("Page 2 of 2");
 
-    const secondPage = await renderedVersions(page);
+    const secondPage = await settledVersions(page, VERSIONS_IN_A - PAGE_SIZE);
     expect(secondPage).toHaveLength(VERSIONS_IN_A - PAGE_SIZE);
     expect(secondPage.some((row) => firstPage.includes(row))).toBe(false);
   });
@@ -257,7 +266,7 @@ test.describe("Catalog artifact versions", () => {
     );
     await expect(page.locator(".artifact-detail")).toBeVisible();
 
-    const before = await renderedVersions(page);
+    const before = await settledVersions(page, PAGE_SIZE);
     const target = before[1]; // second row: newest deletable version
 
     await page.locator(".versions-row").nth(1).locator(".col-actions button").last().click();

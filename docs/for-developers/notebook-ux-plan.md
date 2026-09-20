@@ -1,24 +1,28 @@
 # Notebook UX: implementation plan
 
-Status: ready for implementation planning; no feature code has been changed.
-Updated: 2026-09-18.
+Status: Changes 1 and 2 shipped; Changes 3 and 4 not started.
+Updated: 2026-09-20.
 
 ## What we are building
 
 Deliver four changes, in the order below, as one release. Apply each to both catalog notebooks and Python Script node notebooks unless explicitly stated otherwise.
 
-| Change | Deliverable | Depends on |
-| --- | --- | --- |
-| 1 | Drag cells to reorder; keyboard equivalent; undo cell actions | — |
-| 2 | Duplicate/collapse cells; reliable focus and run-and-advance | 1 |
-| 3 | Mark old results and prevent execution races | 1 |
-| 4 | Suggest columns and types for the actual dataframe being edited | 3 |
+| Change | Deliverable | Depends on | Status |
+| --- | --- | --- | --- |
+| 1 | Drag cells to reorder; keyboard equivalent; undo cell actions | — | Shipped |
+| 2 | Duplicate/collapse cells; reliable focus and run-and-advance | 1 | Shipped |
+| 3 | Mark old results and prevent execution races | 1 | Not started |
+| 4 | Suggest columns and types for the actual dataframe being edited | 3 | Not started |
+
+Each change below carries a Status section recording what is in the tree, so the
+numbered Implement steps stay readable as the original specification.
 
 Do not include reactive execution, multiplayer editing, AI generation, SQL cells, notebook-to-app publishing, or notebook-to-flow conversion in this release. Do not rewrite the two notebook stores into one store.
 
 ## File aliases used below
 
-All paths are relative to the repository root. A name marked NEW is a file to create.
+All paths are relative to the repository root. A name marked NEW was a file to
+create when this plan was written; the Status sections say which of them now exist.
 
 - `APP` = `flowfile_frontend/src/renderer/app`
 - `NB` = `APP/components/notebook`
@@ -27,6 +31,14 @@ All paths are relative to the repository root. A name marked NEW is a file to cr
 - `RUNTIME` = `kernel_runtime/kernel_runtime`
 
 ## Change 1 — Reorder cells and undo structural edits
+
+### Status
+
+Shipped. `NB/cellOperations.ts`, `NB/useCellHistory.ts` and `NB/useCellDrag.ts`
+all exist with unit tests beside them, both cell components carry the handle,
+and `flowfile_frontend/tests/notebook-interactions.spec.ts` covers drag, undo
+and persistence on both surfaces. That spec runs in CI as part of
+`.github/workflows/e2e-tests.yml`.
 
 ### User behavior
 
@@ -58,6 +70,17 @@ Tests: NEW `NB/cellOperations.test.ts`, `NB/useCellHistory.test.ts`; NEW `flowfi
 
 ## Change 2 — Useful cell actions and correct focus
 
+### Status
+
+Shipped. All six steps are in the tree: `duplicateCell` in `NB/cellOperations.ts`
+is reached from both surfaces, `NB/editorViews.ts` is owner-keyed
+(`ownerIdForNotebook`, `ownerIdForNode`) and its `focusCell(ownerId, cellId, host?)`
+is called after insert, duplicate, delete and run-and-advance, `NB/cellPresentation.ts`
+holds the session-local code/output collapse state, and `NB/CellActionMenu.vue` is
+the one menu both cell components render. Note that `PY/useCollapsedSections.ts`
+is unrelated — it collapses the kernel/outputs/artifacts panels of the Python
+Script drawer, not a cell's code or output.
+
 ### User behavior
 
 Each cell menu contains Insert above, Insert below, Duplicate, Collapse code, Collapse output, and Delete. The active cell has a visible border. Running with advance moves the caret to the next cell, creating a blank trailing cell when needed.
@@ -84,6 +107,12 @@ Shift+Enter = run and advance; Cmd/Ctrl+Enter = run in place, matching Jupyter a
 Tests: extend `notebook-interactions.spec.ts`; add duplicate cases to `cellOperations.test.ts`.
 
 ## Change 3 — Outdated outputs and execution identity
+
+### Status
+
+Not started. There is no `NB/notebookRuntimeState.ts`, no source-revision,
+session-epoch or request-id bookkeeping anywhere in the notebook code, and none
+of the status copy described below exists.
 
 ### User behavior
 
@@ -112,6 +141,12 @@ Only one execution batch can be active per notebook. Repeated Run All clicks or 
 Tests: NEW `NB/notebookRuntimeState.test.ts`; extend `APP/stores/notebook-store.test.ts`; browser test edit-during-run and tab-switch races using controlled API responses.
 
 ## Change 4 — Dataframe-aware column names and types
+
+### Status
+
+Not started. `dataframe_schemas` appears nowhere in `kernel_runtime/` or
+`flowfile_core/`, and none of the frontend modules below exist.
+`PY/useUpstreamColumns.ts` remains the only column source for node notebooks.
 
 ### Exact initial support
 
@@ -181,6 +216,9 @@ No pre-execution dtype inference for arbitrary with_columns expressions, aggrega
 Tests: NEW `kernel_runtime/tests/test_dataframe_schemas.py`, NEW `flowfile_core/tests/kernel/test_dataframe_schemas_route.py`, NEW `PY/dataframeColumnContext.test.ts`, NEW `PY/dataframeColumnCompletions.test.ts`; extend `notebookEditorCompletions.test.ts` and model-sync tests.
 
 ## Release check
+
+Outstanding as of the date above: Changes 3 and 4. Changes 1 and 2 need no
+further work.
 
 The release is complete only when Changes 1–4 work in both surfaces. Run the focused new tests, existing notebook/store/completion tests, Vue type checking, and existing kernel LSP/model-sync tests. Use non-fixing lint on touched frontend files; the repository-wide lint script includes --fix.
 
