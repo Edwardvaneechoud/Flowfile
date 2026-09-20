@@ -111,25 +111,52 @@ async function navigateWithAuth(page: Page, token: string, targetUrl: string) {
 }
 
 const KERNEL_ID = "e2e-kernel";
+const KERNEL_NAME = "E2E Kernel";
+const KERNEL_ID_2 = "e2e-kernel-2";
+const KERNEL_NAME_2 = "E2E Kernel Two";
 const KERNEL_STDOUT = "e2e kernel ran this cell";
 const RUN_FAILURE = "RuntimeError: e2e kernel refused";
+
+const STALE_CODE = "Code changed — rerun";
+const STALE_UPSTREAM = "Earlier cells changed — rerun";
+const STALE_PREVIOUS = "Previous session";
 
 interface KernelMockOptions {
   /** When set, execute_cell answers success:false with this error text. */
   failWith?: string;
+  /** Delay every execute_cell answer, so a batch stays observably in flight. */
+  delayMs?: number;
+  /** Offer a second kernel, so a test can change the session from the picker. */
+  twoKernels?: boolean;
+}
+
+/** A gate over execute_cell answers; `release` opens it for held and later calls alike. */
+interface ExecuteHold {
+  /** Resolves once the fixture has received at least `n` execute_cell requests. */
+  waitForRequests(n: number): Promise<void>;
+  release(): void;
+}
+
+interface KernelControl {
+  /** execute_cell requests received so far. */
+  executeCount(): number;
+  /** Hold every execute_cell answer from now on. */
+  hold(): ExecuteHold;
 }
 
 /**
  * Answer every /kernels/* call with one ready kernel, so run-and-advance can be
- * driven through a real success or a real failure without Docker.
+ * driven through a real success or a real failure without Docker. The returned
+ * handle counts execute_cell calls and can hold their answers open, which is what
+ * makes "in flight" a state a test can stand in.
  * Must be called before the page navigates.
  */
-async function mockKernel(page: Page, options: KernelMockOptions = {}) {
-  const kernel = {
-    id: KERNEL_ID,
-    name: "E2E Kernel",
+async function mockKernel(page: Page, options: KernelMockOptions = {}): Promise<KernelControl> {
+  const makeKernel = (id: string, name: string) => ({
+    id,
+    name,
     state: "idle",
-    container_id: "e2e-container",
+    container_id: `${id}-container`,
     port: 19000,
     packages: [],
     resolved_packages: [],
@@ -142,18 +169,29 @@ async function mockKernel(page: Page, options: KernelMockOptions = {}) {
     created_at: new Date().toISOString(),
     error_message: null,
     kernel_version: "0.1.0",
-  };
+  });
+  const kernels = [makeKernel(KERNEL_ID, KERNEL_NAME)];
+  if (options.twoKernels) kernels.push(makeKernel(KERNEL_ID_2, KERNEL_NAME_2));
+
+  let executeCount = 0;
+  let gate: Promise<void> | null = null;
 
   await page.route(/\/kernels(\/|$)/, async (route) => {
     const path = new URL(route.request().url()).pathname;
+    // A held answer can outlive the page, and a fulfil that then fails means nothing.
     const json = (body: unknown) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+      route
+        .fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) })
+        .catch(() => undefined);
 
     if (path.endsWith("/docker-status")) {
       return json({ available: true, image_available: true, images: [], error: null });
     }
-    if (path.endsWith("/kernels/") || path.endsWith("/kernels")) return json([kernel]);
+    if (path.endsWith("/kernels/") || path.endsWith("/kernels")) return json(kernels);
     if (path.endsWith("/execute_cell")) {
+      executeCount += 1;
+      if (options.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs));
+      if (gate) await gate;
       return json({
         success: !options.failWith,
         output_paths: [],
@@ -166,14 +204,43 @@ async function mockKernel(page: Page, options: KernelMockOptions = {}) {
         execution_time_ms: 7,
       });
     }
+    if (path.endsWith("/clear_namespace")) return json(null);
     if (path.endsWith("/artifacts")) return json({});
     if (path.endsWith("/memory")) return json(null);
     // Code intelligence is failure-safe by design; let it fall back to empty.
     if (path.includes("/lsp/")) {
-      return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+      return route
+        .fulfill({ status: 404, contentType: "application/json", body: "{}" })
+        .catch(() => undefined);
     }
     return json([]);
   });
+
+  return {
+    executeCount: () => executeCount,
+    hold() {
+      let open!: () => void;
+      const held = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      gate = held;
+      return {
+        async waitForRequests(n: number) {
+          const deadline = Date.now() + 20000;
+          while (executeCount < n) {
+            if (Date.now() > deadline) {
+              throw new Error(`Saw ${executeCount} execute_cell requests, expected ${n}`);
+            }
+            await page.waitForTimeout(50);
+          }
+        },
+        release() {
+          open();
+          if (gate === held) gate = null;
+        },
+      };
+    },
+  };
 }
 
 const cellRoots = (page: Page, host = ".nb-cells") => page.locator(`${host} > [data-cell-id]`);
@@ -241,6 +308,28 @@ async function expectRanCleanly(cell: Locator) {
   await expect(output).toBeVisible();
   await expect(output.locator(".output-error")).toHaveCount(0);
   await expect(output).toContainText(KERNEL_STDOUT);
+}
+
+const staleBadge = (cell: Locator) => cell.locator(".nb-status-badge.is-stale");
+
+async function expectStale(cell: Locator, reason: string, label: string) {
+  const badge = staleBadge(cell);
+  await expect(badge).toBeVisible({ timeout: 10000 });
+  await expect(badge).toHaveAttribute("data-reason", reason);
+  await expect(badge).toHaveText(label);
+}
+
+/** Open a saved notebook in a second tab; both must exist before the page loaded. */
+async function openSavedNotebook(page: Page, name: string) {
+  await page.locator("button[title='New or open notebook']").click();
+  await page.locator("li.el-dropdown-menu__item").filter({ hasText: name }).first().click();
+  await expect(page.locator(".nb-tabs .el-tabs__item.is-active .nb-tab-name")).toHaveText(name);
+}
+
+async function switchNotebookTab(page: Page, name: string) {
+  // dispatchEvent, not click: the strip scrolls, so an inactive tab can sit off it.
+  await page.locator(".nb-tabs .el-tabs__item").filter({ hasText: name }).dispatchEvent("click");
+  await expect(page.locator(".nb-tabs .el-tabs__item.is-active .nb-tab-name")).toHaveText(name);
 }
 
 /** Nothing moved: same cells, same caret. The wait lets a stray advance land first. */
@@ -852,6 +941,225 @@ test.describe("Catalog notebook — cell actions and focus", () => {
   });
 });
 
+test.describe("Catalog notebook — outdated outputs and execution identity", () => {
+  let authToken: string;
+  const seeded: number[] = [];
+
+  const PAIR_IDS = ["e2e-run-0", "e2e-run-1"];
+  const pairCells = (label: string): SeedCell[] =>
+    PAIR_IDS.map((id, i) => ({ id, type: "python", source: `# ${label} ${i}` }));
+
+  test.beforeAll(async ({ request }) => {
+    authToken = await getAuthToken(request);
+  });
+
+  test.afterAll(async ({ request }) => {
+    for (const id of seeded) await deleteNotebook(request, authToken, id);
+  });
+
+  async function seedAndOpen(
+    page: Page,
+    request: APIRequestContext,
+    label: string,
+    cells: SeedCell[] = pairCells(label),
+  ): Promise<SeededNotebook> {
+    const nb = await createNotebook(request, authToken, label, cells, KERNEL_ID);
+    seeded.push(nb.id);
+    await navigateWithAuth(page, authToken, NOTEBOOK_URL);
+    await openNotebookByName(page, nb.name, cells.length);
+    return nb;
+  }
+
+  /** Replace a cell's code and leave the caret in its editor. */
+  async function retypeCell(page: Page, cells: Locator, index: number, text: string) {
+    await cells.nth(index).locator(".cm-content").click();
+    await page.keyboard.press(SELECT_ALL);
+    await page.keyboard.type(text);
+  }
+
+  test("an edit during a slow run keeps the result and marks it outdated", async ({
+    page,
+    request,
+  }) => {
+    const kernel = await mockKernel(page);
+    await seedAndOpen(page, request, "editrun");
+
+    const cells = cellRoots(page);
+    await retypeCell(page, cells, 0, "# before the run");
+
+    const hold = kernel.hold();
+    await page.keyboard.press(RUN_IN_PLACE);
+    await hold.waitForRequests(1);
+
+    // The caret never left the editor, so this lands while the request is still out.
+    await page.keyboard.type(" # edited mid-run");
+    hold.release();
+
+    await expectRanCleanly(cells.nth(0));
+    await expectStale(cells.nth(0), "code-changed", STALE_CODE);
+  });
+
+  test("editing a cell outdates its result and every later one; rerunning clears only its own", async ({
+    page,
+    request,
+  }) => {
+    await mockKernel(page);
+    await seedAndOpen(page, request, "chain");
+
+    const cells = cellRoots(page);
+    await cells.nth(0).locator("button.nb-run").click();
+    await expectRanCleanly(cells.nth(0));
+    await cells.nth(1).locator("button.nb-run").click();
+    await expectRanCleanly(cells.nth(1));
+    await expect(page.locator(".nb-cells .nb-status-badge")).toHaveCount(0);
+
+    await retypeCell(page, cells, 0, "# edited A");
+    await expectStale(cells.nth(0), "code-changed", STALE_CODE);
+    await expectStale(cells.nth(1), "upstream-changed", STALE_UPSTREAM);
+
+    await cells.nth(0).locator("button.nb-run").click();
+    await expect(staleBadge(cells.nth(0))).toHaveCount(0, { timeout: 15000 });
+    await expectStale(cells.nth(1), "upstream-changed", STALE_UPSTREAM);
+  });
+
+  test("Run All finishes in the notebook it started in after a tab switch", async ({
+    page,
+    request,
+  }) => {
+    const kernel = await mockKernel(page);
+    const otherIds = ["e2e-other-0", "e2e-other-1"];
+    const otherCells: SeedCell[] = otherIds.map((id, i) => ({
+      id,
+      type: "python",
+      source: `# other ${i}`,
+    }));
+    // Both notebooks exist before the page loads: the "+" list is fetched once on mount.
+    const other = await createNotebook(request, authToken, "batch-other", otherCells, KERNEL_ID);
+    seeded.push(other.id);
+    const origin = await seedAndOpen(page, request, "batch-origin");
+
+    await openSavedNotebook(page, other.name);
+    await switchNotebookTab(page, origin.name);
+    await expectCellIds(page, PAIR_IDS);
+
+    const hold = kernel.hold();
+    await page.locator(".nb-run-all").click();
+    await hold.waitForRequests(1);
+
+    await switchNotebookTab(page, other.name);
+    await expectCellIds(page, otherIds);
+    hold.release();
+
+    await expect.poll(() => kernel.executeCount(), { timeout: 20000 }).toBe(PAIR_IDS.length);
+    await page.waitForTimeout(500);
+    // The tab in view was never the batch's target.
+    await expect(page.locator(".nb-cells .cell-output")).toHaveCount(0);
+
+    await switchNotebookTab(page, origin.name);
+    await expectRanCleanly(cellRoots(page).nth(0));
+    await expectRanCleanly(cellRoots(page).nth(1));
+    await expect(page.locator(".nb-batch-progress")).toHaveCount(0);
+    await expect(page.locator(".nb-run-all")).toBeEnabled();
+  });
+
+  test("two Run All clicks in one tick run the notebook once", async ({ page, request }) => {
+    const kernel = await mockKernel(page, { delayMs: 400 });
+    await seedAndOpen(page, request, "dupe");
+
+    // dispatchEvent, not click: a second real click would wait for the button to re-enable.
+    const runAll = page.locator(".nb-run-all");
+    await runAll.dispatchEvent("click");
+    await runAll.dispatchEvent("click");
+
+    const cells = cellRoots(page);
+    await expectRanCleanly(cells.nth(0));
+    await expectRanCleanly(cells.nth(1));
+    await expect(page.locator(".nb-batch-progress")).toHaveCount(0, { timeout: 20000 });
+    await page.waitForTimeout(600);
+    expect(kernel.executeCount()).toBe(PAIR_IDS.length);
+  });
+
+  test("Reset session clears outputs and their stale marks", async ({ page, request }) => {
+    await mockKernel(page);
+    await seedAndOpen(page, request, "reset");
+
+    const cells = cellRoots(page);
+    await cells.nth(0).locator("button.nb-run").click();
+    await expectRanCleanly(cells.nth(0));
+    await retypeCell(page, cells, 0, "# edited after running");
+    await expectStale(cells.nth(0), "code-changed", STALE_CODE);
+
+    await page.locator("button[title='More actions']").click();
+    await page
+      .locator("li.el-dropdown-menu__item:visible")
+      .filter({ hasText: "Reset session" })
+      .click();
+
+    await expect(page.locator(".el-message--success")).toContainText("Session reset");
+    await expect(page.locator(".nb-cells .cell-output")).toHaveCount(0);
+    await expect(page.locator(".nb-cells .nb-status-badge")).toHaveCount(0);
+  });
+
+  // Reset session is disabled while a batch runs, so the in-flight half of that rule is
+  // reached through the other epoch bump the plan names: changing the kernel.
+  test("a response in flight when the session changes cannot revive the result", async ({
+    page,
+    request,
+  }) => {
+    const kernel = await mockKernel(page, { twoKernels: true });
+    await seedAndOpen(page, request, "inflight");
+
+    const cells = cellRoots(page);
+    await cells.nth(0).locator("button.nb-run").click();
+    await expectRanCleanly(cells.nth(0));
+
+    const hold = kernel.hold();
+    await cells.nth(0).locator("button.nb-run").click();
+    await hold.waitForRequests(2);
+
+    await page.locator(".nb-kernel-select").click();
+    await page
+      .locator(".el-select-dropdown__item:visible")
+      .filter({ hasText: KERNEL_NAME_2 })
+      .click();
+    await expectStale(cells.nth(0), "previous-session", STALE_PREVIOUS);
+
+    hold.release();
+    await page.waitForTimeout(1000);
+    // Applying the answer would have cleared the mark; discarding it leaves it standing.
+    await expectStale(cells.nth(0), "previous-session", STALE_PREVIOUS);
+  });
+
+  test("a running batch disables reordering and the structural cell actions", async ({
+    page,
+    request,
+  }) => {
+    const kernel = await mockKernel(page);
+    await seedAndOpen(page, request, "busy");
+
+    const cells = cellRoots(page);
+    const hold = kernel.hold();
+    await page.locator(".nb-run-all").click();
+    await hold.waitForRequests(1);
+
+    await expect(page.locator(".nb-batch-progress")).toHaveText("Running cell 1 of 2");
+    await expect(cells.nth(0).locator("button.nb-drag-handle")).toBeDisabled();
+    await expect(page.locator("button.nb-add-btn")).toBeDisabled();
+
+    await openCellMenu(page, cells, 1);
+    for (const action of ["insert-above", "insert-below", "duplicate", "delete"]) {
+      await expect(menuItem(page, action)).toHaveAttribute("aria-disabled", "true");
+    }
+    await cells.nth(1).locator("button.nb-cell-menu").click();
+    await expect(menuItem(page, "toggle-code")).toBeHidden();
+
+    hold.release();
+    await expect(page.locator(".nb-batch-progress")).toHaveCount(0, { timeout: 20000 });
+    await expect(page.locator(".nb-run-all")).toBeEnabled();
+    await expect(cells.nth(0).locator("button.nb-drag-handle")).toBeEnabled();
+  });
+});
+
 test.describe("Python Script node notebook — reorder and undo", () => {
   // The node cell list lives in the settings drawer; a taller viewport keeps all
   // three cells on screen so a pointer drag can reach past the last one.
@@ -1096,5 +1404,144 @@ test.describe("Python Script node notebook — cell actions and focus", () => {
       (el) => (el as HTMLElement & { __e2eStamp?: string }).__e2eStamp ?? null,
     );
     expect(stamp).toBe("node-cm-editor-0");
+  });
+});
+
+test.describe("Python Script node notebook — outdated outputs", () => {
+  test.use({ viewport: { width: 1600, height: 1100 } });
+
+  const NODE_HOST = ".notebook-cells";
+  // One node per test: the drawer's cells are per-node state that outlives a reload.
+  const NODE_IDS = { stale: 1, reset: 2 };
+  const NODE_Y = 220;
+  const nodeX = (nodeId: number) => 240 + (nodeId - 1) * 320;
+  let authToken: string;
+  let flowId: number;
+
+  test.beforeAll(async ({ request }) => {
+    authToken = await getAuthToken(request);
+    const created = await request.post(
+      `${API_URL}/editor/create_flow/?name=NotebookNodeStale_E2E_${Date.now()}&register_in_catalog=false`,
+      { headers: { Authorization: `Bearer ${authToken}` } },
+    );
+    if (!created.ok()) throw new Error(`create_flow failed: ${created.status()}`);
+    flowId = await created.json();
+    for (const nodeId of Object.values(NODE_IDS)) {
+      const added = await request.post(
+        `${API_URL}/editor/add_node/?flow_id=${flowId}&node_id=${nodeId}&node_type=python_script&pos_x=${nodeX(nodeId)}&pos_y=${NODE_Y}`,
+        { headers: { Authorization: `Bearer ${authToken}` } },
+      );
+      if (!added.ok()) throw new Error(`add_node ${nodeId} failed: ${added.status()}`);
+    }
+  });
+
+  test.afterAll(async ({ request }) => {
+    await request.post(`${API_URL}/editor/close_flow/?flow_id=${flowId}`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+  });
+
+  /** Persist the kernel on the node itself — the drawer reads it back from the settings. */
+  async function seedNodeKernel(request: APIRequestContext, nodeId: number) {
+    const response = await request.post(`${API_URL}/update_settings/`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+      params: { node_type: "python_script" },
+      data: {
+        flow_id: flowId,
+        node_id: nodeId,
+        pos_x: nodeX(nodeId),
+        pos_y: NODE_Y,
+        depending_on_ids: [],
+        cache_results: false,
+        output_names: ["main"],
+        python_script_input: {
+          code: "",
+          kernel_id: KERNEL_ID,
+          cells: [{ id: `stale-cell-${nodeId}`, code: "" }],
+        },
+      },
+    });
+    if (!response.ok()) throw new Error(`seed node kernel failed: ${response.status()}`);
+  }
+
+  async function openNodeNotebook(page: Page, nodeId: number) {
+    await page.goto(`${BASE_URL}/#/main/designer`);
+    await page.waitForLoadState("networkidle");
+    await page.evaluate(
+      ({ token, expiration, flowId }) => {
+        localStorage.setItem("auth_token", token);
+        localStorage.setItem("auth_token_expiration", expiration.toString());
+        localStorage.setItem("flowfile-tutorial-dismissed", "true");
+        localStorage.setItem("flowfile-tutorial-banner-dismissed", "true");
+        sessionStorage.setItem("last_flow_id", String(flowId));
+      },
+      { token: authToken, expiration: Date.now() + 60 * 60 * 1000, flowId },
+    );
+    await page.reload();
+    await page.waitForLoadState("networkidle");
+    const node = page.locator(`.vue-flow__node[data-id="${nodeId}"]`);
+    await expect(node).toBeVisible({ timeout: 20000 });
+    // dispatchEvent rather than dblclick: the floating palette can cover the node.
+    await node.dispatchEvent("dblclick");
+    await expect(cellRoots(page, NODE_HOST)).toHaveCount(1, { timeout: 20000 });
+  }
+
+  /** Replace a cell's code and leave the caret in its editor. */
+  async function retypeCell(page: Page, cells: Locator, index: number, text: string) {
+    await cells.nth(index).locator(".cm-content").click();
+    await page.keyboard.press(SELECT_ALL);
+    await page.keyboard.type(text);
+  }
+
+  test("an edit during a slow run marks the result outdated above its output", async ({
+    page,
+    request,
+  }) => {
+    const kernel = await mockKernel(page);
+    await seedNodeKernel(request, NODE_IDS.stale);
+    await openNodeNotebook(page, NODE_IDS.stale);
+
+    const cells = cellRoots(page, NODE_HOST);
+    await retypeCell(page, cells, 0, "# before the run");
+
+    const hold = kernel.hold();
+    await page.keyboard.press(RUN_IN_PLACE);
+    await hold.waitForRequests(1);
+
+    await page.keyboard.type(" # edited mid-run");
+    hold.release();
+
+    await expectRanCleanly(cells.nth(0));
+    await expectStale(cells.nth(0), "code-changed", STALE_CODE);
+
+    // The node toolbar is hover-only, so the badge has to sit with the result.
+    const badgePrecedesOutput = await cells.nth(0).evaluate((el) => {
+      const badge = el.querySelector(".nb-status-badge");
+      const output = el.querySelector(".cell-output");
+      if (!badge || !output) return false;
+      return !!(badge.compareDocumentPosition(output) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    expect(badgePrecedesOutput).toBe(true);
+  });
+
+  test("Reset session clears the node notebook's outputs and stale marks", async ({
+    page,
+    request,
+  }) => {
+    await mockKernel(page);
+    await seedNodeKernel(request, NODE_IDS.reset);
+    await openNodeNotebook(page, NODE_IDS.reset);
+
+    const cells = cellRoots(page, NODE_HOST);
+    await retypeCell(page, cells, 0, "# node reset");
+    await page.keyboard.press(RUN_IN_PLACE);
+    await expectRanCleanly(cells.nth(0));
+
+    await page.keyboard.type(" # edited");
+    await expectStale(cells.nth(0), "code-changed", STALE_CODE);
+
+    await page.locator("button[title^='Reset session']").click();
+    await expect(page.locator(`${NODE_HOST} .cell-output`)).toHaveCount(0);
+    await expect(page.locator(`${NODE_HOST} .nb-status-badge`)).toHaveCount(0);
   });
 });

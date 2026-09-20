@@ -46,6 +46,24 @@
               </p>
             </div>
             <div class="api-item">
+              <code>Reset session</code>
+              <p>
+                Toolbar ⋯ menu. Clears this notebook's variables on the kernel; the kernel keeps
+                running. Outputs and the execution counter go with them, and a reset that fails
+                changes nothing.
+              </p>
+            </div>
+            <div class="api-item">
+              <code>Outdated results</code>
+              <p>
+                <strong>Code changed — rerun</strong>: this cell's code changed after the result was
+                produced. <strong>Earlier cells changed — rerun</strong>: a cell above it was
+                edited, moved or run again. <strong>Previous session</strong>: the result predates
+                the kernel session you are in now. A label never removes a result — rerun the cell
+                to refresh it.
+              </p>
+            </div>
+            <div class="api-item">
               <code>df</code>
               <p>A bare value on the last line shows its repr (what the object is).</p>
             </div>

@@ -23,6 +23,12 @@ Reorder cells by dragging the six-dot handle at the left of a cell's toolbar: an
 
 The **⋯** menu on a cell's toolbar holds the rest: **Insert above** and **Insert below** place a new cell either side of this one and put the cursor in it, and **Duplicate** drops a copy immediately below — the code comes along, the old result does not, so you can fork a cell and change one thing without losing the original. **Collapse code** and **Collapse output** fold either half of a cell out of the way, which is what keeps a long notebook readable once the exploratory cells at the top have served their purpose. Collapsing hides nothing permanently: the code, its cursor and its text undo history are all still there when you expand it again, and the collapse itself is a view preference for this session only — it is never written to the notebook file, so a teammate opening it sees every cell expanded.
 
+## Outdated outputs
+
+A result never disappears because you changed the code that made it — it stays on screen and says that it is out of date. Edit a cell that has already run and its output is labelled **Code changed — rerun**; every later Python cell that holds a result picks up **Earlier cells changed — rerun**, because running an earlier cell — or inserting, deleting, moving or duplicating one — can change the values everything below it was built on. A result from a kernel session that no longer exists is labelled **Previous session**, which is what you see after switching kernels or reopening the panel. Rerunning a cell clears its own label and leaves the ones below it alone.
+
+**Reset session** in the **⋯** menu clears this notebook's variables on the kernel without stopping it: the kernel keeps running and other notebooks keep their own variables. The outputs and the execution counter are cleared with the variables, and a reset that fails says so rather than pretending to have worked. A response that arrives after a reset or a kernel switch is discarded instead of being written into the cell, so a slow run can never make an outdated output look current.
+
 ## Talking to the catalog
 
 Cells see the catalog through the same `flowfile_ctx` API that Python Script nodes use:

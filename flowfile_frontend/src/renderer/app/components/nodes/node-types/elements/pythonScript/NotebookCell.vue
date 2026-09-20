@@ -20,7 +20,7 @@
           <i class="fa-solid fa-grip-vertical"></i>
         </button>
         <button
-          :disabled="isExecuting"
+          :disabled="busy"
           title="Run and advance (Shift+Enter) · Run (Cmd/Ctrl+Enter)"
           @click="emit('run-cell')"
         >
@@ -77,7 +77,8 @@
         <i class="fa-solid fa-chevron-right"></i> {{ collapsedCodeLabel }}
       </button>
 
-      <!-- Output area -->
+      <!-- Output area: the hover-only toolbar cannot carry a badge, so it sits with the result. -->
+      <CellStatusBadge class="cell-status-badge" :runtime="runtime" :has-output="!!cell.output" />
       <CellOutput v-if="cell.output" v-show="!pres.outputCollapsed" :output="cell.output" />
       <button
         v-if="cell.output && pres.outputCollapsed"
@@ -89,7 +90,7 @@
       </button>
 
       <!-- Executing indicator -->
-      <div v-if="isExecuting" class="cell-executing">
+      <div v-if="status === 'running'" class="cell-executing">
         <i class="fas fa-spinner fa-spin"></i> Running...
       </div>
     </div>
@@ -102,12 +103,14 @@ import { Codemirror } from "vue-codemirror";
 import { EditorView } from "@codemirror/view";
 
 import CellActionMenu from "../../../../notebook/CellActionMenu.vue";
+import CellStatusBadge from "../../../../notebook/CellStatusBadge.vue";
 import {
   cellPresentation,
   toggleCodeCollapsed,
   toggleOutputCollapsed,
 } from "../../../../notebook/cellPresentation";
 import { registerCellView, unregisterCellView } from "../../../../notebook/editorViews";
+import type { CellRuntime } from "../../../../notebook/notebookRuntimeState";
 import type { NotebookCell } from "../../../../../types/node.types";
 import CellOutput from "./CellOutput.vue";
 import { buildNotebookEditorExtensions } from "./notebookEditor";
@@ -118,7 +121,10 @@ interface Props {
   /** Identifies the open notebook this cell's editor view belongs to. */
   ownerId: string;
   cellIndex: number;
-  isExecuting: boolean;
+  /** Execution identity and staleness for this cell; absent until it is first touched. */
+  runtime?: CellRuntime | null;
+  /** True while any batch is running in this notebook. */
+  busy?: boolean;
   isLastCell: boolean;
   cellCount: number;
   /** Structural edits (reorder, insert, delete) are blocked while the notebook is running. */
@@ -134,6 +140,8 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  runtime: null,
+  busy: false,
   structuralDisabled: false,
   dragging: false,
   active: false,
@@ -163,9 +171,12 @@ const emit = defineEmits<{
 // Keyed by the live prop: Vue reuses cell instances across owners when two notebooks share ids.
 const pres = computed(() => cellPresentation(props.ownerId, props.cell.id));
 
+const status = computed(() => props.runtime?.status ?? "idle");
+
 const cellClasses = computed(() => ({
   "cell--active": props.active,
-  "cell--executing": props.isExecuting,
+  "cell--executing": status.value === "running",
+  "cell--queued": status.value === "queued",
   "cell--error": props.cell.output?.error,
   "is-dragging": props.dragging,
 }));
@@ -234,6 +245,10 @@ onBeforeUnmount(() => {
 .cell-wrapper.cell--active {
   border-color: var(--el-border-color);
   border-left-color: var(--el-color-primary);
+}
+
+.cell-wrapper.cell--queued {
+  border-left-color: var(--el-text-color-placeholder);
 }
 
 .cell-wrapper.cell--executing {
@@ -346,6 +361,10 @@ onBeforeUnmount(() => {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 3px;
   overflow: hidden;
+}
+
+.cell-status-badge {
+  margin: 0.15rem 0 0.15rem 0.25rem;
 }
 
 .cell-executing {
