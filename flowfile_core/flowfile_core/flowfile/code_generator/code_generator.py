@@ -242,7 +242,9 @@ class _FlowfileCtx:
         )
 
 
-flowfile_ctx = _FlowfileCtx()'''
+flowfile_ctx = _FlowfileCtx()
+globals().setdefault("display", flowfile_ctx.display)
+globals().setdefault("explore", flowfile_ctx.explore)'''
 
 
 class FlowGraphCodeConverter(

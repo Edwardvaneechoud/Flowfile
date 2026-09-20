@@ -80,11 +80,11 @@
               <p>A bare value on the last line shows its repr (what the object is).</p>
             </div>
             <div class="api-item">
-              <code>flowfile_ctx.display(df)</code>
+              <code>display(df)</code>
               <p>Render a DataFrame as an interactive, sortable table.</p>
             </div>
             <div class="api-item">
-              <code>flowfile_ctx.explore(df)</code>
+              <code>explore(df)</code>
               <p>Open the Graphic Walker explorer (data grid + drag-to-chart).</p>
             </div>
           </section>
@@ -123,16 +123,20 @@
 
           <section class="api-section">
             <h4>Display &amp; explore</h4>
-            <p class="section-description">Render results inline in the cell output.</p>
+            <p class="section-description">
+              Render results inline in the cell output. Both are available as bare names —
+              <code>flowfile_ctx.display</code> and <code>flowfile_ctx.explore</code> are the same
+              functions.
+            </p>
             <div class="api-item">
-              <code>flowfile_ctx.display(obj, title?)</code>
+              <code>display(obj, title?)</code>
               <p>
                 Polars frames → interactive table; also matplotlib / plotly figures, PIL images, and
                 HTML strings.
               </p>
             </div>
             <div class="api-item">
-              <code>flowfile_ctx.explore(df)</code>
+              <code>explore(df)</code>
               <p>Full Graphic Walker explorer (Data + Visualization tabs).</p>
             </div>
           </section>
@@ -180,13 +184,13 @@
 
 df = flowfile_ctx.get_catalog("Demo").get_schema("market").read_table("fx_rates")
 strong = df.filter(pl.col("rate") > 1).collect()
-flowfile_ctx.display(strong)</code></pre>
+display(strong)</code></pre>
             </div>
 
             <div class="pattern">
               <h5>Explore a table</h5>
               <pre><code>df = flowfile_ctx.read_catalog_table("fx_rates", schema="market")
-flowfile_ctx.explore(df)</code></pre>
+explore(df)</code></pre>
             </div>
 
             <div class="pattern">

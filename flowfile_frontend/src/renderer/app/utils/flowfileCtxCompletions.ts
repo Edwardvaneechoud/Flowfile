@@ -1,15 +1,7 @@
-/**
- * Canonical CodeMirror completions for the kernel-runtime `flowfile_ctx` global.
- *
- * `flowfile_ctx` is injected into the exec namespace only for code that runs on
- * an isolated kernel — the Python Script node's notebook cells and custom-node
- * `process()` bodies whose execution environment is "kernel". The entries below
- * mirror `kernel_runtime/kernel_runtime/flowfile_client.py` (the source of truth
- * for the API). Both editors import from here so the two never drift apart.
- */
+/** Shared kernel completions; API definitions live in kernel_runtime/flowfile_client.py. */
 import type { Completion, CompletionSource } from "@codemirror/autocomplete";
 
-// ─── flowfile_ctx API (after `flowfile_ctx.` / legacy `flowfile.`) ───────────
+// ─── flowfile_ctx API (after `flowfile_ctx.`) ────────────────────────────────
 
 export const FLOWFILE_API_ENTRIES: Completion[] = [
   {
@@ -406,12 +398,7 @@ export function buildRefVarMap(code: string): Map<string, RefKind> {
 
 // ─── Kernel-global bare-name entries ─────────────────────────────────────────
 
-/**
- * The kernel-only globals every kernel-executed cell / process() body can use.
- * `pl` is deliberately excluded — editors that also want it (the notebook)
- * append it via KERNEL_GLOBAL_ENTRIES; editors with their own Polars completions
- * (the node designer) use just these two.
- */
+// Polars completions are supplied separately by each editor.
 export const FLOWFILE_CTX_GLOBAL_ENTRIES: Completion[] = [
   {
     label: "flowfile_ctx",
@@ -420,19 +407,22 @@ export const FLOWFILE_CTX_GLOBAL_ENTRIES: Completion[] = [
     detail: "kernel global",
   },
   {
-    label: "flowfile",
-    type: "namespace",
-    info: "Deprecated alias for `flowfile_ctx`. Still works but emits a DeprecationWarning on first attribute access.",
-    detail: "kernel global (deprecated → flowfile_ctx)",
+    label: "display",
+    type: "function",
+    info: "Display a rich object inline. Polars DataFrames/LazyFrames render as an interactive table; also matplotlib/plotly figures, PIL images, and HTML strings.",
+    detail: "display(obj, title?) — kernel global",
+    apply: "display(df)",
+  },
+  {
+    label: "explore",
+    type: "function",
+    info: "Open the full Graphic Walker explorer (data grid + drag-to-chart visualization) for a Polars DataFrame/LazyFrame.",
+    detail: "explore(obj, title?) — kernel global",
+    apply: "explore(df)",
   },
 ];
 
-/**
- * Globals injected into the kernel exec namespace. Suggested as bare-name
- * completions so typing `flowfile_ct…` offers `flowfile_ctx` before the user
- * has typed the dot. `flowfile` is also suggested but flagged as deprecated;
- * `pl` is included for editors that don't have their own Polars completions.
- */
+// Notebook editors also suggest the conventional Polars alias.
 const KERNEL_GLOBAL_ENTRIES: Completion[] = [
   ...FLOWFILE_CTX_GLOBAL_ENTRIES,
   {
@@ -445,12 +435,7 @@ const KERNEL_GLOBAL_ENTRIES: Completion[] = [
 
 // ─── Completion sources ──────────────────────────────────────────────────────
 
-/**
- * Completions for bare global identifiers — fires when the user is typing a
- * word that is NOT preceded by a dot (so it doesn't interfere with the
- * scoped member-access completions below). Suggests the kernel globals
- * (`flowfile_ctx`, `flowfile`, `pl`).
- */
+/** Complete kernel globals outside member access. */
 export const globalIdentifierCompletions: CompletionSource = (context) => {
   const match = context.matchBefore(/\w+/);
   if (!match) return null;
@@ -470,12 +455,10 @@ export const globalIdentifierCompletions: CompletionSource = (context) => {
 };
 
 /**
- * Completions after `flowfile_ctx.` (canonical) or `flowfile.` (legacy alias) —
- * Flowfile kernel-runtime API functions. Suggestion `detail` strings always
- * show the canonical `flowfile_ctx.` form to nudge migration.
+ * Completions after `flowfile_ctx.` — Flowfile kernel-runtime API functions.
  */
 export const flowfileApiCompletions: CompletionSource = (context) => {
-  const match = context.matchBefore(/(?:flowfile_ctx|flowfile)\.\w*/);
+  const match = context.matchBefore(/flowfile_ctx\.\w*/);
   if (!match) return null;
   // Only fire if there's actually a dot in the match
   if (!match.text.includes(".")) return null;
@@ -536,7 +519,7 @@ export function createRefVariableCompletions(getExtraCode: () => string[]): Comp
     if (!idMatch) return null;
     const varName = idMatch[1];
     // These have their own dedicated sources — don't shadow them.
-    if (varName === "flowfile_ctx" || varName === "flowfile" || varName === "pl") return null;
+    if (varName === "flowfile_ctx" || varName === "pl") return null;
 
     const allCode = [...getExtraCode(), context.state.doc.toString()].join("\n");
     const kind = buildRefVarMap(allCode).get(varName);

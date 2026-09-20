@@ -200,7 +200,7 @@ class ArtifactStore:
                 raise ValueError(
                     f"Artifact '{name}' already exists (published by node "
                     f"{self._artifacts[key]['node_id']}). "
-                    f"Delete it first with flowfile.delete_artifact('{name}') "
+                    f"Delete it first with flowfile_ctx.delete_artifact('{name}') "
                     f"before publishing a new one with the same name."
                 )
             metadata = {

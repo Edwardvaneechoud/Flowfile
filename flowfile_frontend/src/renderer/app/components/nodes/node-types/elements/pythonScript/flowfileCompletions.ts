@@ -216,20 +216,15 @@ export const polarsModuleCompletions: CompletionSource = (context) => {
   };
 };
 
-/**
- * Completions after any `.` — common Polars Expr / DataFrame / LazyFrame methods.
- * Skipped when the preceding identifier is `flowfile_ctx`, the legacy `flowfile`
- * alias, `pl`, any catalog-ref-producing call, or a variable locally bound to a
- * catalog/schema/table ref (those have dedicated sources).
- */
+/** Polars method completions, excluding names with dedicated completion sources. */
 export function createPolarsExprCompletions(getPriorCellCodes: () => string[]): CompletionSource {
   return (context) => {
     const match = context.matchBefore(/\.\w*/);
     if (!match) return null;
 
-    // Skip if preceded by `flowfile_ctx`, `flowfile`, or `pl` — those have dedicated, more specific sources
+    // Dedicated sources handle context and module members.
     const lookback = context.state.doc.sliceString(Math.max(0, match.from - 200), match.from);
-    if (/\b(?:flowfile_ctx|flowfile)$/.test(lookback) || /\bpl$/.test(lookback)) return null;
+    if (/\bflowfile_ctx$/.test(lookback) || /\bpl$/.test(lookback)) return null;
     // Also step aside for catalog-ref chains so the Polars list doesn't pollute
     // ref completions.
     if (

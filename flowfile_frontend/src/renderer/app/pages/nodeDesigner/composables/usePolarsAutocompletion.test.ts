@@ -383,14 +383,21 @@ describe("flowfile_ctx completions (kernel-gated)", () => {
     );
   });
 
-  it("also fires for the legacy `flowfile.` alias", () => {
+  it("no longer fires for the removed `flowfile.` global", () => {
     const result = kernel(ctxFor("flowfile."));
-    expect(result!.options.map((o) => o.label)).toContain("read_input");
+    expect(result?.options.map((o) => o.label) ?? []).not.toContain("read_input");
   });
 
   it("suggests `flowfile_ctx` as a bare-word global", () => {
     const result = kernel(ctxFor("flowfile_ct", 11));
     expect(result!.options.map((o) => o.label)).toContain("flowfile_ctx");
+  });
+
+  it("suggests the bare `display` global", () => {
+    const result = kernel(ctxFor("disp", 4));
+    expect(result!.options.map((o) => o.label)).toEqual(
+      expect.arrayContaining(["display", "explore"]),
+    );
   });
 
   it("offers catalog-ref methods after a get_catalog(...) chain", () => {
