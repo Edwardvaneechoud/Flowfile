@@ -3,9 +3,18 @@
     class="nb-cell"
     :class="[
       `nb-cell--${cell.cellType}`,
-      { running: cell.execState === 'running', 'is-dragging': dragging },
+      {
+        running: cell.execState === 'running',
+        'is-dragging': dragging,
+        'nb-cell--active': active,
+      },
     ]"
     tabindex="-1"
+    @focus="emit('activate')"
+    @keydown.enter.self.exact.prevent="onRootEnter"
+    @keydown.shift.enter.self.prevent="emit('run')"
+    @keydown.meta.enter.self.prevent="emit('run-advance')"
+    @keydown.ctrl.enter.self.prevent="emit('run-advance')"
   >
     <!-- Cell toolbar -->
     <div class="nb-cell-bar">
@@ -25,7 +34,11 @@
       <button
         class="nb-run"
         :disabled="cell.execState === 'running'"
-        :title="cell.cellType === 'markdown' ? 'Render (Shift+Enter)' : 'Run (Shift+Enter)'"
+        :title="
+          cell.cellType === 'markdown'
+            ? 'Render (Shift+Enter) · Render and advance (Cmd/Ctrl+Enter)'
+            : 'Run (Shift+Enter) · Run and advance (Cmd/Ctrl+Enter)'
+        "
         @click="emit('run')"
       >
         <i v-if="cell.execState === 'running'" class="fa-solid fa-spinner fa-spin"></i>
@@ -63,25 +76,31 @@
         >
           <i class="fa-solid fa-arrow-down"></i>
         </button>
-        <button
-          class="nb-act nb-act--danger"
-          :disabled="cellCount <= 1 || structuralDisabled"
-          title="Delete cell"
-          @click="emit('remove')"
-        >
-          <i class="fa-solid fa-trash"></i>
-        </button>
+        <CellActionMenu
+          :disabled="structuralDisabled"
+          :code-collapsed="pres.codeCollapsed"
+          :output-collapsed="pres.outputCollapsed"
+          :has-output="cell.cellType === 'python' && !!cell.output"
+          :can-delete="cellCount > 1"
+          @insert-above="emit('insert-above')"
+          @insert-below="emit('insert-below')"
+          @duplicate="emit('duplicate')"
+          @toggle-code="toggleCodeCollapsed(ownerId, cell.id)"
+          @toggle-output="toggleOutputCollapsed(ownerId, cell.id)"
+          @delete="emit('remove')"
+        />
       </div>
     </div>
 
-    <!-- Editor -->
-    <div class="nb-cell-editor">
+    <!-- Editor. Collapse uses v-show so the EditorView (and its text undo history) survives. -->
+    <div v-show="!pres.codeCollapsed" class="nb-cell-editor">
       <!-- Markdown preview (double-click to edit). Content is sanitised via
            DOMPurify in sanitiseMarkdown before reaching v-html. -->
       <!-- eslint-disable vue/no-v-html -->
       <div
         v-if="cell.cellType === 'markdown' && !cell.editing"
         class="nb-md-rendered"
+        @click="emit('activate')"
         @dblclick="emit('update:editing', true)"
         v-html="cell.renderedHtml || '<em>Empty markdown cell — double-click to edit</em>'"
       ></div>
@@ -93,7 +112,10 @@
         :autosize="{ minRows: 3 }"
         placeholder="# Markdown — Render (Shift+Enter) to preview"
         @update:model-value="(v: string) => emit('update:code', v)"
+        @focus="emit('activate')"
         @keydown.shift.enter.prevent="emit('run')"
+        @keydown.meta.enter.prevent="emit('run-advance')"
+        @keydown.ctrl.enter.prevent="emit('run-advance')"
       />
       <!-- Python code -->
       <codemirror
@@ -107,17 +129,37 @@
         @update:model-value="(v: string) => emit('update:code', v)"
       />
     </div>
+    <button
+      v-if="pres.codeCollapsed"
+      type="button"
+      class="nb-cell-collapsed"
+      @click="toggleCodeCollapsed(ownerId, cell.id)"
+    >
+      Code hidden · {{ codeLineCount }} {{ codeLineCount === 1 ? "line" : "lines" }}
+    </button>
 
     <!-- Output -->
-    <CellOutput v-if="cell.cellType === 'python' && cell.output" :output="cell.output" />
+    <template v-if="cell.cellType === 'python' && cell.output">
+      <CellOutput v-show="!pres.outputCollapsed" :output="cell.output" />
+      <button
+        v-if="pres.outputCollapsed"
+        type="button"
+        class="nb-cell-collapsed"
+        @click="toggleOutputCollapsed(ownerId, cell.id)"
+      >
+        Output hidden
+      </button>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount } from "vue";
+import { computed, onBeforeUnmount, watch } from "vue";
 import { Codemirror } from "vue-codemirror";
 import { EditorView } from "@codemirror/view";
 import { registerCellView, unregisterCellView } from "./editorViews";
+import { cellPresentation, toggleCodeCollapsed, toggleOutputCollapsed } from "./cellPresentation";
+import CellActionMenu from "./CellActionMenu.vue";
 import CellOutput from "../nodes/node-types/elements/pythonScript/CellOutput.vue";
 import { buildNotebookEditorExtensions } from "../nodes/node-types/elements/pythonScript/notebookEditor";
 import type { CellType, NotebookCellModel } from "./types";
@@ -131,6 +173,8 @@ const props = defineProps<{
   allowedTypes?: CellType[];
   /** Structural edits (reorder, delete) are blocked while the notebook is running. */
   structuralDisabled?: boolean;
+  /** The cell the caret last landed in — draws the active border. */
+  active?: boolean;
   dragging?: boolean;
   /** Code of cells before this one, for scope/ref completions. */
   priorCellCodes?: string[];
@@ -142,6 +186,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "run"): void;
+  (e: "run-advance"): void;
   (e: "update:code", code: string): void;
   (e: "update:type", cellType: CellType): void;
   (e: "update:editing", editing: boolean): void;
@@ -149,10 +194,23 @@ const emit = defineEmits<{
   (e: "move-key", direction: -1 | 1): void;
   (e: "drag-start", ev: PointerEvent): void;
   (e: "remove"): void;
+  (e: "duplicate"): void;
+  (e: "insert-above"): void;
+  (e: "insert-below"): void;
+  (e: "activate"): void;
   (e: "cursor", offset: number): void;
 }>();
 
 const allowedTypes = computed<CellType[]>(() => props.allowedTypes ?? ["python", "markdown"]);
+
+// Keyed by the live prop: Vue reuses cell instances across owners when two notebooks share ids.
+const pres = computed(() => cellPresentation(props.ownerId, props.cell.id));
+const codeLineCount = computed(() => props.cell.code.split("\n").length);
+
+// Jupyter command mode: Enter on a rendered markdown cell's root opens it for editing.
+function onRootEnter() {
+  if (props.cell.cellType === "markdown" && !props.cell.editing) emit("update:editing", true);
+}
 
 const TYPE_LABELS: Record<CellType, string> = {
   python: "Python",
@@ -164,6 +222,7 @@ const TYPE_LABELS: Record<CellType, string> = {
 const extensions = [
   ...buildNotebookEditorExtensions({
     onRun: () => emit("run"),
+    onRunAdvance: () => emit("run-advance"),
     getPriorCellCodes: () => props.priorCellCodes ?? [],
     getKernelId: () => props.kernelId ?? null,
     getFlowId: () => props.flowId ?? 0,
@@ -178,14 +237,27 @@ const extensions = [
 ];
 
 let view: EditorView | null = null;
+let viewOwnerId: string | null = null;
 
 function onReady(payload: { view: EditorView }) {
   view = payload.view;
-  registerCellView(props.ownerId, props.cell.id, view);
+  viewOwnerId = props.ownerId;
+  registerCellView(viewOwnerId, props.cell.id, view);
 }
 
+// A reused instance has to take its registered view to the new owner.
+watch(
+  () => props.ownerId,
+  (next) => {
+    if (!view || viewOwnerId === next) return;
+    if (viewOwnerId) unregisterCellView(viewOwnerId, props.cell.id, view);
+    viewOwnerId = next;
+    registerCellView(next, props.cell.id, view);
+  },
+);
+
 onBeforeUnmount(() => {
-  if (view) unregisterCellView(props.ownerId, props.cell.id, view);
+  if (view && viewOwnerId) unregisterCellView(viewOwnerId, props.cell.id, view);
 });
 </script>
 
@@ -205,6 +277,11 @@ onBeforeUnmount(() => {
 }
 .nb-cell.is-dragging {
   opacity: 0.55;
+}
+/* Declared before .running so a running cell keeps the stronger accent. */
+.nb-cell.nb-cell--active {
+  border-color: var(--el-color-primary, #409eff);
+  box-shadow: inset 3px 0 0 var(--el-color-primary-light-5, #a0cfff);
 }
 .nb-cell.running {
   border-color: var(--el-color-primary, #409eff);
@@ -337,10 +414,6 @@ onBeforeUnmount(() => {
   opacity: 0.35;
   cursor: not-allowed;
 }
-.nb-act--danger:hover:not(:disabled) {
-  color: var(--el-color-danger, #f56c6c);
-  background: var(--el-color-danger-light-9, #fef0f0);
-}
 
 .nb-cell-editor {
   padding: 2px 4px 4px;
@@ -349,5 +422,24 @@ onBeforeUnmount(() => {
   padding: 6px 10px;
   cursor: text;
   line-height: 1.5;
+}
+
+/* Stub row standing in for hidden code/output; click restores it. */
+.nb-cell-collapsed {
+  display: block;
+  width: calc(100% - 8px);
+  margin: 2px 4px 4px;
+  padding: 5px 10px;
+  border: 1px dashed var(--el-border-color, #dcdfe6);
+  border-radius: 5px;
+  background: var(--el-fill-color-lighter, #f5f7fa);
+  color: var(--el-text-color-secondary, #909399);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.nb-cell-collapsed:hover {
+  color: var(--el-text-color-primary, #303133);
+  border-color: var(--el-color-primary, #409eff);
 }
 </style>

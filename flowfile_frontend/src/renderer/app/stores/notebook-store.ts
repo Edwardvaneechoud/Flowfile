@@ -24,6 +24,7 @@ import {
   getCellHistory,
   type CellHistory,
 } from "../components/notebook/useCellHistory";
+import { disposeOwnerPresentation } from "../components/notebook/cellPresentation";
 import { sanitiseMarkdown } from "../features/ai/markdown";
 import {
   loadPersistedNotebooks,
@@ -314,6 +315,7 @@ export const useNotebookStore = defineStore("notebook", {
       this.openNotebooks.splice(idx, 1);
       disposeCellHistory(ownerIdForNotebook(tabId));
       disposeOwnerViews(ownerIdForNotebook(tabId));
+      disposeOwnerPresentation(ownerIdForNotebook(tabId));
       if (this.activeTabId === tabId) {
         const next = this.openNotebooks[idx] ?? this.openNotebooks[idx - 1] ?? null;
         this.activeTabId = next?.tabId ?? null;
@@ -434,6 +436,15 @@ export const useNotebookStore = defineStore("notebook", {
       return cell;
     },
 
+    /** `index` is the new cell's final index, unlike `addCell`'s after-index. */
+    insertCellAt(cellType: CellType, index: number) {
+      const nb = this.active;
+      if (!nb) return;
+      const cell = newCell(cellType);
+      this._applyStructural(nb, insertCell(nb.cells, cell, index));
+      return cell;
+    },
+
     /** Returns the id to focus next, or `null` when the delete was refused. */
     removeCell(cellId: string): string | null {
       const nb = this.active;
@@ -516,6 +527,12 @@ export const useNotebookStore = defineStore("notebook", {
       if (!nb || !cell) return;
       cell.cursor = offset;
       nb.focusedCellId = cellId;
+    },
+
+    /** Focus without touching the caret: chrome clicks must not reset `cell.cursor`. */
+    setFocusedCell(cellId: string) {
+      const nb = this.active;
+      if (nb?.cells.some((c) => c.id === cellId)) nb.focusedCellId = cellId;
     },
 
     /** Insert a read of `qualifiedName` (catalog.schema.table) at the caret of the

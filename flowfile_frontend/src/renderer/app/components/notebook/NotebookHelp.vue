@@ -22,11 +22,21 @@
             </div>
             <div class="api-item">
               <code>Cmd / Ctrl + Enter</code>
-              <p>Run the cell and move to the next one.</p>
+              <p>Run the cell and move to the next one; a blank cell is added after the last.</p>
+            </div>
+            <div class="api-item">
+              <code>Enter on a rendered Markdown cell</code>
+              <p>Opens it for editing (the cell itself must be focused, not its editor).</p>
             </div>
             <div class="api-item">
               <code>Alt + ↑ / ↓</code>
               <p>Move the cell up or down (with the drag handle focused); or drag the handle.</p>
+            </div>
+            <div class="api-item">
+              <code>⋯ Cell menu</code>
+              <p>
+                Insert above / Insert below, Duplicate, Collapse code / Collapse output, and Delete.
+              </p>
             </div>
             <div class="api-item">
               <code>Undo / Redo</code>

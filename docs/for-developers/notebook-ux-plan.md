@@ -75,11 +75,11 @@ Keep the current mappings for this release: Shift+Enter = run; Cmd/Ctrl+Enter = 
 
 ### Done when
 
-- [ ] Duplicate has identical code and no old result.
-- [ ] Run-and-advance focuses the next editor in both surfaces, including after the last cell and after rendering Markdown.
-- [ ] Collapsing and expanding retains cursor and text undo history.
-- [ ] Delete and undo restore source without stealing focus from another notebook tab.
-- [ ] Toolbar labels, NotebookHelp, and notebook user docs describe the same shortcuts.
+- [x] Duplicate has identical code and no old result.
+- [x] Run-and-advance focuses the next editor in both surfaces, including after the last cell and after rendering Markdown.
+- [x] Collapsing and expanding retains cursor and text undo history.
+- [x] Delete and undo restore source without stealing focus from another notebook tab.
+- [x] Toolbar labels, NotebookHelp, and notebook user docs describe the same shortcuts.
 
 Tests: extend `notebook-interactions.spec.ts`; add duplicate cases to `cellOperations.test.ts`.
 

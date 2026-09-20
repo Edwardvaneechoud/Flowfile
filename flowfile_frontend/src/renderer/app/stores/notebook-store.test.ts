@@ -301,6 +301,25 @@ describe("structural cell actions", () => {
     expect(store.active!.dirty).toBe(true);
   });
 
+  it("insertCellAt puts the cell at index 0", () => {
+    const { store, cells } = withCells(2);
+    const inserted = store.insertCellAt("python", 0)!;
+    expect(store.active!.cells.map((c) => c.id)).toEqual([inserted.id, cells[0].id, cells[1].id]);
+    expect(store.active!.dirty).toBe(true);
+  });
+
+  it("insertCellAt puts the cell at a middle index", () => {
+    const { store, cells } = withCells(3);
+    const inserted = store.insertCellAt("markdown", 2)!;
+    expect(store.active!.cells.map((c) => c.id)).toEqual([
+      cells[0].id,
+      cells[1].id,
+      inserted.id,
+      cells[2].id,
+    ]);
+    expect(inserted.cellType).toBe("markdown");
+  });
+
   it("removeCell refuses to delete the last remaining cell", () => {
     const store = useNotebookStore();
     store.ensureHydrated();
@@ -432,6 +451,18 @@ describe("insertReadCell", () => {
     expect(store.active!.focusedCellId).toBe(cell.id);
   });
 
+  it("still inserts at the caret after the cell's chrome took focus", () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    const cell = store.active!.cells[0];
+    store.setCellCode(cell.id, "x = 1\ny = 2");
+    store.setCellCursor(cell.id, 5);
+    store.setFocusedCell(cell.id);
+    expect(cell.cursor).toBe(5);
+    store.insertReadCell("orders");
+    expect(cell.code).toBe('x = 1\ndf = flowfile_ctx.read_catalog_table("orders")\ny = 2');
+  });
+
   it("appends a new cell when the last one has code", () => {
     const store = useNotebookStore();
     store.ensureHydrated();
@@ -441,6 +472,23 @@ describe("insertReadCell", () => {
     const cell = store.insertReadCell("orders")!;
     expect(store.active!.cells.length).toBe(before + 1);
     expect(cell.code).toBe('df = flowfile_ctx.read_catalog_table("orders")');
+  });
+});
+
+describe("setFocusedCell", () => {
+  it("records focus, leaves the caret alone and ignores unknown ids", () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    const first = store.active!.cells[0];
+    const second = store.addCell("python")!;
+    store.setCellCursor(first.id, 4);
+
+    store.setFocusedCell(second.id);
+    expect(store.active!.focusedCellId).toBe(second.id);
+    expect(first.cursor).toBe(4);
+
+    store.setFocusedCell("missing-cell");
+    expect(store.active!.focusedCellId).toBe(second.id);
   });
 });
 
