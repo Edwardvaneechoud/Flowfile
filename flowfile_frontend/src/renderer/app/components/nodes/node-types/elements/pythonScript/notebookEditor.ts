@@ -32,7 +32,7 @@ import type { UpstreamColumn } from "./useUpstreamColumns";
 
 export interface NotebookEditorOptions {
   onRun: () => void;
-  onRunAdvance?: () => void; // Mod+Enter; falls back to onRun
+  onRunAdvance?: () => void; // Shift+Enter; falls back to onRun
   getInputNames?: () => string[];
   getUpstreamColumns?: () => UpstreamColumn[];
   getPriorCellCodes?: () => string[];
@@ -166,8 +166,8 @@ export function buildNotebookEditorExtensions(opts: NotebookEditorOptions): Exte
   const getLspCtx = lspCtxGetter(opts);
 
   const runKeymap = keymap.of([
-    { key: "Shift-Enter", run: () => (opts.onRun(), true) },
-    { key: "Mod-Enter", run: () => (runAdvance(), true) },
+    { key: "Shift-Enter", run: () => (runAdvance(), true) },
+    { key: "Mod-Enter", run: () => (opts.onRun(), true) },
   ]);
 
   const tabKeymap = keymap.of([

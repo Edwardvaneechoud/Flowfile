@@ -1,6 +1,6 @@
 # Notebook UX: implementation plan
 
-Status: Change 1 shipped; Change 2 part-built; Changes 3 and 4 not started.
+Status: Changes 1 and 2 shipped; Changes 3 and 4 not started.
 Updated: 2026-09-20.
 
 ## What we are building
@@ -10,7 +10,7 @@ Deliver four changes, in the order below, as one release. Apply each to both cat
 | Change | Deliverable | Depends on | Status |
 | --- | --- | --- | --- |
 | 1 | Drag cells to reorder; keyboard equivalent; undo cell actions | — | Shipped |
-| 2 | Duplicate/collapse cells; reliable focus and run-and-advance | 1 | Part-built |
+| 2 | Duplicate/collapse cells; reliable focus and run-and-advance | 1 | Shipped |
 | 3 | Mark old results and prevent execution races | 1 | Not started |
 | 4 | Suggest columns and types for the actual dataframe being edited | 3 | Not started |
 
@@ -72,27 +72,20 @@ Tests: NEW `NB/cellOperations.test.ts`, `NB/useCellHistory.test.ts`; NEW `flowfi
 
 ### Status
 
-Part-built. Already in the tree:
-
-- Step 1: `duplicateCell` in `NB/cellOperations.ts` and a `duplicateCell` action
-  in `APP/stores/notebook-store.ts`. Nothing in the UI reaches either.
-- Step 2: `NB/editorViews.ts` is keyed by owner (`ownerIdForNotebook`,
-  `ownerIdForNode`) and registers node editors as well as catalog editors.
-- Step 3: `focusCell(ownerId, cellId, host?)` exists in `NB/editorViews.ts`, but
-  it is exported and never called.
-
-Still to do: the callers for step 3, and steps 4, 5 and 6 in full. Concretely,
-both cell components still render a flat button row — drag, run, up, down,
-delete — with no action menu; `NotebookEditor.runCellAndAdvance` only appends a
-trailing cell and carries a comment deferring focus management; and
-`PY/useCollapsedSections.ts` collapses the kernel/outputs/artifacts panels of
-the Python Script drawer, not a cell's code or output.
+Shipped. All six steps are in the tree: `duplicateCell` in `NB/cellOperations.ts`
+is reached from both surfaces, `NB/editorViews.ts` is owner-keyed
+(`ownerIdForNotebook`, `ownerIdForNode`) and its `focusCell(ownerId, cellId, host?)`
+is called after insert, duplicate, delete and run-and-advance, `NB/cellPresentation.ts`
+holds the session-local code/output collapse state, and `NB/CellActionMenu.vue` is
+the one menu both cell components render. Note that `PY/useCollapsedSections.ts`
+is unrelated — it collapses the kernel/outputs/artifacts panels of the Python
+Script drawer, not a cell's code or output.
 
 ### User behavior
 
 Each cell menu contains Insert above, Insert below, Duplicate, Collapse code, Collapse output, and Delete. The active cell has a visible border. Running with advance moves the caret to the next cell, creating a blank trailing cell when needed.
 
-Keep the current mappings for this release: Shift+Enter = run; Cmd/Ctrl+Enter = run and advance. Update all tooltips/help to match. Markdown follows the same advancement behavior in catalog notebooks.
+Shift+Enter = run and advance; Cmd/Ctrl+Enter = run in place, matching Jupyter and Databricks. Update all tooltips/help to match. Markdown follows the same advancement behavior in catalog notebooks.
 
 ### Implement
 
@@ -105,11 +98,11 @@ Keep the current mappings for this release: Shift+Enter = run; Cmd/Ctrl+Enter = 
 
 ### Done when
 
-- [ ] Duplicate has identical code and no old result.
-- [ ] Run-and-advance focuses the next editor in both surfaces, including after the last cell and after rendering Markdown.
-- [ ] Collapsing and expanding retains cursor and text undo history.
-- [ ] Delete and undo restore source without stealing focus from another notebook tab.
-- [ ] Toolbar labels, NotebookHelp, and notebook user docs describe the same shortcuts.
+- [x] Duplicate has identical code and no old result.
+- [x] Run-and-advance focuses the next editor in both surfaces, including after the last cell and after rendering Markdown.
+- [x] Collapsing and expanding retains cursor and text undo history.
+- [x] Delete and undo restore source without stealing focus from another notebook tab.
+- [x] Toolbar labels, NotebookHelp, and notebook user docs describe the same shortcuts.
 
 Tests: extend `notebook-interactions.spec.ts`; add duplicate cases to `cellOperations.test.ts`.
 
@@ -224,8 +217,8 @@ Tests: NEW `kernel_runtime/tests/test_dataframe_schemas.py`, NEW `flowfile_core/
 
 ## Release check
 
-Outstanding as of the date above: finish Change 2, then Changes 3 and 4. Change
-1 needs no further work.
+Outstanding as of the date above: Changes 3 and 4. Changes 1 and 2 need no
+further work.
 
 The release is complete only when Changes 1–4 work in both surfaces. Run the focused new tests, existing notebook/store/completion tests, Vue type checking, and existing kernel LSP/model-sync tests. Use non-fixing lint on touched frontend files; the repository-wide lint script includes --fix.
 

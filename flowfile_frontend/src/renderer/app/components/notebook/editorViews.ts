@@ -52,10 +52,11 @@ export function cellSelector(cellId: string): string {
   return `[data-cell-id="${escapeId(cellId)}"]`;
 }
 
-/** Focus a cell: its editor if mounted, else the markdown textarea, else the cell root. */
+/** Focus a cell: its editor if visible, else the markdown textarea, else the cell root. */
 export function focusCell(ownerId: string, cellId: string, host?: HTMLElement | null): boolean {
   const view = getCellView(ownerId, cellId);
-  if (view) {
+  // A collapsed (display:none) editor swallows focus() silently, so fall through to the root.
+  if (view && view.dom.offsetParent !== null) {
     view.focus();
     view.dispatch({ selection: { anchor: view.state.doc.length } });
     return true;

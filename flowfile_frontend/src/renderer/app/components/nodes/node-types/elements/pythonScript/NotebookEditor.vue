@@ -51,6 +51,7 @@
           :cell-count="cells.length"
           :structural-disabled="structuralDisabled"
           :dragging="drag.draggingId.value === cell.id"
+          :active="activeCellId === cell.id"
           :input-names="inputNames"
           :upstream-columns="upstreamColumns"
           :prior-cell-codes="cells.slice(0, index).map((c) => c.code)"
@@ -59,11 +60,15 @@
           :node-id="nodeId"
           @update:code="(code) => updateCellCode(cell.id, code)"
           @run-cell="() => runCell(cell.id)"
-          @run-cell-and-advance="() => runCellAndAdvance(cell.id, index)"
+          @run-cell-and-advance="() => runCellAndAdvance(cell.id)"
           @drag-start="(ev: PointerEvent) => drag.onHandlePointerDown(cell.id, ev)"
           @move-key="(dir: -1 | 1) => onMoveKey(index, dir)"
           @move-up="() => onMoveKey(index, -1)"
           @move-down="() => onMoveKey(index, 1)"
+          @duplicate="() => duplicateCell(cell.id)"
+          @insert-above="() => insertAbove(index)"
+          @insert-below="() => insertBelow(index)"
+          @focus="activeCellId = cell.id"
           @delete="() => deleteCell(cell.id)"
         />
 
@@ -74,7 +79,7 @@
           class="nb-insert-zone"
           :class="{ 'is-disabled': structuralDisabled }"
           title="Add cell here"
-          @click="insertCellAt(index)"
+          @click="insertBelow(index)"
         >
           <span class="nb-insert-plus"><i class="fa-solid fa-plus"></i></span>
         </div>
@@ -97,6 +102,7 @@ import type { NotebookCell } from "../../../../../types/node.types";
 import {
   applyOperation,
   cellMoveAnnouncement,
+  duplicateCell as duplicateCellOp,
   insertCell,
   moveCell as moveCellOp,
   moveCellBy,
@@ -104,7 +110,8 @@ import {
   removeCell,
   type OperationResult,
 } from "../../../../notebook/cellOperations";
-import { cellSelector, ownerIdForNode } from "../../../../notebook/editorViews";
+import { cellPresentation } from "../../../../notebook/cellPresentation";
+import { cellSelector, focusCell, ownerIdForNode } from "../../../../notebook/editorViews";
 import { findScrollParent, useCellDrag } from "../../../../notebook/useCellDrag";
 import { getCellHistory } from "../../../../notebook/useCellHistory";
 import NotebookCellComponent from "./NotebookCell.vue";
@@ -133,6 +140,7 @@ const executionCounter = ref(1);
 const isAnyExecuting = computed(() => executingCellId.value !== null);
 const hostRef = ref<HTMLElement | null>(null);
 const announcement = ref("");
+const activeCellId = ref<string | null>(null);
 
 const ownerId = computed(() => ownerIdForNode(props.flowId, props.nodeId));
 // Change 3 swaps this for isBatchActive(ownerId).
@@ -166,6 +174,16 @@ const focusDragHandle = (cellId: string) => {
   hostRef.value?.querySelector<HTMLElement>(`${cellSelector(cellId)} .nb-drag-handle`)?.focus();
 };
 
+// The parent re-renders (and a new cell registers its view) during the flush nextTick awaits.
+const focusAfterTick = (cellId: string | null) => {
+  if (!cellId) return;
+  // A collapsed editor is display:none and cannot take the caret, so reveal it first.
+  cellPresentation(ownerId.value, cellId).codeCollapsed = false;
+  nextTick(() => {
+    focusCell(ownerId.value, cellId, hostRef.value);
+  });
+};
+
 const updateCellCode = (cellId: string, code: string) => {
   emit(
     "update:cells",
@@ -173,20 +191,39 @@ const updateCellCode = (cellId: string, code: string) => {
   );
 };
 
-const addCell = () => {
+const insertAt = (index: number) => {
   if (structuralDisabled.value) return;
-  applyStructural(insertCell(props.cells, makeCell(), props.cells.length));
+  const cell = makeCell();
+  applyStructural(insertCell(props.cells, cell, index));
+  focusAfterTick(cell.id);
 };
 
-const insertCellAt = (afterIndex: number) => {
+const addCell = () => insertAt(props.cells.length);
+
+const insertAbove = (index: number) => insertAt(index);
+
+const insertBelow = (index: number) => insertAt(index + 1);
+
+const duplicateCell = (cellId: string) => {
   if (structuralDisabled.value) return;
-  applyStructural(insertCell(props.cells, makeCell(), afterIndex + 1));
+  const result = duplicateCellOp(props.cells, cellId, (src, id) => ({
+    id,
+    code: src.code,
+    output: null,
+  }));
+  if (!result || result.op.kind !== "duplicate") return;
+  applyStructural(result);
+  focusAfterTick(result.op.cell.id);
 };
 
 const deleteCell = (cellId: string) => {
+  const index = props.cells.findIndex((c) => c.id === cellId);
   const result = removeCell(props.cells, cellId, { minCells: 1 });
   if (!result) return;
+  // The next surviving cell takes the removed index; at the end, fall back to the previous one.
+  const nextFocusId = result.cells[Math.min(index, result.cells.length - 1)]?.id ?? null;
   applyStructural(result);
+  focusAfterTick(nextFocusId);
 };
 
 const moveCell = (index: number, direction: -1 | 1): MoveInfo | null => {
@@ -258,7 +295,8 @@ const updateCellOutput = (cellId: string, output: NotebookCell["output"]) => {
 };
 
 const runCell = async (cellId: string): Promise<boolean> => {
-  if (!props.kernelId) return false;
+  // One run at a time per notebook: overlapping runs would clobber the shared executingCellId.
+  if (!props.kernelId || isAnyExecuting.value) return false;
 
   // Capture code at start to avoid race conditions if cells change during execution
   const cell = props.cells.find((c) => c.id === cellId);
@@ -310,13 +348,14 @@ const runAllCells = async () => {
   }
 };
 
-const runCellAndAdvance = async (cellId: string, index: number) => {
-  await runCell(cellId);
-  if (index >= props.cells.length - 1) {
-    addCell();
-  }
-  // Note: actual focus management of the next cell's CodeMirror editor
-  // would require ref tracking. For v1, just adding the cell is sufficient.
+const runCellAndAdvance = (cellId: string) => {
+  if (isAnyExecuting.value) return;
+  const index = props.cells.findIndex((c) => c.id === cellId);
+  if (index < 0) return;
+  // Advance on submit, Jupyter-style — before the run, whose executing-cell guard blocks inserts.
+  if (index >= props.cells.length - 1) addCell();
+  else focusAfterTick(props.cells[index + 1].id);
+  void runCell(cellId);
 };
 
 const restartKernel = async () => {
