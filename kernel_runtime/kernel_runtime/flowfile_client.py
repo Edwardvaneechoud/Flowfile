@@ -837,17 +837,17 @@ def log(message: str, level: Literal["INFO", "WARNING", "ERROR"] = "INFO") -> No
 
 
 def log_info(message: str) -> None:
-    """Convenience wrapper: ``flowfile.log(message, level="INFO")``."""
+    """Convenience wrapper: ``flowfile_ctx.log(message, level="INFO")``."""
     log(message, level="INFO")
 
 
 def log_warning(message: str) -> None:
-    """Convenience wrapper: ``flowfile.log(message, level="WARNING")``."""
+    """Convenience wrapper: ``flowfile_ctx.log(message, level="WARNING")``."""
     log(message, level="WARNING")
 
 
 def log_error(message: str) -> None:
-    """Convenience wrapper: ``flowfile.log(message, level="ERROR")``."""
+    """Convenience wrapper: ``flowfile_ctx.log(message, level="ERROR")``."""
     log(message, level="ERROR")
 
 

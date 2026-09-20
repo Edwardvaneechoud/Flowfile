@@ -103,7 +103,8 @@ def _seed_namespace(live: dict | None) -> dict:
         from kernel_runtime import flowfile_client
 
         ns["flowfile_ctx"] = flowfile_client
-        ns["flowfile"] = flowfile_client
+        ns["display"] = flowfile_client.display
+        ns["explore"] = flowfile_client.explore
     except Exception:  # noqa: BLE001
         pass
     if live:

@@ -31,40 +31,6 @@ from kernel_runtime.lsp.models import (
 )
 
 
-class _DeprecatedFlowfileAlias:
-    """Backwards-compat alias for the renamed ``flowfile_ctx`` kernel global.
-
-    Forwards attribute access to the real ``flowfile_client`` module and emits
-    a one-shot ``DeprecationWarning`` per execution. The kernel injects an
-    instance under the legacy name ``flowfile`` so existing user code, saved
-    flows, and tutorials keep working while users migrate to ``flowfile_ctx``.
-    """
-
-    __slots__ = ("_target", "_warned")
-
-    def __init__(self, target):
-        object.__setattr__(self, "_target", target)
-        object.__setattr__(self, "_warned", False)
-
-    def __getattr__(self, name):
-        if not self._warned:
-            warnings.warn(
-                "The kernel global `flowfile` is deprecated; use `flowfile_ctx` "
-                "instead (e.g. `flowfile_ctx.read_input()`). The old name will "
-                "be removed in a future release.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            object.__setattr__(self, "_warned", True)
-        return getattr(self._target, name)
-
-    def __dir__(self):
-        return dir(self._target)
-
-    def __repr__(self):
-        return f"<DeprecatedFlowfileAlias for {self._target!r}>"
-
-
 logger = logging.getLogger(__name__)
 
 artifact_store = ArtifactStore()
@@ -551,28 +517,19 @@ def _run_user_code(
 
         exec_globals = _get_namespace(request.flow_id)
 
-        # Always update the kernel-context reference (context changes between
-        # executions). ``flowfile_ctx`` is the canonical name; ``flowfile``
-        # remains as a deprecation-warning alias so legacy user code keeps
-        # running. Include ``__name__`` and ``__builtins__`` so classes
-        # defined in user code get ``__module__ = "__main__"`` instead of
-        # ``builtins``, enabling cloudpickle to serialize them correctly.
+        # User-defined classes need __main__ as their module for cloudpickle.
         exec_globals["flowfile_ctx"] = flowfile_client
-        exec_globals["flowfile"] = _DeprecatedFlowfileAlias(flowfile_client)
         exec_globals["__builtins__"] = __builtins__
         exec_globals["__name__"] = "__main__"
+        # Preserve user bindings across notebook cells.
+        exec_globals.setdefault("display", flowfile_client.display)
+        exec_globals.setdefault("explore", flowfile_client.explore)
 
         with (
             warnings.catch_warnings(),
             contextlib.redirect_stdout(stdout_buf),
             contextlib.redirect_stderr(stderr_buf),
         ):
-            # Force the default warning filter so the ``flowfile`` deprecation
-            # warning is actually shown — Python's default config suppresses
-            # ``DeprecationWarning`` for non-``__main__`` callers, and ``exec``'s
-            # frame attribution is fragile. Scoped to user-code execution so the
-            # process-wide filter state is not mutated.
-            warnings.simplefilter("default", DeprecationWarning)
             # plt.show() is a harmless no-op under Agg; hide its warning.
             warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive", category=UserWarning)
 

@@ -19,6 +19,7 @@ from flowfile_core.configs.node_store import add_to_custom_node_store
 from flowfile_core.flowfile.code_generator import project_shim
 from flowfile_core.flowfile.code_generator.project_exporter import (
     FlowGraphToProjectConverter,
+    _ctx_import_statements,
     _insert_flowfile_ctx_import,
     export_flow_to_project,
     project_to_zip_bytes,
@@ -1423,7 +1424,8 @@ def test_insert_flowfile_ctx_import_handles_decorated_first_statement():
     decorator; the import must go ABOVE the decorator or the module is a SyntaxError."""
     # Decorated class as the first statement.
     out = _insert_flowfile_ctx_import(
-        "@nd.register\nclass N(nd.CustomNodeBase):\n    def process(self, m):\n        return m\n"
+        "@nd.register\nclass N(nd.CustomNodeBase):\n    def process(self, m):\n        return m\n",
+        ["import flowfile_ctx"],
     )
     ast.parse(out)  # would raise if spliced between @nd.register and `class`
     lines = out.splitlines()
@@ -1432,12 +1434,57 @@ def test_insert_flowfile_ctx_import_handles_decorated_first_statement():
     # Stacked decorators after a docstring + __future__ import: stay after __future__,
     # still above the first decorator.
     out2 = _insert_flowfile_ctx_import(
-        '"""doc"""\nfrom __future__ import annotations\n\n@deco_a\n@deco_b\nclass N:\n    pass\n'
+        '"""doc"""\nfrom __future__ import annotations\n\n@deco_a\n@deco_b\nclass N:\n    pass\n',
+        ["import flowfile_ctx"],
     )
     ast.parse(out2)
     l2 = out2.splitlines()
     assert l2.index("from __future__ import annotations") < l2.index("import flowfile_ctx")
     assert l2.index("import flowfile_ctx") < next(i for i, line in enumerate(l2) if line.startswith("@"))
+
+
+def test_ctx_import_statements_cover_qualified_and_bare_names():
+    assert _ctx_import_statements("x = 1\n") == []
+    assert _ctx_import_statements("flowfile_ctx.log_info('x')\n") == ["import flowfile_ctx"]
+    assert _ctx_import_statements("display(df)\n") == ["from flowfile_ctx import display"]
+    assert _ctx_import_statements("explore(df)\n") == ["from flowfile_ctx import explore"]
+    assert _ctx_import_statements("flowfile_ctx.log_info('x')\ndisplay(df)\n") == [
+        "import flowfile_ctx",
+        "from flowfile_ctx import display",
+    ]
+    assert _ctx_import_statements("self.display(df)\nwidget.explore()\n") == []
+    assert _ctx_import_statements("render = display\n") == ["from flowfile_ctx import display"]
+    assert _ctx_import_statements("# display(df)\ntext = 'explore(df)'\n") == []
+    assert _ctx_import_statements("def render(display):\n    display(df)\n") == []
+    assert _ctx_import_statements("from IPython.display import display\ndisplay(df)\n") == []
+    assert _ctx_import_statements("import flowfile_ctx\ndisplay(df)\n") == [
+        "from flowfile_ctx import display"
+    ]
+    assert _ctx_import_statements("from flowfile_ctx import display\nexplore(df)\n") == [
+        "from flowfile_ctx import explore"
+    ]
+
+
+def test_insert_bare_name_import_is_importable_and_ordered():
+    """Both statements land above the first decorator and keep __future__ first."""
+    out = _insert_flowfile_ctx_import(
+        '"""doc"""\nfrom __future__ import annotations\n\n@deco\nclass N:\n    pass\n',
+        ["import flowfile_ctx", "from flowfile_ctx import display, explore"],
+    )
+    ast.parse(out)
+    lines = out.splitlines()
+    assert lines.index("from __future__ import annotations") < lines.index("import flowfile_ctx")
+    assert lines.index("import flowfile_ctx") < lines.index("from flowfile_ctx import display, explore")
+    assert lines.index("from flowfile_ctx import display, explore") < next(
+        i for i, line in enumerate(lines) if line.startswith("@")
+    )
+
+
+def test_existing_context_import_does_not_skip_missing_helpers():
+    source = "import flowfile_ctx\ndisplay(df)\n"
+    out = _insert_flowfile_ctx_import(source, _ctx_import_statements(source))
+    assert "from flowfile_ctx import display\n" in out
+    assert out.count("import flowfile_ctx\n") == 1
 
 
 def test_subflow_custom_node_ships_flowfile_ctx_shim(tmp_path):

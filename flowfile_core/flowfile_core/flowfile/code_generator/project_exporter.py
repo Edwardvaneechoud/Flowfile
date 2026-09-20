@@ -18,9 +18,11 @@ import inspect
 import io
 import keyword
 import re
+import textwrap
 import zipfile
 from pathlib import Path
 
+from flowfile_core.flowfile.code_generator.base import referenced_kernel_globals
 from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 from flowfile_core.flowfile.code_generator.param_codegen import (
     SENTINEL_PREFIX,
@@ -133,23 +135,24 @@ def _read_shim_source() -> str:
         return inspect.getsource(project_shim)
 
 
-def _insert_flowfile_ctx_import(source: str) -> str:
-    """Insert ``import flowfile_ctx`` into a verbatim custom-node module.
+def _ctx_import_statements(source: str) -> list[str]:
+    """Return imports for unresolved kernel globals in a custom-node module."""
+    names = referenced_kernel_globals(source)
+    statements = ["import flowfile_ctx"] if "flowfile_ctx" in names else []
+    helpers = sorted(names & {"display", "explore"})
+    if helpers:
+        statements.append(f"from flowfile_ctx import {', '.join(helpers)}")
+    return statements
 
-    Placed after a leading module docstring and any ``from __future__`` imports
-    (which must stay first) and before the first other statement, so the node's
-    ``flowfile_ctx.*`` calls resolve against the shipped shim. No-op if the module
-    already imports flowfile_ctx.
-    """
+
+def _insert_flowfile_ctx_import(source: str, statements: list[str]) -> str:
+    """Insert imports after the module docstring and future imports, before decorators."""
+    if not statements:
+        return source
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return _insert_flowfile_ctx_import_fallback(source)
-    for stmt in tree.body:
-        if isinstance(stmt, ast.Import) and any(alias.name == "flowfile_ctx" for alias in stmt.names):
-            return source
-        if isinstance(stmt, ast.ImportFrom) and stmt.module == "flowfile_ctx":
-            return source
+        return _insert_flowfile_ctx_import_fallback(source, statements)
     insert_line = 1
     for stmt in tree.body:
         is_docstring = (
@@ -163,13 +166,13 @@ def _insert_flowfile_ctx_import(source: str) -> str:
         insert_line = decorators[0].lineno if decorators else stmt.lineno
         break
     lines = source.split("\n")
-    lines.insert(max(0, insert_line - 1), "import flowfile_ctx")
+    lines[max(0, insert_line - 1) : max(0, insert_line - 1)] = statements
     return "\n".join(lines)
 
 
-def _insert_flowfile_ctx_import_fallback(source: str) -> str:
+def _insert_flowfile_ctx_import_fallback(source: str, statements: list[str]) -> str:
     """Line-scan fallback for unparseable source: keep leading ``from __future__``
-    lines first, then insert the import."""
+    lines first, then insert the imports."""
     lines = source.split("\n")
     idx = 0
     for i, line in enumerate(lines):
@@ -178,7 +181,7 @@ def _insert_flowfile_ctx_import_fallback(source: str) -> str:
             idx = i + 1
         elif stripped and not stripped.startswith("#"):
             break
-    lines.insert(idx, "import flowfile_ctx")
+    lines[idx:idx] = statements
     return "\n".join(lines)
 
 
@@ -374,7 +377,8 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             "    ) as ctx:\n"
             "        exec(  # noqa: S102 - the node's own code, preserved byte-for-byte\n"
             f'            compile(_NODE_SOURCE, "<notebook node {settings.node_id}>", "exec"),\n'
-            '            {"flowfile_ctx": flowfile_ctx, "pl": pl, "__name__": "__main__"},\n'
+            '            {"flowfile_ctx": flowfile_ctx, "pl": pl, "__name__": "__main__",\n'
+            '             "display": flowfile_ctx.display, "explore": flowfile_ctx.explore},\n'
             "        )\n"
             "    return ctx.results()\n"
         )
@@ -642,9 +646,9 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             source = self._read_custom_node_source_file(custom_node_class)
             if source is None:
                 try:
-                    # Class-only fallback: prepend the node_designer imports the
-                    # full source file would otherwise carry.
-                    source = _CUSTOM_NODE_FALLBACK_IMPORTS + "\n\n" + inspect.getsource(custom_node_class)
+                    source = _CUSTOM_NODE_FALLBACK_IMPORTS + "\n\n" + textwrap.dedent(
+                        inspect.getsource(custom_node_class)
+                    )
                 except (OSError, TypeError) as e:
                     self.unsupported_nodes.append(
                         (node.node_id, node.node_type, f"Could not retrieve source code for user-defined node: {e}")
@@ -654,11 +658,16 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
                     )
                     return False
             module_name = self._unique_custom_module_name(class_name)
-            if re.search(r"\bflowfile_ctx\b", source):
-                # Node code uses the kernel-injected flowfile_ctx global; bind it to
-                # the shipped shim so the exported module runs standalone.
+            ctx_imports = _ctx_import_statements(source)
+            imports_ctx = any(
+                (isinstance(stmt, ast.Import) and any(a.name == "flowfile_ctx" for a in stmt.names))
+                or (isinstance(stmt, ast.ImportFrom) and stmt.module == "flowfile_ctx")
+                for stmt in ast.walk(ast.parse(source))
+            )
+            if ctx_imports or imports_ctx:
                 self._needs_flowfile_ctx = True
-                source = _insert_flowfile_ctx_import(source)
+            if ctx_imports:
+                source = _insert_flowfile_ctx_import(source, ctx_imports)
             self.module_files[f"custom_nodes/{module_name}.py"] = source if source.endswith("\n") else source + "\n"
             self._custom_node_modules[class_key] = module_name
         self.imports.add(f"from custom_nodes.{module_name} import {class_name}")

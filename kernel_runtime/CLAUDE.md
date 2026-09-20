@@ -9,7 +9,7 @@ Image flavours (selected by core, not by this package): **base** / **ml** / **li
 
 ## Layout
 - `kernel_runtime/main.py` — FastAPI app, `/execute` + clear/artifact/persistence/recovery/memory/display/health endpoints, per-flow namespace store, SIGUSR1 interrupt handling.
-- `kernel_runtime/flowfile_client.py` — the injected `flowfile_ctx` module: `read_input`/`read_inputs`/`read_first`/`publish_output`, in-memory + global artifacts, catalog `TableRef`/`SchemaRef`/`CatalogRef`, logging, `is_dry_run`, `display`/`explore` (Polars frames render as an interactive table / full Graphic Walker explorer via the `application/vnd.flowfile.{table,gwalker}+json` mimes), host→container path translation.
+- `kernel_runtime/flowfile_client.py` — the injected `flowfile_ctx` module: `read_input`/`read_inputs`/`read_first`/`publish_output`, in-memory + global artifacts, catalog `TableRef`/`SchemaRef`/`CatalogRef`, logging, `is_dry_run`, `display`/`explore` (also injected as bare names; Polars frames render as an interactive table / full Graphic Walker explorer via the `application/vnd.flowfile.{table,gwalker}+json` mimes), host→container path translation.
 - `kernel_runtime/artifact_store.py` — thread-safe in-memory artifact store keyed by `(flow_id, name)`, with lazy/eager disk recovery.
 - `kernel_runtime/artifact_persistence.py` — disk-backed cloudpickle persistence + `RecoveryMode` enum (`lazy`/`eager`/`clear`).
 - `kernel_runtime/serialization.py` — `detect_format` + (de)serialise for global artifacts (parquet/joblib/json/pickle, all via cloudpickle for pickle).
@@ -18,7 +18,7 @@ Image flavours (selected by core, not by this package): **base** / **ml** / **li
 - `entrypoint.sh` — installs `KERNEL_PACKAGES` (constraint-pinned) then `exec uvicorn kernel_runtime.main:app`.
 
 ## Key patterns & conventions
-- **Injected globals:** `flowfile_ctx` is the canonical name; `flowfile` is a deprecation-warning alias (`_DeprecatedFlowfileAlias` in `main.py`). New code/docs/tests use `flowfile_ctx`.
+- **Injected globals:** `flowfile_ctx`, `display`, and `explore`. The helpers use `setdefault` to preserve user bindings across cells; `flowfile` is no longer injected. `lsp/analysis.py::_seed_namespace` provides the same globals for Jedi. A trailing frame expression shows its repr; explicit `display`/`explore` calls render the data.
 - **Per-flow namespace:** `_namespace_store[flow_id]` persists variables across `/execute` cells (LRU, `_MAX_NAMESPACES` from `MAX_NAMESPACES`, default 20). `__name__` is set to `"__main__"` so user-defined classes cloudpickle correctly.
 - **Execution context:** request context lives in `contextvars` (`flowfile_client._context`); `flowfile_ctx` APIs only work during `/execute` and raise `RuntimeError` otherwise.
 - **Interrupts are per-execution, not per-kernel:** `_execute_sync` registers `exec_token -> generation` in `_exec_tokens`, and `POST /interrupt` takes an optional `{"exec_token": ...}` so a cancel names one cell. One kernel serves many flows, so a token whose cell already finished must interrupt **nothing** — falling back to `max(_running_execs)` there kills whichever flow started next. An empty/absent token keeps the legacy newest-cell behaviour for older core.

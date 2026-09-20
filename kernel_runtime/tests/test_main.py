@@ -457,36 +457,27 @@ class TestExecuteWithParquet:
         df_out = pl.read_parquet(str(output_dir / "main.parquet"))
         assert df_out["v"].to_list() == [10, 20]
 
-    def test_legacy_flowfile_alias_still_works_with_warning(self, client: TestClient, tmp_dir: Path):
-        """Legacy ``flowfile.foo()`` continues to forward to ``flowfile_ctx`` but
-        emits a ``DeprecationWarning`` so users migrate. Pins both halves of the
-        backward-compat contract: forwarding works AND warning fires.
-
-        (We assert via ``pytest.warns`` because pytest's warning subsystem
-        intercepts the warning before it reaches the kernel's ``stderr_buf``
-        redirect. In production there is no pytest interception, so the message
-        does reach the user-visible stderr panel.)"""
+    def test_legacy_flowfile_global_is_not_injected(self, client: TestClient, tmp_dir: Path):
         input_dir = tmp_dir / "inputs"
         output_dir = tmp_dir / "outputs"
         input_dir.mkdir()
         output_dir.mkdir()
 
         pl.DataFrame({"v": [1, 2, 3]}).write_parquet(str(input_dir / "main.parquet"))
+        payload = {
+            "node_id": 99,
+            "flow_id": 42,
+            "input_paths": {"main": [str(input_dir / "main.parquet")]},
+            "output_dir": str(output_dir),
+        }
 
-        code = "df = flowfile.read_input().collect()\nflowfile.publish_output(df)\n"
+        data = client.post("/execute", json={**payload, "code": "flowfile.read_input()\n"}).json()
+        assert data["success"] is False
+        assert "NameError" in data["error"]
+        assert "name 'flowfile' is not defined" in data["error"]
 
-        with pytest.warns(DeprecationWarning, match=r"flowfile_ctx"):
-            resp = client.post(
-                "/execute",
-                json={
-                    "node_id": 99,
-                    "code": code,
-                    "flow_id": 42,
-                    "input_paths": {"main": [str(input_dir / "main.parquet")]},
-                    "output_dir": str(output_dir),
-                },
-            )
-        data = resp.json()
+        code = "df = flowfile_ctx.read_input().collect()\nflowfile_ctx.publish_output(df)\n"
+        data = client.post("/execute", json={**payload, "code": code}).json()
         assert data["success"] is True, f"Execution failed: {data['error']}"
         df_out = pl.read_parquet(str(output_dir / "main.parquet"))
         assert df_out["v"].to_list() == [1, 2, 3]
@@ -1021,6 +1012,74 @@ class TestDisplayOutputs:
         assert data["success"] is True, f"Execution failed: {data['error']}"
         assert len(data["display_outputs"]) == 1
         assert data["display_outputs"][0]["mime_type"] == "application/vnd.flowfile.gwalker+json"
+
+    def test_bare_display_and_explore_are_injected(self, client: TestClient):
+        """``display``/``explore`` are callable without the ``flowfile_ctx.`` prefix."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 73,
+                "code": "import polars as pl\ndf = pl.DataFrame({'a': [1]})\ndisplay(df)\nexplore(df)",
+                "flow_id": 1,
+                "input_paths": {},
+                "output_dir": "",
+                "interactive": True,
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        mimes = [o["mime_type"] for o in data["display_outputs"]]
+        assert mimes == [
+            "application/vnd.flowfile.table+json",
+            "application/vnd.flowfile.gwalker+json",
+        ]
+
+    def test_bare_display_works_in_non_interactive_flow_runs(self, client: TestClient):
+        """A flow run (interactive=False) reaches the same bare names a cell does."""
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 74,
+                "code": "import polars as pl\ndisplay(pl.DataFrame({'a': [1]}))",
+                "flow_id": 1,
+                "input_paths": {},
+                "output_dir": "",
+                "interactive": False,
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        assert [o["mime_type"] for o in data["display_outputs"]] == ["application/vnd.flowfile.table+json"]
+
+    def test_user_binding_shadows_injected_display(self, client: TestClient):
+        """The namespace persists, so a user's own ``display`` survives the next cell."""
+        flow_id = 7311
+        first = client.post(
+            "/execute",
+            json={
+                "node_id": 75,
+                "code": "display = 5",
+                "flow_id": flow_id,
+                "input_paths": {},
+                "output_dir": "",
+                "interactive": True,
+            },
+        ).json()
+        assert first["success"] is True, f"Execution failed: {first['error']}"
+
+        second = client.post(
+            "/execute",
+            json={
+                "node_id": 76,
+                "code": "print(display)",
+                "flow_id": flow_id,
+                "input_paths": {},
+                "output_dir": "",
+                "interactive": True,
+            },
+        ).json()
+        assert second["success"] is True, f"Execution failed: {second['error']}"
+        assert second["stdout"].strip() == "5"
 
     def test_non_interactive_mode_no_auto_display(self, client: TestClient):
         """Non-interactive mode should not auto-display the last expression."""

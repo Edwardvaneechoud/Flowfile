@@ -2,7 +2,7 @@
 
 `flowfile_ctx` is the object your code talks to when Python runs on a kernel. It is available wherever kernel Python runs — inside a [Python Script node](kernels.md) on the canvas, and inside [catalog notebook](catalog/notebooks.md) cells. One API, two contexts: this page documents it once for both.
 
-The object is injected automatically. No import is needed — `flowfile_ctx` is already in scope inside any cell or Python Script node connected to a kernel.
+The object is injected automatically. No import is needed — `flowfile_ctx` is already in scope inside any cell or Python Script node connected to a kernel. The two display helpers are also bound as bare names, so `display(df)` and `explore(df)` work without the prefix.
 
 ## Which calls exist where
 
@@ -91,7 +91,9 @@ Both `pl.LazyFrame` and `pl.DataFrame` are accepted by `publish_output`.
 
 ### Displaying Results
 
-Use `flowfile_ctx.display()` to render rich output in the output panel:
+Use `display()` to render rich output in the output panel. It is bound as a bare
+name in every kernel-executed cell and node, so no prefix or import is needed —
+`flowfile_ctx.display()` is the same function if you prefer the explicit form.
 
 ```python
 # Display a matplotlib chart
@@ -100,7 +102,7 @@ import matplotlib.pyplot as plt
 fig, ax = plt.subplots()
 ax.bar(["A", "B", "C"], [10, 20, 15])
 ax.set_title("Sales by Category")
-flowfile_ctx.display(fig, title="Sales Chart")
+display(fig, title="Sales Chart")
 ```
 
 Supported display types:
@@ -120,20 +122,20 @@ A Polars `DataFrame` or `LazyFrame` renders as an interactive, sortable table
 
 ```python
 df = flowfile_ctx.read_input().collect()
-flowfile_ctx.display(df)               # interactive table
-flowfile_ctx.display(df, max_rows=500) # smaller cap
+display(df)               # interactive table
+display(df, max_rows=500) # smaller cap
 ```
 
-For ad-hoc visual exploration of a frame, use `flowfile_ctx.explore()` — it opens
-the full Graphic Walker explorer (a data grid plus a drag-to-chart visualization
-builder) inline:
+For ad-hoc visual exploration of a frame, use `explore()` — it opens the full
+Graphic Walker explorer (a data grid plus a drag-to-chart visualization builder)
+inline:
 
 ```python
-flowfile_ctx.explore(df)
+explore(df)
 ```
 
 !!! tip "Interactive mode"
-    In cell-execution mode, the last expression in your code is automatically displayed — similar to Jupyter notebooks. A bare `df` shows its **repr** (what the object is); call `flowfile_ctx.display(df)` for the interactive table or `flowfile_ctx.explore(df)` for the explorer.
+    In cell-execution mode, the last expression in your code is automatically displayed — similar to Jupyter notebooks. A bare `df` shows its **repr** (what the object is), so nothing is collected by accident; call `display(df)` for the interactive table or `explore(df)` for the explorer.
 
 ### Logging
 
@@ -315,7 +317,7 @@ df.collect().write_csv(output_path)
 
 ## `flowfile_ctx` API Reference
 
-The following functions are available inside kernel code via the `flowfile_ctx` object:
+The following functions are available inside kernel code via the `flowfile_ctx` object. `display` and `explore` are additionally bound as bare names.
 
 ### Data I/O
 
@@ -347,7 +349,8 @@ The following functions are available inside kernel code via the `flowfile_ctx` 
 
 | Function | Description |
 |----------|-------------|
-| `display(obj, title="")` | Render rich output (charts, images, HTML, text) |
+| `display(obj, title="")` | Render rich output (frames, charts, images, HTML, text) |
+| `explore(obj, title="")` | Open the Graphic Walker explorer for a Polars frame |
 | `log(message, level="INFO")` | Send a log message to the flow viewer |
 | `log_info(message)` | Shortcut for `log(message, "INFO")` |
 | `log_warning(message)` | Shortcut for `log(message, "WARNING")` |

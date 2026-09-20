@@ -798,7 +798,7 @@ function inferFromRhs(
   }
   // flowfile_ctx kernel reads (kernel-environment nodes): frame readers return
   // LazyFrames (DataFrame once .collect()ed); read_inputs() yields a dict.
-  const ctxRead = s.match(/^(?:flowfile_ctx|flowfile)\.(\w+)\s*\(/);
+  const ctxRead = s.match(/^flowfile_ctx\.(\w+)\s*\(/);
   if (ctxRead) {
     const fn = ctxRead[1];
     if (fn === "read_input" || fn === "read_first" || fn === "read_catalog_table") {
@@ -1175,14 +1175,13 @@ export function usePolarsAutocompletion(
   // catalog the Python Script editor uses (@/utils/flowfileCtxCompletions).
   function flowfileCtxSource(context: CompletionContext): CompletionResult | null {
     if (!isKernel()) return null;
-    const api = ffApiSource(context); // after `flowfile_ctx.` / `flowfile.`
+    const api = ffApiSource(context); // after `flowfile_ctx.`
     if (api) return api;
     const chain = ffCatalogChainSource(context); // after `.get_catalog(...)` etc.
     if (chain) return chain;
     const refVar = refVariableSource(context); // locals bound to a catalog/schema/table ref
     if (refVar) return refVar;
-    // Bare-word: suggest `flowfile_ctx` (and the deprecated `flowfile`) as the
-    // user starts an identifier — but not for member access or def-param lists.
+    // Kernel globals do not apply to member access or parameter names.
     if (precededByDot(context) || insideDefParams(context)) return null;
     const word = context.matchBefore(/[A-Za-z_]\w*/);
     if (!word && !context.explicit) return null;

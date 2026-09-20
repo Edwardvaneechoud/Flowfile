@@ -25,12 +25,12 @@ The **⋯** menu on a cell's toolbar holds the rest: **Insert above** and **Inse
 
 ## Talking to the catalog
 
-Cells see the catalog through the same `flowfile_ctx` API that Python Script nodes use:
+Cells see the catalog through the same `flowfile_ctx` API that Python Script nodes use. `display` and `explore` are bound as bare names, so they need no prefix:
 
 ```python
 lf = flowfile_ctx.read_catalog_table("sales_by_city")   # by name; schema= / namespace_id= to disambiguate
-flowfile_ctx.display(lf)                                 # interactive table
-flowfile_ctx.explore(lf)                                 # Graphic Walker explorer
+display(lf)                                              # interactive table
+explore(lf)                                              # Graphic Walker explorer
 ```
 
 Reads come back as LazyFrames; `flowfile_ctx.write_catalog_table` persists a result as a real catalog table, and `flowfile_ctx.publish_global` saves a Python object (a trained model, a config) as a [global artifact](index.md#global-artifacts) that survives across sessions and flows. The full cell-side API — inputs, outputs, display, artifacts — is documented in [The flowfile_ctx API](../kernel-api.md).
