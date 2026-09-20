@@ -24,7 +24,10 @@ import {
   getCellHistory,
   type CellHistory,
 } from "../components/notebook/useCellHistory";
-import { disposeOwnerPresentation } from "../components/notebook/cellPresentation";
+import {
+  disposeCellPresentation,
+  disposeOwnerPresentation,
+} from "../components/notebook/cellPresentation";
 import {
   beginExecution,
   bumpSessionEpoch,
@@ -247,6 +250,7 @@ export const useNotebookStore = defineStore("notebook", {
 
     _applyStructural(nb: OpenNotebook, result: OperationResult<NotebookCellModel>) {
       nb.cells = result.cells;
+      if (result.op.kind === "remove") disposeCellPresentation(ownerOf(nb), result.op.cell.id);
       getCellHistory<NotebookCellModel>(ownerOf(nb)).push({
         op: result.op,
         inverse: result.inverse,
@@ -415,12 +419,8 @@ export const useNotebookStore = defineStore("notebook", {
 
     async deleteNotebook(id: number) {
       await NotebookApi.remove(id);
-      // Free the namespace + close any open tab pointing at this notebook so a
-      // future notebook reusing the id never inherits stale variables.
+      // closeTab frees the namespace, so a future notebook reusing the id never inherits stale variables.
       const open = this.openNotebooks.find((n) => n.persistedId === id);
-      if (open?.kernelId) {
-        await KernelApi.clearNamespace(open.kernelId, -id).catch(() => undefined);
-      }
       if (open) this.closeTab(open.tabId);
       await this.loadList();
     },
@@ -569,6 +569,7 @@ export const useNotebookStore = defineStore("notebook", {
         return null;
       }
       nb.cells = result.cells;
+      if (result.op.kind === "remove") disposeCellPresentation(ownerOf(nb), result.op.cell.id);
       invalidateFrom(ownerOf(nb), refs(nb), affectedIndex(result.op), "upstream-changed");
       nb.dirty = true;
       this._schedulePersist();
