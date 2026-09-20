@@ -295,7 +295,8 @@ const updateCellOutput = (cellId: string, output: NotebookCell["output"]) => {
 };
 
 const runCell = async (cellId: string): Promise<boolean> => {
-  if (!props.kernelId) return false;
+  // One run at a time per notebook: overlapping runs would clobber the shared executingCellId.
+  if (!props.kernelId || isAnyExecuting.value) return false;
 
   // Capture code at start to avoid race conditions if cells change during execution
   const cell = props.cells.find((c) => c.id === cellId);
@@ -348,6 +349,7 @@ const runAllCells = async () => {
 };
 
 const runCellAndAdvance = (cellId: string) => {
+  if (isAnyExecuting.value) return;
   const index = props.cells.findIndex((c) => c.id === cellId);
   if (index < 0) return;
   // Advance on submit, Jupyter-style — before the run, whose executing-cell guard blocks inserts.

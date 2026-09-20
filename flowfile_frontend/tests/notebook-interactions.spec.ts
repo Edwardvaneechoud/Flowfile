@@ -117,6 +117,8 @@ const RUN_FAILURE = "RuntimeError: e2e kernel refused";
 interface KernelMockOptions {
   /** When set, execute_cell answers success:false with this error text. */
   failWith?: string;
+  /** Hold every execute_cell response this long, to observe in-flight state. */
+  delayMs?: number;
 }
 
 /**
@@ -154,6 +156,7 @@ async function mockKernel(page: Page, options: KernelMockOptions = {}) {
     }
     if (path.endsWith("/kernels/") || path.endsWith("/kernels")) return json([kernel]);
     if (path.endsWith("/execute_cell")) {
+      if (options.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs));
       return json({
         success: !options.failWith,
         output_paths: [],
@@ -939,7 +942,7 @@ test.describe("Python Script node notebook — cell actions and focus", () => {
 
   const NODE_HOST = ".notebook-cells";
   // One node per test: the drawer's cells are per-node state that outlives a reload.
-  const NODE_IDS = { advance: 1, duplicate: 2, collapse: 3, fail: 4 };
+  const NODE_IDS = { advance: 1, duplicate: 2, collapse: 3, fail: 4, overlap: 5 };
   const NODE_Y = 220;
   const nodeX = (nodeId: number) => 240 + (nodeId - 1) * 320;
   let authToken: string;
@@ -1052,6 +1055,36 @@ test.describe("Python Script node notebook — cell actions and focus", () => {
     await expect(cells).toHaveCount(2);
     const ids = await cellIds(page, NODE_HOST);
     await expectEditorFocused(page, ids[1]);
+  });
+
+  test("run-and-advance while a cell is running neither advances nor runs", async ({
+    page,
+    request,
+  }) => {
+    await mockKernel(page, { delayMs: 1500 });
+    await seedNodeKernel(request, NODE_IDS.overlap);
+    await openNodeNotebook(page, NODE_IDS.overlap);
+
+    const cells = cellRoots(page, NODE_HOST);
+    await typeIntoCell(page, cells, 0, "# slow");
+    await page.keyboard.press(RUN_ADVANCE);
+
+    // The advance lands immediately; the first cell is still in flight.
+    await expect(cells).toHaveCount(2);
+    const ids = await cellIds(page, NODE_HOST);
+    await expectEditorFocused(page, ids[1]);
+    const running = cells.nth(0).locator(".cell-executing");
+    await expect(running).toBeVisible();
+
+    // A second submit on the freshly focused cell must not start an overlapping run.
+    await page.keyboard.type("# second");
+    await page.keyboard.press(RUN_ADVANCE);
+    await expectStayedPut(page, ids[1], 2, NODE_HOST);
+    await expect(running).toBeVisible();
+
+    await expectRanCleanly(cells.nth(0));
+    await expect(running).toHaveCount(0);
+    await expect(cells.nth(1).locator(".cell-output")).toHaveCount(0);
   });
 
   test("duplicate copies the code and focuses the copy", async ({ page }) => {
