@@ -13,6 +13,7 @@ import warnings
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import Body, FastAPI, Query
 from pydantic import BaseModel, Field
@@ -21,8 +22,12 @@ from kernel_runtime import __version__, flowfile_client
 from kernel_runtime.artifact_persistence import ArtifactPersistence, RecoveryMode
 from kernel_runtime.artifact_store import ArtifactStore
 from kernel_runtime.lsp import analysis as lsp_analysis
+from kernel_runtime.lsp.dataframe_schemas import collect_dataframe_schemas
 from kernel_runtime.lsp.models import (
     CompleteResponse,
+    DataframeSchema,
+    DataframeSchemasRequest,
+    DataframeSchemasResponse,
     DiagnosticsResponse,
     HoverResponse,
     LspCapabilities,
@@ -75,6 +80,11 @@ artifact_store = ArtifactStore()
 _namespace_store: dict[int, dict] = {}
 _namespace_access: dict[int, float] = {}  # flow_id -> last access timestamp
 _MAX_NAMESPACES = int(os.environ.get("MAX_NAMESPACES", "20"))
+
+# Schema-cache identity: generation per namespace instance, revision per execution attempt.
+_namespace_generation: dict[int, str] = {}
+_namespace_revision: dict[int, int] = {}
+_executing_flow_ids: dict[int, int] = {}
 
 # Display outputs from the most recent execution of each node, retrievable by
 # the frontend after a flow run completes. Bounded (LRU) so base64-image / 10k-row
@@ -129,6 +139,8 @@ def _evict_oldest_namespace() -> None:
     oldest_flow_id = min(_namespace_access, key=lambda k: _namespace_access[k])
     _namespace_store.pop(oldest_flow_id, None)
     _namespace_access.pop(oldest_flow_id, None)
+    _namespace_generation.pop(oldest_flow_id, None)
+    _namespace_revision.pop(oldest_flow_id, None)
     logger.debug("Evicted namespace for flow_id=%d (LRU)", oldest_flow_id)
 
 
@@ -137,6 +149,8 @@ def _get_namespace(flow_id: int) -> dict:
     if flow_id not in _namespace_store:
         _evict_oldest_namespace()
         _namespace_store[flow_id] = {}
+        _namespace_generation[flow_id] = uuid4().hex
+        _namespace_revision[flow_id] = 0
     _namespace_access[flow_id] = time.time()
     return _namespace_store[flow_id]
 
@@ -145,6 +159,8 @@ def _clear_namespace(flow_id: int) -> None:
     """Clear the namespace for a flow (e.g., on kernel restart)."""
     _namespace_store.pop(flow_id, None)
     _namespace_access.pop(flow_id, None)
+    _namespace_generation.pop(flow_id, None)
+    _namespace_revision.pop(flow_id, None)
     _purge_display_outputs(flow_id)
 
 
@@ -450,6 +466,8 @@ class ExecuteResponse(BaseModel):
     stderr: str = ""
     error: str | None = None
     execution_time_ms: float = 0.0
+    namespace_generation: str | None = None
+    revision: int | None = None
 
 
 class ArtifactIdentifier(BaseModel):
@@ -468,6 +486,21 @@ class CleanupRequest(BaseModel):
 
 
 # Existing endpoints
+
+
+def _stamp_namespace_state(response: ExecuteResponse, flow_id: int) -> ExecuteResponse:
+    """Count this execution attempt and stamp the namespace identity onto the response.
+
+    Every exit of ``_execute_sync`` routes through here — success, user exception,
+    interrupt — because the editor treats a bumped revision as "the namespace may
+    have changed". A crash before the namespace existed leaves both fields None.
+    """
+    with _exec_lock:
+        if flow_id in _namespace_store:
+            _namespace_revision[flow_id] = _namespace_revision.get(flow_id, 0) + 1
+            response.namespace_generation = _namespace_generation.get(flow_id)
+            response.revision = _namespace_revision[flow_id]
+    return response
 
 
 def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
@@ -490,18 +523,22 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
         _running_execs[my_gen] = threading.get_ident()
         if request.exec_token:
             _exec_tokens[request.exec_token] = my_gen
+        _executing_flow_ids[request.flow_id] = _executing_flow_ids.get(request.flow_id, 0) + 1
     try:
-        return _run_user_code(request, start, stdout_buf, stderr_buf)
+        return _stamp_namespace_state(_run_user_code(request, start, stdout_buf, stderr_buf), request.flow_id)
     except BaseException as exc:  # noqa: BLE001 - never surface a stray interrupt as a 500
         elapsed = (time.perf_counter() - start) * 1000
-        return ExecuteResponse(
-            success=False,
-            stdout=stdout_buf.getvalue(),
-            stderr=stderr_buf.getvalue(),
-            error="Execution cancelled by user"
-            if isinstance(exc, KeyboardInterrupt)
-            else f"{type(exc).__name__}: {exc}",
-            execution_time_ms=elapsed,
+        return _stamp_namespace_state(
+            ExecuteResponse(
+                success=False,
+                stdout=stdout_buf.getvalue(),
+                stderr=stderr_buf.getvalue(),
+                error="Execution cancelled by user"
+                if isinstance(exc, KeyboardInterrupt)
+                else f"{type(exc).__name__}: {exc}",
+                execution_time_ms=elapsed,
+            ),
+            request.flow_id,
         )
     finally:
         with _exec_lock:
@@ -510,6 +547,11 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
                 _exec_tokens.pop(request.exec_token, None)
             if _interrupt_generation == my_gen:
                 _interrupt_generation = None
+            remaining = _executing_flow_ids.get(request.flow_id, 0) - 1
+            if remaining > 0:
+                _executing_flow_ids[request.flow_id] = remaining
+            else:
+                _executing_flow_ids.pop(request.flow_id, None)
 
 
 def _run_user_code(
@@ -728,6 +770,38 @@ async def lsp_diagnostics(request: LspRequest):
         return DiagnosticsResponse(diagnostics=[])
 
 
+@app.post("/lsp/dataframe_schemas", response_model=DataframeSchemasResponse)
+async def lsp_dataframe_schemas(request: DataframeSchemasRequest):
+    """Column names and dtypes of the Polars frames in a flow's namespace.
+
+    Never allocates a namespace, never reads a row, never resolves a LazyFrame.
+    Refuses to inspect a namespace with an execution in flight ("busy") — the
+    editor keeps its previous entry and retries.
+    """
+    with _exec_lock:
+        generation = _namespace_generation.get(request.flow_id)
+        revision = _namespace_revision.get(request.flow_id, 0)
+        busy = _executing_flow_ids.get(request.flow_id, 0) > 0
+    if generation is None:
+        return DataframeSchemasResponse()
+    if busy:
+        return DataframeSchemasResponse(namespace_generation=generation, revision=revision, state="busy")
+    live = _peek_namespace(request.flow_id)
+    try:
+        frames = await asyncio.wait_for(
+            asyncio.to_thread(collect_dataframe_schemas, live),
+            timeout=_LSP_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        return DataframeSchemasResponse(namespace_generation=generation, revision=revision)
+    return DataframeSchemasResponse(
+        namespace_generation=generation,
+        revision=revision,
+        state="ready",
+        dataframes=[DataframeSchema(**f) for f in frames],
+    )
+
+
 @app.post("/clear")
 async def clear_artifacts(flow_id: int | None = Query(default=None)):
     """Clear all artifacts, or only those belonging to a specific flow."""
@@ -738,6 +812,8 @@ async def clear_artifacts(flow_id: int | None = Query(default=None)):
     else:
         _namespace_store.clear()
         _namespace_access.clear()
+        _namespace_generation.clear()
+        _namespace_revision.clear()
         _display_output_store.clear()
         _artifact_preview_store.clear()
     return {"status": "cleared"}

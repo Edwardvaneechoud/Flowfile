@@ -6,7 +6,6 @@ import {
   RE_SCHEMA_CALL,
   RE_TABLE_CALL,
 } from "@/utils/flowfileCtxCompletions";
-import type { UpstreamColumn } from "./useUpstreamColumns";
 
 // The kernel-runtime `flowfile_ctx` API + catalog-ref completions live in a
 // shared, editor-agnostic module (also used by the Node Designer's process-code
@@ -275,42 +274,6 @@ export function createNamedInputCompletions(getInputNames: () => string[]): Comp
         detail: "input",
         info: "Connected input name",
         boost: 10,
-      })),
-      validFor: /^[^"]*$/,
-    };
-  };
-}
-
-/**
- * Build a completion source that suggests upstream column names inside `col("...")`
- * or `pl.col("...")`. Each column carries its data type as `detail` and its source
- * input as `info`. Accepts a getter so the source picks up newly-fetched schemas.
- */
-export function createUpstreamColumnCompletions(
-  getColumns: () => UpstreamColumn[],
-): CompletionSource {
-  return (context) => {
-    const columns = getColumns();
-    if (columns.length === 0) return null;
-    const match = context.matchBefore(/(?:pl\.)?col\(\s*"[^"]*/);
-    if (!match) return null;
-    const quoteIdx = match.text.lastIndexOf('"');
-    const partialStart = match.from + quoteIdx + 1;
-
-    // Dedupe by column name; if multiple inputs share a column name keep the first
-    const seen = new Map<string, UpstreamColumn>();
-    for (const col of columns) {
-      if (!seen.has(col.name)) seen.set(col.name, col);
-    }
-
-    return {
-      from: partialStart,
-      options: Array.from(seen.values()).map((col) => ({
-        label: col.name,
-        type: "property",
-        detail: col.data_type,
-        info: `Column from "${col.source_input}"`,
-        boost: 5,
       })),
       validFor: /^[^"]*$/,
     };

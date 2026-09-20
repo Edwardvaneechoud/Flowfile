@@ -34,6 +34,7 @@ def test_capabilities_enabled(client: TestClient):
     body = resp.json()
     assert body["enabled"] is True
     assert "complete" in body["features"]
+    assert "dataframe_schemas" in body["features"]
 
 
 def test_capabilities_disabled(client: TestClient):
@@ -76,6 +77,13 @@ def test_bridge_diagnostics_degrades(client: TestClient):
     resp = client.post("/kernels/no-such-kernel/lsp/diagnostics", json=_complete_payload())
     assert resp.status_code == 200
     assert resp.json() == {"diagnostics": []}
+
+
+def test_bridge_dataframe_schemas_degrades(client: TestClient):
+    settings.FLOWFILE_LSP_ENABLED.set(True)
+    resp = client.post("/kernels/no-such-kernel/lsp/dataframe_schemas", json={"flow_id": -1})
+    assert resp.status_code == 200
+    assert resp.json() == {"namespace_generation": "", "revision": 0, "state": "unavailable", "dataframes": []}
 
 
 def test_admin_flag_get_and_set(client: TestClient):

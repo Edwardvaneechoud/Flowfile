@@ -190,6 +190,8 @@ const props = defineProps<{
   dragging?: boolean;
   /** Code of cells before this one, for scope/ref completions. */
   priorCellCodes?: string[];
+  /** Cells before this one with their ids, so column inference can date each assignment. */
+  priorCells?: { id: string; code: string }[];
   /** Kernel + namespace identity for Jedi code intelligence (sessionFlowId as flow_id). */
   kernelId?: string | null;
   flowId?: number;
@@ -236,6 +238,10 @@ const extensions = [
     onRun: () => emit("run"),
     onRunAdvance: () => emit("run-advance"),
     getPriorCellCodes: () => props.priorCellCodes ?? [],
+    getPriorCells: () => props.priorCells ?? [],
+    getOwnerId: () => props.ownerId,
+    getCellId: () => props.cell.id,
+    getSurface: () => "catalog",
     getKernelId: () => props.kernelId ?? null,
     getFlowId: () => props.flowId ?? 0,
     getNodeId: () => props.nodeId ?? 0,

@@ -240,7 +240,7 @@ class TestResolveLocalImage:
         stale.attrs = {"Created": "2026-06-06T14:50:09Z"}
         client.images.list.return_value = [stale]
         result = _resolve_local_image(
-            ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.5.4"
+            ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.5.5"
         )
         assert result is None
 
@@ -252,7 +252,7 @@ class TestResolveLocalImage:
         fresh.attrs = {"Created": "2026-09-01T00:00:00Z"}
         client.images.list.return_value = [fresh]
         result = _resolve_local_image(
-            ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.5.4"
+            ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.5.5"
         )
         assert result == "flowfile-kernel-lite:local"
 

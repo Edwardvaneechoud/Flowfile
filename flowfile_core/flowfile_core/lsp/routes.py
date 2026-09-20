@@ -12,7 +12,7 @@ from flowfile_core.lsp.models import LspCapabilities
 
 router = APIRouter()
 
-_FEATURES = ["complete", "hover", "signature", "diagnostics"]
+_FEATURES = ["complete", "hover", "signature", "diagnostics", "dataframe_schemas"]
 
 
 @router.get("/lsp/capabilities", response_model=LspCapabilities)

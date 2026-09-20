@@ -66,3 +66,28 @@ class LspCapabilities(BaseModel):
     enabled: bool = True
     version: str = ""
     features: list[str] = []
+
+
+class DataframeSchemasRequest(BaseModel):
+    flow_id: int  # namespace/session key, same value the cell executes with
+    node_id: int | None = None  # optional, unused in v1
+
+
+class DataframeColumn(BaseModel):
+    name: str
+    dtype: str  # str(polars dtype), e.g. "Int64"
+
+
+class DataframeSchema(BaseModel):
+    name: str  # the variable name in the namespace
+    kind: str  # DataFrame | LazyFrame
+    state: str  # ready | unresolved (LazyFrames are never resolved here)
+    columns: list[DataframeColumn] = []
+    truncated: bool = False  # column list hit the per-frame cap
+
+
+class DataframeSchemasResponse(BaseModel):
+    namespace_generation: str = ""
+    revision: int = 0
+    state: str = "unavailable"  # ready | busy | unavailable
+    dataframes: list[DataframeSchema] = []

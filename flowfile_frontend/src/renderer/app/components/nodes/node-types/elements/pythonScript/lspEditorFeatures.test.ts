@@ -1,18 +1,27 @@
 import { describe, it, expect, vi } from "vitest";
 import { EditorState, Text } from "@codemirror/state";
 import { CompletionContext } from "@codemirror/autocomplete";
+import { python } from "@codemirror/lang-python";
 import type { Tooltip } from "@codemirror/view";
 
 // The hover/signature modules reach the API layer, which boots axios + auth on import.
 vi.mock("@/api/lsp.api", () => ({ LspApi: { capabilities: vi.fn(), hover: vi.fn() } }));
 
-import { insideCall, lspDiagnosticToRange, notInAsBinding } from "./lspPositions";
+import { insideCall, insideString, lspDiagnosticToRange, notInAsBinding } from "./lspPositions";
 import { signatureCoversHover } from "./lspHover";
-import { setSigTooltip, sigTooltipField } from "./lspSignature";
+import { setSigTooltip, sigTooltipField, signatureApplies } from "./lspSignature";
 import type { LspDiagnostic } from "@/api/lsp.api";
 
 function stateFor(code: string): EditorState {
   return EditorState.create({ doc: code });
+}
+
+// `|` marks the caret; string positions need the real grammar, so these states carry python().
+function pyStateAt(source: string): { state: EditorState; pos: number } {
+  const pos = source.indexOf("|");
+  if (pos < 0) throw new Error(`no caret marker in ${JSON.stringify(source)}`);
+  const doc = source.slice(0, pos) + source.slice(pos + 1);
+  return { state: EditorState.create({ doc, extensions: [python()] }), pos };
 }
 
 function ctxFor(code: string, pos: number): CompletionContext {
@@ -48,6 +57,93 @@ describe("insideCall (signature-help trigger)", () => {
   it("is false after balanced nested calls", () => {
     const code = "outer(inner())";
     expect(insideCall(stateFor(code), code.length)).toBe(false);
+  });
+});
+
+describe("insideString (caret in a string literal)", () => {
+  function at(source: string): boolean {
+    const { state, pos } = pyStateAt(source);
+    return insideString(state, pos);
+  }
+
+  it("is true inside a double-quoted string", () => {
+    expect(at('orders.rename({"a|"})')).toBe(true);
+  });
+
+  it("is true right after the opening quote", () => {
+    expect(at('orders.rename({"|"})')).toBe(true);
+  });
+
+  it("is true inside a single-quoted string", () => {
+    expect(at("orders.select('am|')")).toBe(true);
+  });
+
+  it("is true inside an f-string", () => {
+    expect(at('print(f"am|ount")')).toBe(true);
+  });
+
+  it("is true right after an escape sequence, which resolves below the string", () => {
+    expect(at('orders.select("a\\n|b")')).toBe(true);
+  });
+
+  it("is true anywhere under an f-string, replacement fields included", () => {
+    expect(at('print(f"{orders.rename(|)}")')).toBe(true);
+  });
+
+  it("is true inside an unterminated string, including at its end", () => {
+    expect(at('orders.rename({"|')).toBe(true);
+    expect(at('orders.select("amount|')).toBe(true);
+  });
+
+  it("is false before the opening quote of a prefixed string", () => {
+    expect(at('print(f|"amount")')).toBe(false);
+    expect(at('print(r|"amount")')).toBe(false);
+  });
+
+  it("is false right after the closing quote, still inside the call", () => {
+    expect(at('orders.select("amount"|)')).toBe(false);
+    expect(at("orders.select('amount'|)")).toBe(false);
+    expect(at('print(f"amount"|)')).toBe(false);
+  });
+
+  it("is false outside any string", () => {
+    expect(at("orders.rename(|)")).toBe(false);
+    expect(at("x = 1|")).toBe(false);
+  });
+});
+
+describe("signatureApplies (signature help vs. string arguments)", () => {
+  function at(source: string): boolean {
+    const { state, pos } = pyStateAt(source);
+    return signatureApplies(state, pos);
+  }
+
+  it("does not query while the caret sits in a double-quoted argument", () => {
+    expect(at('orders.rename({"|"})')).toBe(false);
+    expect(at('orders.select("amo|")')).toBe(false);
+  });
+
+  it("does not query in a single-quoted or f-string argument", () => {
+    expect(at("orders.select('amo|')")).toBe(false);
+    expect(at('print(f"amo|unt")')).toBe(false);
+  });
+
+  it("does not query in an unterminated string argument", () => {
+    expect(at('orders.rename({"|')).toBe(false);
+    expect(at('orders.select("amount|')).toBe(false);
+  });
+
+  it("still applies after the closing quote, inside the parens", () => {
+    expect(at('orders.select("amount"|)')).toBe(true);
+    expect(at('orders.select("amount", |)')).toBe(true);
+  });
+
+  it("still applies with no string in play", () => {
+    expect(at("orders.rename(|)")).toBe(true);
+  });
+
+  it("does not apply outside a call", () => {
+    expect(at("orders.rename()|")).toBe(false);
   });
 });
 

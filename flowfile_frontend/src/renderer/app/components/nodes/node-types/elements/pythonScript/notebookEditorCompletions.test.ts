@@ -13,8 +13,15 @@ vi.mock("@/api/lsp.api", () => ({
     hover: vi.fn(),
     signature: vi.fn(),
     diagnostics: vi.fn(),
+    dataframeSchemas: vi.fn(),
     resetCapabilitiesCache: vi.fn(),
   },
+}));
+vi.mock("@/api/catalog.api", () => ({
+  CatalogApi: { resolveTableStrict: vi.fn() },
+}));
+vi.mock("@/stores/catalog-store", () => ({
+  useCatalogStore: () => ({ tree: [] }),
 }));
 
 import { LspApi } from "@/api/lsp.api";
@@ -130,6 +137,34 @@ describe("buildNotebookCompletionSources", () => {
     const code = 'flowfile_ctx.read_input("';
     const labels = (await allOptions(opts, code, code.length)).map((o) => o.label);
     expect(labels).toContain("main");
+  });
+
+  it("registers the dataframe column source: one row per input, none from any other source", async () => {
+    const opts = optsFor({
+      getKernelId: () => "k1",
+      getFlowId: () => 1,
+      getUpstreamColumns: () => [
+        { name: "id", data_type: "Int64", source_input: "main" },
+        { name: "id", data_type: "String", source_input: "lookup" },
+      ],
+    });
+    const code = 'pl.col("';
+    const options = await allOptions(opts, code, code.length);
+    expect(options.map((o) => `${o.label} → ${o.detail}`)).toEqual([
+      "id → Int64 · input main",
+      "id → String · input lookup",
+    ]);
+  });
+
+  it("serves column rows with no kernel selected", async () => {
+    const opts = optsFor({
+      getKernelId: () => null,
+      getUpstreamColumns: () => [{ name: "city", data_type: "String", source_input: "main" }],
+    });
+    const code = "orders.select('";
+    const options = await allOptions(opts, code, code.length);
+    expect(options.map((o) => o.label)).toEqual(["city"]);
+    expect(mockComplete).not.toHaveBeenCalled();
   });
 
   it("drops `info` so the docs panel never opens while typing, but keeps `detail`", async () => {

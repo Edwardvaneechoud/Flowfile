@@ -141,9 +141,7 @@ Tests: NEW `NB/notebookRuntimeState.test.ts`; extend `APP/stores/notebook-store.
 
 ### Status
 
-Not started. `dataframe_schemas` appears nowhere in `kernel_runtime/` or
-`flowfile_core/`, and none of the frontend modules below exist.
-`PY/useUpstreamColumns.ts` remains the only column source for node notebooks.
+Shipped. Kernel 0.5.5 serves `POST /lsp/dataframe_schemas` over a generation/revision-stamped namespace, core bridges it at `POST /kernels/{id}/lsp/dataframe_schemas`, and `PY/dataframeColumnCompletions.ts` resolves a column position against static source inference (catalog refs, node inputs, literal frames, the transfer rules) first and the kernel's last-run schemas second. `PY/useUpstreamColumns.ts` now feeds only the unresolved-receiver fallback rows. Verified against a live 0.5.5 kernel in the browser on both surfaces.
 
 ### Exact initial support
 
@@ -200,22 +198,242 @@ The runtime mints a generation when a namespace is created, including after LRU 
 
 No pre-execution dtype inference for arbitrary with_columns expressions, aggregations, joins, Python functions, dynamic table names, or dynamic selectors in this change. After an eager result has executed, its observed schema is available. Unresolved LazyFrames remain visibly unresolved until supported catalog/input inference supplies their schema. No missing-column squiggles in this release.
 
+### Design (decided 2026-09-20)
+
+This section is the build contract for Change 4. Where it is more specific than
+"Implement" above, it wins; where it widens a rule, it says so and why.
+
+#### What the user experiences
+
+1. **Column names appear the moment you open a quote in a column position** —
+   `orders.select("`, `orders.group_by('`, `orders.filter(pl.col("`, `orders["` —
+   and each row shows the column name, its dtype and where that knowledge came
+   from. Nothing has to run first: a frame read from a catalog table or a node
+   input already has a schema, and a plain chain of `select` / `rename` / `drop`
+   (and row-only operations such as `filter`, `sort`, `head`, `unique`) keeps it.
+2. **Running a cell adds what the kernel actually observed.** An eager
+   `DataFrame` (anything `.collect()`ed) reports its real columns and dtypes after
+   the run, labelled `last run`. If the cell that produced the frame has changed
+   since (or its badge says it is stale), the label becomes `last run, outdated`
+   — the same story the amber badges from Change 3 already tell.
+3. **When the editor cannot know, it says nothing rather than guessing.** After
+   a `join`, `agg`, `with_columns`, a dynamic table name, or an uncollected
+   `LazyFrame` past an unsupported transform, the popup does not appear. In a
+   Python Script node the one exception is deliberate: `pl.col("` with an
+   unresolved (or absent) receiver lists every input's columns, each row labelled
+   with its input, so `id · Int64 · input main` and `id · String · input lookup`
+   stay two rows. A catalog notebook never guesses a receiver.
+4. **Both quote styles, string lists, multiline calls and unfinished strings all
+   work.** A column name containing the active quote or a backslash is escaped on
+   insert. Accepting a row replaces the whole string content, not just the prefix.
+5. **Nothing reads data.** No `collect`, no LazyFrame plan resolution, no
+   user-defined property or `repr`. The kernel reports names and dtypes of eager
+   frames only.
+6. **Reset session, kernel switch or restart forget the `last run` knowledge;
+   the static knowledge stays.** An old kernel image or a disabled LSP behaves
+   the same: static column completions keep working, `last run` rows are absent.
+7. **Typing never waits on the kernel.** Schema metadata is fetched when a
+   notebook opens on a live kernel and after a run settles, never per keystroke.
+
+#### One resolution engine
+
+The receiver of a column position is an **expression**, not a name. The engine
+infers the schema of an expression by walking it:
+
+- `VariableName` → the last top-level assignment to that name *before this
+  point* (prior cells in notebook order, then the current cell up to the
+  cursor), and the RHS is inferred *as of that assignment*, so `df = df.select(...)`
+  refers to the previous `df`. Resolution indices strictly decrease, so it
+  terminates without a visited set (a depth cap of 32 guards pathological chains).
+  Tuple/starred/augmented assignments and nested (indented) assignments are ignored.
+- `CallExpression` on a `MemberExpression` → infer the object, then apply the
+  method rule below.
+- A **root** call produces a schema from outside the source (next section).
+- Anything else → unresolved.
+
+Every result carries `columns` (`{name, dtype}`; dtype may be `""` when only
+names are known), `kind` (`DataFrame | LazyFrame | unknown`), `provenance`
+(`source | runtime`), a `sourceLabel`, and `outdated`.
+
+**Method rules** (applied to a resolved receiver schema; any other method, or a
+supported method with non-literal arguments, stops inference → unresolved):
+
+| Method | Effect on schema |
+| --- | --- |
+| `select(args)` | subset in argument order. Accepted args: `"a"`, `["a", "b"]`, `pl.col("a")`, `pl.col("a").alias("x")` (dtype of `a`), keyword `x=pl.col("a")`. A name missing from the input stops. |
+| `rename({"a": "b"})` | renamed, dtype kept. Missing key or non-dict stops. |
+| `drop("a", ["b"])` | removed. Missing name stops. |
+| `collect()` / `lazy()` | schema kept; kind becomes `DataFrame` / `LazyFrame`. |
+| `filter`, `sort`, `head`, `tail`, `limit`, `slice`, `unique`, `drop_nulls`, `reverse`, `clone`, `cache`, `rechunk` | schema kept (row-only; can never be wrong). *Widens Decision 4: the risk that decision guarded against — offering an incorrect schema — cannot occur for these.* |
+| `group_by(...)` | schema kept, flagged `grouped` so `pl.col` inside the following `.agg(` sees the pre-group columns; `.agg(...)` itself stops. |
+| `with_columns`, `join`, `agg`, `pivot`, `explode`, `unnest`, `pipe`, `map_*`, `__getitem__`, everything else | stop. |
+
+**Roots:**
+
+| Root expression (literal arguments only) | Schema source | kind |
+| --- | --- | --- |
+| `flowfile_ctx.read_input("x")`, `read_input()` (= `"main"`), `read_first("x")` (`flowfile.` alias too) | node input `x` from `useUpstreamColumns` (columns grouped by `source_input`) | LazyFrame |
+| `flowfile_ctx.read_catalog_table("t")`, `(..., schema="s")`, `(..., namespace_id=N)` | catalog table metadata (strict resolve, below) | LazyFrame |
+| `flowfile_ctx.get_catalog("c").get_schema("s").read_table("t")` and `.get_table_ref("t").read()` | same | LazyFrame |
+| `pl.DataFrame({"a": ..., "b": ...})`, `pl.LazyFrame({...})`, `pl.from_dict({...})` | names from the literal string keys, dtype `""` | as constructed |
+| a name the kernel knows (last executed namespace) | runtime metadata, `provenance: runtime` | as reported |
+
+Precedence for a variable: a resolved current-source chain wins; otherwise the
+runtime entry (`last run`); otherwise unresolved. The one exception is a chain
+that knows only names and no dtypes (a literal `pl.DataFrame({...})` root): when
+the runtime knows the same variable with exactly the same column-name set, the
+runtime entry wins, so the literal frame picks up the dtypes the kernel observed.
+The runtime entry is
+**outdated** when the cell holding the variable's last assignment (prior cell or
+the current cell) is unrun, stale (any `staleReason`), or edited since submission
+(`sourceRevision !== submittedRevision`). A runtime name with no assignment in
+the visible source (another node on the same flow, a deleted cell) is plain
+`last run`.
+
+#### Column positions (where the popup fires)
+
+Located on the CodeMirror syntax tree (`syntaxTree` / `ensureSyntaxTree`, never a
+regex): `resolveInner(pos, -1)` must land on a `String` that starts with a single
+`'` or `"` (no prefix letter, no triple quote; `FormatString` rejected). An
+unterminated string is still a `String` node, so one path covers finished and
+unfinished literals. Climb: `String` → (`ArrayExpression`)? → `ArgList` → `CallExpression`.
+
+| Enclosing call | Receiver expression | Fires when |
+| --- | --- | --- |
+| `<expr>.select / with_columns / filter / sort / group_by / agg / drop / unique / drop_nulls / explode / partition_by ("…")` | `<expr>` | always (the receiver's schema *before* the call is what `with_columns` needs) |
+| `<expr>.rename({"…"` (dict **key** position only) | `<expr>` | always |
+| `<expr>["…"]` (`MemberExpression` subscript) | `<expr>` | only when the receiver resolves with `kind === "DataFrame"` |
+| `pl.col / col / pl.exclude / pl.sum / pl.mean / pl.min / pl.max / pl.first / pl.last / pl.median / pl.n_unique / pl.std / pl.var ("…")` | the nearest enclosing call from the first row (climb ≤ 8 levels from the `col` call) | with a receiver: that schema; without one → **bare-col** |
+
+Bare-col and an **unresolved receiver** behave the same: node surface → every
+upstream column, one row per input, `detail: "<dtype> · input <name>"`; catalog
+surface → null. Subscript never falls back.
+
+Result shape: `from` = first content offset, `to` = end of the string content
+(the closing quote excluded, or `pos` when unfinished), `validFor` =
+`/^[^"\\]*$/` or `/^[^'\\]*$/` by quote, `apply` set only when the label contains
+the active quote or a backslash, options `{label, type: "property", detail, boost: 6}`.
+`detail` carries dtype and source because `withoutInfo` strips `info`.
+
+**Labels** (`detail`): `Float64 · orders` (static, receiver variable name);
+`Float64 · orders (catalog)` / `Int64 · main (input)` when the receiver is a
+root call rather than a variable; `Float64 · orders (last run)`;
+`Float64 · orders (last run, outdated)`; `Int64 · input main` (fallback rows);
+` · ` alone precedes the source when dtype is `""`.
+
+#### Runtime metadata lifecycle
+
+Kernel (`RUNTIME/main.py`): `_namespace_generation[flow_id]` (uuid4 hex, minted
+in `_get_namespace` on creation — the only creation site, so LRU recreation
+mints a new one), `_namespace_revision[flow_id]` (0 on creation, +1 after every
+execution attempt including failures and interrupts, stamped onto
+`ExecuteResponse.namespace_generation/revision` through one exit path in
+`_execute_sync`), `_executing_flow_ids[flow_id]` (refcount held for the whole of
+`_execute_sync`). `_evict_oldest_namespace`, `_clear_namespace` and the
+no-`flow_id` `/clear` branch drop the bookkeeping with the namespace.
+
+`POST /lsp/dataframe_schemas` `{flow_id, node_id?}` → `{namespace_generation,
+revision, state, dataframes}` with top-level `state`:
+`unavailable` (no namespace → never allocates one; or timeout),
+`busy` (refcount > 0: generation/revision present, `dataframes` empty),
+`ready`. Collection runs in `asyncio.to_thread` under `_LSP_TIMEOUT_S` over
+`_peek_namespace`'s copy. Per frame: `state: ready` for eager frames with
+`columns`, `state: unresolved` with no columns for `LazyFrame`s. Caps: 100
+frames (alphabetical), 2 000 columns per frame with `truncated: true`.
+
+Frontend (`NB/useDataframeSchemas.ts`, module cache keyed by owner id, read
+synchronously by the completion source): entry `{kernelId, flowId, generation,
+revision, frames: Map<name, schema>}`. Refresh points: attach (notebook opened
+with a kernel selected), execution settled with any verdict but `discard`,
+session epoch bump (invalidate, forget the last seen generation, then refresh —
+the new kernel may already hold this flow's namespace, under a generation of its
+own), explicit call. **Batch-aware:** a settle schedules the
+refresh on a macrotask and skips it while `isBatchActive(ownerId)`, so Run All
+produces one request at the end instead of one per cell. A response is accepted
+only when the owner's kernel/flow are unchanged, its generation matches the last
+generation seen on a settle (when one is known), and its revision is not older
+than the cached one. `busy` keeps the current entry and retries once after
+1.5 s; `unavailable` drops it. A settle whose `namespace_generation` differs from
+the cached entry drops the entry before refreshing.
+
+#### Catalog and input roots
+
+`NB/catalogRefResolver.ts` scans sources for the literal catalog root forms and
+resolves each distinct reference **once** through `GET /catalog/tables/resolve`
+with `strict=true` (`namespace_id=N` → `q=t&namespace_id=N`; `schema="s"` or a
+3-part chain → `q="s.t"`, using `catalogStore.tree` to map `catalog → schema →
+namespace_id` when loaded; bare `t` → `q=t`). 404 and 409 (ambiguous) both mean
+unresolved. Results are memoized per reference key with in-flight dedupe;
+negative results expire after 30 s so a table created later becomes visible.
+Refs found in prior cells are pre-resolved on attach and after each settle; a
+ref typed in the current cell resolves lazily the first time the completion
+source needs it (the source returns a promise for that one call, synchronous
+otherwise). Never a read, never a collect. Node inputs come from
+`useUpstreamColumns` (dtypes as the flow reports them).
+
+#### Safety rules (backend)
+
+- Type dispatch uses `type(obj)` and `issubclass`, never `isinstance` on the
+  object (a `__class__` property could lie) and never `getattr` on unknown objects.
+- Eager schemas are read through the base-class getter
+  (`pl.DataFrame.schema.__get__(obj)`), so a user subclass overriding `schema`
+  is never invoked; `LazyFrame`s get no attribute access at all; `pl.Series`,
+  pandas and everything else are ignored.
+- Names starting with `_`, plus `flowfile_ctx` and `flowfile`, are skipped;
+  non-`str` keys ignored; each frame's body is wrapped in `try/except Exception:
+  continue`.
+- The response never contains a row value; a test plants a sentinel string
+  value in a frame and asserts it is absent from `resp.text`.
+
+#### Degradation matrix
+
+| Situation | Static (catalog/input/literal) rows | `last run` rows |
+| --- | --- | --- |
+| No kernel selected | yes | no |
+| Kernel stopped / starting | yes | no (bridge returns `{}` → unavailable) |
+| Kernel image < 0.5.5 | yes | no (404 → `{}`; core logs once per `(kernel, op)`) |
+| `FLOWFILE_LSP_ENABLED` off | yes (no request is made) | no |
+| Kernel busy for this flow | yes | previous entry kept, one retry |
+| Reset session / kernel switch | yes | dropped until the next run |
+| Namespace evicted (LRU) | yes | dropped on the next settle (generation changed) |
+
+#### Module map
+
+Backend: `RUNTIME/lsp/dataframe_schemas.py` (pure collector), `RUNTIME/main.py`
+(bookkeeping + endpoint), `RUNTIME/lsp/models.py` ≡ `CORE/lsp/models.py`
+(four new models, byte-identical field lists), `RUNTIME/lsp/analysis.py` and
+`CORE/lsp/routes.py` `_FEATURES += "dataframe_schemas"`, `CORE/kernel/routes.py`
+(`_lsp_forward` widened to `BaseModel`, new route), `CORE/kernel/manager.py`
+(`_lsp_unsupported_warned: set[tuple[str, str]]`, op-aware warning text),
+`CORE/kernel/models.py` (`ExecuteResult` + two optional fields), kernel 0.5.5
+(`make bump-version-kernel VERSION=0.5.5` + `images.py` pins).
+
+Frontend: `APP/api/lsp.api.ts` (`dataframeSchemas`), `APP/types/kernel.types.ts`,
+`APP/api/catalog.api.ts` (`resolveTableStrict`), `PY/dataframeColumnContext.ts`
+(positions), `PY/dataframeSchemaInference.ts` (engine, roots, method rules,
+memoized per-cell assignment index), `NB/catalogRefResolver.ts`,
+`NB/useDataframeSchemas.ts`, `PY/dataframeColumnCompletions.ts` (the
+CompletionSource), `PY/notebookEditor.ts` (options `getOwnerId`, `getCellId`,
+`getPriorCells` `{id, code}[]`, `getSurface`; registration; removal of
+`createUpstreamColumnCompletions`), wiring in `CatalogNotebookCell.vue`,
+`NotebookCell.vue`, `NotebookEditor.vue`, `NotebookPanel.vue`, `PythonScript.vue`.
+
 ### Done when
 
-- [ ] Two frames have `id` with different types; each receiver shows the correct type.
-- [ ] All expressions in the support table work with single/double quotes and multiline code.
-- [ ] Renaming a catalog-backed LazyFrame column offers the new name without collecting data.
-- [ ] An unsupported transform never offers its input schema as a certain output schema.
-- [ ] Reassigning a variable, failed execution, kernel reset, and LRU recreation invalidate old metadata.
-- [ ] An old kernel image or disabled LSP leaves existing static completions usable.
-- [ ] No endpoint returns dataframe row values or invokes user-defined properties/repr.
+- [x] Two frames have `id` with different types; each receiver shows the correct type.
+- [x] All expressions in the support table work with single/double quotes and multiline code.
+- [x] Renaming a catalog-backed LazyFrame column offers the new name without collecting data.
+- [x] An unsupported transform never offers its input schema as a certain output schema.
+- [x] Reassigning a variable, failed execution, kernel reset, and LRU recreation invalidate old metadata. (Reassignment and kernel reset verified live; failure-still-increments-revision verified against the live kernel; LRU recreation by `kernel_runtime/tests/test_dataframe_schemas.py`.)
+- [x] An old kernel image or disabled LSP leaves existing static completions usable. (0.5.4 image verified live — the bridge answers `unavailable` and core warns once per `(kernel, op)`; the LSP-disabled path by `flowfile_core/tests/kernel/test_dataframe_schemas_route.py`.)
+- [x] No endpoint returns dataframe row values or invokes user-defined properties/repr.
 
 Tests: NEW `kernel_runtime/tests/test_dataframe_schemas.py`, NEW `flowfile_core/tests/kernel/test_dataframe_schemas_route.py`, NEW `PY/dataframeColumnContext.test.ts`, NEW `PY/dataframeColumnCompletions.test.ts`; extend `notebookEditorCompletions.test.ts` and model-sync tests.
 
 ## Release check
 
-Outstanding as of the date above: Changes 3 and 4. Changes 1 and 2 need no
-further work.
+Changes 1–4 have all shipped on their branches; nothing in this plan is
+outstanding.
 
 The release is complete only when Changes 1–4 work in both surfaces. Run the focused new tests, existing notebook/store/completion tests, Vue type checking, and existing kernel LSP/model-sync tests. Use non-fixing lint on touched frontend files; the repository-wide lint script includes --fix.
 

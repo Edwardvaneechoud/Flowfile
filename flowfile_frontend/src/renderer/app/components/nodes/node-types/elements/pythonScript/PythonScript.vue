@@ -347,9 +347,11 @@ import {
   ensureOwner,
 } from "../../../../notebook/notebookRuntimeState";
 import { disposeCellHistory } from "../../../../notebook/useCellHistory";
+import { attachDataframeSchemas } from "../../../../notebook/useDataframeSchemas";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import AiGenerateCodeButton from "../../../../../features/designer/editor/AiGenerateCodeButton.vue";
 import { AI_GENERATE_CODE_ENABLED as aiGenerateEnabled } from "../../../../../stores/ai-code-generator-store";
+import { scanCatalogRefs } from "./dataframeSchemaInference";
 import FlowfileApiHelp from "./FlowfileApiHelp.vue";
 import NotebookEditor from "./NotebookEditor.vue";
 import { createPythonScriptNode, DEFAULT_PYTHON_SCRIPT_CODE } from "./utils";
@@ -803,6 +805,7 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 // Owner-keyed state (cell history, editor views) is created by the two NotebookEditor
 // mounts but owned here — this component is the only holder of node identity.
 let currentOwnerId: string | null = null;
+let detachSchemas: (() => void) | null = null;
 
 const loadNodeData = async (nodeId: number) => {
   try {
@@ -851,6 +854,14 @@ const loadNodeData = async (nodeId: number) => {
 
       selectedKernelId.value = nodePythonScript.value!.python_script_input.kernel_id;
 
+      detachSchemas?.();
+      detachSchemas = attachDataframeSchemas(nextOwnerId, () => ({
+        kernelId: selectedKernelId.value,
+        flowId: Number(nodePythonScript.value?.flow_id ?? 0),
+        nodeId: nodePythonScript.value?.node_id ?? 0,
+        catalogRefs: () => cells.value.flatMap((c) => scanCatalogRefs(c.code)),
+      }));
+
       const savedOutputNames = nodePythonScript.value!.output_names;
       outputNames.value =
         savedOutputNames && savedOutputNames.length > 0 ? [...savedOutputNames] : ["main"];
@@ -877,6 +888,8 @@ const loadNodeData = async (nodeId: number) => {
 onUnmounted(() => {
   stopKernelPolling();
   stopMemoryPolling();
+  detachSchemas?.();
+  detachSchemas = null;
   if (currentOwnerId) {
     disposeCellHistory(currentOwnerId);
     disposeOwnerViews(currentOwnerId);

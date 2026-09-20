@@ -116,10 +116,26 @@ const KERNEL_ID_2 = "e2e-kernel-2";
 const KERNEL_NAME_2 = "E2E Kernel Two";
 const KERNEL_STDOUT = "e2e kernel ran this cell";
 const RUN_FAILURE = "RuntimeError: e2e kernel refused";
+// One namespace identity per mocked kernel: the frontend drops schema metadata whose
+// generation doesn't match the one the last execution reported.
+const NAMESPACE_GENERATION = "e2e-namespace-1";
 
 const STALE_CODE = "Code changed — rerun";
 const STALE_UPSTREAM = "Earlier cells changed — rerun";
 const STALE_PREVIOUS = "Previous session";
+
+interface MockFrameColumn {
+  name: string;
+  dtype: string;
+}
+
+/** One entry of the dataframe_schemas answer: a frame the kernel holds after a run. */
+interface MockFrame {
+  name: string;
+  kind?: string;
+  state?: string;
+  columns: MockFrameColumn[];
+}
 
 interface KernelMockOptions {
   /** When set, execute_cell answers success:false with this error text. */
@@ -128,6 +144,8 @@ interface KernelMockOptions {
   delayMs?: number;
   /** Offer a second kernel, so a test can change the session from the picker. */
   twoKernels?: boolean;
+  /** Frames the dataframe_schemas endpoint reports; empty means the kernel holds none. */
+  dataframes?: MockFrame[];
 }
 
 /** A gate over execute_cell answers; `release` opens it for held and later calls alike. */
@@ -140,6 +158,8 @@ interface ExecuteHold {
 interface KernelControl {
   /** execute_cell requests received so far. */
   executeCount(): number;
+  /** lsp/dataframe_schemas requests received so far. */
+  schemaCount(): number;
   /** Hold every execute_cell answer from now on. */
   hold(): ExecuteHold;
 }
@@ -174,7 +194,26 @@ async function mockKernel(page: Page, options: KernelMockOptions = {}): Promise<
   if (options.twoKernels) kernels.push(makeKernel(KERNEL_ID_2, KERNEL_NAME_2));
 
   let executeCount = 0;
+  let schemaCount = 0;
+  let namespaceRevision = 0;
   let gate: Promise<void> | null = null;
+  const frames = options.dataframes ?? [];
+
+  // Code intelligence is a core-level probe, not a kernel call: without it the schema
+  // fetch never leaves the frontend.
+  await page.route(/\/lsp\/capabilities(\?|$)/, (route) =>
+    route
+      .fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          enabled: true,
+          version: "",
+          features: ["complete", "dataframe_schemas"],
+        }),
+      })
+      .catch(() => undefined),
+  );
 
   await page.route(/\/kernels(\/|$)/, async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -190,6 +229,7 @@ async function mockKernel(page: Page, options: KernelMockOptions = {}): Promise<
     if (path.endsWith("/kernels/") || path.endsWith("/kernels")) return json(kernels);
     if (path.endsWith("/execute_cell")) {
       executeCount += 1;
+      namespaceRevision += 1;
       if (options.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs));
       if (gate) await gate;
       return json({
@@ -202,6 +242,23 @@ async function mockKernel(page: Page, options: KernelMockOptions = {}): Promise<
         stderr: "",
         error: options.failWith ?? null,
         execution_time_ms: 7,
+        namespace_generation: NAMESPACE_GENERATION,
+        revision: namespaceRevision,
+      });
+    }
+    if (path.endsWith("/lsp/dataframe_schemas")) {
+      schemaCount += 1;
+      return json({
+        namespace_generation: NAMESPACE_GENERATION,
+        revision: namespaceRevision,
+        state: "ready",
+        dataframes: frames.map((frame) => ({
+          name: frame.name,
+          kind: frame.kind ?? "DataFrame",
+          state: frame.state ?? "ready",
+          columns: frame.columns,
+          truncated: false,
+        })),
       });
     }
     if (path.endsWith("/clear_namespace")) return json(null);
@@ -218,6 +275,7 @@ async function mockKernel(page: Page, options: KernelMockOptions = {}): Promise<
 
   return {
     executeCount: () => executeCount,
+    schemaCount: () => schemaCount,
     hold() {
       let open!: () => void;
       const held = new Promise<void>((resolve) => {
@@ -241,6 +299,125 @@ async function mockKernel(page: Page, options: KernelMockOptions = {}): Promise<
       };
     },
   };
+}
+
+interface MockCatalogTable {
+  name: string;
+  columns: MockFrameColumn[];
+}
+
+/**
+ * Answer the strict table resolve with one table's metadata; every other name 404s, which
+ * is what "unresolved" looks like to the completion source. No read, no collect.
+ */
+async function mockCatalogResolve(page: Page, table: MockCatalogTable) {
+  await page.route(/\/catalog\/tables\/resolve(\?|$)/, (route) => {
+    const q = new URL(route.request().url()).searchParams.get("q");
+    if (q !== table.name) {
+      return route
+        .fulfill({ status: 404, contentType: "application/json", body: "{}" })
+        .catch(() => undefined);
+    }
+    return route
+      .fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          table: { id: 1, name: table.name, schema_columns: table.columns },
+        }),
+      })
+      .catch(() => undefined);
+  });
+}
+
+interface MockNodeInput {
+  name: string;
+  sourceNodeId: number;
+  columns: { name: string; data_type: string }[];
+}
+
+/** Two upstream inputs with their own schemas, without building the upstream flow. */
+async function mockNodeInputs(page: Page, inputs: MockNodeInput[]) {
+  await page.route(/\/node\/input_names(\?|$)/, (route) =>
+    route
+      .fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(
+          inputs.map((input) => ({
+            name: input.name,
+            source_node_id: input.sourceNodeId,
+            source_node_type: "manual_input",
+          })),
+        ),
+      })
+      .catch(() => undefined),
+  );
+  await page.route(/\/node\/data(\?|$)/, (route) => {
+    const nodeId = Number(new URL(route.request().url()).searchParams.get("node_id"));
+    const input = inputs.find((i) => i.sourceNodeId === nodeId);
+    const columns = input?.columns ?? [];
+    return route
+      .fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          node_id: nodeId,
+          number_of_records: 0,
+          number_of_columns: columns.length,
+          name: input?.name ?? "",
+          table_schema: columns,
+          columns: columns.map((c) => c.name),
+          data: [],
+          has_example_data: true,
+          has_run_with_current_setup: true,
+        }),
+      })
+      .catch(() => undefined);
+  });
+}
+
+interface CompletionRow {
+  label: string;
+  detail: string;
+}
+
+/** Every row the completion popup currently renders; empty when it is closed. */
+async function completionRows(page: Page): Promise<CompletionRow[]> {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll(".cm-tooltip-autocomplete li")).map((li) => ({
+      label: li.querySelector(".cm-completionLabel")?.textContent ?? "",
+      detail: li.querySelector(".cm-completionDetail")?.textContent ?? "",
+    })),
+  );
+}
+
+/** `label → detail` for every popup row naming one of `names`, sorted. */
+const columnRowKeys = async (page: Page, names: string[]) =>
+  (await completionRows(page))
+    .filter((row) => names.includes(row.label))
+    .map((row) => `${row.label} → ${row.detail}`)
+    .sort();
+
+/** Wait until the popup's column rows are exactly `expected` — details included. */
+async function expectColumnRows(page: Page, names: string[], expected: string[]) {
+  await expect
+    .poll(() => columnRowKeys(page, names), { timeout: 15000 })
+    .toEqual([...expected].sort());
+}
+
+/** No column row may appear: settle first, so an empty popup isn't a race. */
+async function expectNoColumnRows(page: Page, names: string[]) {
+  await page.waitForTimeout(800);
+  expect(await columnRowKeys(page, names)).toEqual([]);
+}
+
+/** Retype a cell and ask for completions at the caret; typing alone already opens them. */
+async function typeForCompletions(page: Page, cells: Locator, index: number, text: string) {
+  await cells.nth(index).locator(".cm-content").click();
+  await page.keyboard.press(SELECT_ALL);
+  await page.keyboard.type(text);
+  await page.keyboard.press("Control+Space");
 }
 
 const cellRoots = (page: Page, host = ".nb-cells") => page.locator(`${host} > [data-cell-id]`);
@@ -949,6 +1126,28 @@ test.describe("Catalog notebook — outdated outputs and execution identity", ()
   const pairCells = (label: string): SeedCell[] =>
     PAIR_IDS.map((id, i) => ({ id, type: "python", source: `# ${label} ${i}` }));
 
+  // Two frames sharing a column name with different dtypes — the case a single flat
+  // column list used to collapse onto the first source's type.
+  const ORDERS_FRAME: MockFrame = {
+    name: "orders",
+    columns: [
+      { name: "id", dtype: "Int64" },
+      { name: "amount", dtype: "Float64" },
+    ],
+  };
+  const CUSTOMERS_FRAME: MockFrame = {
+    name: "customers",
+    columns: [{ name: "id", dtype: "String" }],
+  };
+  const SALES_TABLE: MockCatalogTable = {
+    name: "sales",
+    columns: [
+      { name: "amount", dtype: "Float64" },
+      { name: "city", dtype: "String" },
+    ],
+  };
+  const SALES_COLUMNS = ["amount", "city", "total"];
+
   test.beforeAll(async ({ request }) => {
     authToken = await getAuthToken(request);
   });
@@ -1157,6 +1356,95 @@ test.describe("Catalog notebook — outdated outputs and execution identity", ()
     await expect(page.locator(".nb-batch-progress")).toHaveCount(0, { timeout: 20000 });
     await expect(page.locator(".nb-run-all")).toBeEnabled();
     await expect(cells.nth(0).locator("button.nb-drag-handle")).toBeEnabled();
+  });
+
+  test("each run frame keeps its own dtype for the same column name", async ({ page, request }) => {
+    const kernel = await mockKernel(page, { dataframes: [ORDERS_FRAME, CUSTOMERS_FRAME] });
+    await seedAndOpen(page, request, "runframes");
+
+    const cells = cellRoots(page);
+    await cells.nth(0).locator("button.nb-run").click();
+    await expectRanCleanly(cells.nth(0));
+    // The frames are fetched when the run settles, never while typing.
+    await expect.poll(() => kernel.schemaCount(), { timeout: 20000 }).toBeGreaterThan(0);
+    await page.waitForTimeout(500);
+
+    await typeForCompletions(page, cells, 1, 'orders.select("');
+    await expectColumnRows(page, ["id"], ["id → Int64 · orders (last run)"]);
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".cm-tooltip-autocomplete")).toHaveCount(0);
+
+    await typeForCompletions(page, cells, 1, 'customers.select("');
+    await expectColumnRows(page, ["id"], ["id → String · customers (last run)"]);
+  });
+
+  test("a catalog-backed rename offers the new name without running anything", async ({
+    page,
+    request,
+  }) => {
+    const kernel = await mockKernel(page);
+    await mockCatalogResolve(page, SALES_TABLE);
+    await seedAndOpen(page, request, "catalogstatic");
+
+    const cells = cellRoots(page);
+    await typeForCompletions(page, cells, 0, 'lf = flowfile_ctx.read_catalog_table("sales")');
+    await page.keyboard.press("Escape");
+
+    const schemasBefore = kernel.schemaCount();
+    await typeForCompletions(page, cells, 1, 'lf.rename({"amount": "total"}).select("');
+    await expectColumnRows(page, SALES_COLUMNS, ["total → Float64 · lf", "city → String · lf"]);
+
+    // Catalog metadata alone got there: nothing executed, no kernel metadata was fetched.
+    expect(kernel.executeCount()).toBe(0);
+    expect(kernel.schemaCount()).toBe(schemasBefore);
+  });
+
+  test("an unsupported transform and a bare pl.col offer nothing on a catalog notebook", async ({
+    page,
+    request,
+  }) => {
+    await mockKernel(page);
+    await mockCatalogResolve(page, SALES_TABLE);
+    const joinCells: SeedCell[] = [
+      {
+        id: "e2e-join-0",
+        type: "python",
+        source: 'lf = flowfile_ctx.read_catalog_table("sales")\nx = lf.join(lf, on="city")',
+      },
+      { id: "e2e-join-1", type: "python", source: "" },
+    ];
+    await seedAndOpen(page, request, "unsupported", joinCells);
+
+    const cells = cellRoots(page);
+    // The receiver of the join does resolve, so the silence below is about the join alone.
+    await typeForCompletions(page, cells, 1, 'lf.select("');
+    await expectColumnRows(page, SALES_COLUMNS, ["amount → Float64 · lf", "city → String · lf"]);
+
+    await page.keyboard.press("Escape");
+    await typeForCompletions(page, cells, 1, 'x.select("');
+    await expectNoColumnRows(page, SALES_COLUMNS);
+
+    await page.keyboard.press("Escape");
+    await typeForCompletions(page, cells, 1, 'pl.col("');
+    await expectNoColumnRows(page, SALES_COLUMNS);
+  });
+
+  test("typing inside a column string never fetches kernel metadata", async ({ page, request }) => {
+    const kernel = await mockKernel(page, { dataframes: [ORDERS_FRAME] });
+    await seedAndOpen(page, request, "nofetch");
+
+    const cells = cellRoots(page);
+    await cells.nth(0).locator("button.nb-run").click();
+    await expectRanCleanly(cells.nth(0));
+    await expect.poll(() => kernel.schemaCount(), { timeout: 20000 }).toBeGreaterThan(0);
+    await page.waitForTimeout(500);
+
+    await typeForCompletions(page, cells, 1, 'orders.select("');
+    const before = kernel.schemaCount();
+    await page.keyboard.type("abcdefghijklmnopqrstuvwxyz0123");
+    await page.waitForTimeout(800);
+    expect(kernel.schemaCount()).toBe(before);
   });
 });
 
@@ -1442,7 +1730,7 @@ test.describe("Python Script node notebook — outdated outputs", () => {
 
   const NODE_HOST = ".notebook-cells";
   // One node per test: the drawer's cells are per-node state that outlives a reload.
-  const NODE_IDS = { stale: 1, reset: 2 };
+  const NODE_IDS = { stale: 1, reset: 2, columns: 3 };
   const NODE_Y = 220;
   const nodeX = (nodeId: number) => 240 + (nodeId - 1) * 320;
   let authToken: string;
@@ -1573,5 +1861,33 @@ test.describe("Python Script node notebook — outdated outputs", () => {
     await page.locator("button[title^='Reset session']").click();
     await expect(page.locator(`${NODE_HOST} .cell-output`)).toHaveCount(0);
     await expect(page.locator(`${NODE_HOST} .nb-status-badge`)).toHaveCount(0);
+  });
+
+  test("column completions label every input and scope a read_input receiver", async ({
+    page,
+    request,
+  }) => {
+    await mockKernel(page);
+    await mockNodeInputs(page, [
+      { name: "main", sourceNodeId: 90, columns: [{ name: "id", data_type: "Int64" }] },
+      { name: "lookup", sourceNodeId: 91, columns: [{ name: "id", data_type: "String" }] },
+    ]);
+    await seedNodeKernel(request, NODE_IDS.columns);
+    await openNodeNotebook(page, NODE_IDS.columns);
+
+    const cells = cellRoots(page, NODE_HOST);
+    // No resolvable receiver: every input's column, one row each, so the dtypes stay apart.
+    await typeForCompletions(page, cells, 0, 'pl.col("');
+    await expectColumnRows(page, ["id"], ["id → Int64 · input main", "id → String · input lookup"]);
+
+    await page.keyboard.press("Escape");
+    await typeForCompletions(page, cells, 0, 'main = flowfile_ctx.read_input("main")');
+    await page.keyboard.press("Escape");
+
+    await page.locator("button.add-cell-button").click();
+    await expect(cells).toHaveCount(2);
+
+    await typeForCompletions(page, cells, 1, 'main.select("');
+    await expectColumnRows(page, ["id"], ["id → Int64 · main"]);
   });
 });

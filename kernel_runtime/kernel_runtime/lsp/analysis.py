@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_COMPLETIONS = 100
 _MAX_COMPLETION_DOC_CHARS = 400
-_FEATURES = ["complete", "hover", "signature", "diagnostics"]
+_FEATURES = ["complete", "hover", "signature", "diagnostics", "dataframe_schemas"]
 
 
 def _safe(fn: Callable[[], Any], default: Any = None) -> Any:

@@ -148,6 +148,8 @@ The code editor uses a Jupyter-style notebook interface with multiple cells. Eac
 | Collapse output | — | Hide the result without clearing it; session-only, never saved |
 | Delete | — | Remove the cell |
 
+Opening a quote where a column name belongs (`df.select("`, `pl.col("`, `df["`) lists that frame's columns as `dtype · source`, and when the frame cannot be worked out the node's own input columns are offered instead, each row labelled with the input it came from.
+
 ### Cell Output
 
 After executing a cell, the output area shows results, stdout, and any errors.

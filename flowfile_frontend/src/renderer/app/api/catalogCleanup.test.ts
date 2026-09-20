@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 vi.mock("../services/axios.config", () => ({
-  default: { post: vi.fn() },
+  default: { post: vi.fn(), get: vi.fn() },
 }));
 
 const loadModule = async () => {
@@ -10,7 +10,7 @@ const loadModule = async () => {
   const { CatalogApi } = await import("./catalog.api");
   // The instance's `post` is overloaded, so vi.mocked() (shallow) keeps the
   // original signature and the mock helpers don't typecheck — cast instead.
-  return { post: axios.post as unknown as Mock, CatalogApi };
+  return { post: axios.post as unknown as Mock, get: axios.get as unknown as Mock, CatalogApi };
 };
 
 describe("CatalogApi.cleanupNamespaceFlows", () => {
@@ -37,5 +37,30 @@ describe("CatalogApi.cleanupNamespaceFlows", () => {
     await expect(CatalogApi.cleanupNamespaceFlows(7)).rejects.toMatchObject({
       response: { data: { detail: "Not authorized" } },
     });
+  });
+});
+
+describe("CatalogApi.resolveTableStrict", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("asks for a strict resolve and returns the table", async () => {
+    const { get, CatalogApi } = await loadModule();
+    get.mockResolvedValueOnce({ data: { table: { id: 3, name: "orders" } } });
+
+    const table = await CatalogApi.resolveTableStrict("orders", 9);
+
+    expect(get).toHaveBeenCalledWith("/catalog/tables/resolve", {
+      params: { q: "orders", strict: true, namespace_id: 9 },
+    });
+    expect(table).toMatchObject({ id: 3, name: "orders" });
+  });
+
+  it("returns null on an ambiguous name (409) instead of throwing", async () => {
+    const { get, CatalogApi } = await loadModule();
+    get.mockRejectedValueOnce({ response: { status: 409 } });
+
+    await expect(CatalogApi.resolveTableStrict("orders")).resolves.toBeNull();
   });
 });

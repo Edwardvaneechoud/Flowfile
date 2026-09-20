@@ -15,7 +15,7 @@ Two cell types, mixable freely:
 - **Python** — executes on a [kernel](../kernels.md), which you pick in the toolbar. Any library the kernel image carries (or that you added to the kernel) is available. The notebook remembers your last-used kernel.
 - **Markdown** — renders in place, no kernel needed. Use it for the narrative between the code.
 
-Keybindings match Jupyter: **Shift+Enter** runs a cell (or renders a Markdown cell) and moves to the next — adding a blank cell after the last one, so you can keep going without reaching for the mouse. **Cmd/Ctrl+Enter** runs it in place and leaves the caret where it is. The cell you are working in carries a highlighted border. In cell mode the last expression displays automatically, Jupyter-style, and the editor gives you code completions as you type.
+Keybindings match Jupyter: **Shift+Enter** runs a cell (or renders a Markdown cell) and moves to the next — adding a blank cell after the last one, so you can keep going without reaching for the mouse. **Cmd/Ctrl+Enter** runs it in place and leaves the caret where it is. The cell you are working in carries a highlighted border. In cell mode the last expression displays automatically, Jupyter-style, and the editor gives you code completions as you type. Open a quote where a column name belongs — `orders.select("`, `pl.col("`, `orders["` — and the popup lists that frame's columns with their dtype and where the names came from: a catalog table's columns are known before you run anything, and after a run the kernel's own columns appear, labelled `last run`. When the editor cannot work out which frame you mean, it offers nothing rather than guessing.
 
 ## Organizing cells
 

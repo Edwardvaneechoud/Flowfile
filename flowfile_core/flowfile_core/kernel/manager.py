@@ -438,8 +438,8 @@ class KernelManager:
         # a network call (the actual pull runs on a thread without the lock).
         self._pull_state: dict[str, str] = {}
         self._pull_state_lock = threading.Lock()
-        # Kernels already warned about for lacking the /lsp endpoint (old runtime image).
-        self._lsp_unsupported_warned: set[str] = set()
+        # Keyed per op: an image can serve `complete` and still 404 a newer /lsp endpoint.
+        self._lsp_unsupported_warned: set[tuple[str, str]] = set()
         # Single-flight starts: kernel_id -> Future shared by concurrent callers.
         self._start_flights: dict[str, Future] = {}
         self._start_flights_lock = threading.Lock()
@@ -2251,11 +2251,21 @@ class KernelManager:
                 response.raise_for_status()
                 return response.json()
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 404 and kernel_id not in self._lsp_unsupported_warned:
-                self._lsp_unsupported_warned.add(kernel_id)
+            if exc.response.status_code == 404 and (kernel_id, op) not in self._lsp_unsupported_warned:
+                self._lsp_unsupported_warned.add((kernel_id, op))
+                if op == "dataframe_schemas":
+                    message = (
+                        "Kernel '%s' (runtime %s, image '%s') does not serve dataframe schemas (needs a kernel "
+                        "image 0.5.5 or newer); notebook column completions fall back to static inference. "
+                        "Pull %s and restart the kernel."
+                    )
+                else:
+                    message = (
+                        "Kernel '%s' (runtime %s, image '%s') has no code-intelligence endpoint; notebook "
+                        "completions fall back to client-side sources. Pull %s and restart the kernel."
+                    )
                 logger.warning(
-                    "Kernel '%s' (runtime %s, image '%s') has no code-intelligence endpoint; notebook "
-                    "completions fall back to client-side sources. Pull %s and restart the kernel.",
+                    message,
                     kernel_id,
                     kernel.kernel_version,
                     kernel.image,

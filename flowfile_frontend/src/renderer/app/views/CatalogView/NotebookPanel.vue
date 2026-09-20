@@ -274,6 +274,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           :index="idx"
           :cell-count="store.active.cells.length"
           :prior-cell-codes="priorCodes(idx)"
+          :prior-cells="priorCells(idx)"
           :kernel-id="store.active.kernelId"
           :flow-id="store.active.sessionFlowId"
           :node-id="cellNodeId(cell.id)"
@@ -357,7 +358,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
 import { useNotebookStore, cellNodeId } from "../../stores/notebook-store";
@@ -370,6 +371,8 @@ import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
 import { cellMoveAnnouncement } from "../../components/notebook/cellOperations";
 import { cellPresentation } from "../../components/notebook/cellPresentation";
 import { cellSelector, focusCell, ownerIdForNotebook } from "../../components/notebook/editorViews";
+import { attachDataframeSchemas } from "../../components/notebook/useDataframeSchemas";
+import { scanCatalogRefs } from "../../components/nodes/node-types/elements/pythonScript/dataframeSchemaInference";
 import { useCellDrag } from "../../components/notebook/useCellDrag";
 import { getCellHistory } from "../../components/notebook/useCellHistory";
 import {
@@ -544,6 +547,51 @@ function priorCodes(idx: number): string[] {
   return store.active ? store.active.cells.slice(0, idx).map((c) => c.code) : [];
 }
 
+// Column inference only reads Python source, and it needs the cell id to date each assignment.
+function priorCells(idx: number): { id: string; code: string }[] {
+  if (!store.active) return [];
+  return store.active.cells
+    .slice(0, idx)
+    .filter((c) => c.cellType === "python")
+    .map((c) => ({ id: c.id, code: c.code }));
+}
+
+function pythonCellsOf(tabId: string): NotebookCellModel[] {
+  const nb = store.openNotebooks.find((n) => n.tabId === tabId);
+  return (nb?.cells ?? []).filter((c) => c.cellType === "python");
+}
+
+const schemaDetachers = new Map<string, () => void>();
+
+// One attachment per open tab: the schema cache is owner-keyed and the kernel is read live.
+watch(
+  () => store.openNotebooks.map((n) => n.tabId),
+  (tabIds) => {
+    const live = new Set(tabIds);
+    for (const [tabId, detach] of Array.from(schemaDetachers)) {
+      if (live.has(tabId)) continue;
+      detach();
+      schemaDetachers.delete(tabId);
+    }
+    for (const tabId of tabIds) {
+      if (schemaDetachers.has(tabId)) continue;
+      schemaDetachers.set(
+        tabId,
+        attachDataframeSchemas(ownerIdForNotebook(tabId), () => {
+          const nb = store.openNotebooks.find((n) => n.tabId === tabId);
+          return {
+            kernelId: nb?.kernelId ?? null,
+            flowId: nb?.sessionFlowId ?? 0,
+            nodeId: 0,
+            catalogRefs: () => pythonCellsOf(tabId).flatMap((c) => scanCatalogRefs(c.code)),
+          };
+        }),
+      );
+    }
+  },
+  { immediate: true },
+);
+
 const hostRef = ref<HTMLElement | null>(null);
 const announcement = ref("");
 
@@ -686,6 +734,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (pollTimer) clearInterval(pollTimer);
+  for (const detach of schemaDetachers.values()) detach();
+  schemaDetachers.clear();
   store.closeAllSessions();
 });
 

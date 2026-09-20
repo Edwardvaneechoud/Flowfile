@@ -7,12 +7,12 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { acceptCompletion, autocompletion, type CompletionSource } from "@codemirror/autocomplete";
 import { indentLess, indentMore } from "@codemirror/commands";
 import { bodyTooltips } from "@/utils/codemirrorTooltips";
+import { createDataframeColumnCompletions } from "./dataframeColumnCompletions";
 import {
   catalogRefChainCompletions,
   createNamedInputCompletions,
   createPolarsExprCompletions,
   createRefVariableCompletions,
-  createUpstreamColumnCompletions,
   flowfileApiCompletions,
   globalIdentifierCompletions,
   polarsModuleCompletions,
@@ -36,6 +36,11 @@ export interface NotebookEditorOptions {
   getInputNames?: () => string[];
   getUpstreamColumns?: () => UpstreamColumn[];
   getPriorCellCodes?: () => string[];
+  // Column completions: the owner keys the schema cache, cell ids resolve a variable's assignment.
+  getOwnerId?: () => string;
+  getCellId?: () => string | null;
+  getPriorCells?: () => { id: string; code: string }[];
+  getSurface?: () => "node" | "catalog";
   // Kernel/session identity for Jedi code intelligence. flow_id is the namespace key
   // (node flow_id, or the notebook sessionFlowId for the Catalog notebook). When no
   // kernel is selected the LSP sources resolve null and the static sources serve.
@@ -136,6 +141,10 @@ export function buildNotebookCompletionSources(opts: NotebookEditorOptions): Com
   const getInputNames = opts.getInputNames ?? (() => []);
   const getUpstreamColumns = opts.getUpstreamColumns ?? (() => []);
   const getPrior = opts.getPriorCellCodes ?? (() => []);
+  const getPriorCells = opts.getPriorCells ?? (() => []);
+  const getOwnerId = opts.getOwnerId ?? (() => "");
+  const getCellId = opts.getCellId ?? (() => null);
+  const getSurface = opts.getSurface ?? (() => "node" as const);
   const getLspCtx = lspCtxGetter(opts);
   const isLspActive = lspActiveFor(getLspCtx);
   const fb = (s: CompletionSource) => fallbackWhenNoLsp(s, isLspActive);
@@ -150,7 +159,13 @@ export function buildNotebookCompletionSources(opts: NotebookEditorOptions): Com
     na(createIdentifierCompletionSource(getLspCtx, getPrior, curated)),
     // String-literal content sources Jedi can't provide — always on.
     createNamedInputCompletions(getInputNames),
-    createUpstreamColumnCompletions(getUpstreamColumns),
+    createDataframeColumnCompletions(() => ({
+      ownerId: getOwnerId(),
+      cellId: getCellId(),
+      surface: getSurface(),
+      getPriorCells,
+      getUpstreamColumns,
+    })),
     // Sources Jedi subsumes via live-namespace introspection: fallback only.
     na(fb(flowfileApiCompletions)),
     na(fb(globalIdentifierCompletions)),

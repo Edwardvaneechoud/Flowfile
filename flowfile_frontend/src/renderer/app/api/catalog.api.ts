@@ -318,6 +318,23 @@ export class CatalogApi {
     }
   }
 
+  /** 404, 409 and transport failures all mean "unresolved": a lookup must never surface a toast. */
+  static async resolveTableStrict(
+    name: string,
+    namespaceId?: number | null,
+  ): Promise<CatalogTable | null> {
+    try {
+      const params: Record<string, any> = { q: name, strict: true };
+      if (namespaceId !== undefined && namespaceId !== null) params.namespace_id = namespaceId;
+      const response = await axios.get<{ table: CatalogTable }>("/catalog/tables/resolve", {
+        params,
+      });
+      return response.data?.table ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   static async getTable(tableId: number): Promise<CatalogTable> {
     const response = await axios.get<CatalogTable>(`/catalog/tables/${tableId}`);
     return response.data;

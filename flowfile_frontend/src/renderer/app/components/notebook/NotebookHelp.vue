@@ -64,6 +64,18 @@
               </p>
             </div>
             <div class="api-item">
+              <code>Column names</code>
+              <p>
+                Open a quote in a column position — <code>df.select("</code>,
+                <code>pl.col("</code>, <code>df["</code> — and the popup lists that frame's
+                columns with their dtype and where the names came from. Catalog tables, node
+                inputs and plain <code>select</code> / <code>rename</code> / <code>drop</code>
+                chains are known before anything runs; after a run the kernel's own columns
+                appear, labelled <strong>last run</strong>. When the editor cannot know the
+                frame, it offers nothing rather than guessing.
+              </p>
+            </div>
+            <div class="api-item">
               <code>df</code>
               <p>A bare value on the last line shows its repr (what the object is).</p>
             </div>

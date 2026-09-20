@@ -3,7 +3,7 @@
 // built-in async signature help, so a ViewPlugin debounces + fetches and dispatches the
 // resulting Tooltip into a StateField that feeds the showTooltip facet. Renders through
 // the editor's bodyTooltips() (mounted on <body>) like the hover tooltip. Degrades to no
-// tooltip when LSP is off / no kernel / not inside a call.
+// tooltip when LSP is off / no kernel / not inside a call / inside a string literal.
 import { Prec, StateEffect, StateField, type EditorState, type Extension } from "@codemirror/state";
 import {
   EditorView,
@@ -18,7 +18,7 @@ import { LspApi } from "@/api/lsp.api";
 import type { LspSignatureResponse } from "@/api/lsp.api";
 import type { LspContext } from "./lspCompletionSource";
 import { renderDocText } from "./lspDocRender";
-import { insideCall } from "./lspPositions";
+import { insideCall, insideString } from "./lspPositions";
 
 const QUERY_DEBOUNCE_MS = 150;
 
@@ -38,6 +38,14 @@ export const sigTooltipField = StateField.define<Tooltip | null>({
 /** Document position the signature tooltip is currently anchored at, or null when hidden. */
 export function signatureTooltipShownAt(state: EditorState): number | null {
   return state.field(sigTooltipField, false)?.pos ?? null;
+}
+
+/**
+ * Signature help belongs to the call's arguments, not to the text of a string argument: a
+ * string position is where column completions live, and two popups fight over the caret.
+ */
+export function signatureApplies(state: EditorState, pos: number): boolean {
+  return insideCall(state, pos) && !insideString(state, pos);
 }
 
 function buildTooltip(res: LspSignatureResponse, pos: number): Tooltip {
@@ -109,7 +117,7 @@ function signaturePlugin(getCtx: () => LspContext) {
       private async query() {
         const ctx = getCtx();
         const pos = this.view.state.selection.main.head;
-        if (!ctx.kernelId || !insideCall(this.view.state, pos)) {
+        if (!ctx.kernelId || !signatureApplies(this.view.state, pos)) {
           this.hide();
           return;
         }
@@ -127,9 +135,14 @@ function signaturePlugin(getCtx: () => LspContext) {
           flow_id: ctx.flowId,
           node_id: ctx.nodeId ?? null,
         });
-        // Drop stale responses and re-check we're still inside a call at the live cursor.
+        // Drop stale responses and re-check the live cursor still wants a signature — the
+        // caret may have moved into a string argument while the request was in flight.
         const head = this.view.state.selection.main.head;
-        if (token !== this.seq || !res.signatures.length || !insideCall(this.view.state, head)) {
+        if (
+          token !== this.seq ||
+          !res.signatures.length ||
+          !signatureApplies(this.view.state, head)
+        ) {
           this.hide();
           return;
         }

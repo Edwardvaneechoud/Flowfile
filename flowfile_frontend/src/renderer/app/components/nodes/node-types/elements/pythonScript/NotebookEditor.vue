@@ -57,6 +57,7 @@
           :input-names="inputNames"
           :upstream-columns="upstreamColumns"
           :prior-cell-codes="cells.slice(0, index).map((c) => c.code)"
+          :prior-cells="cells.slice(0, index).map((c) => ({ id: c.id, code: c.code }))"
           :kernel-id="kernelId"
           :flow-id="flowId"
           :node-id="nodeId"

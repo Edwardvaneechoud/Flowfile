@@ -41,6 +41,11 @@ def _clear_global_state():
     artifact_store._persist_pending.clear()
     main._display_output_store.clear()
     main._artifact_preview_store.clear()
+    main._namespace_store.clear()
+    main._namespace_access.clear()
+    main._namespace_generation.clear()
+    main._namespace_revision.clear()
+    main._executing_flow_ids.clear()
 
     yield
 
@@ -60,6 +65,11 @@ def _clear_global_state():
     artifact_store._persist_pending.clear()
     main._display_output_store.clear()
     main._artifact_preview_store.clear()
+    main._namespace_store.clear()
+    main._namespace_access.clear()
+    main._namespace_generation.clear()
+    main._namespace_revision.clear()
+    main._executing_flow_ids.clear()
 
 
 @pytest.fixture()

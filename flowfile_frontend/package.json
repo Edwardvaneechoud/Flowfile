@@ -61,6 +61,7 @@
     "@ag-grid-community/vue3": "^31.1.1",
     "@codemirror/lang-python": "^6.1.6",
     "@codemirror/lang-sql": "^6.6.4",
+    "@codemirror/language": "^6.12.1",
     "@codemirror/lint": "^6.9.6",
     "@codemirror/theme-one-dark": "^6.1.2",
     "@element-plus/icons-vue": "^2.3.1",
