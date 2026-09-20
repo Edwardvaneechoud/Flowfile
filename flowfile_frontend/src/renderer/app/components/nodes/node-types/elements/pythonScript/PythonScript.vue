@@ -339,6 +339,7 @@ import { NotebookApi, type NotebookSummary } from "../../../../../api/notebook.a
 import { FlowApi } from "../../../../../api/flow.api";
 import { outputHandle } from "../../../../../utils/outputHandle";
 import { newCellId } from "../../../../notebook/cellOperations";
+import { disposeOwnerPresentation } from "../../../../notebook/cellPresentation";
 import { disposeOwnerViews, ownerIdForNode } from "../../../../notebook/editorViews";
 import { disposeCellHistory } from "../../../../notebook/useCellHistory";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
@@ -814,6 +815,7 @@ const loadNodeData = async (nodeId: number) => {
       if (currentOwnerId && currentOwnerId !== nextOwnerId) {
         disposeCellHistory(currentOwnerId);
         disposeOwnerViews(currentOwnerId);
+        disposeOwnerPresentation(currentOwnerId);
       }
       currentOwnerId = nextOwnerId;
 
@@ -867,6 +869,7 @@ onUnmounted(() => {
   if (currentOwnerId) {
     disposeCellHistory(currentOwnerId);
     disposeOwnerViews(currentOwnerId);
+    disposeOwnerPresentation(currentOwnerId);
     currentOwnerId = null;
   }
 });

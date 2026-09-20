@@ -19,7 +19,11 @@
         >
           <i class="fa-solid fa-grip-vertical"></i>
         </button>
-        <button :disabled="isExecuting" title="Run cell (Shift+Enter)" @click="emit('run-cell')">
+        <button
+          :disabled="isExecuting"
+          title="Run and advance (Shift+Enter) · Run (Cmd/Ctrl+Enter)"
+          @click="emit('run-cell')"
+        >
           <i class="fa-solid fa-play"></i>
         </button>
         <button
@@ -36,17 +40,23 @@
         >
           <i class="fa-solid fa-chevron-down"></i>
         </button>
-        <button
-          :disabled="cellCount <= 1 || structuralDisabled"
-          title="Delete cell"
-          @click="emit('delete')"
-        >
-          <i class="fa-solid fa-xmark"></i>
-        </button>
+        <CellActionMenu
+          :disabled="structuralDisabled"
+          :code-collapsed="pres.codeCollapsed"
+          :output-collapsed="pres.outputCollapsed"
+          :has-output="!!cell.output"
+          :can-delete="cellCount > 1"
+          @insert-above="emit('insert-above')"
+          @insert-below="emit('insert-below')"
+          @duplicate="emit('duplicate')"
+          @toggle-code="toggleCodeCollapsed(ownerId, cell.id)"
+          @toggle-output="toggleOutputCollapsed(ownerId, cell.id)"
+          @delete="emit('delete')"
+        />
       </div>
 
-      <!-- CodeMirror editor -->
-      <div class="cell-editor-wrapper">
+      <!-- CodeMirror editor: v-show keeps the EditorView (and its undo history) alive -->
+      <div v-show="!pres.codeCollapsed" class="cell-editor-wrapper">
         <codemirror
           :model-value="cell.code"
           placeholder="# Enter code..."
@@ -58,9 +68,25 @@
           @update:model-value="(val: string) => emit('update:code', val)"
         />
       </div>
+      <button
+        v-if="pres.codeCollapsed"
+        type="button"
+        class="nb-cell-collapsed"
+        @click="toggleCodeCollapsed(ownerId, cell.id)"
+      >
+        <i class="fa-solid fa-chevron-right"></i> {{ collapsedCodeLabel }}
+      </button>
 
       <!-- Output area -->
-      <CellOutput v-if="cell.output" :output="cell.output" />
+      <CellOutput v-if="cell.output" v-show="!pres.outputCollapsed" :output="cell.output" />
+      <button
+        v-if="cell.output && pres.outputCollapsed"
+        type="button"
+        class="nb-cell-collapsed"
+        @click="toggleOutputCollapsed(ownerId, cell.id)"
+      >
+        <i class="fa-solid fa-chevron-right"></i> Output hidden
+      </button>
 
       <!-- Executing indicator -->
       <div v-if="isExecuting" class="cell-executing">
@@ -71,10 +97,16 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, onBeforeUnmount } from "vue";
+import { computed, onBeforeUnmount, watch } from "vue";
 import { Codemirror } from "vue-codemirror";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 
+import CellActionMenu from "../../../../notebook/CellActionMenu.vue";
+import {
+  cellPresentation,
+  toggleCodeCollapsed,
+  toggleOutputCollapsed,
+} from "../../../../notebook/cellPresentation";
 import { registerCellView, unregisterCellView } from "../../../../notebook/editorViews";
 import type { NotebookCell } from "../../../../../types/node.types";
 import CellOutput from "./CellOutput.vue";
@@ -92,6 +124,7 @@ interface Props {
   /** Structural edits (reorder, insert, delete) are blocked while the notebook is running. */
   structuralDisabled?: boolean;
   dragging?: boolean;
+  active?: boolean;
   inputNames?: string[];
   upstreamColumns?: UpstreamColumn[];
   priorCellCodes?: string[];
@@ -103,6 +136,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   structuralDisabled: false,
   dragging: false,
+  active: false,
   inputNames: () => [],
   upstreamColumns: () => [],
   priorCellCodes: () => [],
@@ -119,35 +153,66 @@ const emit = defineEmits<{
   (e: "move-down"): void;
   (e: "move-key", direction: -1 | 1): void;
   (e: "drag-start", ev: PointerEvent): void;
+  (e: "duplicate"): void;
+  (e: "insert-above"): void;
+  (e: "insert-below"): void;
+  (e: "focus"): void;
   (e: "delete"): void;
 }>();
 
+// Keyed by the live prop: Vue reuses cell instances across owners when two notebooks share ids.
+const pres = computed(() => cellPresentation(props.ownerId, props.cell.id));
+
 const cellClasses = computed(() => ({
+  "cell--active": props.active,
   "cell--executing": props.isExecuting,
   "cell--error": props.cell.output?.error,
   "is-dragging": props.dragging,
 }));
 
-const cellExtensions = buildNotebookEditorExtensions({
-  onRun: () => emit("run-cell"),
-  onRunAdvance: () => emit("run-cell-and-advance"),
-  getInputNames: () => props.inputNames,
-  getUpstreamColumns: () => props.upstreamColumns,
-  getPriorCellCodes: () => props.priorCellCodes,
-  getKernelId: () => props.kernelId,
-  getFlowId: () => props.flowId,
-  getNodeId: () => props.nodeId,
+const collapsedCodeLabel = computed(() => {
+  const lines = props.cell.code.split("\n").length;
+  return `Code hidden · ${lines} line${lines === 1 ? "" : "s"}`;
 });
 
+const cellExtensions = [
+  ...buildNotebookEditorExtensions({
+    onRun: () => emit("run-cell"),
+    onRunAdvance: () => emit("run-cell-and-advance"),
+    getInputNames: () => props.inputNames,
+    getUpstreamColumns: () => props.upstreamColumns,
+    getPriorCellCodes: () => props.priorCellCodes,
+    getKernelId: () => props.kernelId,
+    getFlowId: () => props.flowId,
+    getNodeId: () => props.nodeId,
+  }),
+  EditorView.updateListener.of((u) => {
+    if (u.focusChanged && u.view.hasFocus) emit("focus");
+  }),
+];
+
 let view: EditorView | null = null;
+let viewOwnerId: string | null = null;
 
 function onReady(payload: { view: EditorView }) {
   view = payload.view;
-  registerCellView(props.ownerId, props.cell.id, view);
+  viewOwnerId = props.ownerId;
+  registerCellView(viewOwnerId, props.cell.id, view);
 }
 
+// A reused instance has to take its registered view to the new owner.
+watch(
+  () => props.ownerId,
+  (next) => {
+    if (!view || viewOwnerId === next) return;
+    if (viewOwnerId) unregisterCellView(viewOwnerId, props.cell.id, view);
+    viewOwnerId = next;
+    registerCellView(next, props.cell.id, view);
+  },
+);
+
 onBeforeUnmount(() => {
-  if (view) unregisterCellView(props.ownerId, props.cell.id, view);
+  if (view && viewOwnerId) unregisterCellView(viewOwnerId, props.cell.id, view);
 });
 </script>
 
@@ -162,6 +227,11 @@ onBeforeUnmount(() => {
 
 .cell-wrapper:hover,
 .cell-wrapper:focus-within {
+  border-color: var(--el-border-color);
+  border-left-color: var(--el-color-primary);
+}
+
+.cell-wrapper.cell--active {
   border-color: var(--el-border-color);
   border-left-color: var(--el-color-primary);
 }
@@ -244,6 +314,32 @@ onBeforeUnmount(() => {
 
 .cell-toolbar .nb-drag-handle:disabled {
   cursor: not-allowed;
+}
+
+/* The shared menu button ships at 24px; the node toolbar is denser. */
+.cell-toolbar :deep(.nb-cell-menu) {
+  width: 20px;
+  height: 20px;
+  font-size: 0.65rem;
+}
+
+.nb-cell-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.25rem 0.5rem;
+  border: 1px dashed var(--el-border-color-lighter);
+  border-radius: 3px;
+  background: var(--el-fill-color-lighter);
+  cursor: pointer;
+  font-size: 0.7rem;
+  color: var(--el-text-color-secondary);
+}
+
+.nb-cell-collapsed:hover {
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
 }
 
 .cell-editor-wrapper {

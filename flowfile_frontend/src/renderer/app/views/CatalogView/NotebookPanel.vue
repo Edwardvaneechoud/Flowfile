@@ -272,15 +272,21 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           :flow-id="store.active.sessionFlowId"
           :node-id="cellNodeId(cell.id)"
           :structural-disabled="structuralDisabled"
+          :active="cell.id === store.active.focusedCellId"
           :dragging="drag.draggingId.value === cell.id"
           @run="store.runCell(cell.id)"
+          @run-advance="onRunAdvance(cell.id)"
           @update:code="(code: string) => store.setCellCode(cell.id, code)"
           @update:type="(t: CellType) => store.setCellType(cell.id, t)"
-          @update:editing="(e: boolean) => store.setCellEditing(cell.id, e)"
+          @update:editing="(e: boolean) => onEditingChange(cell.id, e)"
           @move="(dir: -1 | 1) => onMoveKey(cell.id, dir)"
           @move-key="(dir: -1 | 1) => onMoveKey(cell.id, dir)"
           @drag-start="(ev: PointerEvent) => drag.onHandlePointerDown(cell.id, ev)"
-          @remove="store.removeCell(cell.id)"
+          @remove="onRemove(cell.id)"
+          @duplicate="onDuplicate(cell.id)"
+          @insert-above="onInsertAt(idx)"
+          @insert-below="onInsertAt(idx + 1)"
+          @activate="store.setFocusedCell(cell.id)"
           @cursor="(pos: number) => store.setCellCursor(cell.id, pos)"
         />
 
@@ -354,7 +360,8 @@ import { KernelApi } from "../../api/kernel.api";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";
 import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
 import { cellMoveAnnouncement } from "../../components/notebook/cellOperations";
-import { cellSelector, ownerIdForNotebook } from "../../components/notebook/editorViews";
+import { cellPresentation } from "../../components/notebook/cellPresentation";
+import { cellSelector, focusCell, ownerIdForNotebook } from "../../components/notebook/editorViews";
 import { useCellDrag } from "../../components/notebook/useCellDrag";
 import { getCellHistory } from "../../components/notebook/useCellHistory";
 import {
@@ -568,6 +575,56 @@ function onMoveKey(cellId: string, dir: -1 | 1) {
   });
 }
 
+/** Focus after the DOM settles, but never steal it from a notebook tab the user switched to. */
+function focusAfterTick(ownerTab: string, cellId: string | null) {
+  if (!cellId) return;
+  // A collapsed editor is display:none and cannot take the caret, so reveal it first.
+  cellPresentation(ownerIdForNotebook(ownerTab), cellId).codeCollapsed = false;
+  void nextTick(() => {
+    if (store.activeTabId !== ownerTab) return;
+    focusCell(ownerIdForNotebook(ownerTab), cellId, hostRef.value);
+  });
+}
+
+/** Opening a markdown editor has to take the caret with it — Enter on the cell root is a
+ * keyboard-only path with no textarea to click. */
+function onEditingChange(cellId: string, editing: boolean) {
+  store.setCellEditing(cellId, editing);
+  const tab = store.activeTabId;
+  if (editing && tab) focusAfterTick(tab, cellId);
+}
+
+function onRunAdvance(cellId: string) {
+  const tab = store.activeTabId;
+  const nb = store.active;
+  if (!tab || !nb || structuralDisabled.value) return;
+  const idx = nb.cells.findIndex((c) => c.id === cellId);
+  if (idx < 0) return;
+  // Advance on submit, Jupyter-style: the result is never waited for.
+  if (idx < nb.cells.length - 1) focusAfterTick(tab, nb.cells[idx + 1].id);
+  else focusAfterTick(tab, store.addCell("python")?.id ?? null);
+  void store.runCell(cellId);
+}
+
+function onDuplicate(cellId: string) {
+  const tab = store.activeTabId;
+  if (!tab) return;
+  focusAfterTick(tab, store.duplicateCell(cellId)?.id ?? null);
+}
+
+/** `index` is the new cell's final position, so "above" is `idx` and "below" is `idx + 1`. */
+function onInsertAt(index: number) {
+  const tab = store.activeTabId;
+  if (!tab || structuralDisabled.value) return;
+  focusAfterTick(tab, store.insertCellAt("python", index)?.id ?? null);
+}
+
+function onRemove(cellId: string) {
+  const tab = store.activeTabId;
+  if (!tab) return;
+  focusAfterTick(tab, store.removeCell(cellId));
+}
+
 function onUndoCellAction() {
   announceIfMove(store.undoCellAction());
 }
@@ -622,8 +679,9 @@ function onTabRemove(name: TabPaneName) {
 }
 
 function onAddCell(command: string, afterIndex?: number) {
-  if (structuralDisabled.value) return;
-  store.addCell(command as CellType, afterIndex);
+  const tab = store.activeTabId;
+  if (!tab || structuralDisabled.value) return;
+  focusAfterTick(tab, store.addCell(command as CellType, afterIndex)?.id ?? null);
 }
 
 async function onSave() {

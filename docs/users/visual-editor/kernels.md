@@ -137,10 +137,15 @@ The code editor uses a Jupyter-style notebook interface with multiple cells. Eac
 
 | Action | Shortcut | Description |
 |--------|----------|-------------|
-| Run cell | `Shift+Enter` | Execute the cell |
-| Run and advance | `Cmd/Ctrl+Enter` | Execute and move to next cell |
+| Run and advance | `Shift+Enter` | Execute and move to the next cell, adding a blank cell after the last one |
+| Run cell | `Cmd/Ctrl+Enter` | Execute the cell in place |
 | Drag handle | `Alt+↑` / `Alt+↓` | Drag to reorder, or move with the keyboard while the handle is focused |
 | Move up/down | — | Reorder cells |
+| Insert above | — | Add a cell before this one, via the ⋯ menu |
+| Insert below | — | Add a cell after this one, via the ⋯ menu |
+| Duplicate | — | Copy the cell below itself — the code, not the output |
+| Collapse code | — | Hide the code without losing it; session-only, never saved |
+| Collapse output | — | Hide the result without clearing it; session-only, never saved |
 | Delete | — | Remove the cell |
 
 ### Cell Output

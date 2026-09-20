@@ -276,6 +276,64 @@ describe("run routing", () => {
   });
 });
 
+describe("runCell result", () => {
+  // Earlier describes leave unconsumed *Once entries queued on the shared mock.
+  beforeEach(() => {
+    mocks.executeCell.mockReset();
+    mocks.executeCell.mockResolvedValue(okExecResult);
+  });
+
+  it("resolves true for a markdown cell", async () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    const id = store.active!.cells[0].id;
+    store.setCellType(id, "markdown");
+    store.setCellCode(id, "# Title");
+    await expect(store.runCell(id)).resolves.toBe(true);
+    expect(store.active!.cells[0].renderedHtml).toBe("<md># Title</md>");
+  });
+
+  it("resolves false with no kernel and still writes the error output", async () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.active!.kernelId = null;
+    const cell = store.active!.cells[0];
+    await expect(store.runCell(cell.id)).resolves.toBe(false);
+    expect(cell.execState).toBe("error");
+    expect(cell.output?.error).toMatch(/kernel/i);
+  });
+
+  it("resolves false when the kernel reports success:false, output still written", async () => {
+    mocks.executeCell.mockResolvedValueOnce({ ...okExecResult, success: false, error: "boom" });
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.setKernel("kern-1");
+    const cell = store.active!.cells[0];
+    await expect(store.runCell(cell.id)).resolves.toBe(false);
+    expect(cell.execState).toBe("error");
+    expect(cell.output?.error).toBe("boom");
+  });
+
+  it("resolves false when executeCell rejects", async () => {
+    mocks.executeCell.mockRejectedValueOnce(new Error("kernel exploded"));
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.setKernel("kern-1");
+    const cell = store.active!.cells[0];
+    await expect(store.runCell(cell.id)).resolves.toBe(false);
+    expect(cell.output?.error).toBe("kernel exploded");
+  });
+
+  it("resolves true after a successful execute", async () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.setKernel("kern-1");
+    const cell = store.active!.cells[0];
+    await expect(store.runCell(cell.id)).resolves.toBe(true);
+    expect(cell.execState).toBe("idle");
+  });
+});
+
 describe("structural cell actions", () => {
   /** Fresh tab with `n` python cells, dirty cleared so an assertion can see the next edit. */
   function withCells(n: number) {
@@ -299,6 +357,25 @@ describe("structural cell actions", () => {
       appended.id,
     ]);
     expect(store.active!.dirty).toBe(true);
+  });
+
+  it("insertCellAt puts the cell at index 0", () => {
+    const { store, cells } = withCells(2);
+    const inserted = store.insertCellAt("python", 0)!;
+    expect(store.active!.cells.map((c) => c.id)).toEqual([inserted.id, cells[0].id, cells[1].id]);
+    expect(store.active!.dirty).toBe(true);
+  });
+
+  it("insertCellAt puts the cell at a middle index", () => {
+    const { store, cells } = withCells(3);
+    const inserted = store.insertCellAt("markdown", 2)!;
+    expect(store.active!.cells.map((c) => c.id)).toEqual([
+      cells[0].id,
+      cells[1].id,
+      inserted.id,
+      cells[2].id,
+    ]);
+    expect(inserted.cellType).toBe("markdown");
   });
 
   it("removeCell refuses to delete the last remaining cell", () => {
@@ -432,6 +509,18 @@ describe("insertReadCell", () => {
     expect(store.active!.focusedCellId).toBe(cell.id);
   });
 
+  it("still inserts at the caret after the cell's chrome took focus", () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    const cell = store.active!.cells[0];
+    store.setCellCode(cell.id, "x = 1\ny = 2");
+    store.setCellCursor(cell.id, 5);
+    store.setFocusedCell(cell.id);
+    expect(cell.cursor).toBe(5);
+    store.insertReadCell("orders");
+    expect(cell.code).toBe('x = 1\ndf = flowfile_ctx.read_catalog_table("orders")\ny = 2');
+  });
+
   it("appends a new cell when the last one has code", () => {
     const store = useNotebookStore();
     store.ensureHydrated();
@@ -441,6 +530,23 @@ describe("insertReadCell", () => {
     const cell = store.insertReadCell("orders")!;
     expect(store.active!.cells.length).toBe(before + 1);
     expect(cell.code).toBe('df = flowfile_ctx.read_catalog_table("orders")');
+  });
+});
+
+describe("setFocusedCell", () => {
+  it("records focus, leaves the caret alone and ignores unknown ids", () => {
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    const first = store.active!.cells[0];
+    const second = store.addCell("python")!;
+    store.setCellCursor(first.id, 4);
+
+    store.setFocusedCell(second.id);
+    expect(store.active!.focusedCellId).toBe(second.id);
+    expect(first.cursor).toBe(4);
+
+    store.setFocusedCell("missing-cell");
+    expect(store.active!.focusedCellId).toBe(second.id);
   });
 });
 
