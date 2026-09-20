@@ -58,7 +58,7 @@
                 <kbd>O</kbd>
               </span>
               <button class="tile-link" @click="emit('import-alteryx')">
-                Import from Alteryx…
+                Import Alteryx workflow…
               </button>
             </div>
           </article>

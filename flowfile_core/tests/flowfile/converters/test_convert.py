@@ -177,16 +177,16 @@ LLM_WITH_CREDENTIALS = b"""<?xml version="1.0"?>
     <Node ToolID="1">
       <GuiSettings Plugin="LLMOverride_1_0" />
       <Properties><Configuration>
-        <inputUrl>https://ayx-sandbox.bender.rocks/aims/</inputUrl>
+        <inputUrl>https://llm.example.invalid/aims/</inputUrl>
         <validCredentials>true</validCredentials>
         <Secrets />
-        <Connection DcmType="ConnectionId">7a9a50b6-a4bd-4841-b4c9-3bfd051752d2</Connection>
+        <Connection DcmType="ConnectionId">00000000-1111-2222-3333-444444444444</Connection>
         <authServerDetails>
-          <client_id>aa7d8c1a-8001-49d5-86a0-f6a5322f5d46</client_id>
+          <client_id>55555555-6666-7777-8888-999999999999</client_id>
           <token_endpoint>/as/token</token_endpoint>
-          <url>https://pingauth-sandbox.alteryxcloud.com</url>
+          <url>https://auth.example.invalid</url>
         </authServerDetails>
-        <llmConnectionId>01JB01XTJVFQCTCMMS9X3F3HX1</llmConnectionId>
+        <llmConnectionId>01EXAMPLE00000000000000000</llmConnectionId>
       </Configuration></Properties>
     </Node>
   </Nodes>
@@ -7051,15 +7051,15 @@ def test_credentials_never_reach_the_saved_flow():
     result = convert_yxmd(LLM_WITH_CREDENTIALS, source_name="llm.yxmd")
     code = placeholder_code(result)
     for secret in (
-        "7a9a50b6-a4bd-4841-b4c9-3bfd051752d2",
-        "aa7d8c1a-8001-49d5-86a0-f6a5322f5d46",
-        "01JB01XTJVFQCTCMMS9X3F3HX1",
+        "00000000-1111-2222-3333-444444444444",
+        "55555555-6666-7777-8888-999999999999",
+        "01EXAMPLE00000000000000000",
     ):
         assert secret not in code
     assert "[redacted by Flowfile]" in code
     # The shape of the configuration still survives, so the node can be rebuilt by hand.
     assert "authServerDetails" in code
-    assert "https://ayx-sandbox.bender.rocks/aims/" in code
+    assert "https://llm.example.invalid/aims/" in code
     assert "Credential values were not copied out of the workflow:" in code
     assert "llmConnectionId" in code
 
