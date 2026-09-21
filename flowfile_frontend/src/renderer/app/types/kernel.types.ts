@@ -171,6 +171,9 @@ export interface ExecuteResult {
   stderr: string;
   error: string | null;
   execution_time_ms: number;
+  // Namespace identity of the run; absent on kernel images older than 0.6.0.
+  namespace_generation?: string | null;
+  revision?: number | null;
 }
 
 export interface ExecuteCellRequest {

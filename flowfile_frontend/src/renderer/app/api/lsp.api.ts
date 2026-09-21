@@ -54,11 +54,38 @@ export interface LspCapabilities {
   version: string;
   features: string[];
 }
+export interface LspDataframeColumn {
+  name: string;
+  dtype: string;
+}
+export interface LspDataframeSchema {
+  name: string;
+  kind: string; // DataFrame | LazyFrame
+  state: string; // ready | unresolved
+  columns: LspDataframeColumn[];
+  truncated: boolean;
+}
+export interface LspDataframeSchemasResponse {
+  namespace_generation: string;
+  revision: number;
+  state: "ready" | "busy" | "unavailable";
+  dataframes: LspDataframeSchema[];
+}
+export interface LspDataframeSchemasPayload {
+  flow_id: number; // namespace/session key (node flow_id or notebook sessionFlowId)
+  node_id?: number | null;
+}
 
 const EMPTY_COMPLETE: LspCompleteResponse = { items: [] };
 const EMPTY_HOVER: LspHoverResponse = { contents: null };
 const EMPTY_SIGNATURE: LspSignatureResponse = { signatures: [], active_signature: 0 };
 const EMPTY_DIAGNOSTICS: LspDiagnosticsResponse = { diagnostics: [] };
+export const EMPTY_DATAFRAME_SCHEMAS: LspDataframeSchemasResponse = {
+  namespace_generation: "",
+  revision: 0,
+  state: "unavailable",
+  dataframes: [],
+};
 const DISABLED: LspCapabilities = { enabled: false, version: "", features: [] };
 
 let _capabilities: Promise<LspCapabilities> | null = null;
@@ -145,6 +172,23 @@ export class LspApi {
       return r.data ?? EMPTY_DIAGNOSTICS;
     } catch {
       return EMPTY_DIAGNOSTICS;
+    }
+  }
+
+  static async dataframeSchemas(
+    kernelId: string,
+    req: LspDataframeSchemasPayload,
+    signal?: AbortSignal,
+  ): Promise<LspDataframeSchemasResponse> {
+    try {
+      const r = await axios.post<LspDataframeSchemasResponse>(
+        `/kernels/${encodeURIComponent(kernelId)}/lsp/dataframe_schemas`,
+        req,
+        { signal },
+      );
+      return r.data ?? EMPTY_DATAFRAME_SCHEMAS;
+    } catch {
+      return EMPTY_DATAFRAME_SCHEMAS;
     }
   }
 }

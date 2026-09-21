@@ -11,10 +11,26 @@ mixins resolve for static analysis; the real state and methods live on
 
 import json
 import re
+import symtable
 import typing
 
 # Stdlib modules a polars_expr_transformer-generated expression may reference bare.
 _EXPR_STDLIB_MODULES = ("datetime", "hashlib")
+
+def referenced_kernel_globals(source: str) -> set[str]:
+    """Find kernel globals used by source but not bound by the module itself."""
+    table = symtable.symtable(source, "<custom node>", "exec")
+    candidates = {"flowfile_ctx", "display", "explore"}
+    bound = {s.get_name() for s in table.get_symbols() if s.is_assigned() or s.is_imported()}
+    referenced: set[str] = set()
+    pending = [table]
+    while pending:
+        scope = pending.pop()
+        referenced.update(
+            s.get_name() for s in scope.get_symbols() if s.is_referenced() and s.is_global()
+        )
+        pending.extend(scope.get_children())
+    return (referenced & candidates) - bound
 
 
 class ConverterMixinBase:

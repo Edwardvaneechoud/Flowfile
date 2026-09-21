@@ -1,5 +1,5 @@
 {
-  "kernel_version": "0.5.4",
+  "kernel_version": "0.6.0",
   "python_version": "3.12",
   "source": "kernel_runtime/{pyproject.toml,poetry.lock,Dockerfile}",
   "generator": "tools/generate_kernel_manifest.py",

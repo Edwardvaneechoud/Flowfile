@@ -10,8 +10,8 @@ Run custom Python code in isolated Docker containers with full access to your fl
 
 Kernels provide a sandboxed execution environment for Python Script nodes. Each kernel runs inside its own Docker container with configurable resources (CPU, memory, GPU), persistent namespaces across executions, and access to the `flowfile_ctx` API for reading inputs, writing outputs, and managing artifacts.
 
-!!! info "Renamed from `flowfile`"
-    The kernel-context global was previously called `flowfile`. It has been renamed to `flowfile_ctx` to avoid colliding with the `flowfile` PyPI package, which you may want to `import` inside a cell. The old name still works (it forwards to `flowfile_ctx` and emits a `DeprecationWarning` on first use) but will be removed in a future release.
+!!! warning "The old `flowfile` global was removed"
+    The kernel-context global was previously called `flowfile`. It was renamed to `flowfile_ctx` to avoid colliding with the `flowfile` PyPI package, which you may want to `import` inside a cell. As of kernel image **0.6.0**, the kernel no longer defines `flowfile`; references to it without an import or assignment raise `NameError`. Update kernel-context calls in saved cells and node code to use `flowfile_ctx.`. Calls to the imported `flowfile` package remain unchanged.
 
 ---
 
@@ -147,6 +147,8 @@ The code editor uses a Jupyter-style notebook interface with multiple cells. Eac
 | Collapse code | — | Hide the code without losing it; session-only, never saved |
 | Collapse output | — | Hide the result without clearing it; session-only, never saved |
 | Delete | — | Remove the cell |
+
+Opening a quote where a column name belongs (`df.select("`, `pl.col("`, `df["`) lists that frame's columns as `dtype · source`, and when the frame cannot be worked out the node's own input columns are offered instead, each row labelled with the input it came from.
 
 ### Cell Output
 

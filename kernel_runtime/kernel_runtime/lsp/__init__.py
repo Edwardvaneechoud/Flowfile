@@ -8,6 +8,10 @@ environment and any variables already executed into the cell's session.
 from kernel_runtime.lsp.models import (
     CompleteResponse,
     CompletionItem,
+    DataframeColumn,
+    DataframeSchema,
+    DataframeSchemasRequest,
+    DataframeSchemasResponse,
     Diagnostic,
     DiagnosticsResponse,
     HoverResponse,
@@ -27,4 +31,8 @@ __all__ = [
     "Diagnostic",
     "DiagnosticsResponse",
     "LspCapabilities",
+    "DataframeSchemasRequest",
+    "DataframeColumn",
+    "DataframeSchema",
+    "DataframeSchemasResponse",
 ]

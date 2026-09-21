@@ -57,6 +57,7 @@
           :input-names="inputNames"
           :upstream-columns="upstreamColumns"
           :prior-cell-codes="cells.slice(0, index).map((c) => c.code)"
+          :prior-cells="cells.slice(0, index).map((c) => ({ id: c.id, code: c.code }))"
           :kernel-id="kernelId"
           :flow-id="flowId"
           :node-id="nodeId"
@@ -358,7 +359,7 @@ const executeOne = async (cellId: string): Promise<boolean> => {
       flow_id: props.flowId,
     });
 
-    // Change 4 stamps namespace identity onto ExecuteResult; older runtimes send neither field.
+    // Kernel images before 0.6.0 stamp neither identity field.
     const stamped = result as ExecuteResult & SettledMeta;
     const verdict = settleExecution(ticket, {
       namespace_generation: stamped.namespace_generation ?? null,

@@ -63,3 +63,29 @@ class LspCapabilities(BaseModel):
     enabled: bool = True
     version: str = ""
     features: list[str] = []
+
+
+class DataframeSchemasRequest(BaseModel):
+    flow_id: int
+    node_id: int | None = None
+    resolve_lazy_frames: bool = False
+
+
+class DataframeColumn(BaseModel):
+    name: str
+    dtype: str
+
+
+class DataframeSchema(BaseModel):
+    name: str
+    kind: str
+    state: str
+    columns: list[DataframeColumn] = []
+    truncated: bool = False
+
+
+class DataframeSchemasResponse(BaseModel):
+    namespace_generation: str = ""
+    revision: int = 0
+    state: str = "unavailable"
+    dataframes: list[DataframeSchema] = []

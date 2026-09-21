@@ -450,6 +450,8 @@ def _run(folder, config):
     lazy_inputs = [pl.LazyFrame(d) for d in config.get("example_inputs") or []]
     ctx = _FlowfileCtx(inputs=lazy_inputs)
     module.__dict__["flowfile_ctx"] = ctx
+    module.__dict__.setdefault("display", ctx.display)
+    module.__dict__.setdefault("explore", ctx.explore)
     node = find_custom_node_class(module, config["class_name"])()
     settings = config.get("example_settings") or {}
     if settings and node.settings_schema:

@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.kernel.models import (
@@ -32,6 +33,8 @@ from flowfile_core.kernel.models import (
 from flowfile_core.lsp.feature_flag import is_lsp_enabled
 from flowfile_core.lsp.models import (
     CompleteResponse,
+    DataframeSchemasRequest,
+    DataframeSchemasResponse,
     DiagnosticsResponse,
     HoverResponse,
     LspRequest,
@@ -486,7 +489,7 @@ async def get_node_artifacts(
 # Code intelligence (Jedi) bridge. Editor-facing: owner-checked, but every not-ready
 # condition (flag off, no Docker, kernel missing/not-owned/idle-less, old image) degrades
 # to an empty 200 so the notebook editor silently falls back to its client-side sources.
-async def _lsp_forward(kernel_id: str, op: str, request: LspRequest, current_user) -> dict:
+async def _lsp_forward(kernel_id: str, op: str, request: BaseModel, current_user) -> dict:
     if not is_lsp_enabled():
         return {}
     try:
@@ -517,6 +520,15 @@ async def lsp_signature(kernel_id: str, request: LspRequest, current_user=Depend
 @router.post("/{kernel_id}/lsp/diagnostics", response_model=DiagnosticsResponse)
 async def lsp_diagnostics(kernel_id: str, request: LspRequest, current_user=Depends(get_current_active_user)):
     return DiagnosticsResponse(**(await _lsp_forward(kernel_id, "diagnostics", request, current_user) or {}))
+
+
+@router.post("/{kernel_id}/lsp/dataframe_schemas", response_model=DataframeSchemasResponse)
+async def lsp_dataframe_schemas(
+    kernel_id: str,
+    request: DataframeSchemasRequest,
+    current_user=Depends(get_current_active_user),
+):
+    return DataframeSchemasResponse(**(await _lsp_forward(kernel_id, "dataframe_schemas", request, current_user) or {}))
 
 
 @router.get("/{kernel_id}/display_outputs")

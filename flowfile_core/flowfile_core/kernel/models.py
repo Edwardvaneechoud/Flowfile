@@ -246,6 +246,8 @@ class ExecuteResult(BaseModel):
     stderr: str = ""
     error: str | None = None
     execution_time_ms: float = 0.0
+    namespace_generation: str | None = None
+    revision: int | None = None
 
     @field_validator("artifacts_published", mode="before")
     @classmethod

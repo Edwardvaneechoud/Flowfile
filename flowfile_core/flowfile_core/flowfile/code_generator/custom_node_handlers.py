@@ -3,7 +3,10 @@ import inspect
 import re
 import textwrap
 
-from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
+from flowfile_core.flowfile.code_generator.base import (
+    ConverterMixinBase,
+    referenced_kernel_globals,
+)
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
 # Import spellings that resolve the node-designer SDK. The node's own designer
@@ -163,7 +166,8 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
             self.imports.add("from flowfile import node_designer as nd")
             if self._body_uses_bare_sdk_symbols(self.custom_node_classes[class_name]):
                 self.imports.add(f"from flowfile.node_designer import ({_CANONICAL_SDK_SYMBOLS})")
-            if re.search(r"\bflowfile_ctx\b", self.custom_node_classes[class_name]):
+            node_source = self.custom_node_classes[class_name]
+            if referenced_kernel_globals(node_source):
                 self._needs_flowfile_ctx = True
         # The inlined node body references pl. (and the Polars converter's return
         # normalization uses isinstance(..., pl.DataFrame)), so polars is needed

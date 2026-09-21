@@ -1,7 +1,9 @@
 import ast
 import asyncio
+import concurrent.futures
 import contextlib
 import ctypes
+import functools
 import io
 import logging
 import os
@@ -13,6 +15,7 @@ import warnings
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import Body, FastAPI, Query
 from pydantic import BaseModel, Field
@@ -21,49 +24,18 @@ from kernel_runtime import __version__, flowfile_client
 from kernel_runtime.artifact_persistence import ArtifactPersistence, RecoveryMode
 from kernel_runtime.artifact_store import ArtifactStore
 from kernel_runtime.lsp import analysis as lsp_analysis
+from kernel_runtime.lsp.dataframe_schemas import collect_dataframe_schemas, describe_lazy_frame
 from kernel_runtime.lsp.models import (
     CompleteResponse,
+    DataframeSchema,
+    DataframeSchemasRequest,
+    DataframeSchemasResponse,
     DiagnosticsResponse,
     HoverResponse,
     LspCapabilities,
     LspRequest,
     SignatureResponse,
 )
-
-
-class _DeprecatedFlowfileAlias:
-    """Backwards-compat alias for the renamed ``flowfile_ctx`` kernel global.
-
-    Forwards attribute access to the real ``flowfile_client`` module and emits
-    a one-shot ``DeprecationWarning`` per execution. The kernel injects an
-    instance under the legacy name ``flowfile`` so existing user code, saved
-    flows, and tutorials keep working while users migrate to ``flowfile_ctx``.
-    """
-
-    __slots__ = ("_target", "_warned")
-
-    def __init__(self, target):
-        object.__setattr__(self, "_target", target)
-        object.__setattr__(self, "_warned", False)
-
-    def __getattr__(self, name):
-        if not self._warned:
-            warnings.warn(
-                "The kernel global `flowfile` is deprecated; use `flowfile_ctx` "
-                "instead (e.g. `flowfile_ctx.read_input()`). The old name will "
-                "be removed in a future release.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            object.__setattr__(self, "_warned", True)
-        return getattr(self._target, name)
-
-    def __dir__(self):
-        return dir(self._target)
-
-    def __repr__(self):
-        return f"<DeprecatedFlowfileAlias for {self._target!r}>"
-
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +47,11 @@ artifact_store = ArtifactStore()
 _namespace_store: dict[int, dict] = {}
 _namespace_access: dict[int, float] = {}  # flow_id -> last access timestamp
 _MAX_NAMESPACES = int(os.environ.get("MAX_NAMESPACES", "20"))
+
+# Schema-cache identity: generation per namespace instance, revision per execution attempt.
+_namespace_generation: dict[int, str] = {}
+_namespace_revision: dict[int, int] = {}
+_executing_flow_ids: dict[int, int] = {}
 
 # Display outputs from the most recent execution of each node, retrievable by
 # the frontend after a flow run completes. Bounded (LRU) so base64-image / 10k-row
@@ -129,6 +106,8 @@ def _evict_oldest_namespace() -> None:
     oldest_flow_id = min(_namespace_access, key=lambda k: _namespace_access[k])
     _namespace_store.pop(oldest_flow_id, None)
     _namespace_access.pop(oldest_flow_id, None)
+    _namespace_generation.pop(oldest_flow_id, None)
+    _namespace_revision.pop(oldest_flow_id, None)
     logger.debug("Evicted namespace for flow_id=%d (LRU)", oldest_flow_id)
 
 
@@ -137,6 +116,8 @@ def _get_namespace(flow_id: int) -> dict:
     if flow_id not in _namespace_store:
         _evict_oldest_namespace()
         _namespace_store[flow_id] = {}
+        _namespace_generation[flow_id] = uuid4().hex
+        _namespace_revision[flow_id] = 0
     _namespace_access[flow_id] = time.time()
     return _namespace_store[flow_id]
 
@@ -145,6 +126,8 @@ def _clear_namespace(flow_id: int) -> None:
     """Clear the namespace for a flow (e.g., on kernel restart)."""
     _namespace_store.pop(flow_id, None)
     _namespace_access.pop(flow_id, None)
+    _namespace_generation.pop(flow_id, None)
+    _namespace_revision.pop(flow_id, None)
     _purge_display_outputs(flow_id)
 
 
@@ -450,6 +433,8 @@ class ExecuteResponse(BaseModel):
     stderr: str = ""
     error: str | None = None
     execution_time_ms: float = 0.0
+    namespace_generation: str | None = None
+    revision: int | None = None
 
 
 class ArtifactIdentifier(BaseModel):
@@ -468,6 +453,21 @@ class CleanupRequest(BaseModel):
 
 
 # Existing endpoints
+
+
+def _stamp_namespace_state(response: ExecuteResponse, flow_id: int) -> ExecuteResponse:
+    """Count this execution attempt and stamp the namespace identity onto the response.
+
+    Every exit of ``_execute_sync`` routes through here — success, user exception,
+    interrupt — because the editor treats a bumped revision as "the namespace may
+    have changed". A crash before the namespace existed leaves both fields None.
+    """
+    with _exec_lock:
+        if flow_id in _namespace_store:
+            _namespace_revision[flow_id] = _namespace_revision.get(flow_id, 0) + 1
+            response.namespace_generation = _namespace_generation.get(flow_id)
+            response.revision = _namespace_revision[flow_id]
+    return response
 
 
 def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
@@ -490,18 +490,22 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
         _running_execs[my_gen] = threading.get_ident()
         if request.exec_token:
             _exec_tokens[request.exec_token] = my_gen
+        _executing_flow_ids[request.flow_id] = _executing_flow_ids.get(request.flow_id, 0) + 1
     try:
-        return _run_user_code(request, start, stdout_buf, stderr_buf)
+        return _stamp_namespace_state(_run_user_code(request, start, stdout_buf, stderr_buf), request.flow_id)
     except BaseException as exc:  # noqa: BLE001 - never surface a stray interrupt as a 500
         elapsed = (time.perf_counter() - start) * 1000
-        return ExecuteResponse(
-            success=False,
-            stdout=stdout_buf.getvalue(),
-            stderr=stderr_buf.getvalue(),
-            error="Execution cancelled by user"
-            if isinstance(exc, KeyboardInterrupt)
-            else f"{type(exc).__name__}: {exc}",
-            execution_time_ms=elapsed,
+        return _stamp_namespace_state(
+            ExecuteResponse(
+                success=False,
+                stdout=stdout_buf.getvalue(),
+                stderr=stderr_buf.getvalue(),
+                error="Execution cancelled by user"
+                if isinstance(exc, KeyboardInterrupt)
+                else f"{type(exc).__name__}: {exc}",
+                execution_time_ms=elapsed,
+            ),
+            request.flow_id,
         )
     finally:
         with _exec_lock:
@@ -510,6 +514,11 @@ def _execute_sync(request: ExecuteRequest) -> ExecuteResponse:
                 _exec_tokens.pop(request.exec_token, None)
             if _interrupt_generation == my_gen:
                 _interrupt_generation = None
+            remaining = _executing_flow_ids.get(request.flow_id, 0) - 1
+            if remaining > 0:
+                _executing_flow_ids[request.flow_id] = remaining
+            else:
+                _executing_flow_ids.pop(request.flow_id, None)
 
 
 def _run_user_code(
@@ -551,28 +560,19 @@ def _run_user_code(
 
         exec_globals = _get_namespace(request.flow_id)
 
-        # Always update the kernel-context reference (context changes between
-        # executions). ``flowfile_ctx`` is the canonical name; ``flowfile``
-        # remains as a deprecation-warning alias so legacy user code keeps
-        # running. Include ``__name__`` and ``__builtins__`` so classes
-        # defined in user code get ``__module__ = "__main__"`` instead of
-        # ``builtins``, enabling cloudpickle to serialize them correctly.
+        # User-defined classes need __main__ as their module for cloudpickle.
         exec_globals["flowfile_ctx"] = flowfile_client
-        exec_globals["flowfile"] = _DeprecatedFlowfileAlias(flowfile_client)
         exec_globals["__builtins__"] = __builtins__
         exec_globals["__name__"] = "__main__"
+        # Preserve user bindings across notebook cells.
+        exec_globals.setdefault("display", flowfile_client.display)
+        exec_globals.setdefault("explore", flowfile_client.explore)
 
         with (
             warnings.catch_warnings(),
             contextlib.redirect_stdout(stdout_buf),
             contextlib.redirect_stderr(stderr_buf),
         ):
-            # Force the default warning filter so the ``flowfile`` deprecation
-            # warning is actually shown — Python's default config suppresses
-            # ``DeprecationWarning`` for non-``__main__`` callers, and ``exec``'s
-            # frame attribution is fragile. Scoped to user-code execution so the
-            # process-wide filter state is not mutated.
-            warnings.simplefilter("default", DeprecationWarning)
             # plt.show() is a harmless no-op under Agg; hide its warning.
             warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive", category=UserWarning)
 
@@ -675,6 +675,9 @@ async def interrupt(request: InterruptRequest | None = Body(default=None)):
 # a hard per-request timeout; any failure/timeout degrades to an empty result.
 _LSP_TIMEOUT_S = 2.0
 
+# Dedicated: a hung plan must never occupy the default executor that /execute runs on.
+_LAZY_SCHEMA_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="lazy-schema")
+
 
 @app.get("/lsp/capabilities", response_model=LspCapabilities)
 async def lsp_capabilities():
@@ -728,6 +731,59 @@ async def lsp_diagnostics(request: LspRequest):
         return DiagnosticsResponse(diagnostics=[])
 
 
+@app.post("/lsp/dataframe_schemas", response_model=DataframeSchemasResponse)
+async def lsp_dataframe_schemas(request: DataframeSchemasRequest):
+    """Column names and dtypes of the Polars frames in a flow's namespace.
+
+    Never allocates a namespace and never executes a query. A LazyFrame is reported
+    ``unresolved`` unless the caller opts in with ``resolve_lazy_frames``, which
+    resolves each plan in turn on a dedicated single worker: resolution runs the
+    query planner, not the query, but a scan may still read file metadata or an
+    inference sample. One ``_LSP_TIMEOUT_S`` deadline covers the whole call, so a
+    slow or hung plan leaves itself and the frames after it ``unresolved`` while
+    the eager frames still ship. Refuses to inspect a namespace with an execution
+    in flight ("busy") — the editor keeps its previous entry and retries.
+    """
+    with _exec_lock:
+        generation = _namespace_generation.get(request.flow_id)
+        revision = _namespace_revision.get(request.flow_id, 0)
+        busy = _executing_flow_ids.get(request.flow_id, 0) > 0
+    if generation is None:
+        return DataframeSchemasResponse()
+    if busy:
+        return DataframeSchemasResponse(namespace_generation=generation, revision=revision, state="busy")
+    live = _peek_namespace(request.flow_id)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _LSP_TIMEOUT_S
+    try:
+        frames = await asyncio.wait_for(
+            asyncio.to_thread(collect_dataframe_schemas, live),
+            timeout=deadline - loop.time(),
+        )
+    except asyncio.TimeoutError:
+        return DataframeSchemasResponse(namespace_generation=generation, revision=revision)
+    if request.resolve_lazy_frames:
+        for index, frame in enumerate(frames):
+            if frame["kind"] != "LazyFrame" or frame["state"] != "unresolved":
+                continue
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            job = functools.partial(describe_lazy_frame, frame["name"], live.get(frame["name"]))
+            try:
+                frames[index] = await asyncio.wait_for(
+                    loop.run_in_executor(_LAZY_SCHEMA_EXECUTOR, job), timeout=remaining
+                )
+            except asyncio.TimeoutError:
+                break  # the one worker is stuck on this plan, so later frames would only queue behind it
+    return DataframeSchemasResponse(
+        namespace_generation=generation,
+        revision=revision,
+        state="ready",
+        dataframes=[DataframeSchema(**f) for f in frames],
+    )
+
+
 @app.post("/clear")
 async def clear_artifacts(flow_id: int | None = Query(default=None)):
     """Clear all artifacts, or only those belonging to a specific flow."""
@@ -738,6 +794,8 @@ async def clear_artifacts(flow_id: int | None = Query(default=None)):
     else:
         _namespace_store.clear()
         _namespace_access.clear()
+        _namespace_generation.clear()
+        _namespace_revision.clear()
         _display_output_store.clear()
         _artifact_preview_store.clear()
     return {"status": "cleared"}

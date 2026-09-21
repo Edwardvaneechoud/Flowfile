@@ -64,15 +64,27 @@
               </p>
             </div>
             <div class="api-item">
+              <code>Column names</code>
+              <p>
+                Open a quote in a column position — <code>df.select("</code>,
+                <code>pl.col("</code>, <code>df["</code> — and the popup lists that frame's
+                columns with their dtype and where the names came from. Catalog tables, node
+                inputs and plain <code>select</code> / <code>rename</code> / <code>drop</code>
+                chains are known before anything runs; after a run the kernel's own columns
+                appear, labelled <strong>last run</strong>. When the editor cannot know the
+                frame, it offers nothing rather than guessing.
+              </p>
+            </div>
+            <div class="api-item">
               <code>df</code>
               <p>A bare value on the last line shows its repr (what the object is).</p>
             </div>
             <div class="api-item">
-              <code>flowfile_ctx.display(df)</code>
+              <code>display(df)</code>
               <p>Render a DataFrame as an interactive, sortable table.</p>
             </div>
             <div class="api-item">
-              <code>flowfile_ctx.explore(df)</code>
+              <code>explore(df)</code>
               <p>Open the Graphic Walker explorer (data grid + drag-to-chart).</p>
             </div>
           </section>
@@ -111,16 +123,20 @@
 
           <section class="api-section">
             <h4>Display &amp; explore</h4>
-            <p class="section-description">Render results inline in the cell output.</p>
+            <p class="section-description">
+              Render results inline in the cell output. Both are available as bare names —
+              <code>flowfile_ctx.display</code> and <code>flowfile_ctx.explore</code> are the same
+              functions.
+            </p>
             <div class="api-item">
-              <code>flowfile_ctx.display(obj, title?)</code>
+              <code>display(obj, title?)</code>
               <p>
                 Polars frames → interactive table; also matplotlib / plotly figures, PIL images, and
                 HTML strings.
               </p>
             </div>
             <div class="api-item">
-              <code>flowfile_ctx.explore(df)</code>
+              <code>explore(df)</code>
               <p>Full Graphic Walker explorer (Data + Visualization tabs).</p>
             </div>
           </section>
@@ -168,13 +184,13 @@
 
 df = flowfile_ctx.get_catalog("Demo").get_schema("market").read_table("fx_rates")
 strong = df.filter(pl.col("rate") > 1).collect()
-flowfile_ctx.display(strong)</code></pre>
+display(strong)</code></pre>
             </div>
 
             <div class="pattern">
               <h5>Explore a table</h5>
               <pre><code>df = flowfile_ctx.read_catalog_table("fx_rates", schema="market")
-flowfile_ctx.explore(df)</code></pre>
+explore(df)</code></pre>
             </div>
 
             <div class="pattern">

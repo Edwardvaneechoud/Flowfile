@@ -757,9 +757,55 @@ class CtxLogger(nd.CustomNodeBase):
 '''
 
 
+_BARE_DISPLAY_NODE_SOURCE = '''
+import polars as pl
+
+from flowfile import node_designer as nd
+
+
+class BareDisplayNode(nd.CustomNodeBase):
+    node_name: str = "Bare Display"
+    node_category: str = "Transform"
+    number_of_inputs: int = 1
+    number_of_outputs: int = 1
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        display("bare display ran")
+        return inputs[0].with_columns(pl.lit(1).alias("k"))
+'''
+
+
 class TestFlowfileCtxInlineShim:
-    """Bug 2: the flat export binds flowfile_ctx via a self-contained inline shim
-    (a single-file script ships no sibling flowfile_ctx.py)."""
+    """Single-file exports provide their own kernel-context shim."""
+
+    def test_flat_export_binds_bare_display_and_runs(self, tmp_path):
+        """A node using the kernel's bare display() must still resolve in a flat export."""
+        import contextlib
+        import io
+        import sys
+
+        mod = _write_node_module(tmp_path, "bare_display_flat_mod", _BARE_DISPLAY_NODE_SOURCE)
+        try:
+            add_to_custom_node_store(mod.BareDisplayNode)
+            graph = create_graph()
+            add_manual_input(graph, [{"x": 1}], node_id=1)
+            add_custom_node_to_graph(graph, mod.BareDisplayNode, node_id=2, settings={})
+            add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+            code = export_flow_to_flowframe(graph)
+        finally:
+            sys.modules.pop("bare_display_flat_mod", None)
+
+        assert 'globals().setdefault("display", flowfile_ctx.display)' in code
+        assert 'globals().setdefault("explore", flowfile_ctx.explore)' in code
+
+        buf = io.StringIO()
+        ns: dict = {}
+        with contextlib.redirect_stdout(buf):
+            exec(compile(code, "<gen>", "exec"), ns)
+            result = ns["run_etl_pipeline"]()
+            if hasattr(result, "collect"):
+                result.collect()
+        assert "bare display ran" in buf.getvalue()
 
     def test_flat_export_binds_flowfile_ctx_and_runs(self, tmp_path):
         import contextlib

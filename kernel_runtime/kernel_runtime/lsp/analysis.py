@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_COMPLETIONS = 100
 _MAX_COMPLETION_DOC_CHARS = 400
-_FEATURES = ["complete", "hover", "signature", "diagnostics"]
+_FEATURES = ["complete", "hover", "signature", "diagnostics", "dataframe_schemas"]
 
 
 def _safe(fn: Callable[[], Any], default: Any = None) -> Any:
@@ -103,7 +103,8 @@ def _seed_namespace(live: dict | None) -> dict:
         from kernel_runtime import flowfile_client
 
         ns["flowfile_ctx"] = flowfile_client
-        ns["flowfile"] = flowfile_client
+        ns["display"] = flowfile_client.display
+        ns["explore"] = flowfile_client.explore
     except Exception:  # noqa: BLE001
         pass
     if live:

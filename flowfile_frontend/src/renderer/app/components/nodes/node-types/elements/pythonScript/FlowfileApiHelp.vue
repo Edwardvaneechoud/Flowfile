@@ -76,16 +76,21 @@
           <section class="api-section">
             <h4>Display</h4>
             <p class="section-description">
-              Render rich objects (matplotlib figures, plotly figures, PIL images, HTML strings) in
-              the output panel.
+              Render rich objects (Polars frames, matplotlib figures, plotly figures, PIL images,
+              HTML strings) in the output panel. <code>display</code> and <code>explore</code> are
+              available as bare names; <code>flowfile_ctx.display</code> is the same function.
             </p>
             <div class="api-item">
-              <code>flowfile_ctx.display(obj)</code>
+              <code>display(obj)</code>
               <p>Display a rich object in the output panel.</p>
             </div>
             <div class="api-item">
-              <code>flowfile_ctx.display(fig, "My Chart")</code>
+              <code>display(fig, "My Chart")</code>
               <p>Display with an optional title.</p>
+            </div>
+            <div class="api-item">
+              <code>explore(df)</code>
+              <p>Open the Graphic Walker explorer for a Polars DataFrame/LazyFrame.</p>
             </div>
           </section>
 

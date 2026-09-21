@@ -1,12 +1,19 @@
 // Pure position/range helpers for the LSP editor features, kept free of the API layer so
 // they unit-test in isolation (mirrors the kernel's dependency-free lsp/context.py). Only
-// @codemirror/state types + an LSP type (elided at runtime) are imported here.
+// editor/language modules and an LSP type (elided at runtime) are imported here.
 import type { CompletionContext, CompletionSource } from "@codemirror/autocomplete";
+import { ensureSyntaxTree, syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
 import type { EditorState, Text } from "@codemirror/state";
+import type { SyntaxNode } from "@lezer/common";
+
 import type { LspDiagnostic } from "@/api/lsp.api";
 
 const IDENT = /[A-Za-z0-9_]/;
 const CALL_SCAN_WINDOW = 2000;
+const STRING_NODES = new Set(["String", "FormatString", "ContinuedString"]);
+// An escape or an f-string replacement resolves below the string node, so climb a little.
+const MAX_STRING_CLIMB = 8;
+const QUOTE = /["']/;
 
 // `import x as p`, `with ... as f`, `except E as e` — the name after `as` is a binding the
 // user is defining, not a reference, so identifier completions there are noise. The `\b`
@@ -30,6 +37,28 @@ export function insideCall(state: EditorState, pos: number): boolean {
       if (depth === 0) return true;
       depth--;
     }
+  }
+  return false;
+}
+
+// Is the cursor inside a string literal? Column completions own that position, so signature
+// help stays out of it. An unterminated string still counts; the spot right after a closing
+// quote does not.
+export function insideString(state: EditorState, pos: number): boolean {
+  const tree = syntaxTreeAvailable(state, pos)
+    ? syntaxTree(state)
+    : (ensureSyntaxTree(state, pos, 50) ?? syntaxTree(state));
+  let node: SyntaxNode | null = tree.resolveInner(pos, -1);
+  for (let climbed = 0; node && climbed < MAX_STRING_CLIMB; climbed++) {
+    if (!STRING_NODES.has(node.name)) {
+      node = node.parent;
+      continue;
+    }
+    // `r`/`b`/`f` prefixes sit inside the node, so find the quote rather than assuming from.
+    const quote = state.sliceDoc(node.from, Math.min(node.to, node.from + 4)).search(QUOTE);
+    if (quote < 0) return false;
+    const unterminated = node.lastChild?.name === "⚠";
+    return pos > node.from + quote && (unterminated || pos < node.to);
   }
   return false;
 }

@@ -6,7 +6,6 @@ import {
   RE_SCHEMA_CALL,
   RE_TABLE_CALL,
 } from "@/utils/flowfileCtxCompletions";
-import type { UpstreamColumn } from "./useUpstreamColumns";
 
 // The kernel-runtime `flowfile_ctx` API + catalog-ref completions live in a
 // shared, editor-agnostic module (also used by the Node Designer's process-code
@@ -217,20 +216,15 @@ export const polarsModuleCompletions: CompletionSource = (context) => {
   };
 };
 
-/**
- * Completions after any `.` — common Polars Expr / DataFrame / LazyFrame methods.
- * Skipped when the preceding identifier is `flowfile_ctx`, the legacy `flowfile`
- * alias, `pl`, any catalog-ref-producing call, or a variable locally bound to a
- * catalog/schema/table ref (those have dedicated sources).
- */
+/** Polars method completions, excluding names with dedicated completion sources. */
 export function createPolarsExprCompletions(getPriorCellCodes: () => string[]): CompletionSource {
   return (context) => {
     const match = context.matchBefore(/\.\w*/);
     if (!match) return null;
 
-    // Skip if preceded by `flowfile_ctx`, `flowfile`, or `pl` — those have dedicated, more specific sources
+    // Dedicated sources handle context and module members.
     const lookback = context.state.doc.sliceString(Math.max(0, match.from - 200), match.from);
-    if (/\b(?:flowfile_ctx|flowfile)$/.test(lookback) || /\bpl$/.test(lookback)) return null;
+    if (/\bflowfile_ctx$/.test(lookback) || /\bpl$/.test(lookback)) return null;
     // Also step aside for catalog-ref chains so the Polars list doesn't pollute
     // ref completions.
     if (
@@ -275,42 +269,6 @@ export function createNamedInputCompletions(getInputNames: () => string[]): Comp
         detail: "input",
         info: "Connected input name",
         boost: 10,
-      })),
-      validFor: /^[^"]*$/,
-    };
-  };
-}
-
-/**
- * Build a completion source that suggests upstream column names inside `col("...")`
- * or `pl.col("...")`. Each column carries its data type as `detail` and its source
- * input as `info`. Accepts a getter so the source picks up newly-fetched schemas.
- */
-export function createUpstreamColumnCompletions(
-  getColumns: () => UpstreamColumn[],
-): CompletionSource {
-  return (context) => {
-    const columns = getColumns();
-    if (columns.length === 0) return null;
-    const match = context.matchBefore(/(?:pl\.)?col\(\s*"[^"]*/);
-    if (!match) return null;
-    const quoteIdx = match.text.lastIndexOf('"');
-    const partialStart = match.from + quoteIdx + 1;
-
-    // Dedupe by column name; if multiple inputs share a column name keep the first
-    const seen = new Map<string, UpstreamColumn>();
-    for (const col of columns) {
-      if (!seen.has(col.name)) seen.set(col.name, col);
-    }
-
-    return {
-      from: partialStart,
-      options: Array.from(seen.values()).map((col) => ({
-        label: col.name,
-        type: "property",
-        detail: col.data_type,
-        info: `Column from "${col.source_input}"`,
-        boost: 5,
       })),
       validFor: /^[^"]*$/,
     };
