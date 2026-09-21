@@ -118,7 +118,22 @@ def test_kernel_payload_passes_through_verbatim(client: TestClient, owner_id: in
     resp = client.post("/kernels/k1/lsp/dataframe_schemas", json={"flow_id": 42, "node_id": 7})
     assert resp.status_code == 200
     assert resp.json() == payload
-    assert manager.calls == [("k1", "dataframe_schemas", {"flow_id": 42, "node_id": 7})]
+    assert manager.calls == [
+        ("k1", "dataframe_schemas", {"flow_id": 42, "node_id": 7, "resolve_lazy_frames": False})
+    ]
+
+
+def test_resolve_lazy_frames_reaches_the_kernel_verbatim(client: TestClient, owner_id: int, monkeypatch):
+    manager = _StubManager(kernel=_StubKernel(KernelState.IDLE), owner_id=owner_id)
+    _install_manager(monkeypatch, manager)
+    resp = client.post(
+        "/kernels/k1/lsp/dataframe_schemas",
+        json={"flow_id": 42, "resolve_lazy_frames": True},
+    )
+    assert resp.status_code == 200
+    assert manager.calls == [
+        ("k1", "dataframe_schemas", {"flow_id": 42, "node_id": None, "resolve_lazy_frames": True})
+    ]
 
 
 def test_unauthenticated_is_rejected():

@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 
 from kernel_runtime import main
-from kernel_runtime.lsp.dataframe_schemas import collect_dataframe_schemas
+from kernel_runtime.lsp.dataframe_schemas import collect_dataframe_schemas, describe_lazy_frame
 
 
 def _by_name(frames: list[dict]) -> dict[str, dict]:
@@ -83,14 +83,60 @@ class TestCollectDataframeSchemas:
         assert [f["name"] for f in frames] == ["df"]
 
 
+_UNRESOLVED = {"name": "lazy", "kind": "LazyFrame", "state": "unresolved", "columns": []}
+
+
+class TestDescribeLazyFrame:
+    def test_reports_the_resolved_schema(self):
+        lazy = pl.LazyFrame({"a": [1], "b": ["x"]}).with_columns(pl.col("a").cast(pl.Float64))
+        frame = describe_lazy_frame("lazy", lazy)
+        assert frame["kind"] == "LazyFrame"
+        assert frame["state"] == "ready"
+        assert frame["columns"] == [{"name": "a", "dtype": "Float64"}, {"name": "b", "dtype": "String"}]
+        assert frame["truncated"] is False
+
+    def test_unresolvable_plan_degrades_to_unresolved(self):
+        assert describe_lazy_frame("lazy", pl.scan_parquet("/nonexistent.parquet")) == _UNRESOLVED
+
+    def test_a_panicking_plan_degrades_to_unresolved(self):
+        class _Panic(BaseException):  # a pyo3 panic does not subclass Exception
+            pass
+
+        class _Panicking(pl.LazyFrame):
+            @property
+            def _ldf(self):
+                raise _Panic("plan blew up")
+
+            @_ldf.setter
+            def _ldf(self, value):
+                pass
+
+        assert describe_lazy_frame("lazy", _Panicking({"a": [1]})) == _UNRESOLVED
+
+    def test_subclass_overriding_collect_schema_still_reports_the_real_schema(self):
+        class _Overridden(pl.LazyFrame):
+            def collect_schema(self):
+                raise RuntimeError("overridden collect_schema must not be invoked")
+
+        frame = describe_lazy_frame("lazy", _Overridden({"a": [1], "b": ["x"]}))
+        assert frame["state"] == "ready"
+        assert frame["columns"] == [{"name": "a", "dtype": "Int64"}, {"name": "b", "dtype": "String"}]
+
+    def test_columns_are_capped_and_flagged(self):
+        wide = pl.LazyFrame({f"c{i}": [i] for i in range(5)})
+        frame = describe_lazy_frame("lazy", wide, max_columns=3)
+        assert len(frame["columns"]) == 3
+        assert frame["truncated"] is True
+
+
 def _execute(client, flow_id: int, code: str) -> dict:
     resp = client.post("/execute", json={"node_id": 1, "flow_id": flow_id, "code": code})
     assert resp.status_code == 200, resp.text
     return resp.json()
 
 
-def _schemas(client, flow_id: int):
-    resp = client.post("/lsp/dataframe_schemas", json={"flow_id": flow_id})
+def _schemas(client, flow_id: int, **extra):
+    resp = client.post("/lsp/dataframe_schemas", json={"flow_id": flow_id, **extra})
     assert resp.status_code == 200, resp.text
     return resp
 
@@ -168,6 +214,26 @@ class TestDataframeSchemasEndpoint:
         sentinel = "SENTINEL_ROW_VALUE_9f3a"
         _execute(client, flow_id, f"import polars as pl\nsecrets = pl.DataFrame({{'token': ['{sentinel}']}})")
         resp = _schemas(client, flow_id)
+        assert "token" in resp.text
+        assert sentinel not in resp.text
+
+    def test_lazy_frame_resolves_only_when_the_request_opts_in(self, client):
+        flow_id = 7009
+        _execute(client, flow_id, "import polars as pl\nlazy = pl.LazyFrame({'a': [1], 'b': ['x']})")
+
+        resolved = _by_name(_schemas(client, flow_id, resolve_lazy_frames=True).json()["dataframes"])["lazy"]
+        assert resolved["state"] == "ready"
+        assert resolved["columns"] == [{"name": "a", "dtype": "Int64"}, {"name": "b", "dtype": "String"}]
+
+        default = _by_name(_schemas(client, flow_id).json()["dataframes"])["lazy"]
+        assert default["state"] == "unresolved"
+        assert default["columns"] == []
+
+    def test_resolved_lazy_response_never_carries_row_values(self, client):
+        flow_id = 7010
+        sentinel = "SENTINEL_LAZY_VALUE_4c7b"
+        _execute(client, flow_id, f"import polars as pl\nlazy = pl.LazyFrame({{'token': ['{sentinel}']}})")
+        resp = _schemas(client, flow_id, resolve_lazy_frames=True)
         assert "token" in resp.text
         assert sentinel not in resp.text
 

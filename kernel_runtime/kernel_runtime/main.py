@@ -1,7 +1,9 @@
 import ast
 import asyncio
+import concurrent.futures
 import contextlib
 import ctypes
+import functools
 import io
 import logging
 import os
@@ -22,7 +24,7 @@ from kernel_runtime import __version__, flowfile_client
 from kernel_runtime.artifact_persistence import ArtifactPersistence, RecoveryMode
 from kernel_runtime.artifact_store import ArtifactStore
 from kernel_runtime.lsp import analysis as lsp_analysis
-from kernel_runtime.lsp.dataframe_schemas import collect_dataframe_schemas
+from kernel_runtime.lsp.dataframe_schemas import collect_dataframe_schemas, describe_lazy_frame
 from kernel_runtime.lsp.models import (
     CompleteResponse,
     DataframeSchema,
@@ -673,6 +675,9 @@ async def interrupt(request: InterruptRequest | None = Body(default=None)):
 # a hard per-request timeout; any failure/timeout degrades to an empty result.
 _LSP_TIMEOUT_S = 2.0
 
+# Dedicated: a hung plan must never occupy the default executor that /execute runs on.
+_LAZY_SCHEMA_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="lazy-schema")
+
 
 @app.get("/lsp/capabilities", response_model=LspCapabilities)
 async def lsp_capabilities():
@@ -730,9 +735,14 @@ async def lsp_diagnostics(request: LspRequest):
 async def lsp_dataframe_schemas(request: DataframeSchemasRequest):
     """Column names and dtypes of the Polars frames in a flow's namespace.
 
-    Never allocates a namespace, never reads a row, never resolves a LazyFrame.
-    Refuses to inspect a namespace with an execution in flight ("busy") — the
-    editor keeps its previous entry and retries.
+    Never allocates a namespace and never executes a query. A LazyFrame is reported
+    ``unresolved`` unless the caller opts in with ``resolve_lazy_frames``, which
+    resolves each plan in turn on a dedicated single worker: resolution runs the
+    query planner, not the query, but a scan may still read file metadata or an
+    inference sample. One ``_LSP_TIMEOUT_S`` deadline covers the whole call, so a
+    slow or hung plan leaves itself and the frames after it ``unresolved`` while
+    the eager frames still ship. Refuses to inspect a namespace with an execution
+    in flight ("busy") — the editor keeps its previous entry and retries.
     """
     with _exec_lock:
         generation = _namespace_generation.get(request.flow_id)
@@ -743,13 +753,29 @@ async def lsp_dataframe_schemas(request: DataframeSchemasRequest):
     if busy:
         return DataframeSchemasResponse(namespace_generation=generation, revision=revision, state="busy")
     live = _peek_namespace(request.flow_id)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _LSP_TIMEOUT_S
     try:
         frames = await asyncio.wait_for(
             asyncio.to_thread(collect_dataframe_schemas, live),
-            timeout=_LSP_TIMEOUT_S,
+            timeout=deadline - loop.time(),
         )
     except asyncio.TimeoutError:
         return DataframeSchemasResponse(namespace_generation=generation, revision=revision)
+    if request.resolve_lazy_frames:
+        for index, frame in enumerate(frames):
+            if frame["kind"] != "LazyFrame" or frame["state"] != "unresolved":
+                continue
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            job = functools.partial(describe_lazy_frame, frame["name"], live.get(frame["name"]))
+            try:
+                frames[index] = await asyncio.wait_for(
+                    loop.run_in_executor(_LAZY_SCHEMA_EXECUTOR, job), timeout=remaining
+                )
+            except asyncio.TimeoutError:
+                break  # the one worker is stuck on this plan, so later frames would only queue behind it
     return DataframeSchemasResponse(
         namespace_generation=generation,
         revision=revision,

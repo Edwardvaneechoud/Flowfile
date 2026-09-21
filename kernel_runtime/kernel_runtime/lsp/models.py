@@ -71,6 +71,8 @@ class LspCapabilities(BaseModel):
 class DataframeSchemasRequest(BaseModel):
     flow_id: int  # namespace/session key, same value the cell executes with
     node_id: int | None = None  # optional, unused in v1
+    # Opt-in: resolving a lazy plan runs the planner and can do I/O, so callers ask for it.
+    resolve_lazy_frames: bool = False
 
 
 class DataframeColumn(BaseModel):
@@ -81,7 +83,7 @@ class DataframeColumn(BaseModel):
 class DataframeSchema(BaseModel):
     name: str  # the variable name in the namespace
     kind: str  # DataFrame | LazyFrame
-    state: str  # ready | unresolved (LazyFrames are never resolved here)
+    state: str  # ready | unresolved (a LazyFrame is unresolved unless the caller opted in)
     columns: list[DataframeColumn] = []
     truncated: bool = False  # column list hit the per-frame cap
 

@@ -68,6 +68,7 @@ class LspCapabilities(BaseModel):
 class DataframeSchemasRequest(BaseModel):
     flow_id: int
     node_id: int | None = None
+    resolve_lazy_frames: bool = False
 
 
 class DataframeColumn(BaseModel):
