@@ -41,7 +41,7 @@ const MAX_DEPTH = 32;
 const PARSE_CACHE_LIMIT = 200;
 
 const PUNCTUATION = new Set(["(", ")", "[", "]", "{", "}", ",", ":", "Comment", "⚠"]);
-const CONTEXT_NAMES = new Set(["flowfile_ctx", "flowfile"]);
+const CONTEXT_NAMES = new Set(["flowfile_ctx"]);
 const INPUT_METHODS = new Set(["read_input", "read_first"]);
 const ROW_ONLY_METHODS = new Set([
   "filter",

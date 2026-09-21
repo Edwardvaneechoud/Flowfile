@@ -237,7 +237,7 @@ describe("run routing", () => {
     expect(second.output).toBeNull();
   });
 
-  it("double-invoking runCell on a running cell does not double-run (NB-03)", async () => {
+  it("double-invoking runCell on a running cell does not double-run", async () => {
     let resolve!: (v: unknown) => void;
     mocks.executeCell.mockReturnValueOnce(new Promise((r) => (resolve = r)));
     const store = useNotebookStore();
@@ -253,7 +253,7 @@ describe("run routing", () => {
     expect(cell.execState).toBe("idle");
   });
 
-  it("a mid-run tab switch keeps the batch and its results on the origin tab (NB-04)", async () => {
+  it("a mid-run tab switch keeps the batch and its results on the origin tab", async () => {
     let resolve!: (v: unknown) => void;
     mocks.executeCell
       .mockReturnValueOnce(new Promise((r) => (resolve = r)))

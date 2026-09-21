@@ -47,7 +47,6 @@ class TestCollectDataframeSchemas:
         namespace = {
             "_private": pl.DataFrame({"a": [1]}),
             "flowfile_ctx": pl.DataFrame({"a": [1]}),
-            "flowfile": pl.DataFrame({"a": [1]}),
             "pl": pl,
             "series": pl.Series("s", [1, 2]),
             "kept": pl.DataFrame({"a": [1]}),

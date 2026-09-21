@@ -11,7 +11,7 @@ Run custom Python code in isolated Docker containers with full access to your fl
 Kernels provide a sandboxed execution environment for Python Script nodes. Each kernel runs inside its own Docker container with configurable resources (CPU, memory, GPU), persistent namespaces across executions, and access to the `flowfile_ctx` API for reading inputs, writing outputs, and managing artifacts.
 
 !!! warning "The old `flowfile` global was removed"
-    The kernel-context global was previously called `flowfile`. It was renamed to `flowfile_ctx` to avoid colliding with the `flowfile` PyPI package, which you may want to `import` inside a cell. As of kernel image **0.5.5**, the kernel no longer defines `flowfile`; references to it without an import or assignment raise `NameError`. Update kernel-context calls in saved cells and node code to use `flowfile_ctx.`. Calls to the imported `flowfile` package remain unchanged.
+    The kernel-context global was previously called `flowfile`. It was renamed to `flowfile_ctx` to avoid colliding with the `flowfile` PyPI package, which you may want to `import` inside a cell. As of kernel image **0.6.0**, the kernel no longer defines `flowfile`; references to it without an import or assignment raise `NameError`. Update kernel-context calls in saved cells and node code to use `flowfile_ctx.`. Calls to the imported `flowfile` package remain unchanged.
 
 ---
 

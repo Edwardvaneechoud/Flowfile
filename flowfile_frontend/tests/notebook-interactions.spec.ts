@@ -1,10 +1,10 @@
 import { test, expect, APIRequestContext, Locator, Page } from "@playwright/test";
 
 /**
- * E2E for notebook cell reordering and structural undo (Change 1) and for cell
- * actions, collapse and run-and-advance focus (Change 2) on both surfaces: the
- * catalog notebook (NotebookPanel + CatalogNotebookCell) and the Python Script
- * node's notebook editor (NotebookEditor + NotebookCell).
+ * E2E for notebook cell reordering and structural undo, and for cell actions,
+ * collapse and run-and-advance focus on both surfaces: the catalog notebook
+ * (NotebookPanel + CatalogNotebookCell) and the Python Script node's notebook
+ * editor (NotebookEditor + NotebookCell).
  *
  * Docker is not required: the kernel is faked at the network layer (mockKernel),
  * so a run can succeed or fail on demand. Leaving that fixture off is what
@@ -1126,8 +1126,7 @@ test.describe("Catalog notebook — outdated outputs and execution identity", ()
   const pairCells = (label: string): SeedCell[] =>
     PAIR_IDS.map((id, i) => ({ id, type: "python", source: `# ${label} ${i}` }));
 
-  // Two frames sharing a column name with different dtypes — the case a single flat
-  // column list used to collapse onto the first source's type.
+  // Two frames sharing a column name with different dtypes — each keeps its own.
   const ORDERS_FRAME: MockFrame = {
     name: "orders",
     columns: [
@@ -1300,7 +1299,7 @@ test.describe("Catalog notebook — outdated outputs and execution identity", ()
   });
 
   // Reset session is disabled while a batch runs, so the in-flight half of that rule is
-  // reached through the other epoch bump the plan names: changing the kernel.
+  // reached through the other epoch bump: changing the kernel.
   test("a response in flight when the session changes cannot revive the result", async ({
     page,
     request,

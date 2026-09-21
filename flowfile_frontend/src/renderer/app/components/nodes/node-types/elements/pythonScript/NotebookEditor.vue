@@ -359,7 +359,7 @@ const executeOne = async (cellId: string): Promise<boolean> => {
       flow_id: props.flowId,
     });
 
-    // Change 4 stamps namespace identity onto ExecuteResult; older runtimes send neither field.
+    // Kernel images before 0.6.0 stamp neither identity field.
     const stamped = result as ExecuteResult & SettledMeta;
     const verdict = settleExecution(ticket, {
       namespace_generation: stamped.namespace_generation ?? null,

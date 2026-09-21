@@ -10,7 +10,7 @@ eager schemas are read through the base-class descriptor so a subclass overridin
 
 import polars as pl
 
-_SKIP_NAMES = frozenset({"flowfile_ctx", "flowfile"})
+_SKIP_NAMES = frozenset({"flowfile_ctx"})
 
 
 def collect_dataframe_schemas(

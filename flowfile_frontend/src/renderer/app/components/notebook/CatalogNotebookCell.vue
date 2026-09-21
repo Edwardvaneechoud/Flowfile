@@ -357,7 +357,7 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
 }
 
-/* Compact ghost run button (replaces the big primary button) */
+/* Compact ghost run button */
 .nb-run {
   display: inline-flex;
   align-items: center;

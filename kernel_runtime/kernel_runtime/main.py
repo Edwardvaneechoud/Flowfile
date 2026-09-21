@@ -35,7 +35,6 @@ from kernel_runtime.lsp.models import (
     SignatureResponse,
 )
 
-
 logger = logging.getLogger(__name__)
 
 artifact_store = ArtifactStore()

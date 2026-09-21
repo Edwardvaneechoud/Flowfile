@@ -44,7 +44,7 @@ export interface RuntimeCellRef {
   isPython: boolean;
 }
 
-/** Namespace identity stamped on an ExecuteResult; Change 4 keys its schema cache on it. */
+/** Namespace identity stamped on an ExecuteResult; the schema cache is keyed on it. */
 export interface SettledMeta {
   namespace_generation?: string | null;
   revision?: number | null;

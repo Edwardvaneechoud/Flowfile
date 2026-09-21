@@ -10,9 +10,9 @@ import os
 
 from flowfile_core.kernel.models import ImageFlavour
 
-_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.5.5"
-_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.5.5"
-_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.5.5"
+_KERNEL_IMAGE_BASE_DEFAULT = "edwardvaneechoud/flowfile-kernel-base:0.6.0"
+_KERNEL_IMAGE_ML_DEFAULT = "edwardvaneechoud/flowfile-kernel-ml:0.6.0"
+_KERNEL_IMAGE_LITE_DEFAULT = "edwardvaneechoud/flowfile-kernel-lite:0.6.0"
 
 
 def _envvar_or_default(name: str, default: str) -> str:

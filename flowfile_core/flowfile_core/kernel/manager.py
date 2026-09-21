@@ -2256,7 +2256,7 @@ class KernelManager:
                 if op == "dataframe_schemas":
                     message = (
                         "Kernel '%s' (runtime %s, image '%s') does not serve dataframe schemas (needs a kernel "
-                        "image 0.5.5 or newer); notebook column completions fall back to static inference. "
+                        "image 0.6.0 or newer); notebook column completions fall back to static inference. "
                         "Pull %s and restart the kernel."
                     )
                 else:

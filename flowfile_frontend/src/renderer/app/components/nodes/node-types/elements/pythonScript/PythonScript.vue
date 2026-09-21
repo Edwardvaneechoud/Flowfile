@@ -206,7 +206,7 @@
           </div>
         </div>
 
-        <!-- Code Editor — replaced with notebook -->
+        <!-- Code Editor -->
         <div class="setting-block">
           <div class="code-header">
             <label class="setting-label">Code</label>
