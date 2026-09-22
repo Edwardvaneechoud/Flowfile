@@ -15,6 +15,9 @@ import type {
   CatalogTableKeyColumnResponse,
   CatalogTablePreview,
   CatalogTableUpdate,
+  CdcCursor,
+  CdcCursorResetRequest,
+  CdcCursorResetTarget,
   ColumnStatsResponse,
   CatalogVisualization,
   Dashboard,
@@ -43,6 +46,7 @@ import type {
   SchedulerStatus,
   SqlQueryResult,
   SubflowInterface,
+  TableCdcStatus,
   VacuumTableRequest,
   VacuumTableResponse,
   VirtualFlowTableCreate,
@@ -396,13 +400,46 @@ export class CatalogApi {
     tableId: number,
     retentionHours: number,
     dryRun: boolean,
+    force = false,
   ): Promise<VacuumTableResponse> {
-    const body: VacuumTableRequest = { retention_hours: retentionHours, dry_run: dryRun };
+    const body: VacuumTableRequest = {
+      retention_hours: retentionHours,
+      dry_run: dryRun,
+      force,
+    };
     const response = await axios.post<VacuumTableResponse>(
       `/catalog/tables/${tableId}/vacuum`,
       body,
     );
     return response.data;
+  }
+
+  /** Change-tracking status: the table's enablement plus every consumer cursor on it. */
+  static async getTableCdc(tableId: number): Promise<TableCdcStatus> {
+    const response = await axios.get<TableCdcStatus>(`/catalog/tables/${tableId}/cdc`);
+    return response.data;
+  }
+
+  static async enableTableCdc(tableId: number): Promise<TableCdcStatus> {
+    const response = await axios.post<TableCdcStatus>(`/catalog/tables/${tableId}/cdc/enable`);
+    return response.data;
+  }
+
+  static async resetCdcCursor(
+    tableId: number,
+    consumerKey: string,
+    to: CdcCursorResetTarget,
+  ): Promise<CdcCursor> {
+    const body: CdcCursorResetRequest = { consumer_key: consumerKey, to };
+    const response = await axios.post<CdcCursor>(
+      `/catalog/tables/${tableId}/cdc/cursors/reset`,
+      body,
+    );
+    return response.data;
+  }
+
+  static async deleteCdcCursor(tableId: number, consumerKey: string): Promise<void> {
+    await axios.delete(`/catalog/tables/${tableId}/cdc/cursors/${encodeURIComponent(consumerKey)}`);
   }
 
   /** Apply row-level edits (keyed upserts / deletes / new columns) to a catalog table. */

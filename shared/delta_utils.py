@@ -197,6 +197,7 @@ def write_delta(
     mode: str = "overwrite",
     partition_by: list[str] | None = None,
     storage_options: dict[str, str] | None = None,
+    enable_cdf: bool = False,
 ) -> bool:
     """Write a Polars DataFrame or LazyFrame to a Delta table.
 
@@ -211,6 +212,9 @@ def write_delta(
 
     When *storage_options* is set, *output_path* is an object-storage URI and the write
     targets that backend; ``None`` is a local filesystem write.
+
+    *enable_cdf* turns the change data feed on for a table this write **creates**; an existing
+    table is left alone (``enable_change_data_feed`` is the explicit, commit-producing path).
     """
     import os
 
@@ -242,6 +246,9 @@ def write_delta(
         _validate_partition_columns(df, partition_by)
         delta_write_options["partition_by"] = partition_by
 
+    if enable_cdf and not _delta_table_exists(output_path, storage_options):
+        delta_write_options["configuration"] = {CDF_PROPERTY: "true"}
+
     write_kwargs: dict[str, object] = {"mode": mode, "delta_write_options": delta_write_options}
     if storage_options is not None:
         write_kwargs["storage_options"] = storage_options
@@ -261,6 +268,7 @@ def merge_into_delta(
     partition_by: list[str] | None = None,
     storage_options: dict[str, str] | None = None,
     commit_metadata: dict[str, str] | None = None,
+    enable_cdf: bool = False,
 ) -> bool:
     """Merge a Polars DataFrame into a Delta table.
 
@@ -272,6 +280,9 @@ def merge_into_delta(
 
     *commit_metadata* (when set) is stamped onto the Delta commit as custom metadata
     (``userMetadata`` in the log), so table history can attribute the change.
+
+    *enable_cdf* turns the change data feed on for a table this merge **creates**; an existing
+    table is left alone (see ``enable_change_data_feed``).
 
     Returns ``True`` if data was written, ``False`` if the write was a no-op.
     """
@@ -301,6 +312,8 @@ def merge_into_delta(
         if partition_by:
             _validate_partition_columns(df, partition_by)
             create_opts["partition_by"] = partition_by
+        if enable_cdf:
+            create_opts["configuration"] = {CDF_PROPERTY: "true"}
         if merge_mode in ("delete", "update"):
             df.clear().write_delta(output_path, mode="error", delta_write_options=create_opts, **create_kwargs)
         else:
@@ -346,6 +359,130 @@ def merge_into_delta(
         else:
             raise ValueError(f"Unknown merge_mode: {merge_mode}")
     return True
+
+
+# Delta change data feed (change tracking)
+
+CDF_PROPERTY = "delta.enableChangeDataFeed"
+"""The Delta table property that turns the change data feed on."""
+
+CDF_COLUMNS = ("_change_type", "_commit_version", "_commit_timestamp")
+"""The three columns ``load_cdf`` appends to every change row."""
+
+
+def is_change_data_feed_enabled(path: str | Path, storage_options: dict[str, str] | None = None) -> bool:
+    """Return ``True`` when the Delta table at *path* carries the change-data-feed property."""
+    from deltalake import DeltaTable
+
+    dt = DeltaTable(str(path), without_files=True, storage_options=storage_options)
+    return str(dt.metadata().configuration.get(CDF_PROPERTY, "")).lower() == "true"
+
+
+def enable_change_data_feed(path: str | Path, storage_options: dict[str, str] | None = None) -> int:
+    """Turn the change data feed on and return the table version after the call.
+
+    That version is the **enablement floor**: reads below it are inconsistent (an error at v0,
+    silently synthesized rows above it), so callers record it and clamp every cursor to it.
+    Setting the property is its own commit, so an already-enabled table is left untouched and
+    simply reports its current version.
+    """
+    from deltalake import DeltaTable
+
+    dt = DeltaTable(str(path), storage_options=storage_options)
+    if str(dt.metadata().configuration.get(CDF_PROPERTY, "")).lower() != "true":
+        dt.alter.set_table_properties({CDF_PROPERTY: "true"})
+    return get_delta_head_version(path, storage_options=storage_options)
+
+
+def get_delta_head_version(path: str | Path, storage_options: dict[str, str] | None = None) -> int:
+    """Current Delta commit version of the table at *path* — metadata only, no data I/O."""
+    from deltalake import DeltaTable
+
+    return DeltaTable(str(path), without_files=True, storage_options=storage_options).version()
+
+
+def get_delta_version_at_or_after(
+    path: str | Path, instant: datetime, storage_options: dict[str, str] | None = None
+) -> int | None:
+    """The lowest commit version whose timestamp is at or after *instant*, or ``None`` when every
+    commit predates it. Metadata only (the transaction log), no data I/O."""
+    from deltalake import DeltaTable
+
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    threshold_ms = int(instant.timestamp() * 1000)
+    versions = [
+        int(entry["version"])
+        for entry in DeltaTable(str(path), without_files=True, storage_options=storage_options).history()
+        if int(entry["timestamp"]) >= threshold_ms
+    ]
+    return min(versions) if versions else None
+
+
+def _load_cdf_reader(
+    path: str,
+    starting_version: int | None,
+    ending_version: int | None,
+    starting_timestamp: str | None,
+    storage_options: dict[str, str] | None,
+):
+    """Open the change feed for one window. ``allow_out_of_range`` makes a cursor at or past head
+    an empty frame with the full schema instead of an error — the quiet-hour scheduled run."""
+    from deltalake import DeltaTable
+
+    kwargs: dict[str, object] = {"allow_out_of_range": True}
+    if starting_version is not None:
+        kwargs["starting_version"] = starting_version
+    if starting_timestamp is not None:
+        kwargs["starting_timestamp"] = starting_timestamp
+    if ending_version is not None:
+        kwargs["ending_version"] = ending_version
+    return DeltaTable(str(path), storage_options=storage_options).load_cdf(**kwargs)
+
+
+def scan_delta_changes(
+    path: str,
+    starting_version: int | None = None,
+    ending_version: int | None = None,
+    *,
+    starting_timestamp: str | None = None,
+    storage_options: dict[str, str] | None = None,
+    include_preimage: bool = False,
+) -> pl.LazyFrame:
+    """Lazily scan a Delta table's change data feed between two commit versions.
+
+    ``pl.scan_delta`` has no CDF argument, so the feed is wrapped in a polars IO plugin. The
+    resulting LazyFrame serializes and collects in a worker child like any other plan, so core
+    never materialises it. The schema is derived from the reader's arrow schema without reading
+    data, and projection / predicate / row-limit pushdown are honoured inside the source.
+
+    Unless *include_preimage* is set, ``update_preimage`` rows are dropped: a consumer wants one
+    row per change, not the before/after pair.
+    """
+    import polars as pl_
+
+    reader = _load_cdf_reader(path, starting_version, ending_version, starting_timestamp, storage_options)
+    schema = pl_.DataFrame(reader.schema.empty_table()).schema
+
+    def _source(with_columns, predicate, n_rows, batch_size):
+        del batch_size
+        if n_rows == 0:
+            yield pl_.DataFrame(schema=schema)
+            return
+        reader = _load_cdf_reader(path, starting_version, ending_version, starting_timestamp, storage_options)
+        df = pl_.DataFrame(reader.read_all())
+        if predicate is not None:
+            df = df.filter(predicate)
+        if n_rows is not None:
+            df = df.head(n_rows)
+        if with_columns is not None:
+            df = df.select(with_columns)
+        yield df
+
+    lf = pl_.io.plugins.register_io_source(_source, schema=schema)
+    if not include_preimage:
+        lf = lf.filter(pl_.col("_change_type") != "update_preimage")
+    return lf
 
 
 # In-place table edits (catalog "edit table data" surface)

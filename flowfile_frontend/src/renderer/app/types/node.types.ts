@@ -956,6 +956,10 @@ export type CatalogWriteMode =
 
 export type Scd2OutputMode = "input" | "changed" | "current";
 
+export type CdcMode = "off" | "since_last_run" | "since_version" | "since_timestamp";
+
+export type CdcStart = "now" | "beginning";
+
 export interface Scd2Settings {
   compare_columns: string[];
   full_snapshot: boolean;
@@ -987,6 +991,8 @@ export interface CatalogWriteSettings {
   merge_keys: string[];
   partition_by: string[];
   scd2: Scd2Settings | null;
+  // Enable-only: turns the Delta change data feed on, never off.
+  track_changes: boolean;
 }
 
 export interface NodeCatalogWriter extends NodeBase {
@@ -1002,7 +1008,32 @@ export interface NodeCatalogReader extends NodeBase {
   scd2_view: "active" | "all" | "active_at" | null;
   scd2_as_of: string | null;
   sql_query: string | null;
+  cdc_mode: CdcMode;
+  cdc_from_version: number | string | null;
+  cdc_from_timestamp: string | null;
+  cdc_consumer_name: string | null;
+  cdc_start: CdcStart;
+  cdc_include_preimage: boolean;
 }
+
+export type CdcReaderSettings = Pick<
+  NodeCatalogReader,
+  | "cdc_mode"
+  | "cdc_from_version"
+  | "cdc_from_timestamp"
+  | "cdc_consumer_name"
+  | "cdc_start"
+  | "cdc_include_preimage"
+>;
+
+export const DEFAULT_CDC_SETTINGS: CdcReaderSettings = {
+  cdc_mode: "off",
+  cdc_from_version: null,
+  cdc_from_timestamp: null,
+  cdc_consumer_name: null,
+  cdc_start: "now",
+  cdc_include_preimage: false,
+};
 
 export interface NodeInputData extends NodeBase {
   file_ref: string;

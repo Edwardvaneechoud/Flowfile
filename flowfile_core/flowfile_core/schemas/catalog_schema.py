@@ -372,6 +372,44 @@ def scd2_system_columns_missing(cfg: dict, schema_columns: list[dict]) -> bool:
     )
 
 
+class CdcCursorOut(BaseModel):
+    """One consumer's position in a table's change feed.
+
+    ``pending_commits`` is ``current_version - last_version``, filled in by the route that knows
+    the live head; it is ``None`` when the head could not be read.
+    """
+
+    consumer_key: str
+    consumer_label: str | None = None
+    owner_id: int | None = None
+    last_version: int
+    last_commit_timestamp: datetime | None = None
+    table_path: str | None = None
+    pending_commits: int | None = None
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CdcStatusOut(BaseModel):
+    """A table's change-tracking state plus every consumer's position in its feed.
+
+    ``current_version`` is the live Delta head, or ``None`` when it could not be read.
+    """
+
+    cdc_enabled: bool = False
+    cdc_enabled_version: int | None = None
+    current_version: int | None = None
+    cursors: list[CdcCursorOut] = Field(default_factory=list)
+
+
+class CdcCursorResetRequest(BaseModel):
+    """Move one cursor to the live head, below the enablement floor, or an explicit version."""
+
+    consumer_key: str
+    to: int | Literal["now", "beginning"] = "now"
+
+
 class CatalogTableOut(BaseModel):
     id: int
     name: str
@@ -410,6 +448,10 @@ class CatalogTableOut(BaseModel):
     partition_columns: list[str] | None = None
     # Set only for tables maintained by an SCD2 write; NULL for every other table.
     scd2: Scd2TableConfig | None = None
+    # Delta change data feed: whether the table is tracked, and the commit version tracking
+    # started at (the floor every change cursor is clamped to).
+    cdc_enabled: bool = False
+    cdc_enabled_version: int | None = None
     # Sibling catalog table holding model predictions; the name is None when the target row is gone.
     prediction_table_id: int | None = None
     prediction_table_name: str | None = None
@@ -496,6 +538,8 @@ class VacuumTableRequest(BaseModel):
 
     retention_hours: int = Field(default=168, ge=0)
     dry_run: bool = True
+    # Vacuuming past a change cursor's window breaks its next read; ``force`` acknowledges that.
+    force: bool = False
 
 
 class VacuumTableResponse(BaseModel):

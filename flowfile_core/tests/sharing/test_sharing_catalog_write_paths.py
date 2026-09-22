@@ -264,7 +264,9 @@ def test_optimize_and_vacuum_allowed_with_manage(users, alice_delta_table, team,
         svc = CatalogService(SQLAlchemyCatalogRepository(db), access=AccessResolver(db, bob))
         svc._tables = SimpleNamespace(
             optimize_table=lambda table_id, z_order_columns=None: calls.append(("optimize", table_id)),
-            vacuum_table=lambda table_id, retention_hours=168, dry_run=True: calls.append(("vacuum", table_id)),
+            vacuum_table=lambda table_id, retention_hours=168, dry_run=True, force=False: calls.append(
+                ("vacuum", table_id)
+            ),
         )
         svc.optimize_table(alice_delta_table)
         svc.vacuum_table(alice_delta_table)

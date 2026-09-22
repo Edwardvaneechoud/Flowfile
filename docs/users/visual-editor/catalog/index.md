@@ -306,6 +306,13 @@ In the table detail panel, the **History** section shows:
 !!! info "Delta versioning is only available for physical tables"
     Virtual tables have no physical storage and therefore no version history. If you need historical snapshots, use a physical table.
 
+### Change tracking
+
+Version history tells you what the whole table looked like at a past version. **Change tracking** tells you which rows changed between two versions: turn it on for a table and a Catalog Reader can read only the inserts, updates and deletes committed since its last run, keeping a cursor per consumer. It is off by default, enable-only, and only records commits made after it is turned on. See [Change Tracking](change-tracking.md).
+
+!!! warning "Vacuum can strand a cursor"
+    A change feed is readable only while the Delta history behind it is still on disk. A vacuum that would drop versions a cursor still needs is refused, with the option to vacuum anyway and reset the affected cursors.
+
 ---
 
 ## SQL Editor
@@ -354,6 +361,7 @@ Version management (available to the artifact's owner and anyone with a manage g
 ## Related Documentation
 
 - [Virtual Flow Tables](virtual-tables.md) — Non-materialized tables with on-demand resolution
+- [Change Tracking](change-tracking.md) — Reading only the rows that changed since the last run
 - [Visualizations](visualizations.md) — Save Graphic Walker charts on top of catalog tables and SQL queries
 - [Schedules](schedules.md) — Automating flow execution with schedules and table triggers
 - [SQL Editor](sql-editor.md) — Ad-hoc SQL queries against catalog tables

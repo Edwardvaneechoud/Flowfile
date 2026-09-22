@@ -26,6 +26,45 @@ def get_current_user_id() -> int:
     return 1
 
 
+def _resolve_change_mode(changes_since: int | str | datetime | None) -> tuple[str, int | None, str | None]:
+    """Map ``changes_since`` onto the reader's ``(cdc_mode, from_version, from_timestamp)``.
+
+    An ``int`` is a Delta commit version and reads the changes *after* it; ``"last_run"`` resumes
+    this consumer's cursor; any other string (or a ``datetime``) is an ISO-8601 instant.
+    """
+    if changes_since is None:
+        return "off", None, None
+    if isinstance(changes_since, bool):
+        raise TypeError("changes_since must be a commit version, 'last_run', or an ISO-8601 timestamp")
+    if isinstance(changes_since, int):
+        return "since_version", changes_since, None
+    if isinstance(changes_since, datetime):
+        return "since_timestamp", None, changes_since.isoformat()
+    if isinstance(changes_since, str):
+        if changes_since == "last_run":
+            return "since_last_run", None, None
+        return "since_timestamp", None, changes_since
+    raise TypeError(f"changes_since must be an int, str or datetime, got {type(changes_since).__name__}")
+
+
+def _require_cursor_identity(flow_graph: FlowGraph, settings) -> None:
+    """Fail early when a ``last_run`` read has neither a cursor name nor a registered flow.
+
+    A script-built graph usually has no catalog registration, so ``changes_consumer`` is what
+    gives the cursor a stable identity across runs.
+    """
+    from flowfile_core.flowfile.catalog_cdc import resolve_consumer_key
+
+    try:
+        resolve_consumer_key(flow_graph, settings)
+    except ValueError as exc:
+        raise ValueError(
+            "changes_since='last_run' needs a stable cursor identity. Pass "
+            "changes_consumer='<name>', or register this flow with the catalog first "
+            "(flowfile_frame.register_flow_with_catalog)."
+        ) from exc
+
+
 def add_write_to_catalog(
     flow_graph: FlowGraph,
     depends_on_node_id: int,
@@ -45,6 +84,7 @@ def add_write_to_catalog(
     scd2_is_current_column: str = "is_current",
     scd2_partition_on_current: bool = True,
     scd2_output_mode: Literal["input", "changed", "current"] = "input",
+    track_changes: bool = False,
     description: str | None = None,
 ) -> int:
     """Add a catalog writer node to the flow graph.
@@ -73,6 +113,9 @@ def add_write_to_catalog(
         scd2_output_mode: What the node passes downstream — ``"input"`` (the input rows with the
             four generated columns joined on), ``"changed"`` (only the rows this write inserted or
             closed), or ``"current"`` (the table's whole current slice).
+        track_changes: Turn the table's change feed on so readers can ask for changes only.
+            Enable-only: ``False`` never turns tracking off. Not allowed with
+            ``write_mode`` ``"overwrite"``, ``"virtual"`` or ``"scd2"``.
         description: Optional description for the node.
 
     Returns:
@@ -132,6 +175,7 @@ def add_write_to_catalog(
             merge_keys=merge_keys or [],
             partition_by=partition_by or [],
             scd2=scd2,
+            track_changes=track_changes,
         ),
     )
 
@@ -147,6 +191,10 @@ def read_catalog_table(
     delta_version: int | None = None,
     scd2_view: Literal["active", "all", "active_at"] | None = None,
     scd2_as_of: str | datetime | None = None,
+    changes_since: int | str | datetime | None = None,
+    changes_consumer: str | None = None,
+    changes_start: Literal["now", "beginning"] = "now",
+    include_change_preimage: bool = False,
     flow_graph: FlowGraph | None = None,
 ) -> FlowFrame:
     """Read a table from the Flowfile catalog.
@@ -165,20 +213,34 @@ def read_catalog_table(
             returned, and the setting is ignored for non-SCD2 tables.
         scd2_as_of: Required when ``scd2_view="active_at"``. Accepts an ISO-8601 string
             or a ``datetime`` (converted via ``.isoformat()``).
+        changes_since: Read the table's change feed instead of its current rows. An ``int``
+            is a Delta commit version and returns the changes *after* it; ``"last_run"``
+            resumes this consumer's cursor; any other string or a ``datetime`` is an
+            ISO-8601 instant. The table must be change-tracked (see ``track_changes`` on
+            :func:`write_catalog_table`). The result carries the feed's ``_change_type``,
+            ``_commit_version`` and ``_commit_timestamp`` columns.
+        changes_consumer: Cursor name for ``changes_since="last_run"``. A named cursor is
+            global to the table, so several flows or scripts can share it. Required unless
+            the flow is registered with the catalog.
+        changes_start: Where a ``"last_run"`` cursor starts on its first run — ``"now"``
+            (read nothing this run) or ``"beginning"`` (replay all tracked history).
+        include_change_preimage: Keep ``update_preimage`` rows (the before-image of an
+            update). Dropped by default.
         flow_graph: Optional existing FlowGraph to add the node to.
 
     Returns:
         FlowFrame: A FlowFrame backed by a catalog reader node.
 
     Raises:
-        ValueError: If both ``schema`` and ``namespace_id`` are provided, or
-            if the table cannot be found.
+        ValueError: If both ``schema`` and ``namespace_id`` are provided, if the table
+            cannot be found, or if ``changes_since="last_run"`` has no cursor identity.
     """
     from flowfile_core.schemas import input_schema
     from flowfile_frame.flow_frame import FlowFrame
     from flowfile_frame.utils import create_flow_graph, generate_node_id
 
     resolved_namespace_id = _resolve_namespace_id(schema, namespace_id)
+    cdc_mode, cdc_from_version, cdc_from_timestamp = _resolve_change_mode(changes_since)
     node_id = generate_node_id()
 
     if flow_graph is None:
@@ -194,7 +256,15 @@ def read_catalog_table(
         delta_version=delta_version,
         scd2_view=scd2_view,
         scd2_as_of=scd2_as_of.isoformat() if isinstance(scd2_as_of, datetime) else scd2_as_of,
+        cdc_mode=cdc_mode,
+        cdc_from_version=cdc_from_version,
+        cdc_from_timestamp=cdc_from_timestamp,
+        cdc_consumer_name=changes_consumer,
+        cdc_start=changes_start,
+        cdc_include_preimage=include_change_preimage,
     )
+    if cdc_mode == "since_last_run" and not settings.cdc_consumer_name:
+        _require_cursor_identity(flow_graph, settings)
     flow_graph.add_catalog_reader(settings)
     return FlowFrame(
         data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
@@ -321,6 +391,7 @@ def write_catalog_table(
     scd2_is_current_column: str = "is_current",
     scd2_partition_on_current: bool = True,
     scd2_output_mode: Literal["input", "changed", "current"] = "input",
+    track_changes: bool = False,
     description: str | None = None,
 ) -> FlowFrame:
     """Write a LazyFrame to the Flowfile catalog as a Delta table.
@@ -357,6 +428,10 @@ def write_catalog_table(
         scd2_partition_on_current: Partition new SCD2 tables by the is-current column.
         scd2_output_mode: What the returned frame contains for an SCD2 write — ``"input"``,
             ``"changed"`` or ``"current"``. See :meth:`FlowFrame.write_catalog_table`.
+        track_changes: Turn the table's change feed on so readers can ask for changes only
+            (see ``changes_since`` on :func:`read_catalog_table`). Enable-only: ``False``
+            never turns tracking off. Not allowed with ``write_mode`` ``"overwrite"``,
+            ``"virtual"`` or ``"scd2"``.
         description: Optional description for the table.
 
     Returns:
@@ -383,5 +458,6 @@ def write_catalog_table(
         scd2_is_current_column=scd2_is_current_column,
         scd2_partition_on_current=scd2_partition_on_current,
         scd2_output_mode=scd2_output_mode,
+        track_changes=track_changes,
         description=description,
     )

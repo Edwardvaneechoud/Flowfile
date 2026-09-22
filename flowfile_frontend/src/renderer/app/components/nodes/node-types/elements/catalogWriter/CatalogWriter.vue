@@ -203,6 +203,28 @@
               </CollapsibleSection>
             </template>
 
+            <div class="catalog-field">
+              <el-tooltip
+                :disabled="trackChangesDisabledReason === null"
+                :content="trackChangesDisabledReason ?? ''"
+                placement="top"
+              >
+                <span>
+                  <el-checkbox
+                    v-model="nodeData.catalog_write_settings.track_changes"
+                    size="small"
+                    :disabled="trackChangesDisabledReason !== null"
+                  >
+                    Track changes
+                  </el-checkbox>
+                </span>
+              </el-tooltip>
+              <p class="partition-hint">
+                Records every insert, update and delete so a catalog reader can read only what
+                changed. Turning it on never turns it off again.
+              </p>
+            </div>
+
             <div v-if="physicalModeDescription" class="mode-description">
               {{ physicalModeDescription }}
             </div>
@@ -474,6 +496,18 @@ const keyColumnsLabel = computed(() =>
   physicalWriteMode.value === "scd2" ? "Business key columns" : "Key columns",
 );
 
+const trackChangesDisabledReason = computed(() => {
+  if (activeTab.value === "virtual") return "Virtual tables have no change feed.";
+  const mode = physicalWriteMode.value;
+  if (mode === "overwrite") {
+    return "An overwrite replaces the whole table, so its change feed would be every row deleted and re-inserted.";
+  }
+  if (mode === "scd2") {
+    return "SCD2 already keeps history in the table's own valid_from / valid_to columns.";
+  }
+  return null;
+});
+
 const canPartition = computed(() => {
   const mode = physicalWriteMode.value;
   return mode === "overwrite" || mode === "error" || mode === "append" || mode === "scd2";
@@ -653,6 +687,9 @@ watch(physicalWriteMode, (newMode) => {
     if (newMode === "scd2" && !s.scd2) {
       s.scd2 = { ...DEFAULT_SCD2_SETTINGS };
     }
+    if (newMode === "overwrite" || newMode === "scd2") {
+      s.track_changes = false;
+    }
   }
 });
 
@@ -664,6 +701,7 @@ async function handleTabChange(tab: string) {
     nodeData.value.catalog_write_settings.partition_by = [];
     // The backend rejects a dangling scd2 block on virtual (Scd2Settings is physical-mode-only).
     nodeData.value.catalog_write_settings.scd2 = null;
+    nodeData.value.catalog_write_settings.track_changes = false;
     fetchLazinessCheck();
   } else {
     nodeData.value.catalog_write_settings.write_mode = physicalWriteMode.value;
@@ -733,6 +771,9 @@ async function loadNodeData(nodeId: number) {
     if (nodeData.value!.catalog_write_settings.scd2 === undefined) {
       nodeData.value!.catalog_write_settings.scd2 = null;
     }
+    if (nodeData.value!.catalog_write_settings.track_changes === undefined) {
+      nodeData.value!.catalog_write_settings.track_changes = false;
+    }
     if (
       nodeData.value!.catalog_write_settings.scd2 &&
       nodeData.value!.catalog_write_settings.scd2.partition_on_current === undefined
@@ -756,6 +797,7 @@ async function loadNodeData(nodeId: number) {
         merge_keys: [],
         partition_by: [],
         scd2: null,
+        track_changes: false,
       },
       flow_id: nodeStore.flow_id,
       node_id: nodeId,

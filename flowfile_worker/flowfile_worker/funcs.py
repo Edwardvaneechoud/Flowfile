@@ -636,6 +636,7 @@ def write_delta(
     mode: str = "overwrite",
     partition_by: list[str] | None = None,
     storage_payload: dict | None = None,
+    enable_cdf: bool = False,
     flowfile_flow_id: int = -1,
     flowfile_node_id: int | str = -1,
 ):
@@ -646,7 +647,8 @@ def write_delta(
     is returned via the queue so the core never needs to read the table.
 
     *storage_payload* routes the write to object storage (``None`` ⇒ local); *output_path* is
-    the fully-resolved destination (local path or ``s3://`` URI).
+    the fully-resolved destination (local path or ``s3://`` URI). *enable_cdf* is forwarded to the
+    shared writer, which turns the change data feed on for a table this write creates.
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting write_delta operation to: {output_path}")
@@ -656,7 +658,14 @@ def write_delta(
         storage_options = _resolve_storage_options(storage_payload)
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
         df = collect_lazy_frame(lf)
-        wrote = _write_delta(df, output_path, mode=mode, partition_by=partition_by, storage_options=storage_options)
+        wrote = _write_delta(
+            df,
+            output_path,
+            mode=mode,
+            partition_by=partition_by,
+            storage_options=storage_options,
+            enable_cdf=enable_cdf,
+        )
 
         if not wrote:
             queue.put({"skipped": True})
@@ -698,6 +707,7 @@ def merge_delta(
     merge_keys: list[str] | None = None,
     partition_by: list[str] | None = None,
     storage_payload: dict | None = None,
+    enable_cdf: bool = False,
     flowfile_flow_id: int = -1,
     flowfile_node_id: int | str = -1,
 ):
@@ -709,6 +719,8 @@ def merge_delta(
     - delete: remove matched rows from target
 
     *storage_payload* routes the merge to object storage (``None`` ⇒ local-filesystem table).
+    *enable_cdf* is forwarded to the shared merger, which turns the change data feed on for a
+    table this merge creates.
     """
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info(f"Starting merge_delta ({merge_mode}) to: {output_path}")
@@ -725,6 +737,7 @@ def merge_delta(
             merge_keys=merge_keys,
             partition_by=partition_by,
             storage_options=storage_options,
+            enable_cdf=enable_cdf,
         )
 
         if not wrote:

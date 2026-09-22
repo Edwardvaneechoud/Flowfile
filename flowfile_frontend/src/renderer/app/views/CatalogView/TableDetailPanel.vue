@@ -153,6 +153,43 @@
           </div>
         </el-popover>
       </div>
+      <div v-if="table.table_type !== 'virtual'" class="meta-card">
+        <span class="meta-label">Change tracking</span>
+        <el-popover
+          v-if="table.cdc_enabled"
+          placement="top-start"
+          :width="400"
+          trigger="click"
+          popper-class="cdc-popover"
+          @show="loadCdcStatus"
+        >
+          <template #reference>
+            <span class="meta-value meta-link">
+              <i class="fa-solid fa-clock-rotate-left"></i>
+              <span class="meta-link-text">{{ cdcEnabledLabel }}</span>
+            </span>
+          </template>
+          <div class="cdc-popover-body">
+            <div v-if="cdcLoading" class="cdc-popover-empty">Loading cursors…</div>
+            <div v-else-if="cdcCursors.length === 0" class="cdc-popover-empty">
+              Nothing has read changes from this table yet.
+            </div>
+            <div v-for="c in cdcCursors" :key="c.consumer_key" class="cdc-cursor-row">
+              <div class="cdc-cursor-main">
+                <span class="cdc-cursor-name" :title="c.consumer_key">
+                  {{ c.consumer_label ?? c.consumer_key }}
+                </span>
+                <span class="cdc-cursor-meta">
+                  v{{ c.last_version }} · {{ pendingLabel(c.pending_commits) }}
+                </span>
+              </div>
+              <el-button text size="small" @click="resetCursor(c)">Reset</el-button>
+              <el-button text size="small" type="danger" @click="deleteCursor(c)">Delete</el-button>
+            </div>
+          </div>
+        </el-popover>
+        <span v-else class="meta-value meta-muted">Off</span>
+      </div>
       <div class="meta-card">
         <span class="meta-label">Created</span>
         <span class="meta-value">{{ formatDate(table.created_at) }}</span>
@@ -446,8 +483,17 @@
 <script setup lang="ts">
 // TODO(refactor): ~905 LOC, but cohesive. Defer unless touched.
 //   If split: per-section sub-components (PreviewSection, SchemaSection, VersionHistorySection).
-import { ref, computed } from "vue";
-import type { CatalogTable, CatalogTablePreview, DeltaTableHistory } from "../../types";
+import { ref, computed, watch } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
+import type {
+  CatalogTable,
+  CatalogTablePreview,
+  CdcCursor,
+  DeltaTableHistory,
+  TableCdcStatus,
+} from "../../types";
+import { CatalogApi } from "../../api/catalog.api";
+import { pendingLabel } from "../../utils/catalogCdc";
 import { formatDate, formatNumber, formatSize } from "./catalog-formatters";
 import VisualizationsTab from "./VisualizationsTab.vue";
 import TableMaintenance from "./TableMaintenance.vue";
@@ -510,6 +556,76 @@ const canEditData = computed(
     props.table.file_exists &&
     !props.table.scd2,
 );
+
+const cdcStatus = ref<TableCdcStatus | null>(null);
+const cdcLoading = ref(false);
+
+const cdcCursors = computed(() => cdcStatus.value?.cursors ?? []);
+
+const cdcEnabledLabel = computed(() =>
+  props.table.cdc_enabled_version !== null
+    ? `On · since v${props.table.cdc_enabled_version}`
+    : "On",
+);
+
+watch(
+  () => props.table.id,
+  () => {
+    cdcStatus.value = null;
+  },
+);
+
+async function loadCdcStatus() {
+  cdcLoading.value = true;
+  try {
+    cdcStatus.value = await CatalogApi.getTableCdc(props.table.id);
+  } catch (e: any) {
+    cdcStatus.value = null;
+    ElMessage.error(e?.response?.data?.detail ?? e?.message ?? "Could not load change cursors");
+  } finally {
+    cdcLoading.value = false;
+  }
+}
+
+async function resetCursor(cursor: CdcCursor) {
+  const label = cursor.consumer_label ?? cursor.consumer_key;
+  try {
+    await ElMessageBox.confirm(
+      `Move "${label}" to the table's current version? Changes it has not read yet are skipped.`,
+      "Reset cursor",
+      { confirmButtonText: "Reset", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  try {
+    await CatalogApi.resetCdcCursor(props.table.id, cursor.consumer_key, "now");
+    await loadCdcStatus();
+    ElMessage.success("Cursor reset");
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? e?.message ?? "Could not reset the cursor");
+  }
+}
+
+async function deleteCursor(cursor: CdcCursor) {
+  const label = cursor.consumer_label ?? cursor.consumer_key;
+  try {
+    await ElMessageBox.confirm(
+      `Delete "${label}"? Its next run starts over from whatever its reader is configured to start from.`,
+      "Delete cursor",
+      { confirmButtonText: "Delete", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  try {
+    await CatalogApi.deleteCdcCursor(props.table.id, cursor.consumer_key);
+    await loadCdcStatus();
+    ElMessage.success("Cursor deleted");
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? e?.message ?? "Could not delete the cursor");
+  }
+}
 
 function formatTimestamp(ts: string | null): string {
   if (!ts) return "--";
@@ -574,6 +690,42 @@ function formatCell(value: any): string {
   font-size: var(--font-size-xs);
   color: var(--color-text-primary);
   overflow-wrap: anywhere;
+}
+
+.cdc-popover .cdc-popover-empty {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.cdc-popover .cdc-cursor-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) 0;
+  border-bottom: 1px solid var(--color-border-primary);
+}
+
+.cdc-popover .cdc-cursor-row:last-child {
+  border-bottom: none;
+}
+
+.cdc-popover .cdc-cursor-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.cdc-popover .cdc-cursor-name {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cdc-popover .cdc-cursor-meta {
+  font-size: 11px;
+  color: var(--color-text-secondary);
 }
 </style>
 

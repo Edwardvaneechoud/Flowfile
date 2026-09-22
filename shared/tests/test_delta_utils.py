@@ -7,16 +7,25 @@ Covers:
 - vacuum_delta (dry_run, <168h retention guard)
 - optimize_delta (compact + z_order)
 - fixed-size Array -> List normalization on the way into a Delta write
+- the Delta change data feed: enablement, the scan plugin, and the vacuum caveats
 """
+
+import subprocess
+import sys
 
 import polars as pl
 import pytest
 from deltalake import DeltaTable
 
 from shared.delta_utils import (
+    CDF_COLUMNS,
+    enable_change_data_feed,
+    get_delta_head_version,
     get_delta_partition_columns,
+    is_change_data_feed_enabled,
     merge_into_delta,
     optimize_delta,
+    scan_delta_changes,
     vacuum_delta,
     write_delta,
 )
@@ -217,3 +226,127 @@ def test_make_json_safe_uses_the_hex_preview_encoding_for_bytes():
     assert make_json_safe(memoryview(b"\x01")) == "0x01"
     assert make_json_safe(bytes(range(17))) == format_binary_preview(bytes(range(17)))
     assert make_json_safe(bytes(range(17))).endswith("\u2026 (17 bytes)")
+
+
+class TestChangeDataFeedEnablement:
+    def test_enabled_at_creation_by_the_writer(self, tmp_path):
+        p = tmp_path / "t"
+        write_delta(pl.DataFrame({"a": [1]}), str(p), mode="overwrite", enable_cdf=True)
+        assert is_change_data_feed_enabled(p)
+        assert get_delta_head_version(p) == 0
+
+    def test_merge_create_enables_it(self, tmp_path):
+        p = tmp_path / "t"
+        merge_into_delta(pl.DataFrame({"a": [1]}), str(p), merge_mode="upsert", merge_keys=["a"], enable_cdf=True)
+        assert is_change_data_feed_enabled(p)
+
+    def test_enable_on_existing_table_records_its_own_version(self, tmp_path):
+        p = tmp_path / "t"
+        write_delta(pl.DataFrame({"a": [1]}), str(p), mode="overwrite")
+        assert not is_change_data_feed_enabled(p)
+        enabled_version = enable_change_data_feed(p)
+        assert enabled_version == 1
+        assert is_change_data_feed_enabled(p)
+
+    def test_enable_is_idempotent(self, tmp_path):
+        p = tmp_path / "t"
+        write_delta(pl.DataFrame({"a": [1]}), str(p), mode="overwrite", enable_cdf=True)
+        assert enable_change_data_feed(p) == 0
+        assert enable_change_data_feed(p) == 0
+
+    def test_enable_cdf_does_not_touch_an_existing_table(self, tmp_path):
+        """``enable_cdf`` only configures a table the write creates; enabling is its own commit."""
+        p = tmp_path / "t"
+        write_delta(pl.DataFrame({"a": [1]}), str(p), mode="overwrite")
+        write_delta(pl.DataFrame({"a": [2]}), str(p), mode="append", enable_cdf=True)
+        assert not is_change_data_feed_enabled(p)
+
+    def test_property_survives_an_overwrite(self, tmp_path):
+        p = tmp_path / "t"
+        write_delta(pl.DataFrame({"a": [1]}), str(p), mode="overwrite", enable_cdf=True)
+        write_delta(pl.DataFrame({"a": [2]}), str(p), mode="overwrite")
+        assert is_change_data_feed_enabled(p)
+
+
+class TestScanDeltaChanges:
+    def _seed(self, path) -> int:
+        write_delta(pl.DataFrame({"id": [1, 2], "v": ["a", "b"]}), str(path), mode="overwrite", enable_cdf=True)
+        merge_into_delta(
+            pl.DataFrame({"id": [2, 3], "v": ["B", "c"]}), str(path), merge_mode="upsert", merge_keys=["id"]
+        )
+        return get_delta_head_version(path)
+
+    def test_window_returns_only_the_new_commits(self, tmp_path):
+        p = tmp_path / "t"
+        head = self._seed(p)
+        df = scan_delta_changes(str(p), 1, head).collect().sort("id")
+        assert df["id"].to_list() == [2, 3]
+        assert df["_change_type"].to_list() == ["update_postimage", "insert"]
+        assert list(df.columns)[-3:] == list(CDF_COLUMNS)
+
+    def test_preimage_dropped_by_default_and_kept_on_request(self, tmp_path):
+        p = tmp_path / "t"
+        head = self._seed(p)
+        assert scan_delta_changes(str(p), 1, head).collect().height == 2
+        with_pre = scan_delta_changes(str(p), 1, head, include_preimage=True).collect()
+        assert "update_preimage" in with_pre["_change_type"].to_list()
+
+    def test_out_of_range_window_is_empty_with_the_full_schema(self, tmp_path):
+        p = tmp_path / "t"
+        head = self._seed(p)
+        lf = scan_delta_changes(str(p), head + 1, head + 1)
+        assert lf.collect().height == 0
+        assert set(CDF_COLUMNS).issubset(lf.collect_schema().names())
+
+    def test_projection_and_predicate_pushdown(self, tmp_path):
+        p = tmp_path / "t"
+        head = self._seed(p)
+        lf = scan_delta_changes(str(p), 1, head)
+        assert lf.select("id", "_change_type").collect().columns == ["id", "_change_type"]
+        assert lf.filter(pl.col("id") == 3).collect().height == 1
+        assert lf.head(1).collect().height == 1
+
+    def test_plan_serializes_and_collects_in_another_process(self, tmp_path):
+        """The core/worker contract: core ships the plan, a worker child collects it."""
+        p = tmp_path / "t"
+        head = self._seed(p)
+        plan = tmp_path / "plan.bin"
+        plan.write_bytes(scan_delta_changes(str(p), 1, head).serialize())
+        code = (
+            "import io, polars as pl;"
+            f"print(pl.LazyFrame.deserialize(io.BytesIO(open({str(plan)!r}, 'rb').read())).collect().height)"
+        )
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+        assert out.stdout.strip() == "2"
+
+    def test_since_timestamp_window(self, tmp_path):
+        p = tmp_path / "t"
+        write_delta(pl.DataFrame({"id": [1]}), str(p), mode="overwrite", enable_cdf=True)
+        first_commit = DeltaTable(str(p)).history(1)[0]["timestamp"]
+        write_delta(pl.DataFrame({"id": [2]}), str(p), mode="append")
+        from datetime import datetime, timezone
+
+        instant = datetime.fromtimestamp(first_commit / 1000, tz=timezone.utc).isoformat()
+        df = scan_delta_changes(str(p), starting_timestamp=instant).collect()
+        assert set(df["id"].to_list()) == {1, 2}
+
+
+class TestChangeFeedVacuumCaveats:
+    def test_merge_change_data_survives_a_vacuum(self, tmp_path):
+        """Merge-based writes materialize ``_change_data/``, which vacuum does not remove."""
+        p = tmp_path / "t"
+        write_delta(pl.DataFrame({"id": [1, 2], "v": ["a", "b"]}), str(p), mode="overwrite", enable_cdf=True)
+        merge_into_delta(pl.DataFrame({"id": [2], "v": ["B"]}), str(p), merge_mode="upsert", merge_keys=["id"])
+        head = get_delta_head_version(p)
+        vacuum_delta(p, retention_hours=0, dry_run=False)
+        assert scan_delta_changes(str(p), head, head).collect().height == 1
+
+    def test_overwrite_window_breaks_after_a_vacuum(self, tmp_path):
+        """Pins the documented caveat: overwrite commits are reconstructed from tombstoned files."""
+        p = tmp_path / "t"
+        write_delta(pl.DataFrame({"id": [1]}), str(p), mode="overwrite", enable_cdf=True)
+        write_delta(pl.DataFrame({"id": [2]}), str(p), mode="overwrite")
+        head = get_delta_head_version(p)
+        vacuum_delta(p, retention_hours=0, dry_run=False)
+        with pytest.raises(Exception):
+            scan_delta_changes(str(p), head, head).collect()
