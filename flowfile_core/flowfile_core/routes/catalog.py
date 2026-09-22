@@ -68,6 +68,7 @@ from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.scheduler import FlowScheduler, get_scheduler, set_scheduler
 from flowfile_core.schemas.catalog_schema import (
     ActiveFlowRun,
+    CatalogOverview,
     CatalogStats,
     CatalogTableCreate,
     CatalogTableEditsRequest,
@@ -1538,12 +1539,8 @@ def cancel_run(
 # Scheduler management
 
 
-@router.get("/scheduler/status", response_model=SchedulerStatusOut)
-def scheduler_status(
-    db=Depends(get_db),
-    current_user=Depends(get_current_active_user),
-):
-    """Return the current scheduler lock status."""
+def _scheduler_status(db: Session) -> SchedulerStatusOut:
+    """Resolve the scheduler lock row into a status, flagging a stale heartbeat as inactive."""
     import logging
 
     logger = logging.getLogger("flowfile.scheduler.status")
@@ -1598,6 +1595,43 @@ def scheduler_status(
         started_at=lock.started_at,
         heartbeat_at=lock.heartbeat_at,
         is_embedded=is_embedded,
+    )
+
+
+@router.get("/scheduler/status", response_model=SchedulerStatusOut)
+def scheduler_status(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    """Return the current scheduler lock status."""
+    return _scheduler_status(db)
+
+
+@router.get("/overview", response_model=CatalogOverview)
+def get_catalog_overview(
+    runs_limit: int = Query(25, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Everything the catalog screen loads on mount, in one round-trip.
+
+    FastAPI caches ``get_db`` per request, so ``db`` is the session the service was
+    built on: the whole screen costs one pooled connection instead of one per call.
+    The individual endpoints stay for detail views, mutations and the poll loop.
+    """
+    user_id = current_user.id
+    return CatalogOverview(
+        stats=service.get_catalog_stats(user_id=user_id),
+        tree=service.get_namespace_tree(user_id=user_id),
+        flows=service.list_flows(user_id=user_id),
+        tables=service.list_tables(user_id=user_id),
+        favorites=service.list_favorites(user_id=user_id),
+        schedules=service.list_schedules(),
+        active_runs=service.list_active_runs(),
+        runs=service.list_runs(limit=runs_limit, offset=0),
+        scheduler=_scheduler_status(db),
+        default_namespace_id=service.get_default_namespace_id(),
     )
 
 
