@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     binutils \
     && curl https://sh.rustup.rs -sSf | sh -s -- -y \
-    && python3 -m pip install --no-cache-dir poetry==1.8.4 \
+    && curl -sSL https://install.python-poetry.org | python3 - \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/root/.cargo/bin:/root/.local/bin:${PATH}"
