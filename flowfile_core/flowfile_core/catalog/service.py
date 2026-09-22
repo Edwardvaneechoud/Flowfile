@@ -733,7 +733,7 @@ class CatalogService:
             # flows (page totals may drift; by-id run reads are separately guarded).
             allowed_flows = self.access.accessible_ids("flow")
             user_id = self.access.user_id
-            result.runs = [r for r in result.runs if r.user_id == user_id or (r.registration_id in allowed_flows)]
+            result.items = [r for r in result.items if r.user_id == user_id or (r.registration_id in allowed_flows)]
         return result
 
     def get_run_detail(self, run_id: int) -> FlowRunDetail:

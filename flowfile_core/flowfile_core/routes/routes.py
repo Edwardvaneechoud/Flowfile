@@ -1762,13 +1762,8 @@ def get_description_node(flow_id: int, node_id: int):
         raise HTTPException(404, "Could not find the node") from None
     if node is None:
         raise HTTPException(404, "Could not find the node")
-    user_description = node.setting_input.description if hasattr(node.setting_input, "description") else ""
-    if user_description:
-        return output_model.NodeDescriptionResponse(description=user_description, is_auto_generated=False)
-    if hasattr(node.setting_input, "get_default_description"):
-        auto_desc = node.setting_input.get_default_description()
-        return output_model.NodeDescriptionResponse(description=auto_desc, is_auto_generated=True)
-    return output_model.NodeDescriptionResponse(description="", is_auto_generated=True)
+    description, is_auto_generated = node.resolve_description()
+    return output_model.NodeDescriptionResponse(description=description, is_auto_generated=is_auto_generated)
 
 
 @router.post("/node/reference/", tags=["editor"])

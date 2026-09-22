@@ -806,6 +806,8 @@ class NodeInput(NodeTemplate):
         pos_y (float): The y-coordinate on the canvas.
         output_names (list[str] | None): Named outputs for multi-output nodes.
         node_reference (str | None): Reference name used for code generation and input naming.
+        description (str): Canvas text — the user's, else auto-generated.
+        is_auto_generated (bool): Whether ``description`` is the auto text.
     """
 
     id: int
@@ -817,6 +819,9 @@ class NodeInput(NodeTemplate):
     # (index 0 is the reserved parameter handle). None for static nodes.
     input_names: list[str] | None = None
     node_reference: str | None = None
+    # Set by core on the way out (canvas cache seed); ignored on the way in.
+    description: str = ""
+    is_auto_generated: bool = True
 
 
 class NodeEdge(BaseModel):

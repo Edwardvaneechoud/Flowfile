@@ -4,7 +4,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
-from shared.database import create_catalog_engine, sqlite_database_path
+from shared import database as shared_database
+from shared.database import SQLITE_POOL_ARGS, create_catalog_engine, get_catalog_engine, sqlite_database_path
 from shared.storage_config import get_database_url, get_legacy_database_path, storage
 
 
@@ -56,3 +57,42 @@ def test_sqlite_driver_and_query_options(tmp_path):
     with engine.connect() as conn:
         assert conn.scalar(text("SELECT 1")) == 1
     engine.dispose()
+
+
+def test_file_sqlite_gets_tuned_pool_but_factory_leaves_journal_mode(tmp_path):
+    # The legacy-DB import reads through this; it must not rewrite the file.
+    engine = create_catalog_engine(f"sqlite:///{tmp_path / 'catalog.db'}")
+    assert engine.pool.size() == SQLITE_POOL_ARGS["pool_size"]
+    assert engine.pool._max_overflow == SQLITE_POOL_ARGS["max_overflow"]
+    assert engine.pool._timeout == SQLITE_POOL_ARGS["pool_timeout"]
+    with engine.connect() as conn:
+        assert conn.scalar(text("PRAGMA journal_mode")) == "delete"
+    engine.dispose()
+
+
+def test_shared_engine_enables_wal(tmp_path, monkeypatch):
+    monkeypatch.setattr(shared_database, "_engines", {})
+    engine = get_catalog_engine(f"sqlite:///{tmp_path / 'catalog.db'}")
+    with engine.connect() as conn:
+        assert conn.scalar(text("PRAGMA journal_mode")) == "wal"
+    engine.dispose()
+
+
+def test_memory_sqlite_keeps_default_pool():
+    engine = create_catalog_engine("sqlite:///:memory:")
+    with engine.connect() as conn:
+        assert conn.scalar(text("SELECT 1")) == 1
+    engine.dispose()
+
+
+def test_get_catalog_engine_is_shared_per_url(tmp_path, monkeypatch):
+    monkeypatch.setattr(shared_database, "_engines", {})
+    url_a = f"sqlite:///{tmp_path / 'a.db'}"
+    url_b = f"sqlite:///{tmp_path / 'b.db'}"
+    engine = get_catalog_engine(url_a)
+    assert get_catalog_engine(url_a) is engine
+    assert get_catalog_engine(url_b) is not engine
+    monkeypatch.setenv("FLOWFILE_DATABASE_URL", url_a)
+    assert get_catalog_engine() is engine
+    for e in {engine, get_catalog_engine(url_b)}:
+        e.dispose()

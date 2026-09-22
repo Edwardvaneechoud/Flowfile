@@ -566,3 +566,125 @@ class TestRefreshToken:
             )
             assert response.status_code == 401
             assert response.json()["detail"] == "User no longer exists"
+
+
+class TestUserLookupCache:
+    """Auth lookups are TTL-cached; mutation routes invalidate."""
+
+    @pytest.fixture(autouse=True)
+    def setup_docker_mode(self, monkeypatch):
+        monkeypatch.setenv("FLOWFILE_MODE", "docker")
+        monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-for-unit-tests")
+
+    @pytest.fixture
+    def admin_user(self):
+        with get_db_context() as db:
+            existing = db.query(db_models.User).filter(db_models.User.username == "cache_admin").first()
+            if existing:
+                db.delete(existing)
+                db.commit()
+            admin = db_models.User(
+                username="cache_admin",
+                email="cache_admin@flowfile.app",
+                hashed_password=get_password_hash("adminpassword123"),
+                disabled=False,
+                is_admin=True,
+            )
+            db.add(admin)
+            db.commit()
+            admin_id = admin.id
+        yield {"id": admin_id, "username": "cache_admin", "password": "adminpassword123"}
+        with get_db_context() as db:
+            db.query(db_models.User).filter(db_models.User.id == admin_id).delete()
+            db.commit()
+
+    @staticmethod
+    def _login(client, username, password):
+        response = client.post("/auth/token", data={"username": username, "password": password})
+        assert response.status_code == 200
+        return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+    def test_lookup_is_cached_until_invalidated(self, create_test_user, test_user_credentials):
+        from flowfile_core.auth.jwt import invalidate_user_cache
+
+        with TestClient(main.app) as client:
+            headers = self._login(client, test_user_credentials["username"], test_user_credentials["password"])
+            assert client.get("/auth/users/me", headers=headers).status_code == 200
+
+            with get_db_context() as db:
+                user = db.query(db_models.User).filter(db_models.User.id == create_test_user).first()
+                user.disabled = True
+                db.commit()
+
+            # Direct DB writes bypass invalidation.
+            assert client.get("/auth/users/me", headers=headers).status_code == 200
+            invalidate_user_cache(test_user_credentials["username"])
+            assert client.get("/auth/users/me", headers=headers).status_code == 400
+
+    def test_expired_entry_is_reread(self, monkeypatch, create_test_user, test_user_credentials):
+        from flowfile_core.auth import jwt as jwt_module
+
+        monkeypatch.setattr(jwt_module, "USER_CACHE_TTL_SECONDS", 0)
+        with TestClient(main.app) as client:
+            headers = self._login(client, test_user_credentials["username"], test_user_credentials["password"])
+            assert client.get("/auth/users/me", headers=headers).status_code == 200
+            with get_db_context() as db:
+                user = db.query(db_models.User).filter(db_models.User.id == create_test_user).first()
+                user.disabled = True
+                db.commit()
+            assert client.get("/auth/users/me", headers=headers).status_code == 400
+
+    def test_admin_disable_takes_effect_immediately(self, admin_user, create_test_user, test_user_credentials):
+        with TestClient(main.app) as client:
+            user_headers = self._login(client, test_user_credentials["username"], test_user_credentials["password"])
+            assert client.get("/auth/users/me", headers=user_headers).status_code == 200
+
+            admin_headers = self._login(client, admin_user["username"], admin_user["password"])
+            response = client.put(f"/auth/users/{create_test_user}", json={"disabled": True}, headers=admin_headers)
+            assert response.status_code == 200
+
+            assert client.get("/auth/users/me", headers=user_headers).status_code == 400
+
+    def test_delete_evicts_cached_user(self, admin_user, create_test_user, test_user_credentials):
+        with TestClient(main.app) as client:
+            user_headers = self._login(client, test_user_credentials["username"], test_user_credentials["password"])
+            assert client.get("/auth/users/me", headers=user_headers).status_code == 200
+
+            admin_headers = self._login(client, admin_user["username"], admin_user["password"])
+            assert client.delete(f"/auth/users/{create_test_user}", headers=admin_headers).status_code == 200
+
+            assert client.get("/auth/users/me", headers=user_headers).status_code == 401
+
+    def test_password_change_refreshes_flags(self, create_test_user, test_user_credentials):
+        with get_db_context() as db:
+            user = db.query(db_models.User).filter(db_models.User.id == create_test_user).first()
+            user.must_change_password = True
+            db.commit()
+
+        with TestClient(main.app) as client:
+            headers = self._login(client, test_user_credentials["username"], test_user_credentials["password"])
+            assert client.get("/auth/users/me", headers=headers).json()["must_change_password"] is True
+
+            response = client.post(
+                "/auth/users/me/change-password",
+                json={
+                    "current_password": test_user_credentials["password"],
+                    "new_password": "brandnew-password456!",
+                },
+                headers=headers,
+            )
+            assert response.status_code == 200
+            assert client.get("/auth/users/me", headers=headers).json()["must_change_password"] is False
+
+    def test_concurrent_authenticated_requests_do_not_stall(self, create_test_user, test_user_credentials):
+        """A page-load fan-out must not stall (was a multi-minute deadlock)."""
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+
+        with TestClient(main.app) as client:
+            headers = self._login(client, test_user_credentials["username"], test_user_credentials["password"])
+            started = time.monotonic()
+            with ThreadPoolExecutor(max_workers=40) as pool:
+                statuses = list(pool.map(lambda _: client.get("/auth/users/me", headers=headers).status_code, range(40)))
+            assert statuses == [200] * 40
+            assert time.monotonic() - started < 10
