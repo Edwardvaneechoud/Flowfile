@@ -12,6 +12,7 @@ from flowfile_core.auth.jwt import (
     decode_refresh_token,
     get_current_active_user,
     get_current_admin_user,
+    invalidate_user_cache,
 )
 from flowfile_core.auth.models import ChangePassword, Token, User, UserCreate, UserUpdate
 from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash, validate_password, verify_password
@@ -22,7 +23,7 @@ router = APIRouter()
 
 
 @router.post("/token", response_model=Token)
-async def login_for_access_token(
+def login_for_access_token(
     request: Request,
     db: Session = Depends(get_db),
     username: str | None = Form(None),
@@ -56,7 +57,7 @@ async def login_for_access_token(
 
 
 @router.post("/refresh", response_model=Token)
-async def refresh_access_token(
+def refresh_access_token(
     refresh_token: str = Form(...),
     db: Session = Depends(get_db),
 ):
@@ -91,7 +92,7 @@ async def read_users_me(current_user=Depends(get_current_active_user)):
 
 
 @router.get("/users", response_model=list[User])
-async def list_users(current_user: User = Depends(get_current_admin_user), db: Session = Depends(get_db)):
+def list_users(current_user: User = Depends(get_current_admin_user), db: Session = Depends(get_db)):
     """List all users (admin only)"""
     users = db.query(db_models.User).all()
     return [
@@ -109,7 +110,7 @@ async def list_users(current_user: User = Depends(get_current_admin_user), db: S
 
 
 @router.post("/users", response_model=User)
-async def create_user(
+def create_user(
     user_data: UserCreate, current_user: User = Depends(get_current_admin_user), db: Session = Depends(get_db)
 ):
     """Create a new user (admin only)"""
@@ -156,7 +157,7 @@ async def create_user(
 
 
 @router.put("/users/{user_id}", response_model=User)
-async def update_user(
+def update_user(
     user_id: int,
     user_data: UserUpdate,
     current_user: User = Depends(get_current_admin_user),
@@ -206,6 +207,7 @@ async def update_user(
 
     db.commit()
     db.refresh(user)
+    invalidate_user_cache(user.username)
 
     return User(
         username=user.username,
@@ -219,9 +221,7 @@ async def update_user(
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(
-    user_id: int, current_user: User = Depends(get_current_admin_user), db: Session = Depends(get_db)
-):
+def delete_user(user_id: int, current_user: User = Depends(get_current_admin_user), db: Session = Depends(get_db)):
     """Delete a user (admin only)"""
     user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
     if not user:
@@ -279,6 +279,7 @@ async def delete_user(
 
     db.delete(user)
     db.commit()
+    invalidate_user_cache(user.username)
 
     return {"message": f"User '{user.username}' deleted successfully"}
 
@@ -287,7 +288,7 @@ async def delete_user(
 
 
 @router.post("/users/me/change-password", response_model=User)
-async def change_own_password(
+def change_own_password(
     password_data: ChangePassword, current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)
 ):
     """Change the current user's password"""
@@ -306,6 +307,7 @@ async def change_own_password(
     user.must_change_password = False
     db.commit()
     db.refresh(user)
+    invalidate_user_cache(user.username)
 
     return User(
         username=user.username,

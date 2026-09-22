@@ -3,6 +3,7 @@
 import logging
 import os
 import secrets
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -180,30 +181,68 @@ def get_current_user_sync(token: str, db: Session):
     except JWTError:
         raise credentials_exception from None
 
-    if os.environ.get("FLOWFILE_MODE") == "electron":
-        if token_data.username == "local_user":
-            electron_user = User(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
-            return electron_user
+    return _resolve_token_user(db, token_data.username, credentials_exception)
+
+
+USER_CACHE_TTL_SECONDS = 60
+
+_user_cache: dict[str, tuple[float, User]] = {}
+_user_cache_lock = threading.Lock()
+
+
+def invalidate_user_cache(username: str | None = None) -> None:
+    """Drop cached auth lookups for *username* (all users when ``None``).
+
+    Call after any change to a user row that auth must see at once — disable, delete,
+    password or flag changes. Elsewhere the TTL bounds staleness.
+    """
+    with _user_cache_lock:
+        if username is None:
+            _user_cache.clear()
         else:
-            raise credentials_exception
+            _user_cache.pop(username, None)
+
+
+def _resolve_token_user(db: Session, username: str, credentials_exception: HTTPException) -> User:
+    """Turn a verified token subject into a ``User``.
+
+    Non-electron lookups are served from a short per-process TTL cache: a page load
+    fans out 15+ authenticated requests, and re-reading the same unchanged row for
+    each of them is what used to exhaust the SQLite pool from the auth path alone.
+    Misses are not cached; the user-mutation routes call ``invalidate_user_cache``.
+    """
+    if os.environ.get("FLOWFILE_MODE") == "electron":
+        if username == "local_user":
+            return User(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
+        raise credentials_exception
+
+    now = time.monotonic()
+    with _user_cache_lock:
+        cached = _user_cache.get(username)
+    if cached is not None and cached[0] > now:
+        user = cached[1]
     else:
-        user = db.query(db_models.User).filter(db_models.User.username == token_data.username).first()
-        if user is None:
+        row = db.query(db_models.User).filter(db_models.User.username == username).first()
+        if row is None:
             raise credentials_exception
-        if user.disabled:
-            raise HTTPException(status_code=400, detail="Inactive user")
-        return User(
-            username=user.username,
-            id=user.id,
-            email=user.email,
-            full_name=user.full_name,
-            disabled=user.disabled,
-            is_admin=user.is_admin,
-            must_change_password=user.must_change_password,
+        user = User(
+            username=row.username,
+            id=row.id,
+            email=row.email,
+            full_name=row.full_name,
+            disabled=row.disabled,
+            is_admin=row.is_admin,
+            must_change_password=row.must_change_password,
         )
+        with _user_cache_lock:
+            _user_cache[username] = (now + USER_CACHE_TTL_SECONDS, user)
+    if user.disabled:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return user.model_copy()
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    """Sync on purpose: FastAPI runs it in the threadpool, so a pool wait can never block the event loop."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -225,27 +264,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     except JWTError:
         raise credentials_exception from None
 
-    if os.environ.get("FLOWFILE_MODE") == "electron":
-        if token_data.username == "local_user":
-            electron_user = User(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
-            return electron_user
-        else:
-            raise credentials_exception
-    else:
-        user = db.query(db_models.User).filter(db_models.User.username == token_data.username).first()
-        if user is None:
-            raise credentials_exception
-        if user.disabled:
-            raise HTTPException(status_code=400, detail="Inactive user")
-        return User(
-            username=user.username,
-            id=user.id,
-            email=user.email,
-            full_name=user.full_name,
-            disabled=user.disabled,
-            is_admin=user.is_admin,
-            must_change_password=user.must_change_password,
-        )
+    return _resolve_token_user(db, token_data.username, credentials_exception)
 
 
 def get_current_active_user(current_user=Depends(get_current_user)):
@@ -296,7 +315,7 @@ def decode_refresh_token(token: str) -> str:
         raise credentials_exception from None
 
 
-async def get_current_user_from_query(
+def get_current_user_from_query(
     access_token: str = Query(..., description="JWT access token"), db: Session = Depends(get_db)
 ):
     """
@@ -321,27 +340,7 @@ async def get_current_user_from_query(
     except JWTError:
         raise credentials_exception from None
 
-    if os.environ.get("FLOWFILE_MODE") == "electron":
-        if token_data.username == "local_user":
-            electron_user = User(username="local_user", id=1, disabled=False, is_admin=True, must_change_password=False)
-            return electron_user
-        else:
-            raise credentials_exception
-    else:
-        user = db.query(db_models.User).filter(db_models.User.username == token_data.username).first()
-        if user is None:
-            raise credentials_exception
-        if user.disabled:
-            raise HTTPException(status_code=400, detail="Inactive user")
-        return User(
-            username=user.username,
-            id=user.id,
-            email=user.email,
-            full_name=user.full_name,
-            disabled=user.disabled,
-            is_admin=user.is_admin,
-            must_change_password=user.must_change_password,
-        )
+    return _resolve_token_user(db, token_data.username, credentials_exception)
 
 
 async def get_current_admin_user(current_user: User = Depends(get_current_user)):
@@ -351,7 +350,7 @@ async def get_current_admin_user(current_user: User = Depends(get_current_user))
     return current_user
 
 
-async def get_user_or_internal_service(
+def get_user_or_internal_service(
     token: str = Depends(oauth2_scheme),
     x_internal_token: str | None = Header(None, alias="X-Internal-Token"),
     x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
@@ -413,4 +412,4 @@ async def get_user_or_internal_service(
             # Token not configured or invalid user ID - fall through to JWT auth
             pass
 
-    return await get_current_user(token=token, db=db)
+    return get_current_user(token=token, db=db)

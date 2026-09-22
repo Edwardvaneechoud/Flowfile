@@ -4,7 +4,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import sessionmaker
 
-from shared.database import create_catalog_engine, sqlite_database_path
+from shared.database import get_catalog_engine, sqlite_database_path
 from shared.storage_config import get_database_url, storage
 
 
@@ -18,7 +18,7 @@ def get_database_path() -> Path | None:
     return sqlite_database_path()
 
 
-engine = create_catalog_engine()
+engine = get_catalog_engine()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
