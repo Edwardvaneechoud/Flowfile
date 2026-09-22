@@ -8,6 +8,16 @@
       <i class="fa-solid fa-broom"></i>
       Vacuum
     </button>
+    <button
+      v-if="canEnableTracking"
+      class="action-btn-lg"
+      :disabled="!table.file_exists || enablingCdc"
+      title="Record inserts, updates and deletes so readers can read only what changed"
+      @click="enableTracking"
+    >
+      <i class="fa-solid fa-clock-rotate-left"></i>
+      Track changes
+    </button>
 
     <!-- Optimize dialog -->
     <el-dialog v-model="showOptimize" title="Optimize table" width="460px" append-to-body>
@@ -63,6 +73,25 @@
           Dry run (list files only, delete nothing)
         </el-checkbox>
       </div>
+      <div v-if="cursorsAtRisk" class="dialog-warning">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        <div class="dialog-warning-body">
+          <span>
+            {{
+              cursorsAtRisk.message ??
+              "Change-feed consumers still point at versions this vacuum would remove."
+            }}
+          </span>
+          <ul class="at-risk-list">
+            <li v-for="c in cursorsAtRisk.cursors ?? []" :key="c.consumer_key">
+              {{ c.consumer_label ?? c.consumer_key }} — v{{ c.last_version }}
+            </li>
+          </ul>
+          <el-button size="small" type="danger" :loading="vacuuming" @click="runVacuum(true)">
+            Vacuum anyway
+          </el-button>
+        </div>
+      </div>
       <div v-if="vacuumResult" class="dialog-result">
         <i class="fa-solid fa-circle-check"></i>
         {{ vacuumResult.dry_run ? "Would remove" : "Removed" }}
@@ -77,7 +106,7 @@
           size="small"
           :type="dryRun ? 'primary' : 'danger'"
           :loading="vacuuming"
-          @click="runVacuum"
+          @click="runVacuum()"
         >
           {{ dryRun ? "Run dry run" : "Run vacuum" }}
         </el-button>
@@ -88,13 +117,20 @@
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
-import { ElMessage } from "element-plus";
-import type { CatalogTable, OptimizeTableResponse, VacuumTableResponse } from "../../types";
+import { ElMessage, ElMessageBox } from "element-plus";
+import type {
+  CatalogTable,
+  CdcCursorsAtRiskDetail,
+  OptimizeTableResponse,
+  VacuumTableResponse,
+} from "../../types";
 import { useCatalogStore } from "../../stores/catalog-store";
+import { useResourceSharing } from "../../composables/useResourceSharing";
 import { formatSize } from "./catalog-formatters";
 
 const props = defineProps<{ table: CatalogTable }>();
 const store = useCatalogStore();
+const { canManage } = useResourceSharing();
 
 const columnNames = computed(() => props.table.schema_columns.map((c) => c.name));
 
@@ -136,26 +172,70 @@ const dryRun = ref(true);
 const vacuuming = ref(false);
 const vacuumResult = ref<VacuumTableResponse | null>(null);
 
+const cursorsAtRisk = ref<CdcCursorsAtRiskDetail | null>(null);
+
 function openVacuum() {
   vacuumResult.value = null;
+  cursorsAtRisk.value = null;
   retentionHours.value = 168;
   dryRun.value = true;
   showVacuum.value = true;
 }
 
-async function runVacuum() {
+async function runVacuum(force = false) {
   vacuuming.value = true;
+  cursorsAtRisk.value = null;
   try {
     vacuumResult.value = await store.vacuumTable(
       props.table.id,
       retentionHours.value,
       dryRun.value,
+      force,
     );
     ElMessage.success(dryRun.value ? "Dry run complete" : "Table vacuumed");
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail ?? e?.message ?? "Vacuum failed");
+    const detail = e?.response?.data?.detail;
+    if (e?.response?.status === 409 && detail?.error_code === "CDC_CURSORS_AT_RISK") {
+      cursorsAtRisk.value = detail;
+    } else {
+      ElMessage.error(detail ?? e?.message ?? "Vacuum failed");
+    }
   } finally {
     vacuuming.value = false;
+  }
+}
+
+// Enable-only (the Delta property never comes back off), so this is a button, not a toggle.
+const enablingCdc = ref(false);
+
+const canEnableTracking = computed(
+  () =>
+    !props.table.cdc_enabled &&
+    props.table.table_type !== "virtual" &&
+    !props.table.scd2 &&
+    canManage(props.table),
+);
+
+async function enableTracking() {
+  try {
+    await ElMessageBox.confirm(
+      "Record every insert, update and delete on this table so readers can read only what " +
+        "changed? Only commits made from now on are tracked, and tracking cannot be turned off " +
+        "again.",
+      "Track changes",
+      { confirmButtonText: "Enable", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  enablingCdc.value = true;
+  try {
+    await store.enableTableCdc(props.table.id);
+    ElMessage.success("Change tracking enabled");
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? e?.message ?? "Could not enable change tracking");
+  } finally {
+    enablingCdc.value = false;
   }
 }
 </script>
@@ -231,6 +311,18 @@ async function runVacuum() {
 .dialog-warning i {
   color: var(--color-warning, #f59e0b);
   margin-top: 2px;
+}
+
+.dialog-warning-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.at-risk-list {
+  margin: 0;
+  padding-left: 16px;
 }
 
 .dialog-result {

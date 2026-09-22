@@ -290,6 +290,10 @@ class SchemaReference:
         delta_version: int | None = None,
         scd2_view: Literal["active", "all", "active_at"] | None = None,
         scd2_as_of: str | datetime | None = None,
+        changes_since: int | str | datetime | None = None,
+        changes_consumer: str | None = None,
+        changes_start: Literal["now", "beginning"] = "now",
+        include_change_preimage: bool = False,
         flow_graph: FlowGraph | None = None,
     ) -> FlowFrame:
         """Read a table from this schema as a :class:`FlowFrame`.
@@ -305,6 +309,10 @@ class SchemaReference:
             delta_version=delta_version,
             scd2_view=scd2_view,
             scd2_as_of=scd2_as_of,
+            changes_since=changes_since,
+            changes_consumer=changes_consumer,
+            changes_start=changes_start,
+            include_change_preimage=include_change_preimage,
             flow_graph=flow_graph,
         )
 
@@ -324,6 +332,7 @@ class SchemaReference:
         scd2_is_current_column: str = "is_current",
         scd2_partition_on_current: bool = True,
         scd2_output_mode: Literal["input", "changed", "current"] = "input",
+        track_changes: bool = False,
         description: str | None = None,
     ) -> FlowFrame:
         """Write a :class:`FlowFrame` to a table in this schema.
@@ -345,6 +354,7 @@ class SchemaReference:
             scd2_is_current_column=scd2_is_current_column,
             scd2_partition_on_current=scd2_partition_on_current,
             scd2_output_mode=scd2_output_mode,
+            track_changes=track_changes,
             description=description,
         )
 

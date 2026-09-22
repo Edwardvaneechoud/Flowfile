@@ -25,6 +25,9 @@ from flowfile_core.catalog import (
     KEEP_PREDICTION,
     AmbiguousTableError,
     CatalogService,
+    CdcCursorNotFoundError,
+    CdcCursorsAtRiskError,
+    CdcNotSupportedError,
     DashboardNotFoundError,
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
@@ -77,6 +80,9 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTablePreview,
     CatalogTableRefreshRequest,
     CatalogTableUpdate,
+    CdcCursorOut,
+    CdcCursorResetRequest,
+    CdcStatusOut,
     ColumnStatsResponse,
     CronValidationRequest,
     CronValidationResult,
@@ -192,6 +198,9 @@ _CATALOG_EXCEPTION_MAP: dict[type[Exception], tuple[int, str | None]] = {
     DashboardNotFoundError: (404, None),
     NotebookNotFoundError: (404, None),
     NotebookExistsError: (409, None),
+    CdcNotSupportedError: (409, None),
+    CdcCursorNotFoundError: (404, None),
+    CdcCursorsAtRiskError: (409, None),
     ValueError: (422, None),
 }
 
@@ -234,6 +243,15 @@ def handle_catalog_exceptions(**overrides: str):
                             raise HTTPException(
                                 status_code,
                                 detail={"message": msg, "name": exc.name, "candidates": exc.candidates},
+                            ) from None
+                        if isinstance(exc, CdcCursorsAtRiskError):
+                            raise HTTPException(
+                                status_code,
+                                detail={
+                                    "error_code": "CDC_CURSORS_AT_RISK",
+                                    "message": msg,
+                                    "cursors": exc.cursors,
+                                },
                             ) from None
                         if isinstance(exc, StaleWriteError):
                             raise HTTPException(
@@ -871,8 +889,58 @@ def vacuum_table(
     current_user=Depends(get_current_active_user),
     service: CatalogService = Depends(get_catalog_service),
 ):
-    """Vacuum tombstoned files from a Delta catalog table (dry-run by default)."""
-    return service.vacuum_table(table_id, retention_hours=body.retention_hours, dry_run=body.dry_run)
+    """Vacuum tombstoned files from a Delta catalog table (dry-run by default).
+
+    Refused with 409 ``CDC_CURSORS_AT_RISK`` when change-feed cursors still point into the
+    history this retention window would drop, unless ``force`` is set.
+    """
+    return service.vacuum_table(table_id, retention_hours=body.retention_hours, dry_run=body.dry_run, force=body.force)
+
+
+@router.get("/tables/{table_id}/cdc", response_model=CdcStatusOut)
+@handle_catalog_exceptions()
+def get_table_cdc(
+    table_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Change-tracking state for a catalog table, with every consumer's cursor position."""
+    return service.get_table_cdc_status(table_id)
+
+
+@router.post("/tables/{table_id}/cdc/enable", response_model=CdcStatusOut)
+@handle_catalog_exceptions()
+def enable_table_cdc(
+    table_id: int,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Turn change tracking on for a Delta catalog table (idempotent). Requires manage."""
+    return service.enable_table_cdc(table_id)
+
+
+@router.post("/tables/{table_id}/cdc/cursors/reset", response_model=CdcCursorOut)
+@handle_catalog_exceptions()
+def reset_table_cdc_cursor(
+    table_id: int,
+    body: CdcCursorResetRequest,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Move one consumer's cursor. Requires cursor ownership or manage on the table."""
+    return service.reset_table_cdc_cursor(table_id, body.consumer_key, body.to)
+
+
+@router.delete("/tables/{table_id}/cdc/cursors/{consumer_key}", status_code=204)
+@handle_catalog_exceptions()
+def delete_table_cdc_cursor(
+    table_id: int,
+    consumer_key: str,
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """Forget one consumer's cursor. Requires cursor ownership or manage on the table."""
+    service.delete_table_cdc_cursor(table_id, consumer_key)
 
 
 @router.post("/tables/{table_id}/edits", response_model=CatalogTableEditsResponse)

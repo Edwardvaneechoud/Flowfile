@@ -91,6 +91,7 @@ Tests live in `flowfile_core/tests/` (package root, `test_*.py`); fixtures in `t
 - `flowfile_core/auth/api_key.py` — deliberate SHA-256 API-key hashing.
 - `flowfile_core/kernel/manager.py` — Docker kernel lifecycle, host ports 19000–19999.
 - `flowfile_core/database/migration.py` — startup Alembic migration orchestration.
+- `flowfile_core/flowfile/catalog_cdc.py` — catalog change-feed cursors: consumer-key resolution, read/init/commit/reset, and the `_on_flow_complete` commit callback.
 - `flowfile_core/routes/system_backups.py` — admin catalog-DB snapshot listing + on-demand snapshot.
 - `flowfile_core/ai/feature_flag.py` — `FEATURE_FLAG_AI` gate for `/ai/*`.
 - `flowfile_core/ai/providers/registry.py` — provider registry (litellm-backed, lazy imports).

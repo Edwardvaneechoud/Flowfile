@@ -1798,6 +1798,7 @@ class NodeRunFlow(NodeBase):
 
 
 _SCD2_COLUMN_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_PARAM_REF_RE = re.compile(r"^\$\{[a-zA-Z_][a-zA-Z0-9_]*\}$")  # a whole-field flow-parameter reference
 
 
 class Scd2Settings(BaseModel):
@@ -1870,9 +1871,14 @@ class CatalogWriteSettings(BaseModel):
     partition_by: list[str] = Field(default_factory=list)
     # A dangling block on a non-scd2 physical mode is tolerated: the UI keeps it while toggling modes.
     scd2: Scd2Settings | None = None
+    # Enable-only: True turns the Delta change data feed on (at creation, or on the existing
+    # table); False never turns it off.
+    track_changes: bool = False
 
     @model_validator(mode="after")
     def _validate_merge_keys(self) -> "CatalogWriteSettings":
+        if self.track_changes and self.write_mode in ("overwrite", "virtual", "scd2"):
+            raise ValueError(f"track_changes is not supported with write_mode '{self.write_mode}'")
         if self.write_mode in ("upsert", "update", "delete", "scd2") and not self.merge_keys:
             raise ValueError(f"merge_keys must be non-empty when write_mode is '{self.write_mode}'")
         if self.partition_by and self.write_mode == "virtual":
@@ -1932,6 +1938,48 @@ class NodeCatalogReader(NodeBase):
     scd2_as_of: str | None = None  # ISO-8601 instant, required when scd2_view == "active_at"
     sql_query: str | None = None
     is_virtual_optimized: bool | None = None
+    # Change feed ("Read" selector). Only valid when the resolved table is change-tracked;
+    # ``since_last_run`` is the only mode that keeps a cursor.
+    cdc_mode: Literal["off", "since_last_run", "since_version", "since_timestamp"] = "off"
+    cdc_from_version: int | str | None = None  # a commit version, or a whole-field ${param} reference
+    cdc_from_timestamp: str | None = None  # ISO-8601 instant or ${param}, required when cdc_mode == "since_timestamp"
+    cdc_consumer_name: str | None = None  # names the cursor; without one it is keyed on flow + node
+    cdc_start: Literal["now", "beginning"] = "now"
+    cdc_include_preimage: bool = False
+
+    @model_validator(mode="after")
+    def _validate_cdc(self) -> "NodeCatalogReader":
+        if self.cdc_consumer_name is not None:
+            name = self.cdc_consumer_name.strip()
+            self.cdc_consumer_name = name or None
+            if name and not re.fullmatch(r"[A-Za-z0-9_.:-]+", name):
+                raise ValueError(f"cdc_consumer_name may only contain letters, digits and _.:- — got {name!r}")
+        if self.cdc_mode == "off":
+            return self
+        if self.sql_query:
+            raise ValueError("Change modes are not available for SQL catalog readers")
+        if self.delta_version is not None:
+            raise ValueError("Change modes cannot be combined with a pinned table version")
+        if self.scd2_view not in (None, "all"):
+            raise ValueError("Change modes are not available for an SCD2 history view")
+        if self.cdc_mode == "since_version":
+            if self.cdc_from_version is None:
+                raise ValueError("cdc_from_version is required when cdc_mode is 'since_version'")
+            if isinstance(self.cdc_from_version, str) and not _PARAM_REF_RE.match(self.cdc_from_version):
+                raise ValueError("cdc_from_version must be a commit version or a ${parameter} reference")
+        if self.cdc_mode == "since_timestamp":
+            if not self.cdc_from_timestamp:
+                raise ValueError("cdc_from_timestamp is required when cdc_mode is 'since_timestamp'")
+            if _PARAM_REF_RE.match(self.cdc_from_timestamp):
+                return self
+            try:
+                # Python 3.10's fromisoformat rejects the trailing "Z" the UI's DateTimePicker emits.
+                datetime.fromisoformat(self.cdc_from_timestamp.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(
+                    f"cdc_from_timestamp must be an ISO-8601 datetime: {self.cdc_from_timestamp!r}"
+                ) from exc
+        return self
 
     @model_validator(mode="after")
     def _validate_scd2_view(self) -> "NodeCatalogReader":
@@ -1958,6 +2006,13 @@ class NodeCatalogReader(NodeBase):
                 suffix += " [active]"
             elif self.scd2_view == "active_at" and self.scd2_as_of:
                 suffix += f" [as of {self.scd2_as_of}]"
+            if self.cdc_mode == "since_last_run":
+                suffix += " [changes since last run]"
+            elif self.cdc_mode == "since_version":
+                v = self.cdc_from_version
+                suffix += f" [changes since {v if isinstance(v, str) else f'v{v}'}]"
+            elif self.cdc_mode == "since_timestamp":
+                suffix += f" [changes since {self.cdc_from_timestamp}]"
             return f"Catalog: {display}{suffix}"
         return "Read from Catalog"
 

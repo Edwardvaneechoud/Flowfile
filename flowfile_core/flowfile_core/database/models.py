@@ -593,6 +593,12 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
 
     prediction_table_id = Column(Integer, nullable=True)
 
+    # Delta change data feed. ``cdc_enabled`` mirrors the table property; ``cdc_enabled_version``
+    # is the commit version it was enabled at — the floor every cursor is clamped to, because
+    # reads below it are inconsistent.
+    cdc_enabled = Column(Boolean, nullable=False, default=False, server_default="0")
+    cdc_enabled_version = Column(Integer, nullable=True)
+
     # Lineage: which flow produced this table
     source_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
     source_run_id = Column(Integer, ForeignKey("flow_runs.id"), nullable=True)
@@ -613,6 +619,33 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
     __table_args__ = (UniqueConstraint("name", "namespace_id", name="uq_catalog_table_name_ns"),)
+
+
+class CatalogCdcCursor(Base):
+    """One consumer's position in a catalog table's Delta change feed.
+
+    ``last_version`` is the last commit version that consumer fully processed; the next read starts
+    at ``last_version + 1`` (clamped to the table's ``cdc_enabled_version``). ``consumer_key`` is
+    either ``name:<typed name>`` — global to the table, deliberately shared across flows — or
+    ``flow:<flow_uuid>:node:<node_id>``. ``table_path`` is the table's path at mint time: SQLite
+    reuses rowids, so a mismatch means the cursor outlived its table and must be re-initialised.
+    """
+
+    __tablename__ = "catalog_cdc_cursors"
+
+    id = Column(Integer, primary_key=True, index=True)
+    table_id = Column(Integer, ForeignKey("catalog_tables.id"), nullable=False, index=True)
+    consumer_key = Column(String, nullable=False)
+    consumer_label = Column(String, nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    last_version = Column(Integer, nullable=False)
+    last_commit_timestamp = Column(DateTime, nullable=True)
+    table_path = Column(Text, nullable=True)
+    last_run_id = Column(Integer, ForeignKey("flow_runs.id"), nullable=True)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("table_id", "consumer_key", name="uq_cdc_cursor_table_consumer"),)
 
 
 class CatalogTableReadLink(Base):
