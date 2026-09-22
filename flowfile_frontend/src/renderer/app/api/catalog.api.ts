@@ -6,6 +6,7 @@ import type {
   ArtifactPruneResult,
   ArtifactWithVersions,
   CatalogNamespace,
+  CatalogOverview,
   CatalogStats,
   CatalogTable,
   CatalogTableCreate,
@@ -583,6 +584,14 @@ export class CatalogApi {
 
   static async getStats(): Promise<CatalogStats> {
     const response = await axios.get<CatalogStats>("/catalog/stats");
+    return response.data;
+  }
+
+  /** One round-trip for everything the catalog screen needs on mount. */
+  static async getOverview(runsLimit = 25): Promise<CatalogOverview> {
+    const response = await axios.get<CatalogOverview>("/catalog/overview", {
+      params: { runs_limit: runsLimit },
+    });
     return response.data;
   }
 
