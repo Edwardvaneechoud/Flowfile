@@ -589,7 +589,7 @@ def test_create_in_public_namespace_allowed(users, client_for, resource_factory)
 
 
 def test_global_runs_list_filters_to_accessible_flows(users, client_for, alice_catalog, resource_factory):
-    """The restricted global list keeps own runs and runs of accessible flows (was a 500: ``.runs`` vs ``.items``)."""
+    """Restricted global list: own runs + accessible flows' runs (was a 500 on ``.runs``)."""
     from datetime import datetime, timezone
 
     started = datetime.now(timezone.utc).replace(tzinfo=None)

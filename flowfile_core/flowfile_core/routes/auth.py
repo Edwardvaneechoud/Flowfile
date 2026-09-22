@@ -167,6 +167,8 @@ def update_user(
     user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    # Auth cache is keyed by the pre-edit username.
+    username_before_update = user.username
 
     # Prevent admin from disabling themselves
     if user.id == current_user.id and user_data.disabled:
@@ -207,7 +209,7 @@ def update_user(
 
     db.commit()
     db.refresh(user)
-    invalidate_user_cache(user.username)
+    invalidate_user_cache(username_before_update)
 
     return User(
         username=user.username,

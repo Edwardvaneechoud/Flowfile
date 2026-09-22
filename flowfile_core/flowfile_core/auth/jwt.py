@@ -191,10 +191,9 @@ _user_cache_lock = threading.Lock()
 
 
 def invalidate_user_cache(username: str | None = None) -> None:
-    """Drop cached auth lookups for *username* (all users when ``None``).
+    """Drop cached lookups for *username* (all when ``None``).
 
-    Call after any change to a user row that auth must see at once — disable, delete,
-    password or flag changes. Elsewhere the TTL bounds staleness.
+    Call after any user-row mutation. Keyed by username, so a rename must pass the old name.
     """
     with _user_cache_lock:
         if username is None:
@@ -204,12 +203,10 @@ def invalidate_user_cache(username: str | None = None) -> None:
 
 
 def _resolve_token_user(db: Session, username: str, credentials_exception: HTTPException) -> User:
-    """Turn a verified token subject into a ``User``.
+    """Token subject → ``User``.
 
-    Non-electron lookups are served from a short per-process TTL cache: a page load
-    fans out 15+ authenticated requests, and re-reading the same unchanged row for
-    each of them is what used to exhaust the SQLite pool from the auth path alone.
-    Misses are not cached; the user-mutation routes call ``invalidate_user_cache``.
+    Cached per process for ``USER_CACHE_TTL_SECONDS`` so a page-load fan-out needs no DB
+    connections for auth; misses are not cached.
     """
     if os.environ.get("FLOWFILE_MODE") == "electron":
         if username == "local_user":
@@ -242,7 +239,7 @@ def _resolve_token_user(db: Session, username: str, credentials_exception: HTTPE
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    """Sync on purpose: FastAPI runs it in the threadpool, so a pool wait can never block the event loop."""
+    """Sync on purpose: a pool wait must land on the threadpool, not the event loop."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",

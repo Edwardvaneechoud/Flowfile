@@ -156,7 +156,7 @@ def setup_test_db():
 
 @pytest.fixture(autouse=True)
 def reset_auth_user_cache():
-    """Fixtures recreate users (new ids) straight through the DB; never let one test's cached auth row leak into the next."""
+    """Fixtures recreate users with new ids; don't let cached auth rows leak across tests."""
     from flowfile_core.auth.jwt import invalidate_user_cache
 
     invalidate_user_cache()

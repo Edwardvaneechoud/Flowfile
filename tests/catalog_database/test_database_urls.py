@@ -59,11 +59,20 @@ def test_sqlite_driver_and_query_options(tmp_path):
     engine.dispose()
 
 
-def test_file_sqlite_gets_tuned_pool_and_wal(tmp_path):
+def test_file_sqlite_gets_tuned_pool_but_factory_leaves_journal_mode(tmp_path):
+    # The legacy-DB import reads through this; it must not rewrite the file.
     engine = create_catalog_engine(f"sqlite:///{tmp_path / 'catalog.db'}")
     assert engine.pool.size() == SQLITE_POOL_ARGS["pool_size"]
     assert engine.pool._max_overflow == SQLITE_POOL_ARGS["max_overflow"]
     assert engine.pool._timeout == SQLITE_POOL_ARGS["pool_timeout"]
+    with engine.connect() as conn:
+        assert conn.scalar(text("PRAGMA journal_mode")) == "delete"
+    engine.dispose()
+
+
+def test_shared_engine_enables_wal(tmp_path, monkeypatch):
+    monkeypatch.setattr(shared_database, "_engines", {})
+    engine = get_catalog_engine(f"sqlite:///{tmp_path / 'catalog.db'}")
     with engine.connect() as conn:
         assert conn.scalar(text("PRAGMA journal_mode")) == "wal"
     engine.dispose()

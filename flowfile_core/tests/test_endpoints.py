@@ -1998,6 +1998,28 @@ def test_get_flow_data_v2():
     assert response.status_code == 200, "Flow data not retrieved"
 
 
+def test_flow_data_v2_carries_node_descriptions():
+    """The canvas seeds its description cache from this payload."""
+    flow_id = create_flow_with_manual_input_and_select()
+    response = client.post(
+        "/node/description/", json="Load the people", params={"flow_id": flow_id, "node_id": 1}
+    )
+    assert response.status_code == 200, response.text
+
+    nodes = {n["id"]: n for n in client.get("/flow_data/v2", params={"flow_id": flow_id}).json()["node_inputs"]}
+    assert nodes[1]["description"] == "Load the people"
+    assert nodes[1]["is_auto_generated"] is False
+    assert nodes[2]["is_auto_generated"] is True
+
+    # Bulk payload and per-node GET must agree.
+    for node_id in (1, 2):
+        single = client.get("/node/description", params={"flow_id": flow_id, "node_id": node_id}).json()
+        assert single == {
+            "description": nodes[node_id]["description"],
+            "is_auto_generated": nodes[node_id]["is_auto_generated"],
+        }
+
+
 def create_flow_with_graphic_walker_input() -> FlowId:
     flow_id = create_flow_with_manual_input()
     add_node(flow_id=flow_id, node_id=2, node_type="explore_data")

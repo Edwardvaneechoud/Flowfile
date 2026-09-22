@@ -569,7 +569,7 @@ class TestRefreshToken:
 
 
 class TestUserLookupCache:
-    """The auth dependency serves repeat lookups from a TTL cache; mutation routes invalidate it."""
+    """Auth lookups are TTL-cached; mutation routes invalidate."""
 
     @pytest.fixture(autouse=True)
     def setup_docker_mode(self, monkeypatch):
@@ -616,7 +616,7 @@ class TestUserLookupCache:
                 user.disabled = True
                 db.commit()
 
-            # A direct DB write bypasses the routes, so the cached row is still served.
+            # Direct DB writes bypass invalidation.
             assert client.get("/auth/users/me", headers=headers).status_code == 200
             invalidate_user_cache(test_user_credentials["username"])
             assert client.get("/auth/users/me", headers=headers).status_code == 400
@@ -677,7 +677,7 @@ class TestUserLookupCache:
             assert client.get("/auth/users/me", headers=headers).json()["must_change_password"] is False
 
     def test_concurrent_authenticated_requests_do_not_stall(self, create_test_user, test_user_credentials):
-        """A page-load fan-out (many auth'd calls at once) used to deadlock core for minutes."""
+        """A page-load fan-out must not stall (was a multi-minute deadlock)."""
         import time
         from concurrent.futures import ThreadPoolExecutor
 

@@ -468,6 +468,8 @@ const loadFlow = async () => {
     const vueFlowInput = await getFlowData(flowIdAtStart);
     if (myToken !== loadToken) return;
 
+    // Seed before nodes mount so their description reads hit the cache.
+    nodeStore.seedNodeDescriptions(flowIdAtStart, vueFlowInput.node_inputs);
     await importFlow(vueFlowInput);
     // Stale check after importFlow: createEmptyFlow inside importFlow already
     // cleared the canvas, so bailing here is safe — the newer in-flight run
