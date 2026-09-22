@@ -10,5 +10,11 @@ export const DATA_FILE_EXTENSIONS = [
   "ndjson",
   "jsonl",
   "avro",
+  "arrows",
+  "csv.gz",
+  "tsv.gz",
+  "txt.gz",
+  "ndjson.gz",
+  "jsonl.gz",
 ];
 export const ALLOWED_SAVE_EXTENSIONS = ["yaml", "yml"];

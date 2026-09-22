@@ -7,6 +7,7 @@ from flowfile_worker.create.models import (
     InputAvroTable,
     InputCsvTable,
     InputExcelTable,
+    InputIpcStreamTable,
     InputIpcTable,
     InputJsonTable,
     InputNdjsonTable,
@@ -199,6 +200,12 @@ def create_from_path_avro(received_table: ReceivedTable):
     if not isinstance(received_table.table_settings, InputAvroTable):
         raise ValueError("Received table settings are not of type InputAvroTable")
     return pl.read_avro(received_table.abs_file_path)
+
+
+def create_from_path_ipc_stream(received_table: ReceivedTable):
+    if not isinstance(received_table.table_settings, InputIpcStreamTable):
+        raise ValueError("Received table settings are not of type InputIpcStreamTable")
+    return pl.read_ipc_stream(received_table.abs_file_path)
 
 
 def create_from_path_excel(received_table: ReceivedTable, logger=None):

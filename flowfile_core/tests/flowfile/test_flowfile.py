@@ -332,7 +332,7 @@ def test_opening_parquet_file(flow_logger: FlowLogger):
     self.execute_remote(node_logger=flow_logger.get_node_logger(1))
 
 
-@pytest.mark.parametrize("file_type,ext", [("ipc", "arrow"), ("ndjson", "ndjson"), ("avro", "avro")])
+@pytest.mark.parametrize("file_type,ext", [("ipc", "arrow"), ("ndjson", "ndjson"), ("avro", "avro"), ("ipc_stream", "arrows")])
 def test_read_new_file_formats(file_type, ext, execution_location):
     """Round-trip read of the newly supported file connectors. IPC/NDJSON read
     lazily in-process (like parquet); avro offloads its eager read to the worker
@@ -350,6 +350,29 @@ def test_read_new_file_formats(file_type, ext, execution_location):
         run_info = graph.run_graph()
         handle_run_info(run_info)
         assert graph.get_node(1).get_resulting_data().count() == 3
+
+
+@pytest.mark.parametrize("file_type,ext", [("csv", "csv.gz"), ("ndjson", "ndjson.gz")])
+def test_read_gzipped_text_formats(file_type, ext, execution_location):
+    """Polars decompresses gzip inside scan_csv/scan_ndjson, so a .gz file reads through the
+    same lazy path as its plain counterpart with no settings change."""
+    import gzip
+    import polars as pl
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, f"data.{ext}")
+        with gzip.open(path, "wb") as fh:
+            getattr(pl.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]}), f"write_{file_type}")(fh)
+
+        graph = create_graph(execution_location=execution_location)
+        add_node_promise_on_type(graph, 'read', 1, 1)
+        received_table = input_schema.ReceivedTable(file_type=file_type, name=f"data.{ext}", path=path)
+        node_read = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table)
+        graph.add_read(node_read)
+        run_info = graph.run_graph()
+        handle_run_info(run_info)
+        result = graph.get_node(1).get_resulting_data()
+        assert result.count() == 3
+        assert result.columns == ["id", "name"]
 
 
 def _write_late_type_conflict_csv(path: str, n_rows: int = 2500, conflict_at: int = 1500) -> None:

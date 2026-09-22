@@ -328,6 +328,12 @@ def create_from_path_avro(received_table: input_schema.ReceivedTable) -> pl.Data
     return pl.read_avro(received_table.abs_file_path)
 
 
+def create_from_path_ipc_stream(received_table: input_schema.ReceivedTable) -> pl.DataFrame:
+    if not isinstance(received_table.table_settings, input_schema.InputIpcStreamTable):
+        raise ValueError("Received table settings are not of type InputIpcStreamTable")
+    return pl.read_ipc_stream(received_table.abs_file_path)
+
+
 def create_from_path_excel(received_table: input_schema.ReceivedTable, logger=None):
     """Read an Excel sheet; see ``shared.excel_reader`` for engine selection and the openpyxl fallback.
 

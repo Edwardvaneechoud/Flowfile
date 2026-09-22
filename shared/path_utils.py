@@ -33,6 +33,7 @@ _DEFAULT_SCAN_EXTENSIONS = {
     "json": "json",
     "ndjson": "ndjson",
     "avro": "avro",
+    "ipc_stream": "arrows",
 }
 
 

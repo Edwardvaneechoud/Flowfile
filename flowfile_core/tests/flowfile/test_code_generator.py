@@ -3414,6 +3414,37 @@ def test_parquet_read(export_func):
     assert len(result) > 0
 
 
+@pytest.mark.parametrize("file_type,ext,settings", [
+    ("ndjson", "ndjson", input_schema.InputNdjsonTable()),
+    ("avro", "avro", input_schema.InputAvroTable()),
+    ("ipc_stream", "arrows", input_schema.InputIpcStreamTable()),
+], ids=["ndjson", "avro", "ipc_stream"])
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_ndjson_and_eager_format_read(tmp_path, file_type, ext, settings, export_func):
+    """These formats used to land in unsupported_nodes; both exports now emit a reader that runs.
+    NDJSON scans lazily; avro and the IPC stream format have no scan, so the polars export
+    wraps the eager read in ``.lazy()`` and the FlowFrame export imports the reader from
+    flowfile_frame (``flowfile`` does not re-export it)."""
+    path = tmp_path / f"data.{ext}"
+    getattr(pl.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]}), f"write_{file_type}")(str(path))
+    flow = create_basic_flow()
+    flow.add_read(input_schema.NodeRead(
+        flow_id=1,
+        node_id=1,
+        received_file=input_schema.ReceivedTable(name=path.name, path=str(path), file_type=file_type, table_settings=settings),
+    ))
+
+    code = export_func(flow)
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    assert result["name"].to_list() == ["a", "b", "c"]
+    if export_func is export_flow_to_flowframe:
+        reader = "scan_ndjson" if file_type == "ndjson" else f"read_{file_type}"
+        assert f"from flowfile_frame import {reader}" in code
+    elif file_type != "ndjson":
+        assert f"pl.read_{file_type}(" in code and ".lazy()" in code
+
+
 @pytest.mark.parametrize("export_func", [
     export_flow_to_polars,
     export_flow_to_flowframe,
