@@ -874,8 +874,7 @@ const flowDetailFocusRuns = ref(false);
 const showCreateVirtualTable = ref(false);
 const sqlInitialQuery = ref<string | undefined>(undefined);
 
-// Default namespace ID (loaded once on mount)
-const defaultNamespaceId = ref<number | null>(null);
+const defaultNamespaceId = computed(() => catalogStore.defaultNamespaceId);
 
 // Polling
 let pollInterval: ReturnType<typeof setInterval> | null = null;
@@ -1719,6 +1718,10 @@ async function handleCancelFlowRun(flowId: number) {
 
 // --- Route → Store sync ---
 
+function routeTab(): CatalogTab {
+  return nestedPageTab.value ?? ((route.query.tab as CatalogTab) || "runs");
+}
+
 function applyRouteToStore() {
   // A nested page owns its own state; only its tab is pinned.
   if (nestedPageTab.value) {
@@ -1726,7 +1729,7 @@ function applyRouteToStore() {
     return;
   }
   const q = route.query;
-  const tab = (q.tab as CatalogTab) || "runs";
+  const tab = routeTab();
   const flowId = q.flowId ? Number(q.flowId) : null;
   const runId = q.runId ? Number(q.runId) : null;
   const artifactId = q.artifactId ? Number(q.artifactId) : null;
@@ -1819,13 +1822,11 @@ watch(
 );
 
 onMounted(async () => {
+  // Pin the route's tab before the overview loads, or the store's previous (or default)
+  // tab renders first and the page visibly jumps once the data arrives.
+  catalogStore.activeTab = routeTab();
   await catalogStore.initialize();
-  applyRouteToStore(); // Restore state from URL after data is loaded
-  try {
-    defaultNamespaceId.value = await CatalogApi.getDefaultNamespaceId();
-  } catch {
-    // Not critical — leave null
-  }
+  applyRouteToStore(); // Restore selections from URL after data is loaded
   pollInterval = setInterval(pollActiveRuns, 20_000);
 });
 

@@ -19,6 +19,7 @@ import type {
   FlowSchedule,
   GlobalArtifact,
   NamespaceTree,
+  PaginatedFlowRuns,
   SchedulerStatus,
   VisualizationCreatePayload,
   VisualizationUpdatePayload,
@@ -27,6 +28,9 @@ import type {
 
 // Monotonic token guarding the artifact-versions fetch against out-of-order responses.
 let artifactVersionsRequestToken = 0;
+
+// Re-entering the catalog within this window reuses the last overview instead of refetching.
+export const OVERVIEW_TTL_MS = 30_000;
 
 interface CatalogState {
   tree: NamespaceTree[];
@@ -81,6 +85,8 @@ interface CatalogState {
   scheduleRunsTriggerFilter: string | null;
   activeRuns: ActiveFlowRun[];
   schedulerStatus: SchedulerStatus | null;
+  defaultNamespaceId: number | null;
+  overviewLoadedAt: number | null;
   activeTab: CatalogTab;
   loading: boolean;
   error: string | null;
@@ -177,6 +183,8 @@ export const useCatalogStore = defineStore("catalog", {
     scheduleRunsTriggerFilter: null,
     activeRuns: [],
     schedulerStatus: null,
+    defaultNamespaceId: null,
+    overviewLoadedAt: null,
     activeTab: "runs",
     loading: false,
     error: null,
@@ -282,14 +290,18 @@ export const useCatalogStore = defineStore("catalog", {
           runType,
           this.runsSearch,
         );
-        this.runs = result.items;
-        this.runsTotal = result.total;
-        this.runsTotalSuccess = result.total_success;
-        this.runsTotalFailed = result.total_failed;
-        this.runsTotalRunning = result.total_running;
+        this.applyRunsPage(result);
       } catch (e: any) {
         this.error = e?.message ?? "Failed to load runs";
       }
+    },
+
+    applyRunsPage(result: PaginatedFlowRuns) {
+      this.runs = result.items;
+      this.runsTotal = result.total;
+      this.runsTotalSuccess = result.total_success;
+      this.runsTotalFailed = result.total_failed;
+      this.runsTotalRunning = result.total_running;
     },
 
     setRunsPage(page: number, registrationId?: number | null) {
@@ -924,18 +936,40 @@ export const useCatalogStore = defineStore("catalog", {
       else if (tab === "catalog") this.loadTree();
     },
 
-    async initialize() {
-      await Promise.all([
-        this.loadTree(),
-        this.loadAllFlows(),
-        this.loadAllTables(),
-        this.loadStats(),
-        this.loadFavorites(),
-        this.loadRuns(),
-        this.loadSchedules(),
-        this.loadActiveRuns(),
-        this.loadSchedulerStatus(),
-      ]);
+    /**
+     * Load everything the catalog screen needs in one request. Within OVERVIEW_TTL_MS of the
+     * last load this is a no-op (back-navigation keeps the store's data); in-catalog mutations
+     * refresh their own slices, so the cache only governs re-mounts. `force` bypasses it.
+     */
+    async initialize(force = false) {
+      const fresh =
+        this.overviewLoadedAt !== null && Date.now() - this.overviewLoadedAt < OVERVIEW_TTL_MS;
+      if (fresh && !force) return;
+      this.loading = true;
+      this.error = null;
+      try {
+        const overview = await CatalogApi.getOverview(this.runsPageSize);
+        this.tree = overview.tree;
+        this.allFlows = overview.flows;
+        this.allTables = overview.tables;
+        this.stats = overview.stats;
+        this.favorites = overview.favorites;
+        this.schedules = overview.schedules;
+        this.activeRuns = overview.active_runs;
+        this.schedulerStatus = overview.scheduler;
+        this.defaultNamespaceId = overview.default_namespace_id;
+        this.overviewLoadedAt = Date.now();
+        // The overview carries page 1 unfiltered; a persisted page/filter needs its own query.
+        if (this.runsPage === 1 && !this.runsTriggerFilter && !this.runsSearch) {
+          this.applyRunsPage(overview.runs);
+        } else {
+          await this.loadRuns();
+        }
+      } catch (e: any) {
+        this.error = e?.message ?? "Failed to load catalog";
+      } finally {
+        this.loading = false;
+      }
     },
 
     // ============== Visualizations ==============
