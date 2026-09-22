@@ -247,8 +247,9 @@ make test_e2e          # build:web, start core + preview (:4173), run web-flow.s
 make test_e2e_dev      # same but uses the dev server instead of preview
 ```
 
-> Note: `make test_e2e` starts only flowfile_core (not the worker) and runs only
-> `web-flow.spec.ts`. Tauri-shell E2E tests via `tauri-driver` are a follow-up;
+> Note: `make test_e2e` starts flowfile_core and flowfile_worker and runs only
+> `web-flow.spec.ts` + `csp.spec.ts` (the latter mounts graphic-walker, hence the
+> worker). Tauri-shell E2E tests via `tauri-driver` are a follow-up;
 > the Playwright suite currently covers renderer behavior in web mode, which is
 > shared with the desktop shell.
 

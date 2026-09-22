@@ -97,6 +97,20 @@ jobs:
             sleep 2
           done
 
+      # csp.spec.ts mounts graphic-walker, which needs chart data from the worker.
+      - name: Start worker server
+        run: |
+          poetry run flowfile_worker &
+          echo "Waiting for worker to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:63579/docs > /dev/null 2>&1; then
+              echo "Worker is ready!"
+              break
+            fi
+            echo "Attempt $i: Worker not ready yet..."
+            sleep 2
+          done
+
       # Start frontend preview server in background
       - name: Start frontend preview server
         working-directory: flowfile_frontend
@@ -118,7 +132,7 @@ jobs:
         env:
           TEST_URL: http://localhost:4173
           API_URL: http://localhost:63578
-        run: npx playwright test tests/web-flow.spec.ts tests/tutorial.spec.ts tests/node-handle-labels.spec.ts tests/catalog-artifact-versions.spec.ts tests/notebook-interactions.spec.ts --reporter=html
+        run: npx playwright test tests/web-flow.spec.ts tests/tutorial.spec.ts tests/node-handle-labels.spec.ts tests/catalog-artifact-versions.spec.ts tests/notebook-interactions.spec.ts tests/csp.spec.ts --reporter=html
 
       # Upload test results on failure
       - name: Upload Playwright report

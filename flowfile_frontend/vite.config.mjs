@@ -1,4 +1,5 @@
 import Path from 'path';
+import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import vuePlugin from '@vitejs/plugin-vue';
@@ -19,6 +20,81 @@ const CORE_PORT = Number(process.env.FLOWFILE_CORE_PORT ?? 63578);
 // desktop shell reports its real version via the get_app_version command.
 const pkg = JSON.parse(readFileSync(Path.join(__dirname, 'package.json'), 'utf-8'));
 
+// Tauri only enforces its CSP on pages it serves itself (the packaged asset protocol), never
+// on a devUrl, so the dev/preview servers send the same policy to keep dev honest. The only
+// addition is Vite's HMR websocket, which the packaged app doesn't have.
+const tauriConf = JSON.parse(readFileSync(Path.join(__dirname, 'src-tauri', 'tauri.conf.json'), 'utf-8'));
+const DESKTOP_CSP = tauriConf.app.security.csp;
+const DEV_CSP = DESKTOP_CSP.replace('connect-src ', 'connect-src ws://localhost:* ws://127.0.0.1:* ');
+
+// graphic-walker injects a CDN <link> for leaflet.css into its shadow root; the Tauri CSP
+// (`style-src 'self'`) blocks it in packaged builds only, so serve a same-origin copy instead.
+const LEAFLET_CDN_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+const LEAFLET_LOCAL_CSS = '/leaflet.css';
+const LEAFLET_CSS_FILE = Path.join(__dirname, 'node_modules', 'leaflet', 'dist', 'leaflet.css');
+const GRAPHIC_WALKER_BUNDLE = /@kanaries[\/\\]graphic-walker[\/\\]dist[\/\\]graphic-walker\.es\.js$/;
+
+function leafletCssLocal() {
+    let rewrites = 0;
+    const rewrite = (code) => {
+        const out = code.split(LEAFLET_CDN_CSS).join(LEAFLET_LOCAL_CSS);
+        if (out !== code) rewrites += 1;
+        return out;
+    };
+    // The rewritten <link> keeps its SRI attribute, so the local file must match unpkg's bytes.
+    const assertIntegrity = (code) => {
+        const match = code.match(new RegExp(`${LEAFLET_CDN_CSS}", integrity: "(sha256-[^"]+)"`));
+        if (!match) return;
+        const local = 'sha256-' + createHash('sha256').update(readFileSync(LEAFLET_CSS_FILE)).digest('base64');
+        if (local !== match[1]) {
+            throw new Error(
+                `leaflet.css SRI mismatch: graphic-walker pins ${match[1]} but node_modules/leaflet serves ${local}; ` +
+                'align the leaflet version with the one graphic-walker embeds.',
+            );
+        }
+    };
+    return {
+        name: 'flowfile:leaflet-css-local',
+        // Dev serves graphic-walker from the esbuild pre-bundle, which Vite's transform hook never sees.
+        config: () => ({
+            optimizeDeps: {
+                esbuildOptions: {
+                    plugins: [{
+                        name: 'flowfile:leaflet-css-local',
+                        setup(build) {
+                            build.onLoad({ filter: GRAPHIC_WALKER_BUNDLE }, (args) => {
+                                const code = readFileSync(args.path, 'utf-8');
+                                assertIntegrity(code);
+                                return { contents: rewrite(code), loader: 'js' };
+                            });
+                        },
+                    }],
+                },
+            },
+        }),
+        configureServer(server) {
+            server.middlewares.use(LEAFLET_LOCAL_CSS, (_req, res) => {
+                res.setHeader('Content-Type', 'text/css');
+                res.end(readFileSync(LEAFLET_CSS_FILE));
+            });
+        },
+        buildStart() {
+            rewrites = 0;
+        },
+        transform(code, id) {
+            if (!GRAPHIC_WALKER_BUNDLE.test(id)) return null;
+            assertIntegrity(code);
+            return { code: rewrite(code), map: null };
+        },
+        generateBundle() {
+            if (rewrites === 0) {
+                this.error(`${LEAFLET_CDN_CSS} not found in graphic-walker; update leafletCssLocal() in vite.config.mjs`);
+            }
+            this.emitFile({ type: 'asset', fileName: LEAFLET_LOCAL_CSS.slice(1), source: readFileSync(LEAFLET_CSS_FILE) });
+        },
+    };
+}
+
 export default defineConfig({
     root: Path.join(__dirname, 'src', 'renderer'),
     publicDir: 'public',
@@ -37,6 +113,7 @@ export default defineConfig({
         // Don't silently jump to 8082 when 8080/8081 are busy — fail fast so
         // Tauri's hard-coded devUrl doesn't end up pointing at the wrong port.
         strictPort: true,
+        headers: { 'Content-Security-Policy': DEV_CSP },
         proxy: {
             '/api': {
                 target: `http://localhost:${CORE_PORT}`,
@@ -80,7 +157,8 @@ export default defineConfig({
     // router's onError guard now recovers from a stale cache; to rebuild it by
     // hand use `npm run dev:web:force`.
     plugins: [
-        vuePlugin()
+        vuePlugin(),
+        leafletCssLocal(),
     ],
     resolve: {
         alias: {
