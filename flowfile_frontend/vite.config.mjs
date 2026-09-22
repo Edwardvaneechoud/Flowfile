@@ -43,7 +43,8 @@ function leafletCssLocal() {
     };
     // The rewritten <link> keeps its SRI attribute, so the local file must match unpkg's bytes.
     const assertIntegrity = (code) => {
-        const match = code.match(new RegExp(`${LEAFLET_CDN_CSS}", integrity: "(sha256-[^"]+)"`));
+        const url = LEAFLET_CDN_CSS.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const match = code.match(new RegExp(`${url}", integrity: "(sha256-[^"]+)"`));
         if (!match) return;
         const local = 'sha256-' + createHash('sha256').update(readFileSync(LEAFLET_CSS_FILE)).digest('base64');
         if (local !== match[1]) {
