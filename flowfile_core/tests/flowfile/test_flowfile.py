@@ -6,6 +6,7 @@ from pathlib import Path
 from time import sleep
 from typing import Literal
 
+import datetime
 import pytest
 
 from flowfile_core.configs.flow_logger import FlowLogger
@@ -3323,3 +3324,48 @@ class TestGetCloudConnectionSettings:
                 connection_name="does-not-exist-xyz", user_id=1, auth_mode="auto"
             )
         assert exc_info.value.status_code == 400
+
+
+def _add_basic_filter_to_graph(graph: FlowGraph, field: str, operator: str, value: str, value2: str | None = None):
+    add_node_promise_on_type(graph, "filter", 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                filter_type="basic",
+                basic_filter=transform_schema.BasicFilter(field=field, operator=operator, value=value, value2=value2),
+            ),
+        )
+    )
+
+
+_TEMPORAL_ROWS = [
+    {"d": datetime.date(2024, 1, 1), "ts": datetime.datetime(2024, 1, 1, 10, 0, 0)},
+    {"d": datetime.date(2024, 6, 1), "ts": datetime.datetime(2024, 6, 1, 12, 0, 0)},
+    {"d": datetime.date(2024, 9, 1), "ts": datetime.datetime(2024, 9, 1, 0, 0, 0)},
+]
+
+
+@pytest.mark.parametrize(
+    "field,operator,value,value2,expected",
+    [
+        ("d", "greater_than", "2024-03-01", None, [datetime.date(2024, 6, 1), datetime.date(2024, 9, 1)]),
+        ("d", "equals", "2024-06-01", None, [datetime.date(2024, 6, 1)]),
+        ("d", "between", "2024-01-01", "2024-06-01", [datetime.date(2024, 1, 1), datetime.date(2024, 6, 1)]),
+        ("d", "in", "2024-01-01, 2024-09-01", None, [datetime.date(2024, 1, 1), datetime.date(2024, 9, 1)]),
+        ("ts", "greater_than_or_equals", "2024-06-01 12:00:00", None, [datetime.date(2024, 6, 1), datetime.date(2024, 9, 1)]),
+        ("ts", "less_than", "2024-06-01", None, [datetime.date(2024, 1, 1)]),
+    ],
+)
+def test_basic_filter_on_temporal_column(field, operator, value, value2, expected):
+    """A basic filter on a Date or (parametrized) Datetime column runs instead of raising
+    polars' string-vs-temporal comparison error; the value is what the date picker emits."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, _TEMPORAL_ROWS, node_id=1)
+    _add_basic_filter_to_graph(graph, field, operator, value, value2)
+    graph.run_graph()
+    node = graph.get_node(2)
+    assert node.get_resulting_data().collect()["d"].to_list() == expected
