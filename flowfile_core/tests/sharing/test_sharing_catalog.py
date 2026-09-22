@@ -586,3 +586,30 @@ def test_create_in_public_namespace_allowed(users, client_for, resource_factory)
         if row:
             db.delete(row)
             db.commit()
+
+
+def test_global_runs_list_filters_to_accessible_flows(users, client_for, alice_catalog, resource_factory):
+    """Restricted global list: own runs + accessible flows' runs (was a 500 on ``.runs``)."""
+    from datetime import datetime, timezone
+
+    started = datetime.now(timezone.utc).replace(tzinfo=None)
+    alice_run = resource_factory(
+        db_models.FlowRun,
+        registration_id=alice_catalog["flow"],
+        flow_name="alice_flow",
+        user_id=users["alice"].id,
+        started_at=started,
+        run_type="manual",
+    )
+    bob_run = resource_factory(
+        db_models.FlowRun, registration_id=None, flow_name="bob_adhoc", user_id=users["bob"].id, started_at=started
+    )
+
+    response = client_for("bob").get("/catalog/runs")
+    assert response.status_code == 200, response.text
+    ids = [r["id"] for r in response.json()["items"]]
+    assert bob_run in ids
+    assert alice_run not in ids
+
+    ids = [r["id"] for r in client_for("alice").get("/catalog/runs").json()["items"]]
+    assert alice_run in ids

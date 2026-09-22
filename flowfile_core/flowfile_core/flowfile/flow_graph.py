@@ -29,6 +29,7 @@ from flowfile_core.catalog.delta_utils import (
     delete_table_storage,
     get_live_delta_version,
     is_delta_table,
+    is_legacy_parquet,
 )
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_namespace, serialized_frame_uses_cloud
@@ -44,6 +45,12 @@ from flowfile_core.events import publish
 from flowfile_core.fileExplorer.funcs import SecureFileExplorer
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
+from flowfile_core.flowfile.catalog_cdc import (
+    init_cursor_value,
+    make_cdc_commit_callback,
+    read_cursor,
+    resolve_consumer_key,
+)
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_local_cloud_connection,
     get_local_database_connection,
@@ -178,9 +185,13 @@ from flowfile_core.secret_manager.secret_manager import (
 from shared._version import get_version
 from shared.db_dialects import get_dialect_or_generic
 from shared.delta_utils import (
+    enable_change_data_feed,
+    get_delta_head_version,
     get_delta_partition_columns,
     get_delta_size_bytes,
+    get_delta_version_at_or_after,
     merge_into_delta,
+    scan_delta_changes,
     scd2_into_delta,
     scd2_parse_iso_utc,
 )
@@ -722,6 +733,17 @@ class CatalogTableInfo(NamedTuple):
     # SCD2 shape of the table, straight off the catalog record — the single source of truth for
     # generated column names. ``None`` => not an SCD2 table.
     scd2_config: dict | None = None
+    # Persisted column schema (JSON ``[{"name", "dtype"}]``), used to predict a change reader's
+    # output without opening the feed.
+    schema_json: str | None = None
+
+
+_CDF_COLUMN_DTYPES = (
+    ("_change_type", "String"),
+    ("_commit_version", "UInt64"),
+    ("_commit_timestamp", "Datetime(time_unit='ms', time_zone=None)"),
+)
+"""Dtypes ``load_cdf`` gives the three change columns, for schema prediction."""
 
 
 def _scd2_config_is_stale(cfg: dict, table_record) -> bool:
@@ -755,6 +777,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
     resolved_namespace_id: int | None = None
     resolved_table_name: str | None = None
     resolved_scd2_config: dict | None = None
+    resolved_schema_json: str | None = None
     try:
         with get_db_context() as db:
             repo = SQLAlchemyCatalogRepository(db)
@@ -803,6 +826,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
                     source_table_versions = table_record.source_table_versions
                 else:
                     file_path = table_record.file_path
+                    resolved_schema_json = table_record.schema_json
                     raw_scd2_config = getattr(table_record, "scd2_config", None)
                     if raw_scd2_config:
                         try:
@@ -835,6 +859,7 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
         namespace_id=resolved_namespace_id,
         table_name=resolved_table_name,
         scd2_config=resolved_scd2_config,
+        schema_json=resolved_schema_json,
     )
 
 
@@ -994,6 +1019,7 @@ def _write_catalog_delta_local(
     partition_by: list[str] | None = None,
     storage_options: dict[str, str] | None = None,
     scd2_kwargs: dict | None = None,
+    enable_cdf: bool = False,
 ) -> CatalogDeltaWrite:
     """Write a Delta table in-process. ``meta`` is ``None`` when the write was skipped.
 
@@ -1003,7 +1029,8 @@ def _write_catalog_delta_local(
     as-is (the downstream helpers branch on ``is None``, not truthiness).
 
     *scd2_kwargs* carries the resolved SCD2 configuration (see ``_scd2_primitive_kwargs``) and is
-    required when *delta_mode* is ``"scd2"``.
+    required when *delta_mode* is ``"scd2"``. *enable_cdf* turns change tracking on for a table
+    this write creates; an existing one is handled by ``_ensure_catalog_cdc_enabled`` afterwards.
     """
     dest = str(dest_path)
     if delta_mode == "scd2":
@@ -1045,10 +1072,16 @@ def _write_catalog_delta_local(
             merge_keys=merge_keys,
             partition_by=partition_by,
             storage_options=storage_options,
+            enable_cdf=enable_cdf,
         )
     else:
         wrote = _write_delta(
-            df.data_frame, dest, mode=delta_mode, partition_by=partition_by, storage_options=storage_options
+            df.data_frame,
+            dest,
+            mode=delta_mode,
+            partition_by=partition_by,
+            storage_options=storage_options,
+            enable_cdf=enable_cdf,
         )
     if not wrote:
         return CatalogDeltaWrite(None)
@@ -1265,6 +1298,31 @@ def _register_catalog_table(
             logger.warning("Failed to remove replaced table directory %s", old_path, exc_info=True)
 
 
+def _ensure_catalog_cdc_enabled(
+    table_name: str,
+    namespace_id: int | None,
+    dest_path: str,
+    storage_options: dict[str, str] | None,
+) -> None:
+    """Mirror the Delta change-data-feed property onto the catalog row after a tracked write.
+
+    A table this write created already carries the property (the writer passed ``enable_cdf``);
+    an existing one gets it here, as its own commit. The recorded version is the cursor floor.
+    Failures are logged, not raised: the data is already committed, and a failed enable surfaces
+    as the reader's actionable "enable change tracking first" error.
+    """
+    try:
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            table = repo.get_table_by_name(table_name, namespace_id)
+            if table is None or table.cdc_enabled:
+                return
+            enabled_version = enable_change_data_feed(dest_path, storage_options=storage_options)
+            repo.set_cdc_enabled(table.id, enabled_version)
+    except Exception:
+        logger.warning("Could not enable change tracking on catalog table %s", table_name, exc_info=True)
+
+
 def _collect_source_table_versions(graph: "FlowGraph") -> str | None:
     """Collect delta versions of upstream catalog tables used by this flow.
 
@@ -1380,10 +1438,47 @@ def _fingerprint_virtual_source(
     return entries, False
 
 
+def _resolved_cdc_version(value: object) -> int:
+    """The commit version a since-version reader starts after, once ``${param}`` refs are substituted."""
+    if value is None or isinstance(value, bool):
+        raise ValueError(f"cdc_from_version must resolve to a commit version, got {value!r}")
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"cdc_from_version must resolve to a commit version, got {value!r} — is that flow parameter defined?"
+        ) from exc
+
+
+def _resolved_cdc_instant(value: object) -> datetime.datetime:
+    """The UTC instant a since-time reader starts from, once ``${param}`` refs are substituted."""
+    try:
+        return scd2_parse_iso_utc(str(value))
+    except ValueError as exc:
+        raise ValueError(
+            f"cdc_from_timestamp must resolve to an ISO-8601 instant, got {value!r} — is that flow parameter defined?"
+        ) from exc
+
+
+def _delta_reader_fingerprint(path: str, version: int | None, cdc_state: int | str | None) -> str:
+    """Fingerprint payload for a Delta-backed catalog reader.
+
+    A change reader folds its run state in — the stored cursor, or the resolved ``since`` value
+    when that comes from a flow parameter: head and that state are the values that decide what
+    the next read returns, so a run that finds no new data re-executes once (empty frame) and
+    then short-circuits until one of them moves.
+    """
+    payload: dict = {"path": path, "version": version}
+    if cdc_state is not None:
+        payload["cursor"] = cdc_state
+    return json.dumps(payload, sort_keys=True)
+
+
 def _catalog_reader_source_fingerprint(
     settings: "input_schema.NodeCatalogReader",
     version_cache: dict[str, int],
     opts_by_namespace: dict[int | None, dict | None],
+    cdc_state: int | str | None = None,
 ) -> tuple[str | None, bool]:
     """Canonical freshness fingerprint for a catalog_reader node's sources.
 
@@ -1439,10 +1534,10 @@ def _catalog_reader_source_fingerprint(
         if ns not in opts_by_namespace:
             opts_by_namespace[ns] = resolve_for_namespace(ns).storage_options or None
         version = _probe_version_entry(info.file_path, opts_by_namespace[ns], version_cache)
-        return json.dumps({"path": info.file_path, "version": version}, sort_keys=True), False
+        return _delta_reader_fingerprint(info.file_path, version, cdc_state), False
     if is_delta_table(info.file_path):
         version = _probe_version_entry(info.file_path, None, version_cache)
-        return json.dumps({"path": info.file_path, "version": version}, sort_keys=True), False
+        return _delta_reader_fingerprint(info.file_path, version, cdc_state), False
     # Legacy parquet: the SourceFileInfo idiom (mtime+size).
     stat = os.stat(info.file_path)
     return (
@@ -1636,6 +1731,10 @@ def _handle_physical_table_write(
         storage_payload = None
         storage_options = None
 
+    if settings.track_changes and existing is not None:
+        # Enable before the write so this write's own commit lands above the cursor floor.
+        _ensure_catalog_cdc_enabled(settings.table_name, namespace_id, dest_path, storage_options)
+
     # One processing instant for the whole write, generated before the local/remote fork: the
     # surrogate key is a function of (business key, valid_from), so a second clock read would mint
     # different keys on the two branches of the same write.
@@ -1657,10 +1756,16 @@ def _handle_physical_table_write(
             "merge_mode": delta_mode,
             "merge_keys": settings.merge_keys,
             "partition_by": settings.partition_by,
+            "enable_cdf": settings.track_changes,
         }
     else:
         op_type = "write_delta"
-        op_kwargs = {"output_path": dest_path, "mode": delta_mode, "partition_by": settings.partition_by}
+        op_kwargs = {
+            "output_path": dest_path,
+            "mode": delta_mode,
+            "partition_by": settings.partition_by,
+            "enable_cdf": settings.track_changes,
+        }
     if storage_payload is not None:
         op_kwargs["storage_payload"] = storage_payload
 
@@ -1684,6 +1789,7 @@ def _handle_physical_table_write(
             settings.partition_by,
             storage_options=storage_options,
             scd2_kwargs=scd2_kwargs,
+            enable_cdf=settings.track_changes,
         )
     meta_kwargs = written.meta
 
@@ -1724,6 +1830,8 @@ def _handle_physical_table_write(
         is_cloud=dest_is_cloud,
         scd2_config=scd2_config,
     )
+    if settings.track_changes:
+        _ensure_catalog_cdc_enabled(settings.table_name, namespace_id, dest_path, storage_options)
     return _node_output()
 
 
@@ -5111,14 +5219,117 @@ class FlowGraph:
             node_logger=self.flow_logger.get_node_logger(node_catalog_reader.node_id),
         )
 
+        _cdc_mode = node_catalog_reader.cdc_mode
+        _table_schema_json = info.schema_json
+        if _cdc_mode != "off":
+            if _table_type == "virtual":
+                raise ValueError("Change tracking is not available for virtual catalog tables")
+            if resolved_path and not _is_cloud_uri(resolved_path) and is_legacy_parquet(resolved_path):
+                raise ValueError("Change tracking is not available for legacy parquet catalog tables")
+
         def _apply_scd2_filter(lf: pl.LazyFrame) -> FlowDataEngine:
             return FlowDataEngine(lf if _scd2_filter is None else lf.filter(_scd2_filter))
+
+        def _resolve_table_row(db):
+            repo = SQLAlchemyCatalogRepository(db)
+            table = repo.get_table_fresh(_catalog_table_id) if _catalog_table_id else None
+            if table is not None:
+                return table
+            reference = node_catalog_reader.catalog_full_table_name or node_catalog_reader.catalog_table_name
+            if not reference:
+                return None
+            return CatalogService(repo).resolve_table(
+                reference, default_namespace_id=node_catalog_reader.catalog_namespace_id
+            )
+
+        def _read_changes() -> FlowDataEngine:
+            """Read the table's change feed for this run.
+
+            Head and the cursor are resolved here, at execution time: the designer keeps one
+            FlowGraph across runs, so a window pinned while wiring would go stale after the first
+            one. Strict by design — an untracked table is an actionable error, never a silent
+            full read.
+            """
+            with get_db_context() as db:
+                table = _resolve_table_row(db)
+                if table is None:
+                    raise ValueError("Catalog table could not be resolved — no change feed to read")
+                table_id, table_name = table.id, table.name
+                table_path, cdc_enabled, floor = table.file_path, table.cdc_enabled, table.cdc_enabled_version
+            if not cdc_enabled:
+                raise ValueError(
+                    f"Change tracking is not enabled on '{table_name}'. Enable change tracking on "
+                    f"'{table_name}' first, then re-run."
+                )
+            if not table_path:
+                raise ValueError(f"Catalog table '{table_name}' has no storage to read changes from")
+
+            head = get_delta_head_version(table_path, storage_options=_reader_storage_options)
+            starting_version: int | None = None
+            cursor_consumer: tuple[str, str | None] | None = None
+            if _cdc_mode == "since_timestamp":
+                # Resolved to a version here so the enablement-floor clamp below applies to it too.
+                instant = _resolved_cdc_instant(node_catalog_reader.cdc_from_timestamp)
+                resolved = get_delta_version_at_or_after(table_path, instant, storage_options=_reader_storage_options)
+                starting_version = resolved if resolved is not None else head + 1
+            elif _cdc_mode == "since_version":
+                starting_version = _resolved_cdc_version(node_catalog_reader.cdc_from_version) + 1
+            else:
+                consumer_key, label = resolve_consumer_key(self, node_catalog_reader)
+                with get_db_context() as db:
+                    cursor = read_cursor(db, table_id, consumer_key, table_path)
+                last_version = (
+                    cursor.last_version
+                    if cursor is not None
+                    else init_cursor_value(node_catalog_reader.cdc_start, head, floor)
+                )
+                starting_version = last_version + 1
+                cursor_consumer = (consumer_key, label)
+            if starting_version is not None and floor is not None:
+                starting_version = max(starting_version, floor)
+
+            lf = scan_delta_changes(
+                table_path,
+                starting_version,
+                head,
+                storage_options=_reader_storage_options,
+                include_preimage=node_catalog_reader.cdc_include_preimage,
+            )
+            if cursor_consumer is not None:
+                consumer_key, label = cursor_consumer
+                self.get_node(node_catalog_reader.node_id)._on_flow_complete = make_cdc_commit_callback(
+                    table_id,
+                    consumer_key,
+                    head,
+                    node_catalog_reader.node_id,
+                    self.flow_logger,
+                    owner_id=node_catalog_reader.user_id,
+                    label=label,
+                    table_path=table_path,
+                )
+            self.flow_logger.get_node_logger(node_catalog_reader.node_id).info(
+                f"Reading changes from '{table_name}' (v{starting_version}..v{head})"
+            )
+            return FlowDataEngine(lf)
+
+        def _cdc_schema_callback() -> list[FlowfileColumn]:
+            """Predicted schema of a change read: the table's own columns plus the three feed columns."""
+            columns = [
+                FlowfileColumn.from_input(column_name=entry["name"], data_type=entry["dtype"])
+                for entry in json.loads(_table_schema_json or "[]")
+            ]
+            columns.extend(
+                FlowfileColumn.from_input(column_name=name, data_type=dtype) for name, dtype in _CDF_COLUMN_DTYPES
+            )
+            return columns
 
         def _func() -> FlowDataEngine:
             if not _authorized:
                 raise PermissionError(
                     f"Not authorized to read the catalog table for node {node_catalog_reader.node_id}"
                 )
+            if _cdc_mode != "off":
+                return _read_changes()
             if _table_type == "virtual":
                 return FlowDataEngine(
                     _resolve_virtual_table(
@@ -5152,6 +5363,7 @@ class FlowGraph:
             input_columns=[],
             node_type="catalog_reader",
             setting_input=node_catalog_reader,
+            schema_callback=_cdc_schema_callback if _cdc_mode != "off" else None,
         )
         node = self.get_node(node_catalog_reader.node_id)
         self.add_node_to_starting_list(node)
@@ -6807,9 +7019,7 @@ class FlowGraph:
         the dev-mode cache (and the worker's cache_results lookup).
         """
         input_pairs = [
-            (input_node, src_handle)
-            for input_node, src_handle in node._slot_input_pairs()
-            if input_node is not None
+            (input_node, src_handle) for input_node, src_handle in node._slot_input_pairs() if input_node is not None
         ]
         surviving = frozenset(
             (input_node.node_id, src_handle)
@@ -6961,9 +7171,7 @@ class FlowGraph:
                 self.flow_logger.error(f"Post-execution callback failed for node {n.node_id}: {e}")
             n._on_flow_complete = None
 
-    def _record_deliberate_skips(
-        self, deliberate_skip_ids: set[str | int], count_toward_total: bool = True
-    ) -> None:
+    def _record_deliberate_skips(self, deliberate_skip_ids: set[str | int], count_toward_total: bool = True) -> None:
         """Record deliberately-skipped nodes as green, zero-work results.
 
         Deliberate skips (closed-gate branches) are part of a successful run:
@@ -7035,7 +7243,9 @@ class FlowGraph:
             if not settings.sql_query and settings.delta_version is not None:
                 continue
             try:
-                fingerprint, force = _catalog_reader_source_fingerprint(settings, version_cache, opts_by_namespace)
+                fingerprint, force = _catalog_reader_source_fingerprint(
+                    settings, version_cache, opts_by_namespace, cdc_state=self._cdc_fingerprint_state(node)
+                )
             except Exception:
                 self.flow_logger.warning(
                     f"Node {node.node_id}: could not probe catalog source freshness; re-running to be safe"
@@ -7046,6 +7256,31 @@ class FlowGraph:
                 node.invalidate_cache()
                 self.flow_logger.info(f"Node {node.node_id}: catalog source changed; invalidating cached result")
             node._execution_state.source_version_info = fingerprint
+
+    def _cdc_fingerprint_state(self, node: FlowNode) -> int | str | None:
+        """The run state a change reader's output depends on, for its freshness fingerprint.
+
+        ``since_last_run`` folds in the stored cursor; the version and timestamp modes fold in the
+        resolved ``since`` value when it comes from a flow parameter (a literal is already part of
+        the settings hash). Unresolvable (no registration, no table id, no cursor yet, unknown
+        parameter) means "nothing to fold in" — the head probe alone then decides freshness.
+        """
+        settings = node.setting_input
+        if settings.cdc_mode in ("since_version", "since_timestamp"):
+            raw = settings.cdc_from_version if settings.cdc_mode == "since_version" else settings.cdc_from_timestamp
+            if not isinstance(raw, str) or "${" not in raw:
+                return None
+            params = node._params_getter() if node._params_getter else {}
+            return resolve_parameters(raw, params)
+        if settings.cdc_mode != "since_last_run" or not settings.catalog_table_id:
+            return None
+        try:
+            consumer_key, _ = resolve_consumer_key(self, settings)
+            with get_db_context() as db:
+                cursor = read_cursor(db, settings.catalog_table_id, consumer_key)
+        except Exception:
+            return None
+        return cursor.last_version if cursor is not None else None
 
     def _refresh_read_source_freshness(self) -> None:
         """Invalidate read nodes whose source files changed since their last run.

@@ -2194,6 +2194,24 @@ class FlowNode:
         """
         return self.get_table_example(True)
 
+    def resolve_description(self) -> tuple[str, bool]:
+        """Return ``(description, is_auto_generated)``: the user's text, else the settings' auto text.
+
+        Auto text is a cheap format of in-memory settings; a missing or failing generator
+        yields "" so one node cannot sink the flow payload.
+        """
+        user_description = getattr(self.setting_input, "description", "") or ""
+        if user_description:
+            return user_description, False
+        generate = getattr(self.setting_input, "get_default_description", None)
+        if generate is None:
+            return "", True
+        try:
+            return generate() or "", True
+        except Exception:
+            logger.warning("Auto description failed for node %s (%s)", self.node_id, self.node_type, exc_info=True)
+            return "", True
+
     def get_node_input(self) -> schemas.NodeInput:
         """Creates a `NodeInput` schema object for representing this node in the UI.
 
@@ -2213,6 +2231,7 @@ class FlowNode:
             template_fields["output_names"] = output_names
         # else: keep the template's own names — an unconfigured node has no
         # settings snapshot yet, and clobbering here would drop the tooltips.
+        description, is_auto_generated = self.resolve_description()
         return schemas.NodeInput(
             pos_y=self.setting_input.pos_y,
             pos_x=self.setting_input.pos_x,
@@ -2220,6 +2239,8 @@ class FlowNode:
             id=self.node_id,
             node_reference=node_reference,
             input_names=getattr(self.setting_input, "input_names", None),
+            description=description,
+            is_auto_generated=is_auto_generated,
             **template_fields,
         )
 

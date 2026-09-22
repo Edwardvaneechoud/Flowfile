@@ -2402,6 +2402,7 @@ class FlowFrame:
         scd2_is_current_column: str = "is_current",
         scd2_partition_on_current: bool = True,
         scd2_output_mode: Literal["input", "changed", "current"] = "input",
+        track_changes: bool = False,
         description: str | None = None,
     ) -> FlowFrame:
         """Write the data frame to the Flowfile catalog.
@@ -2436,6 +2437,10 @@ class FlowFrame:
                 minted by this write, unchanged rows their existing one; ``"changed"`` returns
                 only the row versions this write inserted or closed; ``"current"`` returns the
                 table's whole current slice, including keys absent from this input.
+            track_changes: Turn the table's change feed on so readers can ask for changes only
+                (see ``changes_since`` on :func:`flowfile_frame.read_catalog_table`).
+                Enable-only: ``False`` never turns tracking off. Not allowed with
+                ``write_mode`` ``"overwrite"``, ``"virtual"`` or ``"scd2"``.
             description: Optional description for this operation.
 
         Returns:
@@ -2467,6 +2472,7 @@ class FlowFrame:
             scd2_is_current_column=scd2_is_current_column,
             scd2_partition_on_current=scd2_partition_on_current,
             scd2_output_mode=scd2_output_mode,
+            track_changes=track_changes,
             description=description,
         )
         return self._create_child_frame(new_node_id)

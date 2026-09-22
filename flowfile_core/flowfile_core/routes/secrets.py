@@ -41,7 +41,7 @@ def _shared_secret_rows(db: Session, user_id: int) -> list[Secret]:
 
 
 @router.get("/secrets", response_model=list[Secret])
-async def get_secrets(current_user=Depends(get_current_active_user), db: Session = Depends(get_db)):
+def get_secrets(current_user=Depends(get_current_active_user), db: Session = Depends(get_db)):
     """Retrieves all secret names for the currently authenticated user.
 
     Note: This endpoint returns the secret names and metadata but does not
@@ -75,7 +75,7 @@ async def get_secrets(current_user=Depends(get_current_active_user), db: Session
 
 
 @router.post("/secrets", response_model=Secret)
-async def create_secret(
+def create_secret(
     secret: SecretInput, current_user=Depends(get_current_active_user), db: Session = Depends(get_db)
 ) -> Secret:
     """Creates a new secret for the authenticated user.
@@ -117,7 +117,7 @@ async def create_secret(
 
 
 @router.get("/secrets/{secret_name}", response_model=Secret)
-async def get_secret(
+def get_secret(
     secret_name: str, current_user=Depends(get_current_active_user), db: Session = Depends(get_db)
 ) -> Secret:
     """Retrieves a specific secret by name for the authenticated user.
@@ -164,7 +164,7 @@ async def get_secret(
 
 
 @router.delete("/secrets/{secret_name}", status_code=204)
-async def delete_secret(
+def delete_secret(
     secret_name: str, current_user=Depends(get_current_active_user), db: Session = Depends(get_db)
 ) -> None:
     """Deletes a secret by name for the authenticated user.

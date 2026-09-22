@@ -199,6 +199,19 @@ When the selected table is tracked with [SCD2](../catalog/slowly-changing-dimens
 
 The default is all records: reading an SCD2 table without setting History returns full history, not the current snapshot. Set it to **Active records** when the downstream flow expects one row per business key.
 
+### Reading only what changed
+
+When the selected table has [change tracking](../catalog/change-tracking.md) turned on, a **Read** selector appears above History.
+
+| Option | Description |
+|---|---|
+| **Full table** (default) | The table as it is now. |
+| **Changes since last run** | Everything committed after the version this reader last processed. Keeps a cursor, optionally named so several flows share one position. |
+| **Changes since version** | Everything committed after a version you pick. |
+| **Changes since time** | Everything committed at or after a timestamp. |
+
+Every change mode adds `_change_type`, `_commit_version` and `_commit_timestamp` to the table's own columns. The Read selector is unavailable for virtual, SCD2 and SQL-mode readers, and while the reader is pinned to a table version. If the table is not tracked yet, the drawer offers an **Enable change tracking** button.
+
 ### Reading virtual tables
 
 A virtual table resolves at run time and behaves identically to a physical one from the flow's perspective. Optimized virtual tables deserialize a stored execution plan instantly, keeping full Polars query optimization (predicate and projection pushdown); standard virtual tables run the producer flow end to end. See [Virtual Flow Tables](../catalog/virtual-tables.md).

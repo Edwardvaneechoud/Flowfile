@@ -17,6 +17,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.types import DataType
+from flowfile_core.flowfile.param_types import FlowParameter
 
 try:
     import os
@@ -5621,6 +5622,129 @@ def test_catalog_reader_scd2_view():
         'scd2_view="active_at"',
         'scd2_as_of="2024-01-01T00:00:00+00:00"',
     )
+
+
+def test_catalog_reader_changes_since_last_run():
+    """A since-last-run change reader emits its cursor kwargs verbatim."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+
+    catalog_reader = input_schema.NodeCatalogReader(
+        flow_id=1,
+        node_id=1,
+        catalog_table_name="orders",
+        cdc_mode="since_last_run",
+        cdc_consumer_name="nightly",
+        cdc_start="beginning",
+        cdc_include_preimage=True,
+    )
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_catalog_reader(catalog_reader, "df_1", {})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(
+        code_output,
+        "ff.read_catalog_table(",
+        'changes_since="last_run"',
+        'changes_consumer="nightly"',
+        'changes_start="beginning"',
+        "include_change_preimage=True",
+    )
+
+
+def test_catalog_reader_changes_since_version_and_timestamp():
+    """The version and timestamp change modes both land on the changes_since kwarg."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+
+    by_version = input_schema.NodeCatalogReader(
+        flow_id=1, node_id=1, catalog_table_name="orders", cdc_mode="since_version", cdc_from_version=12
+    )
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_catalog_reader(by_version, "df_1", {})
+    verify_code_contains("\n".join(converter.code_lines), "changes_since=12")
+
+    by_timestamp = input_schema.NodeCatalogReader(
+        flow_id=1,
+        node_id=2,
+        catalog_table_name="orders",
+        cdc_mode="since_timestamp",
+        cdc_from_timestamp="2024-01-01T00:00:00+00:00",
+    )
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_catalog_reader(by_timestamp, "df_2", {})
+    verify_code_contains("\n".join(converter.code_lines), 'changes_since="2024-01-01T00:00:00+00:00"')
+
+
+def test_catalog_reader_changes_since_from_flow_parameter():
+    """A ${param} in either since field becomes a reference to the generated function's kwarg."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+    from flowfile_core.flowfile.code_generator.param_codegen import apply_param_sentinels, resolve_param_sentinels
+
+    flow = create_basic_flow()
+    params = [
+        FlowParameter(name="since", default_value="12", type="integer"),
+        FlowParameter(name="since_ts", default_value="2024-01-01T00:00:00+00:00", type="string"),
+    ]
+    by_version = input_schema.NodeCatalogReader(
+        flow_id=1, node_id=1, catalog_table_name="orders", cdc_mode="since_version", cdc_from_version="${since}"
+    )
+    by_time = input_schema.NodeCatalogReader(
+        flow_id=1, node_id=2, catalog_table_name="orders", cdc_mode="since_timestamp", cdc_from_timestamp="${since_ts}"
+    )
+    apply_param_sentinels([by_version, by_time], params)
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_catalog_reader(by_version, "df_1", {})
+    converter._handle_catalog_reader(by_time, "df_2", {})
+    code, leaked = resolve_param_sentinels("\n".join(converter.code_lines), {"since", "since_ts"})
+    assert not leaked
+    verify_code_contains(code, "changes_since=since,")
+    verify_code_contains(code, "changes_since=since_ts,")
+
+
+def test_catalog_reader_without_changes_emits_no_change_kwargs():
+    """A plain reader stays free of change-feed kwargs."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+
+    catalog_reader = input_schema.NodeCatalogReader(flow_id=1, node_id=1, catalog_table_name="orders")
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_catalog_reader(catalog_reader, "df_1", {})
+
+    code_output = "\n".join(converter.code_lines)
+    assert "changes_since" not in code_output
+    assert "include_change_preimage" not in code_output
+
+
+def test_catalog_writer_track_changes_is_emitted():
+    """The writer's track_changes flag survives export."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+
+    catalog_writer = input_schema.NodeCatalogWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name="orders",
+            write_mode="upsert",
+            merge_keys=["order_id"],
+            track_changes=True,
+        ),
+    )
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter.node_var_mapping[2] = "df_2"
+    converter.last_node_var = "df_2"
+    converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
+
+    code_output = "\n".join(converter.code_lines)
+    verify_code_contains(code_output, "ff.write_catalog_table(", "track_changes=True")
 
 
 def test_catalog_reader_missing_table_name_adds_to_unsupported():

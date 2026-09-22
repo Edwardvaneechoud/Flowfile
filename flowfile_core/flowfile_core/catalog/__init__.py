@@ -11,6 +11,9 @@ Public interface:
 from .exceptions import (
     AmbiguousTableError,
     CatalogError,
+    CdcCursorNotFoundError,
+    CdcCursorsAtRiskError,
+    CdcNotSupportedError,
     DashboardNotFoundError,
     FavoriteNotFoundError,
     FlowAlreadyRunningError,
@@ -83,4 +86,7 @@ __all__ = [
     "DashboardNotFoundError",
     "NotebookNotFoundError",
     "NotebookExistsError",
+    "CdcNotSupportedError",
+    "CdcCursorNotFoundError",
+    "CdcCursorsAtRiskError",
 ]

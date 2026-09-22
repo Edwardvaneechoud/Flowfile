@@ -354,3 +354,39 @@ class StaleWriteError(CatalogError):
         self.expected = expected
         self.current = current
         super().__init__(f"This {resource_type} was modified in another session. Reload it or overwrite.")
+
+
+class CdcNotSupportedError(CatalogError):
+    """Raised when change tracking cannot be enabled on a table.
+
+    Virtual tables have no Delta log, legacy Parquet has no commits, and an SCD2 table
+    already keeps its history in ordinary validity-window columns.
+    """
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
+
+
+class CdcCursorNotFoundError(CatalogError):
+    """Raised when a change cursor lookup fails."""
+
+    def __init__(self, table_id: int, consumer_key: str):
+        self.table_id = table_id
+        self.consumer_key = consumer_key
+        super().__init__(f"No change cursor '{consumer_key}' on table id={table_id}")
+
+
+class CdcCursorsAtRiskError(CatalogError):
+    """Raised when a vacuum would drop history a change cursor still points into.
+
+    Carries the at-risk cursors so the caller can list them and offer "vacuum anyway"
+    (``force=True``).
+    """
+
+    def __init__(self, cursors: list[dict]):
+        self.cursors = cursors
+        super().__init__(
+            "Vacuuming would remove history that change-feed cursors still point into. "
+            "Reset those cursors, or vacuum anyway."
+        )

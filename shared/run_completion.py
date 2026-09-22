@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from shared.database import create_catalog_engine
+from shared.database import get_catalog_engine
 from shared.models import FlowRun
 from shared.notifications.processor import enqueue_orphaned_run
 from shared.storage_config import get_database_url
@@ -39,7 +39,7 @@ def get_run_user_id(run_id: int) -> int | None:
     pre-created run record, so the flow is loaded against the right
     user's connections/secrets.
     """
-    engine = create_catalog_engine(get_database_url())
+    engine = get_catalog_engine(get_database_url())
 
     with Session(engine) as session:
         run = session.get(FlowRun, run_id)
@@ -142,7 +142,7 @@ def reap_orphaned_runs(max_age_seconds: int | None = None) -> int:
             logger.warning("Invalid FLOWFILE_RUN_MAX_AGE_SECONDS=%r — using default", raw)
             max_age_seconds = DEFAULT_RUN_MAX_AGE_SECONDS
 
-    engine = create_catalog_engine(get_database_url())
+    engine = get_catalog_engine(get_database_url())
 
     now = datetime.now(timezone.utc)
     now_naive = now.replace(tzinfo=None)
@@ -210,7 +210,7 @@ def complete_run(
     updates the run record, and tears down immediately. ``node_results_json`` is the
     serialised per-node result list; notification payloads read the failed nodes from it.
     """
-    engine = create_catalog_engine(get_database_url())
+    engine = get_catalog_engine(get_database_url())
 
     with Session(engine) as session:
         run = session.get(FlowRun, run_id)

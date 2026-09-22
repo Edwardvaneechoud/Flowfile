@@ -17,6 +17,7 @@ from flowfile_core.auth import sharing
 from flowfile_core.database.models import (
     ApiConsumer,
     ApiConsumerEndpoint,
+    CatalogCdcCursor,
     CatalogDashboard,
     CatalogNamespace,
     CatalogNotebook,
@@ -196,6 +197,29 @@ class CatalogRepository(Protocol):
     def update_table(self, table: CatalogTable) -> CatalogTable: ...
 
     def delete_table(self, table_id: int) -> None: ...
+
+    def set_cdc_enabled(self, table_id: int, enabled_version: int | None) -> CatalogTable | None: ...
+
+    def get_cdc_cursor(self, table_id: int, consumer_key: str) -> CatalogCdcCursor | None: ...
+
+    def list_cdc_cursors(self, table_id: int) -> list[CatalogCdcCursor]: ...
+
+    def upsert_cdc_cursor(
+        self,
+        table_id: int,
+        consumer_key: str,
+        last_version: int,
+        *,
+        last_commit_timestamp: datetime | None = None,
+        owner_id: int | None = None,
+        consumer_label: str | None = None,
+        table_path: str | None = None,
+        last_run_id: int | None = None,
+    ) -> CatalogCdcCursor: ...
+
+    def reset_cdc_cursor(self, table_id: int, consumer_key: str, last_version: int) -> CatalogCdcCursor | None: ...
+
+    def delete_cdc_cursor(self, table_id: int, consumer_key: str) -> bool: ...
 
     def count_tables_in_namespace(self, namespace_id: int) -> int: ...
 
@@ -861,9 +885,9 @@ class SQLAlchemyCatalogRepository:
         return table
 
     def delete_table(self, table_id: int) -> None:
-        """Delete a table row with its read links, favourites, visualizations, grants and
-        ``prediction_table_id`` references, in one transaction. Schedule trigger rows are
-        cleaned per-schedule elsewhere and are deliberately not touched here.
+        """Delete a table row with its read links, favourites, change cursors, visualizations,
+        grants and ``prediction_table_id`` references, in one transaction. Schedule trigger rows
+        are cleaned per-schedule elsewhere and are deliberately not touched here.
 
         ``prediction_table_id`` has no DB-level FK, so surviving references are nulled in this
         same transaction rather than by a follow-up commit: SQLite reuses rowids, so a reference
@@ -871,6 +895,7 @@ class SQLAlchemyCatalogRepository:
         """
         self._db.query(CatalogTableReadLink).filter_by(table_id=table_id).delete()
         self._db.query(TableFavorite).filter_by(table_id=table_id).delete()
+        self._db.query(CatalogCdcCursor).filter_by(table_id=table_id).delete()
         # Drop grants on the table's visualizations before the bulk delete (this is a
         # second viz-delete path that bypasses delete_visualization).
         viz_ids = [row[0] for row in self._db.query(CatalogVisualization.id).filter_by(catalog_table_id=table_id)]
@@ -888,6 +913,88 @@ class SQLAlchemyCatalogRepository:
         if table is not None:
             self._db.delete(table)
         self._db.commit()
+
+    # -- Change tracking (CDC) -----------------------------------------------
+
+    def set_cdc_enabled(self, table_id: int, enabled_version: int | None) -> CatalogTable | None:
+        """Mark a table as change-tracked, recording *enabled_version* as the cursor floor.
+
+        An already-recorded floor is kept: it is the version the feed genuinely became readable
+        at, while a later call reports whatever head happens to be by then.
+        """
+        table = self._db.get(CatalogTable, table_id)
+        if table is None:
+            return None
+        # Self-assigning updated_at suppresses onupdate — enabling tracking is not a data change
+        # and must not fire table-trigger schedules.
+        values = {CatalogTable.cdc_enabled: True, CatalogTable.updated_at: CatalogTable.updated_at}
+        if table.cdc_enabled_version is None and enabled_version is not None:
+            values[CatalogTable.cdc_enabled_version] = enabled_version
+        self._db.query(CatalogTable).filter(CatalogTable.id == table_id).update(values, synchronize_session=False)
+        self._db.commit()
+        self._db.refresh(table)
+        return table
+
+    def get_cdc_cursor(self, table_id: int, consumer_key: str) -> CatalogCdcCursor | None:
+        return self._db.query(CatalogCdcCursor).filter_by(table_id=table_id, consumer_key=consumer_key).first()
+
+    def list_cdc_cursors(self, table_id: int) -> list[CatalogCdcCursor]:
+        q = self._db.query(CatalogCdcCursor).filter_by(table_id=table_id)
+        return q.order_by(CatalogCdcCursor.consumer_key).all()
+
+    def upsert_cdc_cursor(
+        self,
+        table_id: int,
+        consumer_key: str,
+        last_version: int,
+        *,
+        last_commit_timestamp: datetime | None = None,
+        owner_id: int | None = None,
+        consumer_label: str | None = None,
+        table_path: str | None = None,
+        last_run_id: int | None = None,
+    ) -> CatalogCdcCursor:
+        """Create or advance the cursor for ``(table_id, consumer_key)``.
+
+        Every field but ``last_version`` is descriptive; ``None`` leaves an existing value alone
+        so a run that cannot resolve a label does not erase one recorded earlier.
+        """
+        cursor = self.get_cdc_cursor(table_id, consumer_key)
+        if cursor is None:
+            cursor = CatalogCdcCursor(table_id=table_id, consumer_key=consumer_key, last_version=last_version)
+            self._db.add(cursor)
+        else:
+            cursor.last_version = last_version
+        if last_commit_timestamp is not None:
+            cursor.last_commit_timestamp = last_commit_timestamp
+        if owner_id is not None:
+            cursor.owner_id = owner_id
+        if consumer_label is not None:
+            cursor.consumer_label = consumer_label
+        if table_path is not None:
+            cursor.table_path = table_path
+        if last_run_id is not None:
+            cursor.last_run_id = last_run_id
+        cursor.updated_at = datetime.now()
+        self._db.commit()
+        self._db.refresh(cursor)
+        return cursor
+
+    def reset_cdc_cursor(self, table_id: int, consumer_key: str, last_version: int) -> CatalogCdcCursor | None:
+        """Move an existing cursor to *last_version*. Returns ``None`` when it does not exist."""
+        cursor = self.get_cdc_cursor(table_id, consumer_key)
+        if cursor is None:
+            return None
+        cursor.last_version = last_version
+        cursor.updated_at = datetime.now()
+        self._db.commit()
+        self._db.refresh(cursor)
+        return cursor
+
+    def delete_cdc_cursor(self, table_id: int, consumer_key: str) -> bool:
+        deleted = self._db.query(CatalogCdcCursor).filter_by(table_id=table_id, consumer_key=consumer_key).delete()
+        self._db.commit()
+        return bool(deleted)
 
     def count_tables_in_namespace(self, namespace_id: int) -> int:
         return self._db.query(CatalogTable).filter_by(namespace_id=namespace_id).count()

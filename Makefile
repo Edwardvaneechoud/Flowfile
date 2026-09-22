@@ -198,19 +198,21 @@ test_e2e: install_python_deps
 	@echo "Starting backend..."
 ifeq ($(OS),Windows_NT)
 	start /B $(POETRY_RUN) flowfile_core
+	start /B $(POETRY_RUN) flowfile_worker
 	timeout /t 5 /nobreak >NUL
 	@echo "Starting frontend preview..."
 	$(CD) "$(FRONTEND_DIR)" && start /B npm run preview:web
 	timeout /t 3 /nobreak >NUL
 else
 	$(POETRY_RUN) flowfile_core &
+	$(POETRY_RUN) flowfile_worker &
 	sleep 5
 	@echo "Starting frontend preview..."
 	$(CD) "$(FRONTEND_DIR)" && npm run preview:web &
 	sleep 3
 endif
 	@echo "Running tests..."
-	$(CD) "$(FRONTEND_DIR)" && TEST_URL=http://localhost:4173 npx playwright test tests/web-flow.spec.ts || true
+	$(CD) "$(FRONTEND_DIR)" && TEST_URL=http://localhost:4173 npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts || true
 	@$(MAKE) stop_servers
 
 test_e2e_dev: install_python_deps
@@ -218,19 +220,21 @@ test_e2e_dev: install_python_deps
 	@echo "Starting backend..."
 ifeq ($(OS),Windows_NT)
 	start /B $(POETRY_RUN) flowfile_core
+	start /B $(POETRY_RUN) flowfile_worker
 	timeout /t 5 /nobreak >NUL
 	@echo "Starting frontend dev server..."
 	$(CD) "$(FRONTEND_DIR)" && start /B npm run dev:web
 	timeout /t 3 /nobreak >NUL
 else
 	$(POETRY_RUN) flowfile_core &
+	$(POETRY_RUN) flowfile_worker &
 	sleep 5
 	@echo "Starting frontend dev server..."
 	$(CD) "$(FRONTEND_DIR)" && npm run dev:web &
 	sleep 3
 endif
 	@echo "Running tests..."
-	$(CD) "$(FRONTEND_DIR)" && npx playwright test tests/web-flow.spec.ts || true
+	$(CD) "$(FRONTEND_DIR)" && npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts || true
 	@$(MAKE) stop_servers
 
 stop_servers:
@@ -240,6 +244,7 @@ ifeq ($(OS),Windows_NT)
 	-@taskkill /F /IM node.exe $(NULL_OUTPUT)
 else
 	-@pkill -f "flowfile_core" 2>/dev/null || true
+	-@pkill -f "flowfile_worker" 2>/dev/null || true
 	-@pkill -f "vite" 2>/dev/null || true
 endif
 	@echo "Servers stopped."

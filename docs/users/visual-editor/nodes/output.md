@@ -135,6 +135,8 @@ A physical write materializes a Delta table with full schema metadata, row count
 
 **Key Columns** are required for Upsert, Update, Delete and SCD2 — they are the columns rows are matched on.
 
+**Track changes** turns [change tracking](../catalog/change-tracking.md) on for the table, so a downstream flow can read only the rows each write inserted, updated or deleted. It is enable-only: ticking it records the row changes of this and every later write, and clearing it again never turns tracking back off. Unavailable for the Overwrite, SCD2 and virtual modes.
+
 ### SCD2: keeping history
 
 The SCD2 write mode tracks row history instead of overwriting it. Each write adds four generated columns (`sk`, `valid_from`, `valid_to`, `is_current`), end-dates the rows whose tracked columns changed, and inserts the new versions alongside the unchanged ones.

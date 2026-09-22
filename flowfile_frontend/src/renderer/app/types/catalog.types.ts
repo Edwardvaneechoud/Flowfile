@@ -323,6 +323,9 @@ export interface CatalogTable {
   partition_columns: string[] | null;
   // Set only for tables maintained by an SCD2 write; null for every other table.
   scd2: Scd2TableConfig | null;
+  cdc_enabled: boolean;
+  // Delta commit version at which change tracking was enabled — the cursor floor.
+  cdc_enabled_version: number | null;
   created_at: string;
   updated_at: string;
   access?: AccessInfo | null;
@@ -340,6 +343,43 @@ export interface OptimizeTableResponse {
 export interface VacuumTableRequest {
   retention_hours: number;
   dry_run: boolean;
+  // Overrides the CDC_CURSORS_AT_RISK refusal.
+  force?: boolean;
+}
+
+// Change tracking (Delta change data feed)
+
+export interface CdcCursor {
+  consumer_key: string;
+  consumer_label: string | null;
+  owner_id: number | null;
+  last_version: number;
+  last_commit_timestamp: string | null;
+  table_path?: string | null;
+  // current_version - last_version; null when the live head could not be read.
+  pending_commits: number | null;
+  updated_at: string;
+}
+
+export interface TableCdcStatus {
+  cdc_enabled: boolean;
+  cdc_enabled_version: number | null;
+  current_version: number | null;
+  cursors: CdcCursor[];
+}
+
+export type CdcCursorResetTarget = "now" | "beginning" | number;
+
+export interface CdcCursorResetRequest {
+  consumer_key: string;
+  to: CdcCursorResetTarget;
+}
+
+/** Body of the 409 a vacuum returns when it would strand change-feed cursors. */
+export interface CdcCursorsAtRiskDetail {
+  error_code: "CDC_CURSORS_AT_RISK";
+  message?: string | null;
+  cursors?: CdcCursor[];
 }
 
 export interface VacuumTableResponse {

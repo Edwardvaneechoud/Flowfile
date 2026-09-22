@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from shared.database import create_catalog_engine
+from shared.database import get_catalog_engine
 from shared.models import (
     FlowRun,
     NotificationChannel,
@@ -60,7 +60,7 @@ def _utcnow() -> datetime:
 
 
 def _make_session() -> Session:
-    return Session(create_catalog_engine(get_database_url()))
+    return Session(get_catalog_engine(get_database_url()))
 
 
 def _matching_rules(session: Session, run: FlowRun) -> list[NotificationRule]:

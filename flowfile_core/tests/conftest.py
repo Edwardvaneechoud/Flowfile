@@ -146,9 +146,22 @@ def setup_test_db():
             db_path = get_database_url().replace("sqlite:///", "")
             if db_path != ":memory:" and os.path.exists(db_path):
                 os.remove(db_path)
+                for suffix in ("-wal", "-shm"):
+                    if os.path.exists(db_path + suffix):
+                        os.remove(db_path + suffix)
                 logger.info("Removed test database file")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
+
+
+@pytest.fixture(autouse=True)
+def reset_auth_user_cache():
+    """Fixtures recreate users with new ids; don't let cached auth rows leak across tests."""
+    from flowfile_core.auth.jwt import invalidate_user_cache
+
+    invalidate_user_cache()
+    yield
+    invalidate_user_cache()
 
 
 @pytest.fixture(autouse=True)

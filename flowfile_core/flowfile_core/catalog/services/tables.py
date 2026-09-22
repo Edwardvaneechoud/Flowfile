@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -22,6 +23,9 @@ from flowfile_core.catalog.delta_utils import (
 )
 from flowfile_core.catalog.exceptions import (
     AmbiguousTableError,
+    CdcCursorNotFoundError,
+    CdcCursorsAtRiskError,
+    CdcNotSupportedError,
     InvalidNamespaceStorageError,
     NamespaceNotFoundError,
     StaleWriteError,
@@ -42,7 +46,7 @@ from flowfile_core.catalog.storage_backend import (
     resolve_for_namespace,
 )
 from flowfile_core.catalog.validators import format_full_name, validate_table_registration
-from flowfile_core.database.models import CatalogNamespace, CatalogTable, TableFavorite
+from flowfile_core.database.models import CatalogCdcCursor, CatalogNamespace, CatalogTable, TableFavorite
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     trigger_add_key_column,
     trigger_apply_table_edits,
@@ -52,6 +56,8 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 )
 from flowfile_core.schemas.catalog_schema import (
     CatalogTableOut,
+    CdcCursorOut,
+    CdcStatusOut,
     ColumnSchema,
     FlowSummary,
     OptimizeTableResponse,
@@ -502,6 +508,8 @@ class TableService:
             source_table_versions=getattr(table, "source_table_versions", None),
             partition_columns=self._parse_partition_columns(table),
             scd2=self._parse_scd2_config(table),
+            cdc_enabled=bool(table.cdc_enabled),
+            cdc_enabled_version=table.cdc_enabled_version,
             prediction_table_id=table.prediction_table_id,
             prediction_table_name=self._resolve_table_name(table.prediction_table_id),
             created_at=table.created_at,
@@ -579,6 +587,8 @@ class TableService:
                     source_table_versions=getattr(table, "source_table_versions", None),
                     partition_columns=self._parse_partition_columns(table),
                     scd2=self._parse_scd2_config(table),
+                    cdc_enabled=bool(table.cdc_enabled),
+                    cdc_enabled_version=table.cdc_enabled_version,
                     prediction_table_id=prediction_table_id,
                     prediction_table_name=prediction_table_name,
                     created_at=table.created_at,
@@ -933,6 +943,7 @@ class TableService:
         table_id: int,
         retention_hours: int = 168,
         dry_run: bool = True,
+        force: bool = False,
     ) -> VacuumTableResponse:
         """Vacuum tombstoned files from a Delta catalog table; refresh size on a real run."""
         table = self.repo.get_table(table_id)
@@ -940,6 +951,10 @@ class TableService:
             raise TableNotFoundError(table_id=table_id)
         data_path = self._require_delta_table_path(table)
         is_cloud = _is_cloud_uri(data_path)
+        if not force:
+            at_risk = self._cdc_cursors_at_risk(table, retention_hours)
+            if at_risk:
+                raise CdcCursorsAtRiskError(at_risk)
 
         target = resolve_for_namespace(table.namespace_id) if is_cloud else None
         storage_options = target.storage_options if target else None
@@ -972,6 +987,129 @@ class TableService:
             file_count=len(files),
             size_bytes=size_bytes,
         )
+
+    # ---- Change tracking (CDC) ------------------------------------------- #
+
+    def _require_cdc_capable_path(self, table: CatalogTable) -> str:
+        """Guard: only a physical, non-SCD2 Delta table can carry a change data feed.
+
+        Returns the local path or object-storage URI.
+        """
+        if getattr(table, "table_type", "physical") == "virtual" or not table.file_path:
+            raise CdcNotSupportedError(f"Table '{table.name}' is virtual and has no Delta history to track")
+        if table.scd2_config:
+            raise CdcNotSupportedError(
+                f"Table '{table.name}' is SCD2-tracked; its history already lives in its validity columns"
+            )
+        if _is_cloud_uri(table.file_path):
+            if table.storage_format != "delta":
+                raise CdcNotSupportedError(f"Table '{table.name}' is not a Delta table and cannot track changes")
+            return table.file_path
+        path = Path(table.file_path)
+        if table.storage_format != "delta" or is_legacy_parquet(path) or not is_delta_table(path):
+            raise CdcNotSupportedError(f"Table '{table.name}' is not a Delta table and cannot track changes")
+        return str(path)
+
+    def _cdc_storage_options(self, table: CatalogTable) -> dict[str, str] | None:
+        if not table.file_path or not _is_cloud_uri(table.file_path):
+            return None
+        target = resolve_for_namespace(table.namespace_id)
+        return target.storage_options if target else None
+
+    def _live_delta_version(self, table: CatalogTable) -> int | None:
+        """Live Delta head, or ``None`` when the table has no readable Delta log."""
+        from shared.delta_utils import get_delta_head_version
+
+        if not table.file_path or table.storage_format != "delta":
+            return None
+        try:
+            return get_delta_head_version(table.file_path, storage_options=self._cdc_storage_options(table))
+        except Exception:
+            logger.debug("Could not read Delta head for table %s", table.id, exc_info=True)
+            return None
+
+    def _cursor_out(self, cursor: CatalogCdcCursor, head: int | None) -> CdcCursorOut:
+        out = CdcCursorOut.model_validate(cursor)
+        if head is not None:
+            out.pending_commits = max(0, head - cursor.last_version)
+        return out
+
+    def get_cdc_status(self, table_id: int) -> CdcStatusOut:
+        """Change-tracking state plus every consumer's position in the table's feed."""
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        head = self._live_delta_version(table)
+        return CdcStatusOut(
+            cdc_enabled=bool(table.cdc_enabled),
+            cdc_enabled_version=table.cdc_enabled_version,
+            current_version=head,
+            cursors=[self._cursor_out(c, head) for c in self.repo.list_cdc_cursors(table_id)],
+        )
+
+    def enable_cdc(self, table_id: int) -> CdcStatusOut:
+        """Turn the Delta change data feed on and mirror it onto the catalog row.
+
+        Idempotent: an already-enabled table keeps the floor recorded when it was first
+        enabled, which is the version its feed genuinely became readable at.
+        """
+        from shared.delta_utils import enable_change_data_feed
+
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        data_path = self._require_cdc_capable_path(table)
+        enabled_version = enable_change_data_feed(data_path, storage_options=self._cdc_storage_options(table))
+        self.repo.set_cdc_enabled(table_id, enabled_version)
+        return self.get_cdc_status(table_id)
+
+    def reset_cdc_cursor(self, table_id: int, consumer_key: str, to: str | int) -> CdcCursorOut:
+        """Move a cursor to the live head (``"now"``), below the floor (``"beginning"``) or a version."""
+        from flowfile_core.flowfile.catalog_cdc import init_cursor_value
+
+        table = self.repo.get_table(table_id)
+        if table is None:
+            raise TableNotFoundError(table_id=table_id)
+        if self.repo.get_cdc_cursor(table_id, consumer_key) is None:
+            raise CdcCursorNotFoundError(table_id, consumer_key)
+        head = self._live_delta_version(table)
+        if to in ("now", "beginning"):
+            if head is None:
+                raise ValueError(f"Could not read the Delta version of table '{table.name}'")
+            version = init_cursor_value(str(to), head, table.cdc_enabled_version)
+        else:
+            version = int(to)
+        cursor = self.repo.reset_cdc_cursor(table_id, consumer_key, version)
+        return self._cursor_out(cursor, head)
+
+    def delete_cdc_cursor(self, table_id: int, consumer_key: str) -> None:
+        """Forget a consumer's position; its next read re-initialises per the node's start mode."""
+        if not self.repo.delete_cdc_cursor(table_id, consumer_key):
+            raise CdcCursorNotFoundError(table_id, consumer_key)
+
+    def _cdc_cursors_at_risk(self, table: CatalogTable, retention_hours: int) -> list[dict]:
+        """Cursors whose next read reaches into history a vacuum at *retention_hours* would drop.
+
+        A cursor already at head is safe (its window is entirely in the future). For the rest the
+        best available stamp is when the cursor last moved, since ``last_commit_timestamp`` is
+        descriptive and may be unset.
+        """
+        if not table.cdc_enabled:
+            return []
+        cursors = self.repo.list_cdc_cursors(table.id)
+        if not cursors:
+            return []
+        head = self._live_delta_version(table)
+        threshold = datetime.now() - timedelta(hours=retention_hours)
+        at_risk = []
+        for cursor in cursors:
+            if head is not None and cursor.last_version >= head:
+                continue
+            stamp = cursor.last_commit_timestamp or cursor.updated_at
+            if stamp is not None and stamp >= threshold:
+                continue
+            at_risk.append(self._cursor_out(cursor, head).model_dump(mode="json"))
+        return at_risk
 
     # ---- In-place table edits (catalog edit surface) --------------------- #
 

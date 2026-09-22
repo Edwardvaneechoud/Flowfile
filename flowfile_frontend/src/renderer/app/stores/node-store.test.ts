@@ -11,11 +11,12 @@ import type { NodeData } from "../types";
 
 const mocks = vi.hoisted(() => ({
   getNodeData: vi.fn(),
+  getNodeDescription: vi.fn(),
   flowState: { flowId: 1 },
 }));
 
 vi.mock("../api", () => ({
-  NodeApi: { getNodeData: mocks.getNodeData },
+  NodeApi: { getNodeData: mocks.getNodeData, getNodeDescription: mocks.getNodeDescription },
   ExpressionsApi: {},
 }));
 
@@ -32,6 +33,7 @@ vi.mock("./editor-store", () => ({
 }));
 
 import { useNodeStore } from "./node-store";
+import type { NodeInput } from "../types";
 
 const nodeData = (nodeId: number, description = ""): NodeData => ({
   flow_id: 0,
@@ -46,6 +48,7 @@ beforeEach(() => {
   setActivePinia(createPinia());
   mocks.flowState.flowId = 1;
   mocks.getNodeData.mockReset();
+  mocks.getNodeDescription.mockReset();
 });
 
 describe("node-store getNodeData flow-aware cache", () => {
@@ -193,5 +196,52 @@ describe("node-store description write-back guard", () => {
     // Same flow -> the live blob is updated.
     store.cacheNodeDescriptionDict(1, 3, "updated");
     expect(store.nodeData?.setting_input?.description).toBe("updated");
+  });
+});
+
+describe("node-store description cache seeding from the flow payload", () => {
+  const seed = (entries: Partial<NodeInput>[]) => entries as NodeInput[];
+
+  it("serves seeded descriptions on open without a single API call", async () => {
+    const store = useNodeStore();
+    store.seedNodeDescriptions(
+      1,
+      seed([
+        { id: 1, description: "Load the people", is_auto_generated: false },
+        { id: 2, description: "Keep name", is_auto_generated: true },
+      ]),
+    );
+
+    expect(await store.getNodeDescription(1)).toBe("Load the people");
+    expect(await store.getNodeDescription(2)).toBe("Keep name");
+    expect(mocks.getNodeDescription).not.toHaveBeenCalled();
+    expect(store.nodeDescriptions[1][2].is_auto_generated).toBe(true);
+  });
+
+  it("forceRefresh still goes to GET /node/description", async () => {
+    const store = useNodeStore();
+    store.seedNodeDescriptions(1, seed([{ id: 1, description: "stale", is_auto_generated: true }]));
+    mocks.getNodeDescription.mockResolvedValue({ description: "fresh", is_auto_generated: true });
+
+    expect(await store.getNodeDescription(1, true)).toBe("fresh");
+    expect(mocks.getNodeDescription).toHaveBeenCalledWith(1, 1);
+    expect(await store.getNodeDescription(1)).toBe("fresh");
+    expect(mocks.getNodeDescription).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces the previous seed for the flow and skips payloads without descriptions", async () => {
+    const store = useNodeStore();
+    store.seedNodeDescriptions(1, seed([{ id: 9, description: "gone", is_auto_generated: false }]));
+    store.seedNodeDescriptions(
+      1,
+      seed([{ id: 1, description: "kept", is_auto_generated: false }, { id: 2 }]),
+    );
+    mocks.getNodeDescription.mockResolvedValue({ description: "fetched", is_auto_generated: true });
+
+    expect(store.nodeDescriptions[1][9]).toBeUndefined();
+    expect(await store.getNodeDescription(1)).toBe("kept");
+    // Older core without descriptions: fall back to the per-node GET.
+    expect(await store.getNodeDescription(2)).toBe("fetched");
+    expect(mocks.getNodeDescription).toHaveBeenCalledTimes(1);
   });
 });

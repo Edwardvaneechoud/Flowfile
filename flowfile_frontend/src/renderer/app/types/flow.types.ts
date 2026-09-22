@@ -156,6 +156,9 @@ export interface NodeInput extends NodeTemplate {
   node_reference?: string;
   // run_flow instances: ["Parameters", ...input_slots]; index i ↔ handle input-${i}.
   input_names?: string[] | null;
+  // Resolved by core (user text, else auto); seeds the description cache on open.
+  description?: string;
+  is_auto_generated?: boolean;
 }
 
 // Handle Types

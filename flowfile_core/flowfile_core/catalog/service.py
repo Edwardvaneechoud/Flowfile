@@ -26,6 +26,7 @@ from flowfile_core.catalog.constants import (
     UNNAMED_FLOWS,
 )
 from flowfile_core.catalog.exceptions import (
+    CdcCursorNotFoundError,
     DashboardNotFoundError,
     FlowHasArtifactsError,
     FlowNotFoundError,
@@ -110,6 +111,8 @@ from flowfile_core.schemas.catalog_schema import (
     CatalogTableMaterializeResult,
     CatalogTableOut,
     CatalogTablePreview,
+    CdcCursorOut,
+    CdcStatusOut,
     ColumnStatsResponse,
     DashboardCreate,
     DashboardOut,
@@ -263,6 +266,18 @@ class CatalogService:
         if self.access.can_manage("flow", schedule.registration_id):
             return
         raise NotAuthorizedError(self.access.user_id or -1, "modify this schedule")
+
+    def _require_manage_cdc_cursor(self, table_id: int, consumer_key: str) -> None:
+        """Editing a change cursor needs cursor ownership, manage on its table, or admin."""
+        if not self._restricted:
+            return
+        self._require_use("catalog_table", table_id)
+        cursor = self.repo.get_cdc_cursor(table_id, consumer_key)
+        if cursor is None:
+            raise CdcCursorNotFoundError(table_id, consumer_key)
+        if cursor.owner_id == self.access.user_id:
+            return
+        self._require_manage("catalog_table", table_id)
 
     def _require_use_visualization(self, viz_id: int) -> None:
         """Viz read: creator, a use/manage grant, or read on its parent table."""
@@ -718,7 +733,7 @@ class CatalogService:
             # flows (page totals may drift; by-id run reads are separately guarded).
             allowed_flows = self.access.accessible_ids("flow")
             user_id = self.access.user_id
-            result.runs = [r for r in result.runs if r.user_id == user_id or (r.registration_id in allowed_flows)]
+            result.items = [r for r in result.items if r.user_id == user_id or (r.registration_id in allowed_flows)]
         return result
 
     def get_run_detail(self, run_id: int) -> FlowRunDetail:
@@ -1250,10 +1265,31 @@ class CatalogService:
         table_id: int,
         retention_hours: int = 168,
         dry_run: bool = True,
+        force: bool = False,
     ) -> VacuumTableResponse:
         """Vacuum tombstoned files from a Delta catalog table."""
         self._require_manage("catalog_table", table_id)
-        return self._tables.vacuum_table(table_id, retention_hours=retention_hours, dry_run=dry_run)
+        return self._tables.vacuum_table(table_id, retention_hours=retention_hours, dry_run=dry_run, force=force)
+
+    def get_table_cdc_status(self, table_id: int) -> CdcStatusOut:
+        """Change-tracking state and cursor positions for a catalog table."""
+        self._require_use("catalog_table", table_id)
+        return self._tables.get_cdc_status(table_id)
+
+    def enable_table_cdc(self, table_id: int) -> CdcStatusOut:
+        """Turn change tracking on for a catalog table (idempotent)."""
+        self._require_manage("catalog_table", table_id)
+        return self._tables.enable_cdc(table_id)
+
+    def reset_table_cdc_cursor(self, table_id: int, consumer_key: str, to: str | int = "now") -> CdcCursorOut:
+        """Move one consumer's cursor to head, to the start of the tracked history, or a version."""
+        self._require_manage_cdc_cursor(table_id, consumer_key)
+        return self._tables.reset_cdc_cursor(table_id, consumer_key, to)
+
+    def delete_table_cdc_cursor(self, table_id: int, consumer_key: str) -> None:
+        """Forget one consumer's cursor."""
+        self._require_manage_cdc_cursor(table_id, consumer_key)
+        self._tables.delete_cdc_cursor(table_id, consumer_key)
 
     def _reloaded_table_out(self, table_id: int, user_id: int | None) -> CatalogTableOut:
         """Re-read a table as a fully enriched, access-stamped DTO after a write.
