@@ -1,3 +1,5 @@
+import datetime
+
 import polars as pl
 
 from .dtypes import readable_data_type_group, select_cast_dtype
@@ -16,6 +18,10 @@ def convert_filter_value(value: str, dtype) -> any:
         return float(value)
     elif dtype == pl.Boolean:
         return value.lower() == "true"
+    elif dtype == pl.Date:
+        return datetime.date.fromisoformat(value.strip()[:10])
+    elif dtype == pl.Datetime:
+        return datetime.datetime.fromisoformat(value.strip().replace("T", " ", 1))
     return value
 
 

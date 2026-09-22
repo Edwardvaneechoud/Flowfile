@@ -1,7 +1,34 @@
+import datetime
 import re
 
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
 from flowfile_core.schemas import transform_schema
+
+
+def _temporal_base(field_dtype: str | None) -> str | None:
+    """``"Date"`` or ``"Datetime"`` for a (possibly parametrized) temporal dtype string, else None."""
+    base = (field_dtype or "").split("(", 1)[0]
+    return base if base in ("Date", "Datetime") else None
+
+
+def _temporal_literal(value: str, base: str) -> str | None:
+    """A ``datetime.date(...)``/``datetime.datetime(...)`` source literal for an ISO value.
+
+    Returns None when the value does not parse, so the caller can fall back to the
+    string literal the runtime would also reject.
+    """
+    text = value.strip().replace("T", " ", 1)
+    try:
+        if base == "Date":
+            d = datetime.date.fromisoformat(text[:10])
+            return f"datetime.date({d.year}, {d.month}, {d.day})"
+        dt = datetime.datetime.fromisoformat(text)
+        parts = [dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second]
+        if dt.microsecond:
+            parts.append(dt.microsecond)
+        return f"datetime.datetime({', '.join(str(p) for p in parts)})"
+    except ValueError:
+        return None
 
 
 class ExpressionHelpersMixin(ConverterMixinBase):
@@ -48,12 +75,19 @@ class ExpressionHelpersMixin(ConverterMixinBase):
         value = basic.value
         value2 = basic.value2
         is_boolean = field_dtype == "Boolean"
+        temporal = _temporal_base(field_dtype)
 
         def render(v: str) -> str:
-            """Render a comparison value: bool literal for boolean columns, a bare number
-            for numeric strings, otherwise an escaped string literal."""
+            """Render a comparison value: bool literal for boolean columns, a datetime
+            literal for temporal columns, a bare number for numeric strings, otherwise
+            an escaped string literal."""
             if is_boolean:
                 return "True" if v.strip().lower() in ("true", "1") else "False"
+            if temporal:
+                literal = _temporal_literal(v, temporal)
+                if literal:
+                    self.imports.add("import datetime")
+                    return literal
             if v and v.replace(".", "", 1).replace("-", "", 1).isnumeric():
                 return v
             return self._py_str(v)
@@ -104,7 +138,9 @@ class ExpressionHelpersMixin(ConverterMixinBase):
 
         elif operator == FilterOperator.IN:
             values = [v.strip() for v in value.split(",")]
-            if all(v.replace(".", "", 1).replace("-", "", 1).isnumeric() for v in values):
+            if temporal:
+                values_str = ", ".join(render(v) for v in values)
+            elif all(v.replace(".", "", 1).replace("-", "", 1).isnumeric() for v in values):
                 values_str = ", ".join(values)
             else:
                 values_str = ", ".join(self._py_str(v) for v in values)
@@ -112,7 +148,9 @@ class ExpressionHelpersMixin(ConverterMixinBase):
 
         elif operator == FilterOperator.NOT_IN:
             values = [v.strip() for v in value.split(",")]
-            if all(v.replace(".", "", 1).replace("-", "", 1).isnumeric() for v in values):
+            if temporal:
+                values_str = ", ".join(render(v) for v in values)
+            elif all(v.replace(".", "", 1).replace("-", "", 1).isnumeric() for v in values):
                 values_str = ", ".join(values)
             else:
                 values_str = ", ".join(self._py_str(v) for v in values)
@@ -121,6 +159,8 @@ class ExpressionHelpersMixin(ConverterMixinBase):
         elif operator == FilterOperator.BETWEEN:
             if value2 is None:
                 return f"{col}  # BETWEEN requires two values"
+            if temporal:
+                return f"({col} >= {render(value)}) & ({col} <= {render(value2)})"
             if is_numeric and value2.replace(".", "", 1).replace("-", "", 1).isnumeric():
                 return f"({col} >= {value}) & ({col} <= {value2})"
             return f"({col} >= {self._py_str(value)}) & ({col} <= {self._py_str(value2)})"

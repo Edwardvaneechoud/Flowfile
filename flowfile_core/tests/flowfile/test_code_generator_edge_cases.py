@@ -17,6 +17,7 @@ Tests cover:
 """
 
 import polars as pl
+import datetime
 import pytest
 from polars.testing import assert_frame_equal
 
@@ -1271,3 +1272,42 @@ class TestSpecialCharacterColumnNames:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestTemporalFilterTypedLiteral:
+    """Basic filters on Date / Datetime columns must emit ``datetime`` literals, matching the runtime."""
+
+    def _flow(self) -> FlowGraph:
+        flow = create_basic_flow()
+        flow.add_manual_input(input_schema.NodeManualInput(
+            flow_id=1, node_id=1, raw_data_format=input_schema.RawData.from_pylist([
+                {"d": datetime.date(2024, 1, 1), "ts": datetime.datetime(2024, 1, 1, 10, 0, 0)},
+                {"d": datetime.date(2024, 6, 1), "ts": datetime.datetime(2024, 6, 1, 12, 0, 0)},
+                {"d": datetime.date(2024, 9, 1), "ts": datetime.datetime(2024, 9, 1, 0, 0, 0)},
+            ])))
+        return flow
+
+    def _add_filter(self, flow: FlowGraph, field: str, operator: str, value: str, value2: str | None = None):
+        flow.add_filter(input_schema.NodeFilter(
+            flow_id=1, node_id=2, depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                filter_type="basic",
+                basic_filter=transform_schema.BasicFilter(field=field, operator=operator, value=value, value2=value2))))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe],
+                             ids=["polars", "flowframe"])
+    @pytest.mark.parametrize("field,operator,value,value2,literal", [
+        ("d", "greater_than", "2024-03-01", None, "> datetime.date(2024, 3, 1)"),
+        ("d", "between", "2024-01-01", "2024-06-01", ">= datetime.date(2024, 1, 1)"),
+        ("d", "in", "2024-01-01, 2024-09-01", None, "is_in([datetime.date(2024, 1, 1), datetime.date(2024, 9, 1)])"),
+        ("ts", "less_than", "2024-06-01 12:00:00", None, "< datetime.datetime(2024, 6, 1, 12, 0, 0)"),
+        ("ts", "equals", "2024-06-01", None, "== datetime.datetime(2024, 6, 1, 0, 0, 0)"),
+    ])
+    def test_temporal_filter_emits_datetime_literal(self, field, operator, value, value2, literal, export_func):
+        flow = self._flow()
+        self._add_filter(flow, field, operator, value, value2)
+        code = export_func(flow)
+        assert literal in code
+        assert "import datetime" in code
+        assert_flow_result_matches_generated(flow, output_node_id=2, code=code)
