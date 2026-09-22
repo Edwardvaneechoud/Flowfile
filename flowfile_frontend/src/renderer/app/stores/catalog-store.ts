@@ -656,8 +656,8 @@ export const useCatalogStore = defineStore("catalog", {
       return result;
     },
 
-    async vacuumTable(tableId: number, retentionHours: number, dryRun: boolean) {
-      const result = await CatalogApi.vacuumTable(tableId, retentionHours, dryRun);
+    async vacuumTable(tableId: number, retentionHours: number, dryRun: boolean, force = false) {
+      const result = await CatalogApi.vacuumTable(tableId, retentionHours, dryRun, force);
       if (!dryRun) {
         if (this.selectedTable && this.selectedTable.id === tableId) {
           this.selectedTable.size_bytes = result.size_bytes;
@@ -666,6 +666,19 @@ export const useCatalogStore = defineStore("catalog", {
         await this.loadAllTables();
       }
       return result;
+    },
+
+    /** Turn on the Delta change data feed; enable-only, so there is no matching disable. */
+    async enableTableCdc(tableId: number) {
+      const status = await CatalogApi.enableTableCdc(tableId);
+      for (const table of [this.selectedTable, this.findTableInTree(tableId)]) {
+        if (table && table.id === tableId) {
+          table.cdc_enabled = status.cdc_enabled;
+          table.cdc_enabled_version = status.cdc_enabled_version;
+        }
+      }
+      await this.loadAllTables();
+      return status;
     },
 
     selectVersion(version: number | null) {

@@ -229,6 +229,12 @@
             >virtual</span
           >
           <span v-if="table.scd2" class="table-scd2-badge" title="SCD2 table">scd2</span>
+          <span
+            v-if="table.cdc_enabled"
+            class="table-cdc-badge"
+            title="Change tracking is on for this table"
+            >changes</span
+          >
           <el-tooltip
             v-if="table.table_type !== 'virtual' && table.file_exists === false"
             content="Table data file not found on disk"
@@ -815,6 +821,17 @@ const totalFlows = computed(() => {
   font-size: 10px;
   color: var(--el-color-warning, #e6a23c);
   background: var(--el-color-warning-light-9, rgba(230, 162, 60, 0.1));
+  padding: 0 5px;
+  border-radius: var(--border-radius-sm);
+  line-height: 16px;
+  flex-shrink: 0;
+  font-weight: var(--font-weight-medium);
+}
+
+.table-cdc-badge {
+  font-size: 10px;
+  color: var(--el-color-success, #67c23a);
+  background: var(--el-color-success-light-9, rgba(103, 194, 58, 0.1));
   padding: 0 5px;
   border-radius: var(--border-radius-sm);
   line-height: 16px;

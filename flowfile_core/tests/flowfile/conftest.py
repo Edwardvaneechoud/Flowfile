@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import (
+    CatalogCdcCursor,
     CatalogNamespace,
     CatalogTable,
     CatalogTableReadLink,
@@ -131,6 +132,7 @@ def catalog_cleanup():
 
     with get_db_context() as db:
         db.query(CatalogTableReadLink).delete()
+        db.query(CatalogCdcCursor).delete()
         db.query(FlowSchedule).delete()
         db.query(CatalogTable).delete()
         db.query(FlowRegistration).delete()

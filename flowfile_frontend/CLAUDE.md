@@ -77,6 +77,7 @@ From this dir (`npm install` first):
 - `src/renderer/app/router/index.ts` — hash router, lazy routes, auth meta.
 - `src/renderer/app/stores/flow-store.ts` — central flow/graph state store.
 - `src/renderer/app/components/nodes/GenericNode.vue` — per-node settings drawer loader (`import.meta.glob`).
+- `src/renderer/app/utils/catalogCdc.ts` — catalog change-feed UI helpers (CDF column list, cursor matching/status line, why the Read selector is disabled), shared by the Catalog Reader drawer and the table detail panel.
 - `vite.config.mjs` — root, aliases, `/api` proxy, build out, port strictness.
 - `tsconfig.json` / `vitest.config.ts` — path aliases (keep aligned with Vite).
 - `src-tauri/tauri.conf.json` — windows, CSP, bundle, dev/build commands, updater.
