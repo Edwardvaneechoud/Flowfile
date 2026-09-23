@@ -135,6 +135,27 @@ describe("buildFilterStep", () => {
     expect(stepValue(f, null)).toEqual(["EU", "US"]);
   });
 
+  it("sends a date range as a temporal range of epoch milliseconds", () => {
+    const f = filterOf({
+      field_name: "order_date",
+      kind: "date_range",
+      state: { start: "2026-07-01T00:00:00.000Z", end: "2026-07-07T00:00:00.000Z" },
+    });
+    expect(buildFilterStep([f], null)).toEqual({
+      type: "filter",
+      filters: [
+        {
+          fid: "order_date",
+          rule: { type: "temporal range", value: [Date.UTC(2026, 6, 1), Date.UTC(2026, 6, 7)] },
+        },
+      ],
+    });
+    const open = filterOf({ kind: "date_range", state: { start: null, end: "2026-07-07" } });
+    expect(stepValue(open, null)).toEqual([null, Date.UTC(2026, 6, 7)]);
+    const empty = filterOf({ kind: "date_range", state: { start: null, end: null } });
+    expect(buildFilterStep([empty], null)).toBeNull();
+  });
+
   it("drops entries that do not parse as numbers and omits an emptied filter", () => {
     const mixed = filterOf({ state: { selected: ["2020", "abc", " "] } });
     expect(stepValue(mixed, fieldsOf({ region: "quantitative" }))).toEqual([2020]);

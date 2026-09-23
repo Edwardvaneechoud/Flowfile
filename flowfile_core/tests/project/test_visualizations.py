@@ -17,7 +17,7 @@ from flowfile_core.catalog import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogDashboard, CatalogTable, CatalogVisualization
 from flowfile_core.project import project_sync, projection
-from flowfile_core.schemas.catalog_schema import DashboardLayout, DashboardTile
+from flowfile_core.schemas.catalog_schema import DashboardKpi, DashboardLayout, DashboardTile
 
 OWNER = 1
 
@@ -201,6 +201,43 @@ def test_dashboard_round_trips_and_relinks_tiles(tmp_path):
         with get_db_context() as db:
             projection.project_all(db, root, OWNER)
         assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "dashboard must round-trip byte-identically"
+    finally:
+        _clear_viz_dashboards()
+        project_sync.close_project(OWNER)
+
+
+def test_kpi_tile_round_trips_and_relinks(tmp_path):
+    from flowfile_core.project.importer import import_project
+
+    project_sync.close_project(OWNER)
+    _clear_viz_dashboards()
+    viz_id, vuuid = _make_viz("kpi-chart", source_type="sql", sql_query="SELECT 1 AS amount")
+    kpi = DashboardKpi(field="amount", agg="sum", label="Revenue", prefix="$", comparison="target", target=100.0)
+    layout = DashboardLayout(tiles=[DashboardTile(id="kpi-1", type="kpi", viz_id=viz_id, kpi=kpi, x=0, y=0, w=12, h=3)])
+    _, duuid = _make_dashboard("kpi-board", layout)
+    root = tmp_path / "project"
+    try:
+        project_sync.init_project(str(root), "Kpi", OWNER)
+        tile = _dash_yaml(root)[duuid]["layout"]["tiles"][0]
+        assert tile["viz_uuid"] == vuuid and "viz_id" not in tile
+        assert tile["kpi"] == kpi.model_dump()
+
+        dash_bytes = (root / "dashboards.yaml").read_bytes()
+
+        project_sync.close_project(OWNER)
+        _clear_viz_dashboards()
+        import_project(root, OWNER)
+        with get_db_context() as db:
+            new_viz = db.query(CatalogVisualization).filter_by(viz_uuid=vuuid).first()
+            dashboard = db.query(CatalogDashboard).filter_by(dashboard_uuid=duuid).first()
+            assert new_viz is not None and dashboard is not None
+            stored_tile = json.loads(dashboard.layout_json)["tiles"][0]
+            assert stored_tile["viz_id"] == new_viz.id and "viz_uuid" not in stored_tile
+            assert stored_tile["type"] == "kpi"
+            assert DashboardKpi.model_validate(stored_tile["kpi"]) == kpi
+        with get_db_context() as db:
+            projection.project_all(db, root, OWNER)
+        assert (root / "dashboards.yaml").read_bytes() == dash_bytes, "KPI dashboard must round-trip byte-identically"
     finally:
         _clear_viz_dashboards()
         project_sync.close_project(OWNER)

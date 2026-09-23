@@ -45,7 +45,10 @@
             <el-dropdown-item v-if="isText" @click="toggleTextEdit">
               <el-icon><EditPen /></el-icon> Edit text
             </el-dropdown-item>
-            <el-dropdown-item v-if="isSeparator" @click="openStyleMenu">
+            <el-dropdown-item v-if="isKpi" @click="kpiRef?.openSettings()">
+              <el-icon><Odometer /></el-icon> Edit KPI
+            </el-dropdown-item>
+            <el-dropdown-item v-if="isSeparator || isKpi" @click="openStyleMenu">
               <el-icon><Brush /></el-icon> Style
             </el-dropdown-item>
             <el-dropdown-item
@@ -91,6 +94,16 @@
         />
         <!-- eslint-enable vue/no-v-html -->
       </template>
+      <KpiTile
+        v-else-if="isKpi"
+        ref="kpiRef"
+        :tile="tile"
+        :mode="mode"
+        :filters="filters"
+        :tile-datasource="tileDatasource"
+        :viz-refresh-nonce="vizRefreshNonce"
+        @update:tile="emit('update:tile', $event)"
+      />
       <template v-else>
         <div
           class="tile-viz-body"
@@ -266,6 +279,7 @@ import {
   Edit,
   EditPen,
   MoreFilled,
+  Odometer,
   Rank,
   Switch,
   Warning,
@@ -283,6 +297,7 @@ import type {
   DashboardTile,
   SeparatorOrientation,
 } from "../../types";
+import KpiTile from "./KpiTile.vue";
 import VueGraphicRenderer from "../../components/nodes/node-types/elements/exploreData/vueGraphicWalker/VueGraphicRenderer.vue";
 
 const props = defineProps<{
@@ -306,8 +321,10 @@ const emit = defineEmits<{
 
 const isText = computed(() => props.tile.type === "text");
 const isSeparator = computed(() => props.tile.type === "separator");
-const isViz = computed(() => !isText.value && !isSeparator.value);
+const isKpi = computed(() => props.tile.type === "kpi");
+const isViz = computed(() => props.tile.type === "viz");
 const rootEl = ref<HTMLElement | null>(null);
+const kpiRef = ref<InstanceType<typeof KpiTile> | null>(null);
 
 // ---- separator branch ----
 const isVertical = computed(() => props.tile.orientation === "vertical");
@@ -367,7 +384,7 @@ const vizMissing = ref(false);
 // jump straight into the chart editor. Edit mode already exposes "Edit chart"
 // in the tile dropdown, and dragging dominates there, so we don't compete.
 const vizClickable = computed(
-  () => !isText.value && props.mode === "view" && props.tile.viz_id != null && !vizMissing.value,
+  () => isViz.value && props.mode === "view" && props.tile.viz_id != null && !vizMissing.value,
 );
 
 const onVizDblclick = (e: MouseEvent) => {
@@ -422,7 +439,7 @@ const rendererKey = computed(
 );
 
 const reloadViz = async () => {
-  if (isText.value) {
+  if (!isViz.value) {
     loading.value = false;
     return;
   }
@@ -507,7 +524,9 @@ const toggleTextEdit = async () => {
 const headerTitle = computed(() => vizName.value);
 
 const tileStyle = computed(() =>
-  isText.value && props.tile.bg_color ? { background: props.tile.bg_color } : undefined,
+  (isText.value || isKpi.value) && props.tile.bg_color
+    ? { background: props.tile.bg_color }
+    : undefined,
 );
 const textStyle = computed(() =>
   isText.value && props.tile.text_color ? { color: props.tile.text_color } : undefined,

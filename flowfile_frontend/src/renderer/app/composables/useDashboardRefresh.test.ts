@@ -4,9 +4,9 @@ import type { DashboardLayout, DashboardTile } from "../types";
 import { bumpVizNonces, useDashboardRefresh } from "./useDashboardRefresh";
 
 let tileSeq = 0;
-const tile = (vizId: number | null): DashboardTile => ({
+const tile = (vizId: number | null, type?: DashboardTile["type"]): DashboardTile => ({
   id: `tile-${tileSeq++}`,
-  type: vizId == null ? "text" : "viz",
+  type: type ?? (vizId == null ? "text" : "viz"),
   viz_id: vizId,
   chart_index: 0,
   x: 0,
@@ -28,6 +28,12 @@ describe("bumpVizNonces", () => {
 
   it("skips text tiles (null viz_id)", () => {
     expect(bumpVizNonces({}, [tile(null), tile(3)])).toEqual({ 3: 1 });
+  });
+
+  it("bumps the viz a KPI tile reads from, shared with a chart tile once", () => {
+    expect(bumpVizNonces({}, [tile(4, "kpi")])).toEqual({ 4: 1 });
+    expect(bumpVizNonces({}, [tile(4, "kpi"), tile(4)])).toEqual({ 4: 1 });
+    expect(bumpVizNonces({}, [tile(null, "kpi")])).toEqual({});
   });
 
   it("dedupes tiles sharing a viz id to a single increment", () => {

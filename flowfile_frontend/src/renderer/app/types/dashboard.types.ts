@@ -2,14 +2,34 @@
 
 import type { AccessInfo } from "./sharing.types";
 
-export type DashboardTileType = "viz" | "text" | "separator";
+export type DashboardTileType = "viz" | "text" | "separator" | "kpi";
 export type SeparatorOrientation = "horizontal" | "vertical";
+export type KpiAgg = "sum" | "mean" | "median" | "min" | "max" | "count" | "distinctCount";
+export type KpiComparison = "none" | "target" | "previous_period";
+export type KpiValueSize = "auto" | "sm" | "md" | "lg" | "xl";
+
+export interface DashboardKpi {
+  /** null with agg "count" = row count. */
+  field: string | null;
+  agg: KpiAgg;
+  label?: string | null;
+  prefix?: string | null;
+  suffix?: string | null;
+  /** null = auto. */
+  decimals?: number | null;
+  compact?: boolean;
+  comparison?: KpiComparison;
+  target?: number | null;
+  higher_is_better?: boolean;
+  /** Fixed number size; "auto" fits the tile. */
+  value_size?: KpiValueSize;
+}
 
 export interface DashboardTile {
   /** Client-generated UUID, stable across saves so component state survives. */
   id: string;
   type: DashboardTileType;
-  /** Required when type === "viz". */
+  /** Required when type === "viz"; the KPI's source when type === "kpi". */
   viz_id: number | null;
   /** Which entry of CatalogVisualization.spec[] to render. */
   chart_index: number;
@@ -22,6 +42,8 @@ export interface DashboardTile {
   orientation?: SeparatorOrientation | null;
   thickness?: number | null;
   line_color?: string | null;
+  /** Headline-number config when type === "kpi"; the source is viz_id. */
+  kpi?: DashboardKpi | null;
   x: number;
   y: number;
   w: number;

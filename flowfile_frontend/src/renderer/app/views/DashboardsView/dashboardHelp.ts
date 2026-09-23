@@ -26,13 +26,13 @@ export const dashboardHelp: PageHelpContent = {
           icon: "fa-solid fa-shapes",
           title: "Tiles",
           description:
-            "Three types: visualization tiles render a saved chart from the catalog, text tiles hold sanitized Markdown for headings and notes, and separators draw a horizontal rule between sections.",
+            "Four types: visualization tiles render a saved chart from the catalog, KPI tiles show one headline number, text tiles hold sanitized Markdown for headings and notes, and separators draw a horizontal rule between sections.",
         },
         {
           icon: "fa-solid fa-filter",
           title: "Filters",
           description:
-            "Dashboard-wide filters bound to a catalog table. When active, every tile that reads from the same table re-renders with the filter applied.",
+            "Dashboard-wide filters bound to a catalog table. When active, every tile that reads from the same table re-renders with the filter applied. In edit mode, drag a filter by its grip to reorder the strip.",
         },
       ],
     },
@@ -64,7 +64,7 @@ export const dashboardHelp: PageHelpContent = {
           icon: "fa-solid fa-ruler-combined",
           title: "Default sizes",
           description:
-            "The canvas is a 48-column grid with 40px rows. New visualization tiles spawn at half width and 6 rows; text tiles full width and 3 rows; separators a one-row full-width line, or a narrow 6-row bar when vertical. Reshape them right after dropping.",
+            "The canvas is a 48-column grid with 40px rows. New visualization tiles spawn at half width and 6 rows; KPI tiles a quarter width and 3 rows; text tiles full width and 3 rows; separators a one-row full-width line, or a narrow 6-row bar when vertical. Reshape them right after dropping.",
         },
       ],
     },
@@ -72,13 +72,19 @@ export const dashboardHelp: PageHelpContent = {
       title: "Tile types",
       icon: "fa-solid fa-shapes",
       description:
-        "Each tile is a visualization (a saved chart from the catalog), a text block (Markdown), or a separator line. The three-dot menu in edit mode lets you edit the underlying chart, edit text, or remove the tile from the dashboard. Removing a tile here does not delete the visualization from the catalog.",
+        "Each tile is a visualization (a saved chart from the catalog), a KPI (one headline number), a text block (Markdown), or a separator line. The three-dot menu in edit mode lets you edit the underlying chart, edit a KPI, edit text, or remove the tile from the dashboard. Removing a tile here does not delete the visualization from the catalog.",
       features: [
         {
           icon: "fa-solid fa-chart-column",
           title: "Visualization tile",
           description:
             "Renders a saved visualization. Re-fetches data when the underlying viz is edited and applies any dashboard filters that target it.",
+        },
+        {
+          icon: "fa-solid fa-hashtag",
+          title: "KPI tile",
+          description:
+            "One aggregate (sum, average, median, min, max, count or distinct count) of a column from a saved visualization's data source, with the dashboard filters applied — the chart's own filters are not. Optionally compared against a target or the previous period, coloured by whether higher or lower is better. Double-click it in edit mode, or use its menu, to configure the number and its size; right-click it or use Style to set the background and text colour.",
         },
         {
           icon: "fa-solid fa-pen-to-square",
@@ -152,6 +158,12 @@ export const dashboardHelp: PageHelpContent = {
         },
         {
           type: "warning",
+          title: "Previous-period KPIs need a date range filter",
+          description:
+            "A KPI compared to the previous period uses the dashboard date range filter that applies to it and shifts that window back by its own length. Without one set, the KPI shows only its value.",
+        },
+        {
+          type: "warning",
           title: "Untied filters need a datasource",
           description:
             "A filter showing the untied badge has no datasource bound — click the pencil to bind one.",
@@ -168,7 +180,7 @@ export const dashboardHelp: PageHelpContent = {
           icon: "fa-solid fa-plus",
           title: "Insert sidebar",
           description:
-            "Add a Markdown text block or a separator line with one click, or pick any saved visualization. Tiles already on the canvas dim but can still be added a second time.",
+            "Add a Markdown text block, a separator line or a KPI with one click, or pick any saved visualization. Tiles already on the canvas dim but can still be added a second time.",
         },
         {
           icon: "fa-solid fa-sliders",

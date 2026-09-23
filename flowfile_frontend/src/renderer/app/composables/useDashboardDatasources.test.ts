@@ -74,6 +74,59 @@ describe("useDashboardDatasources", () => {
     expect(tileFields(TILE_ID)).toBeNull();
   });
 
+  it("resolves a KPI tile through its viz like a chart tile", async () => {
+    const layout = layoutOf();
+    layout.tiles.push(
+      {
+        id: "tile-kpi",
+        type: "kpi",
+        viz_id: 1,
+        chart_index: 0,
+        kpi: { field: "amount", agg: "sum" },
+        x: 0,
+        y: 9,
+        w: 12,
+        h: 3,
+      },
+      {
+        id: "tile-kpi-labelled",
+        type: "kpi",
+        viz_id: 1,
+        chart_index: 0,
+        kpi: { field: "amount", agg: "sum", label: "Revenue total" },
+        x: 12,
+        y: 9,
+        w: 12,
+        h: 3,
+      },
+      {
+        id: "tile-kpi-empty",
+        type: "kpi",
+        viz_id: null,
+        chart_index: 0,
+        kpi: null,
+        x: 24,
+        y: 9,
+        w: 12,
+        h: 3,
+      },
+    );
+    const { tilesByDatasource, vizTileIds, tileDatasource, tileLabel, tileFields, loadTileFields } =
+      useDashboardDatasources(ref(layout));
+    await flush();
+
+    expect(tilesByDatasource.value).toEqual({ 5: [TILE_ID, "tile-kpi", "tile-kpi-labelled"] });
+    expect(vizTileIds.value).toEqual([TILE_ID, "tile-kpi", "tile-kpi-labelled"]);
+    expect(tileDatasource("tile-kpi")).toBe(5);
+    expect(tileDatasource("tile-kpi-empty")).toBeNull();
+    expect(tileLabel("tile-kpi")).toBe("KPI · Revenue");
+    expect(tileLabel("tile-kpi-labelled")).toBe("Revenue total");
+    expect(tileLabel("tile-kpi-empty")).toBe("KPI");
+
+    await loadTileFields();
+    expect(tileFields("tile-kpi")).toEqual([{ fid: "region", semanticType: "nominal" }]);
+  });
+
   it("serves repeat refreshes from the cache", async () => {
     const { refresh } = useDashboardDatasources(ref(layoutOf()));
     await flush();

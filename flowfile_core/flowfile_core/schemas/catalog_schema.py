@@ -787,6 +787,31 @@ class ColumnStatsResponse(BaseModel):
 # ==================== Dashboard Schemas ====================
 
 
+class DashboardKpi(BaseModel):
+    """Headline-number config for a ``type == "kpi"`` tile.
+
+    The value is one aggregate of ``field`` over the tile's visualization
+    source (``DashboardTile.viz_id``) with the dashboard filters applied; the
+    chart's own Graphic Walker filters are not applied. ``field`` None with
+    ``agg == "count"`` counts rows. ``comparison`` "target" compares against
+    ``target``; "previous_period" compares against the same aggregate over
+    the targeting dashboard date_range filter shifted back by its own length.
+    ``value_size`` fixes the number's font size ("auto" fits it to the tile).
+    """
+
+    field: str | None = None
+    agg: Literal["sum", "mean", "median", "min", "max", "count", "distinctCount"] = "sum"
+    label: str | None = Field(default=None, max_length=120)
+    prefix: str | None = Field(default=None, max_length=8)
+    suffix: str | None = Field(default=None, max_length=16)
+    decimals: int | None = Field(default=None, ge=0, le=6)
+    compact: bool = True
+    comparison: Literal["none", "target", "previous_period"] = "none"
+    target: float | None = None
+    higher_is_better: bool = True
+    value_size: Literal["auto", "sm", "md", "lg", "xl"] = "auto"
+
+
 class DashboardTile(BaseModel):
     """One tile on a dashboard canvas.
 
@@ -796,11 +821,14 @@ class DashboardTile(BaseModel):
     ``chart_index``); ``"text"`` renders user-authored Markdown from
     ``text_md``; ``"separator"`` draws a rule to break the page into
     sections (``orientation``, ``thickness`` in px and ``line_color`` style
-    it). Type-irrelevant fields are simply ignored.
+    it); ``"kpi"`` shows one headline aggregate of the ``viz_id``
+    visualization's source configured by ``kpi`` (``chart_index`` is ignored;
+    ``kpi`` None is an unconfigured placeholder). Type-irrelevant fields are
+    simply ignored.
     """
 
     id: str
-    type: Literal["viz", "text", "separator"] = "viz"
+    type: Literal["viz", "text", "separator", "kpi"] = "viz"
     viz_id: int | None = None
     chart_index: int = 0
     text_md: str | None = None
@@ -809,6 +837,7 @@ class DashboardTile(BaseModel):
     orientation: Literal["horizontal", "vertical"] = "horizontal"
     thickness: int | None = Field(default=None, ge=1, le=24)
     line_color: str | None = None
+    kpi: DashboardKpi | None = None
     x: int
     y: int
     w: int
