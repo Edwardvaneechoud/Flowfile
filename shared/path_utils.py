@@ -6,6 +6,8 @@ Dependency-free on purpose: imported by hot core/worker schema modules.
 from __future__ import annotations
 
 import glob
+import gzip
+import io
 import os
 import re
 
@@ -33,6 +35,7 @@ _DEFAULT_SCAN_EXTENSIONS = {
     "json": "json",
     "ndjson": "ndjson",
     "avro": "avro",
+    "ipc_stream": "arrows",
 }
 
 
@@ -64,6 +67,22 @@ def is_utf8_encoding(encoding: str | None) -> bool:
     callers deciding local-vs-worker and directory-scan eligibility must agree on this test.
     """
     return encoding is not None and encoding.upper() in _UTF8_ENCODINGS
+
+
+def is_gzip_path(path: str) -> bool:
+    return isinstance(path, str) and path.lower().endswith(".gz")
+
+
+def transcode_text_to_utf8(path: str, encoding: str) -> io.BytesIO:
+    """Read a text file in ``encoding`` (gunzipping a ``.gz`` first) and return it re-encoded as UTF-8.
+
+    Polars decompresses gzip only on its native utf8 path; with any other ``encoding`` it decodes
+    the raw compressed bytes and silently yields garbage, so a latin1 ``.csv.gz`` must be gunzipped
+    and transcoded by hand before it reaches ``read_csv``. Whole-file, like polars' own non-utf8 path.
+    """
+    opener = gzip.open if is_gzip_path(path) else open
+    with opener(path, "rt", encoding=encoding, errors="replace", newline="") as fh:
+        return io.BytesIO(fh.read().encode("utf-8"))
 
 
 def default_scan_extension(file_type: str) -> str:

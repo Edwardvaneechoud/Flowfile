@@ -498,7 +498,7 @@ def _read_simple_file(
     scan_mode: Literal["single_file", "directory"] | None = None,
     include_file_paths: str | None = None,
 ) -> FlowFrame:
-    """Shared reader for option-less file formats (ipc/ndjson/avro).
+    """Shared reader for option-less file formats (ipc/ndjson/avro/ipc_stream).
 
     Only directory-capable formats pass ``scan_mode``/``include_file_paths``; the rest leave them
     at their single-file defaults.
@@ -622,6 +622,34 @@ def read_avro(
         source,
         "avro",
         input_schema.InputAvroTable(),
+        flow_graph=flow_graph,
+        description=description,
+        convert_to_absolute_path=convert_to_absolute_path,
+    )
+
+
+def read_ipc_stream(
+    source, *, flow_graph: FlowGraph = None, description: str = None, convert_to_absolute_path: bool = True, **options
+) -> FlowFrame:
+    """
+    Read an Arrow IPC stream file (``.arrows``) into a FlowFrame.
+
+    The stream format has no footer, so unlike ``read_ipc`` it cannot be scanned lazily; the
+    read is offloaded to the worker.
+
+    Args:
+        source: Path to the IPC stream file
+        flow_graph: if you want to add it to an existing graph
+        description: if you want to add a readable name in the frontend (advised)
+        convert_to_absolute_path: If the path needs to be set to a fixed location
+
+    Returns:
+        A FlowFrame with the stream's data
+    """
+    return _read_simple_file(
+        source,
+        "ipc_stream",
+        input_schema.InputIpcStreamTable(),
         flow_graph=flow_graph,
         description=description,
         convert_to_absolute_path=convert_to_absolute_path,

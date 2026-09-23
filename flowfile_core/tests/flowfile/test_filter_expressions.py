@@ -34,6 +34,7 @@ from flowfile_core.flowfile.filter_expressions import (
     _is_numeric_string,
     _should_quote_value,
     build_filter_expression,
+    resolve_filter_field_type,
 )
 from flowfile_core.schemas.transform_schema import BasicFilter, FilterOperator
 
@@ -573,3 +574,72 @@ class TestEdgeCases:
         assert result == "([id]!=1) & ([id]!=2)"
         assert '"1"' not in result
         assert '"2"' not in result
+
+
+class TestTemporalFields:
+    """Date / datetime columns wrap the value in ``to_date`` / ``to_datetime``.
+
+    Polars refuses to compare a temporal column with a string literal, so the
+    expression must parse the value first; the frontend date picker emits
+    ``YYYY-MM-DD`` for Date and ``YYYY-MM-DD HH:mm:ss`` for Datetime columns.
+    """
+
+    class _Column:
+        def __init__(self, data_type: str, generic: str = "str"):
+            self.data_type = data_type
+            self._generic = generic
+
+        def generic_datatype(self):
+            return self._generic
+
+    def test_resolve_date(self):
+        assert resolve_filter_field_type(self._Column("Date", "date")) == "date"
+
+    def test_resolve_datetime_parametrized(self):
+        # generic_datatype() misses the parametrized form; the resolver must not.
+        col = self._Column("Datetime(time_unit='us', time_zone=None)", "str")
+        assert resolve_filter_field_type(col) == "datetime"
+
+    def test_resolve_falls_back_to_generic(self):
+        assert resolve_filter_field_type(self._Column("Int64", "numeric")) == "numeric"
+        assert resolve_filter_field_type(self._Column("Time", "date")) == "date"
+
+    def test_date_comparison(self):
+        bf = BasicFilter(field="d", operator=FilterOperator.GREATER_THAN, value="2024-03-01")
+        assert build_filter_expression(bf, "date") == '[d]>to_date("2024-03-01")'
+
+    def test_datetime_comparison(self):
+        bf = BasicFilter(field="ts", operator=FilterOperator.EQUALS, value="2024-03-01 12:30:00")
+        assert build_filter_expression(bf, "datetime") == '[ts]=to_datetime("2024-03-01 12:30:00")'
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            ("2024-03-01", "2024-03-01 00:00:00"),
+            ("2024-03-01T12:30:00", "2024-03-01 12:30:00"),
+            ("2024-03-01 12:30", "2024-03-01 12:30:00"),
+        ],
+    )
+    def test_datetime_value_is_normalized(self, value, expected):
+        bf = BasicFilter(field="ts", operator=FilterOperator.LESS_THAN, value=value)
+        assert build_filter_expression(bf, "datetime") == f'[ts]<to_datetime("{expected}")'
+
+    def test_date_between(self):
+        bf = BasicFilter(field="d", operator=FilterOperator.BETWEEN, value="2024-01-01", value2="2024-06-30")
+        assert build_filter_expression(bf, "date") == '([d]>=to_date("2024-01-01")) & ([d]<=to_date("2024-06-30"))'
+
+    def test_date_in(self):
+        bf = BasicFilter(field="d", operator=FilterOperator.IN, value="2024-01-01, 2024-02-01")
+        assert build_filter_expression(bf, "date") == '([d]=to_date("2024-01-01")) | ([d]=to_date("2024-02-01"))'
+
+    def test_date_not_in_single(self):
+        bf = BasicFilter(field="d", operator=FilterOperator.NOT_IN, value="2024-01-01")
+        assert build_filter_expression(bf, "date") == '[d]!=to_date("2024-01-01")'
+
+    def test_string_operators_unchanged_on_date(self):
+        bf = BasicFilter(field="d", operator=FilterOperator.IS_NULL, value="")
+        assert build_filter_expression(bf, "date") == "is_empty([d])"
+
+    def test_none_type_still_quotes_a_date_string(self):
+        bf = BasicFilter(field="d", operator=FilterOperator.EQUALS, value="2024-01-01")
+        assert build_filter_expression(bf, None) == '[d]="2024-01-01"'

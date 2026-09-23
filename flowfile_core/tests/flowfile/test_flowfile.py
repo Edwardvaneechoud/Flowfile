@@ -6,6 +6,7 @@ from pathlib import Path
 from time import sleep
 from typing import Literal
 
+import datetime
 import pytest
 
 from flowfile_core.configs.flow_logger import FlowLogger
@@ -332,7 +333,7 @@ def test_opening_parquet_file(flow_logger: FlowLogger):
     self.execute_remote(node_logger=flow_logger.get_node_logger(1))
 
 
-@pytest.mark.parametrize("file_type,ext", [("ipc", "arrow"), ("ndjson", "ndjson"), ("avro", "avro")])
+@pytest.mark.parametrize("file_type,ext", [("ipc", "arrow"), ("ndjson", "ndjson"), ("avro", "avro"), ("ipc_stream", "arrows")])
 def test_read_new_file_formats(file_type, ext, execution_location):
     """Round-trip read of the newly supported file connectors. IPC/NDJSON read
     lazily in-process (like parquet); avro offloads its eager read to the worker
@@ -350,6 +351,77 @@ def test_read_new_file_formats(file_type, ext, execution_location):
         run_info = graph.run_graph()
         handle_run_info(run_info)
         assert graph.get_node(1).get_resulting_data().count() == 3
+
+
+@pytest.mark.parametrize("file_type,ext", [("csv", "csv.gz"), ("ndjson", "ndjson.gz")])
+def test_read_gzipped_text_formats(file_type, ext, execution_location):
+    """Polars decompresses gzip inside scan_csv/scan_ndjson, so a .gz file reads through the
+    same lazy path as its plain counterpart with no settings change."""
+    import gzip
+    import polars as pl
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, f"data.{ext}")
+        with gzip.open(path, "wb") as fh:
+            getattr(pl.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]}), f"write_{file_type}")(fh)
+
+        graph = create_graph(execution_location=execution_location)
+        add_node_promise_on_type(graph, 'read', 1, 1)
+        received_table = input_schema.ReceivedTable(file_type=file_type, name=f"data.{ext}", path=path)
+        node_read = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table)
+        graph.add_read(node_read)
+        run_info = graph.run_graph()
+        handle_run_info(run_info)
+        result = graph.get_node(1).get_resulting_data()
+        assert result.count() == 3
+        assert result.columns == ["id", "name"]
+
+
+@pytest.mark.parametrize("gzipped", [False, True], ids=["plain", "gzip"])
+def test_read_csv_non_utf8_encoding(gzipped, execution_location):
+    """A latin1 CSV must come back decoded, gzipped or not. Polars only gunzips on its utf8 path
+    and used to hand the compressed bytes to the latin1 decoder, yielding a silent garbage frame;
+    core's own non-utf8 path was a deprecated batched read that failed outright."""
+    import gzip
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, "data.csv.gz" if gzipped else "data.csv")
+        body = "id,name\n1,café\n2,naïve\n3,plain\n".encode("latin1")
+        with (gzip.open(path, "wb") if gzipped else open(path, "wb")) as fh:
+            fh.write(body)
+
+        graph = create_graph(execution_location=execution_location)
+        add_node_promise_on_type(graph, 'read', 1, 1)
+        received_table = input_schema.ReceivedTable(
+            file_type="csv", name=os.path.basename(path), path=path,
+            table_settings=input_schema.InputCsvTable(encoding="latin1"),
+        )
+        node_read = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table)
+        graph.add_read(node_read)
+        run_info = graph.run_graph()
+        handle_run_info(run_info)
+        result = graph.get_node(1).get_resulting_data().collect()
+        assert result.columns == ["id", "name"]
+        assert result["name"].to_list() == ["café", "naïve", "plain"]
+
+
+@pytest.mark.parametrize("file_type,ext", [("avro", "avro"), ("ipc_stream", "arrows")])
+def test_eager_formats_predict_schema_before_run(file_type, ext):
+    """avro and the IPC stream format cannot be scanned, so the read node probes the schema with a
+    zero-row eager read (like the excel header probe) instead of leaving downstream nodes blind
+    until the flow has run."""
+    import polars as pl
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, f"data.{ext}")
+        getattr(pl.DataFrame({"id": [1, 2, 3], "name": ["a", "b", "c"]}), f"write_{file_type}")(path)
+
+        graph = create_graph()
+        add_node_promise_on_type(graph, 'read', 1, 1)
+        received_table = input_schema.ReceivedTable(file_type=file_type, name=f"data.{ext}", path=path)
+        graph.add_read(input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table))
+
+        node = graph.get_node(1)
+        assert not node.node_stats.has_run_with_current_setup
+        assert [c.column_name for c in node.schema] == ["id", "name"]
+        assert [c.data_type for c in node.schema] == ["Int64", "String"]
 
 
 def _write_late_type_conflict_csv(path: str, n_rows: int = 2500, conflict_at: int = 1500) -> None:
@@ -3323,3 +3395,48 @@ class TestGetCloudConnectionSettings:
                 connection_name="does-not-exist-xyz", user_id=1, auth_mode="auto"
             )
         assert exc_info.value.status_code == 400
+
+
+def _add_basic_filter_to_graph(graph: FlowGraph, field: str, operator: str, value: str, value2: str | None = None):
+    add_node_promise_on_type(graph, "filter", 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                filter_type="basic",
+                basic_filter=transform_schema.BasicFilter(field=field, operator=operator, value=value, value2=value2),
+            ),
+        )
+    )
+
+
+_TEMPORAL_ROWS = [
+    {"d": datetime.date(2024, 1, 1), "ts": datetime.datetime(2024, 1, 1, 10, 0, 0)},
+    {"d": datetime.date(2024, 6, 1), "ts": datetime.datetime(2024, 6, 1, 12, 0, 0)},
+    {"d": datetime.date(2024, 9, 1), "ts": datetime.datetime(2024, 9, 1, 0, 0, 0)},
+]
+
+
+@pytest.mark.parametrize(
+    "field,operator,value,value2,expected",
+    [
+        ("d", "greater_than", "2024-03-01", None, [datetime.date(2024, 6, 1), datetime.date(2024, 9, 1)]),
+        ("d", "equals", "2024-06-01", None, [datetime.date(2024, 6, 1)]),
+        ("d", "between", "2024-01-01", "2024-06-01", [datetime.date(2024, 1, 1), datetime.date(2024, 6, 1)]),
+        ("d", "in", "2024-01-01, 2024-09-01", None, [datetime.date(2024, 1, 1), datetime.date(2024, 9, 1)]),
+        ("ts", "greater_than_or_equals", "2024-06-01 12:00:00", None, [datetime.date(2024, 6, 1), datetime.date(2024, 9, 1)]),
+        ("ts", "less_than", "2024-06-01", None, [datetime.date(2024, 1, 1)]),
+    ],
+)
+def test_basic_filter_on_temporal_column(field, operator, value, value2, expected):
+    """A basic filter on a Date or (parametrized) Datetime column runs instead of raising
+    polars' string-vs-temporal comparison error; the value is what the date picker emits."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, _TEMPORAL_ROWS, node_id=1)
+    _add_basic_filter_to_graph(graph, field, operator, value, value2)
+    graph.run_graph()
+    node = graph.get_node(2)
+    assert node.get_resulting_data().collect()["d"].to_list() == expected

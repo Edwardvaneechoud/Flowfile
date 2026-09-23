@@ -5,12 +5,13 @@ from flowfile_worker.create.funcs import (
     create_from_path_csv,
     create_from_path_excel,
     create_from_path_ipc,
+    create_from_path_ipc_stream,
     create_from_path_json,
     create_from_path_ndjson,
     create_from_path_parquet,
 )
 
-FileType = Literal["csv", "parquet", "json", "excel", "ipc", "ndjson", "avro"]
+FileType = Literal["csv", "parquet", "json", "excel", "ipc", "ndjson", "avro", "ipc_stream"]
 
 
 def table_creator_factory_method(file_type: FileType) -> callable:
@@ -29,5 +30,7 @@ def table_creator_factory_method(file_type: FileType) -> callable:
             return create_from_path_ndjson
         case "avro":
             return create_from_path_avro
+        case "ipc_stream":
+            return create_from_path_ipc_stream
         case _:
             raise ValueError(f"Unsupported file type: {file_type}")

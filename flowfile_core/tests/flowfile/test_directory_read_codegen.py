@@ -336,12 +336,12 @@ def test_directory_scan_does_not_reglob_literal_filenames(tmp_path):
 
 @EXPORTERS
 def test_unsupported_single_file_type_is_refused_loudly(tmp_path, export_func):
-    """ndjson has no emission; the export must refuse instead of producing a script that dies
-    with NameError on an unbound variable."""
-    path = tmp_path / "data.ndjson"
+    """The legacy ``json`` type has no emission; the export must refuse instead of producing a
+    script that dies with NameError on an unbound variable."""
+    path = tmp_path / "data.json"
     path.write_text('{"a": 1}\n')
     flow = add_read(
-        create_flow(), str(path), "ndjson", input_schema.InputNdjsonTable(), scan_mode="single_file"
+        create_flow(), str(path), "json", input_schema.InputJsonTable(), scan_mode="single_file"
     )
 
     with pytest.raises(UnsupportedNodeError):
