@@ -23,7 +23,9 @@ export const drawers: DrawerDef[] = [
     // visibleWhen is always-true), so it can't be the thing that opens it.
     visibleWhen: ({ editor }) =>
       editor.isDrawerOpen || editor.showFlowResult || editor.showCodeGenerator,
-    onMinimize: ({ editor, node }) => {
+    onMinimize: async ({ editor, node }) => {
+      // Save first: closing unmounts the Settings tab before its nodeId watcher can.
+      if (editor.isDrawerOpen && node.nodeId !== -1) await editor.drawCloseFunction?.();
       node.nodeId = -1; // closes the Settings tab via NodeSettingsDrawer's watch
       editor.isDrawerOpen = false;
       editor.activeDrawerComponent = null;
