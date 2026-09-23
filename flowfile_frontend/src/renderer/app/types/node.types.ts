@@ -230,6 +230,10 @@ export interface InputAvroTable {
   file_type: "avro";
 }
 
+export interface InputIpcStreamTable {
+  file_type: "ipc_stream";
+}
+
 export type InputTableSettings =
   | InputCsvTable
   | InputJsonTable
@@ -237,7 +241,8 @@ export type InputTableSettings =
   | InputExcelTable
   | InputIpcTable
   | InputNdjsonTable
-  | InputAvroTable;
+  | InputAvroTable
+  | InputIpcStreamTable;
 
 export function isInputCsvTable(settings: InputTableSettings): settings is InputCsvTable {
   return settings.file_type === "csv";
@@ -261,6 +266,12 @@ export function isInputNdjsonTable(settings: InputTableSettings): settings is In
 
 export function isInputAvroTable(settings: InputTableSettings): settings is InputAvroTable {
   return settings.file_type === "avro";
+}
+
+export function isInputIpcStreamTable(
+  settings: InputTableSettings,
+): settings is InputIpcStreamTable {
+  return settings.file_type === "ipc_stream";
 }
 
 // Output Table Settings
@@ -808,7 +819,7 @@ export interface ReceivedTable {
   status?: string;
   fields?: MinimalFieldInput[];
   abs_file_path?: string;
-  file_type: "csv" | "json" | "parquet" | "excel" | "ipc" | "ndjson" | "avro";
+  file_type: "csv" | "json" | "parquet" | "excel" | "ipc" | "ndjson" | "avro" | "ipc_stream";
   table_settings: InputTableSettings;
   scan_mode?: ScanMode;
   include_file_paths?: string | null;

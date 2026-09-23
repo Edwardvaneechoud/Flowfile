@@ -34,6 +34,12 @@ ALLOWED_EXTENSIONS = {
     "ndjson",
     "jsonl",
     "avro",
+    "arrows",
+    "csv.gz",
+    "tsv.gz",
+    "txt.gz",
+    "ndjson.gz",
+    "jsonl.gz",
 }
 
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
@@ -52,9 +58,19 @@ def _check_docker_mode() -> None:
         raise HTTPException(403, "File manager is only available in Docker mode")
 
 
+def _split_suffix(safe_name: str) -> tuple[str, str]:
+    """Stem and suffix, keeping a gzip compound (``a.csv.gz`` -> ``.csv.gz``) together."""
+    suffixes = Path(safe_name).suffixes
+    if len(suffixes) > 1 and suffixes[-1].lower() == ".gz":
+        suffix = "".join(suffixes[-2:])
+    else:
+        suffix = Path(safe_name).suffix
+    return safe_name[: len(safe_name) - len(suffix)], suffix
+
+
 def _open_unique(uploads_dir: Path, safe_name: str) -> tuple[Path, int]:
     """Create and open the first free of "a.csv", "a (1).csv", "a (2).csv", ... returning (path, fd)."""
-    stem, suffix = Path(safe_name).stem, Path(safe_name).suffix
+    stem, suffix = _split_suffix(safe_name)
     for attempt in range(MAX_UNIQUE_ATTEMPTS):
         candidate = uploads_dir / (safe_name if attempt == 0 else f"{stem} ({attempt}){suffix}")
         try:
@@ -120,7 +136,7 @@ async def upload_file(file: UploadFile = File(...), unique: bool = False) -> JSO
     if not safe_name or ".." in safe_name:
         raise HTTPException(400, "Invalid filename")
 
-    suffix = Path(safe_name).suffix.lstrip(".").lower()
+    suffix = _split_suffix(safe_name)[1].lstrip(".").lower()
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             400,

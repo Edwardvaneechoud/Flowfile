@@ -1277,6 +1277,7 @@ class FlowDataEngine:
             "ipc": create_funcs.create_from_path_ipc,
             "ndjson": create_funcs.create_from_path_ndjson,
             "avro": create_funcs.create_from_path_avro,
+            "ipc_stream": create_funcs.create_from_path_ipc_stream,
         }
 
         handler = file_type_handlers.get(received_table.file_type)

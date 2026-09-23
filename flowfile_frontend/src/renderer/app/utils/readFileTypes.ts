@@ -4,6 +4,7 @@ import type {
   InputAvroTable,
   InputCsvTable,
   InputExcelTable,
+  InputIpcStreamTable,
   InputIpcTable,
   InputNdjsonTable,
   InputParquetTable,
@@ -11,7 +12,7 @@ import type {
   ScanMode,
 } from "../types/node.types";
 
-export type ReadFileType = "csv" | "excel" | "parquet" | "ipc" | "ndjson" | "avro";
+export type ReadFileType = "csv" | "excel" | "parquet" | "ipc" | "ndjson" | "avro" | "ipc_stream";
 
 // TS mirror of shared/path_utils.py DIRECTORY_SCAN_FILE_TYPES; ndjson/avro are deliberately excluded.
 export const DIRECTORY_CAPABLE_TYPES: ReadonlySet<ReadFileType> = new Set<ReadFileType>([
@@ -38,7 +39,8 @@ export type ReadTableSettings =
   | InputParquetTable
   | InputIpcTable
   | InputNdjsonTable
-  | InputAvroTable;
+  | InputAvroTable
+  | InputIpcStreamTable;
 
 // ".json" is deliberately absent: ReceivedTable accepts file_type "json" but the engine has no handler.
 export const READ_EXTENSION_MAP: Readonly<Record<string, ReadFileType>> = Object.freeze({
@@ -54,6 +56,13 @@ export const READ_EXTENSION_MAP: Readonly<Record<string, ReadFileType>> = Object
   ndjson: "ndjson",
   jsonl: "ndjson",
   avro: "avro",
+  arrows: "ipc_stream",
+  // Polars decompresses gzip inside scan_csv/scan_ndjson; the container formats have no such path.
+  "csv.gz": "csv",
+  "tsv.gz": "csv",
+  "txt.gz": "csv",
+  "ndjson.gz": "ndjson",
+  "jsonl.gz": "ndjson",
 });
 
 export const READ_EXTENSIONS: readonly string[] = Object.keys(READ_EXTENSION_MAP);
@@ -65,7 +74,12 @@ export function baseNameOf(nameOrPath: string): string {
 export function extensionOf(nameOrPath: string): string | null {
   const base = baseNameOf(nameOrPath);
   const dot = base.lastIndexOf(".");
-  return dot > 0 ? base.slice(dot + 1).toLowerCase() : null;
+  if (dot <= 0) return null;
+  const ext = base.slice(dot + 1).toLowerCase();
+  if (ext !== "gz") return ext;
+  // "data.csv.gz": the format is the extension under the gzip suffix.
+  const inner = extensionOf(base.slice(0, dot));
+  return inner ? `${inner}.gz` : ext;
 }
 
 export function detectFileType(path: string): ReadFileType | null {
@@ -129,9 +143,10 @@ export function createDefaultSettings(
     case "ipc":
     case "ndjson":
     case "avro":
+    case "ipc_stream":
       return { file_type: fileType };
     default:
-      return createDefaultCsvSettings(ext === "tsv" ? "\t" : ",");
+      return createDefaultCsvSettings(ext === "tsv" || ext === "tsv.gz" ? "\t" : ",");
   }
 }
 

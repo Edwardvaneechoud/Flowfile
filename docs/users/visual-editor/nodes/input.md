@@ -4,7 +4,7 @@ Every flow starts here. Input actions have no incoming connection — they produ
 
 | Action | What it does | Lite |
 |---|---|:--:|
-| [Read data](#read-data) | Load a local CSV, Excel, Parquet, Arrow, NDJSON or Avro file | ● |
+| [Read data](#read-data) | Load a local CSV, Excel, Parquet, Arrow, NDJSON or Avro file, gzipped or not | ● |
 | [List files](#list-files) | Turn a folder's contents into a table of file metadata | |
 | [Manual input](#manual-input) | Type or paste a small dataset directly | ● |
 | [Read from Database](#database-reader) | Query a table or write SQL against a database | |
@@ -33,11 +33,12 @@ Loads a local file. Pick the file and the format-specific settings below adapt t
 
 | Format | Extensions | Notes |
 |---|---|---|
-| CSV | `.csv`, `.txt` | Full parsing control, see below |
+| CSV | `.csv`, `.txt`, `.tsv`, plus their `.gz` variants | Full parsing control, see below. Gzipped files are decompressed on the fly |
 | Excel | `.xlsx`, `.xls` | Sheet and cell-range selection, see below |
 | Parquet | `.parquet` | No extra settings; read lazily |
 | Arrow IPC / Feather | `.arrow`, `.ipc`, `.feather` | Stores schema and types natively, read lazily so large files stream without being held in memory |
-| NDJSON | `.ndjson`, `.jsonl` | One JSON record per line, schema inferred, read lazily |
+| NDJSON | `.ndjson`, `.jsonl`, plus their `.gz` variants | One JSON record per line, schema inferred, read lazily |
+| Arrow IPC stream | `.arrows` | The footer-less streaming variant of Arrow IPC (what `write_ipc_stream` and arrow-js produce). Read eagerly on the compute worker |
 | Avro | `.avro` | Row-based binary format that embeds its own schema. Read eagerly, on the compute worker rather than the core service |
 
 ### CSV settings

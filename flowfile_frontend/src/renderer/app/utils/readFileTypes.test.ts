@@ -50,6 +50,21 @@ describe("detectFileType", () => {
     expect(detectFileType("archive.tar.gz")).toBeNull();
   });
 
+  it("maps the IPC stream extension to its own eager type", () => {
+    expect(detectFileType("/data/events.arrows")).toBe("ipc_stream");
+  });
+
+  it("reads through a gzip suffix for the text formats", () => {
+    expect(detectFileType("/data/sales.csv.gz")).toBe("csv");
+    expect(detectFileType("/data/sales.TSV.GZ")).toBe("csv");
+    expect(detectFileType("/data/events.jsonl.gz")).toBe("ndjson");
+  });
+
+  it("rejects gzip over a container format and a bare .gz", () => {
+    expect(detectFileType("/data/table.parquet.gz")).toBeNull();
+    expect(detectFileType("/data/blob.gz")).toBeNull();
+  });
+
   it("never maps .json — the engine has no json handler", () => {
     expect(detectFileType("x.json")).toBeNull();
   });
@@ -117,6 +132,11 @@ describe("inferScanModeFromPath", () => {
 });
 
 describe("extensionOf", () => {
+  it("keeps a gzip compound together", () => {
+    expect(extensionOf("/data/sales.csv.gz")).toBe("csv.gz");
+    expect(extensionOf("blob.gz")).toBe("gz");
+  });
+
   it("lowercases and drops the dot", () => {
     expect(extensionOf("/data/SALES.CSV")).toBe("csv");
   });
@@ -138,6 +158,11 @@ describe("baseNameOf", () => {
 });
 
 describe("createDefaultSettings", () => {
+  it("uses a tab delimiter for a gzipped tsv", () => {
+    const settings = createDefaultSettings("csv", "tsv.gz");
+    expect(settings.file_type === "csv" && settings.delimiter).toBe("\t");
+  });
+
   it("uses a tab delimiter for tsv", () => {
     const settings = createDefaultSettings("csv", "tsv");
     expect(settings).toHaveProperty("delimiter", "\t");

@@ -167,8 +167,45 @@ def test_write_output_excel_create_reports_error_message(tmp_path):
 def test_table_creator_factory_new_formats():
     from flowfile_worker.create import table_creator_factory_method
 
-    for file_type in ("ipc", "ndjson", "avro"):
+    for file_type in ("ipc", "ndjson", "avro", "ipc_stream"):
         assert callable(table_creator_factory_method(file_type))
+
+
+def test_create_from_path_ipc_stream(tmp_path):
+    """The stream format has no footer, so it must go through read_ipc_stream rather than scan_ipc."""
+    from flowfile_worker.create import table_creator_factory_method
+    from flowfile_worker.create.models import InputIpcStreamTable, ReceivedTable
+
+    path = tmp_path / "data.arrows"
+    pl.DataFrame({"value": [1, 2, 3]}).write_ipc_stream(str(path))
+    received = ReceivedTable(
+        name="data.arrows", path=str(path), file_type="ipc_stream", table_settings=InputIpcStreamTable()
+    )
+    received.set_absolute_filepath()
+
+    df = table_creator_factory_method("ipc_stream")(received)
+    assert df["value"].to_list() == [1, 2, 3]
+
+
+def test_create_from_path_csv_gzipped_non_utf8(tmp_path):
+    """Polars gunzips only on its utf8 path; a latin1 .csv.gz used to decode the compressed bytes
+    into a silent garbage frame instead of the rows."""
+    import gzip
+
+    from flowfile_worker.create import table_creator_factory_method
+    from flowfile_worker.create.models import InputCsvTable, ReceivedTable
+
+    path = tmp_path / "data.csv.gz"
+    with gzip.open(path, "wb") as fh:
+        fh.write("id,name\n1,café\n2,naïve\n".encode("latin1"))
+    received = ReceivedTable(
+        name="data.csv.gz", path=str(path), file_type="csv", table_settings=InputCsvTable(encoding="latin1")
+    )
+    received.set_absolute_filepath()
+
+    df = table_creator_factory_method("csv")(received)
+    assert df.columns == ["id", "name"]
+    assert df["name"].to_list() == ["café", "naïve"]
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
