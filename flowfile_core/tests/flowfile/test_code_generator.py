@@ -6539,6 +6539,73 @@ def test_cloud_storage_writer_handler_delta_partition_by():
     assert "df_2 = df_1" in code_output
 
 
+def test_cloud_storage_writer_handler_delta_merge_and_track_changes():
+    """A cloud Delta upsert keeps its merge keys and track_changes flag on export."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+    settings = input_schema.NodeCloudStorageWriter(
+        flow_id=1,
+        node_id=2,
+        user_id=1,
+        cloud_storage_settings=cloud_ss.CloudStorageWriteSettings(
+            resource_path="s3://bucket/orders_delta",
+            connection_name="my_conn",
+            file_format="delta",
+            write_mode="upsert",
+            merge_keys=["order_id"],
+            track_changes=True,
+        ),
+    )
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_cloud_storage_writer(settings, "df_2", {"main": "df_1"})
+
+    verify_code_contains(
+        "\n".join(converter.code_lines),
+        "ff.write_to_cloud_storage(",
+        'write_mode="upsert"',
+        "merge_keys=['order_id']",
+        "track_changes=True",
+    )
+
+
+def test_cloud_storage_reader_handler_delta_changes_since():
+    """Version, timestamp and ${param} change windows all land on the changes_since kwarg."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+    from flowfile_core.flowfile.code_generator.param_codegen import apply_param_sentinels, resolve_param_sentinels
+
+    def reader(node_id: int, **cdc) -> input_schema.NodeCloudStorageReader:
+        return input_schema.NodeCloudStorageReader(
+            flow_id=1,
+            node_id=node_id,
+            cloud_storage_settings=cloud_ss.CloudStorageReadSettings(
+                resource_path="s3://bucket/orders_delta", file_format="delta", **cdc
+            ),
+        )
+
+    by_version = reader(1, cdc_mode="since_version", cdc_from_version=12, cdc_include_preimage=True)
+    by_time = reader(2, cdc_mode="since_timestamp", cdc_from_timestamp="2024-01-01T00:00:00+00:00")
+    by_param = reader(3, cdc_mode="since_version", cdc_from_version="${since}")
+    apply_param_sentinels([by_param], [FlowParameter(name="since", default_value="12", type="integer")])
+
+    converter = FlowGraphToFlowFrameConverter(create_basic_flow())
+    converter._handle_cloud_storage_reader(by_version, "df_1", {})
+    converter._handle_cloud_storage_reader(by_time, "df_2", {})
+    converter._handle_cloud_storage_reader(by_param, "df_3", {})
+    code, leaked = resolve_param_sentinels("\n".join(converter.code_lines), {"since"})
+
+    assert not leaked
+    verify_code_contains(
+        code,
+        "changes_since=12,",
+        "include_change_preimage=True",
+        'changes_since="2024-01-01T00:00:00+00:00"',
+        "changes_since=since,",
+    )
+    assert code.count("include_change_preimage") == 1
+
+
 def test_cloud_storage_writer_polars_unsupported():
     """Test that cloud storage writer is unsupported in Polars mode."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter

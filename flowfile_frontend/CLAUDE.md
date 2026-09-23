@@ -81,7 +81,12 @@ From this dir (`npm install` first):
 - `src/renderer/app/router/index.ts` — hash router, lazy routes, auth meta.
 - `src/renderer/app/stores/flow-store.ts` — central flow/graph state store.
 - `src/renderer/app/components/nodes/GenericNode.vue` — per-node settings drawer loader (`import.meta.glob`).
-- `src/renderer/app/utils/catalogCdc.ts` — catalog change-feed UI helpers (CDF column list, cursor matching/status line, why the Read selector is disabled), shared by the Catalog Reader drawer and the table detail panel.
+- `src/renderer/app/utils/catalogCdc.ts` — change-feed UI helpers (CDF column list, cursor matching/status line, why the catalog Read selector is disabled, `cdcFieldErrors`, `deltaVersionOptions` for history-fed version pickers), shared by the Catalog Reader, the Cloud Storage Reader and the table detail panel.
+- `src/renderer/app/components/common/ChangeFeedReadSection/ChangeFeedReadSection.vue` — the shared **Read** selector (Full table / Changes since version / since time, `${param}` binding, preimage checkbox, not-tracked warning + Enable button) used by both Delta readers; `allowLastRun` adds the catalog-only "since last run" cursor block (status, Start from, cursor name). The parent owns the status probe and handles `enable` / `reset-cursor`.
+- `src/renderer/app/utils/deltaWriteModes.ts` — pure Delta write-mode rules (`needsMergeKeys`, `canPartition`, `trackChangesDisabledReason`, `modeDescription`) shared by the Catalog Writer and the Cloud Storage Writer, unit-tested in `deltaWriteModes.test.ts`.
+- `src/renderer/app/components/common/MergeKeysSelect/MergeKeysSelect.vue` — the key-columns multi-select (`modelValue?` / `columns` / `id?` / `error?`) shared by the Catalog Writer and the Cloud Storage Writer; the label stays in each writer because the two drawers size it differently.
+- `src/renderer/app/components/common/DeltaTableStatusLine/DeltaTableStatusLine.vue` — the existing-table / "New table — will be created." status line with partition chips shared by both writers (`exists` / `partitionColumns` / `rowCount?` / `verb?` / `version?`); the named `#before` slot and the default slot carry the catalog-only lines, styled via `:slotted`.
+- `src/renderer/app/api/cloudDelta.api.ts` — `CloudDeltaApi` for core's `/cloud_storage/delta/{info,cdc/enable,history}` (no trailing slash): the cloud writer's existing-table status line, the cloud reader's tracking state and version pickers. Probes are skipped for `gs://`, which core refuses.
 - `vite.config.mjs` — root, aliases, `/api` proxy, build out, port strictness.
 - `tsconfig.json` / `vitest.config.ts` — path aliases (keep aligned with Vite).
 - `src-tauri/tauri.conf.json` — windows, CSP, bundle, dev/build commands, updater.

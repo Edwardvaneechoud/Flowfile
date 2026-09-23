@@ -267,6 +267,16 @@ def _catalog_writer(settings: input_schema.NodeCatalogWriter) -> ColumnReference
     return ColumnReferences(main=refs)
 
 
+@_extractor("cloud_storage_writer")
+def _cloud_storage_writer(settings: input_schema.NodeCloudStorageWriter) -> ColumnReferences:
+    """Delta merge keys and partition columns; merge keys are only read by the merge modes."""
+    c = settings.cloud_storage_settings
+    if c.file_format != "delta":
+        return ColumnReferences()
+    keys = c.merge_keys if c.write_mode in ("upsert", "update", "delete") else []
+    return ColumnReferences(main=[*keys, *(c.partition_by or [])])
+
+
 @dataclass(frozen=True)
 class ExpressionProbe:
     """A flowfile expression that can be resolved against the node's main input schema."""

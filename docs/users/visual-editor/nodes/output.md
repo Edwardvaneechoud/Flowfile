@@ -87,17 +87,39 @@ Authenticate with a [saved cloud connection](../tutorials/cloud-connections.md),
 
 | Setting | Description |
 |---|---|
-| **File Path** | Full URI including scheme, bucket or container, and file name, e.g. `s3://bucket/folder/output.parquet`. **Browse** picks a folder and names the file. |
+| **File Path** | Full URI including scheme, bucket or container, and file name, e.g. `s3://bucket/folder/output.parquet`. A Delta table is a folder, so its path names the table, e.g. `s3://bucket/warehouse/orders`. **Browse** picks a folder and names the file. |
 | **File Format** | CSV, Parquet, JSON or Delta Lake. |
-| **Write Mode** | `overwrite` replaces what is there; `append` is Delta Lake only. |
+| **Write Mode** | CSV, Parquet and JSON always overwrite. Delta Lake offers the modes in the next table. |
 
-CSV adds **Delimiter** (default `,`) and **Encoding** (UTF-8 or UTF-8 Lossy). Parquet adds **Compression**: Snappy (default), Gzip, Brotli, LZ4 or Zstd. Delta Lake supports both write modes and handles schema evolution automatically when appending.
+CSV adds **Delimiter** (default `,`) and **Encoding** (UTF-8 or UTF-8 Lossy). Parquet adds **Compression**: Snappy (default), Gzip, Brotli, LZ4 or Zstd.
 
 !!! note "Parquet defaults differ between the two writers"
     This node defaults Parquet to **Snappy**, while local [Write data](#write-data) defaults to **Zstd**. Set the codec explicitly if the two paths need to match.
 
 !!! warning "Overwrite replaces the target"
     In `overwrite` mode any existing file or data at the path is replaced. Verify the path before running.
+
+### Delta Lake write modes
+
+| Mode | Description |
+|---|---|
+| **Overwrite** | Replace all existing data in the table. |
+| **Error if exists** | Fail if the table already exists. |
+| **Append** | Add rows to the existing table. Without **Track changes**, the incoming columns must match the table's. |
+| **Upsert** | Insert new rows, update existing ones matching the key columns. |
+| **Update** | Update only existing rows matching the key columns; no inserts. |
+| **Delete** | Remove target rows matching the key columns in the source. |
+
+**Key columns** are required for Upsert, Update and Delete — they are the columns rows are matched on. Upsert and Update first add any source column the table does not have yet.
+
+**Partition by** is optional and offered for Overwrite, Error if exists and Append. It sets the partition columns when the write creates the table; later writes must match that partitioning.
+
+**Track changes** turns [change tracking](../catalog/change-tracking.md) on for the table, so a [Read from cloud provider](input.md#cloud-storage-reader) node can read only the rows each later write inserted, updated or deleted. As on the [catalog writer](#catalog-writer), it is enable-only: on an existing untracked table it is switched on just before this write, so this write is the first one tracked, and clearing it never turns tracking back off. Unavailable with Overwrite.
+
+When the path points at an existing Delta table, the Delta options show its current version and partition columns; otherwise they note that the write creates a new table.
+
+!!! note "Delta on Google Cloud Storage"
+    Upsert, Update, Delete and Track changes are not available for `gs://` paths: the drawer disables them, and a run that asks for them fails before writing. They work on S3 and Azure Data Lake Storage.
 
 ## ![Write to Catalog](../../../assets/images/nodes/catalog_writer.svg){ width="44" height="44" } Write to Catalog { #catalog-writer }
 

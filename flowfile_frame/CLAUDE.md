@@ -47,6 +47,7 @@ Tests live in `tests/` (`test_flow_frame.py`, `test_expressions.py`, `test_ff_re
 - Don't break the `LazyFrame`/`DataFrame` aliases or Polars dtype re-exports in `__init__.py` — generated flow code depends on them.
 - Per the user memory rule, core must not `.collect()` LazyFrames internally; `FlowFrame.collect()` here is the intended user-facing materialization point.
 - DB/cloud/catalog helpers persist via `flowfile_core` (`get_db_context`, core's connection manager) — they touch core's storage, not a local file.
+- **Cloud Delta mirrors the catalog's merge/change-feed kwargs, minus cursors.** `FlowFrame.write_delta` / `write_to_cloud_storage` take `merge_keys` and `track_changes` (Delta-only guards like `partition_by`'s), and `scan_delta` / `read_from_cloud_storage` take `changes_since` + `include_change_preimage` through `catalog._resolve_change_mode`; `changes_since="last_run"` raises for cloud paths (no cursor store) and `version`/`delta_version` plus `changes_since` is a `ValueError`. Cloud writes run when the method is called, not at `.collect()`.
 
 ## Key files
 - `flowfile_frame/flow_frame.py` — `FlowFrame`, the central graph-building class (large; read selectively).
