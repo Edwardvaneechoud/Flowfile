@@ -149,7 +149,7 @@ Loads data from a database table or a custom SQL query. Supports PostgreSQL, MyS
 <div markdown>
 Reads directly from cloud object storage: AWS S3 (including S3-compatible services like MinIO), Azure Data Lake Storage, and Google Cloud Storage.
 
-Authenticate with a [saved cloud connection](../tutorials/cloud-connections.md), or — for S3 only — with local AWS credentials from a CLI profile or environment variables.
+Authenticate with a [saved cloud connection](../tutorials/cloud-connections.md), or with **No connection** to use the credentials of the machine running Flowfile. **No connection** ignores saved endpoints and is unavailable on a multi-user server; see [Running a node without a connection](../tutorials/cloud-connections.md#no-connection).
 </div>
 
 ![Screenshot of the Cloud Storage Reader configuration](../../../assets/images/ui/screenshot_cloud_reader_input.png)
@@ -160,7 +160,7 @@ Authenticate with a [saved cloud connection](../tutorials/cloud-connections.md),
 
 | Setting | Description |
 |---|---|
-| **File Path** | Full URI including the scheme, e.g. `s3://bucket/folder/file.csv`. **Browse** navigates the connection and picks one. |
+| **File Path** | Full URI including the scheme, e.g. `s3://bucket/folder/file.csv`. **Browse** navigates the connection and picks one. The drawer warns while the path is empty or has no scheme, and such a node fails before reading anything: *Cloud storage reader has no source path…* or *Cloud storage path '…' is not a URI…*. |
 | **File Format** | CSV, Parquet, JSON, Delta Lake or Iceberg. |
 | **Scan Mode** | A single file, or a directory scan that reads every matching file in a folder. |
 

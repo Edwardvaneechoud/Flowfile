@@ -291,6 +291,47 @@ class TestErrorMapping:
         assert "AKIAEXAMPLE" not in response.text
 
 
+class TestConnectionErrors:
+    """A connection that cannot build credentials is a fixable 400, never an unhandled 500 ("CORS error")."""
+
+    @pytest.fixture
+    def broken_connection(self, tmp_path, monkeypatch):
+        for key in ("AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
+        monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "credentials"))
+        monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+        created = []
+
+        def _create(name: str, **fields) -> str:
+            _drop_connection(name)
+            with get_db_context() as db:
+                store_cloud_connection(
+                    db, FullCloudStorageConnection(connection_name=name, storage_type="s3", **fields), 1
+                )
+            created.append(name)
+            return name
+
+        yield _create
+        for name in created:
+            _drop_connection(name)
+
+    @pytest.mark.parametrize(
+        "fields,message",
+        [
+            ({"auth_method": "aws-cli", "aws_profile": "no-such-profile"}, "no-such-profile"),
+            ({"auth_method": "access_key", "aws_access_key_id": "AKIAEXAMPLE"}, "aws_secret_access_key"),
+        ],
+    )
+    def test_credential_errors_are_typed_400s(self, stub_listing, broken_connection, fields, message):
+        stub_listing()
+        response = client.get(BROWSE_URL, params={"connection_name": broken_connection("browse_broken", **fields)})
+
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"]["error_code"] == "CONNECTION_INVALID"
+        assert message in response.json()["detail"]["message"]
+
+
 class TestAuthentication:
     def test_endpoint_requires_a_token(self):
         with TestClient(main.app) as anonymous:

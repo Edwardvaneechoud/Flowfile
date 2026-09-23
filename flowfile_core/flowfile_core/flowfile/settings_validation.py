@@ -26,6 +26,9 @@ the schema — are reported. The formula node takes a chained variant of the sam
 (``check_expression_chain``): each entry is checked against the base schema plus the columns the
 entries above it produce, so a reference to an earlier output is correct and a forward reference
 is not.
+
+Cloud reader/writer nodes get the run-time path guard's verdict (``validate_cloud_resource_path``)
+ahead of the run, so an unconfigured target shows on the canvas instead of only failing the run.
 """
 
 from collections.abc import Callable, Sequence
@@ -34,9 +37,11 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
 
+from flowfile_core.auth import sharing
 from flowfile_core.configs.flow_logger import main_logger
 from flowfile_core.flowfile.parameter_resolver import resolve_expression_parameters
 from flowfile_core.schemas import input_schema
+from shared.cloud_storage.utils import validate_cloud_resource_path
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile._extensions.real_time_interface import ExpressionIssue
@@ -44,7 +49,7 @@ if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
 InputHandle = Literal["main", "left", "right"]
-IssueKind = Literal["missing_columns", "invalid_expression", "duplicate_output"]
+IssueKind = Literal["missing_columns", "invalid_expression", "duplicate_output", "invalid_path"]
 
 
 class SettingsValidationIssue(BaseModel):
@@ -473,6 +478,32 @@ def _formula_chain_issues(node: "FlowNode", allow_prediction: bool) -> list[Sett
     ]
 
 
+_CLOUD_PATH_ROLES: dict[str, Literal["reader", "writer"]] = {
+    "cloud_storage_reader": "reader",
+    "cloud_storage_writer": "writer",
+}
+
+
+def _cloud_path_issues(node: "FlowNode") -> list[SettingsValidationIssue]:
+    """The run-time path guard's refusal of a cloud node's target, as a warning.
+
+    Same rule as ``flow_graph._resolve_cloud_node_connection``: empty or relative paths are refused,
+    and absolute local paths too when ambient access is off (docker). A path carrying a ``${param}``
+    reference is left alone — its value is only known at run time.
+    """
+    role = _CLOUD_PATH_ROLES.get(node.node_type)
+    if role is None or not node.is_setup:
+        return []
+    path = node.setting_input.cloud_storage_settings.resource_path
+    if path and "${" in path:
+        return []
+    try:
+        validate_cloud_resource_path(path, role=role, allow_local_paths=sharing.ambient_credentials_allowed())
+    except ValueError as e:
+        return [SettingsValidationIssue(kind="invalid_path", input_handle="main", message=str(e))]
+    return []
+
+
 def _validate_node(node: "FlowNode", allow_prediction: bool) -> list[SettingsValidationIssue]:
     issues = _column_issues(node, allow_prediction)
     if node.node_type == "formula":
@@ -525,7 +556,7 @@ def validate_flow_settings(flow: "FlowGraph") -> FlowSettingsValidation:
     results: list[NodeSettingsValidation] = []
     for node in flow.nodes:
         try:
-            issues = _validate_node(node, allow_prediction)
+            issues = _cloud_path_issues(node) + _validate_node(node, allow_prediction)
             if issues:
                 results.append(NodeSettingsValidation(node_id=int(node.node_id), issues=issues))
         except Exception:

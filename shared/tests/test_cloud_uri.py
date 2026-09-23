@@ -7,6 +7,7 @@ from shared.cloud_storage.uri import (
     is_cloud_uri,
     parse_uri,
     scheme_of,
+    storage_type_for_uri,
     uri_basename,
     uri_is_root,
     uri_join,
@@ -47,6 +48,39 @@ class TestSchemeOf:
     def test_local_path_returns_empty(self):
         assert scheme_of("/tmp/data") == ""
 
+
+
+class TestStorageTypeForUri:
+    @pytest.mark.parametrize(
+        ("uri", "expected"),
+        [
+            ("s3://bucket/key", "s3"),
+            ("s3a://bucket/key", "s3"),
+            ("az://container/path", "adls"),
+            ("abfs://container/path", "adls"),
+            ("abfss://container@account.dfs.core.windows.net/path", "adls"),
+            ("adl://container/path", "adls"),
+            ("gs://bucket/key", "gcs"),
+            ("gcs://bucket/key", "gcs"),
+            ("s3://", "s3"),
+        ],
+    )
+    def test_maps_each_scheme_to_its_storage_type(self, uri, expected):
+        assert storage_type_for_uri(uri) == expected
+
+    @pytest.mark.parametrize(
+        "value", ["", "/tmp/data", "data/file.csv", "file:///tmp/data", "http://host/x", "https://host/x", "s3:/b/k"]
+    )
+    def test_non_cloud_paths_have_no_storage_type(self, value):
+        assert storage_type_for_uri(value) is None
+
+    def test_every_known_scheme_has_a_storage_type(self):
+        for scheme in CLOUD_URI_SCHEMES:
+            assert storage_type_for_uri(f"{scheme}container/key") in ("s3", "adls", "gcs")
+
+    def test_round_trips_with_the_canonical_scheme(self):
+        for storage_type in ("s3", "adls", "gcs"):
+            assert storage_type_for_uri(canonical_scheme(storage_type) + "container") == storage_type
 
 class TestParseUri:
     def test_full_uri(self):

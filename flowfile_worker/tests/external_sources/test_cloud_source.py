@@ -1,12 +1,17 @@
+import os
+import uuid
 from dataclasses import dataclass
 from logging import getLogger
 
 import polars as pl
 import pytest
+from deltalake import DeltaTable
+from pydantic import ValidationError
 
 from flowfile_worker.external_sources.s3_source.main import write_df_to_cloud
 from flowfile_worker.external_sources.s3_source.models import (
     CloudStorageWriteSettings,
+    FullCloudStorageConnection,
     WriteSettings,
 )
 
@@ -111,3 +116,163 @@ def test_write_df_to_cloud_storage(test_case: S3TestWriteCase,
     except Exception as e:
         logger.error(f"❌ Verification failed: {str(e)}")
         raise e
+
+
+@pytest.mark.parametrize("path", ["", "   ", "output_folder/table"])
+def test_write_settings_reject_paths_that_resolve_to_the_worker_cwd(path):
+    with pytest.raises(ValidationError, match="Cloud storage writer has no target path|is not a URI"):
+        WriteSettings(resource_path=path, file_format="delta", write_mode="append")
+
+
+@pytest.mark.parametrize("path", ["s3://bucket/table", "az://container/table", "/abs/local/table"])
+def test_write_settings_accept_cloud_uris_and_absolute_paths(path):
+    assert WriteSettings(resource_path=path).resource_path == path
+
+
+@pytest.fixture
+def minio_aws_cli_profile(monkeypatch, tmp_path):
+    """Static-key default profile for MinIO in temp AWS files, every ambient AWS_* variable removed.
+
+    The node-level "No connection" carries no endpoint of its own, so MinIO is reached through AWS_ENDPOINT_URL.
+    """
+    for key in list(os.environ):
+        if key.startswith("AWS_"):
+            monkeypatch.delenv(key)
+    (tmp_path / "credentials").write_text(
+        "[default]\naws_access_key_id = minioadmin\naws_secret_access_key = minioadmin\n"
+    )
+    (tmp_path / "config").write_text("[default]\nregion = us-east-1\n")
+    (tmp_path / "boto.cfg").write_text("")
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "credentials"))
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
+    monkeypatch.setenv("BOTO_CONFIG", str(tmp_path / "boto.cfg"))
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://localhost:9000")
+    monkeypatch.setenv("AWS_ALLOW_HTTP", "true")
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available so MinIO cannot be reached")
+def test_write_partitioned_delta_with_aws_cli_connection(minio_aws_cli_profile):
+    """The UI's "No connection" writer: aws-cli auth from a static-key profile, delta append partitioned.
+
+    Runs in-process because the spawned worker's environment is fixed at session start.
+    """
+    bucket, prefix = "worker-test-bucket", f"aws_cli_partitioned_{uuid.uuid4().hex[:8]}"
+    s3_client = get_minio_client()
+    try:
+        s3_client.create_bucket(Bucket=bucket)
+    except Exception:
+        pass
+    settings = CloudStorageWriteSettings(
+        write_settings=WriteSettings(
+            resource_path=f"s3://{bucket}/{prefix}",
+            file_format="delta",
+            write_mode="append",
+            partition_by=["output_field"],
+        ),
+        connection=FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli"),
+    )
+    df = pl.LazyFrame({"id": [1, 2, 3], "category": ["a", None, "na"], "output_field": ["test", "test", "other"]})
+    storage_options = {
+        "aws_access_key_id": "minioadmin",
+        "aws_secret_access_key": "minioadmin",
+        "aws_region": "us-east-1",
+        "endpoint_url": "http://localhost:9000",
+        "aws_allow_http": "true",
+    }
+    try:
+        write_df_to_cloud(df, settings, logger)
+        write_df_to_cloud(df, settings, logger)
+        table = DeltaTable(f"s3://{bucket}/{prefix}", storage_options=storage_options)
+        assert table.version() == 1
+        assert table.metadata().partition_columns == ["output_field"]
+        assert pl.scan_delta(f"s3://{bucket}/{prefix}", storage_options=storage_options).collect().height == 6
+    finally:
+        listed = s3_client.list_objects_v2(Bucket=bucket, Prefix=f"{prefix}/")
+        keys = [{"Key": obj["Key"]} for obj in listed.get("Contents", [])]
+        if keys:
+            s3_client.delete_objects(Bucket=bucket, Delete={"Objects": keys})
+
+
+@pytest.fixture
+def minio_named_profile(monkeypatch, tmp_path):
+    """A ``minio`` profile with the MinIO keys, a default profile MinIO rejects, and a dead AWS_ENDPOINT_URL.
+
+    Only an endpoint stored on the connection can reach MinIO, and nothing reaches real AWS.
+    """
+    for key in list(os.environ):
+        if key.startswith("AWS_"):
+            monkeypatch.delenv(key)
+    (tmp_path / "credentials").write_text(
+        "[default]\naws_access_key_id = AKIDNOTMINIO\naws_secret_access_key = wrong-secret\n"
+        "[minio]\naws_access_key_id = minioadmin\naws_secret_access_key = minioadmin\n"
+    )
+    (tmp_path / "config").write_text("[default]\nregion = us-east-1\n[profile minio]\nregion = us-east-1\n")
+    (tmp_path / "boto.cfg").write_text("")
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "credentials"))
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
+    monkeypatch.setenv("BOTO_CONFIG", str(tmp_path / "boto.cfg"))
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:9")
+
+
+def _sts_temporary_keys() -> dict:
+    import boto3
+
+    sts = boto3.client(
+        "sts",
+        endpoint_url="http://localhost:9000",
+        region_name="us-east-1",
+        aws_access_key_id="minioadmin",
+        aws_secret_access_key="minioadmin",
+    )
+    return sts.assume_role(RoleArn="arn:aws:iam::123456789012:role/flowfile-test", RoleSessionName="worker-test")[
+        "Credentials"
+    ]
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available so MinIO cannot be reached")
+@pytest.mark.parametrize("auth", ["aws-cli-profile", "access-key-session-token"])
+def test_saved_connection_credentials_reach_the_worker_write(minio_named_profile, auth):
+    """A saved connection as core ships it: aws-cli with an explicit profile, or temporary keys plus an
+    owner-encrypted session token; the endpoint comes from the connection in both cases.
+    """
+    from flowfile_worker.secrets import encrypt_secret
+
+    connection_fields = {
+        "connection_name": "minio connection",
+        "storage_type": "s3",
+        "aws_region": "us-east-1",
+        "endpoint_url": "http://localhost:9000",
+        "aws_allow_unsafe_html": True,
+    }
+    if auth == "aws-cli-profile":
+        connection = FullCloudStorageConnection(**connection_fields, auth_method="aws-cli", aws_profile="minio")
+    else:
+        keys = _sts_temporary_keys()
+        connection = FullCloudStorageConnection(
+            **connection_fields,
+            auth_method="access_key",
+            aws_access_key_id=keys["AccessKeyId"],
+            aws_secret_access_key=encrypt_secret(keys["SecretAccessKey"], user_id=1),
+            aws_session_token=encrypt_secret(keys["SessionToken"], user_id=1),
+        )
+    bucket, prefix = "worker-test-bucket", f"saved_connection_{uuid.uuid4().hex[:8]}"
+    s3_client = get_minio_client()
+    try:
+        s3_client.create_bucket(Bucket=bucket)
+    except Exception:
+        pass
+    settings = CloudStorageWriteSettings(
+        write_settings=WriteSettings(resource_path=f"s3://{bucket}/{prefix}", file_format="delta"),
+        connection=connection,
+    )
+    try:
+        write_df_to_cloud(pl.LazyFrame({"id": [1, 2, 3]}), settings, logger)
+        table = DeltaTable(f"s3://{bucket}/{prefix}", storage_options=connection.get_storage_options())
+        assert table.version() == 0
+    finally:
+        listed = s3_client.list_objects_v2(Bucket=bucket, Prefix=f"{prefix}/")
+        keys_to_delete = [{"Key": obj["Key"]} for obj in listed.get("Contents", [])]
+        if keys_to_delete:
+            s3_client.delete_objects(Bucket=bucket, Delete={"Objects": keys_to_delete})

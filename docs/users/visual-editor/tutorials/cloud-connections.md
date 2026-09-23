@@ -31,20 +31,28 @@ Choose one of the following authentication methods:
 ##### Access Key
 - **AWS Access Key ID**: Your AWS access key (e.g., `AKIAIOSFODNN7EXAMPLE`)
 - **AWS Secret Access Key**: Your AWS secret access key
+- **AWS Session Token (Optional)**: Only for temporary credentials, such as keys issued by AWS STS. Stored encrypted; leave it blank when editing to keep the stored token. Entering a new key ID or secret without a token removes the stored one.
 - **AWS Region**: The AWS region where your S3 buckets are located (e.g., `us-east-1`)
 
 ##### AWS CLI
-- Uses credentials from your local AWS CLI configuration
+- Uses credentials from the AWS configuration on the machine running Flowfile (`~/.aws/credentials`, `~/.aws/config`, or `AWS_*` environment variables)
+- **AWS Profile (Optional)**: The profile to read, for example `analytics`. Leave it blank to use the default credential chain: environment variables, then the `default` profile, then an instance role. A profile name that does not exist fails with an error naming it.
 - **AWS Region**: The AWS region where your S3 buckets are located
 
+The connection name is only a label; it is never used as the profile name.
+
+!!! note "Upgrading AWS CLI connections"
+    Earlier versions used the connection name as the AWS profile. After upgrading, existing AWS CLI connections use the default AWS credential chain. If a connection needs a named profile, set its **AWS Profile** field.
 
 #### Advanced Settings (Optional)
+
+These apply to every authentication method, AWS CLI included, so an AWS CLI connection can point at MinIO or another S3-compatible service.
 
 | Field | Description |
 |-------|-------------|
 | **Custom Endpoint URL** | For S3-compatible services (e.g., MinIO) |
-| **Allow Unsafe HTTP** | Enable for non-HTTPS endpoints, such as a local MinIO server |
-| **Verify SSL** | Disable only for testing with self-signed certificates |
+| **Allow HTTP (unencrypted) endpoint** | Allows plain `http://` endpoints, such as a local MinIO server. Leave it off for AWS. |
+| **Verify SSL** | On by default. Turning it off skips TLS certificate checks for reads, writes and browsing; use it only for an endpoint with a self-signed certificate. The same checkbox applies to Azure Data Lake Storage connections and has no effect on Google Cloud Storage. |
 
 **3. Save.** Click **"Create Connection"**.
 
@@ -62,6 +70,32 @@ Once created, your S3 connection will appear in the Cloud Storage Reader and Wri
 Picking a file sets the scan mode to *Single File*; picking a folder sets it to *Directory*.
 If the connection's credentials aren't allowed to list buckets, the browser asks for a bucket
 name instead — everything below it still browses normally.
+
+The path must start with `s3://`, `az://`, `abfss://` or `gs://`. The node's settings show a
+warning while the path is empty or has no scheme, and a run fails before anything is read or
+written, for example with *Cloud storage writer has no target path. Enter an object-storage URI
+such as s3://bucket/folder/table.*
+
+## Running a node without a connection { #no-connection }
+
+The reader and writer nodes also offer **No connection (this machine's AWS credentials)**; the label
+names Azure or Google Cloud instead when the path starts with `az://`, `abfss://` or `gs://`. It uses
+the credentials of the machine running Flowfile, not a saved connection:
+
+- For `s3://` paths, the AWS default credential chain: `AWS_*` environment variables, the
+  `default` profile in `~/.aws`, then an instance role. With no credentials at all, the run fails
+  with *No AWS credentials found in the local AWS profile or environment.*
+- For `az://`, `abfss://` and `gs://` paths, that provider's credentials from the environment.
+
+No saved endpoint applies, so MinIO and other S3-compatible services need a connection, unless
+`AWS_ENDPOINT_URL` is set in the environment of the machine running Flowfile.
+
+!!! info "Not available on a multi-user server"
+    In a multi-user [Docker deployment](../../deployment/docker.md#cloud-storage-access) the option is
+    disabled, and a flow that still has it fails with *Select a cloud storage connection; server
+    credentials are not available in multi-user mode.* Local file paths are refused the same way, and
+    only an administrator's connections may use the server's own identity (AWS CLI, IAM Role,
+    Managed Identity or Application Default Credentials).
 
 ## In Python
 

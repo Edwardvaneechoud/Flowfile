@@ -76,6 +76,45 @@ def sharing_enabled() -> bool:
     return os.environ.get("FLOWFILE_MODE", "electron") != "electron"
 
 
+def ambient_credentials_allowed() -> bool:
+    """Whether cloud access may fall back to the process's own credentials and local disk.
+
+    In docker the credentials and the filesystem belong to the server, so letting any
+    authenticated user reach them — by browsing, or through a cloud node with no connection
+    or a local path — would hand every user the deployment's own access. Electron and
+    package mode run on the caller's own machine, where they are already the caller's own.
+
+    Read live, like ``sharing_enabled``: ``configs.settings`` caches FLOWFILE_MODE at import.
+    """
+    return os.environ.get("FLOWFILE_MODE", "electron") != "docker"
+
+
+# Saved-connection auth methods that carry no credentials of their own and authenticate as the process.
+SERVER_IDENTITY_AUTH_METHODS = frozenset({"aws-cli", "env_vars", "iam_role", "managed_identity"})
+
+SERVER_IDENTITY_REFUSED_MESSAGE = (
+    "authenticates with this server's own credentials, which only an administrator's cloud connections may do "
+    "in multi-user mode. Use an access key, SAS token, service principal or service account instead."
+)
+
+
+def uses_server_identity(auth_method: str | None) -> bool:
+    """Whether a saved cloud connection with *auth_method* would run on the deployment's identity.
+
+    The same reasoning as ``ambient_credentials_allowed``: in docker an aws-cli, env_vars, iam_role
+    (STS with the server's base credentials) or managed_identity connection authenticates as the
+    server, and honouring its endpoint would send that identity wherever the connection points.
+    Only an administrator may own such a connection there; elsewhere the machine is the caller's own.
+    """
+    return auth_method in SERVER_IDENTITY_AUTH_METHODS and not ambient_credentials_allowed()
+
+
+def is_admin_user(db: Session, user_id: int | None) -> bool:
+    if user_id is None:
+        return False
+    return bool(db.query(db_models.User.is_admin).filter(db_models.User.id == user_id).scalar())
+
+
 def is_synthetic_principal(user) -> bool:
     return getattr(user, "username", None) == INTERNAL_SERVICE_USERNAME
 

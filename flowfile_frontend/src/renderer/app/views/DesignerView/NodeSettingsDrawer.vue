@@ -64,6 +64,7 @@ const applySettings = async () => {
   try {
     // A component that reports a refused save keeps the button on "Apply".
     if ((await drawerComponentInstance.value.pushNodeData()) === false) return;
+    editorStore.disarmRefusedSave();
     justApplied.value = true;
     if (appliedTimer) clearTimeout(appliedTimer);
     appliedTimer = setTimeout(() => {
@@ -80,9 +81,13 @@ const lastExecutedState = ref({
   componentInstance: null as DrawerComponentInstance | null,
 });
 
+// Fallback for unconditional closes (flow switch); a failed save must not block the next load.
 const executeCleanup = async () => {
-  if (lastExecutedState.value.componentInstance) {
+  if (!lastExecutedState.value.componentInstance) return;
+  try {
     await nodeStore.executeDrawCloseFunction();
+  } catch (error) {
+    console.error("Error saving node settings on close:", error);
   }
 };
 

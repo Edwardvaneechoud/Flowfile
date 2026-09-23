@@ -1,5 +1,6 @@
 """Routes for a Delta table at a bare object-storage path (``/cloud_storage/delta/*``) against MinIO."""
 
+import os
 import uuid
 
 import polars as pl
@@ -41,7 +42,6 @@ def _minio_available() -> bool:
 
 
 requires_minio = pytest.mark.skipif(not _minio_available(), reason="MinIO mock S3 not available")
-pytestmark = requires_minio
 
 
 @pytest.fixture(scope="module")
@@ -85,6 +85,7 @@ def _post(client: TestClient, route: str, path: str, **extra):
     return response.json()
 
 
+@requires_minio
 def test_info_enable_and_history_on_a_bare_path(client):
     path = f"s3://{_BUCKET}/cloud_delta_routes_{uuid.uuid4().hex[:8]}"
 
@@ -121,3 +122,29 @@ def test_info_enable_and_history_on_a_bare_path(client):
     history = _post(client, "/history", path)
     assert [entry["version"] for entry in history] == [1, 0]
     assert history[0]["operation"] == "SET TBLPROPERTIES"
+
+
+def test_aws_cli_without_local_credentials_is_a_400(monkeypatch, tmp_path):
+    """"No connection" resolves to aws-cli; with no local AWS credentials that is a caller error, not a 500."""
+    for key in list(os.environ):
+        if key.startswith("AWS_"):
+            monkeypatch.delenv(key)
+    for name in ("credentials", "config", "boto.cfg"):
+        (tmp_path / name).write_text("")
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "credentials"))
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
+    monkeypatch.setenv("BOTO_CONFIG", str(tmp_path / "boto.cfg"))
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    with TestClient(main.app) as bootstrap:
+        token = bootstrap.post("/auth/token").json()["access_token"]
+
+    response = TestClient(main.app).post(
+        "/cloud_storage/delta/info",
+        json={"connection_name": None, "auth_mode": "aws-cli", "resource_path": f"s3://{_BUCKET}/no-credentials"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "DELTA_ERROR"
+    assert detail["message"].startswith("No AWS credentials found in the local AWS profile or environment.")

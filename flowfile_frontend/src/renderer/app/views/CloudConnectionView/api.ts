@@ -13,7 +13,7 @@ const API_BASE_URL = "/cloud_connections";
 /**
  * Converts JavaScript camelCase to Python snake_case for API requests
  */
-const toPythonFormat = (
+export const toPythonFormat = (
   connection: FullCloudStorageConnection,
 ): PythonFullCloudStorageConnection => {
   return {
@@ -27,6 +27,8 @@ const toPythonFormat = (
     aws_secret_access_key: connection.awsSecretAccessKey,
     aws_role_arn: connection.awsRoleArn,
     aws_allow_unsafe_html: connection.awsAllowUnsafeHtml,
+    aws_session_token: connection.awsSessionToken,
+    aws_profile: connection.awsProfile,
 
     // Azure ADLS
     azure_account_name: connection.azureAccountName,
@@ -77,6 +79,7 @@ export const convertConnectionInterfacePytoTs = (
     awsAccessKeyId: pythonConnectionInterface.aws_access_key_id,
     awsRoleArn: pythonConnectionInterface.aws_role_arn,
     awsAllowUnsafeHtml: pythonConnectionInterface.aws_allow_unsafe_html,
+    awsProfile: pythonConnectionInterface.aws_profile,
 
     // Azure ADLS
     azureAccountName: pythonConnectionInterface.azure_account_name,
@@ -105,6 +108,7 @@ export const convertConnectionInterfaceTstoPy = (
     aws_region: cloudConnectionInterface.awsRegion,
     aws_access_key_id: cloudConnectionInterface.awsAccessKeyId,
     aws_role_arn: cloudConnectionInterface.awsRoleArn,
+    aws_profile: cloudConnectionInterface.awsProfile,
 
     // Azure ADLS
     azure_account_name: cloudConnectionInterface.azureAccountName,

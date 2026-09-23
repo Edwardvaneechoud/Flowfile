@@ -54,6 +54,8 @@ A secret can be shared for **use** but never for **manage**. A manage grant on a
 
 A shared connection is usable directly in a group member's flows. Because a connection bundles a target (host / endpoint / protocol) with the owner's credential, there is one guardrail: a **manage**-grantee who changes the connection's target must re-enter the credentials. Otherwise a grantee could repoint a shared connection at a server they control and harvest the owner's credential by capturing what it sends. When a manage-grantee rotates the credential, the new value is re-encrypted under the **owner's** key — the stored value never changes hands.
 
+A cloud connection that authenticates as the server itself (AWS CLI, IAM Role, Managed Identity, Application Default Credentials) works only while an administrator owns it; group members can run with it, but only an administrator can edit it. See [Cloud storage access](docker.md#cloud-storage-access).
+
 ## How access is resolved
 
 When you ask for a resource by name (a secret in a flow, a connection, a catalog table), Flowfile resolves it **own-first, then group-granted**:

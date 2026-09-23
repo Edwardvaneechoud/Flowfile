@@ -5,6 +5,7 @@ session that really binds the core port — both directions are pinned here.
 """
 
 import http.client
+import platform
 import socket
 import types
 
@@ -98,6 +99,19 @@ class TestSinkServer:
         port = _free_port()
         with socket.socket() as holder:
             holder.bind(("127.0.0.1", port))
+            holder.listen(1)
+            sink = CoreLogSink(port=port)
+            try:
+                assert sink.start() is False
+            finally:
+                sink.stop()
+
+    @pytest.mark.skipif(platform.system() == "Windows", reason="a 0.0.0.0 bind raises a firewall prompt")
+    def test_does_not_start_next_to_a_wildcard_listener(self):
+        """A core on 0.0.0.0 must keep its loopback traffic; macOS would let a 127.0.0.1 bind through."""
+        port = _free_port()
+        with socket.socket() as holder:
+            holder.bind(("0.0.0.0", port))
             holder.listen(1)
             sink = CoreLogSink(port=port)
             try:

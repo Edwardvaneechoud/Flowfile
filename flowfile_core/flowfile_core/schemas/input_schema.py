@@ -1216,7 +1216,8 @@ class NodeCloudStorageReader(NodeBase):
             suffix = f" [changes since {v if isinstance(v, str) else f'v{v}'}]"
         elif cs.cdc_mode == "since_timestamp":
             suffix = f" [changes since {cs.cdc_from_timestamp}]"
-        return f"Read {cs.resource_path} ({cs.file_format}){suffix}"
+        source = cs.resource_path if cs.resource_path.strip() else "(no path set)"
+        return f"Read {source} ({cs.file_format}){suffix}"
 
 
 class NodeCloudStorageWriter(NodeSingleInput):
@@ -1228,7 +1229,8 @@ class NodeCloudStorageWriter(NodeSingleInput):
         """Describes the cloud storage write target."""
         cs = self.cloud_storage_settings
         mode = "" if cs.write_mode == "overwrite" else f", {cs.write_mode}"
-        return f"Write to {cs.resource_path} ({cs.file_format}{mode})"
+        target = f"to {cs.resource_path}" if cs.resource_path.strip() else "(no path set)"
+        return f"Write {target} ({cs.file_format}{mode})"
 
 
 class ExternalSource(BaseModel):

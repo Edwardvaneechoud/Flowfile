@@ -451,8 +451,8 @@ class FlowDataEngine:
         write_settings = settings.write_settings
         logger.info(f"Writing to {connection.storage_type} storage: {write_settings.resource_path}")
 
+        # Executes in this process, so the plan is never serialized: the plain options are safe here.
         storage_options = CloudStorageReader.get_storage_options(connection)
-        credential_provider = CloudStorageReader.get_credential_provider(connection)
         use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection)
 
         write_to_cloud(
@@ -464,7 +464,6 @@ class FlowDataEngine:
             compression=write_settings.parquet_compression,
             separator=write_settings.csv_delimiter,
             partition_by=write_settings.partition_by,
-            credential_provider=credential_provider,
             use_pyarrow=use_pyarrow,
             logger=logger,
         )
@@ -481,16 +480,23 @@ class FlowDataEngine:
         )
 
     @classmethod
-    def from_cloud_storage_obj(cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal) -> FlowDataEngine:
+    def from_cloud_storage_obj(
+        cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal, user_id: int | None = None
+    ) -> FlowDataEngine:
         """Creates a FlowDataEngine from an object in cloud storage.
 
         This method supports reading from various cloud storage providers like AWS S3,
         Azure Data Lake Storage, and Google Cloud Storage, with support for
         various authentication methods.
 
+        The scan's credentials ride in an ``EncryptedCredentialProvider`` rather than in its
+        ``storage_options``, because the plan is serialized to the worker (see
+        ``CloudStorageReader.get_secure_scan_kwargs``).
+
         Args:
             settings: A `CloudStorageReadSettingsInternal` object containing connection
                 details, file format, and read options.
+            user_id: The user the credentials are re-encrypted for inside the plan.
 
         Returns:
             A new `FlowDataEngine` instance containing the data from cloud storage.
@@ -506,7 +512,7 @@ class FlowDataEngine:
 
         logger.info(f"Reading from {connection.storage_type} storage: {read_settings.resource_path}")
         storage_options = CloudStorageReader.get_storage_options(connection)
-        credential_provider = CloudStorageReader.get_credential_provider(connection)
+        credential_provider = CloudStorageReader.get_credential_provider(storage_options, user_id)
         use_pyarrow = CloudStorageReader.use_pyarrow_for_gcs(connection)
         if read_settings.file_format == "parquet":
             return cls._read_parquet_from_cloud(
@@ -645,11 +651,7 @@ class FlowDataEngine:
             if is_directory:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="parquet")
             scan_kwargs = {"source": resource_path}
-            if storage_options:
-                scan_kwargs["storage_options"] = storage_options
-
-            if credential_provider:
-                scan_kwargs["credential_provider"] = credential_provider
+            scan_kwargs.update(CloudStorageReader.get_scan_kwargs(storage_options, credential_provider))
             if storage_options and is_directory:
                 schema = cls._get_schema_from_first_file_in_dir(
                     resource_path, storage_options, "parquet", use_pyarrow=use_pyarrow
@@ -693,10 +695,7 @@ class FlowDataEngine:
                 scan_kwargs = {"source": normalize_delta_path(resource_path)}
                 if read_settings.delta_version:
                     scan_kwargs["version"] = read_settings.delta_version
-                if storage_options:
-                    scan_kwargs["storage_options"] = storage_options
-                if credential_provider:
-                    scan_kwargs["credential_provider"] = credential_provider
+                scan_kwargs.update(CloudStorageReader.get_scan_kwargs(storage_options, credential_provider))
                 lf = pl.scan_delta(**scan_kwargs)
 
             return cls(
@@ -718,7 +717,12 @@ class FlowDataEngine:
         read_settings: cloud_storage_schemas.CloudStorageReadSettings,
         use_pyarrow: bool = False,
     ) -> FlowDataEngine:
-        """Reads CSV file(s) from cloud storage."""
+        """Reads CSV file(s) from cloud storage.
+
+        Unset CSV options fall back to the drawer's defaults (header, ``,``, ``utf8``); Polars
+        rejects ``None`` for each of them.
+        """
+        read_settings = read_settings.with_csv_defaults()
         try:
             if use_pyarrow and read_settings.scan_mode == "directory":
                 return cls._read_directory_via_gcsfs(resource_path, storage_options, "csv", read_settings)
@@ -729,10 +733,7 @@ class FlowDataEngine:
                 "separator": read_settings.csv_delimiter,
                 "encoding": read_settings.csv_encoding,
             }
-            if storage_options:
-                scan_kwargs["storage_options"] = storage_options
-            if credential_provider:
-                scan_kwargs["credential_provider"] = credential_provider
+            scan_kwargs.update(CloudStorageReader.get_scan_kwargs(storage_options, credential_provider))
 
             if read_settings.scan_mode == "directory":
                 resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="csv")
@@ -777,11 +778,7 @@ class FlowDataEngine:
             if is_directory:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path, "json")
             scan_kwargs = {"source": resource_path}
-
-            if storage_options:
-                scan_kwargs["storage_options"] = storage_options
-            if credential_provider:
-                scan_kwargs["credential_provider"] = credential_provider
+            scan_kwargs.update(CloudStorageReader.get_scan_kwargs(storage_options, credential_provider))
 
             if use_pyarrow:
                 # For GCS via gcsfs: use gcsfs.open for single-file JSON
