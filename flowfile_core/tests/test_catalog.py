@@ -806,6 +806,75 @@ class TestStats:
         assert resp.json()["total_namespaces"] == 1
 
 
+# Overview tests
+
+
+class TestOverview:
+    """``GET /catalog/overview`` mirrors the per-resource endpoints the catalog screen used to fan out to."""
+
+    def _seed(self) -> dict:
+        cat = client.post("/catalog/namespaces", json={"name": "OvCat"}).json()
+        schema = client.post("/catalog/namespaces", json={"name": "OvSchema", "parent_id": cat["id"]}).json()
+        flow = client.post(
+            "/catalog/flows",
+            json={"name": "ov_flow", "flow_path": "/tmp/ov_flow.yaml", "namespace_id": schema["id"]},
+        ).json()
+        client.post(f"/catalog/flows/{flow['id']}/favorite")
+        schedule = client.post(
+            "/catalog/schedules",
+            json={"registration_id": flow["id"], "schedule_type": "interval", "interval_seconds": 3600},
+        ).json()
+        with get_db_context() as db:
+            reg_uuid = db.query(FlowRegistration.flow_uuid).filter_by(id=flow["id"]).scalar()
+            for i in range(3):
+                db.add(
+                    FlowRun(
+                        registration_id=flow["id"],
+                        flow_uuid=reg_uuid,
+                        flow_name="ov_flow",
+                        flow_path="/tmp/ov_flow.yaml",
+                        user_id=1,
+                        started_at=datetime.now(timezone.utc),
+                        ended_at=None if i == 0 else datetime.now(timezone.utc),
+                        success=None if i == 0 else True,
+                        number_of_nodes=1,
+                        run_type="manual",
+                    )
+                )
+            db.commit()
+        return {"flow": flow, "schedule": schedule}
+
+    def test_overview_matches_individual_endpoints(self):
+        seeded = self._seed()
+        resp = client.get("/catalog/overview")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["stats"] == client.get("/catalog/stats").json()
+        assert data["tree"] == client.get("/catalog/namespaces/tree").json()
+        assert data["flows"] == client.get("/catalog/flows").json()
+        assert data["tables"] == client.get("/catalog/tables").json()
+        assert data["favorites"] == client.get("/catalog/favorites").json()
+        assert data["schedules"] == client.get("/catalog/schedules").json()
+        assert data["active_runs"] == client.get("/catalog/active-runs").json()
+        assert data["runs"] == client.get("/catalog/runs", params={"limit": 25, "offset": 0}).json()
+        assert data["scheduler"] == client.get("/catalog/scheduler/status").json()
+        assert data["default_namespace_id"] == client.get("/catalog/default-namespace-id").json()
+
+        assert [f["id"] for f in data["favorites"]] == [seeded["flow"]["id"]]
+        assert [s["id"] for s in data["schedules"]] == [seeded["schedule"]["id"]]
+        assert len(data["active_runs"]) == 1
+        assert data["runs"]["total"] == 3
+
+    def test_overview_runs_limit(self):
+        self._seed()
+        data = client.get("/catalog/overview", params={"runs_limit": 2}).json()
+        assert len(data["runs"]["items"]) == 2
+        assert data["runs"]["total"] == 3
+
+        assert client.get("/catalog/overview", params={"runs_limit": 0}).status_code == 422
+
+
 # Default namespace tests
 
 

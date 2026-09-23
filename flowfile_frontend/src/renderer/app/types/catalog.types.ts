@@ -594,6 +594,21 @@ export interface SchedulerStatus {
   is_embedded?: boolean;
 }
 
+// Catalog Overview (everything the catalog screen loads on mount, one round-trip)
+
+export interface CatalogOverview {
+  stats: CatalogStats;
+  tree: NamespaceTree[];
+  flows: FlowRegistration[];
+  tables: CatalogTable[];
+  favorites: FlowRegistration[];
+  schedules: FlowSchedule[];
+  active_runs: ActiveFlowRun[];
+  runs: PaginatedFlowRuns;
+  scheduler: SchedulerStatus;
+  default_namespace_id: number | null;
+}
+
 // View state helpers
 
 export type CatalogTab =

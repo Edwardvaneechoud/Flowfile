@@ -25,7 +25,10 @@ only these shapes are provably the same expression on both sides:
 
 Every other pairing raises on both sides (polars refuses to compare a string
 column with a numeric literal, or a temporal column with a string), so no flow
-that runs in core diverges. Two shapes are left out for that reason: a
+that runs in core diverges. One lenience: a text literal against a Date or
+Datetime column raises as an *advanced* filter but, once translated, runs on
+both sides, because a basic filter parses an ISO value by the column's dtype
+(``filter_expressions`` in core, ``convert_filter_value`` in the browser). Two shapes are left out for that reason: a
 **fractional** number, which ``int()`` rejects on an integer column where core
 happily widens to float, and a boolean or null literal, which the basic filter
 has no equivalent for.

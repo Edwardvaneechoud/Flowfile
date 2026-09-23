@@ -1023,6 +1023,21 @@ class SchedulerStatusOut(BaseModel):
     is_embedded: bool | None = None
 
 
+class CatalogOverview(BaseModel):
+    """Everything the catalog screen loads on mount, served from one DB session."""
+
+    stats: CatalogStats
+    tree: list[NamespaceTree] = Field(default_factory=list)
+    flows: list[FlowRegistrationOut] = Field(default_factory=list)
+    tables: list[CatalogTableOut] = Field(default_factory=list)
+    favorites: list[FlowRegistrationOut] = Field(default_factory=list)
+    schedules: list[FlowScheduleOut] = Field(default_factory=list)
+    active_runs: list[ActiveFlowRun] = Field(default_factory=list)
+    runs: PaginatedFlowRuns
+    scheduler: SchedulerStatusOut
+    default_namespace_id: int | None = None
+
+
 NotebookCellType = Literal["python", "sql", "markdown"]
 
 
