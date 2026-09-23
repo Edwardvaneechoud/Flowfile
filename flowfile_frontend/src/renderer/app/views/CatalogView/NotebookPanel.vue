@@ -25,6 +25,7 @@
                   aria-label="Notebook name"
                   @keydown.enter.prevent="commitRename"
                   @keydown.esc.prevent="cancelRename"
+                  @keydown.stop
                   @blur="commitRename"
                   @click.stop
                   @mousedown.stop
