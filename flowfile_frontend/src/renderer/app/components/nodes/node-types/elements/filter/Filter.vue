@@ -59,7 +59,15 @@
               <!-- Value Input (shown for most operators) -->
               <div v-if="showValueInput" class="filter-field">
                 <label class="filter-label">Value</label>
+                <el-date-picker
+                  v-if="useDatePicker"
+                  v-model="nodeFilter.filter_input.basic_filter.value"
+                  :type="datePickerType"
+                  :value-format="datePickerValueFormat"
+                  :placeholder="valuePlaceholder"
+                />
                 <input
+                  v-else
                   v-model="nodeFilter.filter_input.basic_filter.value"
                   type="text"
                   class="input-field"
@@ -70,7 +78,15 @@
               <!-- Second Value Input (for BETWEEN) -->
               <div v-if="showValue2Input" class="filter-field">
                 <label class="filter-label">And</label>
+                <el-date-picker
+                  v-if="useDatePicker"
+                  v-model="nodeFilter.filter_input.basic_filter.value2"
+                  :type="datePickerType"
+                  :value-format="datePickerValueFormat"
+                  placeholder="End value"
+                />
                 <input
+                  v-else
                   v-model="nodeFilter.filter_input.basic_filter.value2"
                   type="text"
                   class="input-field"
@@ -222,15 +238,51 @@ const showValue2Input = computed((): boolean => {
   return OPERATORS_WITH_VALUE2.includes(currentOperator.value);
 });
 
+// "date" | "datetime" for a temporal column (parametrized "Datetime(...)" included), else null.
+const selectedColumnTemporalKind = computed((): "date" | "datetime" | null => {
+  const field = nodeFilter.value?.filter_input?.basic_filter?.field;
+  const column = nodeData.value?.main_input?.table_schema?.find((c) => c.name === field);
+  const base = column?.data_type?.split("(", 1)[0];
+  if (base === "Date") return "date";
+  if (base === "Datetime") return "datetime";
+  return null;
+});
+
+const useDatePicker = computed((): boolean => {
+  if (!selectedColumnTemporalKind.value) return false;
+  return !["in", "not_in"].includes(currentOperator.value);
+});
+
+// Keep a value picked for a Date column readable when the user switches to a
+// Datetime column (and vice versa); the picker shows nothing for a format mismatch.
+watch(selectedColumnTemporalKind, (kind) => {
+  const bf = nodeFilter.value?.filter_input?.basic_filter;
+  if (!bf || !kind) return;
+  for (const key of ["value", "value2"] as const) {
+    const v = bf[key];
+    if (!v) continue;
+    if (kind === "datetime" && /^\d{4}-\d{2}-\d{2}$/.test(v)) bf[key] = `${v} 00:00:00`;
+    if (kind === "date" && /^\d{4}-\d{2}-\d{2}[ T]/.test(v)) bf[key] = v.slice(0, 10);
+  }
+});
+
+const datePickerType = computed(() =>
+  selectedColumnTemporalKind.value === "datetime" ? "datetime" : "date",
+);
+
+const datePickerValueFormat = computed(() =>
+  selectedColumnTemporalKind.value === "datetime" ? "YYYY-MM-DD HH:mm:ss" : "YYYY-MM-DD",
+);
+
 const valuePlaceholder = computed((): string => {
   switch (currentOperator.value) {
     case "in":
     case "not_in":
-      return "value1, value2, value3";
+      return selectedColumnTemporalKind.value ? "2024-01-01, 2024-02-01" : "value1, value2, value3";
     case "between":
-      return "Start value";
+      return useDatePicker.value ? "Start date" : "Start value";
     default:
-      return "Enter value";
+      return useDatePicker.value ? "Select date" : "Enter value";
   }
 });
 
@@ -238,7 +290,9 @@ const operatorHelpText = computed((): string => {
   switch (currentOperator.value) {
     case "in":
     case "not_in":
-      return "Enter comma-separated values";
+      return selectedColumnTemporalKind.value
+        ? "Enter comma-separated dates (YYYY-MM-DD)"
+        : "Enter comma-separated values";
     case "between":
       return "Enter the range boundaries (inclusive)";
     case "is_null":
@@ -359,6 +413,25 @@ defineExpose({ loadNodeData, pushNodeData, saveSettings });
   &::placeholder {
     color: var(--color-text-muted);
   }
+}
+
+// Element Plus pins the editor to 220px and 32px; match the text input instead.
+.filter-field :deep(.el-date-editor.el-input) {
+  --el-input-height: 38px;
+  width: 100%;
+  height: 38px;
+}
+
+.filter-field :deep(.el-date-editor .el-input__wrapper) {
+  border: 1px solid var(--color-border-primary);
+  border-radius: 4px;
+  box-shadow: none;
+  padding: 0 12px;
+}
+
+.filter-field :deep(.el-date-editor .el-input__wrapper.is-focus) {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.1);
 }
 
 .help-text {

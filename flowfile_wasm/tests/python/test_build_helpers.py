@@ -418,3 +418,21 @@ def test_polars_code_schema_build_does_not_capture_dead_stdout(capsys):
     assert engine.execute_read_csv(1, "a\n1\n", {})["success"] is True
     assert engine.execute_polars_code(2, [1], settings)["success"] is True
     assert "LOG_MARKER" in capsys.readouterr().out
+
+
+def test_filter_parses_iso_values_for_date_and_datetime_columns():
+    """Core wraps the value in to_date/to_datetime for temporal columns; the browser must agree."""
+    frame = lf(
+        d=[datetime.date(2024, 1, 1), datetime.date(2024, 6, 1), datetime.date(2024, 9, 1)],
+        ts=[datetime.datetime(2024, 1, 1, 10), datetime.datetime(2024, 6, 1, 12), datetime.datetime(2024, 9, 1)],
+    )
+
+    def run(field, operator, value, value2=None):
+        settings = {"filter_input": {"basic_filter": {"field": field, "operator": operator, "value": value, "value2": value2}}}
+        return engine.build_filter(frame, settings).collect()["d"].to_list()
+
+    assert run("d", "greater_than", "2024-03-01") == [datetime.date(2024, 6, 1), datetime.date(2024, 9, 1)]
+    assert run("d", "between", "2024-01-01", "2024-06-01") == [datetime.date(2024, 1, 1), datetime.date(2024, 6, 1)]
+    assert run("d", "in", "2024-01-01, 2024-09-01") == [datetime.date(2024, 1, 1), datetime.date(2024, 9, 1)]
+    assert run("ts", "greater_than_or_equals", "2024-06-01 12:00:00") == [datetime.date(2024, 6, 1), datetime.date(2024, 9, 1)]
+    assert run("ts", "less_than", "2024-06-01T12:00:00") == [datetime.date(2024, 1, 1)]

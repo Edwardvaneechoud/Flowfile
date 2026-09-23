@@ -40,7 +40,7 @@ Keeps only the rows that match a condition, in one of three modes.
 | **Single output / Split into pass/fail outputs** | Turns the one output into two handles — `P` for matching rows, `F` for the rest. Single by default. |
 | **Column** | The column the condition is evaluated against. Basic mode. |
 | **Operator** | How the column is compared: Equals, Does not equal, Greater than, Less than, Contains, In, Between and their negations. Defaults to Equals. |
-| **Value** | What the column is compared against — a comma-separated list for In, and the start of the range for Between. |
+| **Value** | What the column is compared against — a comma-separated list for In, and the start of the range for Between. A date or datetime column gets a date picker instead of a text box (except for In / Not in, which take comma-separated `YYYY-MM-DD` values). |
 | **And** | The inclusive end of the range. Shown only when the operator is Between. |
 | **Advanced filter** | The expression to evaluate per row. Advanced mode. |
 

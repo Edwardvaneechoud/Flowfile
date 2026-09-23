@@ -59,7 +59,7 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     get_encrypted_credential,
     get_ga_connection,
 )
-from flowfile_core.flowfile.filter_expressions import build_filter_expression
+from flowfile_core.flowfile.filter_expressions import build_filter_expression, resolve_filter_field_type
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
@@ -3513,7 +3513,7 @@ class FlowGraph:
                     return fl
 
                 try:
-                    field_data_type = fl.get_schema_column(basic_filter.field).generic_datatype()
+                    field_data_type = resolve_filter_field_type(fl.get_schema_column(basic_filter.field))
                 except Exception:
                     field_data_type = None
 

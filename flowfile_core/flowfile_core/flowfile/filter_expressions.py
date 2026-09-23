@@ -16,6 +16,17 @@ if TYPE_CHECKING:
 
 from flowfile_core.schemas.transform_schema import FilterOperator
 
+_COMPARISON_OPERATORS = frozenset(
+    {
+        FilterOperator.EQUALS,
+        FilterOperator.NOT_EQUALS,
+        FilterOperator.GREATER_THAN,
+        FilterOperator.GREATER_THAN_OR_EQUALS,
+        FilterOperator.LESS_THAN,
+        FilterOperator.LESS_THAN_OR_EQUALS,
+    }
+)
+
 
 def _is_numeric_string(value: str) -> bool:
     """Check if a string value represents a numeric value.
@@ -50,6 +61,42 @@ def _should_quote_value(value: str, field_data_type: str | None) -> bool:
     if field_data_type == "numeric":
         return False
     return not _is_numeric_string(value)
+
+
+def resolve_filter_field_type(column) -> str | None:
+    """The ``field_data_type`` a column needs: "str", "numeric", "date", "datetime" or None.
+
+    ``generic_datatype`` lumps Date, Datetime and Time together (and misses a
+    parametrized ``Datetime(time_unit=...)``), but the literal a comparison needs
+    differs per dtype, so the base dtype token decides for temporal columns.
+    """
+    base = str(column.data_type).split("(", 1)[0]
+    if base == "Date":
+        return "date"
+    if base == "Datetime":
+        return "datetime"
+    return column.generic_datatype()
+
+
+def _normalize_datetime_value(value: str) -> str:
+    """Bring a typed or ISO datetime into the ``%Y-%m-%d %H:%M:%S`` shape ``to_datetime`` parses."""
+    value = value.strip().replace("T", " ", 1)
+    if len(value) == 10:
+        return f"{value} 00:00:00"
+    if len(value) == 16:
+        return f"{value}:00"
+    return value
+
+
+def _render_value(value: str, field_data_type: str | None) -> str:
+    """The literal to embed for ``value``: a temporal parse call, a quoted string or a bare number."""
+    if field_data_type == "date":
+        return f'to_date("{value.strip()}")'
+    if field_data_type == "datetime":
+        return f'to_datetime("{_normalize_datetime_value(value)}")'
+    if _should_quote_value(value, field_data_type):
+        return f'"{value}"'
+    return value
 
 
 def _format_field(field_name: str) -> str:
@@ -154,16 +201,9 @@ def _build_in_expression(field: str, value: str, field_data_type: str | None) ->
     """
     values = [v.strip() for v in value.split(",")]
     if len(values) == 1:
-        should_quote = _should_quote_value(values[0], field_data_type)
-        return _build_equals_expression(field, values[0], should_quote)
+        return _build_equals_expression(field, _render_value(values[0], field_data_type), False)
 
-    conditions = []
-    for v in values:
-        should_quote = _should_quote_value(v, field_data_type)
-        if should_quote:
-            conditions.append(f'({field}="{v}")')
-        else:
-            conditions.append(f"({field}={v})")
+    conditions = [f"({field}={_render_value(v, field_data_type)})" for v in values]
     return " | ".join(conditions)
 
 
@@ -180,16 +220,9 @@ def _build_not_in_expression(field: str, value: str, field_data_type: str | None
     """
     values = [v.strip() for v in value.split(",")]
     if len(values) == 1:
-        should_quote = _should_quote_value(values[0], field_data_type)
-        return _build_not_equals_expression(field, values[0], should_quote)
+        return _build_not_equals_expression(field, _render_value(values[0], field_data_type), False)
 
-    conditions = []
-    for v in values:
-        should_quote = _should_quote_value(v, field_data_type)
-        if should_quote:
-            conditions.append(f'({field}!="{v}")')
-        else:
-            conditions.append(f"({field}!={v})")
+    conditions = [f"({field}!={_render_value(v, field_data_type)})" for v in values]
     return " & ".join(conditions)
 
 
@@ -211,19 +244,8 @@ def _build_between_expression(field: str, value: str, value2: str, field_data_ty
     if value2 is None:
         raise ValueError("BETWEEN operator requires value2")
 
-    should_quote_v1 = _should_quote_value(value, field_data_type)
-    should_quote_v2 = _should_quote_value(value2, field_data_type)
-
-    if should_quote_v1:
-        lower = f'({field}>="{value}")'
-    else:
-        lower = f"({field}>={value})"
-
-    if should_quote_v2:
-        upper = f'({field}<="{value2}")'
-    else:
-        upper = f"({field}<={value2})"
-
+    lower = f"({field}>={_render_value(value, field_data_type)})"
+    upper = f"({field}<={_render_value(value2, field_data_type)})"
     return f"{lower} & {upper}"
 
 
@@ -234,8 +256,9 @@ def build_filter_expression(basic_filter: BasicFilter, field_data_type: str | No
 
     Args:
         basic_filter: The basic filter configuration.
-        field_data_type: The data type of the field ("str", "numeric", "date", or None).
-            If None, the type is inferred from the value.
+        field_data_type: The data type of the field ("str", "numeric", "date", "datetime", or None).
+            If None, the type is inferred from the value. Date and datetime columns wrap the
+            value in ``to_date``/``to_datetime`` so the comparison is typed.
 
     Returns:
         A filter expression string compatible with polars_expr_transformer.
@@ -263,25 +286,26 @@ def build_filter_expression(basic_filter: BasicFilter, field_data_type: str | No
     except (ValueError, AttributeError):
         operator = FilterOperator.from_symbol(str(basic_filter.operator))
 
-    should_quote = _should_quote_value(value, field_data_type)
+    if operator in _COMPARISON_OPERATORS:
+        value = _render_value(value, field_data_type)
 
     if operator == FilterOperator.EQUALS:
-        return _build_equals_expression(field, value, should_quote)
+        return _build_equals_expression(field, value, False)
 
     elif operator == FilterOperator.NOT_EQUALS:
-        return _build_not_equals_expression(field, value, should_quote)
+        return _build_not_equals_expression(field, value, False)
 
     elif operator == FilterOperator.GREATER_THAN:
-        return _build_greater_than_expression(field, value, should_quote)
+        return _build_greater_than_expression(field, value, False)
 
     elif operator == FilterOperator.GREATER_THAN_OR_EQUALS:
-        return _build_greater_than_or_equals_expression(field, value, should_quote)
+        return _build_greater_than_or_equals_expression(field, value, False)
 
     elif operator == FilterOperator.LESS_THAN:
-        return _build_less_than_expression(field, value, should_quote)
+        return _build_less_than_expression(field, value, False)
 
     elif operator == FilterOperator.LESS_THAN_OR_EQUALS:
-        return _build_less_than_or_equals_expression(field, value, should_quote)
+        return _build_less_than_or_equals_expression(field, value, False)
 
     elif operator == FilterOperator.CONTAINS:
         return _build_contains_expression(field, value)
@@ -312,6 +336,4 @@ def build_filter_expression(basic_filter: BasicFilter, field_data_type: str | No
 
     else:
         # Fallback for unknown operators - use legacy format
-        if should_quote:
-            return f'{field}{operator.to_symbol()}"{value}"'
-        return f"{field}{operator.to_symbol()}{value}"
+        return f"{field}{operator.to_symbol()}{_render_value(value, field_data_type)}"
