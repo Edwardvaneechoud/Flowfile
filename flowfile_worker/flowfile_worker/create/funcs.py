@@ -16,7 +16,7 @@ from flowfile_worker.create.models import (
 )
 from flowfile_worker.create.utils import create_fake_data
 from shared.excel_reader import read_excel_table
-from shared.path_utils import is_url
+from shared.path_utils import is_url, transcode_text_to_utf8
 
 INFER_SCHEMA_RUNGS = (10_000, 100_000)
 
@@ -157,13 +157,14 @@ def create_from_path_csv(received_table: ReceivedTable) -> pl.DataFrame:
             )
             return df
     else:
+        # Transcoded in memory: polars decodes raw gzip bytes as text when the encoding is not utf8.
         df = pl.read_csv(
-            f,
+            transcode_text_to_utf8(f, input_table_settings.encoding),
             low_memory=low_mem,
             separator=input_table_settings.delimiter,
             has_header=input_table_settings.has_headers,
             skip_rows=input_table_settings.starting_from_line,
-            encoding=input_table_settings.encoding,
+            encoding="utf8",
             ignore_errors=True,
             **fallback_infer,
         )

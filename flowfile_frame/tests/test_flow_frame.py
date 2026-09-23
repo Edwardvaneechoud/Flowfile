@@ -527,6 +527,17 @@ def test_read_gzipped_text_formats(tmpdir, ext, writer, reader):
     assert result["name"].to_list() == ["Alice", "Bob", "Charlie"]
 
 
+def test_read_gzipped_csv_non_utf8(tmpdir):
+    """A gzipped CSV in a non-utf8 encoding is gunzipped and transcoded before polars sees it."""
+    import gzip
+    temp_path = os.path.join(tmpdir, "test_data.csv.gz")
+    with gzip.open(temp_path, "wb") as fh:
+        fh.write("id,name\n1,café\n2,naïve\n".encode("latin1"))
+
+    result = read_csv(temp_path, encoding="latin1").collect()
+    assert result["name"].to_list() == ["café", "naïve"]
+
+
 @pytest.mark.parametrize("ext,writer,reader,compression", [
     ("parquet", "write_parquet", read_parquet, "snappy"),
     ("arrow", "write_ipc", read_ipc, "zstd"),

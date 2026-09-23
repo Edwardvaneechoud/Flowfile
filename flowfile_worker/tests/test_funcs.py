@@ -187,6 +187,27 @@ def test_create_from_path_ipc_stream(tmp_path):
     assert df["value"].to_list() == [1, 2, 3]
 
 
+def test_create_from_path_csv_gzipped_non_utf8(tmp_path):
+    """Polars gunzips only on its utf8 path; a latin1 .csv.gz used to decode the compressed bytes
+    into a silent garbage frame instead of the rows."""
+    import gzip
+
+    from flowfile_worker.create import table_creator_factory_method
+    from flowfile_worker.create.models import InputCsvTable, ReceivedTable
+
+    path = tmp_path / "data.csv.gz"
+    with gzip.open(path, "wb") as fh:
+        fh.write("id,name\n1,café\n2,naïve\n".encode("latin1"))
+    received = ReceivedTable(
+        name="data.csv.gz", path=str(path), file_type="csv", table_settings=InputCsvTable(encoding="latin1")
+    )
+    received.set_absolute_filepath()
+
+    df = table_creator_factory_method("csv")(received)
+    assert df.columns == ["id", "name"]
+    assert df["name"].to_list() == ["café", "naïve"]
+
+
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_write_to_cloud_storage(cloud_storage_connection_settings):
     write_settings = WriteSettings(
