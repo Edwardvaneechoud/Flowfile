@@ -1,36 +1,21 @@
 /**
  * Pure helpers behind the Group By drawer: which aggregation a column gets by
  * default, how rows are added without duplicates, and the derived feedback
- * (usage per column, clashing output names, drop-zone hit-testing).
+ * (usage per column, clashing output names).
  *
  * No Vue or DOM imports so it runs under vitest's `node` environment.
  */
 import type { AggColl, AggOption, GroupByOption } from "../../../../../types/node.types";
+import { AGGREGATE_OPTIONS, aggLabel } from "../../../baseNode/aggregations";
+
+export { AGGREGATE_OPTIONS, aggLabel };
 
 export type AggKind = AggOption | GroupByOption;
-
-export const AGGREGATE_OPTIONS: readonly { value: AggOption; label: string }[] = [
-  { value: "count", label: "Count" },
-  { value: "sum", label: "Sum" },
-  { value: "mean", label: "Mean" },
-  { value: "median", label: "Median" },
-  { value: "min", label: "Min" },
-  { value: "max", label: "Max" },
-  { value: "n_unique", label: "N unique" },
-  { value: "first", label: "First" },
-  { value: "last", label: "Last" },
-  { value: "concat", label: "Concat" },
-];
 
 export const AGG_OPTIONS: readonly AggKind[] = [
   "groupby",
   ...AGGREGATE_OPTIONS.map((option) => option.value),
 ];
-
-export const aggLabel = (agg: string): string =>
-  agg === "groupby"
-    ? "Group by"
-    : (AGGREGATE_OPTIONS.find((option) => option.value === agg)?.label ?? agg);
 
 const NUMERIC_TYPE = /^(u?int|float|decimal)/i;
 
@@ -107,40 +92,4 @@ export const usageByColumn = (rows: readonly AggColl[]): Map<string, ColumnUsage
     usage.set(row.old_name, uses);
   });
   return usage;
-};
-
-export type DropZone = "groupby" | "aggregate";
-
-/** Left half of the settings pane adds keys, right half adds aggregations. */
-export const dropZoneAt = (rect: { left: number; width: number }, clientX: number): DropZone =>
-  clientX < rect.left + rect.width / 2 ? "groupby" : "aggregate";
-
-export const pluralize = (count: number, singular: string, plural = `${singular}s`): string =>
-  `${count} ${count === 1 ? singular : plural}`;
-
-/** The rows left after dropping the given indices, in their original order. */
-export const withoutRows = <T>(rows: readonly T[], indices: readonly number[]): T[] => {
-  const drop = new Set(indices);
-  return rows.filter((_, index) => !drop.has(index));
-};
-
-/** Selected indices that survive a removal, shifted down past the rows that went. */
-export const shiftAfterRemoval = (
-  selected: readonly number[],
-  removed: readonly number[],
-): number[] => {
-  const drop = new Set(removed);
-  return selected
-    .filter((index) => !drop.has(index))
-    .map((index) => index - removed.filter((gone) => gone < index).length);
-};
-
-/** The settings strip on its own, and the column list's toolbar-plus-one-row floor. */
-export const SETTINGS_STRIP_PX = 30;
-export const COLUMNS_MIN_PX = 84;
-
-/** Keeps a dragged settings height between the bare strip and the column list's floor. */
-export const clampSettingsHeight = (height: number, available: number): number => {
-  const max = Math.max(SETTINGS_STRIP_PX, available - COLUMNS_MIN_PX);
-  return Math.round(Math.min(Math.max(height, SETTINGS_STRIP_PX), max));
 };

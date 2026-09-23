@@ -1,20 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  COLUMNS_MIN_PX,
-  SETTINGS_STRIP_PX,
   addAggRows,
-  clampSettingsHeight,
   defaultAggFor,
-  dropZoneAt,
   duplicateOutputNames,
   isNumericType,
   outputNameFor,
-  pluralize,
   renamedForAgg,
-  shiftAfterRemoval,
   usageByColumn,
-  withoutRows,
 } from "./groupByLogic";
 
 describe("defaultAggFor", () => {
@@ -100,61 +93,5 @@ describe("usageByColumn", () => {
     ]);
     expect(usage.get("b")).toEqual([{ agg: "sum", index: 1 }]);
     expect(usage.has("c")).toBe(false);
-  });
-});
-
-describe("dropZoneAt", () => {
-  it("splits the pane down the middle", () => {
-    const rect = { left: 100, width: 200 };
-    expect(dropZoneAt(rect, 100)).toBe("groupby");
-    expect(dropZoneAt(rect, 199)).toBe("groupby");
-    expect(dropZoneAt(rect, 200)).toBe("aggregate");
-    expect(dropZoneAt(rect, 300)).toBe("aggregate");
-  });
-});
-
-describe("pluralize", () => {
-  it("handles regular and irregular plurals", () => {
-    expect(pluralize(1, "key")).toBe("1 key");
-    expect(pluralize(2, "key")).toBe("2 keys");
-    expect(pluralize(0, "aggregation")).toBe("0 aggregations");
-  });
-});
-
-describe("clampSettingsHeight", () => {
-  it("never goes below the bare strip", () => {
-    expect(clampSettingsHeight(-50, 400)).toBe(SETTINGS_STRIP_PX);
-    expect(clampSettingsHeight(10, 400)).toBe(SETTINGS_STRIP_PX);
-  });
-
-  it("leaves the column list its floor", () => {
-    expect(clampSettingsHeight(1000, 400)).toBe(400 - COLUMNS_MIN_PX);
-    expect(clampSettingsHeight(200, 400)).toBe(200);
-  });
-
-  it("keeps the strip even when the card is shorter than both floors", () => {
-    expect(clampSettingsHeight(80, 100)).toBe(SETTINGS_STRIP_PX);
-  });
-
-  it("rounds to whole pixels so the flex basis never carries subpixel drift", () => {
-    expect(clampSettingsHeight(150.6, 400)).toBe(151);
-  });
-});
-
-describe("withoutRows", () => {
-  it("drops the given indices and keeps the rest in order", () => {
-    expect(withoutRows(["a", "b", "c", "d"], [1, 3])).toEqual(["a", "c"]);
-    expect(withoutRows(["a", "b"], [])).toEqual(["a", "b"]);
-  });
-});
-
-describe("shiftAfterRemoval", () => {
-  it("drops removed indices and shifts the survivors down", () => {
-    expect(shiftAfterRemoval([0, 2, 3], [1])).toEqual([0, 1, 2]);
-    expect(shiftAfterRemoval([4], [0, 2])).toEqual([2]);
-  });
-
-  it("is empty when the selection itself was removed", () => {
-    expect(shiftAfterRemoval([1, 2], [1, 2])).toEqual([]);
   });
 });

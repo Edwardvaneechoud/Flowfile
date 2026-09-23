@@ -69,10 +69,10 @@ async function openFlow(page: Page, token: string, flowName: string) {
 async function openGroupBySettings(page: Page, nodeId: string) {
   // dispatchEvent rather than dblclick: nodes overlap on the fixture canvas.
   await page.locator(`.vue-flow__node[data-id="${nodeId}"]`).dispatchEvent("dblclick");
-  await page.locator(".group-by-column-table tbody tr").first().waitFor({ timeout: 20000 });
+  await page.locator(".picker-column-table tbody tr").first().waitFor({ timeout: 20000 });
 }
 
-const columnRows = (page: Page) => page.locator(".group-by-column-table tbody tr:not(.is-empty)");
+const columnRows = (page: Page) => page.locator(".picker-column-table tbody tr:not(.is-empty)");
 const aggRows = (page: Page) => page.locator(".group-by-agg-table tbody tr");
 
 /** First input column no settings row uses yet, so adding it must change the row count. */
@@ -97,8 +97,8 @@ async function firstUnusedColumn(page: Page) {
 const dragColumnToZone = (page: Page, columnIndex: number, zone: "groupby" | "aggregate") =>
   page.evaluate(
     ({ columnIndex, zone }) => {
-      const source = document.querySelectorAll(".group-by-column-table tbody tr")[columnIndex];
-      const pane = document.querySelector(".group-by-settings") as HTMLElement;
+      const source = document.querySelectorAll(".picker-column-table tbody tr")[columnIndex];
+      const pane = document.querySelector(".picker-settings") as HTMLElement;
       const dataTransfer = new DataTransfer();
       const fire = (el: Element, type: string, clientX: number, clientY: number) =>
         el.dispatchEvent(
@@ -136,13 +136,13 @@ test.describe("Group By drawer", () => {
     await openGroupBySettings(page, groupByNodeId);
 
     const body = (await page.locator(".node-settings-body").boundingBox())!;
-    const header = (await page.locator(".group-by-settings-header").boundingBox())!;
+    const header = (await page.locator(".picker-settings-header").boundingBox())!;
     expect(header.y).toBeGreaterThanOrEqual(body.y);
     expect(header.y + header.height).toBeLessThanOrEqual(body.y + body.height);
 
     await expect(columnRows(page).first()).toBeVisible();
     await expect(aggRows(page).first()).toBeVisible();
-    await expect(page.locator(".group-by-settings-count")).toHaveText(
+    await expect(page.locator(".picker-settings-count")).toHaveText(
       /\d+ keys? · \d+ aggregations?/,
     );
   });
@@ -234,13 +234,13 @@ test.describe("Group By drawer", () => {
     await openFlow(page, authToken, "complex-flow");
     await openGroupBySettings(page, groupByNodeId);
 
-    const scroller = page.locator(".group-by-columns .group-by-scroll");
+    const scroller = page.locator(".picker-columns .picker-scroll");
     const scrollable = await scroller.evaluate((el) => el.scrollHeight > el.clientHeight + 1);
     test.skip(!scrollable, "the column list fits without scrolling at this size");
 
     await page.evaluate(() => {
-      const source = document.querySelector(".group-by-column-table tbody tr")!;
-      const scroller = document.querySelector(".group-by-columns .group-by-scroll")!;
+      const source = document.querySelector(".picker-column-table tbody tr")!;
+      const scroller = document.querySelector(".picker-columns .picker-scroll")!;
       const dataTransfer = new DataTransfer();
       const s = source.getBoundingClientRect();
       source.dispatchEvent(
@@ -268,7 +268,7 @@ test.describe("Group By drawer", () => {
 
     await page.evaluate(() => {
       document
-        .querySelector(".group-by-column-table tbody tr")!
+        .querySelector(".picker-column-table tbody tr")!
         .dispatchEvent(new DragEvent("dragend", { bubbles: true }));
     });
     await expect(page.locator(".drop-pill")).toHaveCount(0);
@@ -281,19 +281,19 @@ test.describe("Group By drawer", () => {
     await openFlow(page, authToken, "complex-flow");
     await openGroupBySettings(page, groupByNodeId);
 
-    const pane = page.locator(".group-by-settings");
-    const scroller = page.locator(".group-by-columns .group-by-scroll");
+    const pane = page.locator(".picker-settings");
+    const scroller = page.locator(".picker-columns .picker-scroll");
     const scrollable = await scroller.evaluate((el) => el.scrollHeight > el.clientHeight + 1);
     const paneBefore = (await pane.boundingBox())!;
     const scrollerBefore = (await scroller.boundingBox())!;
     // The pin is clamped so the column list keeps its 84px floor.
-    const available = await page.locator(".group-by-card").evaluate((el) => {
+    const available = await page.locator(".picker-card").evaluate((el) => {
       const style = getComputedStyle(el);
       return el.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
     });
     const expected = Math.min(paneBefore.height + 60, available - 84);
     expect(expected).toBeGreaterThan(paneBefore.height + 40);
-    const grip = (await page.locator(".group-by-sash-grip").boundingBox())!;
+    const grip = (await page.locator(".picker-sash-grip").boundingBox())!;
     const x = grip.x + grip.width / 2;
     const y = grip.y + grip.height / 2;
 
@@ -311,7 +311,7 @@ test.describe("Group By drawer", () => {
       expect((await scroller.boundingBox())!.height).toBeLessThan(scrollerBefore.height - 40);
     }
 
-    await page.locator(".group-by-settings-header").dblclick();
+    await page.locator(".picker-settings-header").dblclick();
     await expect(pane).not.toHaveClass(/is-sized/);
     const paneReset = (await pane.boundingBox())!;
     expect(Math.abs(paneReset.height - paneBefore.height)).toBeLessThan(2);
@@ -324,15 +324,15 @@ test.describe("Group By drawer", () => {
     await openFlow(page, authToken, "complex-flow");
     await openGroupBySettings(page, groupByNodeId);
 
-    const pane = page.locator(".group-by-settings");
-    const scroller = page.locator(".group-by-columns .group-by-scroll");
+    const pane = page.locator(".picker-settings");
+    const scroller = page.locator(".picker-columns .picker-scroll");
     const scrollable = await scroller.evaluate((el) => el.scrollHeight > el.clientHeight + 1);
     const scrollerBefore = (await scroller.boundingBox())!;
     const before = await aggRows(page).count();
 
     await page.getByRole("button", { name: "Hide the settings" }).click();
     await expect(page.locator(".group-by-agg-table")).toHaveCount(0);
-    await expect(page.locator(".group-by-settings-count")).toBeVisible();
+    await expect(page.locator(".picker-settings-count")).toBeVisible();
     expect((await pane.boundingBox())!.height).toBeLessThanOrEqual(40);
     if (scrollable) {
       expect((await scroller.boundingBox())!.height).toBeGreaterThan(scrollerBefore.height + 40);
@@ -367,12 +367,12 @@ test.describe("Group By drawer", () => {
       .nth(before + 1)
       .locator(".agg-field-cell")
       .click({ modifiers: ["Shift"] });
-    await expect(page.locator(".group-by-row-selection .column-list-selection-count")).toHaveText(
+    await expect(page.locator(".picker-row-selection .column-list-selection-count")).toHaveText(
       "2 selected",
     );
-    await page.locator(".group-by-row-selection").getByRole("button", { name: "Remove" }).click();
+    await page.locator(".picker-row-selection").getByRole("button", { name: "Remove" }).click();
     await expect(rows).toHaveCount(before);
-    await expect(page.locator(".group-by-row-selection")).toHaveCount(0);
+    await expect(page.locator(".picker-row-selection")).toHaveCount(0);
 
     await addKey();
     await rows.nth(before).locator(".agg-field-cell").click();

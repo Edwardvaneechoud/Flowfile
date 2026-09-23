@@ -1,278 +1,346 @@
 <template>
-  <div v-if="dataLoaded && nodePivot" class="listbox-wrapper">
+  <div v-if="dataLoaded && nodePivot && input" class="column-picker-host">
     <generic-node-settings
       v-model="nodePivot"
       @update:model-value="handleGenericSettingsUpdate"
       @request-save="saveSettings"
     >
-      <div class="listbox-wrapper">
-        <ul class="listbox">
-          <li
-            v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
-            :key="col_schema.name"
-            :class="getColumnClass(col_schema.name)"
-            draggable="true"
-            @click="handleItemClick(col_schema.name)"
-            @contextmenu.prevent="openContextMenu(col_schema.name, $event)"
-            @dragstart="onDragStart(col_schema.name, $event)"
-            @dragover.prevent
-            @drop="onDrop(index)"
+      <column-picker-card
+        ref="picker"
+        :columns="columns"
+        :usage-chips="usageChips"
+        :used-count="rows.length"
+        :column-menu-options="columnMenuOptions"
+        :drop-zones="dropZones"
+        :row-count="rows.length"
+        :settings-count="settingsCountLabel"
+        settings-label="Pivot settings"
+        @drop="assign"
+        @column-action="onColumnAction"
+        @remove-rows="removeRows"
+        @reveal="flashRows"
+        @drag-change="draggingNames = $event"
+      >
+        <template #selection-actions="{ selectedNames, openMenu }">
+          <button
+            class="btn btn-sm btn-ghost"
+            type="button"
+            title="Add the selected columns as index keys"
+            @mousedown.prevent
+            @click="assign(selectedNames, 'index')"
           >
-            {{ col_schema.name }} ({{ col_schema.data_type }})
-          </li>
-        </ul>
-      </div>
+            Index
+          </button>
+          <button
+            class="btn btn-sm btn-ghost"
+            type="button"
+            title="Use the selected column as the pivot or value column"
+            @mousedown.prevent
+            @click="openMenu(selectedNames, $event, 'roles')"
+          >
+            Set as ▾
+          </button>
+        </template>
 
-      <ContextMenu
-        v-if="showContextMenu"
-        id="pivot-context-menu"
-        ref="contextMenuRef"
-        :position="contextMenuPosition"
-        :options="contextMenuOptions"
-        @select="handleContextMenuSelect"
-        @close="closeContextMenu"
-      />
+        <template #row-actions="{ column, openMenu }">
+          <button
+            type="button"
+            class="btn btn-sm btn-ghost btn-icon"
+            :title="`Add ${column.name} as an index key`"
+            :aria-label="`Index by ${column.name}`"
+            @mousedown.prevent
+            @click.stop="assign([column.name], 'index')"
+          >
+            <span class="material-icons" aria-hidden="true">add</span>
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm btn-ghost btn-icon"
+            :title="`Use ${column.name} as the pivot or value column…`"
+            :aria-label="`Set ${column.name} as`"
+            @mousedown.prevent
+            @click.stop="openMenu([column.name], $event, 'roles')"
+          >
+            <span class="material-icons" aria-hidden="true">pivot_table_chart</span>
+          </button>
+        </template>
 
-      <div class="listbox-wrapper">
-        <SettingsSection
-          title="Index Keys"
-          :items="pivotInput.index_columns"
-          droppable="true"
-          @remove-item="removeColumn('index', $event)"
-          @dragover.prevent
-          @drop="onDropInSection('index')"
-        />
-        <SettingsSection
-          title="Pivot Column"
-          :items="[pivotInput.pivot_column ?? '']"
-          droppable="true"
-          @remove-item="removeColumn('pivot', $event)"
-          @dragover.prevent
-          @drop="onDropInSection('pivot')"
-        />
-        <SettingsSection
-          title="Value Column"
-          :items="[pivotInput.value_col ?? '']"
-          droppable="true"
-          @remove-item="removeColumn('value', $event)"
-          @dragover.prevent
-          @drop="onDropInSection('value')"
-        />
-        <div class="list-wrapper">
-          <div class="listbox-subtitle">Select aggregations</div>
+        <template #strip>
+          <span
+            v-if="missing.length > 0"
+            class="picker-flag"
+            title="Required before this node can run"
+          >
+            Missing: {{ missing.join(", ") }}
+          </span>
+        </template>
+
+        <template #empty>
+          Drag columns here, or hover a column and use
+          <span class="material-icons" aria-label="add">add</span> for index keys and
+          <span class="material-icons" aria-label="set as">pivot_table_chart</span> for the pivot
+          and value columns.
+        </template>
+
+        <template
+          #settings="{ isRowSelected, isDragging, onRowClick, onRowContextMenu, onRowMouseDown }"
+        >
+          <table class="styled-table column-list pivot-role-table">
+            <colgroup>
+              <col />
+              <col style="width: 132px" />
+              <col style="width: 128px" />
+              <col style="width: 34px" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Role</th>
+                <th>Becomes</th>
+                <th aria-label="Remove" />
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(row, index) in rows"
+                :key="row.name"
+                :class="{
+                  'is-new': flashedRows.has(index),
+                  'is-selected': isRowSelected(index),
+                  'is-drop-after': isDragging && index === rows.length - 1,
+                }"
+                @mousedown="onRowMouseDown"
+                @click="onRowClick(index, $event)"
+                @contextmenu="onRowContextMenu($event, index)"
+              >
+                <td class="picker-field-cell" :title="row.name">{{ row.name }}</td>
+                <td>
+                  <el-select
+                    :model-value="row.role"
+                    size="small"
+                    :aria-label="`Role of ${row.name}`"
+                    @update:model-value="assign([row.name], $event)"
+                  >
+                    <el-option
+                      v-for="role in PIVOT_ROLES"
+                      :key="role.value"
+                      :label="role.label"
+                      :value="role.value"
+                    />
+                  </el-select>
+                </td>
+                <td class="picker-note-cell">{{ pivotBecomes(row.role) }}</td>
+                <td class="row-tools-cell">
+                  <span class="row-tools">
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-ghost btn-icon row-remove"
+                      :title="`Remove ${row.name}`"
+                      :aria-label="`Remove ${row.name}`"
+                      @mousedown.prevent
+                      @click="removeRow(index)"
+                    >
+                      <span class="material-icons" aria-hidden="true">close</span>
+                    </button>
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
+
+        <template #footer>
+          <span class="picker-footer-label">Aggregations</span>
           <el-select
-            v-model="pivotInput.aggregations"
+            v-model="input.aggregations"
             multiple
-            placeholder="Select"
+            collapse-tags
+            collapse-tags-tooltip
+            :max-collapse-tags="3"
             size="small"
-            style="width: 100%"
+            class="pivot-agg-select"
+            placeholder="Choose at least one"
+            aria-label="Aggregations"
           >
             <el-option
-              v-for="item in aggOptions"
-              :key="item"
-              :label="item"
-              :value="item"
-              style="width: 400px"
+              v-for="agg in PIVOT_AGGREGATIONS"
+              :key="agg"
+              :label="aggLabel(agg)"
+              :value="agg"
             />
           </el-select>
-        </div>
-        <PivotValidation :pivot-input="pivotInput" />
-      </div>
+        </template>
+      </column-picker-card>
     </generic-node-settings>
   </div>
+  <CodeLoader v-else />
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
-import { NodeData } from "../../../baseNode/nodeInterfaces";
-import { PivotInput, NodePivot, AggOption } from "../../../baseNode/nodeInput";
+import { ref, computed, onUnmounted } from "vue";
+import { CodeLoader } from "vue-content-loader";
+import type { FileColumn, NodePivot } from "../../../baseNode/nodeInput";
+import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
-import ContextMenu from "./ContextMenu.vue";
-import SettingsSection from "./SettingsSection.vue";
-import PivotValidation from "./PivotValidation.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import ColumnPickerCard from "../../../baseNode/selectComponents/ColumnPickerCard.vue";
+import type { ContextMenuOption } from "../../../../common";
+import { aggLabel } from "../../../baseNode/aggregations";
+import {
+  pluralize,
+  withoutRows,
+  type DropZoneSpec,
+  type UsageChip,
+} from "../../../baseNode/selectComponents/columnPicker";
+import { assignRole, type RoleRow } from "../../../baseNode/selectComponents/columnRoles";
+import {
+  PIVOT_AGGREGATIONS,
+  PIVOT_ROLES,
+  missingPivotParts,
+  pivotBecomes,
+  pivotRoleLabel,
+  rowsFromPivot,
+  writePivotRows,
+} from "./pivotLogic";
 
 const nodeStore = useNodeStore();
 const nodePivot = ref<NodePivot | null>(null);
+const nodeData = ref<null | NodeData>(null);
+const dataLoaded = ref(false);
+const picker = ref<InstanceType<typeof ColumnPickerCard> | null>(null);
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodePivot,
-});
-const showContextMenu = ref(false);
-const dataLoaded = ref(false);
-const contextMenuPosition = ref({ x: 0, y: 0 });
-const selectedColumns = ref<string[]>([]);
-const contextMenuOptions = ref<{ label: string; action: string; disabled: boolean }[]>([]);
-const contextMenuRef = ref<HTMLElement | null>(null);
-const nodeData = ref<null | NodeData>(null);
-const draggedColumnName = ref<string | null>(null);
-const aggOptions: AggOption[] = [
-  "sum",
-  "count",
-  "min",
-  "max",
-  "n_unique",
-  "mean",
-  "median",
-  "first",
-  "last",
-  "concat",
-];
-
-const pivotInput = ref<PivotInput>({
-  index_columns: [],
-  pivot_column: null,
-  value_col: null,
-  aggregations: [],
+  onAfterSave: async () => {
+    validateConfig();
+  },
 });
 
-const singleColumnSelected = computed(() => selectedColumns.value.length === 1);
+const columns = computed<FileColumn[]>(() => nodeData.value?.main_input?.table_schema ?? []);
+const input = computed(() => nodePivot.value?.pivot_input ?? null);
+const rows = computed<RoleRow[]>(() => (input.value ? rowsFromPivot(input.value) : []));
+const missing = computed(() => (input.value ? missingPivotParts(input.value) : []));
 
-const getColumnClass = (columnName: string): string => {
-  return selectedColumns.value.includes(columnName) ? "is-selected" : "";
-};
+const settingsCountLabel = computed(() => {
+  if (!input.value || rows.value.length === 0) return "";
+  const keys = pluralize(input.value.index_columns.length, "index key");
+  return `${keys} · pivot ${input.value.pivot_column ?? "—"} · value ${input.value.value_col ?? "—"}`;
+});
 
-const onDragStart = (columnName: string, event: DragEvent) => {
-  draggedColumnName.value = columnName;
-  event.dataTransfer?.setData("text/plain", columnName);
-};
-
-const onDrop = (index: number) => {
-  if (draggedColumnName.value) {
-    const colSchema = nodeData.value?.main_input?.table_schema;
-    if (colSchema) {
-      const fromIndex = colSchema.findIndex((col) => col.name === draggedColumnName.value);
-      if (fromIndex !== -1 && fromIndex !== index) {
-        const [movedColumn] = colSchema.splice(fromIndex, 1);
-        colSchema.splice(index, 0, movedColumn);
-      }
-    }
-    draggedColumnName.value = null;
-  }
-};
-
-const onDropInSection = (section: "index" | "pivot" | "value") => {
-  if (draggedColumnName.value) {
-    removeColumnIfExists(draggedColumnName.value);
-
-    if (section === "index" && !pivotInput.value.index_columns.includes(draggedColumnName.value)) {
-      pivotInput.value.index_columns.push(draggedColumnName.value);
-    } else if (section === "pivot") {
-      pivotInput.value.pivot_column = draggedColumnName.value;
-    } else if (section === "value") {
-      pivotInput.value.value_col = draggedColumnName.value;
-    }
-
-    draggedColumnName.value = null;
-  }
-};
-
-const openContextMenu = (columnName: string, event: MouseEvent) => {
-  selectedColumns.value = [columnName];
-  contextMenuPosition.value = { x: event.clientX, y: event.clientY };
-
-  contextMenuOptions.value = [
+const usageChips = (name: string): UsageChip[] => {
+  const index = rows.value.findIndex((row) => row.name === name);
+  if (index === -1) return [];
+  const role = rows.value[index].role;
+  return [
     {
-      label: "Add to Index",
-      action: "index",
-      disabled: isColumnAssigned(columnName),
-    },
-    {
-      label: "Set as Pivot",
-      action: "pivot",
-      disabled: isColumnAssigned(columnName) || !singleColumnSelected.value,
-    },
-    {
-      label: "Set as Value",
-      action: "value",
-      disabled: isColumnAssigned(columnName) || !singleColumnSelected.value,
+      label: role,
+      title: `Show the ${pivotRoleLabel(role).toLowerCase()} row`,
+      isKey: role === "index",
+      rows: [index],
     },
   ];
-
-  showContextMenu.value = true;
 };
 
-const handleContextMenuSelect = (action: string) => {
-  const column = selectedColumns.value[0];
-  if (action === "index" && !pivotInput.value.index_columns.includes(column)) {
-    removeColumnIfExists(column);
-    pivotInput.value.index_columns.push(column);
-  } else if (action === "pivot") {
-    removeColumnIfExists(column);
-    pivotInput.value.pivot_column = column;
-  } else if (action === "value") {
-    removeColumnIfExists(column);
-    pivotInput.value.value_col = column;
-  }
-  closeContextMenu();
+// ----- feedback -----
+
+const flashedRows = ref(new Set<number>());
+let flashTimer: ReturnType<typeof setTimeout> | null = null;
+
+const flashRows = (indices: number[]) => {
+  flashedRows.value = new Set(indices);
+  if (flashTimer) clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => {
+    flashedRows.value = new Set();
+  }, 1200);
 };
 
-const isColumnAssigned = (columnName: string): boolean => {
-  return (
-    pivotInput.value.index_columns.includes(columnName) ||
-    pivotInput.value.pivot_column === columnName ||
-    pivotInput.value.value_col === columnName
-  );
+// ----- edits -----
+
+const assign = (names: string[], role: string) => {
+  if (!input.value || names.length === 0) return;
+  const result = assignRole(rows.value, names, role, PIVOT_ROLES);
+  writePivotRows(input.value, result.rows);
+  if (result.touched.length > 0) void picker.value?.reveal(result.touched);
+  picker.value?.clearSelection();
 };
 
-const removeColumnIfExists = (column: string) => {
-  pivotInput.value.index_columns = pivotInput.value.index_columns.filter((col) => col !== column);
-  if (pivotInput.value.pivot_column === column) pivotInput.value.pivot_column = null;
-  if (pivotInput.value.value_col === column) pivotInput.value.value_col = null;
+const onColumnAction = (action: string, names: string[]) => assign(names, action);
+
+const removeRows = (indices: number[]) => {
+  if (input.value) writePivotRows(input.value, withoutRows(rows.value, indices));
 };
 
-const removeColumn = (type: "index" | "pivot" | "value", column: string) => {
-  if (type === "index") {
-    pivotInput.value.index_columns = pivotInput.value.index_columns.filter((col) => col !== column);
-  } else if (type === "pivot") {
-    pivotInput.value.pivot_column = null;
-  } else if (type === "value") {
-    pivotInput.value.value_col = null;
-  }
+const removeRow = (index: number) => picker.value?.removeRows([index]);
+
+// ----- menus, drops -----
+
+const columnMenuOptions = (names: string[], variant: string): ContextMenuOption[] => {
+  const many = names.length > 1;
+  const single = [
+    { label: "Set as pivot column", action: "pivot", disabled: many },
+    { label: "Set as value column", action: "value", disabled: many },
+  ];
+  return variant === "roles" ? single : [{ label: "Add as index key", action: "index" }, ...single];
 };
 
-const handleItemClick = (columnName: string) => {
-  selectedColumns.value = [columnName];
-};
+const draggingNames = ref<string[]>([]);
+
+/** The single-holder zones only take one column, so a multi-drag greys them out. */
+const dropZones = computed<DropZoneSpec[]>(() =>
+  PIVOT_ROLES.map((role) => ({
+    value: role.value,
+    label: role.label.replace(/ (key|column)$/, ""),
+    disabled: Boolean(role.single) && draggingNames.value.length > 1,
+  })),
+);
+
+// ----- lifecycle -----
 
 const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
-  nodePivot.value = nodeData.value?.setting_input as NodePivot;
-  if (nodeData.value) {
-    if (nodePivot.value) {
-      if (nodePivot.value.pivot_input) {
-        pivotInput.value = nodePivot.value.pivot_input;
-      } else {
-        nodePivot.value.pivot_input = pivotInput.value;
-      }
-    }
+  const settings = (nodeData.value?.setting_input as NodePivot | undefined) ?? null;
+  if (settings) {
+    settings.pivot_input ??= {
+      index_columns: [],
+      pivot_column: null,
+      value_col: null,
+      aggregations: [],
+    };
+    settings.pivot_input.index_columns ??= [];
+    settings.pivot_input.aggregations ??= [];
   }
+  nodePivot.value = settings;
   dataLoaded.value = true;
 };
 
-const handleClickOutside = (event: MouseEvent) => {
-  const targetEvent = event.target as HTMLElement;
-  if (targetEvent.id === "pivot-context-menu") return;
-  showContextMenu.value = false;
+const validateConfig = () => {
+  if (!nodePivot.value) return;
+  const nodeId = nodePivot.value.node_id;
+  if (missing.value.length > 0) {
+    nodeStore.setNodeValidation(nodeId, {
+      isValid: false,
+      error: `Pivot still needs: ${missing.value.join(", ")}.`,
+    });
+  } else {
+    nodeStore.setNodeValidation(nodeId, { isValid: true, error: "" });
+  }
 };
 
-const closeContextMenu = () => {
-  showContextMenu.value = false;
-};
+onUnmounted(() => {
+  if (flashTimer) clearTimeout(flashTimer);
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
   saveSettings,
 });
-
-onMounted(async () => {
-  await nextTick();
-  window.addEventListener("click", handleClickOutside);
-});
-
-onUnmounted(() => {
-  window.removeEventListener("click", handleClickOutside);
-});
 </script>
+
+<style scoped>
+.pivot-agg-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+</style>
