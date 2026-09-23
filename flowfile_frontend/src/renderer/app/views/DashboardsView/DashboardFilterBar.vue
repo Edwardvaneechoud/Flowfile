@@ -5,7 +5,27 @@
     </span>
 
     <div class="filter-bar-chips">
-      <div v-for="f in filters" :key="f.id" class="filter-chip" :title="chipTooltip(f)">
+      <div
+        v-for="f in filters"
+        :key="f.id"
+        class="filter-chip"
+        :class="{
+          'filter-chip-drop-before': dropTarget?.id === f.id && dropTarget.position === 'before',
+          'filter-chip-drop-after': dropTarget?.id === f.id && dropTarget.position === 'after',
+        }"
+        :title="chipTooltip(f)"
+        v-on="mode === 'edit' ? reorderHandlers(f) : {}"
+      >
+        <span
+          v-if="mode === 'edit'"
+          class="filter-chip-grip"
+          draggable="true"
+          title="Drag to reorder"
+          @dragstart="onGripDragStart($event, f)"
+          @dragend="dropTarget = null"
+        >
+          <el-icon><Rank /></el-icon>
+        </span>
         <span class="filter-chip-name">{{ f.label || f.field_name }}</span>
         <span
           v-if="f.datasource_id == null"
@@ -258,7 +278,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
-import { Check, Close, EditPen, Filter, Loading, Plus } from "@element-plus/icons-vue";
+import { Check, Close, EditPen, Filter, Loading, Plus, Rank } from "@element-plus/icons-vue";
 import type {
   ColumnSchema,
   ColumnStatsResponse,
@@ -273,6 +293,7 @@ import {
   type TileField,
 } from "../../composables/useDashboardComputation";
 import { dtypeToDefaultFilterKind, isNumericDtype, isTemporalDtype } from "../../utils/dtype";
+import { moveFilter, type DropPosition } from "./filterOrder";
 
 const props = defineProps<{
   filters: DashboardFilter[];
@@ -499,6 +520,56 @@ const onRemove = (f: DashboardFilter) => {
   );
 };
 
+// Deliberately not a MIME DashboardCanvas accepts, so a chip drag never drops on the canvas.
+const FILTER_REORDER_MIME = "application/flowfile-filter-reorder";
+
+const dropTarget = ref<{ id: string; position: DropPosition } | null>(null);
+
+const isReorderDrag = (e: DragEvent): boolean =>
+  !!e.dataTransfer?.types.includes(FILTER_REORDER_MIME);
+
+const dropPositionFor = (e: DragEvent): DropPosition => {
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  return e.clientX < rect.left + rect.width / 2 ? "before" : "after";
+};
+
+const onGripDragStart = (e: DragEvent, f: DashboardFilter) => {
+  const dt = e.dataTransfer;
+  if (!dt) return;
+  dt.setData(FILTER_REORDER_MIME, f.id);
+  dt.effectAllowed = "move";
+  const chip = (e.target as HTMLElement).closest(".filter-chip");
+  if (chip) {
+    const rect = chip.getBoundingClientRect();
+    dt.setDragImage(chip, e.clientX - rect.left, e.clientY - rect.top);
+  }
+};
+
+const reorderHandlers = (f: DashboardFilter) => ({
+  dragover: (e: DragEvent) => {
+    if (!isReorderDrag(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    const position = dropPositionFor(e);
+    if (dropTarget.value?.id !== f.id || dropTarget.value.position !== position) {
+      dropTarget.value = { id: f.id, position };
+    }
+  },
+  dragleave: (e: DragEvent) => {
+    const chip = e.currentTarget as HTMLElement;
+    if (e.relatedTarget instanceof Node && chip.contains(e.relatedTarget)) return;
+    if (dropTarget.value?.id === f.id) dropTarget.value = null;
+  },
+  drop: (e: DragEvent) => {
+    dropTarget.value = null;
+    const draggedId = e.dataTransfer?.getData(FILTER_REORDER_MIME);
+    if (!draggedId) return;
+    e.preventDefault();
+    const next = moveFilter(props.filters, draggedId, f.id, dropPositionFor(e));
+    if (next !== props.filters) emit("update:filters", next);
+  },
+});
+
 const onDatasourceChange = () => {
   draft.field_name = "";
   draft.target_tile_ids = [];
@@ -694,6 +765,22 @@ const onDateRange = (f: DashboardFilter, range: [Date, Date] | null) => {
   border: 1px solid var(--el-border-color-light);
   border-radius: 4px;
   font-size: 12px;
+}
+.filter-chip-drop-before {
+  box-shadow: inset 2px 0 0 var(--el-color-primary);
+}
+.filter-chip-drop-after {
+  box-shadow: inset -2px 0 0 var(--el-color-primary);
+}
+.filter-chip-grip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: -2px;
+  color: var(--el-text-color-secondary);
+  cursor: grab;
+}
+.filter-chip-grip:hover {
+  color: var(--el-color-primary);
 }
 .filter-chip-name {
   color: var(--el-text-color-primary);

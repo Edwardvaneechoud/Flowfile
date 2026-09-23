@@ -635,6 +635,47 @@ def test_visualize_query_endpoint_physical_delta(tmp_path):
 
 
 @pytest.mark.worker
+def test_visualize_query_kpi_aggregate_returns_single_row(tmp_path):
+    """A dashboard KPI tile's payload: filter step + empty-groupBy aggregate + limit 2."""
+    _setup_storage(tmp_path)
+    table_dir = _write_delta_table(tmp_path)
+    viz_session_registry.evict_all()
+
+    client = TestClient(main.app, headers=INTERNAL_AUTH_HEADERS)
+    kpi_payload = {
+        "workflow": [
+            {"type": "filter", "filters": [{"fid": "category", "rule": {"type": "one of", "value": ["a", "b"]}}]},
+            {
+                "type": "view",
+                "query": [
+                    {
+                        "op": "aggregate",
+                        "groupBy": [],
+                        "measures": [
+                            {"field": "value", "agg": "sum", "asFieldKey": "value_sum"},
+                            {"field": "*", "agg": "count", "asFieldKey": "row_count"},
+                            {"agg": "expr", "expression": 'COUNT(DISTINCT "category")', "asFieldKey": "n_category"},
+                        ],
+                    }
+                ],
+            },
+        ],
+        "limit": 2,
+    }
+    r = client.post(
+        "/catalog/visualize_query",
+        json={
+            "source": {"kind": "physical", "session_key": "test:kpi:1", "table_path": table_dir},
+            "payload": kpi_payload,
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["error"] is None
+    assert body["rows"] == [{"value_sum": 11, "row_count": 4, "n_category": 2}]
+
+
+@pytest.mark.worker
 def test_visualize_fields_endpoint_returns_imutfields(tmp_path):
     _setup_storage(tmp_path)
     table_dir = _write_delta_table(tmp_path)

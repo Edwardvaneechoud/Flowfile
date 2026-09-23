@@ -38,6 +38,18 @@
         <el-icon class="icon-rotated"><Minus /></el-icon>
         <span>Vertical separator</span>
       </el-button>
+      <el-button
+        size="small"
+        plain
+        class="picker-tool-btn"
+        draggable="true"
+        title="Click or drag onto the canvas"
+        @click="emit('add-kpi')"
+        @dragstart="onKpiDragStart($event)"
+      >
+        <el-icon><Odometer /></el-icon>
+        <span>KPI</span>
+      </el-button>
     </div>
     <div class="picker-divider" />
     <div class="picker-header">
@@ -118,7 +130,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { EditPen, Minus, Plus, Search } from "@element-plus/icons-vue";
+import { EditPen, Minus, Odometer, Plus, Search } from "@element-plus/icons-vue";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useDashboardDragAndDrop } from "../../composables/useDashboardDragAndDrop";
 import type { CatalogVisualization, SeparatorOrientation } from "../../types";
@@ -129,11 +141,13 @@ const emit = defineEmits<{
   (e: "add", viz: CatalogVisualization): void;
   (e: "add-text"): void;
   (e: "add-separator", orientation: SeparatorOrientation): void;
+  (e: "add-kpi"): void;
   (e: "create"): void;
 }>();
 
 const catalogStore = useCatalogStore();
-const { onVizDragStart, onTextDragStart, onSeparatorDragStart } = useDashboardDragAndDrop();
+const { onVizDragStart, onTextDragStart, onSeparatorDragStart, onKpiDragStart } =
+  useDashboardDragAndDrop();
 const search = ref("");
 const tableFilter = ref<number | null>(null);
 

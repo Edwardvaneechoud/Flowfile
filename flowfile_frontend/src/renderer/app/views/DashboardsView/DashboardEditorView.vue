@@ -70,6 +70,7 @@
           @add="onAddTile"
           @add-text="onAddTextTile"
           @add-separator="onAddSeparatorTile"
+          @add-kpi="onAddKpiTile"
           @create="sourcePickerOpen = true"
         />
       </aside>
@@ -105,6 +106,7 @@
             @add-viz-at="onAddVizAt"
             @add-text-at="onAddTextAt"
             @add-separator-at="onAddSeparatorAt"
+            @add-kpi-at="onAddKpiAt"
           />
         </template>
       </main>
@@ -176,6 +178,7 @@ import VisualizationViewer from "../CatalogView/VisualizationViewer.vue";
 import VisualizationSourcePicker from "../CatalogView/VisualizationSourcePicker.vue";
 import VisualizationEditor from "../CatalogView/VisualizationEditor.vue";
 import { upgradeLayoutGrid } from "./gridVersion";
+import { KPI_DEFAULT_SIZE } from "./kpi";
 import {
   EMPTY_DASHBOARD_LAYOUT,
   type CatalogVisualization,
@@ -318,7 +321,10 @@ const {
 const addedVizIds = computed(() => {
   if (!store.current) return new Set<number>();
   return new Set(
-    store.current.layout.tiles.map((t) => t.viz_id).filter((v): v is number => v != null),
+    store.current.layout.tiles
+      .filter((t) => t.type === "viz")
+      .map((t) => t.viz_id)
+      .filter((v): v is number => v != null),
   );
 });
 
@@ -501,6 +507,30 @@ const onAddTextAt = ({ x, y }: { x: number; y: number }) => {
   onLayoutChange({ ...layout, tiles: [...layout.tiles, buildTextTile(x, row)] });
 };
 
+const buildKpiTile = (x: number, y: number): DashboardTile => ({
+  id: generateTileId(),
+  type: "kpi",
+  viz_id: null,
+  chart_index: 0,
+  kpi: null,
+  x,
+  y,
+  ...KPI_DEFAULT_SIZE,
+});
+
+const onAddKpiTile = () => {
+  if (!store.current) return;
+  const layout = store.current.layout;
+  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildKpiTile(0, findFreeRow(layout))] });
+};
+
+const onAddKpiAt = ({ x, y }: { x: number; y: number }) => {
+  if (!store.current) return;
+  const layout = store.current.layout;
+  const row = y < 0 ? findFreeRow(layout) : y;
+  onLayoutChange({ ...layout, tiles: [...layout.tiles, buildKpiTile(x, row)] });
+};
+
 const buildSeparatorTile = (
   x: number,
   y: number,
@@ -583,7 +613,7 @@ const consumeEditVizQuery = async () => {
   const targetParams = { ...route.params };
 
   const tiles = store.current?.layout.tiles ?? [];
-  const targetTile = tiles.find((t) => t.viz_id === id);
+  const targetTile = tiles.find((t) => t.type === "viz" && t.viz_id === id);
   if (targetTile) {
     onEditViz(id);
   }
