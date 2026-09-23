@@ -15,6 +15,7 @@ import {
   readModifiers,
   reconcileOrder,
   reorderInsertIndex,
+  retainIndices,
   sortForDirection,
   type SelectionState,
 } from "./columnSelection";
@@ -362,5 +363,16 @@ describe("reconcileOrder", () => {
   it("handles an empty local list", () => {
     const incoming = [{ name: "a" }, { name: "b" }];
     expect(reconcileOrder([], incoming, key).map(key)).toEqual(["a", "b"]);
+  });
+});
+
+describe("retainIndices", () => {
+  it("drops the rows a filter hides and keeps the anchor", () => {
+    expect(retainIndices(state(1, [1, 2, 3, 4]), new Set([1, 3]))).toEqual(state(1, [1, 3]));
+  });
+
+  it("returns the same state when every selected row is visible", () => {
+    const current = state(0, [0, 2]);
+    expect(retainIndices(current, new Set([0, 1, 2]))).toBe(current);
   });
 });

@@ -13,6 +13,14 @@
   user-select: text;
 }
 
+/* Hosts of ColumnPickerCard fill the tab pane so the card can split the height. */
+.column-picker-host {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 /* ===== Toolbar ===== */
 .column-list-toolbar {
   display: flex;
