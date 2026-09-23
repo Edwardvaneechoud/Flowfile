@@ -44,6 +44,7 @@ import type {
   PaginatedFlowRuns,
   PromotedArtifactVersion,
   QueryVirtualTableCreate,
+  QueryVirtualTableUpdate,
   SchedulerStatus,
   SqlQueryResult,
   SubflowInterface,
@@ -507,6 +508,14 @@ export class CatalogApi {
 
   static async createQueryVirtualTable(body: QueryVirtualTableCreate): Promise<CatalogTable> {
     const response = await axios.post<CatalogTable>("/catalog/query-virtual-tables", body);
+    return response.data;
+  }
+
+  static async updateQueryVirtualTable(
+    id: number,
+    body: QueryVirtualTableUpdate,
+  ): Promise<CatalogTable> {
+    const response = await axios.put<CatalogTable>(`/catalog/query-virtual-tables/${id}`, body);
     return response.data;
   }
 

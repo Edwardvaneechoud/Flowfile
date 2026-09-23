@@ -56,7 +56,8 @@ export interface UseNodeSettingsReturn {
    * Push node data - standard method called when drawer closes.
    * This is the method that should be exposed via defineExpose.
    */
-  pushNodeData: () => Promise<void>;
+  /** Resolves false when the save was refused, so a caller can skip its success state. */
+  pushNodeData: () => Promise<boolean>;
 
   /**
    * Handle updates from genericNodeSettings component.
@@ -157,9 +158,7 @@ export function useNodeSettings<T extends NodeBase>(
    * Push node data - called when drawer closes.
    * This wraps saveSettings for the standard drawer lifecycle.
    */
-  const pushNodeData = async (): Promise<void> => {
-    await saveSettings();
-  };
+  const pushNodeData = async (): Promise<boolean> => saveSettings();
 
   /**
    * Handle updates from genericNodeSettings component.

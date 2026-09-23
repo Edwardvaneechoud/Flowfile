@@ -20,7 +20,10 @@ from pydantic import (
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
+from flowfile_core.schemas.change_feed import _PARAM_REF_RE as _PARAM_REF_RE
+from flowfile_core.schemas.change_feed import ChangeFeedReadSettings
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
+from flowfile_core.schemas.delta_write import MERGE_MODES, validate_delta_write_rules
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.schemas.yaml_types import (
     NodeCrossJoinYaml,
@@ -1207,7 +1210,13 @@ class NodeCloudStorageReader(NodeBase):
     def get_default_description(self) -> str:
         """Describes the cloud storage source."""
         cs = self.cloud_storage_settings
-        return f"Read {cs.resource_path} ({cs.file_format})"
+        suffix = ""
+        if cs.cdc_mode == "since_version":
+            v = cs.cdc_from_version
+            suffix = f" [changes since {v if isinstance(v, str) else f'v{v}'}]"
+        elif cs.cdc_mode == "since_timestamp":
+            suffix = f" [changes since {cs.cdc_from_timestamp}]"
+        return f"Read {cs.resource_path} ({cs.file_format}){suffix}"
 
 
 class NodeCloudStorageWriter(NodeSingleInput):
@@ -1218,7 +1227,8 @@ class NodeCloudStorageWriter(NodeSingleInput):
     def get_default_description(self) -> str:
         """Describes the cloud storage write target."""
         cs = self.cloud_storage_settings
-        return f"Write to {cs.resource_path} ({cs.file_format})"
+        mode = "" if cs.write_mode == "overwrite" else f", {cs.write_mode}"
+        return f"Write to {cs.resource_path} ({cs.file_format}{mode})"
 
 
 class ExternalSource(BaseModel):
@@ -1812,7 +1822,6 @@ class NodeRunFlow(NodeBase):
 
 
 _SCD2_COLUMN_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-_PARAM_REF_RE = re.compile(r"^\$\{[a-zA-Z_][a-zA-Z0-9_]*\}$")  # a whole-field flow-parameter reference
 
 
 class Scd2Settings(BaseModel):
@@ -1891,10 +1900,13 @@ class CatalogWriteSettings(BaseModel):
 
     @model_validator(mode="after")
     def _validate_merge_keys(self) -> "CatalogWriteSettings":
-        if self.track_changes and self.write_mode in ("overwrite", "virtual", "scd2"):
-            raise ValueError(f"track_changes is not supported with write_mode '{self.write_mode}'")
-        if self.write_mode in ("upsert", "update", "delete", "scd2") and not self.merge_keys:
-            raise ValueError(f"merge_keys must be non-empty when write_mode is '{self.write_mode}'")
+        validate_delta_write_rules(
+            self.write_mode,
+            self.merge_keys,
+            self.track_changes,
+            keyed_modes=MERGE_MODES | {"scd2"},
+            untracked_modes=frozenset({"overwrite", "virtual", "scd2"}),
+        )
         if self.partition_by and self.write_mode == "virtual":
             raise ValueError("partition_by is not allowed for virtual tables")
         if self.write_mode == "virtual" and self.scd2 is not None:
@@ -1932,13 +1944,16 @@ class NodeCatalogWriter(NodeSingleInput):
         return f"Catalog: {s.table_name}" if s.table_name else "Write to Catalog"
 
 
-class NodeCatalogReader(NodeBase):
+class NodeCatalogReader(ChangeFeedReadSettings, NodeBase):
     """Settings for a node that reads a table from the catalog.
 
     Resolution priority at runtime: ``catalog_table_id`` > ``catalog_full_table_name`` >
     ``(catalog_table_name, catalog_namespace_id)``. The qualified form
     (``catalog_full_table_name`` = ``"schema.table"``) is the preferred human-facing
     identifier when an id isn't available.
+
+    The change feed ("Read" selector) comes from ``ChangeFeedReadSettings``; only valid when the
+    resolved table is change-tracked. ``since_last_run`` is the only mode that keeps a cursor.
     """
 
     catalog_table_id: int | None = None
@@ -1952,14 +1967,8 @@ class NodeCatalogReader(NodeBase):
     scd2_as_of: str | None = None  # ISO-8601 instant, required when scd2_view == "active_at"
     sql_query: str | None = None
     is_virtual_optimized: bool | None = None
-    # Change feed ("Read" selector). Only valid when the resolved table is change-tracked;
-    # ``since_last_run`` is the only mode that keeps a cursor.
-    cdc_mode: Literal["off", "since_last_run", "since_version", "since_timestamp"] = "off"
-    cdc_from_version: int | str | None = None  # a commit version, or a whole-field ${param} reference
-    cdc_from_timestamp: str | None = None  # ISO-8601 instant or ${param}, required when cdc_mode == "since_timestamp"
     cdc_consumer_name: str | None = None  # names the cursor; without one it is keyed on flow + node
     cdc_start: Literal["now", "beginning"] = "now"
-    cdc_include_preimage: bool = False
 
     @model_validator(mode="after")
     def _validate_cdc(self) -> "NodeCatalogReader":
@@ -1976,23 +1985,6 @@ class NodeCatalogReader(NodeBase):
             raise ValueError("Change modes cannot be combined with a pinned table version")
         if self.scd2_view not in (None, "all"):
             raise ValueError("Change modes are not available for an SCD2 history view")
-        if self.cdc_mode == "since_version":
-            if self.cdc_from_version is None:
-                raise ValueError("cdc_from_version is required when cdc_mode is 'since_version'")
-            if isinstance(self.cdc_from_version, str) and not _PARAM_REF_RE.match(self.cdc_from_version):
-                raise ValueError("cdc_from_version must be a commit version or a ${parameter} reference")
-        if self.cdc_mode == "since_timestamp":
-            if not self.cdc_from_timestamp:
-                raise ValueError("cdc_from_timestamp is required when cdc_mode is 'since_timestamp'")
-            if _PARAM_REF_RE.match(self.cdc_from_timestamp):
-                return self
-            try:
-                # Python 3.10's fromisoformat rejects the trailing "Z" the UI's DateTimePicker emits.
-                datetime.fromisoformat(self.cdc_from_timestamp.replace("Z", "+00:00"))
-            except ValueError as exc:
-                raise ValueError(
-                    f"cdc_from_timestamp must be an ISO-8601 datetime: {self.cdc_from_timestamp!r}"
-                ) from exc
         return self
 
     @model_validator(mode="after")

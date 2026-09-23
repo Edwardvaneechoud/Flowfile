@@ -164,7 +164,21 @@ Authenticate with a [saved cloud connection](../tutorials/cloud-connections.md),
 | **File Format** | CSV, Parquet, JSON, Delta Lake or Iceberg. |
 | **Scan Mode** | A single file, or a directory scan that reads every matching file in a folder. |
 
-CSV adds **Has Headers**, **Delimiter** (default `,`) and **Encoding** (UTF-8 or UTF-8 Lossy). Delta Lake adds an optional **Version** to read a specific version rather than the latest.
+CSV adds **Has Headers**, **Delimiter** (default `,`) and **Encoding** (UTF-8 or UTF-8 Lossy). Delta Lake adds a **Read** selector and an optional **Version**, which reads a past version of the table instead of the latest; the drawer lists the table's recent commits to pick from.
+
+### Reading only what changed { #cloud-reading-changes }
+
+For a Delta table, the **Read** selector reads the table's change feed instead of its rows.
+
+| Option | Description |
+|---|---|
+| **Full table** (default) | The table as it is now, or at the picked **Version**. |
+| **Changes since version** | Everything committed after a version you pick. |
+| **Changes since time** | Everything committed at or after a timestamp. |
+
+Every change mode adds `_change_type`, `_commit_version` and `_commit_timestamp` to the table's own columns and offers **Include row values from before each update**. There is no **Changes since last run** option: a bare path has no cursor, so a flow parameter supplies the starting version or time when the window has to move from run to run.
+
+The table must have [change tracking](../catalog/change-tracking.md#cloud-delta-tables) turned on. If it does not, picking a change mode shows a warning with an **Enable change tracking** button, and a run fails with an error saying how to turn it on. Picking a **Version** puts the selector back on **Full table**, since time travel and change reads are mutually exclusive. Change reads are not available for `gs://` paths.
 
 ## ![Read from Catalog](../../../assets/images/nodes/catalog_reader.svg){ width="44" height="44" } Read from Catalog { #catalog-reader }
 
@@ -201,7 +215,7 @@ The default is all records: reading an SCD2 table without setting History return
 
 ### Reading only what changed
 
-When the selected table has [change tracking](../catalog/change-tracking.md) turned on, a **Read** selector appears above History.
+The **Read** selector reads the table's [change feed](../catalog/change-tracking.md) instead of its rows.
 
 | Option | Description |
 |---|---|

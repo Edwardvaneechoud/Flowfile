@@ -373,9 +373,9 @@ const {
   },
 });
 
-const toggleMinimize = () => {
+const toggleMinimize = async () => {
   if (!isMinimized.value && props.onMinimize) {
-    props.onMinimize();
+    await props.onMinimize();
   }
   isMinimized.value = !isMinimized.value;
 };

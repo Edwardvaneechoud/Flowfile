@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, Field, SecretStr
 
 from flowfile_worker.secrets import decrypt_secret
 from shared.cloud_storage.gcs import use_pyarrow_for_gcs as _use_pyarrow_for_gcs
@@ -90,7 +90,7 @@ class WriteSettings(BaseModel):
 
     resource_path: str  # s3://bucket/path/to/file.csv
 
-    write_mode: Literal["overwrite", "append"] = "overwrite"
+    write_mode: Literal["overwrite", "append", "error", "upsert", "update", "delete"] = "overwrite"
     file_format: Literal["csv", "parquet", "json", "delta"] = "parquet"
 
     parquet_compression: Literal["snappy", "gzip", "brotli", "lz4", "zstd"] = "snappy"
@@ -100,6 +100,10 @@ class WriteSettings(BaseModel):
 
     # Delta only: partition columns, applied at table creation
     partition_by: list[str] | None = None
+    # Delta only: the key columns an upsert/update/delete matches on
+    merge_keys: list[str] = Field(default_factory=list)
+    # Delta only, enable-only: True turns the change data feed on; False never turns it off
+    track_changes: bool = False
 
 
 class CloudStorageWriteSettings(BaseModel):

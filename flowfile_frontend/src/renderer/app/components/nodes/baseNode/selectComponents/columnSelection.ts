@@ -109,6 +109,17 @@ export const clampSelection = (state: SelectionState, length: number): Selection
   return { anchorIndex, selectedIndices };
 };
 
+/** Drops selected rows a filter hides, so ranges and drags only carry visible rows. */
+export const retainIndices = (
+  state: SelectionState,
+  allowed: ReadonlySet<number>,
+): SelectionState => {
+  const selectedIndices = state.selectedIndices.filter((i) => allowed.has(i));
+  return selectedIndices.length === state.selectedIndices.length
+    ? state
+    : { anchorIndex: state.anchorIndex, selectedIndices };
+};
+
 export const applySelectAll = (length: number): SelectionState => ({
   anchorIndex: length > 0 ? 0 : null,
   selectedIndices: Array.from({ length }, (_, i) => i),

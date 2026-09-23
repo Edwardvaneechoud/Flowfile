@@ -38,6 +38,19 @@
           Query table
         </button>
         <button
+          v-if="table.table_type === 'virtual' && table.sql_query"
+          class="action-btn-lg"
+          :title="
+            canManage(table)
+              ? 'Edit this virtual table\'s SQL; saving updates the table'
+              : 'Open this virtual table\'s SQL as a draft (read-only access)'
+          "
+          @click="emit('editSql', { table, link: canManage(table) })"
+        >
+          <i class="fa-solid fa-pen-to-square"></i>
+          {{ canManage(table) ? "Edit SQL" : "Open SQL" }}
+        </button>
+        <button
           class="action-btn-lg"
           :class="{ active: table.is_favorite }"
           @click="emit('toggleTableFavorite', table.id)"
@@ -525,6 +538,7 @@ const emit = defineEmits([
   "navigateToFlow",
   "selectVersion",
   "queryTable",
+  "editSql",
   "recoverFromRun",
   "loadPreview",
   "refreshHistory",

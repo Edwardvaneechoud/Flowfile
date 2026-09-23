@@ -417,12 +417,25 @@ def ensure_compatibility_node_polars(node_polars: input_schema.NodePolarsCode):
 
 
 def ensure_compatibility_node_cloud_storage_writer(node_writer: input_schema.NodeCloudStorageWriter):
-    """Ensure CloudStorageWriteSettings pickled before partition_by existed has the field."""
+    """Ensure CloudStorageWriteSettings pickled before partition_by and the Delta merge fields existed has them."""
     settings = getattr(node_writer, "cloud_storage_settings", None)
     if settings is None:
         return
-    if "partition_by" not in settings.__dict__:
-        object.__setattr__(settings, "__dict__", {**settings.__dict__, "partition_by": None})
+    defaults = {"partition_by": None, "merge_keys": [], "track_changes": False}
+    missing = {k: v for k, v in defaults.items() if k not in settings.__dict__}
+    if missing:
+        object.__setattr__(settings, "__dict__", {**settings.__dict__, **missing})
+
+
+def ensure_compatibility_node_cloud_storage_reader(node_reader: input_schema.NodeCloudStorageReader):
+    """Ensure CloudStorageReadSettings pickled before the change-feed fields existed has them."""
+    settings = getattr(node_reader, "cloud_storage_settings", None)
+    if settings is None:
+        return
+    defaults = {"cdc_mode": "off", "cdc_from_version": None, "cdc_from_timestamp": None, "cdc_include_preimage": False}
+    missing = {k: v for k, v in defaults.items() if k not in settings.__dict__}
+    if missing:
+        object.__setattr__(settings, "__dict__", {**settings.__dict__, **missing})
 
 
 def ensure_compatibility_node_catalog_writer(node_writer: input_schema.NodeCatalogWriter):
@@ -526,6 +539,8 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
             ensure_compatibility_node_groupby(setting_input)
         elif class_name == "NodeCloudStorageWriter":
             ensure_compatibility_node_cloud_storage_writer(setting_input)
+        elif class_name == "NodeCloudStorageReader":
+            ensure_compatibility_node_cloud_storage_reader(setting_input)
         elif class_name == "NodeCatalogWriter":
             ensure_compatibility_node_catalog_writer(setting_input)
         elif class_name == "NodeCatalogReader":

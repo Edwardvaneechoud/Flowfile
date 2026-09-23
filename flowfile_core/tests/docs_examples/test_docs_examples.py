@@ -89,6 +89,7 @@ INTEGRATION_GATES = {
     "database_read_mssql": _mssql_available,
     "database_transform_write": _postgres_available,
     "cloud_storage_s3": _minio_available,
+    "cloud_delta_changes": _minio_available,
     "kafka_read": _kafka_available,
 }
 
