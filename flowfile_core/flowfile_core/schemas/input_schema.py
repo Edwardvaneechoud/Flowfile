@@ -199,6 +199,16 @@ class InputAvroTable(InputTableBase):
     file_type: Literal["avro"] = "avro"
 
 
+class InputIpcStreamTable(InputTableBase):
+    """Defines settings for reading an Arrow IPC *stream* file (``.arrows``).
+
+    Distinct from ``InputIpcTable`` because the stream format has no footer, so polars
+    can only read it eagerly (``read_ipc_stream``); ``scan_ipc`` rejects it.
+    """
+
+    file_type: Literal["ipc_stream"] = "ipc_stream"
+
+
 # Create the discriminated union (similar to OutputTableSettings)
 InputTableSettings = Annotated[
     InputCsvTable
@@ -207,7 +217,8 @@ InputTableSettings = Annotated[
     | InputExcelTable
     | InputIpcTable
     | InputNdjsonTable
-    | InputAvroTable,
+    | InputAvroTable
+    | InputIpcStreamTable,
     Field(discriminator="file_type"),
 ]
 
@@ -227,7 +238,7 @@ class ReceivedTable(BaseModel):
     scan_mode: Literal["single_file", "directory"] = "single_file"
     include_file_paths: str | None = None
 
-    file_type: Literal["csv", "json", "parquet", "excel", "ipc", "ndjson", "avro"]
+    file_type: Literal["csv", "json", "parquet", "excel", "ipc", "ndjson", "avro", "ipc_stream"]
 
     table_settings: InputTableSettings
 
@@ -242,7 +253,9 @@ class ReceivedTable(BaseModel):
 
     @classmethod
     def create_from_path(
-        cls, path: str, file_type: Literal["csv", "json", "parquet", "excel", "ipc", "ndjson", "avro"] = "csv"
+        cls,
+        path: str,
+        file_type: Literal["csv", "json", "parquet", "excel", "ipc", "ndjson", "avro", "ipc_stream"] = "csv",
     ):
         """Creates an instance from a file path string."""
         filename = Path(path).name
@@ -255,6 +268,7 @@ class ReceivedTable(BaseModel):
             "ipc": InputIpcTable(),
             "ndjson": InputNdjsonTable(),
             "avro": InputAvroTable(),
+            "ipc_stream": InputIpcStreamTable(),
         }
 
         return cls(

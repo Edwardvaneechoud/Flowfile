@@ -101,6 +101,10 @@
             v-if="isInputAvroTable(receivedTable.table_settings)"
             v-model="receivedTable.table_settings"
           />
+          <IpcStreamTableConfig
+            v-if="isInputIpcStreamTable(receivedTable.table_settings)"
+            v-model="receivedTable.table_settings"
+          />
         </div>
       </div>
 
@@ -112,20 +116,7 @@
         :close-on-click-modal="false"
       >
         <file-browser
-          :allowed-file-types="[
-            'csv',
-            'txt',
-            'tsv',
-            'parquet',
-            'xlsx',
-            'xls',
-            'ipc',
-            'arrow',
-            'feather',
-            'ndjson',
-            'jsonl',
-            'avro',
-          ]"
+          :allowed-file-types="[...READ_EXTENSIONS]"
           mode="open"
           context="dataFiles"
           :is-visible="modalVisibleForOpen"
@@ -148,6 +139,7 @@ import ParquetTableConfig from "./readParquet.vue";
 import IpcTableConfig from "./readIpc.vue";
 import NdjsonTableConfig from "./readNdjson.vue";
 import AvroTableConfig from "./readAvro.vue";
+import IpcStreamTableConfig from "./readIpcStream.vue";
 import {
   ReceivedTable,
   NodeRead,
@@ -158,6 +150,7 @@ import {
   isInputIpcTable,
   isInputNdjsonTable,
   isInputAvroTable,
+  isInputIpcStreamTable,
 } from "../../../baseNode/nodeInput";
 import {
   baseNameOf,
@@ -167,6 +160,7 @@ import {
   inferScanModeFromPath,
   isDirectoryCapable,
   isUtf8Encoding,
+  READ_EXTENSIONS,
   type ReadFileType,
 } from "../../../../../utils/readFileTypes";
 import { scanModeForSelection } from "../../../../common/FileBrowser/cloudPathMapping";

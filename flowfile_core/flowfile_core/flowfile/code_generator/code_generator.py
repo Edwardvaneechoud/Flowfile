@@ -780,8 +780,10 @@ class FlowGraphCodeConverter(
             return
         if file_settings.file_type == "csv":
             self._handle_csv_read(file_settings, var_name)
-        elif file_settings.file_type in ("parquet", "ipc"):
+        elif file_settings.file_type in ("parquet", "ipc", "ndjson"):
             self._emit_single_file_scan(file_settings.file_type, file_settings, var_name)
+        elif file_settings.file_type in ("avro", "ipc_stream"):
+            self._handle_eager_read(file_settings.file_type, file_settings, var_name)
         elif file_settings.file_type in ("xlsx", "excel"):
             self._handle_excel_read(file_settings, var_name)
         else:
@@ -831,6 +833,14 @@ class FlowGraphCodeConverter(
     def _scan_callable(self, file_type: str) -> str:
         """The reader expression for ``file_type``, registering whatever import it needs."""
         return f"{self.framework}.scan_{file_type}"
+
+    def _read_callable(self, file_type: str) -> str:
+        """The eager reader expression for formats polars cannot scan (avro, ipc_stream)."""
+        return f"{self.framework}.read_{file_type}"
+
+    def _handle_eager_read(self, file_type: str, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
+        source = self._py_path(file_settings.abs_file_path)
+        self._add_code(f"{var_name} = {self._read_callable(file_type)}({source})")
 
     def _directory_scan_source(self, file_settings: input_schema.ReceivedTable) -> str:
         """Render the file-list expression a directory scan reads, mirroring the engine.
@@ -1823,6 +1833,10 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
             self._add_code(f'    sheet_name="{file_settings.table_settings.sheet_name}",')
         self._add_code(").lazy()")
 
+    def _handle_eager_read(self, file_type: str, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
+        source = self._py_path(file_settings.abs_file_path)
+        self._add_code(f"{var_name} = {self._read_callable(file_type)}({source}).lazy()")
+
     def _build_final_code(self) -> str:
         """Build the final Python code with a performance note when flowfile is used."""
         code = super()._build_final_code()
@@ -1978,12 +1992,18 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         self._add_code("")
 
     def _scan_callable(self, file_type: str) -> str:
-        """``flowfile`` re-exports scan_csv/scan_parquet but not scan_ipc, so ipc is imported
+        return self._frame_reader(f"scan_{file_type}")
+
+    def _read_callable(self, file_type: str) -> str:
+        return self._frame_reader(f"read_{file_type}")
+
+    def _frame_reader(self, name: str) -> str:
+        """``flowfile`` re-exports scan_csv/scan_parquet only; every other reader is imported
         from flowfile_frame instead of emitting an ``ff.`` attribute that does not exist."""
-        if file_type == "ipc":
-            self.imports.add("from flowfile_frame import scan_ipc")
-            return "scan_ipc"
-        return f"ff.scan_{file_type}"
+        if name in ("scan_csv", "scan_parquet"):
+            return f"ff.{name}"
+        self.imports.add(f"from flowfile_frame import {name}")
+        return name
 
     def _emit_directory_read(self, file_settings: input_schema.ReceivedTable, var_name: str) -> None:
         """Emit the FlowFrame reader in directory mode so the export re-imports as the same node.

@@ -5,6 +5,7 @@ import {
   isInputIpcTable,
   isInputNdjsonTable,
   isInputAvroTable,
+  isInputIpcStreamTable,
   isOutputParquetTable,
   isOutputIpcTable,
   isOutputNdjsonTable,
@@ -29,6 +30,13 @@ describe("input table type guards", () => {
     expect(isInputAvroTable(ipc)).toBe(false);
     expect(isInputCsvTable(ipc)).toBe(false);
     expect(isInputParquetTable(avro)).toBe(false);
+  });
+
+  it("keeps the IPC file and stream formats apart", () => {
+    const stream: InputTableSettings = { file_type: "ipc_stream" };
+    expect(isInputIpcStreamTable(stream)).toBe(true);
+    expect(isInputIpcTable(stream)).toBe(false);
+    expect(isInputIpcStreamTable({ file_type: "ipc" })).toBe(false);
   });
 });
 

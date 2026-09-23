@@ -61,6 +61,7 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
 )
 from flowfile_core.flowfile.filter_expressions import build_filter_expression, resolve_filter_field_type
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
+from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
     execute_polars_code,
@@ -6415,6 +6416,11 @@ class FlowGraph:
                     def schema_callback():
                         input_data = FlowDataEngine.create_from_path(input_file.received_file)
                         return input_data.schema
+
+                elif input_file.received_file.file_type in ("avro", "ipc_stream"):
+
+                    def schema_callback():
+                        return pl_schema_to_flowfile_columns(create_funcs.probe_eager_schema(input_file.received_file))
 
                 elif input_file.received_file.file_type in ("xlsx", "excel"):
                     schema_callback = get_xlsx_schema_callback(

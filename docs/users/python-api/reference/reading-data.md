@@ -56,20 +56,25 @@ files. These readers live in `flowfile_frame` and are **not** re-exported on the
 `ff` namespace — import them directly:
 
 ```python
-from flowfile_frame import read_ipc, read_ndjson, read_avro, scan_ipc, scan_ndjson
+from flowfile_frame import read_ipc, read_ipc_stream, read_ndjson, read_avro, scan_ipc, scan_ndjson
 
 # Arrow IPC / Feather (lazy scan — like parquet)
 df = read_ipc("data.arrow", description="Arrow IPC source")
 
-# Newline-delimited JSON (lazy scan)
+# Arrow IPC stream (eager read — the footer-less format has no lazy scan)
+df = read_ipc_stream("data.arrows")
+
+# Newline-delimited JSON (lazy scan); a gzipped file is decompressed on the fly
 df = read_ndjson("events.ndjson")
+df = read_ndjson("events.ndjson.gz")
 
 # Avro (eager read — offloaded to the worker so core never holds the dataset)
 df = read_avro("data.avro")
 ```
 
 IPC and NDJSON are scanned lazily, so they also provide `scan_ipc` / `scan_ndjson`.
-Avro has no lazy scan in Polars, so its read is offloaded to the worker.
+Avro and the Arrow IPC stream format have no lazy scan in Polars, so their reads are offloaded
+to the worker. `read_csv` and `read_ndjson` accept `.gz` files directly.
 
 ### Reading a Directory of Files
 

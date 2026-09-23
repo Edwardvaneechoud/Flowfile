@@ -214,7 +214,7 @@ def trigger_create_operation(
     flow_id: int,
     node_id: int | str,
     received_table: ReceivedTable,
-    file_type: str = Literal["csv", "parquet", "json", "excel", "ipc", "ndjson", "avro"],
+    file_type: str = Literal["csv", "parquet", "json", "excel", "ipc", "ndjson", "avro", "ipc_stream"],
 ):
     f = _worker_session.post(
         url=f"{WORKER_URL}/create_table/{file_type}",

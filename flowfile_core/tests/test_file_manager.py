@@ -124,7 +124,7 @@ class TestLimits:
         assert resp.status_code == 200
         data = resp.json()
         assert data["max_file_size_bytes"] == fm_module.MAX_FILE_SIZE
-        expected = {"csv", "tsv", "txt", "parquet", "xlsx", "xls", "ipc", "arrow", "feather", "ndjson", "jsonl", "avro"}
+        expected = {"csv", "tsv", "txt", "parquet", "xlsx", "xls", "ipc", "arrow", "feather", "ndjson", "jsonl", "avro", "arrows", "csv.gz", "ndjson.gz"}
         assert expected <= set(data["allowed_extensions"])
         assert data["allowed_extensions"] == sorted(data["allowed_extensions"])
 
@@ -242,10 +242,20 @@ class TestUpload:
         data = _upload_test_file("test_size.csv", content)
         assert data["size"] == len(content)
 
-    @pytest.mark.parametrize("ext", ["ipc", "arrow", "feather", "ndjson", "jsonl", "avro", "tsv"])
+    @pytest.mark.parametrize("ext", ["ipc", "arrow", "feather", "ndjson", "jsonl", "avro", "tsv", "arrows", "csv.gz", "tsv.gz", "ndjson.gz", "jsonl.gz"])
     def test_upload_accepts_data_extension(self, ext):
         data = _upload_test_file(f"test_ext.{ext}", b"\x00" * 32)
         assert data["filename"] == f"test_ext.{ext}"
+
+    @pytest.mark.parametrize("name", ["test_bare.gz", "test_bad.parquet.gz", "test_bad.py.gz"])
+    def test_upload_rejects_gzip_of_unsupported_or_nothing(self, name):
+        """Only the text formats read through gzip; a bare .gz or a gzipped container is refused."""
+        resp = client.post(
+            f"{PREFIX}/upload",
+            files={"file": (name, io.BytesIO(b"\x00" * 32), "application/octet-stream")},
+        )
+        assert resp.status_code == 400
+        assert "not allowed" in resp.json()["detail"]
 
     def test_upload_returns_absolute_filepath(self):
         data = _upload_test_file("test_abs.csv")
@@ -260,6 +270,11 @@ class TestUniqueUpload:
         assert names == ["u.csv", "u (1).csv", "u (2).csv"]
         for i, name in enumerate(names):
             assert (uploads_dir / name).read_bytes() == f"body-{i}".encode()
+
+    def test_unique_keeps_gzip_compound_suffix(self, _docker_mode_with_tmp_uploads):
+        """The counter goes before ``.csv.gz``, not between ``.csv`` and ``.gz``, so the copy stays readable."""
+        names = [_upload_test_file("u.csv.gz", f"body-{i}".encode(), unique=True)["filename"] for i in range(2)]
+        assert names == ["u.csv.gz", "u (1).csv.gz"]
 
     def test_without_unique_overwrites(self, _docker_mode_with_tmp_uploads):
         uploads_dir = _docker_mode_with_tmp_uploads

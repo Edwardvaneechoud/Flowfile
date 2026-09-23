@@ -2,6 +2,7 @@ import io
 import os
 from flowfile_frame.flow_frame_methods import (read_parquet, from_dict, concat,
                                                read_ipc, read_ndjson, read_avro,
+                                               read_ipc_stream, read_csv,
                                                scan_csv_from_cloud_storage,
                                                scan_parquet_from_cloud_storage,
                                                scan_json_from_cloud_storage,
@@ -500,6 +501,41 @@ def test_write_read_new_formats(tmpdir, ext, writer, reader):
     assert len(result) == 3
     assert result.columns == ["id", "name"]
     assert result["name"].to_list() == ["Alice", "Bob", "Charlie"]
+
+
+def test_read_ipc_stream(tmpdir):
+    """The footer-less stream format reads through its own eager connector; scan_ipc rejects it."""
+    temp_path = os.path.join(tmpdir, "test_data.arrows")
+    pl.DataFrame({"id": [1, 2, 3], "name": ["Alice", "Bob", "Charlie"]}).write_ipc_stream(temp_path)
+
+    result = read_ipc_stream(temp_path).collect()
+    assert result["name"].to_list() == ["Alice", "Bob", "Charlie"]
+
+
+@pytest.mark.parametrize("ext,writer,reader", [
+    ("csv.gz", "write_csv", read_csv),
+    ("ndjson.gz", "write_ndjson", read_ndjson),
+])
+def test_read_gzipped_text_formats(tmpdir, ext, writer, reader):
+    """Polars decompresses gzip inside scan_csv/scan_ndjson, so a .gz path needs no extra options."""
+    import gzip
+    temp_path = os.path.join(tmpdir, f"test_data.{ext}")
+    with gzip.open(temp_path, "wb") as fh:
+        getattr(pl.DataFrame({"id": [1, 2, 3], "name": ["Alice", "Bob", "Charlie"]}), writer)(fh)
+
+    result = reader(temp_path).collect()
+    assert result["name"].to_list() == ["Alice", "Bob", "Charlie"]
+
+
+def test_read_gzipped_csv_non_utf8(tmpdir):
+    """A gzipped CSV in a non-utf8 encoding is gunzipped and transcoded before polars sees it."""
+    import gzip
+    temp_path = os.path.join(tmpdir, "test_data.csv.gz")
+    with gzip.open(temp_path, "wb") as fh:
+        fh.write("id,name\n1,café\n2,naïve\n".encode("latin1"))
+
+    result = read_csv(temp_path, encoding="latin1").collect()
+    assert result["name"].to_list() == ["café", "naïve"]
 
 
 @pytest.mark.parametrize("ext,writer,reader,compression", [

@@ -111,6 +111,7 @@ from flowfile_frame.flow_frame_methods import (  # noqa: F401
     read_csv,
     read_excel,
     read_ipc,
+    read_ipc_stream,
     read_ndjson,
     read_parquet,
     scan_csv,
