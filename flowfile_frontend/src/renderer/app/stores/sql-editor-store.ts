@@ -267,7 +267,8 @@ export const useSqlEditorStore = defineStore("sqlEditor", {
         !active.link &&
         isBlankQuery(active.query) &&
         !active.executing &&
-        !active.result
+        !active.result &&
+        !active.error
       ) {
         active.query = query;
         active.link = link;

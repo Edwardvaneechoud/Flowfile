@@ -238,6 +238,22 @@ describe("openQuery", () => {
     expect(store.active?.query).toBe("SELECT * FROM orders");
   });
 
+  it("never reuses a cleared tab whose last run failed, so its error stays with it", async () => {
+    const store = useSqlEditorStore();
+    store.ensureHydrated();
+    const failed = store.active!;
+    store.setQuery(failed.id, "SELECT nope");
+    mocks.executeSqlQuery.mockResolvedValueOnce({ ...okResult(), error: "no such column" });
+    await store.runQuery();
+    store.setQuery(failed.id, "");
+
+    const tab = store.openQuery("SELECT * FROM orders", "orders");
+    expect(store.tabs).toHaveLength(2);
+    expect(tab.id).not.toBe(failed.id);
+    expect(tab.error).toBeNull();
+    expect(failed.error).toBe("no such column");
+  });
+
   it("focuses a tab that already holds the same query", () => {
     const store = useSqlEditorStore();
     const first = store.openQuery("SELECT * FROM orders", "orders");
