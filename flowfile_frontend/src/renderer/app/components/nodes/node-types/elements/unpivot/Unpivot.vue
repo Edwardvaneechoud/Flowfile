@@ -441,6 +441,9 @@ const loadNodeData = async (nodeId: number) => {
     settings.unpivot_input.index_columns ??= [];
     settings.unpivot_input.value_columns ??= [];
     settings.unpivot_input.data_type_selector_mode ??= "column";
+    if (settings.unpivot_input.data_type_selector_mode === "data_type") {
+      settings.unpivot_input.data_type_selector ??= "all";
+    }
   }
   nodeUnpivot.value = settings;
   dataLoaded.value = true;

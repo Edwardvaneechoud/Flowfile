@@ -4,10 +4,12 @@ import {
   addAggRows,
   defaultAggFor,
   duplicateOutputNames,
+  effectiveOutputName,
   isNumericType,
   outputNameFor,
   renamedForAgg,
   usageByColumn,
+  usesByAgg,
 } from "./groupByLogic";
 
 describe("defaultAggFor", () => {
@@ -68,15 +70,39 @@ describe("renamedForAgg", () => {
 });
 
 describe("duplicateOutputNames", () => {
-  it("lists names used more than once and ignores blanks", () => {
+  it("lists names used more than once, counting a blank by its default name", () => {
     const duplicates = duplicateOutputNames([
       { old_name: "a", agg: "sum", new_name: "x" },
       { old_name: "b", agg: "sum", new_name: "x" },
       { old_name: "c", agg: "sum", new_name: "y" },
       { old_name: "d", agg: "sum", new_name: "" },
+      { old_name: "d", agg: "sum", new_name: "d_sum" },
       { old_name: "e", agg: "sum" },
     ]);
-    expect([...duplicates]).toEqual(["x"]);
+    expect([...duplicates]).toEqual(["x", "d_sum"]);
+  });
+});
+
+describe("effectiveOutputName", () => {
+  it("falls back to the placeholder name for a blank field", () => {
+    expect(effectiveOutputName({ old_name: "a", agg: "sum", new_name: "" })).toBe("a_sum");
+    expect(effectiveOutputName({ old_name: "a", agg: "groupby" })).toBe("a");
+    expect(effectiveOutputName({ old_name: "a", agg: "sum", new_name: "total" })).toBe("total");
+  });
+});
+
+describe("usesByAgg", () => {
+  it("merges rows that aggregate the same way, keeping first-seen order", () => {
+    expect(
+      usesByAgg([
+        { agg: "sum", index: 0 },
+        { agg: "count", index: 1 },
+        { agg: "sum", index: 3 },
+      ]),
+    ).toEqual([
+      { agg: "sum", rows: [0, 3] },
+      { agg: "count", rows: [1] },
+    ]);
   });
 });
 

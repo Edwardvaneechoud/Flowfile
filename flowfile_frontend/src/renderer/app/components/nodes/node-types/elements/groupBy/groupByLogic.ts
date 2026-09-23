@@ -30,6 +30,9 @@ export const defaultAggFor = (dataType: string | null | undefined): AggOption =>
 export const outputNameFor = (column: string, agg: string): string =>
   agg === "groupby" ? column : `${column}_${agg}`;
 
+export const effectiveOutputName = (row: AggColl): string =>
+  row.new_name || outputNameFor(row.old_name, row.agg);
+
 export interface AddRowsResult {
   rows: AggColl[];
   /** Indices of rows appended by this call. */
@@ -65,13 +68,12 @@ export const renamedForAgg = (row: AggColl, nextAgg: string): string | undefined
     ? outputNameFor(row.old_name, nextAgg)
     : row.new_name;
 
-/** Output names used by more than one row. Case-sensitive, like Polars column names. */
+/** Output names used by more than one row, a blank counted by its default. Case-sensitive, like Polars. */
 export const duplicateOutputNames = (rows: readonly AggColl[]): Set<string> => {
   const seen = new Set<string>();
   const duplicates = new Set<string>();
   for (const row of rows) {
-    const name = row.new_name ?? "";
-    if (!name) continue;
+    const name = effectiveOutputName(row);
     if (seen.has(name)) duplicates.add(name);
     seen.add(name);
   }
@@ -92,4 +94,11 @@ export const usageByColumn = (rows: readonly AggColl[]): Map<string, ColumnUsage
     usage.set(row.old_name, uses);
   });
   return usage;
+};
+
+/** One entry per aggregation, so a column aggregated twice the same way gets one chip. */
+export const usesByAgg = (uses: readonly ColumnUsage[]): { agg: string; rows: number[] }[] => {
+  const byAgg = new Map<string, number[]>();
+  for (const use of uses) byAgg.set(use.agg, [...(byAgg.get(use.agg) ?? []), use.index]);
+  return [...byAgg].map(([agg, rows]) => ({ agg, rows }));
 };

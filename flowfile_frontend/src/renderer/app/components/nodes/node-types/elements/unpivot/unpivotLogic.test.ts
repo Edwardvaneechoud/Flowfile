@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { UnpivotInput } from "../../../baseNode/nodeInput";
-import { missingUnpivotParts, rowsFromUnpivot, writeUnpivotRows } from "./unpivotLogic";
+import {
+  dataTypeLabel,
+  missingUnpivotParts,
+  rowsFromUnpivot,
+  writeUnpivotRows,
+} from "./unpivotLogic";
 
 const input = (): UnpivotInput => ({
   index_columns: ["Country"],
@@ -26,11 +31,18 @@ describe("rowsFromUnpivot / writeUnpivotRows", () => {
 });
 
 describe("missingUnpivotParts", () => {
-  it("wants value columns in column mode and a selector in data-type mode", () => {
+  it("wants value columns in column mode and nothing in data-type mode", () => {
     expect(missingUnpivotParts(input())).toEqual([]);
     expect(missingUnpivotParts({ ...input(), value_columns: [] })).toEqual(["value columns"]);
     const byType = { ...input(), data_type_selector_mode: "data_type" as const };
-    expect(missingUnpivotParts(byType)).toEqual(["data type"]);
+    expect(missingUnpivotParts(byType)).toEqual([]);
     expect(missingUnpivotParts({ ...byType, data_type_selector: "numeric" })).toEqual([]);
+  });
+});
+
+describe("dataTypeLabel", () => {
+  it("reads a missing selector as every other column, like the backend", () => {
+    expect(dataTypeLabel(null)).toBe("All other columns");
+    expect(dataTypeLabel("numeric")).toBe("Numeric columns");
   });
 });

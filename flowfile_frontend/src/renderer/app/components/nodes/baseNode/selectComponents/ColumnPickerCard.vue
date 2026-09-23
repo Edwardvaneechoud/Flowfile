@@ -465,6 +465,7 @@ const onRowClick = (index: number, event: MouseEvent) => {
 
 const removeRows = (indices: readonly number[]) => {
   if (indices.length === 0) return;
+  menuTarget.value = null;
   emit("remove-rows", [...indices]);
   rowSelection.value = {
     anchorIndex: null,

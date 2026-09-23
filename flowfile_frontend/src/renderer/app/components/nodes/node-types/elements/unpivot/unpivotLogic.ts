@@ -21,7 +21,7 @@ export const DATA_TYPE_OPTIONS: readonly { value: DataTypeSelector; label: strin
 ];
 
 export const dataTypeLabel = (selector: DataTypeSelector | null | undefined): string =>
-  DATA_TYPE_OPTIONS.find((option) => option.value === selector)?.label ?? "a data type";
+  DATA_TYPE_OPTIONS.find((option) => option.value === (selector ?? "all"))?.label ?? "a data type";
 
 export const unpivotRoleLabel = (role: string): string =>
   UNPIVOT_ROLES.find((spec) => spec.value === role)?.label ?? role;
@@ -37,10 +37,11 @@ export const writeUnpivotRows = (input: UnpivotInput, rows: readonly RoleRow[]):
   input.value_columns = rows.filter((row) => row.role === "value").map((row) => row.name);
 };
 
-/** Human labels for what is still missing before the node does anything useful. */
+/**
+ * Human labels for what is still missing before the node does anything useful.
+ * By type never lacks anything: a missing selector means every other column.
+ */
 export const missingUnpivotParts = (input: UnpivotInput): string[] => {
-  if (input.data_type_selector_mode === "data_type") {
-    return input.data_type_selector ? [] : ["data type"];
-  }
+  if (input.data_type_selector_mode === "data_type") return [];
   return input.value_columns.length > 0 ? [] : ["value columns"];
 };

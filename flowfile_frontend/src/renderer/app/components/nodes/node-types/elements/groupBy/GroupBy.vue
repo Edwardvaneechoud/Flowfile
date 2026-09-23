@@ -205,9 +205,11 @@ import {
   aggLabel,
   defaultAggFor,
   duplicateOutputNames,
+  effectiveOutputName,
   outputNameFor,
   renamedForAgg,
   usageByColumn,
+  usesByAgg,
   type AggKind,
 } from "./groupByLogic";
 
@@ -219,6 +221,13 @@ const picker = ref<InstanceType<typeof ColumnPickerCard> | null>(null);
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeGroupBy,
+  onBeforeSave: () => {
+    // The backend only defaults a missing name, so a blank field gets its placeholder here.
+    rows.value.forEach((row) => {
+      row.new_name = effectiveOutputName(row);
+    });
+    return true;
+  },
   onAfterSave: async () => {
     validateConfig();
   },
@@ -233,8 +242,7 @@ const usedCount = computed(
   () => [...usage.value.keys()].filter((name) => columnNames.value.has(name)).length,
 );
 const duplicateNames = computed(() => duplicateOutputNames(rows.value));
-const isDuplicateName = (item: AggColl) =>
-  Boolean(item.new_name && duplicateNames.value.has(item.new_name));
+const isDuplicateName = (item: AggColl) => duplicateNames.value.has(effectiveOutputName(item));
 
 const settingsCountLabel = computed(() => {
   if (rows.value.length === 0) return "";
@@ -244,11 +252,11 @@ const settingsCountLabel = computed(() => {
 
 const usageChips = (name: string): UsageChip[] =>
   capUsageChips(
-    (usage.value.get(name) ?? []).map((use) => ({
+    usesByAgg(usage.value.get(name) ?? []).map((use) => ({
       label: use.agg === "groupby" ? "key" : use.agg,
-      title: `Show the ${aggLabel(use.agg)} row`,
+      title: `Show the ${aggLabel(use.agg)} ${use.rows.length === 1 ? "row" : "rows"}`,
       isKey: use.agg === "groupby",
-      rows: [use.index],
+      rows: use.rows,
     })),
   );
 
