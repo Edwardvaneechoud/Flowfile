@@ -1,5 +1,5 @@
 <template>
-  <div class="node-settings-drawer">
+  <div class="node-settings-drawer nokey">
     <NodeTitle
       :title="nodeStore.drawerProps.title"
       :intro="nodeStore.drawerProps.intro"
@@ -28,7 +28,7 @@ import NodeTitle from "../../components/nodes/baseNode/nodeTitle.vue";
 
 interface DrawerComponentInstance {
   loadNodeData: (nodeId: number) => void;
-  pushNodeData: () => void | Promise<void>;
+  pushNodeData: () => void | boolean | Promise<void | boolean>;
   // Opt-in: a component that can have nothing to save (ExploreData before its
   // data is fetched) exposes this to hide the Apply footer. Undefined keeps
   // Apply visible, which is what every other node settings component wants.
@@ -62,7 +62,8 @@ const applySettings = async () => {
   if (!drawerComponentInstance.value?.pushNodeData || !canApply.value) return;
   isApplying.value = true;
   try {
-    await drawerComponentInstance.value.pushNodeData();
+    // A component that reports a refused save keeps the button on "Apply".
+    if ((await drawerComponentInstance.value.pushNodeData()) === false) return;
     justApplied.value = true;
     if (appliedTimer) clearTimeout(appliedTimer);
     appliedTimer = setTimeout(() => {
