@@ -232,6 +232,7 @@
           @navigate-to-flow="navigateToFlow($event)"
           @select-version="catalogStore.selectVersion($event)"
           @query-table="handleQueryTable($event)"
+          @edit-sql="handleEditTableSql($event)"
           @recover-from-run="openRunSnapshot($event)"
           @load-preview="catalogStore.loadSelectedPreview()"
           @refresh-history="catalogStore.refreshTableHistory()"
@@ -316,7 +317,7 @@
         <!-- SQL Editor -->
         <SqlEditorPanel
           v-else-if="catalogStore.activeTab === 'sql'"
-          :initial-query="sqlInitialQuery"
+          @view-table="selectTable($event)"
         />
         <!-- Notebook (mixed Python / Markdown exploration console) -->
         <NotebookPanel v-else-if="catalogStore.activeTab === 'notebook'" />
@@ -576,6 +577,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useProjectStore } from "../../stores/project-store";
 import { useNotebookStore } from "../../stores/notebook-store";
+import { useSqlEditorStore } from "../../stores/sql-editor-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useNotificationsStore } from "../../stores/notifications-store";
 import { CatalogApi } from "../../api/catalog.api";
@@ -640,6 +642,7 @@ const route = useRoute();
 const catalogStore = useCatalogStore();
 const projectStore = useProjectStore();
 const notebookStore = useNotebookStore();
+const sqlEditorStore = useSqlEditorStore();
 const flowStore = useFlowStore();
 const notificationsStore = useNotificationsStore();
 const { openFlow } = useFlowOpener();
@@ -872,7 +875,6 @@ const flowMenuOptions = computed<ContextMenuOption[]>(() => [
 const flowDetailFocusRuns = ref(false);
 
 const showCreateVirtualTable = ref(false);
-const sqlInitialQuery = ref<string | undefined>(undefined);
 
 const defaultNamespaceId = computed(() => catalogStore.defaultNamespaceId);
 
@@ -1317,8 +1319,14 @@ function buildTableRef(reference: string): string {
 }
 
 function handleQueryTable(reference: string) {
-  sqlInitialQuery.value = `SELECT * FROM ${buildTableRef(reference)}`;
+  sqlEditorStore.openQuery(`SELECT * FROM ${buildTableRef(reference)}`, reference.split(".").pop());
   // Clear selected table so the SQL editor panel shows
+  catalogStore.clearTableSelection();
+  router.push({ name: "catalog", query: { tab: "sql" } });
+}
+
+function handleEditTableSql({ table, link }: { table: CatalogTable; link: boolean }) {
+  sqlEditorStore.openVirtualTable(table, { link });
   catalogStore.clearTableSelection();
   router.push({ name: "catalog", query: { tab: "sql" } });
 }

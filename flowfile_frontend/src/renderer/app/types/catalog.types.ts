@@ -471,6 +471,13 @@ export interface QueryVirtualTableCreate {
   sql_query: string;
 }
 
+export interface QueryVirtualTableUpdate {
+  name?: string;
+  namespace_id?: number | null;
+  description?: string;
+  sql_query?: string;
+}
+
 export interface CatalogTablePreview {
   columns: string[];
   dtypes: string[];
