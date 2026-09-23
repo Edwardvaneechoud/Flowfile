@@ -1,34 +1,47 @@
 # Change Tracking
 
-Change tracking lets a flow read only what changed in a catalog table since the last time it ran, instead of re-reading the whole table every run. It is Flowfile's incremental-processing primitive: turn it on for a table, point a [Catalog Reader](../nodes/input.md#catalog-reader) at it in one of the **Changes** modes, and each run returns the inserts, updates and deletes committed since the run before it. This page covers how to turn it on, what the reader returns, how the per-consumer cursor behaves, and the cases where tracking is refused or unsafe.
+Change tracking lets a flow read only what changed in a Delta table instead of re-reading the whole table every run. It works on catalog tables and on Delta tables at a cloud storage path: turn it on for the table, point a reader at it in one of the **Changes** modes, and each run returns the inserts, updates and deletes committed in that window. This page covers how to turn it on, what the reader returns, the per-consumer cursor that catalog tables keep, how cloud paths differ, and the cases where tracking is refused or unsafe.
 
-Underneath it is Delta Lake's change data feed: a table property that makes every write record its row-level changes alongside the data. Flowfile turns the property on, remembers the version it was turned on at, and keeps a cursor per consumer.
+Underneath it is Delta Lake's change data feed: a table property that makes every write record its row-level changes alongside the data. Flowfile turns the property on, knows the version it was turned on at, and — for catalog tables — keeps a cursor per consumer.
+
+## Catalog tables and cloud paths
+
+The change feed, the columns it adds and the enable-only rule are the same for both. What differs is what Flowfile can keep about a table the catalog does not manage:
+
+| | Catalog table | Delta table at a cloud path |
+|---|---|---|
+| Reader | [Read from Catalog](../nodes/input.md#catalog-reader) | [Read from cloud provider](../nodes/input.md#cloud-reading-changes), Delta Lake format |
+| Writer | [Write to Catalog](../nodes/output.md#catalog-writer) | [Write to cloud provider](../nodes/output.md#cloud-storage-writer), Delta Lake format |
+| Read modes | Since last run, since version, since time | Since version, since time |
+| Cursor | One per consumer, advanced after each full run | None — a [flow parameter moves the window](#moving-the-window-on-a-cloud-path) |
+| Tracking floor | Recorded when tracking is turned on | Read from the table's Delta log on every run |
+| Storage | Wherever the catalog keeps its tables | S3 or Azure Data Lake Storage; not Google Cloud Storage |
 
 ## Turning it on
 
-Tracking is **off by default**, **per table**, and **enable-only** — nothing in the UI turns it back off, because the changes a table stops recording cannot be recovered later. There are three ways to turn it on, all of which do the same thing:
+Tracking is **off by default**, **per table**, and **enable-only** — nothing in the UI turns it back off, because the changes a table stops recording cannot be recovered later. Every way of turning it on does the same thing:
 
-- The [Catalog Writer](../nodes/output.md#catalog-writer)'s **Track changes** checkbox. On a new table the property is set at creation; on an existing untracked table the writer enables it just before writing, so that write is the first tracked commit.
-- The **Change tracking** card on the table's detail page in the catalog browser.
-- The **Enable change tracking** button in the Catalog Reader's settings, shown when the selected table is not tracked yet.
+- The writer's **Track changes** checkbox, on [Write to Catalog](../nodes/output.md#catalog-writer) or [Write to cloud provider](../nodes/output.md#cloud-storage-writer). On a new table the property is set at creation; on an existing untracked table the writer enables it just before writing, so that write is the first tracked commit.
+- The **Enable change tracking** button in either reader's settings, shown when a change mode is picked on a table that is not tracked yet.
+- For a catalog table, the **Change tracking** card on the table's detail page in the catalog browser.
 
-In Python, pass `track_changes=True` to [`write_catalog_table`](../../python-api/reference/writing-data.md#catalog-writing) or `SchemaReference.write_table`.
+In Python, pass `track_changes=True` to [`write_catalog_table`](../../python-api/reference/writing-data.md#catalog-writing) or `SchemaReference.write_table` for a catalog table, and to [`FlowFrame.write_delta`](../../python-api/reference/writing-data.md#delta-lake-writing) or `write_to_cloud_storage` for a cloud path.
 
 !!! warning "Only commits made after enabling are tracked"
-    Enabling records the Delta version it happened at, and that version is the floor for every cursor. History written before it cannot be replayed — the change feed for those versions is either missing or inconsistent, so Flowfile refuses to read below the floor. Turn tracking on when you create the table, not when you first need a change feed.
+    The version tracking was turned on at is the floor for every change read. History written before it cannot be replayed — the change feed for those versions is either missing or inconsistent, so a window that starts earlier is moved up to the floor. A catalog table records the floor when tracking is enabled; for a cloud path Flowfile reads it from the Delta log: the commit that turned tracking on or, for a table created tracked, its oldest version still in the log. Turn tracking on when you create the table, not when you first need a change feed.
 
-Tracking is refused on virtual tables, legacy parquet tables and [SCD2](slowly-changing-dimensions.md)-tracked tables. An SCD2 table already keeps row history in its `valid_from` / `valid_to` / `is_current` columns — read those instead.
+Tracking is refused on virtual tables, legacy parquet tables and [SCD2](slowly-changing-dimensions.md)-tracked tables, and on `gs://` paths. An SCD2 table already keeps row history in its `valid_from` / `valid_to` / `is_current` columns — read those instead.
 
 ## Reading changes
 
-A Catalog Reader on a tracked table shows a **Read** selector above the History selector:
+Both readers show a **Read** selector:
 
 ![Catalog Reader set to "Changes since last run", showing the cursor status line and Reset cursor button](../../../assets/images/guides/catalog/change-tracking-reader.png)
 
 | Option | What the run returns |
 |--------|----------------------|
 | **Full table** (default) | The table as it is now. No change feed. |
-| **Changes since last run** | Everything committed after the version this consumer last processed. Advances a cursor. |
+| **Changes since last run** | Catalog tables only. Everything committed after the version this consumer last processed. Advances a cursor. |
 | **Changes since version** | Everything committed after the version you pick. No cursor — the same window every run. |
 | **Changes since time** | Everything committed at or after a timestamp (never below the tracking floor). No cursor. |
 
@@ -48,7 +61,7 @@ A run whose window contains nothing returns an empty frame with the full schema,
 
 ## Cursors
 
-Only **Changes since last run** keeps a cursor. A cursor stores one number: the last Delta commit version that was fully processed. The next run reads from the version after it, up to the table's head at the moment the read starts.
+Only **Changes since last run** keeps a cursor, so cursors exist for catalog tables only. A cursor stores one number: the last Delta commit version that was fully processed. The next run reads from the version after it, up to the table's head at the moment the read starts.
 
 **Which runs advance it.** A cursor moves only after a full flow run in which the reader and everything downstream of it completed — running the flow from the designer, from a schedule, or headlessly. Previewing a node, running a single node, or cancelling a run never advances it. A failure anywhere downstream leaves the cursor where it was, so the next run replays the same window.
 
@@ -63,19 +76,37 @@ Only **Changes since last run** keeps a cursor. A cursor stores one number: the 
 
 **Reset and delete.** The reader's settings and the table detail page both list the table's cursors with how far behind they are, and offer **Reset** (move to the current version, skipping unread changes) and **Delete** (forget the position entirely — the next run re-initializes per **Start from**). Resetting to the beginning replays all tracked history.
 
+## Delta tables at a cloud path { #cloud-delta-tables }
+
+A [Read from cloud provider](../nodes/input.md#cloud-reading-changes) node in the Delta Lake format reads the change feed straight from the table's path, with no catalog entry. Three things work differently from a catalog table:
+
+- **No cursor.** A bare path has nowhere to store one, so there is no **Changes since last run**; each run reads the window its **Changes since version** or **Changes since time** setting describes.
+- **The floor comes from the Delta log.** With no catalog entry to record it in, the reader looks up the commit that turned tracking on each time it runs.
+- **Tracking can be turned on without writing.** The reader's **Enable change tracking** button adds the table property as its own commit, so the next write is the first one tracked. A [Write to cloud provider](../nodes/output.md#cloud-storage-writer) node with **Track changes** ticked does the same as part of its write.
+
+### Moving the window on a cloud path
+
+To process each change once without a cursor, remember the highest `_commit_version` a run returned and pass it as the starting version of the next run. Define an integer [flow parameter](../subflows.md#add-parameters-optional), pick it under **Since version** in the reader, and set it per run — a headless run takes it as `--param`, a [published API](flow-api.md#parameters) as a query parameter:
+
+```bash
+flowfile run flow orders_sync.yaml --param since_version=41
+```
+
+That run reads every commit after version 41. Running it again with the same value reads the same window again, so keep the downstream write idempotent, as with a cursor.
+
 ## What each write mode produces
 
 Any write to a tracked table records changes, but what shows up in the feed depends on how the data was written:
 
-- **Upsert, update, delete** record exactly the rows they touched, with `update_preimage`/`update_postimage` pairs for modified rows. This is the combination change tracking is built for.
+- **Upsert, update, delete** record exactly the rows they touched, with `update_preimage`/`update_postimage` pairs for modified rows. This is the combination change tracking is built for, and both writers offer it.
 - **Append** records its new rows as inserts.
-- **Overwrite** is not offered with **Track changes** on the writer (`track_changes` with `write_mode="overwrite"`, `"virtual"` or `"scd2"` is a validation error). A tracked table that some other flow overwrites still produces a feed — but as a full set of deletes followed by a full set of inserts, which is rarely what a downstream consumer wants.
+- **Overwrite** is not offered with **Track changes** on either writer (`track_changes` with `write_mode="overwrite"` is a validation error, as are the catalog's `"virtual"` and `"scd2"`). A tracked table that some other flow overwrites still produces a feed — but as a full set of deletes followed by a full set of inserts, which is rarely what a downstream consumer wants.
 
 ## Vacuum and history retention
 
 A change feed can only be read while the underlying Delta history is still on disk. [Vacuum](index.md#delta-table-history) reclaims files older than the retention window, which can put the versions a cursor still needs out of reach.
 
-Flowfile guards against that: a vacuum that would drop history a cursor still points into is refused with a warning listing the cursors at risk, and the dialog offers **Vacuum anyway** if you accept the loss. If a read later lands on a version that no longer exists, the reader fails with an error telling you to reset the cursor.
+Flowfile guards against that for catalog tables: a vacuum that would drop history a cursor still points into is refused with a warning listing the cursors at risk, and the dialog offers **Vacuum anyway** if you accept the loss. If a read later lands on a version that no longer exists, the reader fails with an error telling you to reset the cursor. A cloud path has no cursors to protect and no vacuum action in Flowfile, so a vacuum run on it by another tool is not checked.
 
 Overwrite commits are the fragile case: their change feed is reconstructed from the files the overwrite replaced, so a vacuum breaks it. Merge-based writes (upsert, update, delete) materialize their changes explicitly and survive.
 
@@ -89,10 +120,19 @@ The tested example below writes a table twice with tracking on, then reads its c
 --8<-- "docs/examples/catalog_change_feed.py:example"
 ```
 
+For a cloud path, `ff.scan_delta` and `ff.read_from_cloud_storage` (with `file_format="delta"`) take the same `changes_since` and `include_change_preimage`, without `"last_run"`: a cloud path keeps no cursor, so `"last_run"` raises a `ValueError`. See [Reading Data](../../python-api/reference/reading-data.md#delta-lake-reading). The tested example upserts into a Delta table on S3 twice, then reads everything committed after version 0:
+
+```python
+--8<-- "docs/examples/integrations/cloud_delta_changes.py:example"
+```
+
+The feed holds order 2 as `update_postimage` and order 3 as `insert`, both at `_commit_version` 1. Order 1 is absent: the second write did not touch it.
+
 ## Related documentation
 
-- [Catalog Reader](../nodes/input.md#catalog-reader) — the Read selector
-- [Catalog Writer](../nodes/output.md#catalog-writer) — the Track changes flag
+- [Read from Catalog](../nodes/input.md#catalog-reader) — the Read selector for a catalog table
+- [Read from cloud provider](../nodes/input.md#cloud-reading-changes) — the Read selector for a cloud Delta path
+- [Write to Catalog](../nodes/output.md#catalog-writer) and [Write to cloud provider](../nodes/output.md#cloud-storage-writer) — the Track changes flag
 - [Slowly Changing Dimensions](slowly-changing-dimensions.md) — row-level history in ordinary columns, the alternative to a change feed
 - [Catalog](index.md#delta-table-history) — Delta version history and vacuum
 - [Schedules](schedules.md) — running an incremental flow on a timer

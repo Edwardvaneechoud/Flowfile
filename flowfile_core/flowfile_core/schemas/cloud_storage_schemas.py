@@ -4,8 +4,10 @@ import base64
 from typing import Literal
 
 import polars as pl
-from pydantic import BaseModel, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
+from flowfile_core.schemas.change_feed import ChangeFeedReadSettings
+from flowfile_core.schemas.delta_write import MERGE_MODES, validate_delta_write_rules
 from flowfile_core.schemas.sharing_schema import AccessInfo
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
 
@@ -185,8 +187,12 @@ class CloudStorageSettings(BaseModel):
         return v
 
 
-class CloudStorageReadSettings(CloudStorageSettings):
-    """Settings for reading from cloud storage"""
+class CloudStorageReadSettings(ChangeFeedReadSettings, CloudStorageSettings):
+    """Settings for reading from cloud storage.
+
+    The change-feed fields read a Delta table's change data feed instead of the table. A bare path
+    has no cursor store, so ``cdc_mode`` omits the catalog's ``since_last_run``.
+    """
 
     scan_mode: Literal["single_file", "directory"] = "single_file"
     file_format: Literal["csv", "parquet", "json", "delta", "iceberg"] = "parquet"
@@ -194,6 +200,17 @@ class CloudStorageReadSettings(CloudStorageSettings):
     csv_delimiter: str | None = ","
     csv_encoding: str | None = "utf8"
     delta_version: int | None = None
+    cdc_mode: Literal["off", "since_version", "since_timestamp"] = "off"
+
+    @model_validator(mode="after")
+    def _validate_change_feed_source(self) -> "CloudStorageReadSettings":
+        if self.cdc_mode == "off":
+            return self
+        if self.file_format != "delta":
+            raise ValueError("Change modes are only available for the 'delta' file format")
+        if self.delta_version is not None:
+            raise ValueError("Change modes cannot be combined with a pinned table version")
+        return self
 
 
 class CloudStorageReadSettingsInternal(BaseModel):
@@ -206,7 +223,7 @@ class WriteSettingsWorkerInterface(BaseModel):
 
     resource_path: str  # s3://bucket/path/to/file.csv
 
-    write_mode: Literal["overwrite", "append"] = "overwrite"
+    write_mode: Literal["overwrite", "append", "error", "upsert", "update", "delete"] = "overwrite"
     file_format: Literal["csv", "parquet", "json", "delta"] = "parquet"
 
     parquet_compression: Literal["snappy", "gzip", "brotli", "lz4", "zstd"] = "snappy"
@@ -216,12 +233,28 @@ class WriteSettingsWorkerInterface(BaseModel):
 
     # Delta only: partition columns, applied at table creation
     partition_by: list[str] | None = None
+    # Delta only: the key columns an upsert/update/delete matches on
+    merge_keys: list[str] = Field(default_factory=list)
+    # Delta only, enable-only: True turns the change data feed on; False never turns it off
+    track_changes: bool = False
 
 
 class CloudStorageWriteSettings(CloudStorageSettings, WriteSettingsWorkerInterface):
-    """Settings for writing to cloud storage"""
+    """Settings for writing to cloud storage.
 
-    pass
+    Shares the key-column and change-tracking rules with ``CatalogWriteSettings``
+    (``validate_delta_write_rules``); on top of them every mode beyond overwrite/append, and
+    ``track_changes``, is Delta-only.
+    """
+
+    @model_validator(mode="after")
+    def _validate_delta_write(self) -> "CloudStorageWriteSettings":
+        if self.file_format != "delta" and (self.write_mode in MERGE_MODES or self.write_mode == "error"):
+            raise ValueError(f"write_mode '{self.write_mode}' is only supported for the 'delta' file format")
+        if self.file_format != "delta" and self.track_changes:
+            raise ValueError("track_changes is only supported for the 'delta' file format")
+        validate_delta_write_rules(self.write_mode, self.merge_keys, self.track_changes)
+        return self
 
     def get_write_setting_worker_interface(self) -> WriteSettingsWorkerInterface:
         """
@@ -235,6 +268,8 @@ class CloudStorageWriteSettings(CloudStorageSettings, WriteSettingsWorkerInterfa
             csv_delimiter=self.csv_delimiter,
             csv_encoding=self.csv_encoding,
             partition_by=self.partition_by,
+            merge_keys=self.merge_keys,
+            track_changes=self.track_changes,
         )
 
 

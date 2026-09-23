@@ -31,43 +31,27 @@
       </div>
 
       <!-- Target table status: exists vs new -->
-      <div
+      <DeltaTableStatusLine
         v-if="nodeData.catalog_write_settings.table_name && tableLookupDone"
-        class="table-status"
+        :exists="!!existingTable"
+        :row-count="existingTable?.row_count ?? 0"
+        :verb="existingModeVerb"
+        :partition-columns="existingPartitionColumns"
       >
-        <div v-if="scd2TargetWarning" class="status-line status-warn">
-          <i class="fa-solid fa-triangle-exclamation"></i>
-          <span>{{ scd2TargetWarning }}</span>
-        </div>
-        <template v-if="existingTable">
-          <div class="status-line status-exists">
-            <i class="fa-solid fa-circle-info"></i>
-            <span
-              >Table exists — {{ (existingTable.row_count ?? 0).toLocaleString() }} rows. Writing
-              here {{ existingModeVerb }}.</span
-            >
-          </div>
-          <div
-            v-if="existingTable.scd2 && physicalWriteMode === 'scd2'"
-            class="status-line status-exists"
-          >
-            <i class="fa-solid fa-clock-rotate-left"></i>
-            <span
-              >SCD2 table - versioned by {{ existingTable.scd2.business_keys.join(", ") }}.</span
-            >
-          </div>
-          <div v-if="existingPartitionColumns.length" class="status-line status-partitions">
-            <span class="status-partitions-label">Partitioned by</span>
-            <span v-for="col in existingPartitionColumns" :key="col" class="status-chip">{{
-              col
-            }}</span>
+        <template #before>
+          <div v-if="scd2TargetWarning" class="status-line status-warn">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <span>{{ scd2TargetWarning }}</span>
           </div>
         </template>
-        <div v-else class="status-line status-new">
-          <i class="fa-solid fa-circle-plus"></i>
-          <span>New table — will be created.</span>
+        <div
+          v-if="existingTable?.scd2 && physicalWriteMode === 'scd2'"
+          class="status-line status-exists"
+        >
+          <i class="fa-solid fa-clock-rotate-left"></i>
+          <span>SCD2 table - versioned by {{ existingTable.scd2.business_keys.join(", ") }}.</span>
         </div>
-      </div>
+      </DeltaTableStatusLine>
 
       <!-- Tabs: Physical Write vs Virtual Table -->
       <el-tabs v-model="activeTab" class="writer-tabs" @tab-change="handleTabChange">
@@ -88,16 +72,11 @@
 
             <div v-if="needsMergeKeys" class="catalog-field">
               <label class="catalog-label">{{ keyColumnsLabel }}</label>
-              <el-select
+              <MergeKeysSelect
                 v-model="nodeData.catalog_write_settings.merge_keys"
-                size="small"
-                multiple
-                filterable
-                placeholder="Select key columns"
-              >
-                <el-option v-for="col in keyColumnOptions" :key="col" :label="col" :value="col" />
-              </el-select>
-              <p v-if="scd2KeyClashError" class="field-error">{{ scd2KeyClashError }}</p>
+                :columns="keyColumnOptions"
+                :error="scd2KeyClashError"
+              />
             </div>
 
             <div v-if="canPartition" class="catalog-field">
@@ -299,7 +278,8 @@ import { FlowApi } from "../../../../../api";
 import { SYSTEM_NAMESPACE_NAMES } from "../../../../../types";
 import axios from "../../../../../services/axios.config";
 import { buildOutputHandles } from "../../../../../utils/nodeHandles";
-import { CollapsibleSection } from "../../../../common";
+import * as writeModes from "../../../../../utils/deltaWriteModes";
+import { CollapsibleSection, DeltaTableStatusLine, MergeKeysSelect } from "../../../../common";
 import type { CatalogTable } from "../../../../../types/catalog.types";
 import type { NodeConnection } from "../../../../../types/canvas.types";
 import {
@@ -487,31 +467,19 @@ const deleteOutputEdges = async (
 const lazinessCheck = ref<{ is_optimizable: boolean; blockers: string[] } | null>(null);
 const lazinessLoading = ref(false);
 
-const needsMergeKeys = computed(() => {
-  const mode = physicalWriteMode.value;
-  return mode === "upsert" || mode === "update" || mode === "delete" || mode === "scd2";
-});
+const needsMergeKeys = computed(() => writeModes.needsMergeKeys(physicalWriteMode.value));
 
 const keyColumnsLabel = computed(() =>
   physicalWriteMode.value === "scd2" ? "Business key columns" : "Key columns",
 );
 
-const trackChangesDisabledReason = computed(() => {
-  if (activeTab.value === "virtual") return "Virtual tables have no change feed.";
-  const mode = physicalWriteMode.value;
-  if (mode === "overwrite") {
-    return "An overwrite replaces the whole table, so its change feed would be every row deleted and re-inserted.";
-  }
-  if (mode === "scd2") {
-    return "SCD2 already keeps history in the table's own valid_from / valid_to columns.";
-  }
-  return null;
-});
+const trackChangesDisabledReason = computed(() =>
+  writeModes.trackChangesDisabledReason(physicalWriteMode.value, {
+    virtual: activeTab.value === "virtual",
+  }),
+);
 
-const canPartition = computed(() => {
-  const mode = physicalWriteMode.value;
-  return mode === "overwrite" || mode === "error" || mode === "append" || mode === "scd2";
-});
+const canPartition = computed(() => writeModes.canPartition(physicalWriteMode.value));
 
 // The generated is-current column is offered by its own toggle, never here.
 const partitionColumnOptions = computed(() => availableColumns.value);
@@ -660,27 +628,16 @@ const availableColumns = computed(() => {
   return fullNodeData.value?.main_input?.columns ?? [];
 });
 
-const physicalModeDescription = computed(() => {
-  const descriptions: Record<string, string> = {
-    overwrite: "Replace all existing data in the table.",
-    error: "Fail if the table already exists.",
-    append: "Add rows to the existing table without modifying existing data.",
-    upsert: "Update rows that match the key columns, insert rows that don't match.",
-    update: "Update only rows that match the key columns. No new rows are inserted.",
-    delete: "Remove rows from the target table that match the key columns in the source data.",
-    scd2: "Track history: rows whose compared columns changed are end-dated and re-inserted as a new version. New keys are inserted as current.",
-  };
-  return descriptions[physicalWriteMode.value] ?? null;
-});
+const physicalModeDescription = computed(() => writeModes.modeDescription(physicalWriteMode.value));
 
 watch(physicalWriteMode, (newMode) => {
   if (nodeData.value && activeTab.value === "physical") {
     const s = nodeData.value.catalog_write_settings;
     s.write_mode = newMode;
-    if (!["upsert", "update", "delete", "scd2"].includes(newMode)) {
+    if (!writeModes.needsMergeKeys(newMode)) {
       s.merge_keys = [];
     }
-    if (!["overwrite", "error", "append", "scd2"].includes(newMode)) {
+    if (!writeModes.canPartition(newMode)) {
       s.partition_by = [];
     }
     // Dangling scd2 block on other physical modes is kept (not nulled) so toggling back restores it.
@@ -901,36 +858,7 @@ defineExpose({
 }
 
 .table-status {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
-  border-radius: 4px;
   background-color: var(--color-background-secondary);
-  font-size: 11px;
-}
-
-.status-line {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.status-exists {
-  color: var(--color-text-secondary);
-}
-
-.status-exists i {
-  color: var(--color-primary);
-}
-
-.status-new {
-  color: var(--color-text-tertiary);
-}
-
-.status-new i {
-  color: var(--color-success, #22c55e);
 }
 
 .status-warn {
@@ -943,20 +871,6 @@ defineExpose({
 
 .status-warn i {
   color: var(--color-warning, #f59e0b);
-}
-
-.status-partitions-label {
-  color: var(--color-text-tertiary);
-}
-
-.status-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 6px;
-  background: rgba(59, 130, 246, 0.12);
-  color: var(--color-primary);
-  border-radius: 4px;
-  font-weight: 500;
 }
 
 .virtual-info {

@@ -58,152 +58,21 @@
           </el-select>
         </div>
 
-        <div class="catalog-field">
-          <label class="catalog-label">Read</label>
-          <el-tooltip
-            :disabled="readDisabledReason === null"
-            :content="readDisabledReason ?? ''"
-            placement="top"
-          >
-            <el-select v-model="cdcMode" size="small" :disabled="readDisabledReason !== null">
-              <el-option label="Full table" value="off" />
-              <el-option label="Changes since last run" value="since_last_run" />
-              <el-option label="Changes since version" value="since_version" />
-              <el-option label="Changes since time" value="since_timestamp" />
-            </el-select>
-          </el-tooltip>
-        </div>
-
-        <div v-if="cdcMode !== 'off' && !trackingEnabled" class="cdc-warning">
-          <i class="fa-solid fa-triangle-exclamation"></i>
-          <div class="cdc-warning-body">
-            <span>
-              Change tracking is not enabled on this table. Only commits made after it is turned on
-              are tracked.
-            </span>
-            <el-button
-              v-if="canEnableTracking"
-              size="small"
-              type="primary"
-              :loading="enablingCdc"
-              @click="enableTracking"
-            >
-              Enable change tracking
-            </el-button>
-          </div>
-        </div>
-
-        <div v-if="cdcMode === 'since_version'" class="catalog-field">
-          <label class="catalog-label">Since version</label>
-          <el-select
-            v-if="!cdcVersionParam"
-            v-model="nodeData.cdc_from_version"
-            size="small"
-            filterable
-            placeholder="Pick a version"
-          >
-            <el-option
-              v-for="v in versionOptions"
-              :key="v.version"
-              :label="v.label"
-              :value="v.version"
-            />
-          </el-select>
-          <el-select
-            v-if="versionParamOptions.length > 0"
-            v-model="cdcVersionParam"
-            size="small"
-            clearable
-            placeholder="Or use a flow parameter"
-          >
-            <el-option
-              v-for="p in versionParamOptions"
-              :key="p.name"
-              :label="'${' + p.name + '}'"
-              :value="p.name"
-            />
-          </el-select>
-          <p class="section-hint">Reads every change committed after this version.</p>
-          <p v-if="cdcVersionError" class="field-error">{{ cdcVersionError }}</p>
-        </div>
-
-        <div v-if="cdcMode === 'since_timestamp'" class="catalog-field">
-          <label class="catalog-label">Since</label>
-          <DateTimePicker
-            v-if="!cdcTimestampParam"
-            v-model="nodeData.cdc_from_timestamp"
-            placeholder="Pick a date and time"
-            show-seconds
-          />
-          <el-select
-            v-if="timestampParamOptions.length > 0"
-            v-model="cdcTimestampParam"
-            size="small"
-            clearable
-            placeholder="Or use a flow parameter"
-          >
-            <el-option
-              v-for="p in timestampParamOptions"
-              :key="p.name"
-              :label="'${' + p.name + '}'"
-              :value="p.name"
-            />
-          </el-select>
-          <p v-if="cdcTimestampError" class="field-error">{{ cdcTimestampError }}</p>
-        </div>
-
-        <template v-if="cdcMode === 'since_last_run'">
-          <div class="cdc-status">
-            <i class="fa-solid fa-bookmark"></i>
-            <span class="cdc-status-text">{{ cursorStatus }}</span>
-            <el-button
-              v-if="cdcCursor"
-              text
-              size="small"
-              :loading="resettingCursor"
-              @click="handleResetCursor"
-            >
-              Reset cursor
-            </el-button>
-          </div>
-          <div class="catalog-field">
-            <label class="catalog-label">Start from</label>
-            <el-select v-model="nodeData.cdc_start" size="small">
-              <el-option label="Now — skip existing history" value="now" />
-              <el-option label="Beginning — replay everything tracked" value="beginning" />
-            </el-select>
-          </div>
-          <CollapsibleSection
-            title="Cursor name (optional)"
-            :default-open="false"
-            nested
-            persist-key="catalogReader.cdcConsumer"
-          >
-            <div class="catalog-field">
-              <el-input
-                v-model="cdcConsumerName"
-                size="small"
-                placeholder="Defaults to this node in this flow"
-              />
-              <p v-if="cdcConsumerNameError" class="field-error">{{ cdcConsumerNameError }}</p>
-              <p class="section-hint">
-                A named cursor is shared by every flow and notebook reading this table under the
-                same name.
-              </p>
-            </div>
-          </CollapsibleSection>
-          <p class="section-hint cdc-hint">
-            <i class="fa-solid fa-circle-info"></i>
-            Delivery is at-least-once — a failed run replays its window, so downstream writers
-            should upsert, not append.
-          </p>
-        </template>
-
-        <div v-if="cdcMode !== 'off'" class="catalog-field">
-          <el-checkbox v-model="nodeData.cdc_include_preimage" size="small">
-            Include row values from before each update
-          </el-checkbox>
-        </div>
+        <ChangeFeedReadSection
+          :model-value="cdcSettings"
+          :node-id="nodeData.node_id"
+          :status="cdcSectionStatus"
+          :version-options="versionOptions"
+          :disabled-reason="readDisabledReason"
+          :can-enable="canEnableTracking"
+          :enabling="enablingCdc"
+          :resetting="resettingCursor"
+          allow-last-run
+          persist-key="catalogReader.cdc"
+          @update:model-value="onCdcSettingsChange"
+          @enable="enableTracking"
+          @reset-cursor="handleResetCursor"
+        />
 
         <div v-if="versionOptions.length > 0 && !selectedScd2" class="catalog-field">
           <label class="catalog-label">Version</label>
@@ -336,24 +205,22 @@ import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { useResourceSharing } from "../../../../../composables/useResourceSharing";
 import { CatalogApi } from "../../../../../api/catalog.api";
-import { CollapsibleSection, DateTimePicker } from "../../../../common";
-import { useFlowStore } from "@/stores/flow-store";
-import type { FlowParameter } from "@/types/flow.types";
+import { ChangeFeedReadSection, CollapsibleSection, DateTimePicker } from "../../../../common";
 import {
   CDF_COLUMNS,
-  cursorStatusLine,
-  findCursor,
+  cdcFieldErrors,
+  deltaVersionOptions,
   readModeDisabledReason,
 } from "../../../../../utils/catalogCdc";
 import type {
   CatalogTable,
+  CdcCursor,
   NamespaceTree,
   DeltaVersionCommit,
   TableCdcStatus,
 } from "../../../../../types";
 import {
   DEFAULT_CDC_SETTINGS,
-  type CdcMode,
   type CdcReaderSettings,
   type NodeCatalogReader,
 } from "../../../../../types/node.types";
@@ -386,7 +253,8 @@ const { saveSettings, pushNodeData } = useNodeSettings({
       ElMessage.error(scd2AsOfError.value);
       return false;
     }
-    const cdcError = cdcConsumerNameError.value ?? cdcVersionError.value ?? cdcTimestampError.value;
+    const errors = cdcFieldErrors(currentCdcSettings());
+    const cdcError = errors.consumerName ?? errors.version ?? errors.timestamp;
     if (cdcError) {
       ElMessage.error(cdcError);
       return false;
@@ -438,12 +306,7 @@ function tableOptionLabel(table: CatalogTable): string {
   return table.name;
 }
 
-const versionOptions = computed(() => {
-  return deltaVersions.value.map((v) => ({
-    version: v.version,
-    label: `v${v.version}${v.operation ? ` (${v.operation})` : ""}${v.timestamp ? ` - ${v.timestamp}` : ""}`,
-  }));
-});
+const versionOptions = computed(() => deltaVersionOptions(deltaVersions.value));
 
 const selectedScd2 = computed(() => selectedTableMeta.value?.scd2 ?? null);
 // null on the wire means "all records" (no filter) — surface it explicitly so the
@@ -474,93 +337,26 @@ const readDisabledReason = computed(() =>
   readModeDisabledReason(selectedTableMeta.value, nodeData.value?.delta_version ?? null),
 );
 
-const cdcMode = computed<CdcMode>({
-  get: () => nodeData.value?.cdc_mode ?? "off",
-  set: (mode: CdcMode) => {
-    if (!nodeData.value) return;
-    nodeData.value.cdc_mode = mode;
-    if (mode !== "since_version") nodeData.value.cdc_from_version = null;
-    if (mode !== "since_timestamp") nodeData.value.cdc_from_timestamp = null;
-    if (mode === "off") {
-      nodeData.value.cdc_consumer_name = null;
-      nodeData.value.cdc_include_preimage = false;
-      cdcStatus.value = null;
-    } else if (mode === "since_last_run") {
-      void loadCdcStatus();
-    }
-  },
-});
+const cdcSettings = computed(() => currentCdcSettings());
 
-const cdcConsumerName = computed({
-  get: () => nodeData.value?.cdc_consumer_name ?? "",
-  set: (value: string) => {
-    if (nodeData.value) nodeData.value.cdc_consumer_name = value.trim() ? value : null;
-  },
-});
-
-const cdcConsumerNameError = computed(() => {
-  const name = nodeData.value?.cdc_consumer_name?.trim();
-  if (!name) return null;
-  return /^[A-Za-z0-9_.:-]+$/.test(name)
-    ? null
-    : "Cursor name: use letters, digits and _ . : - only";
-});
-
-const flowStore = useFlowStore();
-const PARAM_REF = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
-const paramRefName = (value: unknown): string =>
-  typeof value === "string" ? (PARAM_REF.exec(value)?.[1] ?? "") : "";
-const versionParamOptions = computed<FlowParameter[]>(() =>
-  flowStore.parameters.filter((p) => p.type === "integer"),
-);
-const timestampParamOptions = computed<FlowParameter[]>(() =>
-  flowStore.parameters.filter((p) => !p.type || p.type === "string"),
-);
-const cdcVersionParam = computed({
-  get: () => paramRefName(nodeData.value?.cdc_from_version),
-  set: (name: string) => {
-    if (nodeData.value) nodeData.value.cdc_from_version = name ? "${" + name + "}" : null;
-  },
-});
-const cdcTimestampParam = computed({
-  get: () => paramRefName(nodeData.value?.cdc_from_timestamp),
-  set: (name: string) => {
-    if (nodeData.value) nodeData.value.cdc_from_timestamp = name ? "${" + name + "}" : null;
-  },
-});
-onMounted(() => {
-  if (flowStore.flowId > 0) void flowStore.loadParameters(flowStore.flowId);
-});
-
-const cdcVersionError = computed(() =>
-  cdcMode.value === "since_version" && nodeData.value?.cdc_from_version == null
-    ? "Pick the version to read changes after"
-    : null,
-);
-
-const cdcTimestampError = computed(() =>
-  cdcMode.value === "since_timestamp" && !nodeData.value?.cdc_from_timestamp
-    ? "Pick the date and time to read changes from"
-    : null,
-);
-
-const cdcCursor = computed(() =>
-  cdcStatus.value
-    ? findCursor(
-        cdcStatus.value.cursors,
-        nodeData.value?.cdc_consumer_name ?? null,
-        nodeData.value?.node_id ?? -1,
-      )
-    : null,
-);
-
-const cursorStatus = computed(() =>
-  cursorStatusLine(cdcCursor.value, nodeData.value?.cdc_start ?? "now"),
-);
+function onCdcSettingsChange(settings: CdcReaderSettings) {
+  if (!nodeData.value) return;
+  const modeChanged = settings.cdc_mode !== nodeData.value.cdc_mode;
+  Object.assign(nodeData.value, settings);
+  if (!modeChanged) return;
+  if (settings.cdc_mode === "off") cdcStatus.value = null;
+  else if (settings.cdc_mode === "since_last_run") void loadCdcStatus();
+}
 
 // The tree's table row already carries the flag, so the /cdc round trip is only for cursors.
-const trackingEnabled = computed(
-  () => cdcStatus.value?.cdc_enabled ?? selectedTableMeta.value?.cdc_enabled ?? false,
+const cdcSectionStatus = computed<TableCdcStatus>(
+  () =>
+    cdcStatus.value ?? {
+      cdc_enabled: selectedTableMeta.value?.cdc_enabled ?? false,
+      cdc_enabled_version: selectedTableMeta.value?.cdc_enabled_version ?? null,
+      current_version: null,
+      cursors: [],
+    },
 );
 
 const canEnableTracking = computed(
@@ -573,7 +369,7 @@ const schemaPreviewColumns = computed(() => {
     dtype: c.dtype,
     generated: false,
   }));
-  if (cdcMode.value === "off") return columns;
+  if ((nodeData.value?.cdc_mode ?? "off") === "off") return columns;
   return [...columns, ...CDF_COLUMNS.map((c) => ({ ...c, generated: true }))];
 });
 
@@ -630,10 +426,9 @@ async function enableTracking() {
   }
 }
 
-async function handleResetCursor() {
+async function handleResetCursor(cursor: CdcCursor) {
   const tableId = nodeData.value?.catalog_table_id;
-  const cursor = cdcCursor.value;
-  if (tableId == null || !cursor) return;
+  if (tableId == null) return;
   const target = nodeData.value?.cdc_start ?? "now";
   const targetLabel = target === "beginning" ? "the beginning of tracked history" : "now";
   try {
@@ -1034,54 +829,6 @@ defineExpose({
   color: var(--el-color-primary, var(--color-primary));
   background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.1));
   border-radius: 3px;
-}
-
-.cdc-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  background: var(--color-background-secondary, #f5f7fa);
-  border: 1px solid var(--color-border-primary);
-  border-radius: 4px;
-}
-
-.cdc-status-text {
-  flex: 1;
-}
-
-.cdc-warning {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 8px 10px;
-  background: rgba(245, 158, 11, 0.08);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  border-radius: 4px;
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  line-height: 1.4;
-}
-
-.cdc-warning i {
-  color: var(--color-warning, #f59e0b);
-  margin-top: 2px;
-}
-
-.cdc-warning-body {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-.cdc-hint {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  line-height: 1.4;
 }
 
 .sql-editor-wrapper {

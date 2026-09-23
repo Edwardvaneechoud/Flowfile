@@ -2033,6 +2033,8 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
                 self._add_code(f'    encoding="{cs.csv_encoding}",')
         if cs.file_format == "delta" and cs.delta_version is not None:
             self._add_code(f"    delta_version={cs.delta_version},")
+        if cs.file_format == "delta":
+            self._emit_change_feed_kwargs(cs)
         self._add_code(")")
         self._add_code("")
 
@@ -2058,6 +2060,10 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             self._add_code(f'    write_mode="{cs.write_mode}",')
         if cs.file_format == "delta" and cs.partition_by:
             self._add_code(f"    partition_by={cs.partition_by},")
+        if cs.file_format == "delta" and cs.merge_keys:
+            self._add_code(f"    merge_keys={cs.merge_keys},")
+        if cs.file_format == "delta" and cs.track_changes:
+            self._add_code("    track_changes=True,")
         self._add_code(")")
         self._add_code(f"{var_name} = {input_df}")
         self._add_code("")

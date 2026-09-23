@@ -7,6 +7,9 @@ export { default as EmptyState } from "./EmptyState/EmptyState.vue";
 export { default as CollapsibleSection } from "./CollapsibleSection/CollapsibleSection.vue";
 export { default as CloudConnectionPicker } from "./CloudConnectionPicker/CloudConnectionPicker.vue";
 export { default as DateTimePicker } from "./DateTimePicker/DateTimePicker.vue";
+export { default as ChangeFeedReadSection } from "./ChangeFeedReadSection/ChangeFeedReadSection.vue";
+export { default as DeltaTableStatusLine } from "./DeltaTableStatusLine/DeltaTableStatusLine.vue";
+export { default as MergeKeysSelect } from "./MergeKeysSelect/MergeKeysSelect.vue";
 export * from "./DateTimePicker/isoDateTime";
 
 export { default as PageHelpModal } from "./PageHelpModal/PageHelpModal.vue";

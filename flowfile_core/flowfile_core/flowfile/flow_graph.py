@@ -46,9 +46,9 @@ from flowfile_core.fileExplorer.funcs import SecureFileExplorer
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.catalog_cdc import (
-    init_cursor_value,
     make_cdc_commit_callback,
     read_cursor,
+    resolve_change_window,
     resolve_consumer_key,
 )
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
@@ -60,6 +60,7 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     get_ga_connection,
 )
 from flowfile_core.flowfile.filter_expressions import build_filter_expression
+from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
     FlowDataEngine,
     execute_polars_code,
@@ -169,11 +170,14 @@ from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata, scd2_system_columns_missing
 from flowfile_core.schemas.cloud_storage_schemas import (
     CloudStorageAuthMode,
+    CloudStorageReadSettings,
     CloudStorageReadSettingsInternal,
+    CloudStorageWriteSettings,
     CloudStorageWriteSettingsInternal,
     FullCloudStorageConnection,
     get_cloud_storage_write_settings_worker_interface,
 )
+from flowfile_core.schemas.delta_write import MERGE_MODES
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
 from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
 from flowfile_core.schemas.transform_schema import CrossJoinInputManager, FuzzyMatchInputManager, JoinInputManager
@@ -183,13 +187,14 @@ from flowfile_core.secret_manager.secret_manager import (
     get_encrypted_secret,
 )
 from shared._version import get_version
+from shared.cloud_storage.utils import normalize_delta_path
 from shared.db_dialects import get_dialect_or_generic
 from shared.delta_utils import (
     enable_change_data_feed,
+    get_change_data_feed_floor,
     get_delta_head_version,
     get_delta_partition_columns,
     get_delta_size_bytes,
-    get_delta_version_at_or_after,
     merge_into_delta,
     scan_delta_changes,
     scd2_into_delta,
@@ -1101,9 +1106,12 @@ def _write_catalog_delta_remote(
     df: FlowDataEngine,
     op_type: str,
     op_kwargs: dict,
-    table_name: str,
+    table_label: str,
 ) -> CatalogDeltaWrite:
-    """Write a Delta table via the worker service. ``meta`` is ``None`` when the write was skipped."""
+    """Write a Delta table via the worker service. ``meta`` is ``None`` when the write was skipped.
+
+    *table_label* names the table in the error message, quoted as it should appear there.
+    """
     fetcher = ExternalDfFetcher(
         flow_id=flow_id,
         node_id=node.node_id,
@@ -1116,7 +1124,7 @@ def _write_catalog_delta_remote(
     try:
         result = fetcher.get_result()
     except Exception as e:
-        raise RuntimeError(f"Worker failed to write delta table '{table_name}': {e}") from e
+        raise RuntimeError(f"Worker failed to write delta table {table_label}: {e}") from e
     scd2_version = result.get("version") if isinstance(result, dict) else None
     if isinstance(result, dict) and result.get("skipped"):
         return CatalogDeltaWrite(None, scd2_version)
@@ -1128,6 +1136,104 @@ def _write_catalog_delta_remote(
         if result.get("scd2_metrics"):
             meta["scd2_metrics"] = result["scd2_metrics"]
     return CatalogDeltaWrite(meta, scd2_version)
+
+
+def _delta_op(
+    delta_mode: str,
+    *,
+    output_path: str,
+    merge_keys: list[str],
+    partition_by: list[str] | None,
+    enable_cdf: bool,
+) -> tuple[str, dict]:
+    """The worker operation and kwargs for a non-SCD2 Delta write: ``merge_delta`` or ``write_delta``."""
+    if delta_mode in MERGE_MODES:
+        return "merge_delta", {
+            "output_path": output_path,
+            "merge_mode": delta_mode,
+            "merge_keys": merge_keys,
+            "partition_by": partition_by,
+            "enable_cdf": enable_cdf,
+        }
+    return "write_delta", {
+        "output_path": output_path,
+        "mode": delta_mode,
+        "partition_by": partition_by,
+        "enable_cdf": enable_cdf,
+    }
+
+
+def _cloud_write_uses_delta_ops(settings: CloudStorageWriteSettings) -> bool:
+    """Whether a cloud writer needs the catalog's Delta operations rather than the streaming sink."""
+    return settings.file_format == "delta" and (settings.write_mode in MERGE_MODES or settings.track_changes)
+
+
+def _write_cloud_delta_remote(flow_id: int, node: FlowNode, df: FlowDataEngine, op_type: str, op_kwargs: dict) -> None:
+    """Run a cloud writer's Delta merge or tracked write on the worker; the table metadata it returns is unused."""
+    _write_catalog_delta_remote(flow_id, node, df, op_type, op_kwargs, table_label=f"at '{op_kwargs['output_path']}'")
+
+
+def _write_cloud_delta(
+    graph: "FlowGraph",
+    node: FlowNode,
+    df: FlowDataEngine,
+    settings: CloudStorageWriteSettings,
+    connection: FullCloudStorageConnection,
+    user_id: int,
+) -> None:
+    """Upsert/update/delete into, or write with change tracking to, a Delta table on a bare cloud path.
+
+    Dispatches the same ``merge_delta`` / ``write_delta`` operations the catalog writer uses, with the
+    connection shipped owner-encrypted for the worker to decrypt. Local execution merges in-process: the
+    sanctioned local-execution collect, since headless runs have no worker to offload to.
+    """
+    if connection.storage_type == "gcs":
+        raise ValueError("Delta upsert/update/delete and change tracking are not supported on Google Cloud Storage yet")
+    path = normalize_delta_path(settings.resource_path)
+    op_type, op_kwargs = _delta_op(
+        settings.write_mode,
+        output_path=path,
+        merge_keys=settings.merge_keys,
+        partition_by=settings.partition_by,
+        enable_cdf=settings.track_changes,
+    )
+    if graph.execution_location != "local":
+        op_kwargs["storage_payload"] = {"connection": connection.get_worker_interface(user_id).model_dump()}
+        _write_cloud_delta_remote(graph.flow_id, node, df, op_type, op_kwargs)
+        return
+    storage_options = CloudStorageReader.get_storage_options(connection)
+    if op_type == "merge_delta":
+        merge_into_delta(
+            df.data_frame.collect(),
+            path,
+            merge_mode=settings.write_mode,
+            merge_keys=settings.merge_keys,
+            partition_by=settings.partition_by,
+            storage_options=storage_options,
+            enable_cdf=settings.track_changes,
+        )
+    else:
+        _write_delta(
+            df.data_frame,
+            path,
+            mode=settings.write_mode,
+            partition_by=settings.partition_by,
+            storage_options=storage_options,
+            enable_cdf=settings.track_changes,
+        )
+
+
+def _is_cloud_change_read(settings: CloudStorageReadSettings) -> bool:
+    """Whether a cloud reader reads a Delta table's change feed instead of the table itself."""
+    return settings.file_format == "delta" and settings.cdc_mode != "off"
+
+
+def _cloud_change_read_target(settings: CloudStorageReadSettings, user_id: int) -> tuple[str, dict]:
+    """The normalised Delta path and storage options a cloud change read opens the table with."""
+    connection = get_cloud_connection_settings(settings.connection_name, user_id, settings.auth_mode)
+    if connection.storage_type == "gcs":
+        raise ValueError("Reading Delta changes is not supported on Google Cloud Storage yet")
+    return normalize_delta_path(settings.resource_path), CloudStorageReader.get_storage_options(connection)
 
 
 def _effective_namespace_id(svc: CatalogService, settings) -> int | None:
@@ -1438,26 +1544,19 @@ def _fingerprint_virtual_source(
     return entries, False
 
 
-def _resolved_cdc_version(value: object) -> int:
-    """The commit version a since-version reader starts after, once ``${param}`` refs are substituted."""
-    if value is None or isinstance(value, bool):
-        raise ValueError(f"cdc_from_version must resolve to a commit version, got {value!r}")
-    try:
-        return int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"cdc_from_version must resolve to a commit version, got {value!r} — is that flow parameter defined?"
-        ) from exc
+def _cdc_since_param_state(settings, node: FlowNode) -> str | None:
+    """The resolved ``since`` value of a since-version/since-time change reader, when a flow parameter sets it.
 
-
-def _resolved_cdc_instant(value: object) -> datetime.datetime:
-    """The UTC instant a since-time reader starts from, once ``${param}`` refs are substituted."""
-    try:
-        return scd2_parse_iso_utc(str(value))
-    except ValueError as exc:
-        raise ValueError(
-            f"cdc_from_timestamp must resolve to an ISO-8601 instant, got {value!r} — is that flow parameter defined?"
-        ) from exc
+    *settings* is any object carrying the ``cdc_*`` fields (catalog reader node, cloud read settings). A
+    literal is already part of the settings hash, so only a ``${param}`` ref has run state to fold in.
+    """
+    if settings.cdc_mode not in ("since_version", "since_timestamp"):
+        return None
+    raw = settings.cdc_from_version if settings.cdc_mode == "since_version" else settings.cdc_from_timestamp
+    if not isinstance(raw, str) or "${" not in raw:
+        return None
+    params = node._params_getter() if node._params_getter else {}
+    return resolve_parameters(raw, params)
 
 
 def _delta_reader_fingerprint(path: str, version: int | None, cdc_state: int | str | None) -> str:
@@ -1749,23 +1848,14 @@ def _handle_physical_table_write(
         op_kwargs["run_timestamp"] = scd2_kwargs["valid_from_iso"]
         op_kwargs["output_path"] = dest_path
         op_kwargs["partition_by"] = settings.partition_by
-    elif delta_mode in ("upsert", "update", "delete"):
-        op_type = "merge_delta"
-        op_kwargs = {
-            "output_path": dest_path,
-            "merge_mode": delta_mode,
-            "merge_keys": settings.merge_keys,
-            "partition_by": settings.partition_by,
-            "enable_cdf": settings.track_changes,
-        }
     else:
-        op_type = "write_delta"
-        op_kwargs = {
-            "output_path": dest_path,
-            "mode": delta_mode,
-            "partition_by": settings.partition_by,
-            "enable_cdf": settings.track_changes,
-        }
+        op_type, op_kwargs = _delta_op(
+            delta_mode,
+            output_path=dest_path,
+            merge_keys=settings.merge_keys,
+            partition_by=settings.partition_by,
+            enable_cdf=settings.track_changes,
+        )
     if storage_payload is not None:
         op_kwargs["storage_payload"] = storage_payload
 
@@ -1778,7 +1868,7 @@ def _handle_physical_table_write(
             df=df,
             op_type=op_type,
             op_kwargs=op_kwargs,
-            table_name=settings.table_name,
+            table_label=f"'{settings.table_name}'",
         )
     else:
         written = _write_catalog_delta_local(
@@ -5265,28 +5355,25 @@ class FlowGraph:
                 raise ValueError(f"Catalog table '{table_name}' has no storage to read changes from")
 
             head = get_delta_head_version(table_path, storage_options=_reader_storage_options)
-            starting_version: int | None = None
             cursor_consumer: tuple[str, str | None] | None = None
-            if _cdc_mode == "since_timestamp":
-                # Resolved to a version here so the enablement-floor clamp below applies to it too.
-                instant = _resolved_cdc_instant(node_catalog_reader.cdc_from_timestamp)
-                resolved = get_delta_version_at_or_after(table_path, instant, storage_options=_reader_storage_options)
-                starting_version = resolved if resolved is not None else head + 1
-            elif _cdc_mode == "since_version":
-                starting_version = _resolved_cdc_version(node_catalog_reader.cdc_from_version) + 1
-            else:
+            last_version: int | None = None
+            if _cdc_mode == "since_last_run":
                 consumer_key, label = resolve_consumer_key(self, node_catalog_reader)
                 with get_db_context() as db:
                     cursor = read_cursor(db, table_id, consumer_key, table_path)
-                last_version = (
-                    cursor.last_version
-                    if cursor is not None
-                    else init_cursor_value(node_catalog_reader.cdc_start, head, floor)
-                )
-                starting_version = last_version + 1
+                last_version = cursor.last_version if cursor is not None else None
                 cursor_consumer = (consumer_key, label)
-            if starting_version is not None and floor is not None:
-                starting_version = max(starting_version, floor)
+            starting_version = resolve_change_window(
+                _cdc_mode,
+                node_catalog_reader.cdc_from_version,
+                node_catalog_reader.cdc_from_timestamp,
+                head=head,
+                floor=floor,
+                path=table_path,
+                storage_options=_reader_storage_options,
+                last_version=last_version,
+                cdc_start=node_catalog_reader.cdc_start,
+            )
 
             lf = scan_delta_changes(
                 table_path,
@@ -6036,6 +6123,16 @@ class FlowGraph:
                 auth_mode=node_cloud_storage_writer.cloud_storage_settings.auth_mode,
             )
             full_cloud_storage_connection = cloud_connection_settings
+            if _cloud_write_uses_delta_ops(node_cloud_storage_writer.cloud_storage_settings):
+                _write_cloud_delta(
+                    self,
+                    node,
+                    df,
+                    node_cloud_storage_writer.cloud_storage_settings,
+                    full_cloud_storage_connection,
+                    node_cloud_storage_writer.user_id,
+                )
+                return df
             if execute_remote:
                 settings = get_cloud_storage_write_settings_worker_interface(
                     write_settings=node_cloud_storage_writer.cloud_storage_settings,
@@ -6085,8 +6182,63 @@ class FlowGraph:
         node_type = "cloud_storage_reader"
         logger.info("Adding cloud storage reader")
         cloud_storage_read_settings = node_cloud_storage_reader.cloud_storage_settings
+        read_changes = _is_cloud_change_read(cloud_storage_read_settings)
+
+        def _read_changes() -> FlowDataEngine:
+            """Read the Delta table's change feed for this run.
+
+            Floor and head are resolved here, at execution time, for the same reason as the catalog
+            reader's: the designer keeps one FlowGraph across runs. Strict by design — an untracked
+            table is an actionable error, never a silent full read.
+            """
+            path, storage_options = _cloud_change_read_target(
+                cloud_storage_read_settings, node_cloud_storage_reader.user_id
+            )
+            floor = get_change_data_feed_floor(path, storage_options=storage_options)
+            if floor is None:
+                raise ValueError(
+                    f"Change tracking is not enabled on {path}. Enable it in the reader settings, "
+                    "or write the table with 'Track changes' on, then re-run."
+                )
+            head = get_delta_head_version(path, storage_options=storage_options)
+            starting_version = resolve_change_window(
+                cloud_storage_read_settings.cdc_mode,
+                cloud_storage_read_settings.cdc_from_version,
+                cloud_storage_read_settings.cdc_from_timestamp,
+                head=head,
+                floor=floor,
+                path=path,
+                storage_options=storage_options,
+            )
+            self.flow_logger.get_node_logger(node_cloud_storage_reader.node_id).info(
+                f"Reading changes from {path} (v{starting_version}..v{head})"
+            )
+            return FlowDataEngine(
+                scan_delta_changes(
+                    path,
+                    starting_version,
+                    head,
+                    storage_options=storage_options,
+                    include_preimage=cloud_storage_read_settings.cdc_include_preimage,
+                )
+            )
+
+        def _cdc_schema_callback() -> list[FlowfileColumn]:
+            """Predicted schema of a change read: the table's columns (log metadata only) plus the feed columns."""
+            path, storage_options = _cloud_change_read_target(
+                cloud_storage_read_settings, node_cloud_storage_reader.user_id
+            )
+            columns = pl_schema_to_flowfile_columns(
+                pl.scan_delta(path, storage_options=storage_options).collect_schema()
+            )
+            columns.extend(
+                FlowfileColumn.from_input(column_name=name, data_type=dtype) for name, dtype in _CDF_COLUMN_DTYPES
+            )
+            return columns
 
         def _func():
+            if read_changes:
+                return _read_changes()
             logger.info("Starting to run the schema callback for cloud storage reader")
             self.flow_logger.info("Starting to run the schema callback for cloud storage reader")
             settings = CloudStorageReadSettingsInternal(
@@ -6106,6 +6258,7 @@ class FlowGraph:
             cache_results=node_cloud_storage_reader.cache_results,
             setting_input=node_cloud_storage_reader,
             node_type=node_type,
+            schema_callback=_cdc_schema_callback if read_changes else None,
         )
         self.add_node_to_starting_list(node)
 
@@ -7231,30 +7384,38 @@ class FlowGraph:
         Pinned ``delta_version`` readers are deliberate time travel and are
         never probed. Probe failures fail open (invalidate) so the real error
         surfaces on the canvas instead of a silently-served stale snapshot.
+        Cloud readers get the same pass only when they read a Delta change feed.
         """
         version_cache: dict[str, int] = {}
         opts_by_namespace: dict[int | None, dict | None] = {}
         for node in self.nodes:
-            if node.node_type != "catalog_reader":
-                continue
             settings = node.setting_input
-            if not isinstance(settings, input_schema.NodeCatalogReader):
-                continue
-            if not settings.sql_query and settings.delta_version is not None:
-                continue
+            cloud_change_read = (
+                node.node_type == "cloud_storage_reader"
+                and isinstance(settings, input_schema.NodeCloudStorageReader)
+                and _is_cloud_change_read(settings.cloud_storage_settings)
+            )
+            if not cloud_change_read:
+                if node.node_type != "catalog_reader" or not isinstance(settings, input_schema.NodeCatalogReader):
+                    continue
+                if not settings.sql_query and settings.delta_version is not None:
+                    continue
             try:
-                fingerprint, force = _catalog_reader_source_fingerprint(
-                    settings, version_cache, opts_by_namespace, cdc_state=self._cdc_fingerprint_state(node)
-                )
+                if cloud_change_read:
+                    fingerprint, force = self._cloud_change_read_fingerprint(node, version_cache), False
+                else:
+                    fingerprint, force = _catalog_reader_source_fingerprint(
+                        settings, version_cache, opts_by_namespace, cdc_state=self._cdc_fingerprint_state(node)
+                    )
             except Exception:
                 self.flow_logger.warning(
-                    f"Node {node.node_id}: could not probe catalog source freshness; re-running to be safe"
+                    f"Node {node.node_id}: could not probe source freshness; re-running to be safe"
                 )
                 fingerprint, force = None, True
             recorded = node._execution_state.source_version_info
             if force or (recorded is not None and fingerprint != recorded):
                 node.invalidate_cache()
-                self.flow_logger.info(f"Node {node.node_id}: catalog source changed; invalidating cached result")
+                self.flow_logger.info(f"Node {node.node_id}: source changed; invalidating cached result")
             node._execution_state.source_version_info = fingerprint
 
     def _cdc_fingerprint_state(self, node: FlowNode) -> int | str | None:
@@ -7267,11 +7428,7 @@ class FlowGraph:
         """
         settings = node.setting_input
         if settings.cdc_mode in ("since_version", "since_timestamp"):
-            raw = settings.cdc_from_version if settings.cdc_mode == "since_version" else settings.cdc_from_timestamp
-            if not isinstance(raw, str) or "${" not in raw:
-                return None
-            params = node._params_getter() if node._params_getter else {}
-            return resolve_parameters(raw, params)
+            return _cdc_since_param_state(settings, node)
         if settings.cdc_mode != "since_last_run" or not settings.catalog_table_id:
             return None
         try:
@@ -7281,6 +7438,19 @@ class FlowGraph:
         except Exception:
             return None
         return cursor.last_version if cursor is not None else None
+
+    def _cloud_change_read_fingerprint(self, node: FlowNode, version_cache: dict[str, int]) -> str:
+        """Freshness fingerprint of a cloud Delta change reader: live head plus a ``${param}`` ``since`` value.
+
+        Path and connection ``${param}`` refs are resolved for the probe. Raises on probe failures (an
+        undefined parameter included), which the caller treats as a fail-open re-run.
+        """
+        read_settings = node.setting_input.cloud_storage_settings
+        cdc_state = _cdc_since_param_state(read_settings, node)
+        with node_parameters_resolved(node):
+            path, storage_options = _cloud_change_read_target(read_settings, node.setting_input.user_id)
+            head = _probe_version_entry(path, storage_options, version_cache)
+        return _delta_reader_fingerprint(path, head, cdc_state)
 
     def _refresh_read_source_freshness(self) -> None:
         """Invalidate read nodes whose source files changed since their last run.

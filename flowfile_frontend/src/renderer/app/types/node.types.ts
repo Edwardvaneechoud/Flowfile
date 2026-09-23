@@ -862,7 +862,7 @@ interface CloudStorageSettings {
 export type FileFormat = "csv" | "parquet" | "json" | "delta" | "iceberg";
 export type CsvEncoding = "utf8" | "utf8-lossy";
 export type ParquetCompression = "snappy" | "gzip" | "brotli" | "lz4" | "zstd";
-export type WriteMode = "overwrite" | "append";
+export type WriteMode = "overwrite" | "append" | "error" | "upsert" | "update" | "delete";
 
 export interface CloudStorageReadSettings extends CloudStorageSettings {
   scan_mode: ScanMode;
@@ -871,6 +871,11 @@ export interface CloudStorageReadSettings extends CloudStorageSettings {
   csv_delimiter?: string;
   csv_encoding?: CsvEncoding;
   delta_version?: number;
+  // A bare path has no cursor store, so there is no since_last_run.
+  cdc_mode?: Exclude<CdcMode, "since_last_run">;
+  cdc_from_version?: number | string | null;
+  cdc_from_timestamp?: string | null;
+  cdc_include_preimage?: boolean;
 }
 
 export interface CloudStorageWriteSettings extends CloudStorageSettings {
@@ -880,6 +885,8 @@ export interface CloudStorageWriteSettings extends CloudStorageSettings {
   csv_delimiter: string;
   csv_encoding: CsvEncoding;
   partition_by?: string[] | null;
+  merge_keys?: string[];
+  track_changes?: boolean;
 }
 
 // External Source Types
@@ -1016,17 +1023,14 @@ export interface NodeCatalogReader extends NodeBase {
   cdc_include_preimage: boolean;
 }
 
+/** Change-feed read settings; the cursor fields exist only on the catalog reader. */
 export type CdcReaderSettings = Pick<
   NodeCatalogReader,
-  | "cdc_mode"
-  | "cdc_from_version"
-  | "cdc_from_timestamp"
-  | "cdc_consumer_name"
-  | "cdc_start"
-  | "cdc_include_preimage"
->;
+  "cdc_mode" | "cdc_from_version" | "cdc_from_timestamp" | "cdc_include_preimage"
+> &
+  Partial<Pick<NodeCatalogReader, "cdc_consumer_name" | "cdc_start">>;
 
-export const DEFAULT_CDC_SETTINGS: CdcReaderSettings = {
+export const DEFAULT_CDC_SETTINGS: Required<CdcReaderSettings> = {
   cdc_mode: "off",
   cdc_from_version: null,
   cdc_from_timestamp: null,

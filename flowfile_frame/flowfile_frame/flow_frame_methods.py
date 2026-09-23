@@ -1,6 +1,7 @@
 import io
 import os
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -1104,8 +1105,43 @@ def scan_delta(
     flow_graph: FlowGraph | None = None,
     connection_name: str | None = None,
     version: int = None,
+    changes_since: int | str | datetime | None = None,
+    include_change_preimage: bool = False,
     output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
+    """Scan a Delta table in cloud storage into a FlowFrame.
+
+    Args:
+        source: Cloud storage path of the Delta table (e.g. ``'s3://bucket/table'``).
+        flow_graph: Optional existing FlowGraph to add the node to.
+        connection_name: Name of the stored cloud storage connection.
+        version: Delta table version for time travel. Mutually exclusive with ``changes_since``.
+        changes_since: Read the table's change feed instead of its current rows. An ``int`` is a
+            Delta commit version and returns the changes *after* it; a string or a ``datetime``
+            is an ISO-8601 instant. The table must be change-tracked (see ``track_changes`` on
+            :meth:`FlowFrame.write_delta`). The result carries the feed's ``_change_type``,
+            ``_commit_version`` and ``_commit_timestamp`` columns.
+        include_change_preimage: Keep ``update_preimage`` rows (the before-image of an
+            update). Dropped by default.
+        output_field_config: Optional schema validation/transformation config.
+
+    Returns:
+        FlowFrame: A FlowFrame backed by a cloud storage reader node.
+
+    Raises:
+        ValueError: If both ``version`` and ``changes_since`` are given, or if
+            ``changes_since="last_run"`` (cursors exist for catalog tables only).
+    """
+    from flowfile_frame.catalog import _resolve_change_mode
+
+    if changes_since == "last_run":
+        raise ValueError(
+            "changes_since='last_run' is only available for catalog tables; "
+            "pass a commit version or an ISO-8601 instant for a cloud Delta path"
+        )
+    if version is not None and changes_since is not None:
+        raise ValueError("version and changes_since are mutually exclusive")
+    cdc_mode, cdc_from_version, cdc_from_timestamp = _resolve_change_mode(changes_since)
     node_id = generate_node_id()
     if flow_graph is None:
         flow_graph = create_flow_graph()
@@ -1114,7 +1150,14 @@ def scan_delta(
         flow_id=flow_id,
         node_id=node_id,
         cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(
-            resource_path=source, connection_name=connection_name, file_format="delta", delta_version=version
+            resource_path=source,
+            connection_name=connection_name,
+            file_format="delta",
+            delta_version=version,
+            cdc_mode=cdc_mode,
+            cdc_from_version=cdc_from_version,
+            cdc_from_timestamp=cdc_from_timestamp,
+            cdc_include_preimage=include_change_preimage,
         ),
         user_id=get_current_user_id(),
         output_field_config=output_field_config,

@@ -20,6 +20,8 @@ export const createNodeCloudStorageWriter = (
     csv_delimiter: ",",
     csv_encoding: "utf8",
     partition_by: [],
+    merge_keys: [],
+    track_changes: false,
   };
 
   const nodeWriter: NodeCloudStorageWriter = {

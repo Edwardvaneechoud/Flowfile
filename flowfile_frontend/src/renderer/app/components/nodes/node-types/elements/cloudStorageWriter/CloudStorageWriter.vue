@@ -66,13 +66,18 @@
             class="form-control"
           >
             <option value="overwrite">Overwrite</option>
-            <option
-              v-if="nodeCloudStorageWriter.cloud_storage_settings.file_format === 'delta'"
-              value="append"
-            >
-              Append
-            </option>
+            <template v-if="isDelta">
+              <option value="error">Error if exists</option>
+              <option value="append">Append</option>
+              <option value="upsert" :disabled="isGcs">Upsert</option>
+              <option value="update" :disabled="isGcs">Update</option>
+              <option value="delete" :disabled="isGcs">Delete</option>
+            </template>
           </select>
+          <p v-if="isDelta && isGcs" class="field-hint">
+            Upsert, update, delete and change tracking are not supported on Google Cloud Storage
+            yet.
+          </p>
         </div>
 
         <div
@@ -127,12 +132,25 @@
           </div>
         </div>
 
-        <div
-          v-if="nodeCloudStorageWriter.cloud_storage_settings.file_format === 'delta'"
-          class="format-options"
-        >
+        <div v-if="isDelta" class="format-options">
           <h5 class="subsection-title">Delta Options</h5>
-          <div class="form-group">
+          <DeltaTableStatusLine
+            v-if="tableProbe"
+            :exists="tableProbe.exists"
+            :version="tableProbe.current_version"
+            :partition-columns="tableProbe.partition_columns"
+          />
+
+          <div v-if="needsMergeKeys(writeMode)" class="form-group">
+            <label for="merge-keys">Key columns</label>
+            <MergeKeysSelect
+              id="merge-keys"
+              v-model="nodeCloudStorageWriter.cloud_storage_settings.merge_keys"
+              :columns="availableColumns"
+            />
+          </div>
+
+          <div v-if="canPartition(writeMode)" class="form-group">
             <label for="partition-by">Partition by (optional)</label>
             <el-select
               id="partition-by"
@@ -147,6 +165,28 @@
             <p class="field-hint">
               Set at table creation; writes to an existing table must match its partitioning. Use
               low-cardinality columns.
+            </p>
+          </div>
+
+          <div class="form-group">
+            <el-tooltip
+              :disabled="trackChangesDisabled === null"
+              :content="trackChangesDisabled ?? ''"
+              placement="top"
+            >
+              <span>
+                <el-checkbox
+                  v-model="nodeCloudStorageWriter.cloud_storage_settings.track_changes"
+                  size="small"
+                  :disabled="trackChangesDisabled !== null"
+                >
+                  Track changes
+                </el-checkbox>
+              </span>
+            </el-tooltip>
+            <p class="field-hint">
+              Records every insert, update and delete so a reader can read only what changed.
+              Turning it on never turns it off again.
             </p>
           </div>
         </div>
@@ -175,6 +215,12 @@
             </p>
           </div>
         </div>
+        <div v-if="isDelta && otherModeDescription" class="info-box">
+          <i class="fa-solid fa-info-circle"></i>
+          <div>
+            <p>{{ otherModeDescription }}</p>
+          </div>
+        </div>
       </div>
     </generic-node-settings>
 
@@ -196,7 +242,7 @@
 
 <script lang="ts" setup>
 import { CodeLoader } from "vue-content-loader";
-import { computed, ref } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { NodeCloudStorageWriter } from "../../../baseNode/nodeInput";
 import { createNodeCloudStorageWriter } from "./utils";
 import { useNodeStore } from "../../../../../stores/node-store";
@@ -205,7 +251,7 @@ import { fetchCloudStorageConnectionsInterfaces } from "../../../../../views/Clo
 import { FullCloudStorageConnectionInterface } from "../../../../../views/CloudConnectionView/CloudConnectionTypes";
 import { ElMessage } from "element-plus";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
-import { CloudConnectionPicker } from "../../../../common";
+import { CloudConnectionPicker, DeltaTableStatusLine, MergeKeysSelect } from "../../../../common";
 import {
   resolveConnection,
   unavailableConnectionName,
@@ -217,7 +263,15 @@ import {
   suggestedWriteFileName,
   targetsDirectory,
 } from "../../../../common/FileBrowser/cloudPathMapping";
-import { storageTypeForUri } from "../../../../../utils/storagePath";
+import { isCloudUri, storageTypeForUri } from "../../../../../utils/storagePath";
+import {
+  canPartition,
+  modeDescription,
+  needsMergeKeys,
+  trackChangesDisabledReason,
+} from "../../../../../utils/deltaWriteModes";
+import { CloudDeltaApi, type CloudDeltaInfo } from "../../../../../api/cloudDelta.api";
+import type { WriteMode } from "../../../../../types/node.types";
 
 interface Props {
   nodeId: number;
@@ -231,6 +285,13 @@ const availableColumns = ref<string[]>([]);
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeCloudStorageWriter,
+  onBeforeSave: () => {
+    const settings = nodeCloudStorageWriter.value?.cloud_storage_settings;
+    if (settings && needsMergeKeys(settings.write_mode) && !settings.merge_keys?.length) {
+      ElMessage.error(`Select the key columns to ${settings.write_mode} on.`);
+      return false;
+    }
+  },
 });
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
@@ -270,6 +331,84 @@ const browseDisabledReason = computed<string | null>(() => {
   return "Pick a connection, or type a path starting with s3://, az:// or gs:// to browse.";
 });
 
+const isDelta = computed(
+  () => nodeCloudStorageWriter.value?.cloud_storage_settings.file_format === "delta",
+);
+
+const writeMode = computed<WriteMode>(
+  () => nodeCloudStorageWriter.value?.cloud_storage_settings.write_mode ?? "overwrite",
+);
+
+/** Delta merges and change tracking go through delta-rs, which takes no gcsfs-style options. */
+const isGcs = computed(
+  () =>
+    storageTypeForUri(nodeCloudStorageWriter.value?.cloud_storage_settings.resource_path ?? "") ===
+      "gcs" || selectedConnection.value?.storageType === "gcs",
+);
+
+const trackChangesDisabled = computed(() =>
+  isGcs.value
+    ? "Change tracking is not supported on Google Cloud Storage yet."
+    : trackChangesDisabledReason(writeMode.value),
+);
+
+// Overwrite and append keep their own info boxes above.
+const otherModeDescription = computed(() =>
+  writeMode.value === "overwrite" || writeMode.value === "append"
+    ? null
+    : modeDescription(writeMode.value),
+);
+
+// Existing-table probe; null while unknown, when it failed, or for gs:// (unsupported there).
+const tableProbe = ref<CloudDeltaInfo | null>(null);
+let probeTimer: ReturnType<typeof setTimeout> | null = null;
+let probeSeq = 0;
+
+async function probeTable() {
+  const settings = nodeCloudStorageWriter.value?.cloud_storage_settings;
+  if (!settings) return;
+  const seq = probeSeq;
+  try {
+    const info = await CloudDeltaApi.getInfo({
+      resource_path: settings.resource_path,
+      connection_name: settings.connection_name ?? null,
+      auth_mode: settings.auth_mode,
+    });
+    if (seq === probeSeq) tableProbe.value = info;
+  } catch {
+    // Show no status rather than a wrong "new table".
+  }
+}
+
+function scheduleProbe() {
+  if (probeTimer) clearTimeout(probeTimer);
+  probeSeq += 1;
+  tableProbe.value = null;
+  const path = nodeCloudStorageWriter.value?.cloud_storage_settings.resource_path ?? "";
+  if (!isDelta.value || isGcs.value || !isCloudUri(path)) return;
+  probeTimer = setTimeout(probeTable, 350);
+}
+
+onUnmounted(() => {
+  if (probeTimer) clearTimeout(probeTimer);
+});
+
+watch(
+  () => {
+    const settings = nodeCloudStorageWriter.value?.cloud_storage_settings;
+    return [settings?.file_format, settings?.resource_path, settings?.connection_name];
+  },
+  () => scheduleProbe(),
+);
+
+watch([writeMode, isGcs], ([mode, gcs]) => {
+  const settings = nodeCloudStorageWriter.value?.cloud_storage_settings;
+  if (!settings) return;
+  if (!needsMergeKeys(mode)) settings.merge_keys = [];
+  if (!canPartition(mode)) settings.partition_by = [];
+  if (mode === "overwrite" || gcs) settings.track_changes = false;
+});
+
 const applyBrowsedPath = (selectedPath: string) => {
   const settings = nodeCloudStorageWriter.value?.cloud_storage_settings;
   if (settings) settings.resource_path = selectedPath;
@@ -283,6 +422,8 @@ const handleFileFormatChange = () => {
     if (format !== "delta") {
       settings.write_mode = "overwrite";
       settings.partition_by = [];
+      settings.merge_keys = [];
+      settings.track_changes = false;
     }
 
     if (format === "parquet" && !settings.parquet_compression) {
@@ -338,10 +479,11 @@ const loadNodeData = async (nodeId: number) => {
         : createNodeCloudStorageWriter(nodeStore.flow_id, nodeId);
 
       availableColumns.value = nodeData.main_input?.columns ?? [];
-      // Ensure partition_by exists for nodes saved before partitioning support
-      if (!nodeCloudStorageWriter.value!.cloud_storage_settings.partition_by) {
-        nodeCloudStorageWriter.value!.cloud_storage_settings.partition_by = [];
-      }
+      // Backfill fields for nodes saved before partitioning / merge support
+      const settings = nodeCloudStorageWriter.value!.cloud_storage_settings;
+      if (!settings.partition_by) settings.partition_by = [];
+      settings.merge_keys = settings.merge_keys ?? [];
+      settings.track_changes = settings.track_changes ?? false;
 
       setConnectionOnConnectionName(
         nodeCloudStorageWriter.value?.cloud_storage_settings.connection_name ?? null,
@@ -408,6 +550,11 @@ defineExpose({
   background-color: var(--color-background-secondary);
   border-radius: 4px;
   border: 1px solid var(--color-border-primary);
+}
+
+.table-status {
+  margin-bottom: 0.75rem;
+  background-color: var(--color-background-primary);
 }
 
 .form-row {
