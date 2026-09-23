@@ -22,6 +22,8 @@ export interface DropZoneSpec {
 /** The settings strip on its own, and the column list's toolbar-plus-one-row floor. */
 export const SETTINGS_STRIP_PX = 30;
 export const COLUMNS_MIN_PX = 84;
+/** A pinned pane shorter than the strip, a table header and one row folds instead. */
+export const SETTINGS_MIN_OPEN_PX = SETTINGS_STRIP_PX + 26 + 28;
 
 /** Keeps a dragged settings height between the bare strip and the column list's floor. */
 export const clampSettingsHeight = (height: number, available: number): number => {

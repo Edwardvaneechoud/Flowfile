@@ -9,7 +9,7 @@
         ref="picker"
         :columns="columns"
         :usage-chips="usageChips"
-        :used-count="usage.size"
+        :used-count="usedCount"
         :column-menu-options="columnMenuOptions"
         :drop-zones="dropZones"
         :row-count="rows.length"
@@ -81,11 +81,11 @@
         <template #empty>
           Drag columns here, or hover a column and use
           <span class="material-icons" aria-label="add">add</span> /
-          <span class="material-icons" aria-label="aggregate">functions</span>.
+          <span class="material-icons" aria-label="aggregate">functions</span>
         </template>
 
         <template
-          #settings="{ isRowSelected, isDragging, onRowClick, onRowContextMenu, onRowMouseDown }"
+          #settings="{ isRowSelected, activeZone, onRowClick, onRowContextMenu, onRowMouseDown }"
         >
           <table class="styled-table column-list group-by-agg-table">
             <colgroup>
@@ -97,8 +97,8 @@
             <thead>
               <tr>
                 <th>Field</th>
-                <th>Action</th>
-                <th>Output name</th>
+                <th class="picker-control-header">Action</th>
+                <th class="picker-control-header">Output name</th>
                 <th aria-label="Remove" />
               </tr>
             </thead>
@@ -109,13 +109,21 @@
                 :class="{
                   'is-new': flashedRows.has(index),
                   'is-selected': isRowSelected(index),
-                  'is-drop-after': isDragging && index === rows.length - 1,
+                  'is-stale': !columnNames.has(item.old_name),
+                  'is-drop-after': activeZone !== null && index === rows.length - 1,
                 }"
                 @mousedown="onRowMouseDown"
                 @click="onRowClick(index, $event)"
                 @contextmenu="onRowContextMenu($event, index)"
               >
-                <td class="picker-field-cell agg-field-cell" :title="item.old_name">
+                <td
+                  class="picker-field-cell agg-field-cell"
+                  :title="
+                    columnNames.has(item.old_name)
+                      ? item.old_name
+                      : `${item.old_name} is no longer in the input`
+                  "
+                >
                   {{ item.old_name }}
                 </td>
                 <td>
@@ -143,7 +151,7 @@
                     :title="
                       isDuplicateName(item)
                         ? 'Another row already uses this output name'
-                        : undefined
+                        : item.new_name || undefined
                     "
                     v-bind="NO_AUTOFILL"
                   />
@@ -219,6 +227,11 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 const columns = computed<FileColumn[]>(() => nodeData.value?.main_input?.table_schema ?? []);
 const rows = computed<AggColl[]>(() => nodeGroupBy.value?.groupby_input?.agg_cols ?? []);
 const usage = computed(() => usageByColumn(rows.value));
+const columnNames = computed(() => new Set(columns.value.map((column) => column.name)));
+/** Rows for columns the input no longer has do not count as "in use". */
+const usedCount = computed(
+  () => [...usage.value.keys()].filter((name) => columnNames.value.has(name)).length,
+);
 const duplicateNames = computed(() => duplicateOutputNames(rows.value));
 const isDuplicateName = (item: AggColl) =>
   Boolean(item.new_name && duplicateNames.value.has(item.new_name));
@@ -294,6 +307,7 @@ const setAgg = (item: AggColl, next: string) => {
 const removeRows = (indices: number[]) => {
   const input = nodeGroupBy.value?.groupby_input;
   if (input) input.agg_cols = withoutRows(input.agg_cols, indices);
+  flashedRows.value = new Set();
 };
 
 const removeRow = (index: number) => picker.value?.removeRows([index]);
@@ -344,6 +358,7 @@ const loadNodeData = async (nodeId: number) => {
   }
   nodeGroupBy.value = settings;
   dataLoaded.value = true;
+  validateConfig();
 };
 
 // Missing-column warnings come from the backend settings validation; this only

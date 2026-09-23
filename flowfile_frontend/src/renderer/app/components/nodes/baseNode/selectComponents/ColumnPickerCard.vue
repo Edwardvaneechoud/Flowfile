@@ -1,11 +1,17 @@
 <template>
   <div
     ref="rootRef"
-    class="listbox-wrapper picker-card column-list"
+    class="listbox-wrapper picker-card column-list nokey"
     @dragover="onCardDragOver"
     @drop.prevent="onCardDrop"
   >
-    <section class="picker-columns" aria-label="Input columns">
+    <section
+      ref="columnsPaneRef"
+      class="picker-columns"
+      aria-label="Input columns"
+      tabindex="-1"
+      @keydown="onColumnsKeydown"
+    >
       <div class="column-list-toolbar">
         <div v-if="selectedNames.length > 0" class="column-list-selection">
           <span class="column-list-selection-count">{{ selectedNames.length }} selected</span>
@@ -45,7 +51,7 @@
             <col style="width: 22px" />
             <col />
             <col style="width: 82px" />
-            <col style="width: 112px" />
+            <col style="width: 120px" />
             <col style="width: 56px" />
           </colgroup>
           <thead>
@@ -80,18 +86,20 @@
               </td>
               <td class="column-type" :title="column.data_type">{{ column.data_type }}</td>
               <td class="usage-cell">
-                <button
-                  v-for="chip in usageChips(column.name)"
-                  :key="chip.label"
-                  type="button"
-                  class="usage-chip"
-                  :class="{ 'is-key': chip.isKey }"
-                  :title="chip.title"
-                  @mousedown.prevent
-                  @click.stop="reveal(chip.rows)"
-                >
-                  {{ chip.label }}
-                </button>
+                <div class="usage-chips">
+                  <button
+                    v-for="chip in usageChips(column.name)"
+                    :key="chip.label"
+                    type="button"
+                    class="usage-chip"
+                    :class="{ 'is-key': chip.isKey }"
+                    :title="chip.title"
+                    @mousedown.prevent
+                    @click.stop="reveal(chip.rows)"
+                  >
+                    {{ chip.label }}
+                  </button>
+                </div>
               </td>
               <td class="row-tools-cell">
                 <span class="row-tools">
@@ -127,7 +135,12 @@
         @dblclick="resetSplit"
       >
         <span class="picker-settings-title">Settings</span>
-        <span v-if="selectedRowCount > 0" class="column-list-selection picker-row-selection">
+        <span
+          v-if="selectedRowCount > 0"
+          class="column-list-selection picker-row-selection"
+          @click.capture="notePillClick"
+          @dblclick.stop
+        >
           <span class="column-list-selection-count">{{ selectedRowCount }} selected</span>
           <button
             class="btn btn-sm btn-ghost picker-remove-selected"
@@ -158,6 +171,7 @@
             <span
               v-for="zone in dropZones"
               :key="zone.value"
+              :data-drop-zone="zone.value"
               class="drop-pill"
               :class="{ 'is-active': dropZone === zone.value, 'is-disabled': zone.disabled }"
             >
@@ -182,7 +196,7 @@
       </div>
 
       <template v-if="!settingsCollapsed">
-        <div v-if="rowCount === 0" class="picker-empty">
+        <div v-if="rowCount === 0 && $slots.empty" class="picker-empty">
           <slot name="empty" />
         </div>
         <div v-else ref="settingsScrollRef" class="picker-scroll">
@@ -190,6 +204,7 @@
             name="settings"
             :is-row-selected="isRowSelected"
             :is-dragging="isDragging"
+            :active-zone="dropZone"
             :on-row-click="onRowClick"
             :on-row-context-menu="openRowContextMenu"
             :on-row-mouse-down="onRowMouseDown"
@@ -236,16 +251,19 @@ import type { ContextMenuOption } from "../../../common";
 import {
   EMPTY_SELECTION,
   applyClick,
+  applySelectAll,
   clampSelection,
   ensureSelected,
   isMacPlatform,
   nextSortDirection,
   readModifiers,
+  retainIndices,
   sortForDirection,
   type SelectionState,
   type SortDirection,
 } from "./columnSelection";
 import {
+  SETTINGS_MIN_OPEN_PX,
   clampSettingsHeight,
   dropZoneAt,
   pluralize,
@@ -280,10 +298,13 @@ const emit = defineEmits<{
 }>();
 
 const rootRef = ref<HTMLElement | null>(null);
+const columnsPaneRef = ref<HTMLElement | null>(null);
 const columnsScrollRef = ref<HTMLElement | null>(null);
 const settingsPaneRef = ref<HTMLElement | null>(null);
 const settingsScrollRef = ref<HTMLElement | null>(null);
 const isMac = isMacPlatform();
+const isSelectAll = (event: KeyboardEvent) =>
+  (isMac ? event.metaKey : event.ctrlKey) && event.key.toLowerCase() === "a";
 
 // ----- columns -----
 
@@ -307,6 +328,8 @@ const visibleColumns = computed(() => {
     .map((column, index) => ({ column, index }))
     .filter(({ column }) => !query || column.name.toLowerCase().includes(query));
 });
+
+const visibleIndexSet = computed(() => new Set(visibleColumns.value.map(({ index }) => index)));
 
 const sortHint = computed(() =>
   sortDirection.value === "none"
@@ -366,10 +389,36 @@ const onRowMouseDown = (event: MouseEvent) => {
   }
 };
 
+/** A range never picks up rows the filter hides, even when they sit between its ends. */
 const onColumnClick = (index: number, event: MouseEvent) => {
-  selection.value = applyClick(selection.value, index, readModifiers(event, isMac), {
+  const next = applyClick(selection.value, index, readModifiers(event, isMac), {
     clearOnRepeatClick: true,
   });
+  selection.value = retainIndices(next, visibleIndexSet.value);
+  columnsPaneRef.value?.focus({ preventScroll: true });
+};
+
+watch(filterText, () => {
+  selection.value = retainIndices(selection.value, visibleIndexSet.value);
+});
+
+/** Delete and Backspace are swallowed even when idle: the canvas would otherwise delete the node. */
+const onColumnsKeydown = (event: KeyboardEvent) => {
+  if (isRowControl(event.target)) return;
+  if (event.key === "Escape") {
+    // An open menu takes Escape; the selection under it stays.
+    if (!menuTarget.value) clearSelection();
+    return;
+  } else if (isSelectAll(event)) {
+    event.preventDefault();
+    selection.value = retainIndices(
+      applySelectAll(displayColumns.value.length),
+      visibleIndexSet.value,
+    );
+  } else if (event.key !== "Delete" && event.key !== "Backspace") {
+    return;
+  }
+  event.stopPropagation();
 };
 
 const columnRowClasses = (index: number, name: string) => ({
@@ -426,11 +475,18 @@ const removeRows = (indices: readonly number[]) => {
 const onSettingsKeydown = (event: KeyboardEvent) => {
   if (isRowControl(event.target)) return;
   if (event.key === "Escape") {
-    clearRowSelection();
-  } else if ((event.key === "Delete" || event.key === "Backspace") && selectedRowCount.value > 0) {
+    if (!menuTarget.value) clearRowSelection();
+    return;
+  } else if (event.key === "Delete" || event.key === "Backspace") {
     event.preventDefault();
-    removeRows(rowSelection.value.selectedIndices);
+    if (selectedRowCount.value > 0) removeRows(rowSelection.value.selectedIndices);
+  } else if (isSelectAll(event)) {
+    event.preventDefault();
+    rowSelection.value = applySelectAll(props.rowCount);
+  } else {
+    return;
   }
+  event.stopPropagation();
 };
 
 /** Unfolds the settings and scrolls the last row into view; the host flashes them on `reveal`. */
@@ -440,7 +496,9 @@ const reveal = async (indices: number[]) => {
   emit("reveal", indices);
   await nextTick();
   const rowEls = settingsScrollRef.value?.querySelectorAll("tbody tr");
+  // Last, then first: a run of new rows ends up visible, a far-apart pair shows its first.
   rowEls?.[indices[indices.length - 1]]?.scrollIntoView({ block: "nearest" });
+  rowEls?.[indices[0]]?.scrollIntoView({ block: "nearest" });
 };
 
 // ----- context menus -----
@@ -505,7 +563,11 @@ const dropZone = ref<string | null>(null);
 const isDragging = computed(() => draggingNames.value.length > 0);
 
 const autoScroll = useDragAutoScroll({
+  // Hosts mark their own scrollers with data-picker-scroll; they come first so an inner list wins.
   containers: () => [
+    ...Array.from(
+      settingsScrollRef.value?.querySelectorAll<HTMLElement>("[data-picker-scroll]") ?? [],
+    ),
     columnsScrollRef.value,
     settingsScrollRef.value,
     findScrollParent(rootRef.value?.parentElement ?? null),
@@ -554,6 +616,7 @@ const onColumnDragEnd = () => {
   autoScroll.stop();
 };
 
+/** An area the host marked with `data-drop-zone` wins; elsewhere the pane is split into bands. */
 const zoneAt = (event: DragEvent): string | null => {
   const pane = settingsPaneRef.value;
   if (!pane) return null;
@@ -563,7 +626,15 @@ const zoneAt = (event: DragEvent): string | null => {
     event.clientX <= rect.right &&
     event.clientY >= rect.top &&
     event.clientY <= rect.bottom;
-  return inside ? (dropZoneAt(rect, event.clientX, props.dropZones)?.value ?? null) : null;
+  if (!inside) return null;
+  const marked = document
+    .elementFromPoint(event.clientX, event.clientY)
+    ?.closest<HTMLElement>("[data-drop-zone]");
+  if (marked && pane.contains(marked)) {
+    const zone = props.dropZones.find((candidate) => candidate.value === marked.dataset.dropZone);
+    return zone && !zone.disabled ? zone.value : null;
+  }
+  return dropZoneAt(rect, event.clientX, props.dropZones)?.value ?? null;
 };
 
 const onCardDragOver = (event: DragEvent) => {
@@ -616,7 +687,8 @@ let endResize: (() => void) | null = null;
 /** The whole strip is the sash; its buttons keep their own clicks. */
 const onSashPointerDown = (event: PointerEvent) => {
   const pane = settingsPaneRef.value;
-  if (event.button !== 0 || !pane || (event.target as HTMLElement).closest("button")) return;
+  const target = event.target as HTMLElement;
+  if (event.button !== 0 || !pane || target.closest("button, .picker-row-selection")) return;
   event.preventDefault();
   (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
   const startY = event.clientY;
@@ -635,6 +707,11 @@ const onSashPointerDown = (event: PointerEvent) => {
     window.removeEventListener("pointercancel", onEnd);
     document.body.style.cursor = "";
     isResizing.value = false;
+    // Dragged shut: fold, so the chevron and reveal know how to open it again.
+    if (settingsHeight.value !== null && settingsHeight.value < SETTINGS_MIN_OPEN_PX) {
+      settingsHeight.value = null;
+      settingsCollapsed.value = true;
+    }
     endResize = null;
   };
   endResize = onEnd;
@@ -644,7 +721,14 @@ const onSashPointerDown = (event: PointerEvent) => {
   window.addEventListener("pointercancel", onEnd);
 };
 
+/** A Remove click empties the pill, so its second click lands on the strip as a double-click. */
+let lastPillClickAt = 0;
+const notePillClick = () => {
+  lastPillClickAt = performance.now();
+};
+
 const resetSplit = () => {
+  if (performance.now() - lastPillClickAt < 500) return;
   settingsHeight.value = null;
   settingsCollapsed.value = false;
 };
@@ -683,39 +767,55 @@ defineExpose({ clearSelection, clearRowSelection, removeRows, reveal, openMenuUn
   overflow: hidden;
 }
 
-/* Both sections are content-sized and scroll inside their own box. Flex
-   shrinks items in proportion to basis × flex-shrink, so the huge shrink
-   factor makes the column list give up all the space first; the settings only
-   shrink once the columns are frozen at their toolbar-plus-one-row floor. */
+/* Both sections scroll inside their own box. The settings open at their content
+   height within 40–55% of the card and the columns take the rest, so filtering
+   the list never moves the strip. Flex shrinks items in proportion to basis ×
+   flex-shrink, so the huge shrink factor makes the column list give up all the
+   space first; the settings only shrink once the columns are frozen at their
+   toolbar-plus-one-row floor. */
 .picker-columns {
   display: flex;
   flex-direction: column;
-  flex: 0 1000 auto;
+  flex: 1 1000 auto;
   min-height: 84px;
+}
+
+.picker-columns:focus {
+  outline: none;
 }
 
 .picker-settings {
   display: flex;
   flex-direction: column;
   flex: 0 1 auto;
-  min-height: 30px;
+  min-height: 40%;
   max-height: 55%;
   transition: box-shadow var(--transition-fast) var(--transition-timing);
 }
 
 /* A dragged split pins the settings; the max keeps the column list its floor. */
+/* Strip, table header and one row: anything shorter folds on release. */
 .picker-settings.is-sized {
   flex: 0 0 var(--picker-settings-height);
+  min-height: 84px;
   max-height: calc(100% - 84px);
+}
+
+.picker-settings.is-resizing {
+  min-height: 30px;
 }
 
 .picker-settings.is-collapsed {
   flex: 0 0 auto;
+  min-height: 30px;
   max-height: none;
 }
 
-.picker-settings.is-drop-target {
-  box-shadow: inset 0 0 0 1px var(--color-accent);
+/* An outline paints over the rows, unlike an inset shadow. Hosts that mark their
+   own areas highlight those instead of the whole pane. */
+.picker-settings.is-drop-target:not(:has(.picker-scroll [data-drop-zone])) {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
   border-radius: var(--border-radius-sm);
 }
 
@@ -758,10 +858,10 @@ defineExpose({ clearSelection, clearRowSelection, removeRows, reveal, openMenuUn
   padding-bottom: 0;
 }
 
+/* Same side padding as the cells, so a header sits over its column's text. */
 .picker-card :deep(.styled-table thead th) {
   height: 26px;
-  padding-top: 0;
-  padding-bottom: 0;
+  padding: 0 var(--spacing-2);
 }
 
 .picker-card :deep(.styled-table tr) {
@@ -799,18 +899,25 @@ defineExpose({ clearSelection, clearRowSelection, removeRows, reveal, openMenuUn
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  color: var(--color-text-tertiary);
 }
 
-.usage-cell {
-  white-space: nowrap;
+/* Long labels give way so the trailing "+N" chip always stays reachable. */
+.usage-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-0-5);
+  min-width: 0;
   overflow: hidden;
 }
 
 .usage-chip {
-  display: inline-block;
-  margin-right: var(--spacing-0-5);
-  padding: 0 var(--spacing-1-5);
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 var(--spacing-1);
   border: none;
   border-radius: var(--border-radius-full);
   background-color: var(--color-background-soft);
@@ -820,6 +927,15 @@ defineExpose({ clearSelection, clearRowSelection, removeRows, reveal, openMenuUn
   line-height: 16px;
   cursor: pointer;
   transition: background-color var(--transition-fast) var(--transition-timing);
+}
+
+.usage-chip:last-child {
+  flex-shrink: 0;
+}
+
+/* The chip tint matches the row hover tint, so a hovered row lifts it to white. */
+.picker-column-table tbody tr:hover .usage-chip:not(.is-key) {
+  background-color: var(--color-background-primary);
 }
 
 .usage-chip:hover {
@@ -927,13 +1043,14 @@ defineExpose({ clearSelection, clearRowSelection, removeRows, reveal, openMenuUn
 .picker-header-tools {
   display: inline-flex;
   align-items: center;
-  flex-shrink: 0;
+  min-width: 0;
   gap: var(--spacing-1);
   margin-left: auto;
   cursor: default;
 }
 
 .picker-fold {
+  flex-shrink: 0;
   width: 22px;
   min-width: 22px;
   height: 22px;
@@ -974,12 +1091,16 @@ defineExpose({ clearSelection, clearRowSelection, removeRows, reveal, openMenuUn
 
 .drop-pills {
   display: inline-flex;
+  min-width: 0;
   gap: var(--spacing-1);
 }
 
 .drop-pill {
   display: inline-flex;
   align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   height: 20px;
   padding: 0 var(--spacing-2);
   border: 1px dashed var(--color-border-secondary);
@@ -1015,12 +1136,17 @@ defineExpose({ clearSelection, clearRowSelection, removeRows, reveal, openMenuUn
   font-weight: var(--font-weight-medium);
   line-height: 1.4;
   white-space: nowrap;
-  cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
 }
 
 .picker-empty {
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
+  align-content: center;
   justify-content: center;
   flex-wrap: wrap;
   gap: var(--spacing-1);
@@ -1052,6 +1178,16 @@ defineExpose({ clearSelection, clearRowSelection, removeRows, reveal, openMenuUn
   font-weight: var(--font-weight-medium);
 }
 
+/* A header over a select or input sits over the control's text, not its box. */
+.picker-card :deep(.styled-table thead th.picker-control-header) {
+  padding-left: calc(var(--spacing-2) + 8px);
+}
+
+.picker-card :deep(.picker-settings .inline-input) {
+  padding-left: 7px;
+  padding-right: 7px;
+}
+
 /* Hosts name their first cell this way to get the same ellipsis as the column list. */
 .picker-card :deep(.picker-field-cell) {
   overflow: hidden;
@@ -1069,6 +1205,17 @@ defineExpose({ clearSelection, clearRowSelection, removeRows, reveal, openMenuUn
 
 .picker-card :deep(.picker-settings tbody tr.is-new > td) {
   animation: picker-flash 1.2s var(--transition-timing);
+}
+
+/* scrollIntoView lands under the sticky header without this. */
+.picker-card :deep(.picker-settings table:has(thead) tbody tr) {
+  scroll-margin-top: 26px;
+}
+
+/* Hosts mark rows whose column the input no longer has. */
+.picker-card :deep(.picker-settings tbody tr.is-stale .picker-field-cell) {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
 }
 
 @keyframes picker-flash {

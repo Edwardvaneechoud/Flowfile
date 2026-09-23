@@ -9,7 +9,7 @@
         ref="picker"
         :columns="columns"
         :usage-chips="usageChips"
-        :used-count="rows.length"
+        :used-count="usedCount"
         :column-menu-options="columnMenuOptions"
         :drop-zones="dropZones"
         :row-count="rows.length"
@@ -76,116 +76,199 @@
           </span>
         </template>
 
-        <template #empty>
-          <template v-if="byColumns">
-            Drag columns here, or hover a column and use
-            <span class="material-icons" aria-label="add">add</span> for index keys and
-            <span class="material-icons" aria-label="unpivot">unfold_more</span> for the columns to
-            unpivot.
-          </template>
-          <template v-else>
-            Every column that is not an index key is unpivoted. Drag columns here, or hover one and
-            use <span class="material-icons" aria-label="add">add</span>, to keep it on every row
-            instead.
-          </template>
-        </template>
-
         <template
-          #settings="{ isRowSelected, isDragging, onRowClick, onRowContextMenu, onRowMouseDown }"
+          #settings="{ isRowSelected, activeZone, onRowClick, onRowContextMenu, onRowMouseDown }"
         >
-          <table class="styled-table column-list unpivot-role-table">
-            <colgroup>
-              <col />
-              <col style="width: 132px" />
-              <col style="width: 140px" />
-              <col style="width: 34px" />
-            </colgroup>
-            <thead>
-              <tr>
-                <th>Field</th>
-                <th>Role</th>
-                <th>Becomes</th>
-                <th aria-label="Remove" />
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="(row, index) in rows"
-                :key="row.name"
-                :class="{
-                  'is-new': flashedRows.has(index),
-                  'is-selected': isRowSelected(index),
-                  'is-drop-after': isDragging && index === rows.length - 1,
-                }"
-                @mousedown="onRowMouseDown"
-                @click="onRowClick(index, $event)"
-                @contextmenu="onRowContextMenu($event, index)"
+          <div class="unpivot-layout">
+            <div class="unpivot-groups">
+              <section
+                class="unpivot-group"
+                :class="{ 'is-active-zone': activeZone === 'index' }"
+                data-drop-zone="index"
+                aria-label="Index keys"
               >
-                <td class="picker-field-cell" :title="row.name">{{ row.name }}</td>
-                <td>
-                  <el-select
-                    :model-value="row.role"
-                    size="small"
-                    :aria-label="`Role of ${row.name}`"
-                    @update:model-value="assign([row.name], $event)"
+                <div class="unpivot-group-header">
+                  <span class="unpivot-group-title">Index keys</span>
+                  <span class="unpivot-group-hint">kept on every row</span>
+                </div>
+                <div class="unpivot-well" data-picker-scroll>
+                  <table v-if="indexRows.length > 0" class="styled-table column-list unpivot-rows">
+                    <colgroup>
+                      <col />
+                      <col style="width: 64px" />
+                    </colgroup>
+                    <tbody>
+                      <tr
+                        v-for="{ row, index } in indexRows"
+                        :key="row.name"
+                        :class="{
+                          'is-new': flashedRows.has(index),
+                          'is-selected': isRowSelected(index),
+                          'is-stale': !columnNames.has(row.name),
+                        }"
+                        @mousedown="onRowMouseDown"
+                        @click="onRowClick(index, $event)"
+                        @contextmenu="onRowContextMenu($event, index)"
+                      >
+                        <td
+                          class="picker-field-cell"
+                          :title="
+                            columnNames.has(row.name)
+                              ? row.name
+                              : `${row.name} is no longer in the input`
+                          "
+                        >
+                          {{ row.name }}
+                        </td>
+                        <td class="row-tools-cell">
+                          <span class="row-tools">
+                            <button
+                              v-if="byColumns"
+                              type="button"
+                              class="btn btn-sm btn-ghost btn-icon"
+                              :title="`Unpivot ${row.name} instead`"
+                              :aria-label="`Unpivot ${row.name} instead`"
+                              @mousedown.prevent
+                              @click="assign([row.name], 'value')"
+                            >
+                              <span class="material-icons" aria-hidden="true">unfold_more</span>
+                            </button>
+                            <button
+                              type="button"
+                              class="btn btn-sm btn-ghost btn-icon row-remove"
+                              :title="`Remove ${row.name}`"
+                              :aria-label="`Remove ${row.name}`"
+                              @mousedown.prevent
+                              @click="removeRow(index)"
+                            >
+                              <span class="material-icons" aria-hidden="true">close</span>
+                            </button>
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div v-else class="unpivot-well-empty">
+                    Drop columns here to keep them on every row
+                  </div>
+                </div>
+              </section>
+
+              <section
+                class="unpivot-group"
+                :class="{ 'is-active-zone': activeZone === 'value' }"
+                data-drop-zone="value"
+                aria-label="Columns to unpivot"
+              >
+                <div class="unpivot-group-header">
+                  <span class="unpivot-group-title">Columns to unpivot</span>
+                  <span
+                    class="seg-control"
+                    role="group"
+                    aria-label="How the columns to unpivot are chosen"
                   >
-                    <el-option
-                      v-for="role in UNPIVOT_ROLES"
-                      :key="role.value"
-                      :label="role.label"
-                      :value="role.value"
-                      :disabled="role.value === 'value' && !byColumns"
-                    />
-                  </el-select>
-                </td>
-                <td class="picker-note-cell">{{ unpivotBecomes(row.role) }}</td>
-                <td class="row-tools-cell">
-                  <span class="row-tools">
                     <button
                       type="button"
-                      class="btn btn-sm btn-ghost btn-icon row-remove"
-                      :title="`Remove ${row.name}`"
-                      :aria-label="`Remove ${row.name}`"
+                      class="seg-option"
+                      :class="{ 'is-on': byColumns }"
+                      :aria-pressed="byColumns"
                       @mousedown.prevent
-                      @click="removeRow(index)"
+                      @click="setMode('column')"
                     >
-                      <span class="material-icons" aria-hidden="true">close</span>
+                      Chosen
+                    </button>
+                    <button
+                      type="button"
+                      class="seg-option"
+                      :class="{ 'is-on': !byColumns }"
+                      :aria-pressed="!byColumns"
+                      @mousedown.prevent
+                      @click="setMode('data_type')"
+                    >
+                      By type
                     </button>
                   </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </template>
-
-        <template #footer>
-          <span class="picker-footer-label">Values</span>
-          <el-switch
-            :model-value="input.data_type_selector_mode"
-            active-value="column"
-            inactive-value="data_type"
-            active-text="Chosen columns"
-            inactive-text="By data type"
-            inline-prompt
-            size="small"
-            aria-label="How the value columns are chosen"
-            @update:model-value="setMode"
-          />
-          <el-select
-            v-if="!byColumns"
-            v-model="input.data_type_selector"
-            size="small"
-            class="unpivot-type-select"
-            placeholder="Choose a data type"
-            aria-label="Data type to unpivot"
-          >
-            <el-option
-              v-for="option in DATA_TYPE_OPTIONS"
-              :key="option.value"
-              :label="option.label"
-              :value="option.value"
-            />
-          </el-select>
+                </div>
+                <div v-if="byColumns" class="unpivot-well" data-picker-scroll>
+                  <table v-if="valueRows.length > 0" class="styled-table column-list unpivot-rows">
+                    <colgroup>
+                      <col />
+                      <col style="width: 64px" />
+                    </colgroup>
+                    <tbody>
+                      <tr
+                        v-for="{ row, index } in valueRows"
+                        :key="row.name"
+                        :class="{
+                          'is-new': flashedRows.has(index),
+                          'is-selected': isRowSelected(index),
+                          'is-stale': !columnNames.has(row.name),
+                        }"
+                        @mousedown="onRowMouseDown"
+                        @click="onRowClick(index, $event)"
+                        @contextmenu="onRowContextMenu($event, index)"
+                      >
+                        <td
+                          class="picker-field-cell"
+                          :title="
+                            columnNames.has(row.name)
+                              ? row.name
+                              : `${row.name} is no longer in the input`
+                          "
+                        >
+                          {{ row.name }}
+                        </td>
+                        <td class="row-tools-cell">
+                          <span class="row-tools">
+                            <button
+                              type="button"
+                              class="btn btn-sm btn-ghost btn-icon"
+                              :title="`Keep ${row.name} on every row instead`"
+                              :aria-label="`Keep ${row.name} on every row instead`"
+                              @mousedown.prevent
+                              @click="assign([row.name], 'index')"
+                            >
+                              <span class="material-icons" aria-hidden="true">add</span>
+                            </button>
+                            <button
+                              type="button"
+                              class="btn btn-sm btn-ghost btn-icon row-remove"
+                              :title="`Remove ${row.name}`"
+                              :aria-label="`Remove ${row.name}`"
+                              @mousedown.prevent
+                              @click="removeRow(index)"
+                            >
+                              <span class="material-icons" aria-hidden="true">close</span>
+                            </button>
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div v-else class="unpivot-well-empty">Drop the columns to unpivot here</div>
+                </div>
+                <div v-else class="unpivot-well unpivot-by-type">
+                  <el-select
+                    v-model="input.data_type_selector"
+                    size="small"
+                    class="unpivot-type-select"
+                    placeholder="Choose a data type"
+                    aria-label="Data type to unpivot"
+                  >
+                    <el-option
+                      v-for="option in DATA_TYPE_OPTIONS"
+                      :key="option.value"
+                      :label="option.label"
+                      :value="option.value"
+                    />
+                  </el-select>
+                  <span class="unpivot-group-hint"
+                    >every matching column that is not an index key</span
+                  >
+                </div>
+              </section>
+            </div>
+          </div>
         </template>
       </column-picker-card>
     </generic-node-settings>
@@ -216,8 +299,6 @@ import {
   dataTypeLabel,
   missingUnpivotParts,
   rowsFromUnpivot,
-  unpivotBecomes,
-  unpivotRoleLabel,
   writeUnpivotRows,
 } from "./unpivotLogic";
 
@@ -245,15 +326,23 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
 const columns = computed<FileColumn[]>(() => nodeData.value?.main_input?.table_schema ?? []);
 const input = computed(() => nodeUnpivot.value?.unpivot_input ?? null);
 const byColumns = computed(() => input.value?.data_type_selector_mode !== "data_type");
+/** Index keys first, then value columns; the picker addresses rows by this flat index. */
 const rows = computed<RoleRow[]>(() => (input.value ? rowsFromUnpivot(input.value) : []));
+const indexed = computed(() => rows.value.map((row, index) => ({ row, index })));
+const indexRows = computed(() => indexed.value.filter(({ row }) => row.role === "index"));
+const valueRows = computed(() => indexed.value.filter(({ row }) => row.role === "value"));
 const missing = computed(() => (input.value ? missingUnpivotParts(input.value) : []));
+const columnNames = computed(() => new Set(columns.value.map((column) => column.name)));
+const usedCount = computed(
+  () => rows.value.filter((row) => columnNames.value.has(row.name)).length,
+);
 
 const settingsCountLabel = computed(() => {
-  if (!input.value || rows.value.length === 0) return "";
+  if (!input.value) return "";
   const keys = pluralize(input.value.index_columns.length, "index key");
   return byColumns.value
-    ? `${keys} · ${pluralize(input.value.value_columns.length, "value column")}`
-    : `${keys} · values: ${dataTypeLabel(input.value.data_type_selector).toLowerCase()}`;
+    ? `${keys} · ${pluralize(input.value.value_columns.length, "column")} to unpivot`
+    : `${keys} · unpivot ${dataTypeLabel(input.value.data_type_selector).toLowerCase()}`;
 });
 
 const usageChips = (name: string): UsageChip[] => {
@@ -262,8 +351,8 @@ const usageChips = (name: string): UsageChip[] => {
   const role = rows.value[index].role;
   return [
     {
-      label: role,
-      title: `Show the ${unpivotRoleLabel(role).toLowerCase()} row`,
+      label: role === "index" ? "index" : "unpivot",
+      title: `Show ${role === "index" ? "the index key" : "the column to unpivot"}`,
       isKey: role === "index",
       rows: [index],
     },
@@ -290,23 +379,28 @@ const assign = (names: string[], role: string) => {
   if (role === "value" && !byColumns.value) return;
   const result = assignRole(rows.value, names, role, UNPIVOT_ROLES);
   writeUnpivotRows(input.value, result.rows);
-  if (result.touched.length > 0) void picker.value?.reveal(result.touched);
+  // Rows regroup by area on write, so the picker's positions are stale from here.
+  void picker.value?.reveal(indicesOf(names));
   picker.value?.clearSelection();
+  picker.value?.clearRowSelection();
 };
+
+const indicesOf = (names: string[]) =>
+  rows.value.flatMap((row, index) => (names.includes(row.name) ? [index] : []));
 
 const onColumnAction = (action: string, names: string[]) => assign(names, action);
 
 const removeRows = (indices: number[]) => {
   if (input.value) writeUnpivotRows(input.value, withoutRows(rows.value, indices));
+  flashedRows.value = new Set();
 };
 
 const removeRow = (index: number) => picker.value?.removeRows([index]);
 
 /** Switching to data types drops the chosen columns, as the save would anyway. */
-const setMode = (value: string | number | boolean) => {
-  const mode = value as DataSelectorMode;
+const setMode = (mode: DataSelectorMode) => {
   const settings = input.value;
-  if (!settings) return;
+  if (!settings || settings.data_type_selector_mode === mode) return;
   settings.data_type_selector_mode = mode;
   if (mode === "data_type") {
     settings.value_columns = [];
@@ -350,6 +444,7 @@ const loadNodeData = async (nodeId: number) => {
   }
   nodeUnpivot.value = settings;
   dataLoaded.value = true;
+  validateConfig();
 };
 
 const validateConfig = () => {
@@ -377,8 +472,175 @@ defineExpose({
 </script>
 
 <style scoped>
-.unpivot-type-select {
-  flex: 1 1 auto;
+/* Two areas side by side, each scrolling on its own; they stack when the pane is narrow.
+   An element cannot query its own width, so the container sits one level up. */
+.unpivot-layout {
+  height: 100%;
+  container-type: inline-size;
+}
+
+.unpivot-groups {
+  display: flex;
+  height: 100%;
+}
+
+.unpivot-group {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
   min-width: 0;
+  min-height: 0;
+  padding: var(--spacing-1) var(--spacing-2) var(--spacing-2);
+}
+
+.unpivot-group + .unpivot-group {
+  border-left: 1px solid var(--color-border-light);
+}
+
+@container (max-width: 539px) {
+  .unpivot-groups {
+    flex-direction: column;
+  }
+
+  .unpivot-group {
+    flex: 0 1 auto;
+    max-height: 60%;
+  }
+
+  .unpivot-group:last-child {
+    flex: 1 1 auto;
+    max-height: none;
+  }
+
+  .unpivot-group + .unpivot-group {
+    border-left: none;
+    border-top: 1px solid var(--color-border-light);
+  }
+}
+
+.unpivot-group-header {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--spacing-2);
+  height: 26px;
+  font-size: var(--font-size-xs);
+  user-select: none;
+}
+
+.unpivot-group-title {
+  flex-shrink: 0;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.unpivot-group-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+}
+
+/* The list sits in a box, so an empty area still shows where a drop lands. */
+.unpivot-well {
+  flex: 1 1 auto;
+  min-height: 56px;
+  overflow: auto;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  background-color: var(--color-background-primary);
+  transition:
+    border-color var(--transition-fast) var(--transition-timing),
+    background-color var(--transition-fast) var(--transition-timing),
+    box-shadow var(--transition-fast) var(--transition-timing);
+}
+
+.unpivot-well::-webkit-scrollbar {
+  width: 6px;
+}
+
+.unpivot-well::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.unpivot-well::-webkit-scrollbar-thumb {
+  background-color: var(--color-gray-300);
+  border-radius: var(--border-radius-full);
+}
+
+.unpivot-group.is-active-zone .unpivot-well {
+  border-color: var(--color-accent);
+  background-color: var(--color-accent-subtle);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+/* One name per row: the cell divider would only fence off the hover buttons. */
+.unpivot-rows td:not(:last-child) {
+  border-right: none;
+}
+
+.unpivot-well-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 54px;
+  padding: var(--spacing-2);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  text-align: center;
+}
+
+.unpivot-by-type {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2);
+  font-size: var(--font-size-xs);
+}
+
+.unpivot-type-select {
+  flex: 0 1 220px;
+  min-width: 140px;
+}
+
+/* Two-way switch in the area header: the on side is tinted, never a dark pill. */
+.seg-control {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 1px;
+  border: 1px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-full);
+  background-color: var(--color-background-primary);
+}
+
+.seg-option {
+  height: 18px;
+  padding: 0 var(--spacing-2);
+  border: none;
+  border-radius: var(--border-radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-2xs);
+  line-height: 18px;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast) var(--transition-timing),
+    color var(--transition-fast) var(--transition-timing);
+}
+
+.seg-option:hover {
+  color: var(--color-text-primary);
+}
+
+.seg-option.is-on {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent-hover);
+  font-weight: var(--font-weight-medium);
 }
 </style>

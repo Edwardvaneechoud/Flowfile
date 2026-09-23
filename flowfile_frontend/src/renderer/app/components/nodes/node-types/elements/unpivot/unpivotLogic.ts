@@ -26,10 +26,6 @@ export const dataTypeLabel = (selector: DataTypeSelector | null | undefined): st
 export const unpivotRoleLabel = (role: string): string =>
   UNPIVOT_ROLES.find((spec) => spec.value === role)?.label ?? role;
 
-/** What a column in this role turns into in the output. */
-export const unpivotBecomes = (role: string): string =>
-  role === "index" ? "kept on every row" : "variable / value rows";
-
 /** Index keys first, in their saved order, then the value columns. */
 export const rowsFromUnpivot = (input: UnpivotInput): RoleRow[] => [
   ...input.index_columns.map((name) => ({ name, role: "index" })),

@@ -315,6 +315,40 @@ test.describe("Group By drawer", () => {
     await expect(pane).not.toHaveClass(/is-sized/);
     const paneReset = (await pane.boundingBox())!;
     expect(Math.abs(paneReset.height - paneBefore.height)).toBeLessThan(2);
+
+    // Dragged shut, the pane folds instead of staying open at strip height.
+    const gripAgain = (await page.locator(".picker-sash-grip").boundingBox())!;
+    await page.mouse.move(gripAgain.x + gripAgain.width / 2, gripAgain.y + gripAgain.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(gripAgain.x + gripAgain.width / 2, gripAgain.y + 600, { steps: 6 });
+    await page.mouse.up();
+    await expect(pane).toHaveClass(/is-collapsed/);
+    await page.getByRole("button", { name: "Show the settings" }).click();
+    await expect(pane).not.toHaveClass(/is-collapsed/);
+    expect((await pane.boundingBox())!.height).toBeGreaterThan(100);
+  });
+
+  test("a shift-click range while filtering selects only the visible columns", async ({ page }) => {
+    await openFlow(page, authToken, "complex-flow");
+    await openGroupBySettings(page, groupByNodeId);
+
+    const rows = columnRows(page);
+    const names = await rows.locator(".column-name").allTextContents();
+    const letter = "aeiou".split("").find((candidate) => {
+      const visible = names.filter((name) => name.toLowerCase().includes(candidate));
+      return visible.length >= 2 && visible.length < names.length;
+    })!;
+    const visible = names.filter((name) => name.toLowerCase().includes(letter));
+    await page.getByLabel("Filter columns").fill(letter);
+    await expect(rows).toHaveCount(visible.length);
+    await rows.first().locator(".column-name-cell").click();
+    await rows
+      .last()
+      .locator(".column-name-cell")
+      .click({ modifiers: ["Shift"] });
+    await expect(page.locator(".column-list-selection-count")).toHaveText(
+      `${visible.length} selected`,
+    );
   });
 
   test("the chevron folds the settings to its strip and adding a column unfolds them", async ({
@@ -380,7 +414,22 @@ test.describe("Group By drawer", () => {
     await page.keyboard.press("Delete");
     await expect(rows).toHaveCount(before);
 
+    // Backspace removes the row, never the node the canvas has selected.
     await addKey();
+    const canvasNode = page.locator(`.vue-flow__node[data-id="${groupByNodeId}"]`);
+    // A synthetic click selects the node; a synthetic mousedown would trip d3-drag on `event.view`.
+    await canvasNode.dispatchEvent("click", { button: 0 });
+    await expect(canvasNode).toHaveClass(/selected/);
+    await rows.nth(before).locator(".agg-field-cell").click();
+    await page.keyboard.press("Backspace");
+    await expect(rows).toHaveCount(before);
+    await expect(canvasNode).toHaveCount(1);
+
+    await addKey();
+    await rows.nth(before).locator(".agg-field-cell").click({ button: "right" });
+    await expect(page.locator(".context-menu")).toHaveCount(1);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".context-menu")).toHaveCount(0);
     await rows.nth(before).locator(".agg-field-cell").click({ button: "right" });
     await page.locator(".context-menu li", { hasText: "Remove" }).click();
     await expect(rows).toHaveCount(before);

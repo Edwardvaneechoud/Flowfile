@@ -9,7 +9,7 @@
         ref="picker"
         :columns="columns"
         :usage-chips="usageChips"
-        :used-count="rows.length"
+        :used-count="usedCount"
         :column-menu-options="columnMenuOptions"
         :drop-zones="dropZones"
         :row-count="rows.length"
@@ -82,9 +82,7 @@
           and value columns.
         </template>
 
-        <template
-          #settings="{ isRowSelected, isDragging, onRowClick, onRowContextMenu, onRowMouseDown }"
-        >
+        <template #settings="{ isRowSelected, onRowClick, onRowContextMenu, onRowMouseDown }">
           <table class="styled-table column-list pivot-role-table">
             <colgroup>
               <col />
@@ -95,7 +93,7 @@
             <thead>
               <tr>
                 <th>Field</th>
-                <th>Role</th>
+                <th class="picker-control-header">Role</th>
                 <th>Becomes</th>
                 <th aria-label="Remove" />
               </tr>
@@ -107,13 +105,20 @@
                 :class="{
                   'is-new': flashedRows.has(index),
                   'is-selected': isRowSelected(index),
-                  'is-drop-after': isDragging && index === rows.length - 1,
+                  'is-stale': !columnNames.has(row.name),
                 }"
                 @mousedown="onRowMouseDown"
                 @click="onRowClick(index, $event)"
                 @contextmenu="onRowContextMenu($event, index)"
               >
-                <td class="picker-field-cell" :title="row.name">{{ row.name }}</td>
+                <td
+                  class="picker-field-cell"
+                  :title="
+                    columnNames.has(row.name) ? row.name : `${row.name} is no longer in the input`
+                  "
+                >
+                  {{ row.name }}
+                </td>
                 <td>
                   <el-select
                     :model-value="row.role"
@@ -179,6 +184,7 @@
 <script lang="ts" setup>
 import { ref, computed, onUnmounted } from "vue";
 import { CodeLoader } from "vue-content-loader";
+import { ElMessage } from "element-plus";
 import type { FileColumn, NodePivot } from "../../../baseNode/nodeInput";
 import type { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/node-store";
@@ -212,6 +218,16 @@ const picker = ref<InstanceType<typeof ColumnPickerCard> | null>(null);
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodePivot,
+  /** The backend rejects a pivot without all its parts, so the drawer says what is missing instead. */
+  onBeforeSave: () => {
+    if (missing.value.length === 0) return true;
+    validateConfig();
+    ElMessage.warning({
+      message: `Pivot still needs: ${missing.value.join(", ")}.`,
+      showClose: true,
+    });
+    return false;
+  },
   onAfterSave: async () => {
     validateConfig();
   },
@@ -221,6 +237,10 @@ const columns = computed<FileColumn[]>(() => nodeData.value?.main_input?.table_s
 const input = computed(() => nodePivot.value?.pivot_input ?? null);
 const rows = computed<RoleRow[]>(() => (input.value ? rowsFromPivot(input.value) : []));
 const missing = computed(() => (input.value ? missingPivotParts(input.value) : []));
+const columnNames = computed(() => new Set(columns.value.map((column) => column.name)));
+const usedCount = computed(
+  () => rows.value.filter((row) => columnNames.value.has(row.name)).length,
+);
 
 const settingsCountLabel = computed(() => {
   if (!input.value || rows.value.length === 0) return "";
@@ -261,14 +281,20 @@ const assign = (names: string[], role: string) => {
   if (!input.value || names.length === 0) return;
   const result = assignRole(rows.value, names, role, PIVOT_ROLES);
   writePivotRows(input.value, result.rows);
-  if (result.touched.length > 0) void picker.value?.reveal(result.touched);
+  // Rows regroup by role on write, so the picker's positions are stale from here.
+  void picker.value?.reveal(indicesOf(names));
   picker.value?.clearSelection();
+  picker.value?.clearRowSelection();
 };
+
+const indicesOf = (names: string[]) =>
+  rows.value.flatMap((row, index) => (names.includes(row.name) ? [index] : []));
 
 const onColumnAction = (action: string, names: string[]) => assign(names, action);
 
 const removeRows = (indices: number[]) => {
   if (input.value) writePivotRows(input.value, withoutRows(rows.value, indices));
+  flashedRows.value = new Set();
 };
 
 const removeRow = (index: number) => picker.value?.removeRows([index]);
@@ -312,6 +338,7 @@ const loadNodeData = async (nodeId: number) => {
   }
   nodePivot.value = settings;
   dataLoaded.value = true;
+  validateConfig();
 };
 
 const validateConfig = () => {

@@ -109,6 +109,34 @@ const dragColumnTo = (page: Page, columnIndex: number, fraction: number, drop = 
     { columnIndex, fraction, drop },
   );
 
+/** Same event sequence, aimed at the centre of a host-marked drop area. */
+const dragColumnToArea = (page: Page, columnIndex: number, zone: string) =>
+  page.evaluate(
+    ({ columnIndex, zone }) => {
+      const source = document.querySelectorAll(".picker-column-table tbody tr")[columnIndex];
+      const area = document.querySelector(`[data-drop-zone="${zone}"]`) as HTMLElement;
+      const dataTransfer = new DataTransfer();
+      const fire = (el: Element, type: string, clientX: number, clientY: number) =>
+        el.dispatchEvent(
+          new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer, clientX, clientY }),
+        );
+      const s = source.getBoundingClientRect();
+      fire(source, "dragstart", s.left + 10, s.top + s.height / 2);
+      const a = area.getBoundingClientRect();
+      const x = a.left + a.width / 2;
+      const y = a.top + a.height / 2;
+      const target = document.elementFromPoint(x, y) ?? area;
+      fire(target, "dragover", x, y);
+      fire(target, "drop", x, y);
+      fire(source, "dragend", 0, 0);
+    },
+    { columnIndex, zone },
+  );
+
+const areaRows = (page: Page, zone: string) => page.locator(`[data-drop-zone="${zone}"] tbody tr`);
+/** Row texts include the hover icons' ligature names, so name checks read the field cell. */
+const areaFields = (page: Page, zone: string) => areaRows(page, zone).locator(".picker-field-cell");
+
 test.describe("Pivot and Unpivot drawers", () => {
   let authToken: string;
   let flowId: number;
@@ -180,15 +208,17 @@ test.describe("Pivot and Unpivot drawers", () => {
     await expect(page.locator(".drop-pill")).toHaveCount(0);
   });
 
-  test("unpivot multi-selects value rows and removes them from the strip pill", async ({
+  test("unpivot keeps index keys and unpivot columns in separate areas, removes and drops per area", async ({
     page,
   }) => {
     await openFlow(page, authToken, "complex-flow");
     await openNodeSettings(page, unpivotNodeId);
 
     await expect(roleRows(page)).toHaveCount(4);
+    await expect(areaRows(page, "index")).toHaveCount(1);
+    await expect(areaRows(page, "value")).toHaveCount(3);
     await expect(page.locator(".picker-settings-count")).toHaveText(
-      "1 index key · 3 value columns",
+      "1 index key · 3 columns to unpivot",
     );
 
     await roleRows(page).nth(1).locator(".picker-field-cell").click();
@@ -202,15 +232,37 @@ test.describe("Pivot and Unpivot drawers", () => {
     await page.locator(".picker-row-selection").getByRole("button", { name: "Remove" }).click();
 
     await expect(roleRows(page)).toHaveCount(1);
+    await expect(areaRows(page, "value")).toHaveCount(0);
     await expect(page.locator(".picker-flag")).toHaveText("Missing: value columns");
 
-    const { name } = await (async () => {
-      const row = columnRows(page).filter({ hasText: "first_quarter" });
-      await row.getByRole("button", { name: "Unpivot first_quarter" }).click();
-      return { name: "first_quarter" };
-    })();
-    await expect(roleRow(page, name).locator(".el-select")).toContainText("Value column");
-    await expect(roleRow(page, name)).toHaveClass(/is-new/);
+    await columnRows(page)
+      .filter({ hasText: "first_quarter" })
+      .getByRole("button", { name: "Unpivot first_quarter" })
+      .click();
+    await expect(areaFields(page, "value")).toHaveText(["first_quarter"]);
+    await expect(areaRows(page, "value").first()).toHaveClass(/is-new/);
+
+    const rows = columnRows(page);
+    const secondIndex = await rows.evaluateAll((els) =>
+      els.findIndex(
+        (el) => el.querySelector(".column-name")?.textContent?.trim() === "second_quarter",
+      ),
+    );
+    await areaRows(page, "value").first().locator(".picker-field-cell").click();
+    await dragColumnToArea(page, secondIndex, "index");
+    await expect(areaFields(page, "index")).toHaveText(["Country", "second_quarter"]);
+    // The moved row is the one that flashes, and a selection made before the move is dropped.
+    await expect(areaRows(page, "index").filter({ hasText: "second_quarter" })).toHaveClass(
+      /is-new/,
+    );
+    await expect(page.locator(".picker-row-selection")).toHaveCount(0);
+
+    await areaRows(page, "index")
+      .filter({ hasText: "second_quarter" })
+      .getByRole("button", { name: "Unpivot second_quarter instead" })
+      .click();
+    await expect(areaFields(page, "value")).toHaveText(["first_quarter", "second_quarter"]);
+    await expect(page.locator(".drop-pill")).toHaveCount(0);
   });
 
   test("unpivot's data-type mode hides the value rows and survives Apply", async ({
@@ -220,11 +272,11 @@ test.describe("Pivot and Unpivot drawers", () => {
     await openFlow(page, authToken, "complex-flow");
     await openNodeSettings(page, unpivotNodeId);
 
-    await page.locator(".picker-footer .el-switch").click();
+    await page.getByRole("button", { name: "By type" }).click();
     await expect(roleRows(page)).toHaveCount(1);
     await expect(page.locator(".unpivot-type-select")).toContainText("All other columns");
     await expect(page.locator(".picker-settings-count")).toHaveText(
-      "1 index key · values: all other columns",
+      "1 index key · unpivot all other columns",
     );
     await expect(page.locator(".drop-pill")).toHaveCount(0);
 
