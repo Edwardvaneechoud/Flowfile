@@ -30,14 +30,7 @@ from flowfile_core.schemas.cloud_storage_schemas import CloudStorageAuthMode, Cl
 from shared.cloud_storage.uri import is_cloud_uri
 from shared.cloud_storage.utils import normalize_delta_path
 from shared.delta_models import DeltaVersionCommit
-from shared.delta_utils import (
-    delta_table_exists,
-    enable_change_data_feed,
-    format_delta_timestamp,
-    get_change_data_feed_floor,
-    get_delta_head_version,
-    get_delta_partition_columns,
-)
+from shared.delta_utils import enable_change_data_feed, format_delta_timestamp, get_change_data_feed_floor
 
 router = APIRouter()
 
@@ -117,14 +110,22 @@ def _delta_errors(storage_options: dict[str, Any]) -> Iterator[None]:
 
 
 def _read_info(path: str, storage_options: dict[str, Any]) -> CloudDeltaInfoOut:
-    if not delta_table_exists(path, storage_options):
+    """Describe the table from one open of its log; a missing table is ``exists=False``, not an error.
+
+    The request's path reaches delta-rs only, never a shared helper with a local-filesystem
+    branch: that would put a user-supplied value in a path expression, even down a branch a
+    resolved connection can never select.
+    """
+    try:
+        table = DeltaTable(path, without_files=True, storage_options=storage_options)
+    except TableNotFoundError:
         return CloudDeltaInfoOut()
     schema = pl.scan_delta(path, storage_options=storage_options).collect_schema()
     floor = get_change_data_feed_floor(path, storage_options)
     return CloudDeltaInfoOut(
         exists=True,
-        current_version=get_delta_head_version(path, storage_options),
-        partition_columns=get_delta_partition_columns(path, storage_options),
+        current_version=table.version(),
+        partition_columns=list(table.metadata().partition_columns),
         columns=[ColumnSchema(name=name, dtype=str(dtype)) for name, dtype in schema.items()],
         cdc_enabled=floor is not None,
         cdc_enabled_version=floor,

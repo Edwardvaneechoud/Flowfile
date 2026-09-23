@@ -127,23 +127,6 @@ def _open_delta_or_none(output_path: str, storage_options: dict[str, str] | None
         return None
 
 
-def delta_table_exists(output_path: str, storage_options: dict[str, str] | None) -> bool:
-    """Return ``True`` if a Delta table exists at *output_path* (local or object storage).
-
-    Locally a cheap ``_delta_log`` probe; for object storage it opens the table. Only a genuine
-    "not found" returns ``False`` — any other error propagates rather than masquerading as missing.
-    """
-    if storage_options is None:
-        import os
-
-        return os.path.isdir(output_path) and os.path.isdir(os.path.join(output_path, "_delta_log"))
-
-    return _open_delta_or_none(output_path, storage_options) is not None
-
-
-_delta_table_exists = delta_table_exists
-
-
 # Catalog path validation
 
 
