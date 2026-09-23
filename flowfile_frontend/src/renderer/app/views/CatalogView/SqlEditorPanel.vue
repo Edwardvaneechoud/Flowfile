@@ -753,6 +753,7 @@ async function updateLinkedTable() {
 .sql-tabs :deep(.el-tabs__header) {
   margin: 0;
   border-bottom: none;
+  background-color: transparent;
 }
 
 .sql-tabs :deep(.el-tabs__nav-wrap)::after {
