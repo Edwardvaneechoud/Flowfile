@@ -83,13 +83,13 @@ export class NodeApi {
   }
 
   /**
-   * Export a node's cached result as a CSV/TSV file body. 409 means the node has no
-   * current result (not run, stale, or Performance mode); read it with blobErrorDetail.
+   * Export up to 10,000 rows of a node's cached result as a CSV/TSV file body. 409 means
+   * the node has no current result (not run or stale); read it with blobErrorDetail.
    */
   static async exportNodeData(
     flowId: number,
     nodeId: number,
-    opts: { outputHandle?: string; format: "csv" | "tsv"; limit?: number | "all" },
+    opts: { outputHandle?: string; format: "csv" | "tsv"; limit?: number },
   ): Promise<Blob> {
     const params: Record<string, string | number> = {
       flow_id: flowId,

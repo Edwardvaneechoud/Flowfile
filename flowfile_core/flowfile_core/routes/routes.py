@@ -1901,36 +1901,31 @@ def export_node_data(
     node_id: int,
     output_handle: str = DEFAULT_OUTPUT_HANDLE,
     file_format: Literal["csv", "tsv"] = Query("csv", alias="format"),
-    limit: str = Query("10000", pattern=r"^(all|[0-9]+)$"),
+    limit: int = Query(10_000, ge=0, le=10_000),
     current_user=Depends(get_current_active_user),
 ):
-    """Downloads a node's cached result as CSV/TSV without re-executing it.
+    """Downloads up to 10,000 rows of a node's cached result as CSV/TSV without re-executing it.
 
-    ``limit`` caps the rows (``"all"`` for none); TSV is also capped at 100,000 cells.
+    TSV is also capped at 100,000 cells. Larger exports belong in a write node.
     """
-    flow, node = _get_analysis_node(flow_id, node_id, current_user.id)
-    if flow.flow_settings.execution_mode == "Performance":
-        raise HTTPException(409, "Data export is not available in Performance mode.")
+    _, node = _get_analysis_node(flow_id, node_id, current_user.id)
     try:
         engine = node.get_cached_result(output_handle)
     except ColumnStatsUnavailable as e:
         raise HTTPException(409, str(e)) from None
-    lf = engine.data_frame.lazy()
+    data = engine.data_frame
     try:
-        schema = lf.collect_schema()
+        schema = data.collect_schema()
     except Exception:
         raise HTTPException(409, "The cached result is no longer available. Run the flow again.") from None
     if any(dtype.is_nested() for dtype in schema.dtypes()):
         raise HTTPException(422, "CSV cannot hold list or struct columns.")
-    n = None if limit == "all" else int(limit)
-    if file_format == "tsv":
-        cap = 100_000 // max(len(schema), 1)
-        n = cap if n is None else min(n, cap)
+    n = min(limit, 100_000 // max(len(schema), 1)) if file_format == "tsv" else limit
     sep = "\t" if file_format == "tsv" else ","
     path = storage.temp_directory / f"export_{uuid4().hex}.{file_format}"
     try:
-        if n is not None:
-            lf = lf.head(n)
+        # head before lazy(): an in-memory DataFrame is sliced so only n rows get serialized.
+        lf = data.head(n).lazy()
         writer = ExternalOutputWriter if OFFLOAD_TO_WORKER else local_write_output
         writer(
             lf, data_type="csv", path=str(path), write_mode="create", delimiter=sep, flow_id=flow_id, node_id=node_id

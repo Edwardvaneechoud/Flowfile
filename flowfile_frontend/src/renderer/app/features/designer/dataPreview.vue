@@ -86,10 +86,8 @@
           </span>
           <TableExportMenu
             :selected-count="selectedCount"
-            :copy-table-label="copyTableLabel"
-            :all-rows-label="
-              dataLength == null ? 'All rows' : `All rows (${formatCount(dataLength)})`
-            "
+            :row-count="dataLength"
+            :column-count="columnLength"
             :table-disabled="
               dataPreview?.has_run_with_current_setup
                 ? null
@@ -308,13 +306,8 @@ const exportColumns = () =>
 const selectedCount = ref(0);
 const exportBusy = ref(false);
 const copyRowCap = computed(() => rowsForCellCap(columnLength.value));
-const copyTableLabel = computed(() =>
-  dataLength.value != null && dataLength.value <= copyRowCap.value
-    ? "Whole table"
-    : `First ${formatCount(copyRowCap.value)} rows`,
-);
 
-async function fetchExport(format: "csv" | "tsv", limit: number | "all"): Promise<Blob | null> {
+async function fetchExport(format: "csv" | "tsv", limit: number): Promise<Blob | null> {
   const nodeId = currentNodeId.value;
   if (nodeId == null) return null;
   exportBusy.value = true;
@@ -344,12 +337,12 @@ async function onExportCopy(scope: "selection" | "table") {
   await copyRows(header, rows, total ?? rows.length);
 }
 
-async function onExportDownload(scope: "first" | "all") {
+async function onExportDownload() {
   const nodeId = currentNodeId.value;
   const total = dataLength.value;
-  const blob = await fetchExport("csv", scope === "all" ? "all" : DOWNLOAD_DEFAULT_ROWS);
+  const blob = await fetchExport("csv", DOWNLOAD_DEFAULT_ROWS);
   if (!blob) return;
-  const partial = scope === "first" && (total == null || total > DOWNLOAD_DEFAULT_ROWS);
+  const partial = total == null || total > DOWNLOAD_DEFAULT_ROWS;
   await saveCsv(blob, `node_${nodeId}${partial ? `_first_${DOWNLOAD_DEFAULT_ROWS}` : ""}.csv`);
 }
 

@@ -3582,17 +3582,17 @@ def test_export_node_data_blocked_when_run_flags_cleared():
     assert "current settings" in response.json()["detail"]
 
 
-def test_export_node_data_blocked_in_performance_mode():
+def test_export_node_data_uses_cached_result_in_performance_mode():
     flow_id = _run_export_flow()
     flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = "Performance"
-    response = _export_node_data(flow_id)
-    assert response.status_code == 409
-    assert "Performance mode" in response.json()["detail"]
+    assert _export_node_data(flow_id).status_code == 200
 
 
 def test_export_node_data_invalid_limit():
     flow_id = _run_export_flow()
     assert _export_node_data(flow_id, limit="abc").status_code == 422
+    assert _export_node_data(flow_id, limit="all").status_code == 422
+    assert _export_node_data(flow_id, limit="10001").status_code == 422
 
 
 def test_flow_run_status():

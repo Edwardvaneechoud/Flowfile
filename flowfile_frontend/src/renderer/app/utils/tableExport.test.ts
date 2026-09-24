@@ -28,9 +28,10 @@ describe("buildDelimited", () => {
 });
 
 describe("rowsForCellCap", () => {
-  it("divides the cell budget by the column count", () => {
-    expect(rowsForCellCap(0)).toBe(100_000);
-    expect(rowsForCellCap(3)).toBe(33_333);
-    expect(rowsForCellCap(7)).toBe(14_285);
+  it("caps at 10,000 rows and the cell budget", () => {
+    expect(rowsForCellCap(0)).toBe(10_000);
+    expect(rowsForCellCap(1)).toBe(10_000);
+    expect(rowsForCellCap(10)).toBe(10_000);
+    expect(rowsForCellCap(20)).toBe(5_000);
   });
 });

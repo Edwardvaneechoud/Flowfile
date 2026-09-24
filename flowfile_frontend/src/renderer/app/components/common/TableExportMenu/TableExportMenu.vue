@@ -29,65 +29,52 @@
         </template>
       </el-dropdown>
     </div>
-    <div class="export-split" :title="tableDisabled ?? undefined">
-      <button
-        class="export-btn export-btn--main"
-        :disabled="downloadDisabled"
-        @click="emit('download', 'first')"
-      >
-        <span class="material-icons export-icon">download</span>
-        Download CSV
-      </button>
-      <el-dropdown trigger="click" placement="top-end" :disabled="downloadDisabled">
-        <button
-          class="export-btn export-btn--caret"
-          aria-label="Download options"
-          :disabled="downloadDisabled"
-        >
-          <span class="material-icons export-icon">arrow_drop_down</span>
-        </button>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item @click="emit('download', 'first')">
-              First {{ DOWNLOAD_DEFAULT_ROWS.toLocaleString("en-US") }} rows
-            </el-dropdown-item>
-            <el-dropdown-item
-              :disabled="!!allRowsDisabled"
-              :title="allRowsDisabled ?? undefined"
-              @click="emit('download', 'all')"
-            >
-              {{ allRowsLabel }}
-            </el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
-    </div>
+    <button
+      class="export-btn export-btn--solo"
+      :disabled="downloadDisabled"
+      :title="tableDisabled ?? downloadTitle"
+      @click="emit('download')"
+    >
+      <span class="material-icons export-icon">download</span>
+      Download CSV
+    </button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
-import { DOWNLOAD_DEFAULT_ROWS } from "../../../utils/tableExport";
+import { DOWNLOAD_DEFAULT_ROWS, rowsForCellCap } from "../../../utils/tableExport";
 
 const props = withDefaults(
   defineProps<{
     selectedCount: number;
-    copyTableLabel: string;
-    allRowsLabel: string;
+    /** Rows the whole-table copy and the download draw from; null when unknown. */
+    rowCount: number | null;
+    columnCount: number;
     tableDisabled?: string | null;
-    allRowsDisabled?: string | null;
     busy?: boolean;
   }>(),
-  { tableDisabled: null, allRowsDisabled: null, busy: false },
+  { tableDisabled: null, busy: false },
 );
 
 const emit = defineEmits<{
   copy: ["selection" | "table"];
-  download: ["first" | "all"];
+  download: [];
 }>();
 
 const copyDisabled = computed(() => props.selectedCount === 0 && !!props.tableDisabled);
 const downloadDisabled = computed(() => props.busy || !!props.tableDisabled);
+
+const fmt = (n: number) => n.toLocaleString("en-US");
+const rowsLabel = (limit: number) =>
+  props.rowCount == null
+    ? `Up to ${fmt(limit)} rows`
+    : `${fmt(Math.min(props.rowCount, limit))} rows`;
+const copyTableLabel = computed(() => rowsLabel(rowsForCellCap(props.columnCount)));
+const downloadTitle = computed(
+  () =>
+    `Download ${rowsLabel(DOWNLOAD_DEFAULT_ROWS).toLowerCase()}. Use a Write data node for more.`,
+);
 </script>
 
 <style scoped>
@@ -133,6 +120,10 @@ const downloadDisabled = computed(() => props.busy || !!props.tableDisabled);
 .export-btn--caret {
   padding: 0;
   border-radius: 0 4px 4px 0;
+}
+
+.export-btn--solo {
+  border-radius: 4px;
 }
 
 .export-icon {

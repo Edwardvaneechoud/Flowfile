@@ -7,9 +7,9 @@ import { copyTextEverywhere } from "./clipboardUtils";
 export const COPY_MAX_CELLS = 100_000;
 export const DOWNLOAD_DEFAULT_ROWS = 10_000;
 
-/** How many rows fit in one clipboard copy without exceeding COPY_MAX_CELLS. */
+/** Rows in one clipboard copy: at most DOWNLOAD_DEFAULT_ROWS and COPY_MAX_CELLS cells. */
 export const rowsForCellCap = (columnCount: number): number =>
-  Math.floor(COPY_MAX_CELLS / Math.max(1, columnCount));
+  Math.min(DOWNLOAD_DEFAULT_ROWS, Math.floor(COPY_MAX_CELLS / Math.max(1, columnCount)));
 
 // Excel-style quoting, matching what Excel and Google Sheets emit when copying.
 const serializeCell = (value: unknown, separator: string): string => {

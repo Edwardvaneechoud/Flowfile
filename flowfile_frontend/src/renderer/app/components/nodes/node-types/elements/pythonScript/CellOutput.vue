@@ -46,15 +46,10 @@
           <TableExportMenu
             class="display-table-export"
             :selected-count="selectedRows[index]?.length ?? 0"
-            :copy-table-label="copyTableLabel(tablePayloads[index]!)"
-            :all-rows-label="`All rows (${formatCount(tablePayloads[index]!.data.length)})`"
-            :all-rows-disabled="
-              tablePayloads[index]!.truncated
-                ? `Showing ${formatCount(tablePayloads[index]!.loaded_rows)} of ${formatCount(tablePayloads[index]!.total_rows)} rows — only loaded rows are available here.`
-                : null
-            "
+            :row-count="tablePayloads[index]!.data.length"
+            :column-count="tablePayloads[index]!.columns.length"
             @copy="onCopy(index, $event)"
-            @download="onDownload(index, $event)"
+            @download="onDownload(index)"
           />
         </div>
       </div>
@@ -114,7 +109,6 @@ import {
   saveCsv,
 } from "../../../../../utils/tableExport";
 import { TABLE_MIME, EXPLORE_MIME, isTableMime, parseTablePayload } from "./notebookDisplay";
-import type { TablePayload } from "./notebookDisplay";
 
 // Lazy — GW pulls in React; load only when an explore() output appears.
 const VueGraphicWalker = defineAsyncComponent(
@@ -140,12 +134,6 @@ const formatCount = (n: number): string => n.toLocaleString();
 
 const selectedRows = shallowReactive<Record<number, Record<string, unknown>[]>>({});
 
-const copyTableLabel = (p: TablePayload): string => {
-  const cap = rowsForCellCap(p.columns.length);
-  if (p.data.length > cap) return `First ${formatCount(cap)} rows`;
-  return p.truncated ? `Loaded rows (${formatCount(p.data.length)})` : "Whole table";
-};
-
 function onCopy(index: number, scope: "selection" | "table") {
   const p = tablePayloads.value[index]!;
   const rows =
@@ -155,9 +143,9 @@ function onCopy(index: number, scope: "selection" | "table") {
   return copyRows(p.columns, rows, scope === "table" ? p.total_rows : rows.length, formatCount);
 }
 
-function onDownload(index: number, scope: "first" | "all") {
+function onDownload(index: number) {
   const p = tablePayloads.value[index]!;
-  const rows = scope === "all" ? p.data : p.data.slice(0, DOWNLOAD_DEFAULT_ROWS);
+  const rows = p.data.slice(0, DOWNLOAD_DEFAULT_ROWS);
   return saveCsv(buildDelimited(p.columns, rows, ","), "notebook_table.csv");
 }
 
