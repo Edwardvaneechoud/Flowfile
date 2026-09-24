@@ -15,6 +15,8 @@ vi.mock("../stores/node-store", () => ({
 vi.mock("../stores/editor-store", () => ({
   useEditorStore: () => ({ disarmRefusedSave: mocks.disarmRefusedSave }),
 }));
+vi.mock("../stores/flow-store", () => ({ useFlowStore: () => ({ vueFlowInstance: null }) }));
+vi.mock("./useDragAndDrop", () => ({ removeCommittedEdges: vi.fn() }));
 vi.mock("element-plus", () => ({ ElMessage: { error: mocks.messageError } }));
 
 import type { NodeBase } from "../types/node.types";
@@ -46,7 +48,7 @@ describe("useNodeSettings.saveSettings", () => {
     const { saveSettings } = useNodeSettings({ nodeRef, onAfterSave });
 
     expect(await saveSettings()).toBe(true);
-    expect(mocks.updateSettings).toHaveBeenCalledWith(nodeRef);
+    expect(mocks.updateSettings).toHaveBeenCalledWith(nodeRef, undefined, undefined);
     expect(nodeRef.value?.is_setup).toBe(true);
     expect(onAfterSave).toHaveBeenCalledOnce();
   });

@@ -6,7 +6,6 @@ import {
   SemanticType,
   TableExample,
 } from "../../../../types/node.types";
-import axios from "axios";
 
 export const createSelectInput = (
   column_name: string,
@@ -142,13 +141,4 @@ export const createNewSelect = (org_node_select: NodeSelect, node_id: number): N
   newNodeSelect.value.depending_on_id = org_node_select.node_id;
   newNodeSelect.value.node_id = node_id;
   return newNodeSelect.value;
-};
-
-export const insertSelect = async (select_input: NodeSelect): Promise<NodeSelect> => {
-  await axios.post("/transform/select", select_input, {
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
-  return select_input;
 };

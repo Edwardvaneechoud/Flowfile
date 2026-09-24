@@ -9,6 +9,7 @@ import { ElMessage } from "element-plus";
 import { nextTick } from "vue";
 
 import { FlowApi } from "../api";
+import { recoverFromFailedMutation } from "../services/mutationFailure";
 import { useFlowStore } from "../stores/flow-store";
 import type {
   CommentBoundsUpdate,
@@ -16,6 +17,7 @@ import type {
   GroupInput,
   GroupNodeData,
   NodePositionUpdate,
+  UpdateLayoutRequest,
 } from "../types";
 import { COMMENT_NODE_TYPE, commentBoundsOf } from "./useCanvasComments";
 
@@ -290,12 +292,18 @@ export function useNodeGroups() {
     const childGroupIds = topLevel
       .filter((n) => n.type === GROUP_NODE_TYPE)
       .map((n) => groupBackendId(n.id));
-    const response = await FlowApi.createGroup(flowStore.flowId, {
-      node_ids: nodeIds,
-      name: "Group",
-      parent_group_id: commonParentVueId ? groupBackendId(commonParentVueId) : null,
-      child_group_ids: childGroupIds,
-    });
+    let response: Awaited<ReturnType<typeof FlowApi.createGroup>>;
+    try {
+      response = await FlowApi.createGroup(flowStore.flowId, {
+        node_ids: nodeIds,
+        name: "Group",
+        parent_group_id: commonParentVueId ? groupBackendId(commonParentVueId) : null,
+        child_group_ids: childGroupIds,
+      });
+    } catch (error) {
+      recoverFromFailedMutation(error, "Could not create the group");
+      return;
+    }
     if (response.group) {
       const newVueId = groupNodeId(response.group.id);
       const depth = commonParentVueId ? vueGroupDepth(commonParentVueId) + 1 : 0;
@@ -322,10 +330,9 @@ export function useNodeGroups() {
           node_positions: [],
           group_bounds: [fit.bounds],
           record_history: false,
-        });
+        }).catch((error) => recoverFromFailedMutation(error, "Could not fit the group"));
       }
     }
-    flowStore.updateHistoryState(response.history);
   };
 
   /** Ungroup: detach children back to absolute coordinates, then delete the box. */
@@ -345,8 +352,9 @@ export function useNodeGroups() {
       for (const child of children) detachNodeToAbsolute(child);
     }
     removeGroupNode(parentId);
-    const response = await FlowApi.deleteGroup(flowStore.flowId, groupId);
-    flowStore.updateHistoryState(response.history);
+    await FlowApi.deleteGroup(flowStore.flowId, groupId).catch((error) =>
+      recoverFromFailedMutation(error, "Could not ungroup"),
+    );
   };
 
   /** Remove the currently selected grouped nodes from their group(s). */
@@ -360,15 +368,19 @@ export function useNodeGroups() {
     for (const node of grouped) {
       detachNodeToAbsolute(node);
     }
-    const response = await FlowApi.removeNodesFromGroup(
-      flowStore.flowId,
-      grouped.map((node) => Number(node.id)),
-    );
+    try {
+      await FlowApi.removeNodesFromGroup(
+        flowStore.flowId,
+        grouped.map((node) => Number(node.id)),
+      );
+    } catch (error) {
+      recoverFromFailedMutation(error, "Could not remove the nodes from their group");
+      return;
+    }
     // Drop any group box left empty on the canvas (the backend already pruned it).
     for (const groupVueId of affectedGroups) {
       if (childNodesOf(groupVueId).length === 0) removeGroupNode(groupVueId);
     }
-    flowStore.updateHistoryState(response.history);
   };
 
   /** Collapse/expand a group: hide/show members and shrink/refit the box. */
@@ -386,9 +398,7 @@ export function useNodeGroups() {
         style: { width: `${GROUP_COLLAPSED_WIDTH}px`, height: `${GROUP_COLLAPSED_HEIGHT}px` },
       });
       bounds = {
-        group_id: groupId,
-        x_position: group.computedPosition.x,
-        y_position: group.computedPosition.y,
+        ...groupBoundsOf(group),
         width: GROUP_COLLAPSED_WIDTH,
         height: GROUP_COLLAPSED_HEIGHT,
       };
@@ -400,25 +410,20 @@ export function useNodeGroups() {
       await nextTick();
       updateNodeInternals(childNodesOf(parentId).map((child) => child.id));
       await nextTick();
-      const fit = refitGroup(parentId);
-      bounds = fit
-        ? fit.bounds
-        : {
-            group_id: groupId,
-            x_position: group.computedPosition.x,
-            y_position: group.computedPosition.y,
-            width: group.dimensions.width,
-            height: group.dimensions.height,
-          };
+      bounds = refitGroup(parentId)?.bounds ?? groupBoundsOf(group);
     }
-    const response = await FlowApi.updateGroup(flowStore.flowId, groupId, {
-      collapsed,
-      x_position: bounds.x_position,
-      y_position: bounds.y_position,
-      width: bounds.width,
-      height: bounds.height,
-    });
-    flowStore.updateHistoryState(response.history);
+    try {
+      await FlowApi.updateGroup(flowStore.flowId, groupId, {
+        collapsed,
+        x_position: bounds.x_position,
+        y_position: bounds.y_position,
+        width: bounds.width,
+        height: bounds.height,
+      });
+    } catch (error) {
+      recoverFromFailedMutation(error, `Could not ${collapsed ? "collapse" : "expand"} the group`);
+      return;
+    }
     // This group's box changed size; re-wrap its ancestors so a nested group stays inside.
     const ancestorVueId = findNode(parentId)?.parentNode;
     if (ancestorVueId) {
@@ -426,50 +431,16 @@ export function useNodeGroups() {
       updateNodeInternals([parentId]); // measure this group's new box before the parent refits
       await nextTick();
       // updateGroup already recorded the undo entry; fold the ancestor refit into it.
-      await persistGroupChainRefit(ancestorVueId, false);
+      await persistGroupChainRefit(ancestorVueId, false).catch((error) =>
+        recoverFromFailedMutation(error, "Could not fit the enclosing group"),
+      );
     }
-  };
-
-  /** Persist absolute positions for a set of nodes and/or bounds for a set of groups or comments. */
-  const persistLayout = async (nodes: GraphNode[], groups: GraphNode[] = []): Promise<void> => {
-    if (flowStore.flowId === null) return;
-    // Group and comment nodes carry bounds; only custom nodes produce a numeric node position.
-    const groupNodes: GraphNode[] = [...groups];
-    const nodePositions: NodePositionUpdate[] = [];
-    const commentBounds: CommentBoundsUpdate[] = [];
-    for (const node of nodes) {
-      if (node.type === GROUP_NODE_TYPE) {
-        groupNodes.push(node);
-      } else if (node.type === COMMENT_NODE_TYPE) {
-        commentBounds.push(commentBoundsOf(node));
-      } else {
-        const abs = absolutePosition(node);
-        nodePositions.push({ node_id: Number(node.id), pos_x: abs.x, pos_y: abs.y });
-      }
-    }
-    const groupBounds: GroupBoundsUpdate[] = groupNodes.map((group) => ({
-      group_id: groupBackendId(group.id),
-      x_position: group.computedPosition.x,
-      y_position: group.computedPosition.y,
-      width: group.dimensions.width,
-      height: group.dimensions.height,
-    }));
-    if (nodePositions.length === 0 && groupBounds.length === 0 && commentBounds.length === 0)
-      return;
-    const response = await FlowApi.updateLayout(flowStore.flowId, {
-      node_positions: nodePositions,
-      group_bounds: groupBounds,
-      comment_bounds: commentBounds,
-    });
-    flowStore.updateHistoryState(response.history);
   };
 
   /** Refit a group and every ancestor group (so a moved nested group re-wraps up the tree). */
-  const persistGroupChainRefit = async (
+  const refitGroupChain = async (
     startGroupVueId: string,
-    recordHistory = true,
-  ): Promise<void> => {
-    if (flowStore.flowId === null) return;
+  ): Promise<{ group_bounds: GroupBoundsUpdate[]; node_positions: NodePositionUpdate[] }> => {
     const group_bounds: GroupBoundsUpdate[] = [];
     let node_positions: NodePositionUpdate[] = [];
     let current: string | undefined = startGroupVueId;
@@ -490,42 +461,69 @@ export function useNodeGroups() {
       }
       current = parent;
     }
+    return { group_bounds, node_positions };
+  };
+
+  const persistGroupChainRefit = async (
+    startGroupVueId: string,
+    recordHistory = true,
+  ): Promise<void> => {
+    if (flowStore.flowId === null) return;
+    const { group_bounds, node_positions } = await refitGroupChain(startGroupVueId);
     if (group_bounds.length === 0 && node_positions.length === 0) return;
-    const response = await FlowApi.updateLayout(flowStore.flowId, {
+    await FlowApi.updateLayout(flowStore.flowId, {
       node_positions,
       group_bounds,
       record_history: recordHistory,
     });
-    flowStore.updateHistoryState(response.history);
   };
 
+  const groupBoundsOf = (group: GraphNode): GroupBoundsUpdate => ({
+    group_id: groupBackendId(group.id),
+    x_position: group.computedPosition.x,
+    y_position: group.computedPosition.y,
+    width: group.dimensions.width,
+    height: group.dimensions.height,
+  });
+
   /**
-   * Persist a drag-end:
-   * - group moved → its bounds + every child's new absolute position (and refit ancestors);
+   * The layout update for one move gesture (a drag of the whole selection, or an
+   * arrow-key burst), without sending it:
+   * - group moved → its bounds + every descendant's absolute position (and refit ancestors);
    * - grouped child moved → auto-fit the box and every ancestor box;
-   * - free node moved → the dragged node, or all selected free nodes (multi-select).
+   * - free node / comment moved → its absolute position / bounds.
    */
-  const persistDrag = async (node: GraphNode): Promise<void> => {
-    if (flowStore.flowId === null) return;
-    if (node.type === GROUP_NODE_TYPE) {
-      // Persist the whole subtree — children moved with the parent.
-      await persistLayout(descendantsOf(node.id), [node]);
-      // persistLayout already recorded the undo entry; fold the ancestor refit into it.
-      if (node.parentNode) await persistGroupChainRefit(node.parentNode, false);
-      return;
+  const layoutForMovedNodes = async (moved: GraphNode[]): Promise<UpdateLayoutRequest> => {
+    const positions = new Map<number, NodePositionUpdate>();
+    const groups = new Map<number, GroupBoundsUpdate>();
+    const comments = new Map<number, CommentBoundsUpdate>();
+    const refitStarts = new Set<string>();
+    const add = (node: GraphNode) => {
+      if (node.type === GROUP_NODE_TYPE) {
+        groups.set(groupBackendId(node.id), groupBoundsOf(node));
+      } else if (node.type === COMMENT_NODE_TYPE) {
+        const bounds = commentBoundsOf(node);
+        comments.set(bounds.comment_id, bounds);
+      } else {
+        const abs = absolutePosition(node);
+        positions.set(Number(node.id), { node_id: Number(node.id), pos_x: abs.x, pos_y: abs.y });
+      }
+    };
+    for (const node of moved) {
+      add(node);
+      if (node.type === GROUP_NODE_TYPE) descendantsOf(node.id).forEach(add);
+      if (node.parentNode) refitStarts.add(node.parentNode);
     }
-    if (node.parentNode) {
-      await persistGroupChainRefit(node.parentNode);
-      return;
+    for (const start of refitStarts) {
+      const refit = await refitGroupChain(start);
+      for (const bounds of refit.group_bounds) groups.set(bounds.group_id, bounds);
+      for (const position of refit.node_positions) positions.set(position.node_id, position);
     }
-    const selected = getSelectedNodes.value.filter(
-      (selectedNode) => selectedNode.type !== GROUP_NODE_TYPE && !selectedNode.parentNode,
-    );
-    const moved =
-      selected.length > 1 && selected.some((selectedNode) => selectedNode.id === node.id)
-        ? selected
-        : [node];
-    await persistLayout(moved);
+    return {
+      node_positions: [...positions.values()],
+      group_bounds: [...groups.values()],
+      comment_bounds: [...comments.values()],
+    };
   };
 
   return {
@@ -538,7 +536,6 @@ export function useNodeGroups() {
     setGroupCollapsed,
     addGroupProxyEdges,
     removeGroupProxyEdges,
-    persistLayout,
-    persistDrag,
+    layoutForMovedNodes,
   };
 }

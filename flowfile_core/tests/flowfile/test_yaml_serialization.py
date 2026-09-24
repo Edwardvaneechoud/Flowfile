@@ -289,7 +289,8 @@ class TestSelectInputSerialization:
         item = select_node['setting_input']['select_input'][0]
 
         assert item['data_type'] == 'Integer', "data_type should be present when type change occurs"
-        assert 'data_type_change' not in item, "data_type_change is internal and should not be in YAML"
+        # Travels with data_type so a typed column without a cast isn't reloaded as a cast.
+        assert item['data_type_change'] is True
 
 
 # JOIN INPUT SERIALIZATION TESTS

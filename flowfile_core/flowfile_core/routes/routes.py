@@ -12,6 +12,8 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -93,7 +95,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalRestApiFetcher,
 )
-from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
+from flowfile_core.flowfile.flow_graph import GraphTransaction, add_connection, delete_connection, insert_node_on_edge
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.settings_validation import FlowSettingsValidation, validate_flow_settings
 from flowfile_core.flowfile.share import build_share_link
@@ -131,6 +133,28 @@ router = APIRouter(dependencies=[Depends(get_current_active_user)])
 # allowlist enforced by resolve_managed_flow_path) by replacing every run of
 # disallowed characters with a single underscore.
 _MANAGED_FLOW_STEM_DISALLOWED_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def get_flow_or_404(flow_id: int | None):
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, "could not find the flow")
+    return flow
+
+
+@contextmanager
+def edit_flow(
+    flow,
+    description: str,
+    action_type: HistoryActionType = HistoryActionType.BATCH,
+    node_id: int | None = None,
+    record: bool = True,
+) -> Iterator[GraphTransaction]:
+    """One editor mutation: a flow transaction (lock, atomic rollback, <=1 undo step) on an idle flow."""
+    with flow.transaction(description, action_type, node_id=node_id, record=record) as txn:
+        if flow.flow_settings.is_running:
+            raise HTTPException(422, "Flow is running")
+        yield txn
 
 
 def get_node_model(setting_name_ref: str):
@@ -519,17 +543,12 @@ def cancel_flow(flow_id: int):
     flow.cancel()
 
 
-@router.post("/flow/apply_standard_layout/", tags=["editor"])
-def apply_standard_layout(flow_id: int):
-    flow = flow_file_handler.get_flow(flow_id)
-    if not flow:
-        raise HTTPException(status_code=404, detail="Flow not found")
-    if flow.flow_settings.is_running:
-        raise HTTPException(422, "Flow is running")
-
-    flow.capture_history_snapshot(HistoryActionType.APPLY_LAYOUT, "Apply standard layout")
-
-    flow.apply_layout()
+@router.post("/flow/apply_standard_layout/", tags=["editor"], response_model=OperationResponse)
+def apply_standard_layout(flow_id: int) -> OperationResponse:
+    flow = get_flow_or_404(flow_id)
+    with edit_flow(flow, "Apply standard layout", HistoryActionType.APPLY_LAYOUT) as txn:
+        flow.apply_layout()
+    return OperationResponse(success=True, history=txn.history)
 
 
 @router.get("/flow/run_status/", tags=["editor"], response_model=output_model.RunInformation)
@@ -550,18 +569,20 @@ def get_run_status(flow_id: int, response: Response):
 
 @router.post("/transform/manual_input", tags=["transform"])
 def add_manual_input(manual_input: input_schema.NodeManualInput):
-    flow = flow_file_handler.get_flow(manual_input.flow_id)
-    flow.add_datasource(manual_input)
+    flow = get_flow_or_404(manual_input.flow_id)
+    with edit_flow(flow, "Update manual_input settings", HistoryActionType.UPDATE_SETTINGS, manual_input.node_id):
+        flow.add_datasource(manual_input)
 
 
 @router.post("/transform/add_input/", tags=["transform"])
 def add_flow_input(input_data: input_schema.NodeDatasource):
-    flow = flow_file_handler.get_flow(input_data.flow_id)
-    try:
-        flow.add_datasource(input_data)
-    except Exception:
-        input_data.file_ref = os.path.join("db_data", input_data.file_ref)
-        flow.add_datasource(input_data)
+    flow = get_flow_or_404(input_data.flow_id)
+    with edit_flow(flow, "Update datasource settings", HistoryActionType.UPDATE_SETTINGS, input_data.node_id):
+        try:
+            flow.add_datasource(input_data)
+        except Exception:
+            input_data.file_ref = os.path.join("db_data", input_data.file_ref)
+            flow.add_datasource(input_data)
 
 
 @router.post("/editor/copy_node", tags=["editor"], response_model=OperationResponse)
@@ -578,37 +599,26 @@ def copy_node(
     Returns:
         OperationResponse with current history state.
     """
-    try:
-        flow_to_copy_from = flow_file_handler.get_flow(flow_id_to_copy_from)
-        flow = (
-            flow_to_copy_from
-            if flow_id_to_copy_from == node_promise.flow_id
-            else flow_file_handler.get_flow(node_promise.flow_id)
-        )
-        node_to_copy = flow_to_copy_from.get_node(node_id_to_copy_from)
-        logger.info(f"Copying data {node_promise.node_type}")
-
-        if flow.flow_settings.is_running:
-            raise HTTPException(422, "Flow is running")
-
-        flow.capture_history_snapshot(
-            HistoryActionType.COPY_NODE, f"Copy {node_promise.node_type} node", node_id=node_promise.node_id
-        )
-
-        if flow.get_node(node_promise.node_id) is not None:
-            flow.delete_node(node_promise.node_id)
-
-        if node_promise.node_type == "explore_data":
-            flow.add_initial_node_analysis(node_promise)
-            return OperationResponse(success=True, history=flow.get_history_state())
-
-        flow.copy_node(node_promise, node_to_copy.setting_input, node_to_copy.node_type)
-
-        return OperationResponse(success=True, history=flow.get_history_state())
-
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(422, str(e)) from e
+    flow = get_flow_or_404(node_promise.flow_id)
+    flow_to_copy_from = flow if flow_id_to_copy_from == node_promise.flow_id else get_flow_or_404(flow_id_to_copy_from)
+    logger.info(f"Copying data {node_promise.node_type}")
+    with edit_flow(
+        flow, f"Paste {node_promise.node_type} node", HistoryActionType.COPY_NODE, node_id=node_promise.node_id
+    ) as txn:
+        try:
+            node_to_copy = flow_to_copy_from.get_node(node_id_to_copy_from)
+            if flow.get_node(node_promise.node_id) is not None:
+                flow.delete_node(node_promise.node_id)
+            if node_promise.node_type == "explore_data":
+                flow.add_initial_node_analysis(node_promise)
+            else:
+                flow.copy_node(node_promise, node_to_copy.setting_input, node_to_copy.node_type)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(e)
+            raise HTTPException(422, str(e)) from e
+    return OperationResponse(success=True, history=txn.history)
 
 
 @router.post("/editor/add_node/", tags=["editor"], response_model=OperationResponse)
@@ -631,39 +641,26 @@ def add_node(
         pos_x = int(pos_x)
     if isinstance(pos_y, float):
         pos_y = int(pos_y)
-    flow = flow_file_handler.get_flow(flow_id)
+    flow = get_flow_or_404(flow_id)
     logger.info(f"Adding a promise for {node_type}")
-    if flow.flow_settings.is_running:
-        raise HTTPException(422, "Flow is running")
-
-    node = flow.get_node(node_id)
-    if node is not None:
-        flow.delete_node(node_id)
-    node_promise = input_schema.NodePromise(
-        flow_id=flow_id, node_id=node_id, cache_results=False, pos_x=pos_x, pos_y=pos_y, node_type=node_type
-    )
-    if node_type == "explore_data":
-        flow.add_initial_node_analysis(node_promise)
-    else:
-        pre_snapshot = flow.get_flowfile_data() if flow.flow_settings.track_history else None
-
-        logger.info("Adding node")
-        try:
-            flow.add_node_promise(node_promise, track_history=False)
-        except ValueError as e:
-            raise HTTPException(422, str(e)) from e
-
-        is_subflow_port = node_type in ("flow_input", "flow_output")
-        if check_if_has_default_setting(node_type) or is_subflow_port:
-            logger.info(f"Found standard settings for {node_type}, trying to upload them")
-            setting_name_ref = "node" + node_type.replace("_", "")
-            node_model = get_node_model(setting_name_ref)
-
-            # Temporarily disable history tracking for initial settings
-            original_track_history = flow.flow_settings.track_history
-            flow.flow_settings.track_history = False
+    with edit_flow(flow, f"Add {node_type} node", HistoryActionType.ADD_NODE, node_id=node_id) as txn:
+        if flow.get_node(node_id) is not None:
+            flow.delete_node(node_id)
+        node_promise = input_schema.NodePromise(
+            flow_id=flow_id, node_id=node_id, cache_results=False, pos_x=pos_x, pos_y=pos_y, node_type=node_type
+        )
+        if node_type == "explore_data":
+            flow.add_initial_node_analysis(node_promise)
+        else:
             try:
-                add_func = getattr(flow, "add_" + node_type)
+                flow.add_node_promise(node_promise)
+            except ValueError as e:
+                raise HTTPException(422, str(e)) from e
+
+            is_subflow_port = node_type in ("flow_input", "flow_output")
+            if check_if_has_default_setting(node_type) or is_subflow_port:
+                logger.info(f"Found standard settings for {node_type}, trying to upload them")
+                node_model = get_node_model("node" + node_type.replace("_", ""))
                 initial_settings = node_model(
                     flow_id=flow_id, node_id=node_id, cache_results=False, pos_x=pos_x, pos_y=pos_y, node_type=node_type
                 )
@@ -675,22 +672,8 @@ def add_node(
                         name_attr,
                         flow._unique_subflow_port_name(getattr(initial_settings, name_attr), node_type, node_id),
                     )
-                add_func(initial_settings)
-            finally:
-                flow.flow_settings.track_history = original_track_history
-
-        if pre_snapshot is not None and flow.flow_settings.track_history:
-            flow._history_manager.capture_if_changed(
-                flow,
-                pre_snapshot,
-                HistoryActionType.ADD_NODE,
-                f"Add {node_type} node",
-                node_id,
-            )
-            logger.info(f"History: Captured batched 'Add {node_type} node' entry")
-
-    logger.info(f"History state after add_node: {flow.get_history_state()}")
-    return OperationResponse(success=True, history=flow.get_history_state())
+                getattr(flow, "add_" + node_type)(initial_settings)
+    return OperationResponse(success=True, history=txn.history)
 
 
 @router.post("/editor/delete_node/", tags=["editor"], response_model=OperationResponse)
@@ -701,17 +684,14 @@ def delete_node(flow_id: int | None, node_id: int) -> OperationResponse:
         OperationResponse with current history state.
     """
     logger.info("Deleting node")
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow.flow_settings.is_running:
-        raise HTTPException(422, "Flow is running")
-
-    node = flow.get_node(node_id)
-    node_type = node.node_type if node else "unknown"
-    flow.capture_history_snapshot(HistoryActionType.DELETE_NODE, f"Delete {node_type} node", node_id=node_id)
-
-    flow.delete_node(node_id)
-
-    return OperationResponse(success=True, history=flow.get_history_state())
+    flow = get_flow_or_404(flow_id)
+    with edit_flow(flow, "Delete node", HistoryActionType.DELETE_NODE, node_id=node_id) as txn:
+        node = flow.get_node(node_id)
+        if node is None:
+            raise HTTPException(404, f"Node {node_id} does not exist")
+        txn.description = f"Delete {node.node_type} node"
+        flow.delete_node(node_id)
+    return OperationResponse(success=True, history=txn.history)
 
 
 @router.post("/editor/delete_connection/", tags=["editor"], response_model=OperationResponse)
@@ -726,17 +706,12 @@ def delete_node_connection(flow_id: int, node_connection: input_schema.NodeConne
         f"Deleting connection node {node_connection.output_connection.node_id} "
         f"to node {node_connection.input_connection.node_id}"
     )
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow.flow_settings.is_running:
-        raise HTTPException(422, "Flow is running")
-
+    flow = get_flow_or_404(flow_id)
     from_id = node_connection.output_connection.node_id
     to_id = node_connection.input_connection.node_id
-    flow.capture_history_snapshot(HistoryActionType.DELETE_CONNECTION, f"Delete connection {from_id} -> {to_id}")
-
-    delete_connection(flow, node_connection)
-
-    return OperationResponse(success=True, history=flow.get_history_state())
+    with edit_flow(flow, f"Delete connection {from_id} -> {to_id}", HistoryActionType.DELETE_CONNECTION) as txn:
+        delete_connection(flow, node_connection)
+    return OperationResponse(success=True, history=txn.history)
 
 
 @router.get("/db_dialects", tags=["db_connections"], response_model=list[DialectInfo])
@@ -838,20 +813,12 @@ def connect_node(flow_id: int, node_connection: input_schema.NodeConnection) -> 
     Returns:
         OperationResponse with current history state.
     """
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        logger.info("could not find the flow")
-        raise HTTPException(404, "could not find the flow")
-    if flow.flow_settings.is_running:
-        raise HTTPException(422, "Flow is running")
-
+    flow = get_flow_or_404(flow_id)
     from_id = node_connection.output_connection.node_id
     to_id = node_connection.input_connection.node_id
-    flow.capture_history_snapshot(HistoryActionType.ADD_CONNECTION, f"Connect {from_id} -> {to_id}")
-
-    add_connection(flow, node_connection)
-
-    return OperationResponse(success=True, history=flow.get_history_state())
+    with edit_flow(flow, f"Connect {from_id} -> {to_id}", HistoryActionType.ADD_CONNECTION) as txn:
+        add_connection(flow, node_connection)
+    return OperationResponse(success=True, history=txn.history)
 
 
 # Node-group editor endpoints (visual containers; organizational only)
@@ -867,6 +834,11 @@ def _group_to_schema(group: schemas.GroupInformation) -> schemas.FlowfileGroup:
     return schemas.FlowfileGroup(**group.model_dump())
 
 
+def _group_label(verb: str, flow, group_id: int) -> str:
+    group = flow._groups.get(group_id)
+    return f"{verb} group '{group.name}'" if group is not None else f"{verb} group"
+
+
 def _bounds_from_request(req: schemas.CreateGroupRequest | schemas.UpdateGroupRequest) -> schemas.GroupBounds | None:
     """Build explicit bounds only when the frontend supplied all four values."""
     values = (req.x_position, req.y_position, req.width, req.height)
@@ -875,88 +847,85 @@ def _bounds_from_request(req: schemas.CreateGroupRequest | schemas.UpdateGroupRe
     return None
 
 
-def _get_running_flow(flow_id: int):
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
-    if flow.flow_settings.is_running:
-        raise HTTPException(422, "Flow is running")
-    return flow
-
-
 @router.post("/editor/create_group/", tags=["editor"], response_model=GroupOperationResponse)
 def create_group(flow_id: int, request: schemas.CreateGroupRequest) -> GroupOperationResponse:
     """Create a visual group around a set of nodes. Returns the new server-assigned group."""
-    flow = _get_running_flow(flow_id)
-    group = flow.create_group(
-        request.name,
-        request.node_ids,
-        color=request.color,
-        bounds=_bounds_from_request(request),
-        parent_group_id=request.parent_group_id,
-        child_group_ids=request.child_group_ids,
-    )
-    return GroupOperationResponse(success=True, history=flow.get_history_state(), group=_group_to_schema(group))
+    flow = get_flow_or_404(flow_id)
+    with edit_flow(flow, f"Create group '{request.name}'", HistoryActionType.CREATE_GROUP) as txn:
+        group = flow.create_group(
+            request.name,
+            request.node_ids,
+            color=request.color,
+            bounds=_bounds_from_request(request),
+            parent_group_id=request.parent_group_id,
+            child_group_ids=request.child_group_ids,
+        )
+    return GroupOperationResponse(success=True, history=txn.history, group=_group_to_schema(group))
 
 
 @router.post("/editor/update_group/", tags=["editor"], response_model=GroupOperationResponse)
 def update_group(flow_id: int, group_id: int, request: schemas.UpdateGroupRequest) -> GroupOperationResponse:
     """Rename / recolor / move / resize / collapse a group box."""
-    flow = _get_running_flow(flow_id)
-    try:
-        group = flow.update_group(
-            group_id,
-            name=request.name,
-            color=request.color,
-            bounds=_bounds_from_request(request),
-            collapsed=request.collapsed,
-        )
-    except ValueError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    return GroupOperationResponse(success=True, history=flow.get_history_state(), group=_group_to_schema(group))
+    flow = get_flow_or_404(flow_id)
+    with edit_flow(flow, "Update group", HistoryActionType.UPDATE_GROUP) as txn:
+        txn.description = _group_label("Update", flow, group_id)
+        try:
+            group = flow.update_group(
+                group_id,
+                name=request.name,
+                color=request.color,
+                bounds=_bounds_from_request(request),
+                collapsed=request.collapsed,
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+    return GroupOperationResponse(success=True, history=txn.history, group=_group_to_schema(group))
 
 
 @router.post("/editor/delete_group/", tags=["editor"], response_model=OperationResponse)
 def delete_group(flow_id: int, group_id: int) -> OperationResponse:
     """Delete a group box (ungroup). Member nodes are kept."""
-    flow = _get_running_flow(flow_id)
-    flow.delete_group(group_id)
-    return OperationResponse(success=True, history=flow.get_history_state())
+    flow = get_flow_or_404(flow_id)
+    with edit_flow(flow, "Delete group", HistoryActionType.DELETE_GROUP) as txn:
+        txn.description = _group_label("Delete", flow, group_id)
+        flow.delete_group(group_id)
+    return OperationResponse(success=True, history=txn.history)
 
 
 @router.post("/editor/group/add_nodes/", tags=["editor"], response_model=GroupOperationResponse)
 def add_nodes_to_group(flow_id: int, group_id: int, request: schemas.GroupMembershipRequest) -> GroupOperationResponse:
     """Add nodes to an existing group."""
-    flow = _get_running_flow(flow_id)
-    try:
-        group = flow.add_nodes_to_group(group_id, request.node_ids)
-    except ValueError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    return GroupOperationResponse(success=True, history=flow.get_history_state(), group=_group_to_schema(group))
+    flow = get_flow_or_404(flow_id)
+    with edit_flow(flow, "Add nodes to group", HistoryActionType.UPDATE_GROUP_MEMBERSHIP) as txn:
+        try:
+            group = flow.add_nodes_to_group(group_id, request.node_ids)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+    return GroupOperationResponse(success=True, history=txn.history, group=_group_to_schema(group))
 
 
 @router.post("/editor/group/remove_nodes/", tags=["editor"], response_model=OperationResponse)
 def remove_nodes_from_group(flow_id: int, request: schemas.GroupMembershipRequest) -> OperationResponse:
     """Remove nodes from their group; a group emptied this way is pruned."""
-    flow = _get_running_flow(flow_id)
-    flow.remove_nodes_from_group(request.node_ids)
-    return OperationResponse(success=True, history=flow.get_history_state())
+    flow = get_flow_or_404(flow_id)
+    with edit_flow(flow, "Remove nodes from group", HistoryActionType.UPDATE_GROUP_MEMBERSHIP) as txn:
+        flow.remove_nodes_from_group(request.node_ids)
+    return OperationResponse(success=True, history=txn.history)
 
 
 @router.post("/editor/update_layout/", tags=["editor"], response_model=OperationResponse)
 def update_layout(flow_id: int, request: schemas.UpdateLayoutRequest) -> OperationResponse:
     """Persist dragged node positions, group bounds and/or comment bounds (one drag-end -> one call).
 
-    Also closes the long-standing gap where dragged node positions were never persisted.
+    ``record_history=False`` applies the change without an undo step of its own, so it folds
+    into the preceding step (outside a batch; inside ``apply_operations`` the batch records).
     """
-    flow = _get_running_flow(flow_id)
-    if request.node_positions or request.group_bounds or request.comment_bounds:
-        if request.record_history:
-            flow.capture_history_snapshot(HistoryActionType.MOVE_NODES, "Update layout")
+    flow = get_flow_or_404(flow_id)
+    with edit_flow(flow, "Update layout", HistoryActionType.MOVE_NODES, record=request.record_history) as txn:
         flow.set_node_positions(request.node_positions)
         flow.set_group_bounds(request.group_bounds)
         flow.set_comment_bounds(request.comment_bounds)
-    return OperationResponse(success=True, history=flow.get_history_state())
+    return OperationResponse(success=True, history=txn.history)
 
 
 # Canvas comment endpoints (free text notes; organizational only)
@@ -975,32 +944,86 @@ def _comment_to_schema(comment: schemas.CommentInformation) -> schemas.FlowfileC
 @router.post("/editor/create_comment/", tags=["editor"], response_model=CommentOperationResponse)
 def create_comment(flow_id: int, request: schemas.CreateCommentRequest) -> CommentOperationResponse:
     """Create a canvas comment. Returns the new server-assigned comment."""
-    flow = _get_running_flow(flow_id)
-    comment = flow.create_comment(
-        request.text, request.x_position, request.y_position, width=request.width, height=request.height
-    )
-    return CommentOperationResponse(success=True, history=flow.get_history_state(), comment=_comment_to_schema(comment))
+    flow = get_flow_or_404(flow_id)
+    with edit_flow(flow, "Add comment", HistoryActionType.CREATE_COMMENT) as txn:
+        comment = flow.create_comment(
+            request.text, request.x_position, request.y_position, width=request.width, height=request.height
+        )
+    return CommentOperationResponse(success=True, history=txn.history, comment=_comment_to_schema(comment))
 
 
 @router.post("/editor/update_comment/", tags=["editor"], response_model=CommentOperationResponse)
 def update_comment(flow_id: int, comment_id: int, request: schemas.UpdateCommentRequest) -> CommentOperationResponse:
     """Edit, move or resize a canvas comment."""
-    flow = _get_running_flow(flow_id)
+    flow = get_flow_or_404(flow_id)
     values = (request.x_position, request.y_position, request.width, request.height)
     bounds = schemas.CommentBounds(*values) if all(value is not None for value in values) else None
-    try:
-        comment = flow.update_comment(comment_id, text=request.text, bounds=bounds)
-    except ValueError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    return CommentOperationResponse(success=True, history=flow.get_history_state(), comment=_comment_to_schema(comment))
+    with edit_flow(flow, "Update comment", HistoryActionType.UPDATE_COMMENT) as txn:
+        try:
+            comment = flow.update_comment(comment_id, text=request.text, bounds=bounds)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+    return CommentOperationResponse(success=True, history=txn.history, comment=_comment_to_schema(comment))
 
 
 @router.post("/editor/delete_comment/", tags=["editor"], response_model=OperationResponse)
 def delete_comment(flow_id: int, comment_id: int) -> OperationResponse:
     """Delete a canvas comment."""
-    flow = _get_running_flow(flow_id)
-    flow.delete_comment(comment_id)
-    return OperationResponse(success=True, history=flow.get_history_state())
+    flow = get_flow_or_404(flow_id)
+    with edit_flow(flow, "Delete comment", HistoryActionType.DELETE_COMMENT) as txn:
+        flow.delete_comment(comment_id)
+    return OperationResponse(success=True, history=txn.history)
+
+
+@router.post("/editor/apply_operations/", tags=["editor"], response_model=OperationResponse)
+def apply_operations(
+    request: schemas.ApplyOperationsRequest, current_user=Depends(get_current_active_user)
+) -> OperationResponse:
+    """Apply one gesture's primitive operations in order, atomically, as at most one undo step.
+
+    Each op runs through the same route function as its single-op endpoint (``insert_on_edge``,
+    which splices a node into an edge in place, is batch-only). If any op fails
+    the graph is restored to its pre-batch state and the error is re-raised with the op's
+    status code and a detail prefixed ``Operation <i> (<op>): ``.
+    """
+    flow = get_flow_or_404(request.flow_id)
+    with edit_flow(flow, request.label, HistoryActionType.BATCH) as txn:
+        for index, operation in enumerate(request.operations):
+            try:
+                _apply_operation(request.flow_id, operation, current_user)
+            except HTTPException as exc:
+                raise HTTPException(exc.status_code, f"Operation {index} ({operation.op}): {exc.detail}") from exc
+            except Exception as exc:
+                logger.exception(f"apply_operations: operation {index} ({operation.op}) failed")
+                raise HTTPException(500, f"Operation {index} ({operation.op}): {exc}") from exc
+    return OperationResponse(success=True, history=txn.history)
+
+
+def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_user) -> None:
+    match operation.op:
+        case "add_node":
+            add_node(flow_id, operation.node_id, operation.node_type, operation.pos_x, operation.pos_y)
+        case "update_settings":
+            settings = dict(operation.settings)
+            if int(settings.setdefault("flow_id", flow_id)) != flow_id:
+                raise HTTPException(422, "settings.flow_id does not match the batch flow_id")
+            add_generic_settings(settings, operation.node_type, current_user=current_user)
+        case "delete_node":
+            delete_node(flow_id, operation.node_id)
+        case "connect":
+            connect_node(flow_id, operation.connection)
+        case "delete_connection":
+            delete_node_connection(flow_id, operation.connection)
+        case "update_layout":
+            update_layout(flow_id, operation.layout)
+        case "copy_node":
+            if operation.node_promise.flow_id != flow_id:
+                raise HTTPException(422, "node_promise.flow_id does not match the batch flow_id")
+            copy_node(operation.node_id_to_copy_from, operation.flow_id_to_copy_from, operation.node_promise)
+        case "delete_comment":
+            delete_comment(flow_id, operation.comment_id)
+        case "insert_on_edge":
+            insert_node_on_edge(get_flow_or_404(flow_id), operation.node_id, operation.connection)
 
 
 @router.get("/editor/expression_doc", tags=["editor"], response_model=list[output_model.ExpressionsOverview])
@@ -1328,40 +1351,25 @@ def rename_flow(body: RenameFlowInput, current_user=Depends(get_current_active_u
 # ==================== History/Undo-Redo Endpoints ====================
 
 
+def _history_step(flow_id: int, step: Callable[[Any], UndoRedoResult]) -> UndoRedoResult:
+    """Undo or redo on an idle flow. Not edit_flow: an outer transaction would record the restore as a step."""
+    flow = get_flow_or_404(flow_id)
+    with flow.edit_lock():
+        if flow.flow_settings.is_running:
+            raise HTTPException(422, "Flow is running")
+        return step(flow)
+
+
 @router.post("/editor/undo/", tags=["editor"], response_model=UndoRedoResult)
 def undo_action(flow_id: int) -> UndoRedoResult:
-    """Undo the last action on the flow graph.
-
-    Args:
-        flow_id: The ID of the flow to undo.
-
-    Returns:
-        UndoRedoResult indicating success or failure.
-    """
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "Could not find the flow")
-    if flow.flow_settings.is_running:
-        raise HTTPException(422, "Flow is running")
-    return flow.undo()
+    """Undo the last action on the flow graph."""
+    return _history_step(flow_id, lambda flow: flow.undo())
 
 
 @router.post("/editor/redo/", tags=["editor"], response_model=UndoRedoResult)
 def redo_action(flow_id: int) -> UndoRedoResult:
-    """Redo the last undone action on the flow graph.
-
-    Args:
-        flow_id: The ID of the flow to redo.
-
-    Returns:
-        UndoRedoResult indicating success or failure.
-    """
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "Could not find the flow")
-    if flow.flow_settings.is_running:
-        raise HTTPException(422, "Flow is running")
-    return flow.redo()
+    """Redo the last undone action on the flow graph."""
+    return _history_step(flow_id, lambda flow: flow.redo())
 
 
 @router.get("/editor/history_status/", tags=["editor"], response_model=HistoryState)
@@ -1390,7 +1398,7 @@ def clear_history(flow_id: int):
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, "Could not find the flow")
-    flow._history_manager.clear()
+    flow.clear_history()
     return {"message": "History cleared successfully"}
 
 
@@ -1510,11 +1518,7 @@ def add_generic_settings(
     flow_id = int(input_data.get("flow_id"))
     node_id = int(input_data.get("node_id"))
     logger.info(f"Updating the data for flow: {flow_id}, node {node_id}")
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
-    if flow.flow_settings.is_running:
-        raise HTTPException(422, "Flow is running")
+    flow = get_flow_or_404(flow_id)
     add_func = getattr(flow, "add_" + node_type)
     parsed_input = None
     setting_name_ref = "node" + node_type.replace("_", "")
@@ -1531,18 +1535,33 @@ def add_generic_settings(
         raise HTTPException(422, str(e)) from e
     if parsed_input is None:
         raise HTTPException(404, "could not find the interface")
-    if node_type == "catalog_writer":
-        _validate_catalog_writer_target(parsed_input, current_user, flow)
-    elif node_type == "train_model":
-        _validate_train_model_target(parsed_input, current_user, flow)
-    try:
-        # History capture is handled by the decorator on each add_* method
-        add_func(parsed_input)
-    except Exception as e:
-        logger.error(e)
-        raise HTTPException(419, str(f"error: {e}")) from e
+    with edit_flow(flow, f"Update {node_type} settings", HistoryActionType.UPDATE_SETTINGS, node_id=node_id) as txn:
+        keep_server_owned_layout(flow, parsed_input)
+        if node_type == "catalog_writer":
+            _validate_catalog_writer_target(parsed_input, current_user, flow)
+        elif node_type == "train_model":
+            _validate_train_model_target(parsed_input, current_user, flow)
+        try:
+            add_func(parsed_input)
+        except Exception as e:
+            logger.error(e)
+            raise HTTPException(419, str(f"error: {e}")) from e
 
-    return OperationResponse(success=True, history=flow.get_history_state())
+    return OperationResponse(success=True, history=txn.history)
+
+
+_SERVER_OWNED_LAYOUT_FIELDS = ("pos_x", "pos_y", "group_id")
+
+
+def keep_server_owned_layout(flow, settings) -> None:
+    """Position and group membership are owned by layout/group routes; a settings payload's copy is stale."""
+    live = flow.get_node(settings.node_id)
+    live_settings = live.setting_input if live is not None else None
+    if live_settings is None:
+        return
+    for field in _SERVER_OWNED_LAYOUT_FIELDS:
+        if hasattr(settings, field) and hasattr(live_settings, field):
+            setattr(settings, field, getattr(live_settings, field))
 
 
 class RestApiSampleResponse(BaseModel):
@@ -1736,15 +1755,16 @@ def get_node_input_names(flow_id: int, node_id: int) -> list[output_model.NodeIn
     return result
 
 
-@router.post("/node/description/", tags=["editor"])
-def update_description_node(flow_id: int, node_id: int, description: str = Body(...)):
-    """Updates the description text for a specific node."""
-    try:
-        node = flow_file_handler.get_flow(flow_id).get_node(node_id)
-    except Exception:
-        raise HTTPException(404, "Could not find the node") from None
-    node.setting_input.description = description
-    return True
+@router.post("/node/description/", tags=["editor"], response_model=OperationResponse)
+def update_description_node(flow_id: int, node_id: int, description: str = Body(...)) -> OperationResponse:
+    """Updates the description text for a specific node (an empty text restores the auto description)."""
+    flow = get_flow_or_404(flow_id)
+    with edit_flow(flow, "Edit description", HistoryActionType.UPDATE_SETTINGS, node_id=node_id) as txn:
+        node = flow.get_node(node_id)
+        if node is None:
+            raise HTTPException(404, "Could not find the node")
+        node.setting_input.description = description
+    return OperationResponse(success=True, history=txn.history)
 
 
 @router.get("/node/description", response_model=output_model.NodeDescriptionResponse, tags=["editor"])
@@ -1766,8 +1786,8 @@ def get_description_node(flow_id: int, node_id: int):
     return output_model.NodeDescriptionResponse(description=description, is_auto_generated=is_auto_generated)
 
 
-@router.post("/node/reference/", tags=["editor"])
-def update_reference_node(flow_id: int, node_id: int, reference: str = Body(...)):
+@router.post("/node/reference/", tags=["editor"], response_model=OperationResponse)
+def update_reference_node(flow_id: int, node_id: int, reference: str = Body(...)) -> OperationResponse:
     """Updates the reference identifier for a specific node.
 
     The reference must be:
@@ -1775,32 +1795,37 @@ def update_reference_node(flow_id: int, node_id: int, reference: str = Body(...)
     - No spaces allowed
     - Unique across all nodes in the flow
     """
-    try:
-        flow = flow_file_handler.get_flow(flow_id)
+    flow = get_flow_or_404(flow_id)
+    with edit_flow(flow, "Edit reference", HistoryActionType.UPDATE_SETTINGS, node_id=node_id) as txn:
         node = flow.get_node(node_id)
-    except Exception:
-        raise HTTPException(404, "Could not find the node") from None
-    if node is None:
-        raise HTTPException(404, "Could not find the node")
+        if node is None:
+            raise HTTPException(404, "Could not find the node")
+        error = _reference_error(flow, node_id, reference) if reference else None
+        if error:
+            raise HTTPException(422, error)
+        # Clearing falls back to the default df_<node_id> reference.
+        node.setting_input.node_reference = reference or None
+    return OperationResponse(success=True, history=txn.history)
 
-    # Handle empty reference (allow clearing)
-    if reference == "" or reference is None:
-        node.setting_input.node_reference = None
-        return True
 
+def _reference_error(flow, node_id: int, reference: str) -> str | None:
+    """Why ``reference`` cannot name node ``node_id``, else None.
+
+    Applies the rule the settings model enforces on load (so a stored reference always
+    reopens and restores) plus uniqueness across the flow.
+    """
     if " " in reference:
-        raise HTTPException(422, "Reference cannot contain spaces")
+        return "Reference cannot contain spaces"
     if reference != reference.lower():
-        raise HTTPException(422, "Reference must be lowercase")
-
+        return "Reference must be lowercase"
+    try:
+        input_schema.NodeBase.validate_node_reference(reference)
+    except ValueError:
+        return "Reference must start with a letter and contain only lowercase letters, digits, and underscores"
     for other_node in flow.nodes:
-        if other_node.node_id != node_id:
-            other_ref = getattr(other_node.setting_input, "node_reference", None)
-            if other_ref and other_ref == reference:
-                raise HTTPException(422, f'Reference "{reference}" is already used by another node')
-
-    node.setting_input.node_reference = reference
-    return True
+        if other_node.node_id != node_id and getattr(other_node.setting_input, "node_reference", None) == reference:
+            return f'Reference "{reference}" is already used by another node'
+    return None
 
 
 @router.get("/node/reference", tags=["editor"])
@@ -1822,28 +1847,10 @@ def validate_node_reference(flow_id: int, node_id: int, reference: str):
     Returns:
         Dict with 'valid' (bool) and 'error' (str or None) fields.
     """
-    try:
-        flow = flow_file_handler.get_flow(flow_id)
-    except Exception:
-        raise HTTPException(404, "Could not find the flow") from None
-
-    # Handle empty reference (always valid - means use default)
-    if reference == "" or reference is None:
-        return {"valid": True, "error": None}
-
-    if reference != reference.lower():
-        return {"valid": False, "error": "Reference must be lowercase"}
-
-    if " " in reference:
-        return {"valid": False, "error": "Reference cannot contain spaces"}
-
-    for other_node in flow.nodes:
-        if other_node.node_id != node_id:
-            other_ref = getattr(other_node.setting_input, "node_reference", None)
-            if other_ref and other_ref == reference:
-                return {"valid": False, "error": f'Reference "{reference}" is already used by another node'}
-
-    return {"valid": True, "error": None}
+    flow = get_flow_or_404(flow_id)
+    # Empty means "use the default df_<node_id>".
+    error = _reference_error(flow, node_id, reference) if reference else None
+    return {"valid": error is None, "error": error}
 
 
 @router.get("/node/data", response_model=output_model.TableExample, tags=["editor"])
@@ -2291,13 +2298,33 @@ def get_flow_settings(flow_id: int | None = 1) -> schemas.FlowSettingsResponse:
     return _with_display_name(flow_file_handler.get_flow_info_with_runtime(flow_id))
 
 
+_SERVER_OWNED_FLOW_SETTINGS = (
+    "name",
+    "path",
+    "save_location",
+    "source_registration_id",
+    "modified_on",
+    "is_running",
+    "is_canceled",
+    "track_history",
+)
+
+
 @router.post("/flow_settings", tags=["manager"])
 def update_flow_settings(flow_settings: schemas.FlowSettings):
-    """Updates the main settings for a flow."""
-    flow = flow_file_handler.get_flow(flow_settings.flow_id)
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
-    flow.flow_settings = flow_settings
+    """Updates the user-editable settings of a flow.
+
+    Identity (name, path, save location, catalog registration), run state and history
+    tracking stay server-owned: renames, saves and runs have their own routes, and the
+    settings form posts back whatever copy it last fetched. Flow settings are outside
+    the undo scope, so this records no step; it runs as a transaction to serialize with
+    graph edits and refresh the dirty flag.
+    """
+    flow = get_flow_or_404(flow_settings.flow_id)
+    with flow.transaction("Update flow settings"):
+        live = flow.flow_settings
+        server_owned = {field: getattr(live, field) for field in _SERVER_OWNED_FLOW_SETTINGS}
+        flow.flow_settings = flow_settings.model_copy(update=server_owned)
 
 
 @router.get("/flow_data/v2", tags=["manager"])

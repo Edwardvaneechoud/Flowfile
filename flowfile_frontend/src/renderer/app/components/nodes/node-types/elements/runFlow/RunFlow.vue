@@ -201,16 +201,15 @@ import { useNodeStore } from "../../../../../stores/node-store";
 import { useFlowStore } from "../../../../../stores/flow-store";
 import { useCatalogStore } from "../../../../../stores/catalog-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
-import { suppressedEdgeRemovals } from "../../../../../composables/useDragAndDrop";
 import { CatalogApi } from "../../../../../api/catalog.api";
-import { FlowApi } from "../../../../../api";
 import {
   buildDynamicInputHandles,
   buildDynamicOutputHandles,
 } from "../../../../../utils/nodeHandles";
+import { deleteConnectionOperations } from "../../../../../utils/graphOperations";
+import { plural } from "../../../../../utils/text";
 import type { NodeData, NodeRunFlow, FileColumn } from "../../../../../types/node.types";
-import type { FlowParameter, FlowParamType } from "../../../../../types/flow.types";
-import type { NodeConnection } from "../../../../../types/canvas.types";
+import type { FlowParameter, FlowParamType, NodeHandle } from "../../../../../types/flow.types";
 import type { SubflowInterface } from "../../../../../types/catalog.types";
 import {
   MAX_RUN_FLOW_INPUTS,
@@ -218,6 +217,7 @@ import {
   mergeBindingRows,
   reconcileBindings,
   findDanglingEdges,
+  danglingEdgesToDelete,
   hasColumnBinding,
   matchingColumnNames,
   subflowInterfaceChanged,
@@ -239,9 +239,11 @@ const namespaces = ref<{ id: number; label: string }[]>([]);
 // Selected namespace id -> ids of itself + its child schemas (catalog selection includes schemas).
 const namespaceDescendants = ref<Map<number, Set<number>>>(new Map());
 
-const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
-  nodeRef: nodeRunFlow,
-});
+const {
+  saveSettings: saveNodeSettings,
+  saveSettingsWithOperations,
+  handleGenericSettingsUpdate,
+} = useNodeSettings({ nodeRef: nodeRunFlow });
 
 const filteredFlows = computed(() => {
   let flows = catalogStore.allFlows;
@@ -340,7 +342,6 @@ const handleFlowChange = async (registrationId: number | null) => {
     nodeRunFlow.value.parameter_specs = [];
     nodeRunFlow.value.parameter_bindings = [];
     await saveSettings();
-    await applyInterfaceToCanvas();
     return;
   }
   const registration = catalogStore.allFlows.find((f) => f.id === registrationId);
@@ -352,11 +353,9 @@ const handleFlowChange = async (registrationId: number | null) => {
   await refreshInterface();
 };
 
-// Persist a freshly-read interface onto the node: reconcile bindings, store the
-// new slots/specs, save, and rebuild the canvas handles (dropping edges whose
-// handle vanished). Returns true only when the save succeeded.
-const applyInterface = async (iface: SubflowInterface): Promise<boolean> => {
-  if (!nodeRunFlow.value) return false;
+// Adopt a freshly-read interface in the local draft only; it is saved with the node.
+const applyInterfaceDraft = (iface: SubflowInterface) => {
+  if (!nodeRunFlow.value) return;
   nodeRunFlow.value.parameter_bindings = reconcileBindings(
     nodeRunFlow.value.parameter_bindings,
     iface.parameters,
@@ -365,11 +364,55 @@ const applyInterface = async (iface: SubflowInterface): Promise<boolean> => {
   nodeRunFlow.value.input_slots = iface.inputs.map((port) => port.name);
   nodeRunFlow.value.output_slots = iface.outputs.map((port) => port.name);
   nodeRunFlow.value.parameter_specs = iface.parameters;
-  const saved = await saveSettings();
+};
+
+const handleSignature = (handles: NodeHandle[] | undefined) =>
+  JSON.stringify((handles ?? []).map((handle) => [handle.id, handle.label ?? ""]));
+
+/**
+ * Save the node and, in the same step, drop the canvas edges its interface no longer
+ * has handles for. When the handles change the canvas reloads: core remaps keyed data
+ * inputs by slot name, which only a reload shows faithfully.
+ */
+const saveSettings = async (): Promise<boolean> => {
+  const vfInstance = flowStore.vueFlowInstance;
+  const node = nodeRunFlow.value;
+  const vfNode = node ? vfInstance?.findNode(String(node.node_id)) : undefined;
+  if (!node || !vfInstance || !vfNode) return saveNodeSettings();
+
+  const paramLabel = node.parameter_specs.length > 0 ? "Parameters" : "";
+  const inputs = buildDynamicInputHandles([paramLabel, ...node.input_slots]);
+  const outputs = buildDynamicOutputHandles(node.output_slots);
+  if (
+    handleSignature(vfNode.data.inputs) === handleSignature(inputs) &&
+    handleSignature(vfNode.data.outputs) === handleSignature(outputs)
+  ) {
+    return saveNodeSettings();
+  }
+
+  const nodeId = String(node.node_id);
+  const dangling = findDanglingEdges(
+    vfInstance.getEdges.value,
+    nodeId,
+    inputs.map((handle) => handle.id),
+    outputs.map((handle) => handle.id),
+  );
+  const saved = await saveSettingsWithOperations(
+    "Update run_flow settings",
+    deleteConnectionOperations(danglingEdgesToDelete(dangling, nodeId)),
+  );
   if (!saved) return false;
-  await applyInterfaceToCanvas();
+  flowStore.requestReload();
+  if (dangling.length > 0) {
+    ElMessage.warning(
+      `Removed ${plural(dangling.length, "connection")} that no longer match ` +
+        "the flow's inputs/outputs.",
+    );
+  }
   return true;
 };
+
+const pushNodeData = (): Promise<boolean> => saveSettings();
 
 const refreshInterface = async () => {
   const registrationId = nodeRunFlow.value?.flow_reference?.registration_id;
@@ -393,7 +436,8 @@ const refreshInterface = async () => {
       );
       return;
     }
-    if (!(await applyInterface(iface))) {
+    applyInterfaceDraft(iface);
+    if (!(await saveSettings())) {
       ElMessage.error("Could not save the updated interface; connections were left untouched.");
     }
   } catch (error) {
@@ -404,17 +448,19 @@ const refreshInterface = async () => {
   }
 };
 
-// On open, re-sync the node with the referenced subflow so it reflects the
-// current inputs/outputs/parameters without a manual Refresh. Only touches the
-// node when the interface actually drifted, and never wipes it on a missing
-// file or a too-large interface.
+/**
+ * On open, reflect the referenced subflow's current inputs/outputs/parameters in the
+ * draft (never saved on open: it rides along with the next save). Only touches the
+ * draft when the interface actually drifted, and never on a missing file or a
+ * too-large interface.
+ */
 const syncInterfaceOnOpen = async (nodeId: number) => {
   const registrationId = nodeRunFlow.value?.flow_reference?.registration_id;
   if (!nodeRunFlow.value || !registrationId || registrationId <= 0) return;
   try {
     const iface = await CatalogApi.getFlowInterface(registrationId);
     // The fetch is a network round-trip; if the drawer moved to another node or
-    // closed meanwhile, don't mutate/save the node the user navigated away from.
+    // closed meanwhile, don't touch the node the user navigated away from.
     if (!nodeRunFlow.value || nodeStore.node_id !== nodeId) return;
     if (
       !iface.file_exists ||
@@ -433,95 +479,10 @@ const syncInterfaceOnOpen = async (nodeId: number) => {
     ) {
       return;
     }
-    if (await applyInterface(iface)) {
-      ElMessage.info("Updated the Run Flow node to match the subflow's current interface.");
-    }
+    applyInterfaceDraft(iface);
+    ElMessage.info("The subflow's interface changed. Apply to update this node.");
   } catch (error) {
     console.error("Could not auto-sync the run_flow interface on open:", error);
-  }
-};
-
-// Rebuild the live VueFlow node's handles from the saved slots and drop edges
-// that now point at handles which no longer exist (backend first, then UI).
-const applyInterfaceToCanvas = async () => {
-  const vfInstance = flowStore.vueFlowInstance;
-  if (!vfInstance || !nodeRunFlow.value) return;
-
-  const nodeId = String(nodeRunFlow.value.node_id);
-  const vfNode = vfInstance.findNode(nodeId);
-  if (!vfNode) return;
-
-  const paramLabel = nodeRunFlow.value.parameter_specs.length > 0 ? "Parameters" : "";
-  const inputs = buildDynamicInputHandles([paramLabel, ...nodeRunFlow.value.input_slots]);
-  const outputs = buildDynamicOutputHandles(nodeRunFlow.value.output_slots);
-  vfNode.data.inputs = inputs;
-  vfNode.data.outputs = outputs;
-
-  const dangling = findDanglingEdges(
-    vfInstance.getEdges.value,
-    nodeId,
-    inputs.map((handle) => handle.id),
-    outputs.map((handle) => handle.id),
-  );
-  if (dangling.length === 0) return;
-
-  const removedIds: string[] = [];
-  let failedCount = 0;
-  for (const edge of dangling) {
-    const connection: NodeConnection = {
-      input_connection: {
-        node_id: Number(edge.target),
-        connection_class: (edge.targetHandle ??
-          "input-0") as NodeConnection["input_connection"]["connection_class"],
-      },
-      output_connection: {
-        node_id: Number(edge.source),
-        connection_class: (edge.sourceHandle ??
-          "output-0") as NodeConnection["output_connection"]["connection_class"],
-      },
-    };
-    try {
-      await FlowApi.deleteConnection(Number(nodeRunFlow.value.flow_id), connection);
-    } catch (error) {
-      // A 422 means the connection no longer exists server-side — saving the new
-      // interface already dropped it (add_run_flow remaps keyed inputs, dropping
-      // vanished slots). The edge is genuinely stale, so drop it from the canvas
-      // rather than reporting a spurious failure.
-      const status = (error as { response?: { status?: number } })?.response?.status;
-      if (status === 422) {
-        suppressedEdgeRemovals.add(edge.id);
-        removedIds.push(edge.id);
-        continue;
-      }
-      // A real failure (connection still present): keep the edge so it stays in
-      // sync with the server-side connection. Suppressing + removing it here would
-      // hide the edge while the connection lingers, and Canvas.vue's
-      // delete-on-remove retry is suppressed, so the desync would never heal.
-      console.error("Failed to delete stale connection:", error);
-      failedCount += 1;
-      continue;
-    }
-    // Backend delete succeeded: tell Canvas.handleEdgeChange to skip the
-    // redundant delete, then drop the edge from the canvas below.
-    suppressedEdgeRemovals.add(edge.id);
-    removedIds.push(edge.id);
-  }
-  // One removal per call: Canvas.handleEdgeChange ignores batched change events,
-  // which would leave the suppression entries unconsumed.
-  for (const id of removedIds) {
-    vfInstance.removeEdges([id]);
-  }
-  if (removedIds.length > 0) {
-    ElMessage.warning(
-      `Removed ${removedIds.length} connection${removedIds.length === 1 ? "" : "s"} that no longer ` +
-        "match the flow's inputs/outputs.",
-    );
-  }
-  if (failedCount > 0) {
-    ElMessage.error(
-      `Could not remove ${failedCount} stale connection${failedCount === 1 ? "" : "s"}; ` +
-        "they remain on the canvas — reload the flow to retry.",
-    );
   }
 };
 

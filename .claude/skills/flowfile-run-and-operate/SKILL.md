@@ -188,12 +188,17 @@ flowfile_settings:               # description, execution_mode (Development|Perf
 nodes:
   - id: 1
     type: manual_input           # node type == FlowGraph method suffix ("add_" + type)
-    is_start_node: true
+    is_start_node: true          # load-order hint only; start nodes are re-derived on load
     x_position: 100
     y_position: 100
-    outputs: [2]                 # downstream node ids; connections derive from this
+    outputs: [2]                 # downstream ids, sorted by (target, handle); read for handle lookup
     output_handles: [output-0]   # parallel to outputs; missing entries default to "output-0"
     setting_input: {...}         # node-type-specific settings
+  - id: 2
+    type: filter
+    input_ids: [1]               # edges are rebuilt from each target's input_ids / left_input_id /
+    left_input_id: null          # right_input_id, in saved order (keyed run_flow edges: input_connections)
+    right_input_id: null
 groups: []                       # visual FlowfileGroup boxes
 ```
 

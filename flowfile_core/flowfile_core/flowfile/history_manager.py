@@ -4,6 +4,13 @@ History Manager for undo/redo functionality in flow graphs.
 This module provides the HistoryManager class which manages undo/redo stacks
 and enables users to revert or reapply changes to their flow graphs.
 
+Recording contract: a mutation records via :meth:`HistoryManager.record` with the
+snapshots taken before and after it (``FlowGraph.transaction`` does this), so one
+change is one entry and a no-op records nothing. Undo/redo move entries between
+the stacks only after the restore succeeded. The dirty flag is always
+``persisted_hash(current) != persisted_hash(saved)``. Every snapshot is captured as a
+:class:`HistorySnapshot`, so it is serialized, pickled and hashed once.
+
 Optimizations:
 - Compressed snapshots using zlib (60-80% memory reduction)
 - Pre-computed hashes for O(1) snapshot comparison
@@ -11,15 +18,17 @@ Optimizations:
 """
 
 from collections import deque
+from collections.abc import Iterator
+from contextlib import contextmanager
 from time import time
 from typing import TYPE_CHECKING
 
 from flowfile_core.configs import logger
 from flowfile_core.schemas.history_schema import (
-    CompressedSnapshot,
     HistoryActionType,
     HistoryConfig,
     HistoryEntry,
+    HistorySnapshot,
     HistoryState,
     UndoRedoResult,
 )
@@ -33,7 +42,7 @@ class HistoryManager:
     """Manages undo/redo history for a FlowGraph.
 
     Uses two deques (undo_stack and redo_stack) to track state changes.
-    Snapshots are captured BEFORE changes occur, so undo restores to that state.
+    Each entry holds the state BEFORE its change, so undo restores to that state.
 
     Memory Optimization:
     - Snapshots are compressed using zlib (typically 60-80% size reduction)
@@ -46,7 +55,6 @@ class HistoryManager:
         "_undo_stack",
         "_redo_stack",
         "_is_restoring",
-        "_last_snapshot_hash",
         "_saved_snapshot_hash",
         "_dirty",
     )
@@ -61,11 +69,10 @@ class HistoryManager:
         self._undo_stack: deque[HistoryEntry] = deque(maxlen=self._config.max_stack_size)
         self._redo_stack: deque[HistoryEntry] = deque(maxlen=self._config.max_stack_size)
         self._is_restoring: bool = False
-        self._last_snapshot_hash: int | None = None
-        # Hash of the flow state at the last save point; used for dirty tracking
+        # persisted_hash of the flow state at the last save point
         self._saved_snapshot_hash: int | None = None
-        # Fast dirty flag flipped on any recorded change; avoids re-hashing on hot path
-        self._dirty: bool = False
+        # Maintained at the end of every mutation/undo/redo/save so reads stay cheap; None = recompute on read
+        self._dirty: bool | None = False
 
     @property
     def config(self) -> HistoryConfig:
@@ -82,15 +89,15 @@ class HistoryManager:
 
     def _create_entry(
         self,
-        snapshot_dict: dict,
+        snapshot: HistorySnapshot,
         action_type: HistoryActionType,
         description: str,
         node_id: int | None = None,
     ) -> HistoryEntry:
-        """Create a history entry with the configured compression settings.
+        """Create a history entry holding ``snapshot`` with the configured compression settings.
 
         Args:
-            snapshot_dict: The flow state dictionary.
+            snapshot: The captured flow state.
             action_type: The type of action.
             description: Human-readable description.
             node_id: Optional affected node ID.
@@ -98,14 +105,50 @@ class HistoryManager:
         Returns:
             A new HistoryEntry instance.
         """
-        return HistoryEntry.from_dict(
-            snapshot_dict=snapshot_dict,
+        return HistoryEntry.from_snapshot(
+            snapshot,
             action_type=action_type,
             description=description,
             timestamp=time(),
             node_id=node_id,
             compression_level=self._config.compression_level if self._config.use_compression else 1,
         )
+
+    @contextmanager
+    def restoring(self) -> Iterator[None]:
+        """Suppress recording while the graph is rebuilt (entered via ``FlowGraph.rebuilding``)."""
+        previous = self._is_restoring
+        self._is_restoring = True
+        try:
+            yield
+        finally:
+            self._is_restoring = previous
+
+    def record(
+        self,
+        pre_snapshot: HistorySnapshot,
+        post_snapshot: HistorySnapshot,
+        action_type: HistoryActionType,
+        description: str,
+        node_id: int | None = None,
+    ) -> HistoryEntry | None:
+        """Push ``pre_snapshot`` as one undo entry iff the in-scope graph changed.
+
+        Only a recorded change clears the redo stack. Returns the pushed entry, or None
+        when nothing was recorded (disabled, restoring, or no in-scope change).
+        """
+        if not self._config.enabled or self._is_restoring:
+            return None
+        if pre_snapshot.graph_hash == post_snapshot.graph_hash:
+            return None
+        entry = self._create_entry(pre_snapshot, action_type, description, node_id)
+        self._undo_stack.append(entry)
+        self._redo_stack.clear()
+        logger.info(
+            f"History: recorded '{description}' "
+            f"(undo_stack={len(self._undo_stack)}, redo_stack={len(self._redo_stack)})"
+        )
+        return entry
 
     def capture_snapshot(
         self,
@@ -116,9 +159,10 @@ class HistoryManager:
     ) -> bool:
         """Capture the current state of the flow graph BEFORE a change.
 
-        This method captures state BEFORE an operation. We detect duplicates by
-        comparing against the last CAPTURED snapshot (top of undo stack), not
-        against _last_snapshot_hash (which tracks the post-operation state).
+        Legacy explicit API kept for tests; everything else records through
+        ``FlowGraph.transaction``. Duplicates are detected against the last captured
+        snapshot (top of the undo stack). The change that follows happens outside any
+        transaction, so the dirty flag is left to be recomputed on its next read.
 
         Args:
             flow_graph: The FlowGraph to capture.
@@ -129,44 +173,18 @@ class HistoryManager:
         Returns:
             True if snapshot was captured, False if skipped (disabled or restoring).
         """
-        logger.info(
-            f"History: capture_snapshot called for '{description}' "
-            f"(enabled={self._config.enabled}, restoring={self._is_restoring})"
-        )
-
-        if not self._config.enabled:
-            logger.info(f"History: Skipping '{description}' - history disabled")
+        if not self._config.enabled or self._is_restoring:
             return False
-
-        if self._is_restoring:
-            logger.info(f"History: Skipping '{description}' - currently restoring")
-            return False
+        self._dirty = None
 
         try:
-            flowfile_data = flow_graph.get_flowfile_data()
-            snapshot_dict = flowfile_data.model_dump()
+            snapshot = HistorySnapshot(flow_graph.get_flowfile_data().model_dump())
+            if self._undo_stack and self._undo_stack[-1].snapshot_hash == snapshot.graph_hash:
+                logger.info(f"History: Skipping duplicate snapshot for: {description}")
+                return False
 
-            current_hash = CompressedSnapshot._compute_hash(snapshot_dict)
-
-            # Compare against the LAST CAPTURED snapshot (top of undo stack), not _last_snapshot_hash
-            # This correctly detects if we're capturing the same pre-state twice,
-            # without being confused by post-operation hash updates from capture_if_changed
-            if self._undo_stack:
-                last_entry_hash = self._undo_stack[-1].snapshot_hash
-                if last_entry_hash == current_hash:
-                    logger.info(f"History: Skipping duplicate snapshot for: {description}")
-                    return False
-
-            entry = self._create_entry(snapshot_dict, action_type, description, node_id)
-
-            self._undo_stack.append(entry)
-
-            # Real change recorded on a non-restoring path — flip the fast dirty flag.
-            self._dirty = True
-
-            # Clear redo stack when new action is performed
+            self._undo_stack.append(self._create_entry(snapshot, action_type, description, node_id))
             self._redo_stack.clear()
-
             logger.info(
                 f"History: Captured '{description}' "
                 f"(undo_stack={len(self._undo_stack)}, redo_stack={len(self._redo_stack)})"
@@ -187,8 +205,7 @@ class HistoryManager:
     ) -> bool:
         """Capture history only if the flow state actually changed.
 
-        Use this for settings updates where the change might be a no-op.
-        Call this AFTER the change is applied.
+        Legacy explicit API kept for tests: call AFTER the change with the snapshot taken before it.
 
         Args:
             flow_graph: The FlowGraph after the change.
@@ -200,47 +217,47 @@ class HistoryManager:
         Returns:
             True if a change was detected and snapshot was captured.
         """
-        if not self._config.enabled:
-            logger.debug(f"History: Skipping '{description}' (if_changed) - history disabled")
-            return False
-
-        if self._is_restoring:
-            logger.debug(f"History: Skipping '{description}' (if_changed) - currently restoring")
-            return False
-
         try:
-            current_snapshot = flow_graph.get_flowfile_data()
-            current_dict = current_snapshot.model_dump()
-            pre_dict = pre_snapshot.model_dump()
-
-            # Fast hash comparison (no JSON serialization)
-            pre_hash = CompressedSnapshot._compute_hash(pre_dict)
-            current_hash = CompressedSnapshot._compute_hash(current_dict)
-
-            if pre_hash == current_hash:
-                logger.debug(f"History: No change detected for: {description}")
-                return False
-
-            # State changed - capture the BEFORE state (compressed)
-            entry = self._create_entry(pre_dict, action_type, description, node_id)
-
-            self._undo_stack.append(entry)
-            self._last_snapshot_hash = current_hash
-            # Real change confirmed on a non-restoring path — flip the fast dirty flag.
-            self._dirty = True
-
-            # Clear redo stack when new action is performed
-            self._redo_stack.clear()
-
-            logger.info(
-                f"History: Captured '{description}' (after change detection) "
-                f"(undo_stack={len(self._undo_stack)}, redo_stack={len(self._redo_stack)})"
-            )
-            return True
-
+            current = HistorySnapshot(flow_graph.get_flowfile_data().model_dump(), keep_payload=False)
+            pre = HistorySnapshot(pre_snapshot.model_dump())
+            recorded = self.record(pre, current, action_type, description, node_id)
+            self.refresh_dirty(current)
+            return recorded is not None
         except Exception as e:
             logger.error(f"History: Failed to capture snapshot for '{description}': {e}")
             return False
+
+    def _step(self, flow_graph: "FlowGraph", source: deque, target: deque, verb: str) -> UndoRedoResult:
+        """Restore the top of ``source``; move entries only once the restore succeeded."""
+        if not source:
+            return UndoRedoResult(success=False, error_message=f"Nothing to {verb}")
+
+        entry = source[-1]
+        try:
+            replaced = self._restore_entry(flow_graph, entry, verb)
+        except Exception as e:
+            logger.error(f"{verb.capitalize()} failed: {e}")
+            return UndoRedoResult(success=False, error_message=str(e))
+
+        source.pop()
+        target.append(self._create_entry(replaced, entry.action_type, entry.description, entry.node_id))
+        self.refresh_dirty_from(flow_graph)
+        logger.info(f"{verb.capitalize()} successful: {entry.description}")
+        return UndoRedoResult(success=True, action_description=entry.description)
+
+    def _restore_entry(self, flow_graph: "FlowGraph", entry: HistoryEntry, verb: str) -> HistorySnapshot:
+        """Restore ``entry``'s graph and return the graph it replaced; a failed restore is put back, then re-raised."""
+        snapshot_data = FlowfileData.model_validate(entry.get_snapshot())
+        replaced = HistorySnapshot(flow_graph.get_flowfile_data().model_dump())
+        try:
+            flow_graph.restore_from_snapshot(snapshot_data)
+        except Exception:
+            try:
+                flow_graph.restore_from_snapshot(FlowfileData.model_validate(replaced.load()))
+            except Exception as reinstate_error:
+                logger.error(f"History: {verb} could not reinstate the previous graph: {reinstate_error}")
+            raise
+        return replaced
 
     def undo(self, flow_graph: "FlowGraph") -> UndoRedoResult:
         """Undo the last action by restoring to the previous state.
@@ -251,50 +268,7 @@ class HistoryManager:
         Returns:
             UndoRedoResult indicating success or failure.
         """
-        if not self._undo_stack:
-            return UndoRedoResult(
-                success=False,
-                error_message="Nothing to undo",
-            )
-
-        try:
-            # Set flag to prevent capturing during restore
-            self._is_restoring = True
-
-            entry = self._undo_stack.pop()
-
-            # Save current state to redo stack BEFORE restoring
-            current_snapshot = flow_graph.get_flowfile_data()
-            current_dict = current_snapshot.model_dump()
-            redo_entry = self._create_entry(
-                current_dict,
-                entry.action_type,
-                entry.description,
-                entry.node_id,
-            )
-            self._redo_stack.append(redo_entry)
-
-            snapshot_dict = entry.get_snapshot()
-            snapshot_data = FlowfileData.model_validate(snapshot_dict)
-            flow_graph.restore_from_snapshot(snapshot_data)
-
-            self._last_snapshot_hash = entry.snapshot_hash
-
-            logger.info(f"Undo successful: {entry.description}")
-            return UndoRedoResult(
-                success=True,
-                action_description=entry.description,
-            )
-
-        except Exception as e:
-            logger.error(f"Undo failed: {e}")
-            return UndoRedoResult(
-                success=False,
-                error_message=str(e),
-            )
-
-        finally:
-            self._is_restoring = False
+        return self._step(flow_graph, self._undo_stack, self._redo_stack, "undo")
 
     def redo(self, flow_graph: "FlowGraph") -> UndoRedoResult:
         """Redo the last undone action.
@@ -305,76 +279,62 @@ class HistoryManager:
         Returns:
             UndoRedoResult indicating success or failure.
         """
-        if not self._redo_stack:
-            return UndoRedoResult(
-                success=False,
-                error_message="Nothing to redo",
-            )
+        return self._step(flow_graph, self._redo_stack, self._undo_stack, "redo")
 
+    def revert_if_top(self, flow_graph: "FlowGraph", entry: HistoryEntry) -> bool:
+        """Silently undo ``entry`` when it is still the latest step; redo is left untouched.
+
+        Used to retract a just-recorded step (e.g. an AI step whose observation failed)
+        without offering it as a redo. Returns False when another step came after it.
+        """
+        if not self._undo_stack or self._undo_stack[-1] is not entry:
+            return False
         try:
-            # Set flag to prevent capturing during restore
-            self._is_restoring = True
-
-            entry = self._redo_stack.pop()
-
-            # Save current state to undo stack BEFORE restoring
-            current_snapshot = flow_graph.get_flowfile_data()
-            current_dict = current_snapshot.model_dump()
-            undo_entry = self._create_entry(
-                current_dict,
-                entry.action_type,
-                entry.description,
-                entry.node_id,
-            )
-            self._undo_stack.append(undo_entry)
-
-            snapshot_dict = entry.get_snapshot()
-            snapshot_data = FlowfileData.model_validate(snapshot_dict)
-            flow_graph.restore_from_snapshot(snapshot_data)
-
-            self._last_snapshot_hash = entry.snapshot_hash
-
-            logger.info(f"Redo successful: {entry.description}")
-            return UndoRedoResult(
-                success=True,
-                action_description=entry.description,
-            )
-
+            self._restore_entry(flow_graph, entry, "retract")
         except Exception as e:
-            logger.error(f"Redo failed: {e}")
-            return UndoRedoResult(
-                success=False,
-                error_message=str(e),
-            )
+            logger.error(f"History: could not retract '{entry.description}': {e}")
+            return False
+        self._undo_stack.pop()
+        self.refresh_dirty_from(flow_graph)
+        return True
 
-        finally:
-            self._is_restoring = False
+    def discard_if_top(self, entry: HistoryEntry) -> bool:
+        """Drop ``entry`` without restoring it when it is still the latest step; redo is left untouched.
+
+        Used by a transaction that fails after recording: its own rollback restores the
+        graph, so the step must not stay behind. Returns False when ``entry`` is not the top.
+        """
+        if not self._undo_stack or self._undo_stack[-1] is not entry:
+            return False
+        self._undo_stack.pop()
+        return True
 
     def get_state(self) -> HistoryState:
         """Get the current state of the history system.
 
+        Safe to call without the flow's edit lock: a concurrent push/pop can make the
+        counts and descriptions momentarily disagree, but never raises.
+
         Returns:
             HistoryState with information about available undo/redo operations.
         """
-        can_undo = len(self._undo_stack) > 0
-        can_redo = len(self._redo_stack) > 0
-
-        undo_description = None
-        if can_undo:
-            undo_description = self._undo_stack[-1].description
-
-        redo_description = None
-        if can_redo:
-            redo_description = self._redo_stack[-1].description
-
+        undo_top = self._peek(self._undo_stack)
+        redo_top = self._peek(self._redo_stack)
         return HistoryState(
-            can_undo=can_undo,
-            can_redo=can_redo,
-            undo_description=undo_description,
-            redo_description=redo_description,
+            can_undo=undo_top is not None,
+            can_redo=redo_top is not None,
+            undo_description=undo_top.description if undo_top is not None else None,
+            redo_description=redo_top.description if redo_top is not None else None,
             undo_count=len(self._undo_stack),
             redo_count=len(self._redo_stack),
         )
+
+    @staticmethod
+    def _peek(stack: deque) -> HistoryEntry | None:
+        try:
+            return stack[-1]
+        except IndexError:
+            return None
 
     def clear(self) -> None:
         """Clear all history entries.
@@ -384,8 +344,22 @@ class HistoryManager:
         """
         self._undo_stack.clear()
         self._redo_stack.clear()
-        self._last_snapshot_hash = None
         logger.debug("History cleared")
+
+    def refresh_dirty(self, snapshot: HistorySnapshot) -> None:
+        """Recompute the dirty flag from a capture of the current flow state.
+
+        Only read once a save point exists (see :meth:`has_unsaved_changes`).
+        """
+        self._dirty = snapshot.persisted_hash != self._saved_snapshot_hash
+
+    def refresh_dirty_from(self, flow_graph: "FlowGraph") -> None:
+        """Recompute the dirty flag from the live graph; on failure assume dirty."""
+        try:
+            self.refresh_dirty(HistorySnapshot(flow_graph.get_flowfile_data().model_dump(), keep_payload=False))
+        except Exception as e:
+            logger.warning(f"History: failed to compute dirty state: {e}")
+            self._dirty = True
 
     def mark_saved(self, flow_graph: "FlowGraph") -> None:
         """Record the current flow state as the saved baseline.
@@ -394,10 +368,9 @@ class HistoryManager:
         for dirty tracking.
         """
         try:
-            snapshot = flow_graph.get_flowfile_data()
-            snapshot_dict = snapshot.model_dump()
-            self._saved_snapshot_hash = CompressedSnapshot.compute_hash(snapshot_dict)
-            # Successful save establishes a clean baseline — clear the fast dirty flag.
+            self._saved_snapshot_hash = HistorySnapshot(
+                flow_graph.get_flowfile_data().model_dump(), keep_payload=False
+            ).persisted_hash
             self._dirty = False
             logger.debug("History: marked current state as saved")
         except Exception as e:
@@ -407,17 +380,18 @@ class HistoryManager:
     def has_unsaved_changes(self, flow_graph: "FlowGraph") -> bool:
         """Check whether the current flow state differs from the last save point.
 
-        Hot path: when a save baseline exists, return the cheap ``_dirty`` flag
-        without serializing or hashing the graph. The snapshot+hash path only
-        runs as a startup fallback, before the first ``mark_saved`` establishes
-        a baseline.
+        Hot path: when a save baseline exists, return the maintained ``_dirty`` flag
+        without serializing or hashing the graph (recomputed first after a legacy
+        :meth:`capture_snapshot`). Before the first ``mark_saved`` establishes a
+        baseline, non-empty content counts as dirty.
         """
         try:
             if self._saved_snapshot_hash is not None:
+                if self._dirty is None:
+                    self.refresh_dirty_from(flow_graph)
                 return self._dirty
             # Never saved: fall back to the "non-empty content means dirty" rule
-            snapshot = flow_graph.get_flowfile_data()
-            snapshot_dict = snapshot.model_dump()
+            snapshot_dict = flow_graph.get_flowfile_data().model_dump()
             return len(snapshot_dict.get("nodes", []) or []) > 0
         except Exception as e:
             logger.warning(f"History: failed to compute dirty state: {e}")

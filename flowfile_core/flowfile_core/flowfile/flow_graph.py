@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import functools
 import hashlib
@@ -6,9 +7,9 @@ import json
 import os
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
@@ -180,7 +181,13 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     get_cloud_storage_write_settings_worker_interface,
 )
 from flowfile_core.schemas.delta_write import MERGE_MODES
-from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
+from flowfile_core.schemas.history_schema import (
+    HistoryActionType,
+    HistorySnapshot,
+    HistoryState,
+    UndoRedoResult,
+    in_scope_hash,
+)
 from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
 from flowfile_core.schemas.transform_schema import CrossJoinInputManager, FuzzyMatchInputManager, JoinInputManager
 from flowfile_core.secret_manager.secret_manager import (
@@ -231,11 +238,16 @@ def represent_list_json(dumper, data):
 yaml.add_representer(list, represent_list_json)
 
 
-def with_history_capture(action_type: "HistoryActionType", description_template: str = "Update {node_type} settings"):
-    """Decorator to automatically capture history for FlowGraph methods.
+# How long a mutation waits for another in-flight mutation of the same flow before giving up.
+EDIT_LOCK_TIMEOUT_SECONDS = 30.0
 
-    Wraps a method to capture state before execution and record history
-    only if the state actually changed. Respects the flow's track_history setting.
+
+def with_history_capture(action_type: "HistoryActionType", description_template: str = "Update {node_type} settings"):
+    """Decorator that runs a FlowGraph mutator inside :meth:`FlowGraph.transaction`.
+
+    Standalone calls record one undo step when the graph changed; inside an outer
+    transaction (an editor route, an AI batch) or a restore the call records nothing
+    itself. With ``flow_settings.track_history`` off the method runs as a plain call.
 
     Args:
         action_type: The type of history action (e.g., HistoryActionType.UPDATE_SETTINGS).
@@ -254,8 +266,7 @@ def with_history_capture(action_type: "HistoryActionType", description_template:
             settings_input = args[0] if args else next(iter(kwargs.values()), None)
 
             # Remember the session owner so restore_from_snapshot can re-stamp
-            # user_id even when the live graph holds no nodes (every editor
-            # mutation funnels through this decorator with a stamped user_id).
+            # user_id even when the live graph holds no nodes.
             owner_uid = getattr(settings_input, "user_id", None) if settings_input else None
             if owner_uid is not None:
                 self._owner_user_id = owner_uid
@@ -269,19 +280,42 @@ def with_history_capture(action_type: "HistoryActionType", description_template:
                 if settings_input
                 else func.__name__.replace("add_", "")
             )
-
-            pre_snapshot = self.get_flowfile_data()
-
-            result = func(self, *args, **kwargs)
-
-            self._history_manager.capture_if_changed(
-                self, pre_snapshot, action_type, description_template.format(node_type=node_type), node_id
-            )
-            return result
+            with self.transaction(description_template.format(node_type=node_type), action_type, node_id=node_id):
+                return func(self, *args, **kwargs)
 
         return wrapper
 
     return decorator
+
+
+class GraphTransaction:
+    """Handle yielded by :meth:`FlowGraph.transaction`.
+
+    ``description`` may be refined inside the block (e.g. once the affected node is
+    known); ``entry`` holds the recorded history entry after a successful outermost
+    transaction that changed the graph, else None. ``history`` is the history state
+    taken while the lock was still held, so a response never reports another writer's
+    state.
+    """
+
+    __slots__ = ("description", "entry", "history")
+
+    def __init__(self, description: str):
+        self.description = description
+        self.entry = None
+        self.history: HistoryState | None = None
+
+
+def _warn_if_on_event_loop() -> None:
+    """Waiting for a flow's edit lock on the event loop would stall every request (or deadlock)."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    message = "FlowGraph edit waited for the edit lock on an asyncio event-loop thread; use asyncio.to_thread"
+    if os.environ.get("TESTING") == "True":
+        raise RuntimeError(message)
+    logger.error(message)
 
 
 def get_xlsx_schema(
@@ -1988,49 +2022,6 @@ def _resolve_database_credentials(
         return ref_settings, encrypted_password, ref_settings
 
 
-class _FlowIdentity(NamedTuple):
-    """Where a flow lives on disk and what it is called.
-
-    A history snapshot cannot supply this: ``FlowfileSettings`` omits
-    name/path/save_location, and ``flowfile_name`` is whatever the graph was called when
-    the snapshot was taken rather than the current catalog display name. So undo/redo
-    captures identity from the live graph and re-stamps it over the replayed settings.
-    Letting the snapshot win reset ``path`` to ``""``, which broke display-name-by-path
-    lookup (the UI reverted to the raw stem) and path-based save relinking (422 "no save
-    path", or a new orphaned registration).
-    """
-
-    flow_id: int
-    graph_name: str
-    name: str | None
-    path: str | None
-    save_location: str | None
-    source_registration_id: int | None
-
-    @classmethod
-    def capture(cls, graph: "FlowGraph") -> "_FlowIdentity":
-        return cls(
-            flow_id=graph._flow_id,
-            graph_name=graph.__name__,
-            name=graph._flow_settings.name,
-            path=graph._flow_settings.path,
-            save_location=graph._flow_settings.save_location,
-            source_registration_id=graph._flow_settings.source_registration_id,
-        )
-
-    def restore_onto(self, graph: "FlowGraph") -> None:
-        graph._flow_id = self.flow_id
-        graph.__name__ = self.graph_name
-        settings = graph._flow_settings
-        settings.flow_id = self.flow_id
-        settings.name = self.name
-        settings.path = self.path
-        settings.save_location = self.save_location
-        if settings.source_registration_id is None:
-            # A snapshot taken after the flow was registered carries the newer id.
-            settings.source_registration_id = self.source_registration_id
-
-
 class _NodeOwners(NamedTuple):
     """Which user each node belonged to before a snapshot restore.
 
@@ -2149,6 +2140,11 @@ class FlowGraph:
         # Serializes claiming flow_settings.is_running: the bare check-then-set in the
         # run entry points raced when callers arrive from non-asyncio threads.
         self._run_claim_lock = threading.Lock()
+        # Serializes graph mutations, undo/redo and saves; always taken before _run_claim_lock.
+        self._edit_lock = threading.RLock()
+        self._transaction_depth = 0
+        # Primitive graph writes made with history on but outside any transaction.
+        self._untracked_writes = 0
         self.cache_results = cache_results
         self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
@@ -2203,6 +2199,114 @@ class FlowGraph:
 
     # ==================== History Management Methods ====================
 
+    @contextmanager
+    def edit_lock(self, bounded: bool = True) -> Iterator[None]:
+        """Hold the per-flow edit lock; every writer takes it through here.
+
+        A bounded wait answers 409 after ``EDIT_LOCK_TIMEOUT_SECONDS``; ``bounded=False`` waits for
+        the in-flight edit instead (a save or run claim must not fail on a busy flow). A contended
+        wait on an event-loop thread is logged as an error (raised under TESTING): a to_thread
+        worker holding the lock may itself need the loop.
+        """
+        if not self._edit_lock.acquire(blocking=False):
+            _warn_if_on_event_loop()
+            timeout = EDIT_LOCK_TIMEOUT_SECONDS if bounded else -1
+            if not self._edit_lock.acquire(timeout=timeout):
+                raise HTTPException(409, "Flow is busy")
+        try:
+            yield
+        finally:
+            self._edit_lock.release()
+
+    @contextmanager
+    def rebuilding(self) -> Iterator[None]:
+        """Hold the edit lock and record nothing while the graph is rebuilt (open, undo/redo, rollback)."""
+        with self.edit_lock(), self._history_manager.restoring():
+            yield
+
+    @contextmanager
+    def transaction(
+        self,
+        description: str,
+        action_type: HistoryActionType = HistoryActionType.BATCH,
+        node_id: int | None = None,
+        record: bool = True,
+    ) -> Iterator[GraphTransaction]:
+        """Run one graph mutation atomically under the edit lock and record at most one undo step.
+
+        The outermost transaction snapshots the graph before and after the block. A
+        successful one records the pre-block state as one undo entry iff the in-scope graph
+        changed (and only then clears redo), provided ``record`` and history tracking are on.
+        The dirty flag is refreshed either way, and ``txn.history`` is filled while the lock
+        is still held. A failure anywhere in that sequence (the block, the post-snapshot,
+        recording, the dirty refresh or the history read) restores the pre-block graph,
+        discards any entry it already recorded and re-raises, so a failed request changes
+        nothing (except that a failure after recording cannot bring back the redo that the
+        recording cleared). Nested transactions and calls during a restore run the block as-is.
+        """
+        txn = GraphTransaction(description)
+        with self.edit_lock():
+            if self._transaction_depth > 0 or self._history_manager.is_restoring():
+                self._transaction_depth += 1
+                try:
+                    yield txn
+                finally:
+                    self._transaction_depth -= 1
+                txn.history = self.get_history_state()
+                return
+
+            try:
+                pre = HistorySnapshot(self.get_flowfile_data().model_dump())
+            except Exception:
+                # An unserializable graph must stay editable; this edit just can't be undone or rolled back.
+                logger.exception(f"Flow {self.flow_id}: could not snapshot the graph before '{description}'")
+                pre = None
+            self._transaction_depth = 1
+            try:
+                yield txn
+                post = None
+                if pre is not None:
+                    post = HistorySnapshot(self.get_flowfile_data().model_dump(), keep_payload=False)
+                if post is None:
+                    self._history_manager.refresh_dirty_from(self)
+                else:
+                    if record and self.flow_settings.track_history:
+                        txn.entry = self._history_manager.record(pre, post, action_type, txn.description, node_id)
+                    self._history_manager.refresh_dirty(post)
+                txn.history = self.get_history_state()
+            except BaseException:
+                if txn.entry is not None:
+                    self._history_manager.discard_if_top(txn.entry)
+                    txn.entry = None
+                if pre is not None:
+                    self._rollback_to(pre)
+                raise
+            finally:
+                self._transaction_depth = 0
+
+    def _rollback_to(self, snapshot: HistorySnapshot) -> None:
+        """Restore ``snapshot`` without touching the history stacks, if the graph changed."""
+        try:
+            changed = in_scope_hash(self.get_flowfile_data().model_dump()) != snapshot.graph_hash
+        except Exception:
+            changed = True
+        if not changed:
+            return
+        try:
+            self.restore_from_snapshot(schemas.FlowfileData.model_validate(snapshot.load()))
+        except Exception:
+            logger.exception(f"Flow {self.flow_id}: rollback after a failed edit could not restore the graph")
+        self._history_manager.refresh_dirty_from(self)
+
+    def _note_graph_write(self) -> None:
+        """Count primitive graph writes that bypass the transaction (history on, none active)."""
+        if (
+            self._transaction_depth == 0
+            and self.flow_settings.track_history
+            and not self._history_manager.is_restoring()
+        ):
+            self._untracked_writes += 1
+
     def capture_history_snapshot(
         self,
         action_type: HistoryActionType,
@@ -2210,6 +2314,8 @@ class FlowGraph:
         node_id: int = None,
     ) -> bool:
         """Capture the current state before a change for undo support.
+
+        Legacy explicit API kept for tests; editor routes and in-process mutators use :meth:`transaction`.
 
         Args:
             action_type: The type of action being performed.
@@ -2219,7 +2325,8 @@ class FlowGraph:
         Returns:
             True if snapshot was captured, False if skipped.
         """
-        return self._history_manager.capture_snapshot(self, action_type, description, node_id)
+        with self.edit_lock():
+            return self._history_manager.capture_snapshot(self, action_type, description, node_id)
 
     def capture_history_if_changed(
         self,
@@ -2230,8 +2337,7 @@ class FlowGraph:
     ) -> bool:
         """Capture history only if the flow state actually changed.
 
-        Use this for settings updates where the change might be a no-op.
-        Call this AFTER the change is applied.
+        Legacy explicit API kept for tests: call AFTER the change is applied.
 
         Args:
             pre_snapshot: The FlowfileData captured BEFORE the change.
@@ -2242,23 +2348,42 @@ class FlowGraph:
         Returns:
             True if a change was detected and snapshot was captured.
         """
-        return self._history_manager.capture_if_changed(self, pre_snapshot, action_type, description, node_id)
+        with self.edit_lock():
+            return self._history_manager.capture_if_changed(self, pre_snapshot, action_type, description, node_id)
 
     def undo(self) -> UndoRedoResult:
         """Undo the last action by restoring to the previous state.
 
         Returns:
-            UndoRedoResult indicating success or failure.
+            UndoRedoResult indicating success or failure, carrying the resulting history state.
         """
-        return self._history_manager.undo(self)
+        with self.edit_lock():
+            result = self._history_manager.undo(self)
+            result.history = self.get_history_state()
+            return result
 
     def redo(self) -> UndoRedoResult:
         """Redo the last undone action.
 
         Returns:
-            UndoRedoResult indicating success or failure.
+            UndoRedoResult indicating success or failure, carrying the resulting history state.
         """
-        return self._history_manager.redo(self)
+        with self.edit_lock():
+            result = self._history_manager.redo(self)
+            result.history = self.get_history_state()
+            return result
+
+    def revert_if_top(self, entry) -> bool:
+        """Silently retract a just-recorded step if nothing was recorded after it (redo untouched)."""
+        if entry is None:
+            return False
+        with self.edit_lock():
+            return self._history_manager.revert_if_top(self, entry)
+
+    def clear_history(self) -> None:
+        """Drop every undo/redo entry (the save point is kept)."""
+        with self.edit_lock():
+            self._history_manager.clear()
 
     def get_history_state(self) -> HistoryState:
         """Get the current state of the history system.
@@ -2266,11 +2391,14 @@ class FlowGraph:
         Returns:
             HistoryState with information about available undo/redo operations.
         """
-        return self._history_manager.get_state()
+        state = self._history_manager.get_state()
+        state.flow_id = self.flow_id
+        return state
 
     def mark_as_saved(self) -> None:
         """Mark the current flow state as the saved baseline (for dirty tracking)."""
-        self._history_manager.mark_saved(self)
+        with self.edit_lock():
+            self._history_manager.mark_saved(self)
 
     def has_unsaved_changes(self) -> bool:
         """Return True if the flow has changed since the last save point."""
@@ -2283,10 +2411,7 @@ class FlowGraph:
         description: str,
         node_id: int = None,
     ) -> Any:
-        """Execute an operation with automatic history capture.
-
-        This helper captures the state before the operation, executes it,
-        and records history only if the state actually changed.
+        """Run ``operation`` inside :meth:`transaction` (a plain call when tracking is off).
 
         Args:
             operation: A callable that performs the actual operation.
@@ -2297,125 +2422,40 @@ class FlowGraph:
         Returns:
             The result of the operation (if any).
         """
-        # Skip history capture if tracking is disabled for this flow
         if not self.flow_settings.track_history:
             return operation()
-
-        pre_snapshot = self.get_flowfile_data()
-        result = operation()
-        self._history_manager.capture_if_changed(self, pre_snapshot, action_type, description, node_id)
-        return result
+        with self.transaction(description, action_type, node_id=node_id):
+            return operation()
 
     def restore_from_snapshot(self, snapshot: schemas.FlowfileData) -> None:
-        """Clear current state and rebuild from a snapshot.
+        """Clear the graph and rebuild it from a snapshot, recording nothing.
 
-        This method is used internally by undo/redo to restore a previous state.
+        Used by undo/redo and transaction rollback. The live flow settings and identity
+        are kept as-is (they are outside the undo scope); node owners are re-stamped
+        because snapshots deliberately omit ``user_id``.
 
         Args:
             snapshot: The FlowfileData snapshot to restore from.
         """
         from flowfile_core.flowfile.manage.io_flowfile import (
             _flowfile_data_to_flow_information,
-            determine_insertion_order,
+            populate_graph_from_flow_information,
         )
 
-        identity = _FlowIdentity.capture(self)
-        node_owners = _NodeOwners.capture(self)
+        with self.rebuilding():
+            node_owners = _NodeOwners.capture(self)
+            flow_info = _flowfile_data_to_flow_information(snapshot)
 
-        flow_info = _flowfile_data_to_flow_information(snapshot)
+            self._node_db.clear()
+            self._node_ids.clear()
+            self._flow_starts.clear()
+            self._groups.clear()
+            self._comments.clear()
+            self._results = None
+            # Rebuilt nodes restart at _cache_epoch 0; a stale liveness signature would skip the union invalidation.
+            self._any_input_liveness.clear()
 
-        self._node_db.clear()
-        self._node_ids.clear()
-        self._flow_starts.clear()
-        self._groups.clear()
-        self._comments.clear()
-        self._results = None
-        # Rebuilt nodes restart at _cache_epoch 0 while keeping parent_uuid, so
-        # their hashes revert to pre-invalidation values; a remembered liveness
-        # signature would then suppress the union invalidation that guards a
-        # worker cache written under a different gate topology.
-        self._any_input_liveness.clear()
-
-        self._flow_settings = flow_info.flow_settings
-        identity.restore_onto(self)
-
-        ingestion_order = determine_insertion_order(flow_info)
-
-        for node_id in ingestion_order:
-            node_info = flow_info.data[node_id]
-            if getattr(node_info.setting_input, "is_user_defined", False) and node_info.type not in CUSTOM_NODE_STORE:
-                register_missing_node_template(node_info.type)
-            node_promise = input_schema.NodePromise(
-                flow_id=identity.flow_id,
-                node_id=node_info.id,
-                pos_x=node_info.x_position or 0,
-                pos_y=node_info.y_position or 0,
-                node_type=node_info.type,
-            )
-            if hasattr(node_info.setting_input, "cache_results"):
-                node_promise.cache_results = node_info.setting_input.cache_results
-            self.add_node_promise(node_promise)
-
-        for node_id in ingestion_order:
-            node_info = flow_info.data[node_id]
-            if node_info.is_setup and node_info.setting_input is not None:
-                if hasattr(node_info.setting_input, "flow_id"):
-                    node_info.setting_input.flow_id = identity.flow_id
-
-                if hasattr(node_info.setting_input, "user_id"):
-                    node_info.setting_input.user_id = node_owners.owner_of(node_id)
-
-                if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
-                    # .get() execs the node module lazily; on any failure the node
-                    # lands in the missing/error path so the flow still opens.
-                    self._place_user_defined_node(node_info.type, node_info.setting_input)
-                else:
-                    add_method = getattr(self, "add_" + node_info.type, None)
-                    if add_method:
-                        add_method(node_info.setting_input)
-
-        for node_id in ingestion_order:
-            node_info = flow_info.data[node_id]
-            from_node = self.get_node(node_id)
-            if from_node is None:
-                continue
-
-            for output_node_id in node_info.outputs or []:
-                to_node = self.get_node(output_node_id)
-                if to_node is None:
-                    continue
-                if to_node.accepts_dynamic_inputs:
-                    continue  # keyed edges are restored from input_connections below
-
-                output_node_info = flow_info.data.get(output_node_id)
-                if output_node_info is None:
-                    continue
-
-                is_left_input = (output_node_info.left_input_id == node_id) and (
-                    to_node.left_input is None or to_node.left_input.node_id != node_id
-                )
-                is_right_input = (output_node_info.right_input_id == node_id) and (
-                    to_node.right_input is None or to_node.right_input.node_id != node_id
-                )
-                is_main_input = node_id in (output_node_info.input_ids or [])
-
-                if is_left_input:
-                    insert_type = "left"
-                elif is_right_input:
-                    insert_type = "right"
-                elif is_main_input:
-                    insert_type = "main"
-                else:
-                    continue
-
-                to_node.add_node_connection(from_node, insert_type)
-
-        restore_dynamic_input_connections(self, flow_info)
-
-        # Member group_ids were re-applied above via add_<type>(setting_input);
-        # repopulate the box registry (name/color/bounds) from the snapshot.
-        self.restore_groups(flow_info.groups)
-        self.restore_comments(flow_info.comments)
+            populate_graph_from_flow_information(self, flow_info, owner_of=node_owners.owner_of)
 
         logger.info(f"Restored flow from snapshot with {len(self._node_db)} nodes")
 
@@ -2436,6 +2476,7 @@ class FlowGraph:
         return [node.node_id for node in self.nodes if getattr(node.setting_input, "group_id", None) == group_id]
 
     def _set_node_group(self, node_id: int, group_id: int | None) -> None:
+        self._note_graph_write()
         node = self.get_node(node_id)
         if node is not None and node.setting_input is not None and hasattr(node.setting_input, "group_id"):
             node.setting_input.group_id = group_id
@@ -2629,6 +2670,7 @@ class FlowGraph:
         Plain mutator: the caller (update_layout route) captures history once for the
         whole drag-end batch so node moves and group-bounds changes share one snapshot.
         """
+        self._note_graph_write()
         for update in updates:
             node = self.get_node(update.node_id)
             if node is not None and node.setting_input is not None and hasattr(node.setting_input, "pos_x"):
@@ -2637,6 +2679,7 @@ class FlowGraph:
 
     def set_group_bounds(self, updates: list[schemas.GroupBoundsUpdate]) -> None:
         """Persist group box bounds (used together with set_node_positions on drag/resize)."""
+        self._note_graph_write()
         for update in updates:
             group = self._groups.get(update.group_id)
             if group is not None:
@@ -2718,6 +2761,7 @@ class FlowGraph:
 
     def set_comment_bounds(self, updates: list[schemas.CommentBoundsUpdate]) -> None:
         """Persist comment bounds (used together with set_node_positions on drag/resize)."""
+        self._note_graph_write()
         for update in updates:
             comment = self._comments.get(update.comment_id)
             if comment is not None:
@@ -2803,6 +2847,7 @@ class FlowGraph:
             initial_y: The y-position of the topmost node.
         """
         self.flow_logger.info("Applying layered layout...")
+        self._note_graph_write()
         start_time = time()
         try:
             new_positions = calculate_layered_layout(
@@ -3633,7 +3678,6 @@ class FlowGraph:
                     field_data_type = None
 
                 expression = build_filter_expression(basic_filter, field_data_type)
-                filter_settings.filter_input.advanced_filter = expression
 
             if filter_settings.split_mode:
                 return fl.filter_split(expression)
@@ -3908,12 +3952,13 @@ class FlowGraph:
         """
 
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
-            for left_select in cross_join_settings.cross_join_input.left_select.renames:
+            cross_join_input = deepcopy(cross_join_settings.cross_join_input)
+            for left_select in cross_join_input.left_select.renames:
                 left_select.is_available = True if left_select.old_name in main.schema else False
-            for right_select in cross_join_settings.cross_join_input.right_select.renames:
+            for right_select in cross_join_input.right_select.renames:
                 right_select.is_available = True if right_select.old_name in right.schema else False
             return main.do_cross_join(
-                cross_join_input=cross_join_settings.cross_join_input,
+                cross_join_input=cross_join_input,
                 auto_generate_selection=cross_join_settings.auto_generate_selection,
                 verify_integrity=False,
                 other=right,
@@ -4808,10 +4853,10 @@ class FlowGraph:
             The `FlowGraph` instance for method chaining.
         """
 
-        select_cols = select_settings.select_input
         drop_cols = tuple(s.old_name for s in select_settings.select_input)
 
         def _func(table: FlowDataEngine) -> FlowDataEngine:
+            select_cols = deepcopy(select_settings.select_input)
             input_cols = set(f.name for f in table.schema)
             ids_to_remove = []
             for i, select_col in enumerate(select_cols):
@@ -4859,6 +4904,7 @@ class FlowGraph:
 
         node = self._node_db.get(node_id)
         if node:
+            self._note_graph_write()
             logger.info(f"Found node: {node_id}, processing deletion")
             group_id = getattr(node.setting_input, "group_id", None)
 
@@ -4879,6 +4925,8 @@ class FlowGraph:
                     depend_on.delete_lead_to_node(node_id)
 
             self._node_db.pop(node_id)
+            # A later node reusing this id must not inherit its start flag.
+            self._flow_starts[:] = [start for start in self._flow_starts if start.node_id != node_id]
             logger.debug(f"Successfully removed node {node_id} from node_db")
             del node
             logger.info("Node object deleted")
@@ -4931,6 +4979,7 @@ class FlowGraph:
         Returns:
             The created or updated FlowNode object.
         """
+        self._note_graph_write()
         output_field_config = getattr(setting_input, "output_field_config", None) if setting_input else None
 
         logger.info(
@@ -6748,8 +6797,12 @@ class FlowGraph:
         )
 
     def try_claim_run(self) -> bool:
-        """Atomically claim the flow's single-run slot; False when a run is already in flight."""
-        with self._run_claim_lock:
+        """Atomically claim the flow's single-run slot; False when a run is already in flight.
+
+        Waits for an in-flight edit first, so a run never starts on a half-applied mutation
+        (lock order: edit lock, then claim lock).
+        """
+        with self.edit_lock(bounded=False), self._run_claim_lock:
             if self.flow_settings.is_running:
                 return False
             self.flow_settings.is_running = True
@@ -7637,13 +7690,15 @@ class FlowGraph:
                 type=node_info.type,
                 is_start_node=node.node_id in start_node_ids,
                 description=node_info.description,
+                description_is_auto_generated=not getattr(node.setting_input, "description", ""),
                 node_reference=node_info.node_reference,
                 x_position=int(node_info.x_position),
                 y_position=int(node_info.y_position),
                 group_id=node_info.group_id,
                 left_input_id=node_info.left_input_id,
                 right_input_id=node_info.right_input_id,
-                input_ids=node_info.input_ids,
+                # A node whose last main input was removed holds [] where a never-connected one holds None.
+                input_ids=node_info.input_ids or None,
                 outputs=node_info.outputs,
                 output_handles=node_info.output_handles,
                 input_connections=node_info.input_connections,
@@ -7741,6 +7796,10 @@ class FlowGraph:
         Args:
             flow_path: The path where the flow file will be saved.
         """
+        with self.edit_lock(bounded=False):
+            self._save_flow(flow_path)
+
+    def _save_flow(self, flow_path: str):
         logger.info("Saving flow to %s", flow_path)
         path = Path(flow_path)
         os.makedirs(path.parent, exist_ok=True)
@@ -8057,6 +8116,10 @@ def combine_existing_settings_and_new_settings(setting_input: Any, new_settings:
         if hasattr(new_settings, field) and getattr(new_settings, field) is not None:
             setattr(copied_setting_input, field, getattr(new_settings, field))
 
+    # The paste target decides group membership (None = top level), never the source node.
+    if hasattr(copied_setting_input, "group_id"):
+        copied_setting_input.group_id = new_settings.group_id
+
     # Reset node_reference to None when copying (so it defaults to df_{node_id})
     if hasattr(copied_setting_input, "node_reference"):
         copied_setting_input.node_reference = None
@@ -8179,6 +8242,7 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
         node_connection: An object defining the source and target of the connection.
     """
     logger.info("adding a connection")
+    flow._note_graph_write()
     from_node = flow.get_node(node_connection.output_connection.node_id)
     to_node = flow.get_node(node_connection.input_connection.node_id)
     logger.info(f"from_node={from_node}, to_node={to_node}")
@@ -8207,6 +8271,33 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
         insert_type,
         output_handle=node_connection.output_connection.connection_class,
     )
+
+
+def insert_node_on_edge(flow: FlowGraph, node_id: int, node_connection: input_schema.NodeConnection) -> None:
+    """Splice node ``node_id`` into the existing edge A -> B described by ``node_connection``.
+
+    A feeds the node's ``input-0`` through the edge's output handle, and the node's ``output-0``
+    takes A's place in B's inputs: the same slot and the same position among B's inputs (see
+    ``FlowNode.replace_input_source``). Everything is validated before anything changes.
+    """
+    flow._note_graph_write()
+    source_id = node_connection.output_connection.node_id
+    target_id = node_connection.input_connection.node_id
+    slot = node_connection.input_connection.connection_class
+    source_handle = node_connection.output_connection.connection_class
+    node = flow.get_node(node_id)
+    if node is None:
+        raise HTTPException(404, f"Node {node_id} does not exist")
+    from_node, to_node = flow.get_node(source_id), flow.get_node(target_id)
+    if from_node is None or to_node is None or to_node.input_edge_handle(source_id, slot) != source_handle:
+        raise HTTPException(422, "Connection does not exist on the input node")
+    error = validate_connection(node, to_node, DEFAULT_OUTPUT_HANDLE)
+    if error is not None:
+        raise HTTPException(422, error.detail)
+    add_connection(
+        flow, input_schema.NodeConnection.create_from_simple_input(source_id, node_id, output_handle=source_handle)
+    )
+    to_node.replace_input_source(from_node, node, slot, DEFAULT_OUTPUT_HANDLE)
 
 
 def restore_dynamic_input_connections(graph: "FlowGraph", flow_info: schemas.FlowInformation) -> None:
@@ -8278,6 +8369,7 @@ def delete_connection(graph, node_connection: input_schema.NodeConnection):
         graph: The FlowGraph instance to modify.
         node_connection: An object defining the connection to be removed.
     """
+    graph._note_graph_write()
     from_node = graph.get_node(node_connection.output_connection.node_id)
     to_node = graph.get_node(node_connection.input_connection.node_id)
     # Without these guards a stale delete (e.g. after the target node was

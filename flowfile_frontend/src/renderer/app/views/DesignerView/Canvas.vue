@@ -25,6 +25,7 @@ import {
   useVueFlow,
   ConnectionMode,
 } from "@vue-flow/core";
+import type { EdgeChange, GraphNode, NodeChange } from "@vue-flow/core";
 import { MiniMap } from "@vue-flow/minimap";
 
 import CustomNode from "../../components/nodes/NodeWrapper.vue";
@@ -45,7 +46,7 @@ import DeletableEdge from "./DeletableEdge.vue";
 import GroupProxyEdge from "./GroupProxyEdge.vue";
 import useDragAndDrop from "./useDnD";
 import {
-  suppressedEdgeRemovals,
+  isCommittedEdgeRemoval,
   markHoveredEdge,
   detectEdgeUnderPointer,
   markAutoConnectNode,
@@ -59,14 +60,21 @@ import { useEditorStore } from "../../stores/editor-store";
 import { useFlowStore, FLOW_ID_STORAGE_KEY } from "../../stores/flow-store";
 import { useDrawerStore } from "../../stores/drawer-store";
 import { useTutorialStore } from "../../stores/tutorial-store";
-import {
-  getFlowData,
-  deleteConnection,
-  deleteNode,
-  connectNode,
-  NodeConnection,
-} from "./backendInterface";
 import { FlowApi } from "../../api";
+import {
+  mutationGeneration,
+  releaseMutationSlot,
+  reserveMutationSlot,
+  whenMutationsIdle,
+} from "../../services/axios.config";
+import { flushPendingEdits, registerPendingEdit } from "../../services/mutationChannel";
+import { recoverFromFailedMutation } from "../../services/mutationFailure";
+import {
+  buildRemovalBatch,
+  connection,
+  createRemovalCollector,
+  type RemovalTick,
+} from "../../utils/graphOperations";
 import {
   copyNodesToBuffer,
   copySingleNodeToBuffer,
@@ -98,7 +106,7 @@ import { useAiGhostNodeStore } from "../../stores/ai-ghost-node-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { nodeDocsUrl } from "./nodeDocsLinks";
 import { NodeCopyInput, ContextMenuAction, CursorPosition } from "./types";
-import type { NodeHandle, NodeTemplate } from "../../types/flow.types";
+import type { GraphOperation, NodeHandle, NodeTemplate } from "../../types/flow.types";
 import type { RunFlowReference } from "../../types/node.types";
 import type { Connection } from "@vue-flow/core";
 import { applyStandardLayout } from "./editorLayoutInterface";
@@ -248,7 +256,21 @@ function onNodeDrag({
   markAutoConnectNode(nodeDragConnectCandidate?.nodeId ?? null);
 }
 
-async function onNodeDragStop({ node }: { node: Node }) {
+// Absolute positions at drag start, so a drag that moved nothing sends nothing.
+let dragStartPositions = new Map<string, { x: number; y: number }>();
+
+function onNodeDragStart({ nodes: dragged }: { nodes: GraphNode[] }) {
+  resetAutoConnectCandidates();
+  dragStartPositions = new Map(dragged.map((n) => [n.id, { ...n.computedPosition }]));
+}
+
+const movedSinceDragStart = (node: GraphNode): boolean => {
+  const start = dragStartPositions.get(node.id);
+  return !start || start.x !== node.computedPosition.x || start.y !== node.computedPosition.y;
+};
+
+/** One drag = one step: the whole dragged selection's layout plus any splice/auto-connect. */
+async function onNodeDragStop({ node, nodes: dragged }: { node: GraphNode; nodes: GraphNode[] }) {
   const edgeId = nodeDragInsertCandidate;
   const match = nodeDragConnectCandidate;
   nodeDragInsertCandidate = null;
@@ -256,27 +278,44 @@ async function onNodeDragStop({ node }: { node: Node }) {
   markHoveredEdge(null);
   markAutoConnectNode(null);
   resetAutoConnectCandidates();
-  if (edgeId) {
-    const template = (node.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate;
-    if (!template) return;
-    const response = await insertNodeOnEdge(flowStore.flowId, Number(node.id), template, edgeId);
-    if (response?.history) {
-      flowStore.updateHistoryState(response.history);
+  const flowId = flowStore.flowId;
+  const moved = dragged
+    .map((n) => instance.findNode(n.id))
+    .filter((n): n is GraphNode => !!n && movedSinceDragStart(n));
+  dragStartPositions = new Map();
+  const nodeId = Number(node.id);
+  const plan = edgeId
+    ? planEdgeSplice(nodeId, edgeId)
+    : match
+      ? planAutoConnect(nodeId, match)
+      : null;
+  if (moved.length === 0 && !plan) return;
+  // Keep this drag's place in the channel while the layout is measured.
+  const slot = reserveMutationSlot();
+  let layout: Awaited<ReturnType<typeof layoutForMovedNodes>> | null;
+  try {
+    layout = moved.length > 0 ? await layoutForMovedNodes(moved) : null;
+  } catch (error) {
+    releaseMutationSlot(slot);
+    throw error;
+  }
+  try {
+    if (!plan) {
+      if (layout) await FlowApi.updateLayout(flowId, layout, slot);
+      return;
     }
+    const type = (node.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate?.item;
+    const label = `${edgeId ? "Insert" : "Connect"} ${type ? `${type} ` : ""}node`;
+    const operations: GraphOperation[] = layout ? [{ op: "update_layout", layout }] : [];
+    await FlowApi.applyOperations(flowId, label, [...operations, ...plan.operations], slot);
+  } catch (error) {
+    recoverFromFailedMutation(error, "Could not save the move");
     return;
+  } finally {
+    // Frees the slot if nothing was sent; a no-op once the channel has released it.
+    releaseMutationSlot(slot);
   }
-  // No edge-splice: persist the new position(s). Also closes the long-standing gap
-  // where dragged node positions were never sent to the backend.
-  const graphNode = instance.findNode(node.id);
-  if (graphNode) {
-    await persistDrag(graphNode);
-  }
-  if (match) {
-    const response = await autoConnectNode(flowStore.flowId, Number(node.id), match);
-    if (response?.history) {
-      flowStore.updateHistoryState(response.history);
-    }
-  }
+  plan?.apply();
 }
 const nodes = ref<Node[]>([]);
 const edges = ref([]);
@@ -291,13 +330,13 @@ const {
   createCopyNode,
   createMultiCopyNodes,
   createManualInputFromClipboard,
-  insertNodeOnEdge,
+  planEdgeSplice,
+  planAutoConnect,
   detectAutoConnectForNode,
-  autoConnectNode,
   resetAutoConnectCandidates,
 } = useDragAndDrop();
 const fileDrop = useFileDropImport();
-const { groupSelectedNodes, removeSelectedFromGroup, persistDrag } = useNodeGroups();
+const { groupSelectedNodes, removeSelectedFromGroup, layoutForMovedNodes } = useNodeGroups();
 const { addCommentAt } = useCanvasComments();
 // Default drawer sizing. The bottom dock takes ~25% of the canvas height; the
 // right-side drawers span from the canvas top down to the dock, so the two
@@ -372,39 +411,11 @@ useFlowHotkeys({
   toggleAiDrawer: () => editorStore.toggleAiDrawer(),
 });
 
-interface NodeChange {
-  id: string;
-  type: "remove" | "add" | "update";
-}
-
-interface EdgeChange {
-  id: string;
-  source: string;
-  target: string;
-  sourceHandle:
-    | "output-0"
-    | "output-1"
-    | "output-2"
-    | "output-3"
-    | "output-4"
-    | "output-5"
-    | "output-6"
-    | "output-7"
-    | "output-8"
-    | "output-9";
-  targetHandle:
-    | "input-0"
-    | "input-1"
-    | "input-2"
-    | "input-3"
-    | "input-4"
-    | "input-5"
-    | "input-6"
-    | "input-7"
-    | "input-8"
-    | "input-9";
-  type: "remove" | "add" | "update";
-}
+// Closing runs the drawer's close save, which persists nothing for a node that is gone.
+const dismissSettingsDrawer = () => {
+  nodeStore.nodeId = -1;
+  editorStore.activeDrawerComponent = null;
+};
 
 // False when the open drawer refused to save (it stays open) or the selection moved meanwhile.
 const releaseOpenSettings = async (): Promise<boolean> => {
@@ -417,8 +428,7 @@ const handleCanvasClick = async () => {
   window.getSelection()?.removeAllRanges();
   if (!(await releaseOpenSettings())) return;
   drawerStore.clearPreview();
-  nodeStore.nodeId = -1;
-  editorStore.activeDrawerComponent = null;
+  dismissSettingsDrawer();
   nodeStore.hideLogViewer();
 };
 
@@ -462,6 +472,9 @@ function onEdgeUpdate({ edge, connection }: { edge: any; connection: any }) {
   updateEdge(edge, connection);
 }
 
+// The flow the canvas last rendered: a reload of the same flow keeps viewport and selection.
+let loadedFlowId: number | null = null;
+
 const loadFlow = async () => {
   const myToken = ++loadToken;
   isLoadingFlow.value = true;
@@ -472,27 +485,48 @@ const loadFlow = async () => {
     if (myToken !== loadToken) return;
 
     const flowIdAtStart = flowStore.flowId;
-    const vueFlowInput = await getFlowData(flowIdAtStart);
-    if (myToken !== loadToken) return;
-
-    // Seed before nodes mount so their description reads hit the cache.
-    nodeStore.seedNodeDescriptions(flowIdAtStart, vueFlowInput.node_inputs);
-    await importFlow(vueFlowInput);
-    // Stale check after importFlow: createEmptyFlow inside importFlow already
-    // cleared the canvas, so bailing here is safe — the newer in-flight run
-    // (which bumped loadToken) will repopulate.
-    if (myToken !== loadToken) return;
+    const sameFlow = loadedFlowId === flowIdAtStart;
+    const selectedIds = sameFlow ? instance.getSelectedNodes.value.map((node) => node.id) : [];
+    let historyState: Awaited<ReturnType<typeof FlowApi.getHistoryStatus>> | null;
+    // Once: a nudge burst that starts mid-reload is waited for (its reserved slot), not split.
+    await flushPendingEdits();
+    // Show only a settled graph: re-read if a mutation was enqueued while fetching or importing.
+    for (;;) {
+      await whenMutationsIdle();
+      if (myToken !== loadToken) return;
+      const generation = mutationGeneration();
+      let vueFlowInput: Awaited<ReturnType<typeof FlowApi.getFlowData>>;
+      [vueFlowInput, historyState] = await Promise.all([
+        FlowApi.getFlowData(flowIdAtStart),
+        FlowApi.getHistoryStatus(flowIdAtStart).catch((error) => {
+          console.error("Failed to fetch history state:", error);
+          return null;
+        }),
+      ]);
+      if (myToken !== loadToken) return;
+      if (generation !== mutationGeneration()) continue;
+      // Seed before nodes mount so their description reads hit the cache.
+      nodeStore.seedNodeDescriptions(flowIdAtStart, vueFlowInput.node_inputs);
+      await importFlow(vueFlowInput);
+      // importFlow already cleared the canvas; the newer run that bumped loadToken repopulates it.
+      if (myToken !== loadToken) return;
+      if (generation === mutationGeneration()) break;
+    }
+    loadedFlowId = flowIdAtStart;
+    // The settings drawer must not keep showing a node the reloaded graph no longer has.
+    if (nodeStore.nodeId !== -1 && !instance.findNode(String(nodeStore.nodeId))) {
+      dismissSettingsDrawer();
+    }
 
     await nextTick();
-    restoreViewport(flowIdAtStart);
-
-    try {
-      const historyState = await FlowApi.getHistoryStatus(flowIdAtStart);
-      if (myToken !== loadToken) return;
-      flowStore.updateHistoryState(historyState);
-    } catch (error) {
-      console.error("Failed to fetch history state:", error);
+    if (sameFlow) {
+      addSelectedNodes(
+        selectedIds.map((id) => instance.findNode(id)).filter((node): node is GraphNode => !!node),
+      );
+    } else {
+      restoreViewport(flowIdAtStart);
     }
+    if (historyState) flowStore.updateHistoryState(historyState);
     // Fire-and-forget; fetchArtifacts re-checks flowId before writing.
     flowStore.fetchArtifacts(flowIdAtStart);
     flowStore.fetchSettingsValidation(flowIdAtStart);
@@ -649,26 +683,16 @@ async function onConnect(params: Connection & { label?: string }) {
     // Belt-and-suspenders: if VueFlow ever lets an invalid drop through, bail quietly.
     return;
   }
-  const nodeConnection: NodeConnection = {
-    input_connection: {
-      node_id: parseInt(params.target, 10),
-      connection_class:
-        params.targetHandle as NodeConnection["input_connection"]["connection_class"],
-    },
-    output_connection: {
-      node_id: parseInt(params.source, 10),
-      connection_class:
-        params.sourceHandle as NodeConnection["output_connection"]["connection_class"],
-    },
-  };
-  let response: Awaited<ReturnType<typeof connectNode>> | undefined;
+  const nodeConnection = connection(
+    parseInt(params.source, 10),
+    params.sourceHandle ?? "output-0",
+    parseInt(params.target, 10),
+    params.targetHandle ?? "input-0",
+  );
   try {
-    response = await connectNode(flowStore.flowId, nodeConnection);
+    await FlowApi.connectNode(flowStore.flowId, nodeConnection);
   } catch (err) {
-    const detail =
-      (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-      "Failed to create connection";
-    ElMessage.error(detail);
+    recoverFromFailedMutation(err, "Failed to create connection");
     return;
   }
 
@@ -682,9 +706,6 @@ async function onConnect(params: Connection & { label?: string }) {
   const targetId = parseInt(params.target, 10);
   if (Number.isFinite(sourceId) && Number.isFinite(targetId)) {
     useTutorialStore().notify({ type: "edge-connected", sourceId, targetId });
-  }
-  if (response?.history) {
-    flowStore.updateHistoryState(response.history);
   }
   flowStore.fetchSettingsValidation();
 }
@@ -763,74 +784,103 @@ watch(
   () => openNodeData(editorStore.nodeDataOpenRequest.nodeId),
 );
 
-const handleNodeChange = async (nodeChangesEvent: any) => {
-  const nodeChanges = nodeChangesEvent as NodeChange[];
-  let lastResponse: Awaited<ReturnType<typeof deleteNode>> | undefined;
-  for (const nodeChange of nodeChanges) {
-    if (nodeChange.type === "remove") {
-      // Group boxes are not real nodes — their removal is handled by the ungroup
-      // action (which calls deleteGroup). Skip them so we don't deleteNode(NaN).
-      if (isGroupNodeId(nodeChange.id)) continue;
-      if (isCommentNodeId(nodeChange.id)) {
-        const response = await FlowApi.deleteComment(
-          flowStore.flowId,
-          commentBackendId(nodeChange.id),
-        );
-        flowStore.updateHistoryState(response.history);
-        continue;
-      }
-      const nodeChangeId = Number(nodeChange.id);
-      lastResponse = await deleteNode(flowStore.flowId, nodeChangeId);
-      useTutorialStore().notify({ type: "node-removed", nodeId: nodeChangeId });
-    }
-  }
-  if (lastResponse) {
-    flowStore.fetchSettingsValidation();
-  }
-  if (lastResponse?.history) {
-    flowStore.updateHistoryState(lastResponse.history);
-  }
-};
-
-const convertEdgeChangeToNodeConnection = (edgeChange: EdgeChange): NodeConnection => {
-  return {
-    input_connection: {
-      node_id: Number(edgeChange.target),
-      connection_class: edgeChange.targetHandle,
-    },
-    output_connection: {
-      node_id: Number(edgeChange.source),
-      connection_class: edgeChange.sourceHandle,
-    },
-  };
-};
-
-const handleEdgeChange = async (edgeChangesEvent: any) => {
-  const edgeChanges = edgeChangesEvent as EdgeChange[];
-  if (edgeChanges.length >= 2) {
+const flushRemovals = async (removal: RemovalTick) => {
+  const { flowId } = removal;
+  if (removal.nodes.has(String(nodeStore.nodeId))) dismissSettingsDrawer();
+  const { label, operations } = buildRemovalBatch(removal.nodes, removal.edges, removal.comments);
+  if (operations.length === 0) return;
+  try {
+    await FlowApi.applyOperations(flowId, label, operations);
+  } catch (error) {
+    recoverFromFailedMutation(error, "Could not delete");
     return;
   }
-  let lastResponse: Awaited<ReturnType<typeof deleteConnection>> | undefined;
-  for (const edgeChange of edgeChanges) {
-    if (edgeChange.type === "remove") {
-      // UI-only proxy edges must not trigger a backend deleteConnection.
-      if (edgeChange.id.startsWith(GROUP_PROXY_EDGE_PREFIX)) {
-        continue;
-      }
-      if (suppressedEdgeRemovals.delete(edgeChange.id)) {
-        // Edge was already deleted on the backend by an in-flight operation
-        // (e.g. drag-to-insert) — skip the redundant API call.
-        continue;
-      }
-      const nodeConnection = convertEdgeChangeToNodeConnection(edgeChange);
-      lastResponse = await deleteConnection(flowStore.flowId, nodeConnection);
+  for (const id of removal.nodes.keys()) {
+    useTutorialStore().notify({ type: "node-removed", nodeId: Number(id) });
+  }
+  flowStore.fetchSettingsValidation();
+};
+
+// One tick of VueFlow removals is one delete gesture, sent as one batch.
+const removalsThisTick = createRemovalCollector(
+  () => flowStore.flowId,
+  (removal) => void flushRemovals(removal),
+);
+
+// Arrow-key nudges: one burst is one step, sent in the channel slot its first nudge reserved.
+const NUDGE_SETTLE_MS = 300;
+const nudgedNodeIds = new Set<string>();
+let nudgeFlowId = -1;
+let nudgeSlot: number | null = null;
+let nudgeTimer: ReturnType<typeof setTimeout> | null = null;
+
+const flushNudges = async (): Promise<void> => {
+  if (nudgeTimer) clearTimeout(nudgeTimer);
+  nudgeTimer = null;
+  const slot = nudgeSlot;
+  nudgeSlot = null;
+  if (slot === null) return;
+  const flowId = nudgeFlowId;
+  const moved = [...nudgedNodeIds]
+    .map((id) => instance.findNode(id))
+    .filter((n): n is GraphNode => !!n);
+  nudgedNodeIds.clear();
+  // Only while the canvas still shows the nudged flow (a flow switch flushes first).
+  if (moved.length === 0 || flowId !== loadedFlowId) {
+    releaseMutationSlot(slot);
+    return;
+  }
+  let layout: Awaited<ReturnType<typeof layoutForMovedNodes>>;
+  try {
+    layout = await layoutForMovedNodes(moved);
+  } catch (error) {
+    releaseMutationSlot(slot);
+    throw error;
+  }
+  FlowApi.updateLayout(flowId, layout, slot).catch((error) =>
+    recoverFromFailedMutation(error, "Could not save the move"),
+  );
+};
+
+const noteNudge = (nodeId: string) => {
+  if (nudgeSlot === null) {
+    nudgeFlowId = flowStore.flowId;
+    nudgeSlot = reserveMutationSlot();
+  }
+  nudgedNodeIds.add(nodeId);
+  if (nudgeTimer) clearTimeout(nudgeTimer);
+  nudgeTimer = setTimeout(() => void flushNudges(), NUDGE_SETTLE_MS);
+};
+
+const handleNodeChange = (changes: NodeChange[]) => {
+  for (const change of changes) {
+    // Only a keyboard move carries a position without dragging (drag-end omits it).
+    if (change.type === "position") {
+      if (!change.dragging && change.position) noteNudge(change.id);
+      continue;
     }
+    if (change.type !== "remove") continue;
+    // Group boxes are not real nodes — their removal is handled by the ungroup action.
+    if (isGroupNodeId(change.id)) continue;
+    const removal = removalsThisTick();
+    if (isCommentNodeId(change.id)) {
+      removal.comments.push(commentBackendId(change.id));
+      continue;
+    }
+    // VueFlow emits before applying, so the node is still there to read its type.
+    const data = instance.findNode(change.id)?.data as { nodeTemplate?: NodeTemplate } | undefined;
+    removal.nodes.set(change.id, data?.nodeTemplate?.item);
   }
-  if (lastResponse) {
-    flowStore.fetchSettingsValidation();
-  }
-  if (lastResponse?.history) {
-    flowStore.updateHistoryState(lastResponse.history);
+};
+
+const handleEdgeChange = (changes: EdgeChange[]) => {
+  for (const change of changes) {
+    if (change.type !== "remove") continue;
+    // UI-only proxy edges must not trigger a backend deleteConnection.
+    if (change.id.startsWith(GROUP_PROXY_EDGE_PREFIX)) continue;
+    // Already deleted on the backend by the gesture that removed it from the canvas.
+    if (isCommittedEdgeRemoval(change.id)) continue;
+    removalsThisTick().edges.push(change);
   }
 };
 
@@ -838,10 +888,7 @@ const handleEdgeChange = async (edgeChangesEvent: any) => {
 const handleDrop = async (event: DragEvent) => {
   if (fileDrop.handleDrop(event)) return;
   if (!nodeStore.isRunning) {
-    const response = await onDrop(event, flowStore.flowId);
-    if (response?.history) {
-      flowStore.updateHistoryState(response.history);
-    }
+    await onDrop(event, flowStore.flowId);
   }
 };
 
@@ -859,33 +906,18 @@ const pasteNodeFromBuffer = async (x: number, y: number) => {
   const flowPosition = screenToFlowCoordinate({ x, y });
 
   if (buffer.multi) {
-    const response = await createMultiCopyNodes(
-      buffer.multi,
-      flowPosition.x,
-      flowPosition.y,
-      flowStore.flowId,
-    );
-    if (response?.history) {
-      flowStore.updateHistoryState(response.history);
-    } else if (!response) {
-      ElMessage.error("Failed to paste nodes");
-    }
+    await createMultiCopyNodes(buffer.multi, flowPosition.x, flowPosition.y, flowStore.flowId);
     return;
   }
 
   if (!buffer.single) return;
   const nodeCopyInput: NodeCopyInput = {
     ...buffer.single,
-    posX: flowPosition.x,
-    posY: flowPosition.y,
+    posX: Math.round(flowPosition.x),
+    posY: Math.round(flowPosition.y),
     flowId: flowStore.flowId,
   };
-  const response = await createCopyNode(nodeCopyInput);
-  if (response?.history) {
-    flowStore.updateHistoryState(response.history);
-  } else if (!response) {
-    ElMessage.error("Failed to paste node");
-  }
+  await createCopyNode(nodeCopyInput);
 };
 
 // Guards two fast Cmd+Vs from creating two nodes at identical coordinates
@@ -904,15 +936,12 @@ const handleCanvasPaste = async (x: number, y: number, intent: PasteIntent) => {
       return;
     }
     const flowPosition = screenToFlowCoordinate({ x, y });
-    const response = await createManualInputFromClipboard(
+    await createManualInputFromClipboard(
       flowStore.flowId,
-      flowPosition.x,
-      flowPosition.y,
+      Math.round(flowPosition.x),
+      Math.round(flowPosition.y),
       intent.text,
     );
-    if (response?.history) {
-      flowStore.updateHistoryState(response.history);
-    }
   } finally {
     pasteInFlight = false;
   }
@@ -1141,7 +1170,6 @@ const openTargetFlow = async (nodeId: number) => {
 
 const handleResetLayoutGraph = async () => {
   await applyStandardLayout(flowStore.flowId);
-  sessionStorage.removeItem(getViewportStorageKey(flowStore.flowId));
   await loadFlow();
   // loadFlow already fetches history state
   fitView({ padding: 0.2 });
@@ -1253,8 +1281,10 @@ const handleMoveEnd = () => {
 
 let unregisterContainer: (() => void) | null = null;
 let unlistenViewZoom: (() => void) | null = null;
+let unregisterNudges: (() => void) | null = null;
 
 onMounted(async () => {
+  unregisterNudges = registerPendingEdit(flushNudges);
   if (mainContainerRef.value) {
     // Single shared container measurement for every overlay panel (and the
     // derived drawer heights above).
@@ -1283,6 +1313,8 @@ onMounted(async () => {
   watch(
     () => flowStore.flowId,
     async (id) => {
+      // Nudges of the previous flow's nodes are sent before its canvas is replaced.
+      void flushNudges();
       // Switching flows: clear selection + overlays so a drawer/preview from the
       // previous flow can't leak (node ids collide across flows).
       editorStore.hideAllPanels();
@@ -1313,6 +1345,7 @@ onMounted(async () => {
         try {
           await createEmptyFlow();
           if (myToken !== loadToken) return;
+          loadedFlowId = null;
         } finally {
           if (myToken === loadToken) isLoadingFlow.value = false;
         }
@@ -1339,13 +1372,7 @@ onMounted(async () => {
     },
   );
 
-  // External-mutation signal — the backend mutated the live flow without
-  // going through the in-canvas mutation paths. Triggered today by
-  // `useAiDiffStore.accept()` after the apply_diff lands; future
-  // workstreams that mutate the server graph (e.g.'s
-  // `update_node_settings` end-to-end) call `flowStore.requestReload()`
-  // and Canvas reloads. The closure-scoped `loadToken` in `loadFlow`
-  // already cancels stale runs if multiple bumps land in quick succession.
+  // Re-read the graph from core: after AI edits, undo/redo and any failed mutation.
   watch(
     () => flowStore.pendingReloadCounter,
     (count, prev) => {
@@ -1377,6 +1404,9 @@ onUnmounted(() => {
   unlistenViewZoom = null;
   unregisterContainer?.();
   unregisterContainer = null;
+  unregisterNudges?.();
+  unregisterNudges = null;
+  void flushNudges();
   cancelEdgeLeave();
 });
 
@@ -1419,7 +1449,7 @@ defineExpose({
         @connect="onConnect"
         @connect-start="onConnectStart"
         @connect-end="onConnectEnd"
-        @node-drag-start="resetAutoConnectCandidates"
+        @node-drag-start="onNodeDragStart"
         @node-drag="onNodeDrag"
         @node-drag-stop="onNodeDragStop"
         @pane-click="handleCanvasClick"

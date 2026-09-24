@@ -23,7 +23,9 @@ from flowfile_core.flowfile.user_defined.registry import (
     compute_node_key,
     registry,
 )
+from flowfile_core.routes.routes import edit_flow, keep_server_owned_layout
 from flowfile_core.schemas import input_schema
+from flowfile_core.schemas.history_schema import HistoryActionType, OperationResponse
 from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS
 from flowfile_core.utils.utils import camel_case_to_snake_case
 from shared import storage
@@ -177,13 +179,17 @@ def get_simple_custom_object(flow_id: int, node_id: int, current_user=Depends(ge
     return schema
 
 
-@router.post("/update_user_defined_node", tags=["transform"])
-def update_user_defined_node(input_data: dict[str, Any], node_type: str, current_user=Depends(get_current_active_user)):
+@router.post("/update_user_defined_node", tags=["transform"], response_model=OperationResponse)
+def update_user_defined_node(
+    input_data: dict[str, Any], node_type: str, current_user=Depends(get_current_active_user)
+) -> OperationResponse:
     input_data["user_id"] = current_user.id
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get("flow_id"))
     logger.info(f'Updating the data for flow: {flow_id}, node {input_data["node_id"]}')
     flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(status_code=404, detail="could not find the flow")
     user_defined_model = CUSTOM_NODE_STORE.get(node_type)
     if not user_defined_model:
         entry = registry.get(node_type)
@@ -196,13 +202,19 @@ def update_user_defined_node(input_data: dict[str, Any], node_type: str, current
     user_defined_node_settings = input_schema.UserDefinedNode.model_validate(input_data)
     initialized_model = user_defined_model.from_settings(user_defined_node_settings.settings)
 
-    try:
-        flow.add_user_defined_node(custom_node=initialized_model, user_defined_node_settings=user_defined_node_settings)
-    except KernelRequiredError as e:
-        raise HTTPException(
-            status_code=422,
-            detail={"error_code": "KERNEL_REQUIRED", "node_type": e.node_type, "message": str(e)},
-        ) from e
+    node_id = user_defined_node_settings.node_id
+    with edit_flow(flow, f"Update {node_type} settings", HistoryActionType.UPDATE_SETTINGS, node_id=node_id) as txn:
+        keep_server_owned_layout(flow, user_defined_node_settings)
+        try:
+            flow.add_user_defined_node(
+                custom_node=initialized_model, user_defined_node_settings=user_defined_node_settings
+            )
+        except KernelRequiredError as e:
+            raise HTTPException(
+                status_code=422,
+                detail={"error_code": "KERNEL_REQUIRED", "node_type": e.node_type, "message": str(e)},
+            ) from e
+    return OperationResponse(success=True, history=txn.history)
 
 
 def _render_save_source(request: SaveCustomNodeRequest) -> str:

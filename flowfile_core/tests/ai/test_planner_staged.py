@@ -1687,6 +1687,7 @@ def test_agent_live_undoes_failed_step_and_retries(monkeypatch: pytest.MonkeyPat
 
     flow = _make_flow()
     sess = _make_live_session(flow)
+    history_before = flow.get_history_state()
 
     # Three consecutive fill attempts will all observe-fail; the
     # planner should auto-undo each time and exhaust the retry
@@ -1726,6 +1727,12 @@ def test_agent_live_undoes_failed_step_and_retries(monkeypatch: pytest.MonkeyPat
     new_node_ids = sorted(n.node_id for n in flow.nodes)
     assert new_node_ids == [1], (
         f"agent_live must auto-undo the failing node; got nodes {new_node_ids!r}"
+    )
+    # Each retracted step leaves neither an undo entry nor a redo entry behind.
+    history_after = flow.get_history_state()
+    assert (history_after.undo_count, history_after.redo_count) == (
+        history_before.undo_count,
+        history_before.redo_count,
     )
     # No applied_results recorded (no successful step).
     assert sess.applied_results == []

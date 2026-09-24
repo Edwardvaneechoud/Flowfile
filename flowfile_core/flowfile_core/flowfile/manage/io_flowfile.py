@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
@@ -145,6 +146,20 @@ def _load_flowfile_json(flow_path: Path) -> schemas.FlowInformation:
     return _flowfile_data_to_flow_information(flowfile_data)
 
 
+def _keep_auto_description_auto(setting_input) -> None:
+    """A file description equal to the node's default stays auto-generated (empty) instead of freezing as text.
+
+    Saved files carry only the rendered text, so this is a guess: a typed description
+    that happens to equal the auto text also loads as auto. In-memory snapshots record
+    ``description_is_auto_generated`` and never reach this.
+    """
+    try:
+        if setting_input.description and setting_input.description == setting_input.get_default_description():
+            setting_input.description = ""
+    except Exception:
+        pass
+
+
 def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> schemas.FlowInformation:
     nodes_dict = {}
     node_starts = []
@@ -168,7 +183,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
             setting_data["pos_x"] = float(node.x_position or 0)
             setting_data["pos_y"] = float(node.y_position or 0)
             setting_data["group_id"] = node.group_id
-            setting_data["description"] = node.description or ""
+            setting_data["description"] = "" if node.description_is_auto_generated else node.description or ""
             setting_data["node_reference"] = node.node_reference
             setting_data["is_setup"] = True
 
@@ -200,6 +215,8 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
                         output_settings["table_settings"] = {"file_type": file_type}
 
             setting_input = model_class.model_validate(setting_data)
+            if node.description_is_auto_generated is None:
+                _keep_auto_description_auto(setting_input)
 
         node_info = schemas.NodeInformation(
             id=node.id,
@@ -302,6 +319,120 @@ def _resolve_flow_name(flow_path: Path, stored_name: str | None) -> str:
     return flow_path.stem
 
 
+def _source_handle(flow_info: schemas.FlowInformation, source_id: int, target_id: int) -> str:
+    """The output handle the saved edge source -> target leaves through (``outputs`` is parallel to it)."""
+    source = flow_info.data.get(source_id)
+    if source is None:
+        return DEFAULT_OUTPUT_HANDLE
+    # Legacy pickled NodeInformation may lack the field entirely.
+    handles = getattr(source, "output_handles", None) or []
+    for index, output_id in enumerate(source.outputs or []):
+        if output_id == target_id:
+            return handles[index] if index < len(handles) else DEFAULT_OUTPUT_HANDLE
+    return DEFAULT_OUTPUT_HANDLE
+
+
+def _add_node_promise(graph: FlowGraph, node_info: schemas.NodeInformation) -> None:
+    if getattr(node_info.setting_input, "is_user_defined", False) and node_info.type not in CUSTOM_NODE_STORE:
+        register_missing_node_template(node_info.type)
+    node_promise = input_schema.NodePromise(
+        flow_id=graph.flow_id,
+        node_id=node_info.id,
+        pos_x=node_info.x_position or 0,
+        pos_y=node_info.y_position or 0,
+        node_type=node_info.type,
+        group_id=getattr(node_info, "group_id", None),
+    )
+    if node_info.setting_input is None:
+        # Unconfigured nodes hold their metadata on the promise itself, assigned the way the editor routes store it.
+        node_promise.description = node_info.description or ""
+        node_promise.node_reference = node_info.node_reference
+    if hasattr(node_info.setting_input, "cache_results"):
+        node_promise.cache_results = node_info.setting_input.cache_results
+    graph.add_node_promise(node_promise)
+
+
+def _wire_static_inputs(graph: FlowGraph, node_info: schemas.NodeInformation, flow_info: schemas.FlowInformation):
+    """Connect a node's static inputs in their saved order: main inputs, then left, then right."""
+    to_node = graph.get_node(node_info.id)
+    if to_node is None or to_node.accepts_dynamic_inputs:
+        return  # keyed edges are restored from input_connections
+    wiring = [("main", source_id) for source_id in node_info.input_ids or []]
+    wiring.append(("left", getattr(node_info, "left_input_id", None)))
+    wiring.append(("right", getattr(node_info, "right_input_id", None)))
+    for insert_type, source_id in wiring:
+        from_node = graph.get_node(source_id) if source_id is not None else None
+        if from_node is not None:
+            to_node.add_node_connection(
+                from_node, insert_type, output_handle=_source_handle(flow_info, source_id, node_info.id)
+            )
+
+
+def _apply_node_settings(
+    graph: FlowGraph, node_info: schemas.NodeInformation, owner_of: Callable[[int], int | None] | None
+) -> None:
+    setting_input = node_info.setting_input
+    if hasattr(setting_input, "flow_id"):
+        setting_input.flow_id = graph.flow_id
+    if owner_of is not None and hasattr(setting_input, "user_id"):
+        setting_input.user_id = owner_of(node_info.id)
+    if getattr(setting_input, "is_user_defined", False):
+        # Execs the node module lazily; a missing or broken node lands in the error path with its settings kept.
+        graph._place_user_defined_node(node_info.type, setting_input)
+    else:
+        getattr(graph, "add_" + node_info.type)(setting_input)
+
+
+def _repair_source_only_connections(graph: FlowGraph, flow_info: schemas.FlowInformation) -> None:
+    """Legacy files can list an edge only on its source; wire it as main into an input-less target."""
+    for from_id, to_id in set(flow_info.node_connections) - set(graph.node_connections):
+        from_node, to_node = graph.get_node(from_id), graph.get_node(to_id)
+        if from_node is None or to_node is None or to_node.accepts_dynamic_inputs:
+            continue
+        if not to_node.has_input:
+            to_node.add_node_connection(from_node)
+
+
+def populate_graph_from_flow_information(
+    graph: FlowGraph,
+    flow_info: schemas.FlowInformation,
+    owner_of: Callable[[int], int | None] | None = None,
+) -> None:
+    """Build every node, edge, group and comment of ``flow_info`` into an empty ``graph``.
+
+    The single graph builder: ``open_flow`` and ``FlowGraph.restore_from_snapshot`` both
+    go through it, so a snapshot and a saved file rebuild identically
+    (``snapshot(build(s)) == s``). Nodes are created in their saved order, then configured
+    in dependency order with each node's static inputs wired (in saved input order, with
+    their saved output handles) before its settings are applied; keyed edges of
+    dynamic-input nodes follow once every node is configured. Start nodes are not read
+    from the file: each source's ``add_*`` marks itself, so a stale ``is_start_node``
+    flag can never resurface. The caller holds ``graph.rebuilding()``, so nothing is
+    recorded.
+
+    Args:
+        graph: An empty graph whose settings and identity are kept as-is.
+        flow_info: The flow to build.
+        owner_of: Maps a node id to the ``user_id`` to stamp on its settings; None leaves
+            ``user_id`` untouched.
+    """
+    for node_info in flow_info.data.values():
+        _add_node_promise(graph, node_info)
+
+    for node_id in determine_insertion_order(flow_info):
+        node_info = flow_info.data[node_id]
+        _wire_static_inputs(graph, node_info, flow_info)
+        if node_info.is_setup and node_info.setting_input is not None:
+            _apply_node_settings(graph, node_info, owner_of)
+
+    restore_dynamic_input_connections(graph, flow_info)
+    _repair_source_only_connections(graph, flow_info)
+
+    # Legacy pickles may lack groups/comments entirely.
+    graph.restore_groups(getattr(flow_info, "groups", None) or [])
+    graph.restore_comments(getattr(flow_info, "comments", None) or [])
+
+
 def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
     """
     Open a flowfile from a given path.
@@ -311,13 +442,14 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
     - .yaml / .yml - new YAML format
     - .json - JSON format
 
+    The flow opens with an empty undo history and as the clean saved baseline.
+
     Args:
         flow_path (Path): The absolute or relative path to the flowfile
         user_id (int | None): The ID of the user importing the flow, used to resolve cloud connections.
     Returns:
         FlowGraph: The flowfile object
     """
-    # Load flow storage (handles format detection)
     flow_path = _validate_flow_path(flow_path)
     flow_storage_obj = _load_flow_storage(flow_path)
     flow_storage_obj.flow_settings.path = str(flow_path)
@@ -325,101 +457,11 @@ def open_flow(flow_path: Path, user_id: int | None = None) -> FlowGraph:
     flow_storage_obj.flow_settings.name = resolved_name
     flow_storage_obj.flow_name = resolved_name
 
-    ingestion_order = determine_insertion_order(flow_storage_obj)
     new_flow = FlowGraph(name=flow_storage_obj.flow_name, flow_settings=flow_storage_obj.flow_settings)
-    for node_id in ingestion_order:
-        node_info: schemas.NodeInformation = flow_storage_obj.data[node_id]
-        if getattr(node_info.setting_input, "is_user_defined", False) and node_info.type not in CUSTOM_NODE_STORE:
-            register_missing_node_template(node_info.type)
-        node_promise = input_schema.NodePromise(
-            flow_id=new_flow.flow_id,
-            node_id=node_info.id,
-            pos_x=node_info.x_position,
-            pos_y=node_info.y_position,
-            node_type=node_info.type,
-        )
-        if hasattr(node_info.setting_input, "cache_results"):
-            node_promise.cache_results = node_info.setting_input.cache_results
-        new_flow.add_node_promise(node_promise)
-
-    for node_id in ingestion_order:
-        node_info: schemas.NodeInformation = flow_storage_obj.data[node_id]
-        if node_info.is_setup:
-            if user_id is not None and hasattr(node_info.setting_input, "user_id"):
-                node_info.setting_input.user_id = user_id
-            if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
-                # .get() execs the node module lazily; missing or exec-broken nodes
-                # land in the error path so a flow always opens with settings
-                # preserved verbatim instead of being dropped.
-                new_flow._place_user_defined_node(node_info.type, node_info.setting_input)
-            else:
-                getattr(new_flow, "add_" + node_info.type)(node_info.setting_input)
-
-        from_node = new_flow.get_node(node_id)
-        # Legacy pickled NodeInformation may lack the field entirely.
-        output_handles = getattr(node_info, "output_handles", None) or []
-        for idx, output_node_id in enumerate(node_info.outputs or []):
-            to_node = new_flow.get_node(output_node_id)
-            if to_node is not None and to_node.accepts_dynamic_inputs:
-                continue  # keyed edges are restored from input_connections below
-            if to_node is not None:
-                output_node_obj = flow_storage_obj.data[output_node_id]
-                is_left_input = (output_node_obj.left_input_id == node_id) and (
-                    to_node.left_input.node_id != node_id if to_node.left_input is not None else True
-                )
-                is_right_input = (output_node_obj.right_input_id == node_id) and (
-                    to_node.right_input.node_id != node_id if to_node.right_input is not None else True
-                )
-                is_main_input = node_id in (output_node_obj.input_ids or [])
-
-                if is_left_input:
-                    insert_type = "left"
-                elif is_right_input:
-                    insert_type = "right"
-                elif is_main_input:
-                    insert_type = "main"
-                else:
-                    continue
-                output_handle = output_handles[idx] if idx < len(output_handles) else DEFAULT_OUTPUT_HANDLE
-                to_node.add_node_connection(from_node, insert_type, output_handle=output_handle)
-            else:
-                from_node.delete_lead_to_node(output_node_id)
-                if (from_node.node_id, output_node_id) not in flow_storage_obj.node_connections:
-                    continue
-                flow_storage_obj.node_connections.pop(
-                    flow_storage_obj.node_connections.index((from_node.node_id, output_node_id))
-                )
-
-    restore_dynamic_input_connections(new_flow, flow_storage_obj)
-
-    for missing_connection in set(flow_storage_obj.node_connections) - set(new_flow.node_connections):
-        to_node = new_flow.get_node(missing_connection[1])
-        if to_node.accepts_dynamic_inputs:
-            continue  # keyed edges only come from input_connections
-        if not to_node.has_input:
-            test_if_circular_connection(missing_connection, new_flow)
-            from_node = new_flow.get_node(missing_connection[0])
-            if from_node:
-                to_node.add_node_connection(from_node)
-
-    # Restore visual groups. Member group_ids were re-applied above via
-    # add_<type>(setting_input); legacy pickles may lack the field entirely.
-    new_flow.restore_groups(getattr(flow_storage_obj, "groups", None) or [])
-    new_flow.restore_comments(getattr(flow_storage_obj, "comments", None) or [])
-
+    if user_id is not None:
+        new_flow._owner_user_id = user_id
+    owner_of = (lambda _node_id: user_id) if user_id is not None else None
+    with new_flow.rebuilding():
+        populate_graph_from_flow_information(new_flow, flow_storage_obj, owner_of=owner_of)
     new_flow.mark_as_saved()
     return new_flow
-
-
-def test_if_circular_connection(connection: tuple[int, int], flow: FlowGraph):
-    to_node = flow.get_node(connection[1])
-    leads_to_nodes_queue = [n for n in to_node.leads_to_nodes]
-    circular_connection: bool = False
-    while len(leads_to_nodes_queue) > 0:
-        leads_to_node = leads_to_nodes_queue.pop(0)
-        if leads_to_node.node_id == connection[0]:
-            circular_connection = True
-            break
-        for leads_to_node_leads_to in leads_to_node.leads_to_nodes:
-            leads_to_nodes_queue.append(leads_to_node_leads_to)
-    return circular_connection

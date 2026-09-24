@@ -3785,7 +3785,8 @@ def test_set_node_reference():
 
     response = client.post("/node/reference/", params={"flow_id": flow_id, "node_id": 1}, json="my_custom_ref")
     assert response.status_code == 200, "Node reference not set"
-    assert response.json() is True, "Should return True on success"
+    assert response.json()["success"] is True, "Should report success"
+    assert response.json()["history"]["flow_id"] == flow_id
 
     response = client.get("/node/reference", params={"flow_id": flow_id, "node_id": 1})
     assert response.status_code == 200
@@ -3816,7 +3817,7 @@ def test_set_node_reference_allows_underscores():
 
     response = client.post("/node/reference/", params={"flow_id": flow_id, "node_id": 1}, json="my_custom_ref_123")
     assert response.status_code == 200, "Underscores should be allowed"
-    assert response.json() is True
+    assert response.json()["success"] is True
 
 
 def test_set_node_reference_empty_clears():

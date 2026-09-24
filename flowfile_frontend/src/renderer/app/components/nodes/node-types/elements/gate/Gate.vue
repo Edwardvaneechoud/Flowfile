@@ -136,8 +136,8 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, nextTick, ref, watch } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { computed, nextTick, ref } from "vue";
+import { ElMessageBox } from "element-plus";
 import {
   GATE_OPERATOR_LABELS,
   GATE_OPERATORS_WITH_VALUE,
@@ -147,10 +147,7 @@ import {
 } from "@/types/node.types";
 import { buildOutputHandles } from "@/utils/nodeHandles";
 import type { FlowParameter } from "@/types/flow.types";
-import type { NodeConnection } from "@/types/canvas.types";
 import type { NodeData } from "@/components/nodes/baseNode/nodeInterfaces";
-import { FlowApi } from "@/api";
-import { suppressedEdgeRemovals } from "@/composables/useDragAndDrop";
 import { useNodeStore } from "@/stores/node-store";
 import { useFlowStore } from "@/stores/flow-store";
 import { useEditorStore } from "@/stores/editor-store";
@@ -169,21 +166,17 @@ const editorString = ref("");
 const editorChild = ref(null);
 const elseOutputEnabled = ref(false);
 
+// Shows the saved else output (on load and after a save), never an unsaved toggle.
 const updateNodeOutputHandles = () => {
   const vfInstance = flowStore.vueFlowInstance;
   if (!vfInstance || !nodeGate.value) return;
   const vfNode = vfInstance.findNode(String(nodeGate.value.node_id));
   if (!vfNode) return;
-  // Same derivation the canvas uses on flow open (NodeGate.output_names), so
-  // toggling the else output live and reloading the flow agree on the handles.
-  vfNode.data.outputs = elseOutputEnabled.value
+  // Same derivation the canvas uses on flow open (NodeGate.output_names).
+  vfNode.data.outputs = nodeGate.value.else_output
     ? buildOutputHandles(2, ["then", "else"])
     : buildOutputHandles(1);
 };
-
-watch(elseOutputEnabled, () => {
-  updateNodeOutputHandles();
-});
 
 // Fired only on user toggles (not on load), so drawer opens never prompt.
 const handleElseToggle = async (enabled: boolean | string | number) => {
@@ -212,60 +205,8 @@ const handleElseToggle = async (enabled: boolean | string | number) => {
   } catch {
     return;
   }
-  await removeElseEdges(staleEdges);
-};
-
-// Same backend-first prune as RunFlow.vue's applyInterfaceToCanvas.
-const removeElseEdges = async (
-  edges: {
-    id: string;
-    source: string;
-    target: string;
-    sourceHandle?: string | null;
-    targetHandle?: string | null;
-  }[],
-) => {
-  const vfInstance = flowStore.vueFlowInstance;
-  if (!vfInstance || !nodeGate.value) return;
-  const removedIds: string[] = [];
-  let failedCount = 0;
-  for (const edge of edges) {
-    const connection: NodeConnection = {
-      input_connection: {
-        node_id: Number(edge.target),
-        connection_class: (edge.targetHandle ??
-          "input-0") as NodeConnection["input_connection"]["connection_class"],
-      },
-      output_connection: {
-        node_id: Number(edge.source),
-        connection_class: (edge.sourceHandle ??
-          "output-0") as NodeConnection["output_connection"]["connection_class"],
-      },
-    };
-    try {
-      await FlowApi.deleteConnection(Number(nodeGate.value.flow_id), connection);
-    } catch (error) {
-      // 422 = already gone server-side; the edge is stale either way.
-      const status = (error as { response?: { status?: number } })?.response?.status;
-      if (status !== 422) {
-        console.error("Failed to delete stale else connection:", error);
-        failedCount += 1;
-        continue;
-      }
-    }
-    suppressedEdgeRemovals.add(edge.id);
-    removedIds.push(edge.id);
-  }
-  // One removal per call: Canvas.handleEdgeChange ignores batched change events.
-  for (const id of removedIds) {
-    vfInstance.removeEdges([id]);
-  }
-  if (failedCount > 0) {
-    ElMessage.error(
-      `Could not remove ${failedCount} else connection${failedCount === 1 ? "" : "s"}; ` +
-        "they remain on the canvas.",
-    );
-  }
+  // Turning the else output off and dropping its edges is one step.
+  await saveSettingsDroppingEdges("Update gate settings", staleEdges);
 };
 
 const defaultGateInput = (): GateInput => ({
@@ -324,17 +265,19 @@ const parameterHint = computed(() => {
   return `${selected.name} is a ${type} parameter (default: ${selected.default_value || "empty"}).`;
 });
 
-const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
-  nodeRef: nodeGate,
-  onBeforeSave: () => {
-    if (gateInput.value?.condition_source === "formula") {
-      gateInput.value.formula = nodeStore.inputCode;
-    }
-    if (nodeGate.value) {
-      nodeGate.value.else_output = elseOutputEnabled.value;
-    }
-  },
-});
+const { saveSettings, saveSettingsDroppingEdges, pushNodeData, handleGenericSettingsUpdate } =
+  useNodeSettings({
+    nodeRef: nodeGate,
+    onBeforeSave: () => {
+      if (gateInput.value?.condition_source === "formula") {
+        gateInput.value.formula = nodeStore.inputCode;
+      }
+      if (nodeGate.value) {
+        nodeGate.value.else_output = elseOutputEnabled.value;
+      }
+    },
+    onAfterSave: () => updateNodeOutputHandles(),
+  });
 
 const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);

@@ -206,7 +206,7 @@ const pushNodeData = async () => {
   if (!vueGraphicWalkerRef.value) return;
   const currentSpec = await getCurrentSpec();
   if (currentSpec === null || currentSpec.length === 0) return;
-  await saveSpecToNodeStore(currentSpec);
+  return await saveSpecToNodeStore(currentSpec);
 };
 
 // Close/minimize paths hide the drawer (unmounting it) before the async

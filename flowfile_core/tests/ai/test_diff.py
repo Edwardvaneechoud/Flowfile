@@ -247,7 +247,13 @@ def test_apply_diff_creates_single_history_snapshot() -> None:
 
 def test_apply_diff_rolls_back_on_midbatch_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     flow = _flow_with_orders()
+    # An undone step leaves one redo entry; a failed apply must not consume or clear it.
+    flow.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=50, node_type="filter"))
+    assert flow.undo().success is True
     pre_undo = flow.get_history_state().undo_count
+    pre_redo = flow.get_history_state().redo_count
+    pre_redo_description = flow.get_history_state().redo_description
+    assert pre_redo == 1
     pre_node_count = len(flow.nodes)
 
     graph_diff = diff.GraphDiff(
@@ -283,8 +289,10 @@ def test_apply_diff_rolls_back_on_midbatch_failure(monkeypatch: pytest.MonkeyPat
     assert flow.get_node(2) is None
     # Diff still in store so the user can fix-and-retry or reject.
     assert diff.get_diff(graph_diff.diff_id) is graph_diff
-    # The snapshot was taken and then undone — the net undo_count delta is 0.
+    # Nothing was recorded and the redo stack is intact.
     assert flow.get_history_state().undo_count == pre_undo
+    assert flow.get_history_state().redo_count == pre_redo
+    assert flow.get_history_state().redo_description == pre_redo_description
 
 
 # 5. apply_diff drift detection

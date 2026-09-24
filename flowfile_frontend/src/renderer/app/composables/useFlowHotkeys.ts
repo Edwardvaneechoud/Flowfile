@@ -31,6 +31,44 @@ export const isEditableKeydownTarget = (target: EventTarget | null): boolean => 
   return typeof el.closest === "function" && !!el.closest(".cm-editor");
 };
 
+// Focus inside any of these owns Cmd/Ctrl+Z itself (text/list controls and overlays).
+const HISTORY_SHORTCUT_EXCLUDED = [
+  "select",
+  "[role='listbox']",
+  "[role='combobox']",
+  "[role='textbox']",
+  ".cm-editor",
+  ".el-overlay",
+  ".el-dialog",
+  ".el-message-box",
+  ".el-popper",
+  ".context-menu",
+  "[role='dialog']",
+  "[aria-modal='true']",
+].join(",");
+
+/**
+ * The one rule for the canvas undo/redo shortcut: Cmd/Ctrl+Z undoes, Shift+Cmd/Ctrl+Z
+ * and Cmd/Ctrl+Y redo, unless the event was already handled or focus is in an editable
+ * control or an overlay. The settings drawer is deliberately not excluded: Ctrl+Z on a
+ * non-editable spot there saves the drawer and then undoes.
+ */
+export const historyShortcutFor = (
+  event: KeyboardEvent,
+  isMac: boolean,
+): "undo" | "redo" | null => {
+  if (event.defaultPrevented || event.altKey) return null;
+  if (!(isMac ? event.metaKey : event.ctrlKey)) return null;
+  const key = event.key.toLowerCase();
+  const action = key === "z" ? (event.shiftKey ? "redo" : "undo") : key === "y" ? "redo" : null;
+  if (!action) return null;
+  // Inside a shadow root (GraphicWalker) event.target is the host; the path holds the real target.
+  const target = event.composedPath?.()[0] ?? event.target;
+  if (isEditableKeydownTarget(target)) return null;
+  if (target instanceof Element && target.closest(HISTORY_SHORTCUT_EXCLUDED)) return null;
+  return action;
+};
+
 export const createFlowHotkeysHandler = (actions: FlowHotkeyActions) => {
   return (event: KeyboardEvent): void => {
     if (!(event.ctrlKey || event.metaKey)) return;

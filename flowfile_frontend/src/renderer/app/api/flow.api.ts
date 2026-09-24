@@ -20,6 +20,7 @@ import type {
   CreateCommentRequest,
   UpdateCommentRequest,
   CommentOperationResponse,
+  GraphOperation,
 } from "../types";
 
 export class FlowApi {
@@ -257,21 +258,6 @@ export class FlowApi {
   }
 
   /**
-   * Delete a node from the flow
-   */
-  static async deleteNode(flowId: number, nodeId: number): Promise<OperationResponse> {
-    const response = await axios.post<OperationResponse>(
-      "/editor/delete_node/",
-      {},
-      {
-        params: { flow_id: flowId, node_id: nodeId },
-        headers: { accept: "application/json" },
-      },
-    );
-    return response.data;
-  }
-
-  /**
    * Connect two nodes
    */
   static async connectNode(
@@ -285,24 +271,6 @@ export class FlowApi {
       },
       params: { flow_id: flowId },
     });
-    return response.data;
-  }
-
-  /**
-   * Delete a connection between nodes
-   */
-  static async deleteConnection(
-    flowId: number,
-    nodeConnection: NodeConnection,
-  ): Promise<OperationResponse> {
-    const response = await axios.post<OperationResponse>(
-      "/editor/delete_connection/",
-      nodeConnection,
-      {
-        params: { flow_id: flowId },
-        headers: { accept: "application/json" },
-      },
-    );
     return response.data;
   }
 
@@ -411,28 +379,35 @@ export class FlowApi {
     return response.data;
   }
 
-  /** Delete a canvas comment. */
-  static async deleteComment(flowId: number, commentId: number): Promise<OperationResponse> {
-    const response = await axios.post<OperationResponse>(
-      "/editor/delete_comment/",
-      {},
-      {
-        params: { flow_id: flowId, comment_id: commentId },
-        headers: { accept: "application/json" },
-      },
-    );
-    return response.data;
-  }
-
   /** Persist dragged node positions, group bounds and/or comment bounds (one drag-end -> one call). */
   static async updateLayout(
     flowId: number,
     request: UpdateLayoutRequest,
+    mutationSlot?: number,
   ): Promise<OperationResponse> {
     const response = await axios.post<OperationResponse>("/editor/update_layout/", request, {
       params: { flow_id: flowId },
       headers: { "Content-Type": "application/json", accept: "application/json" },
+      mutationSlot,
     });
+    return response.data;
+  }
+
+  /** Apply one gesture's primitive operations atomically: all or nothing, one undo step. */
+  static async applyOperations(
+    flowId: number,
+    label: string,
+    operations: GraphOperation[],
+    mutationSlot?: number,
+  ): Promise<OperationResponse> {
+    const response = await axios.post<OperationResponse>(
+      "/editor/apply_operations/",
+      { flow_id: flowId, label, operations },
+      {
+        headers: { "Content-Type": "application/json", accept: "application/json" },
+        mutationSlot,
+      },
+    );
     return response.data;
   }
 

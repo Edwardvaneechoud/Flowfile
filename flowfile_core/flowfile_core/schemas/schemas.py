@@ -1,13 +1,16 @@
 from enum import Enum
-from typing import Any, ClassVar, Literal, NamedTuple
+from typing import Annotated, Any, ClassVar, Literal, NamedTuple
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
     ValidationInfo,
     field_serializer,
     field_validator,
+    model_serializer,
 )
 
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
@@ -293,12 +296,22 @@ class FlowfileInputConnection(BaseModel):
 
 
 class FlowfileNode(BaseModel):
-    """Node representation for flowfile serialization (YAML/JSON)."""
+    """Node representation for flowfile serialization (YAML/JSON).
+
+    ``description`` is the rendered canvas text: the user's, else the auto-generated one.
+    ``description_is_auto_generated`` records which of the two it is, so an undo snapshot
+    restores a typed description even when it equals the auto text. It is emitted only by
+    python-mode dumps of a live graph (the in-memory history snapshots, which are python-mode
+    anyway so secrets survive); JSON dumps (saved files, share links, run snapshots) omit it,
+    which keeps the on-disk format unchanged and leaves file loads to compare the text with
+    the auto text.
+    """
 
     id: int
     type: str
     is_start_node: bool = False
     description: str | None = ""
+    description_is_auto_generated: bool | None = None
     node_reference: str | None = None  # Unique reference identifier for code generation
     x_position: int | None = 0
     y_position: int | None = 0
@@ -348,6 +361,17 @@ class FlowfileNode(BaseModel):
             data["is_user_defined"] = True
             return data
         return value.model_dump(exclude=self._setting_input_exclude)
+
+    @model_serializer(mode="wrap")
+    def _keep_description_provenance_in_memory(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo):
+        """Drop ``description_is_auto_generated`` from JSON dumps and whenever it is unset.
+
+        Deliberately unannotated: a return annotation would replace the model's serialization JSON schema.
+        """
+        data = handler(self)
+        if info.mode_is_json() or self.description_is_auto_generated is None:
+            data.pop("description_is_auto_generated", None)
+        return data
 
 
 # Allowed group tints. Single source of truth — mirrored by the frontend `GroupColor` union.
@@ -962,6 +986,101 @@ class UpdateLayoutRequest(BaseModel):
     comment_bounds: list[CommentBoundsUpdate] = Field(default_factory=list)
     # False -> apply without a new undo entry (folds into a preceding op's snapshot).
     record_history: bool = True
+
+
+class AddNodeOperation(BaseModel):
+    """Same as ``POST /editor/add_node/``."""
+
+    op: Literal["add_node"]
+    node_id: int
+    node_type: str
+    pos_x: float = 0
+    pos_y: float = 0
+
+
+class UpdateSettingsOperation(BaseModel):
+    """Same as ``POST /update_settings/``; ``settings`` is that route's body (incl. flow_id/node_id)."""
+
+    op: Literal["update_settings"]
+    node_type: str
+    settings: dict[str, Any]
+
+
+class DeleteNodeOperation(BaseModel):
+    """Same as ``POST /editor/delete_node/``."""
+
+    op: Literal["delete_node"]
+    node_id: int
+
+
+class ConnectOperation(BaseModel):
+    """Same as ``POST /editor/connect_node/``."""
+
+    op: Literal["connect"]
+    connection: input_schema.NodeConnection
+
+
+class DeleteConnectionOperation(BaseModel):
+    """Same as ``POST /editor/delete_connection/``."""
+
+    op: Literal["delete_connection"]
+    connection: input_schema.NodeConnection
+
+
+class UpdateLayoutOperation(BaseModel):
+    """Same as ``POST /editor/update_layout/``; ``record_history`` is ignored inside a batch."""
+
+    op: Literal["update_layout"]
+    layout: UpdateLayoutRequest
+
+
+class CopyNodeOperation(BaseModel):
+    """Same as ``POST /editor/copy_node``."""
+
+    op: Literal["copy_node"]
+    node_id_to_copy_from: int
+    flow_id_to_copy_from: int
+    node_promise: input_schema.NodePromise
+
+
+class DeleteCommentOperation(BaseModel):
+    """Same as ``POST /editor/delete_comment/``."""
+
+    op: Literal["delete_comment"]
+    comment_id: int
+
+
+class InsertOnEdgeOperation(BaseModel):
+    """Splice the existing node ``node_id`` into the edge ``connection`` (A -> B), keeping B's input slot and position.
+
+    Batch-only: A(handle) -> node(input-0) and node(output-0) -> B replace the edge; 422 when it does not exist.
+    """
+
+    op: Literal["insert_on_edge"]
+    node_id: int
+    connection: input_schema.NodeConnection
+
+
+EditorOperation = Annotated[
+    AddNodeOperation
+    | UpdateSettingsOperation
+    | DeleteNodeOperation
+    | ConnectOperation
+    | DeleteConnectionOperation
+    | UpdateLayoutOperation
+    | CopyNodeOperation
+    | DeleteCommentOperation
+    | InsertOnEdgeOperation,
+    Field(discriminator="op"),
+]
+
+
+class ApplyOperationsRequest(BaseModel):
+    """Body for ``POST /editor/apply_operations/``: ordered primitive ops applied atomically as one undo step."""
+
+    flow_id: int
+    label: str
+    operations: list[EditorOperation]
 
 
 class NodeDefault(BaseModel):

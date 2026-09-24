@@ -80,8 +80,14 @@ Files live in `app/stores/`, kebab-case `xxx-store.ts` (one legacy exception:
 | AI stores | `ai-store` (1666 LOC), `ai-agent-store`, `ai-diff-store`, `ai-command-palette-store`, `ai-ghost-node-store`, `ai-autocomplete-store`, `ai-code-generator-store` (+ `*-persistence.ts` siblings). These have colocated `*.test.ts` — Vitest picks up `src/**/*.test.ts` only. |
 
 **The signal-counter pattern** (flow-store): `pendingReloadCounter` +
-`requestReload()` means "the backend mutated the flow behind your back,
-re-fetch it" — `Canvas.vue` watches the counter, not a boolean, so that *two
+`requestReload()` means "re-read the graph from core". It is used after an
+out-of-band backend mutation (AI apply), after every undo/redo, after a save
+that changes edges server-side (RunFlow), and after any failed mutation (the
+mutation channel requests it for every refused ordered request; see §3) —
+the canvas never patches itself back. `Canvas.loadFlow` flushes pending
+edits once, waits for the mutation queue, re-reads if `mutationGeneration()`
+moved, and keeps viewport and selection when reloading the same flow.
+`Canvas.vue` watches the counter, not a boolean, so that *two
 reload requests in the same tick* still both fire (a boolean flag toggled
 twice collapses to a no-op watch). `pendingLayoutResetCounter` /
 `requestLayoutReset()` is the same idea for re-running auto-layout. Use this
@@ -89,8 +95,9 @@ pattern for any new "something changed, someone downstream should react"
 signal — don't reach for a boolean.
 
 `editorStore.graphVersion` is different: bumped by `nodeStore.updateSettings`
-after every successful save, it represents dirty state ("something on the
-canvas changed"), not "reload from the network."
+after every successful save and by `flowStore.updateHistoryState` for every
+mutation response carrying history, it represents dirty state ("something on
+the canvas changed"), not "reload from the network."
 
 ---
 
@@ -100,7 +107,13 @@ canvas changed"), not "reload from the network."
 `withCredentials = true`. A request interceptor injects `Authorization:
 Bearer <token>` unless the request carries header `X-Skip-Auth-Header`; a
 response interceptor retries once on 401 after a token refresh, else calls
-`authService.logout()`.
+`authService.logout()`. A third pair, `services/mutationChannel.ts`, is
+installed after them (request interceptors run in reverse): it sends graph
+mutations one at a time in issue order, applies each response's `history`
+centrally, and requests a canvas reload for every ordered request core
+refused. Multi-part gestures are one `FlowApi.applyOperations` batch built with
+`utils/graphOperations.ts` — see `flowfile_frontend/CLAUDE.md` ("Graph
+mutations", "Undo/redo and the settings drawer").
 
 BaseURL resolution (`config/constants.ts`):
 
@@ -200,6 +213,12 @@ path, never this one.
    `loadNodeData(nodeId)` hydrating from `nodeStore.getNodeData`, and end
    with `defineExpose({ loadNodeData, pushNodeData, saveSettings })` — the
    drawer host (`NodeSettingsDrawer.vue`) calls these two names by contract.
+   Never save from `loadNodeData` (drawers never save on open): load-time
+   fix-ups stay in the draft. The drawer's close saves only user edits, plus
+   what a never-configured node shows — decided by the drawer from the
+   loaded response's `NodeData.is_setup`, not from your draft. Handles that
+   depend on settings follow the saved settings (set them on load and in
+   `onAfterSave`, never on an unsaved toggle).
 5. No registration file to edit — both globs above pick it up automatically
    since they point at the same tree.
 6. `prod_ready: false` on the backend template hides it from the
@@ -227,6 +246,10 @@ split-output mode).
   collapsing swaps real edges for synthetic "proxy" edges. VueFlow has no
   `@pane-dblclick` event — `Canvas.vue` listens for the native DOM event
   directly instead.
+- The canvas holds no unsaved graph state: send the gesture first (one
+  `FlowApi.applyOperations` when it changes several things) and change the
+  canvas only after core accepts it. Drags and arrow-key nudges send the
+  whole moved selection; a failed mutation reloads instead of patching back.
 - The right-hand drawer (Settings/Results/Code tabs) is a **declarative
   registry**, `views/DesignerView/drawerRegistry.ts` — its own comment
   calls it "single source of truth... adding/moving a view is a one-entry
