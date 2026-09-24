@@ -2091,34 +2091,16 @@ def test_add_cloud_writer_gcs(flow_logger, execution_location):
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
 def test_complex_cloud_write_scenario(execution_location):
-    from uuid import uuid4
-
-    from test_utils.s3.fixtures import get_minio_client
-
     ensure_cloud_storage_connection_is_available_and_get_connection()
     handler = FlowfileHandler()
     flow_id = handler.import_flow(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/test_cloud_local.flowfile")
     graph = handler.get_flow(flow_id)
     graph.flow_settings.execution_location = execution_location
-    # The fixture's writer targets s3://sample-data/output.parquet, which is shared seed data: write elsewhere.
-    prefix = f"complex_cloud_write_{uuid4().hex[:8]}"
-    writer = next(node for node in graph.nodes if node.node_type == "cloud_storage_writer")
-    writer_settings = writer.setting_input.model_copy(deep=True)
-    writer_settings.cloud_storage_settings.resource_path = f"s3://flowfile-test/{prefix}/output.parquet"
-    graph.add_cloud_storage_writer(writer_settings)
-    s3_client = get_minio_client()
-    try:
-        node = graph.get_node(3)
-        example_data = node.get_table_example(True)
-        assert example_data.number_of_columns == 4
-        run_info = graph.run_graph()
-        handle_run_info(run_info)
-        assert s3_client.head_object(Bucket="flowfile-test", Key=f"{prefix}/output.parquet")["ContentLength"] > 0
-    finally:
-        listed = s3_client.list_objects_v2(Bucket="flowfile-test", Prefix=f"{prefix}/")
-        keys = [{"Key": obj["Key"]} for obj in listed.get("Contents", [])]
-        if keys:
-            s3_client.delete_objects(Bucket="flowfile-test", Delete={"Objects": keys})
+    node = graph.get_node(3)
+    example_data = node.get_table_example(True)
+    assert example_data.number_of_columns == 4
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
 
 
 def test_no_re_calculate_example_data_after_change_no_run():

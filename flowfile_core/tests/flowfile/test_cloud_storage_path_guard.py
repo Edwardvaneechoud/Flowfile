@@ -13,7 +13,6 @@ import pytest
 
 from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.schemas import input_schema
-from shared.cloud_storage.utils import ensure_path_has_wildcard_pattern
 from tests.flowfile.conftest import add_test_manual_input, create_test_graph
 
 WRITER_NO_PATH = (
@@ -77,7 +76,7 @@ def static_aws_profile(tmp_path, monkeypatch):
     monkeypatch.setenv("AWS_ALLOW_HTTP", "true")
 
 
-def _writer_graph(execution_location: str, **overrides):
+def _writer_graph(execution_location: str):
     graph = create_test_graph(flow_id=1, execution_location=execution_location)
     add_test_manual_input(graph, ROWS, node_id=1)
     graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=2, node_type="cloud_storage_writer"))
@@ -88,7 +87,7 @@ def _writer_graph(execution_location: str, **overrides):
                 "node_id": 2,
                 "user_id": 1,
                 "depending_on_id": 1,
-                "cloud_storage_settings": {**USER_WRITER_SETTINGS, **overrides},
+                "cloud_storage_settings": USER_WRITER_SETTINGS,
             }
         )
     )
@@ -112,15 +111,6 @@ def test_user_writer_settings_fail_with_the_path_error(execution_location, isola
     error = _failed_step(run_info, 2).error
     assert WRITER_NO_PATH in error
     assert not MISLEADING_ERROR.search(error)
-    assert list(isolated_cwd.iterdir()) == []
-
-
-@pytest.mark.parametrize("path", ["output_folder/table", "table"])
-def test_writer_rejects_a_relative_path(path, isolated_cwd, static_aws_profile):
-    run_info = _writer_graph("local", resource_path=path).run_graph()
-
-    error = _failed_step(run_info, 2).error
-    assert f"Cloud storage path '{path}' is not a URI" in error
     assert list(isolated_cwd.iterdir()) == []
 
 
@@ -163,8 +153,3 @@ def test_change_read_target_guards_the_path_before_resolving_a_connection():
     )
     with pytest.raises(ValueError, match=re.escape(READER_NO_PATH)):
         _cloud_change_read_target(settings, user_id=1)
-
-
-def test_wildcard_pattern_rejects_an_empty_path():
-    with pytest.raises(ValueError, match=re.escape(READER_NO_PATH)):
-        ensure_path_has_wildcard_pattern("", "parquet")

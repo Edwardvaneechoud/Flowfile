@@ -168,17 +168,9 @@ Group sharing is **authorization-only** (§10), so this format needed zero
 changes when sharing shipped.
 
 **Serialized plans are a transport too.** Polars inlines `storage_options`
-into a LazyFrame's serialized plan, so a cloud scan built in core with
-decrypted keys would ship them to the worker (and into logs/caches) in
-plaintext. Core-built cloud scans therefore pass
-`CloudStorageReader.get_secure_scan_kwargs(...)`: the credentials ride in a
-`shared/cloud_credential_provider.py::EncryptedCredentialProvider` (a Polars
-`credential_provider` whose only state is a `$ffsec$` ciphertext under the
-node's user), decrypted by whichever process executes the plan through the
-decryptor it registered (core: `flow_data_engine/cloud_storage_reader.py`;
-worker: `flowfile_worker/utils.py`). ADLS service-principal secrets and GCS
-service-account keys cannot go through a Polars provider and still travel in
-the options.
+into a serialized plan, so core-built cloud scans carry their credentials as a
+`$ffsec$` ciphertext in an `EncryptedCredentialProvider` instead (rule in
+`shared/CLAUDE.md`).
 
 ---
 

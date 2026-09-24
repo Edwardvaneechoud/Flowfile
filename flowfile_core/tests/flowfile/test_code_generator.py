@@ -6457,32 +6457,6 @@ def test_cloud_storage_reader_handler_unified():
     assert "scan_csv_from_cloud_storage" not in code_output
 
 
-def test_cloud_storage_reader_handler_csv_unset_options():
-    """Unset CSV options export as the engine's defaults, never as literal None."""
-    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
-
-    settings = input_schema.NodeCloudStorageReader(
-        flow_id=1,
-        node_id=1,
-        cloud_storage_settings=cloud_ss.CloudStorageReadSettings(
-            resource_path="s3://bucket/data.csv",
-            file_format="csv",
-            csv_has_header=None,
-            csv_delimiter=None,
-            csv_encoding=None,
-        ),
-    )
-
-    converter = FlowGraphToFlowFrameConverter(create_basic_flow())
-    converter._handle_cloud_storage_reader(settings, "df_1", {})
-    code_output = "\n".join(converter.code_lines)
-
-    verify_code_contains(code_output, 'delimiter=",",')
-    assert "None" not in code_output
-    assert "has_header" not in code_output
-    assert "encoding" not in code_output
-
-
 def test_cloud_storage_reader_polars_unsupported():
     """Test that cloud storage reader is unsupported in Polars mode."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter

@@ -15,28 +15,6 @@ export type AuthMethod =
   | "env_vars"
   | "auto";
 
-// "auto" is a node-level mode only; the backend rejects it on a saved connection.
-export const authMethodsByStorageType: Record<
-  CloudStorageType,
-  { value: AuthMethod; label: string }[]
-> = {
-  s3: [
-    { value: "access_key", label: "Access Key" },
-    { value: "iam_role", label: "IAM Role" },
-    { value: "aws-cli", label: "AWS CLI" },
-  ],
-  adls: [
-    { value: "access_key", label: "Access Key" },
-    { value: "service_principal", label: "Service Principal" },
-    { value: "managed_identity", label: "Managed Identity" },
-    { value: "sas_token", label: "SAS Token" },
-  ],
-  gcs: [
-    { value: "service_account", label: "Service Account" },
-    { value: "env_vars", label: "Application Default Credentials" },
-  ],
-};
-
 export interface PythonAuthSettingsInput {
   storage_type: CloudStorageType;
   auth_method: AuthMethod;
@@ -56,7 +34,6 @@ export interface PythonFullCloudStorageConnection extends PythonAuthSettingsInpu
   aws_secret_access_key?: string;
   aws_role_arn?: string;
   aws_allow_unsafe_html?: boolean;
-  aws_session_token?: string;
   aws_profile?: string;
 
   // Azure ADLS
@@ -83,7 +60,6 @@ export interface FullCloudStorageConnection extends AuthSettingsInput {
   awsSecretAccessKey?: string;
   awsRoleArn?: string;
   awsAllowUnsafeHtml?: boolean;
-  awsSessionToken?: string;
   awsProfile?: string;
 
   // Azure ADLS

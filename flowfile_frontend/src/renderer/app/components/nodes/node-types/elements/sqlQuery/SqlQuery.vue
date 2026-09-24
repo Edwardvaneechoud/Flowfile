@@ -40,7 +40,6 @@
 <script lang="ts" setup>
 import { ref, computed, watch } from "vue";
 import { CodeLoader } from "vue-content-loader";
-import { ElMessage } from "element-plus";
 import { sql } from "@codemirror/lang-sql";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { Codemirror } from "vue-codemirror";
@@ -79,7 +78,6 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   nodeRef: nodeSqlQuery,
   onBeforeSave: () => {
     if (!nodeSqlQuery.value || !nodeSqlQuery.value.sql_query_input.sql_code) {
-      if (nodeSqlQuery.value) ElMessage.warning("Enter a SQL query before saving.");
       return false;
     }
     return true;

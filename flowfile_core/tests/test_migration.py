@@ -1110,11 +1110,6 @@ class TestCloudConnectionAwsProfileMigration:
         engine.dispose()
         return names
 
-    def test_fresh_install_has_the_column(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "catalog.db"
-        _run_migration(db_path, monkeypatch)
-        assert "aws_profile" in self._columns(db_path, "cloud_storage_connections")
-
     def test_upgrade_from_032_never_uses_the_connection_name_as_profile(self, tmp_path, monkeypatch):
         """Every existing row, aws-cli included, upgrades with a NULL profile: boto3's default chain."""
         from alembic import command

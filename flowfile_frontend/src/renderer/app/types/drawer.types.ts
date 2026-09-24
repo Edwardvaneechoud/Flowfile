@@ -39,6 +39,5 @@ export interface DrawerDef {
   // Default drawer visibility = "≥1 tab visible". Override when a tab is a
   // permanent home tab (e.g. the bottom dock's Data placeholder).
   visibleWhen?: (ctx: DrawerCtx) => boolean;
-  // Resolve false to keep the drawer open (e.g. its settings save was refused).
-  onMinimize?: (ctx: DrawerCtx) => void | boolean | Promise<void | boolean>;
+  onMinimize?: (ctx: DrawerCtx) => void | Promise<void>;
 }

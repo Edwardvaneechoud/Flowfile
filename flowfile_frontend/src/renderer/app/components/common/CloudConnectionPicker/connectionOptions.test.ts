@@ -90,28 +90,15 @@ describe("connectionSelectValue with an unavailable connection", () => {
 });
 
 describe("ambientCredentialsChoice", () => {
-  it("warns that no connection means this machine's AWS credentials and no endpoint", () => {
+  it("uses this machine's credentials on a single-user install", () => {
     const choice = ambientCredentialsChoice(false);
     expect(choice.disabled).toBe(false);
-    expect(choice.label).toMatch(/AWS credentials/);
-    expect(choice.warning).toMatch(/~\/\.aws profile or AWS_\* environment variables/);
-    expect(choice.warning).toMatch(/not a saved connection's endpoint/);
-    expect(choice.warning).toMatch(/MinIO/);
-  });
-
-  it("names the provider core picks from the node's path", () => {
-    expect(ambientCredentialsChoice(false, "s3").label).toMatch(/AWS credentials/);
-    expect(ambientCredentialsChoice(false, "adls").label).toMatch(/Azure credentials/);
-    expect(ambientCredentialsChoice(false, "adls").warning).toMatch(/AZURE_\*/);
-    expect(ambientCredentialsChoice(false, "gcs").label).toMatch(/Google Cloud credentials/);
-    expect(ambientCredentialsChoice(false, "gcs").warning).not.toMatch(/AWS/);
-    expect(ambientCredentialsChoice(true, "gcs").disabled).toBe(true);
+    expect(choice.warning).toMatch(/machine running Flowfile/);
   });
 
   it("is disabled on a multi-user server, which refuses its own credentials", () => {
     const choice = ambientCredentialsChoice(true);
     expect(choice.disabled).toBe(true);
-    expect(choice.label).toMatch(/not available on this server/);
     expect(choice.warning).toMatch(/Select a cloud connection/);
   });
 });

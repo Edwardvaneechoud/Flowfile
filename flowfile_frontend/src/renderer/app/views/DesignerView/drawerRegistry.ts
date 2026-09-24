@@ -25,8 +25,9 @@ export const drawers: DrawerDef[] = [
       editor.isDrawerOpen || editor.showFlowResult || editor.showCodeGenerator,
     onMinimize: async ({ editor, node }) => {
       // Save first: closing unmounts the Settings tab before its nodeId watcher can.
-      if (editor.isDrawerOpen && node.nodeId !== -1 && !(await editor.saveDrawerBeforeLeave())) {
-        return false;
+      if (editor.isDrawerOpen && node.nodeId !== -1) {
+        await editor.drawCloseFunction?.();
+        editor.clearCloseFunction();
       }
       editor.isDrawerOpen = false;
       editor.activeDrawerComponent = null;

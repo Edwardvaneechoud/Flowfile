@@ -30,7 +30,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
-from shared.cloud_storage.storage_options import tls_verification_disabled
 from shared.cloud_storage.uri import (
     ParsedUri,
     build_uri,
@@ -263,8 +262,9 @@ _S3_MISSING_CODES = {"NoSuchBucket", "NoSuchKey", "404", "NotFound"}
 def _build_s3_client(storage_options: dict[str, Any] | None):
     """Build a boto3 S3 client from Polars-shaped storage options, by allow-list.
 
-    Separate from ``directory.py::_create_s3_client`` (the read hot path) because listing needs
-    bounded timeouts and path-style addressing. ``allow_invalid_certificates`` becomes ``verify=False``.
+    Deliberately separate from ``directory.py::_create_s3_client``, which is on the
+    read hot path: that one forwards unknown keys and treats the string ``"False"``
+    that ``build_s3_storage_options`` emits for ``verify`` as truthy.
     """
     import boto3
     from botocore.config import Config
@@ -276,8 +276,9 @@ def _build_s3_client(storage_options: dict[str, Any] | None):
     if region:
         kwargs["region_name"] = region
 
-    if tls_verification_disabled(options):
-        kwargs["verify"] = False
+    verify = options.get("verify")
+    if verify is not None:
+        kwargs["verify"] = verify not in (False, "False", "false", "0", 0)
 
     config = Config(
         connect_timeout=_CONNECT_TIMEOUT_SECONDS,
@@ -428,7 +429,6 @@ def _build_blob_service_client(storage_options: dict[str, Any] | None):
     return BlobServiceClient(
         account_url=endpoint,
         credential=credential,
-        connection_verify=not tls_verification_disabled(options),
         connection_timeout=_CONNECT_TIMEOUT_SECONDS,
         read_timeout=_READ_TIMEOUT_SECONDS,
     )

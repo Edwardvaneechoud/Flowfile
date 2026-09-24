@@ -15,10 +15,9 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_database_connection,
     update_cloud_connection,
 )
-from flowfile_core.database.models import Secret
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
-from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
+from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
 
 
 def del_all_cloud_connections(user_id: int = 1):
@@ -243,8 +242,8 @@ def test_get_all_cloud_connections_interface(cloud_connection):
         delete_cloud_connection(db, cloud_connection.connection_name, user_id)
 
 
-class TestAwsProfileAndSessionTokenPersistence:
-    """``aws_profile`` and ``aws_session_token`` survive store, load, update and delete."""
+class TestAwsProfilePersistence:
+    """``aws_profile`` survives store, load and update, and is kept for aws-cli only."""
 
     user_id = 1
 
@@ -271,7 +270,6 @@ class TestAwsProfileAndSessionTokenPersistence:
                 if i.connection_name == "minio connection"
             )
         assert interface.aws_profile == "analytics"
-        assert "aws_session_token" not in interface.model_dump()
 
         with get_db_context() as db:
             update_cloud_connection(db, connection.model_copy(update={"aws_profile": "   "}), self.user_id)
@@ -296,64 +294,21 @@ class TestAwsProfileAndSessionTokenPersistence:
         assert self._load("profiled").aws_profile is None
         del_all_cloud_connections(self.user_id)
 
-    def test_session_token_is_stored_encrypted_kept_rotated_and_deleted(self):
+    def test_updating_without_a_profile_keeps_the_stored_one(self):
+        """An API client that omits aws_profile must not switch an aws-cli connection to the default chain."""
         del_all_cloud_connections(self.user_id)
-        connection = FullCloudStorageConnection(
-            connection_name="temporary-keys",
-            storage_type="s3",
-            auth_method="access_key",
-            aws_access_key_id="ASIATEMP",
-            aws_secret_access_key=SecretStr("temp-secret"),
-            aws_session_token=SecretStr("token-1"),
-        )
+        fields = {"connection_name": "profiled", "storage_type": "s3", "auth_method": "aws-cli"}
         with get_db_context() as db:
-            db_row = store_cloud_connection(db, connection, self.user_id)
-            token_secret_id = db_row.aws_session_token_id
-            assert token_secret_id is not None
-            stored = db.query(Secret).filter(Secret.id == token_secret_id).one()
-            assert "token-1" not in stored.encrypted_value
-        assert self._load("temporary-keys").aws_session_token.get_secret_value() == "token-1"
-
-        blank = connection.model_copy(update={"aws_secret_access_key": None, "aws_session_token": SecretStr("")})
+            store_cloud_connection(db, FullCloudStorageConnection(**fields, aws_profile="analytics"), self.user_id)
+            update_cloud_connection(db, FullCloudStorageConnection(**fields, aws_region="eu-west-1"), self.user_id)
+        assert self._load("profiled").aws_profile == "analytics"
         with get_db_context() as db:
-            update_cloud_connection(db, blank, self.user_id)
-        assert self._load("temporary-keys").aws_session_token.get_secret_value() == "token-1"
-
-        rotated = connection.model_copy(update={"aws_session_token": SecretStr("token-2")})
-        with get_db_context() as db:
-            update_cloud_connection(db, rotated, self.user_id)
-        assert self._load("temporary-keys").aws_session_token.get_secret_value() == "token-2"
-
-        with get_db_context() as db:
-            delete_cloud_connection(db, "temporary-keys", self.user_id)
-            assert db.query(Secret).filter(Secret.id == token_secret_id).first() is None
-
-    def test_blank_session_token_is_not_stored(self):
-        del_all_cloud_connections(self.user_id)
-        connection = FullCloudStorageConnection(
-            connection_name="static-keys",
-            storage_type="s3",
-            auth_method="access_key",
-            aws_access_key_id="AKID",
-            aws_secret_access_key=SecretStr("secret"),
-            aws_session_token=SecretStr(""),
-        )
-        with get_db_context() as db:
-            assert store_cloud_connection(db, connection, self.user_id).aws_session_token_id is None
-        assert self._load("static-keys").aws_session_token is None
+            update_cloud_connection(db, FullCloudStorageConnection(**fields, aws_profile=""), self.user_id)
+        assert self._load("profiled").aws_profile is None
         del_all_cloud_connections(self.user_id)
 
-    def test_worker_interface_carries_the_profile_and_the_encrypted_token(self):
+    def test_worker_interface_carries_the_profile(self):
         connection = FullCloudStorageConnection(
-            connection_name="temporary-keys",
-            storage_type="s3",
-            auth_method="access_key",
-            aws_access_key_id="ASIATEMP",
-            aws_secret_access_key=SecretStr("temp-secret"),
-            aws_session_token=SecretStr("token-1"),
-            aws_profile="analytics",
+            connection_name="profiled", storage_type="s3", auth_method="aws-cli", aws_profile="analytics"
         )
-        worker_interface = connection.get_worker_interface(self.user_id)
-        assert worker_interface.aws_profile == "analytics"
-        assert worker_interface.aws_session_token.startswith(f"$ffsec$1${self.user_id}$")
-        assert decrypt_secret(worker_interface.aws_session_token).get_secret_value() == "token-1"
+        assert connection.get_worker_interface(self.user_id).aws_profile == "analytics"

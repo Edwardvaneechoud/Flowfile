@@ -114,11 +114,6 @@ def is_docker_available() -> bool:
         return False
 
 
-def is_image_present(image: str) -> bool:
-    """True when the image is already local, so no registry round-trip is needed."""
-    return subprocess.run(["docker", "image", "inspect", image], capture_output=True, check=False).returncode == 0
-
-
 def is_container_running(container_name: str) -> bool:
     """Check if the MySQL container is already running."""
     if not is_docker_available():
@@ -223,16 +218,15 @@ def start_mysql_container(
         check=False,
     )
 
-    # Pull only when missing: a pull of a present tag still round-trips to the registry.
+    # Pull the image first (may take a while on first run)
     try:
-        if not is_image_present(image):
-            logger.info(f"Pulling Docker image {image}...")
-            subprocess.run(
-                ["docker", "pull", image],
-                capture_output=True,
-                timeout=300,
-                check=True,
-            )
+        logger.info(f"Pulling Docker image {image}...")
+        subprocess.run(
+            ["docker", "pull", image],
+            capture_output=True,
+            timeout=300,
+            check=True,
+        )
     except subprocess.TimeoutExpired:
         logger.error(f"Timed out pulling Docker image {image}")
         return None, False

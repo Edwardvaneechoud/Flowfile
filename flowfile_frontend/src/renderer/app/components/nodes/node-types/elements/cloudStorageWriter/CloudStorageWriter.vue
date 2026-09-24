@@ -1,5 +1,5 @@
 <template>
-  <div v-if="loadView === 'form' && nodeCloudStorageWriter" class="cloud-storage-container">
+  <div v-if="dataLoaded && nodeCloudStorageWriter" class="cloud-storage-container">
     <generic-node-settings
       v-model="nodeCloudStorageWriter"
       @update:model-value="handleGenericSettingsUpdate"
@@ -11,7 +11,6 @@
           :connections="connectionInterfaces"
           :unavailable-connection="unavailableConnection"
           :loading="connectionsAreLoading"
-          :resource-path="nodeCloudStorageWriter.cloud_storage_settings.resource_path"
           ambient-credentials
           @change="updateConnection"
         />
@@ -145,9 +144,6 @@
             :version="tableProbe.current_version"
             :partition-columns="tableProbe.partition_columns"
           />
-          <p v-if="probeHint" class="field-warning" data-testid="delta-probe-hint">
-            {{ probeHint }}
-          </p>
 
           <div v-if="needsMergeKeys(writeMode)" class="form-group">
             <label for="merge-keys">Key columns</label>
@@ -245,10 +241,6 @@
       @select="applyBrowsedPath"
     />
   </div>
-  <div v-else-if="loadView === 'error'" class="load-error" data-testid="node-load-error">
-    <p>{{ loadError }}</p>
-    <el-button size="small" @click="loadNodeData(requestedNodeId)">Retry</el-button>
-  </div>
   <code-loader v-else />
 </template>
 
@@ -277,8 +269,6 @@ import {
 } from "../../../../common/FileBrowser/cloudPathMapping";
 import { isCloudUri, storageTypeForUri } from "../../../../../utils/storagePath";
 import { cloudPathWarning } from "../../../../../utils/cloudPathWarning";
-import { settingsLoadView } from "../../../../../utils/settingsLoadView";
-import { deltaProbeHint } from "../../../../../utils/cloudDeltaProbe";
 import {
   canPartition,
   modeDescription,
@@ -295,13 +285,7 @@ interface Props {
 defineProps<Props>();
 const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
-const loadError = ref<string | null>(null);
-const requestedNodeId = ref(-1);
-let loadSeq = 0;
 const nodeCloudStorageWriter = ref<NodeCloudStorageWriter | null>(null);
-const loadView = computed(() =>
-  settingsLoadView(dataLoaded.value && nodeCloudStorageWriter.value !== null, loadError.value),
-);
 const availableColumns = ref<string[]>([]);
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
@@ -386,7 +370,6 @@ const otherModeDescription = computed(() =>
 
 // Existing-table probe; null while unknown, when it failed, or for gs:// (unsupported there).
 const tableProbe = ref<CloudDeltaInfo | null>(null);
-const probeHint = ref<string | null>(null);
 let probeTimer: ReturnType<typeof setTimeout> | null = null;
 let probeSeq = 0;
 
@@ -401,9 +384,8 @@ async function probeTable() {
       auth_mode: settings.auth_mode,
     });
     if (seq === probeSeq) tableProbe.value = info;
-  } catch (error) {
-    // Show no status rather than a wrong "new table", but say why when the run would fail too.
-    if (seq === probeSeq) probeHint.value = deltaProbeHint(error);
+  } catch {
+    // Show no status rather than a wrong "new table".
   }
 }
 
@@ -411,7 +393,6 @@ function scheduleProbe() {
   if (probeTimer) clearTimeout(probeTimer);
   probeSeq += 1;
   tableProbe.value = null;
-  probeHint.value = null;
   const path = nodeCloudStorageWriter.value?.cloud_storage_settings.resource_path ?? "";
   if (!isDelta.value || isGcs.value || !isCloudUri(path)) return;
   probeTimer = setTimeout(probeTable, 350);
@@ -494,49 +475,34 @@ const setConnectionOnConnectionName = (connectionName: string | null) => {
   );
 };
 
-// Nothing stale stays behind to save; the drawer shows a retry instead of a skeleton.
-const failLoad = () => {
-  nodeCloudStorageWriter.value = null;
-  dataLoaded.value = false;
-  loadError.value =
-    "Could not load this node's settings. Check that Flowfile is running, then retry.";
-};
-
 const loadNodeData = async (nodeId: number) => {
-  const seq = ++loadSeq;
-  requestedNodeId.value = nodeId;
-  loadError.value = null;
   try {
     const [nodeData] = await Promise.all([
       nodeStore.getNodeData(nodeId, false),
       fetchConnections(),
     ]);
-    if (seq !== loadSeq) return;
-    if (!nodeData) {
-      failLoad();
-      return;
+    if (nodeData) {
+      const hasValidSetup = Boolean(nodeData.setting_input?.is_setup);
+      nodeCloudStorageWriter.value = hasValidSetup
+        ? nodeData.setting_input
+        : createNodeCloudStorageWriter(nodeStore.flow_id, nodeId);
+
+      availableColumns.value = nodeData.main_input?.columns ?? [];
+      // Backfill fields for nodes saved before partitioning / merge support
+      const settings = nodeCloudStorageWriter.value!.cloud_storage_settings;
+      if (!settings.partition_by) settings.partition_by = [];
+      settings.merge_keys = settings.merge_keys ?? [];
+      settings.track_changes = settings.track_changes ?? false;
+
+      setConnectionOnConnectionName(
+        nodeCloudStorageWriter.value?.cloud_storage_settings.connection_name ?? null,
+      );
     }
-    const hasValidSetup = Boolean(nodeData.setting_input?.is_setup);
-    nodeCloudStorageWriter.value = hasValidSetup
-      ? nodeData.setting_input
-      : createNodeCloudStorageWriter(nodeStore.flow_id, nodeId);
-
-    availableColumns.value = nodeData.main_input?.columns ?? [];
-    // Backfill fields for nodes saved before partitioning / merge support
-    const settings = nodeCloudStorageWriter.value!.cloud_storage_settings;
-    if (!settings.partition_by) settings.partition_by = [];
-    settings.merge_keys = settings.merge_keys ?? [];
-    settings.track_changes = settings.track_changes ?? false;
-
-    setConnectionOnConnectionName(
-      nodeCloudStorageWriter.value?.cloud_storage_settings.connection_name ?? null,
-    );
     dataLoaded.value = true;
   } catch (error) {
-    if (seq !== loadSeq) return;
     console.error("Error loading node data:", error);
     ElMessage.error("Failed to load node settings.");
-    failLoad();
+    dataLoaded.value = false;
   }
 };
 
@@ -556,8 +522,6 @@ defineExpose({
   loadNodeData,
   pushNodeData,
   saveSettings,
-  // A failed load has nothing to apply; the drawer hides its Apply footer.
-  canApply: computed(() => loadError.value === null),
 });
 </script>
 
@@ -593,20 +557,6 @@ defineExpose({
   margin: 0.25rem 0 0 0;
   font-size: 0.75rem;
   color: var(--color-warning-dark);
-}
-
-.load-error {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.5rem;
-  padding: 1rem;
-  font-size: 0.875rem;
-  color: var(--color-danger);
-}
-
-.load-error p {
-  margin: 0;
 }
 
 .format-options {

@@ -2045,13 +2045,12 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         if cs.scan_mode and cs.scan_mode != "single_file":
             self._add_code(f'    scan_mode="{cs.scan_mode}",')
         if cs.file_format == "csv":
-            csv = cs.with_csv_defaults()
-            if csv.csv_delimiter != ";":
-                self._add_code(f'    delimiter="{csv.csv_delimiter}",')
-            if not csv.csv_has_header:
-                self._add_code(f"    has_header={csv.csv_has_header},")
-            if csv.csv_encoding != "utf8":
-                self._add_code(f'    encoding="{csv.csv_encoding}",')
+            if cs.csv_delimiter != ";":
+                self._add_code(f'    delimiter="{cs.csv_delimiter}",')
+            if not cs.csv_has_header:
+                self._add_code(f"    has_header={cs.csv_has_header},")
+            if cs.csv_encoding != "utf8":
+                self._add_code(f'    encoding="{cs.csv_encoding}",')
         if cs.file_format == "delta" and cs.delta_version is not None:
             self._add_code(f"    delta_version={cs.delta_version},")
         if cs.file_format == "delta":

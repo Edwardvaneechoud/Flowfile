@@ -16,6 +16,9 @@ from tests.flowfile.conftest import (
 from tests.flowfile.conftest import (
     create_test_namespace as _create_namespace,
 )
+from tests.flowfile.test_cloud_storage_path_guard import ROWS as CLOUD_ROWS
+from tests.flowfile.test_cloud_storage_path_guard import USER_WRITER_SETTINGS as USER_CLOUD_WRITER_SETTINGS
+from tests.flowfile.test_cloud_storage_path_guard import WRITER_NO_PATH
 
 
 def create_graph(flow_id: int = 1) -> FlowGraph:
@@ -855,29 +858,6 @@ def test_add_filter_returns_the_dtype_error():
 
 # Cloud reader/writer targets: the run-time path guard's verdict, shown before the run.
 
-WRITER_NO_PATH = (
-    "Cloud storage writer has no target path. Enter an object-storage URI such as s3://bucket/folder/table."
-)
-READER_NO_PATH = (
-    "Cloud storage reader has no source path. Enter an object-storage URI such as s3://bucket/folder/file.parquet."
-)
-# The writer exactly as the UI saved it in the failing runs: "No connection", empty path, format moved off CSV.
-USER_CLOUD_WRITER_SETTINGS = {
-    "resource_path": "",
-    "write_mode": "append",
-    "file_format": "delta",
-    "parquet_compression": "snappy",
-    "csv_delimiter": ";",
-    "csv_encoding": "utf8-lossy",
-    "partition_by": ["output_field"],
-    "merge_keys": [],
-    "track_changes": False,
-    "auth_mode": "aws-cli",
-    "connection_name": None,
-}
-CLOUD_ROWS = [{"id": 1, "category": "A", "output_field": "test"}, {"id": 2, "category": "na", "output_field": "test"}]
-
-
 def cloud_writer_graph(graph: FlowGraph | None = None, **overrides) -> FlowGraph:
     graph = graph or create_graph()
     add_manual_input(graph, CLOUD_ROWS, node_id=1)
@@ -887,16 +867,6 @@ def cloud_writer_graph(graph: FlowGraph | None = None, **overrides) -> FlowGraph
         "cloud_storage_settings": {**USER_CLOUD_WRITER_SETTINGS, **overrides},
     }))
     connect(graph, 1, 2)
-    return graph
-
-
-def cloud_reader_graph(resource_path: str) -> FlowGraph:
-    graph = create_graph()
-    add_promise(graph, "cloud_storage_reader", 1)
-    graph.add_cloud_storage_reader(input_schema.NodeCloudStorageReader.model_validate({
-        "flow_id": graph.flow_id, "node_id": 1, "user_id": 1,
-        "cloud_storage_settings": {"resource_path": resource_path, "file_format": "parquet", "auth_mode": "aws-cli"},
-    }))
     return graph
 
 
@@ -911,11 +881,6 @@ def test_user_cloud_writer_without_a_path_warns():
 def test_cloud_writer_blank_or_relative_path_warns(path):
     (issue,) = issues_by_node(validate_flow_settings(cloud_writer_graph(resource_path=path)))[2]
     assert issue.kind == "invalid_path"
-
-
-@pytest.mark.parametrize("path", ["s3://flowfile-test/output/table", "abfss://container@account/table", "gs://b/t"])
-def test_cloud_writer_with_a_cloud_uri_stays_silent(path):
-    assert validate_flow_settings(cloud_writer_graph(resource_path=path)).nodes == []
 
 
 @pytest.mark.parametrize("path", ["${target}", "${root}/table"])
@@ -935,35 +900,3 @@ def test_cloud_writer_absolute_local_path_warns_only_in_docker_mode(tmp_path, mo
     assert issue.kind == "invalid_path"
     assert "local path" in issue.message
 
-
-def test_cloud_reader_without_a_path_warns():
-    (issue,) = issues_by_node(validate_flow_settings(cloud_reader_graph("")))[1]
-    assert (issue.kind, issue.message) == ("invalid_path", READER_NO_PATH)
-    assert validate_flow_settings(cloud_reader_graph("s3://flowfile-test/data.parquet")).nodes == []
-
-
-def test_cloud_path_issue_sits_beside_column_issues():
-    graph = cloud_writer_graph(partition_by=["gone"])
-    kinds = sorted(issue.kind for issue in issues_by_node(validate_flow_settings(graph))[2])
-    assert kinds == ["invalid_path", "missing_columns"]
-
-
-def test_endpoint_reports_the_cloud_path_issue():
-    from flowfile_core import flow_file_handler
-
-    client = _get_test_client()
-    flow_id = 9872
-    if flow_file_handler.get_flow(flow_id) is not None:
-        flow_file_handler.delete_flow(flow_id)
-    flow_file_handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name="sv_cloud", path="."))
-    cloud_writer_graph(flow_file_handler.get_flow(flow_id))
-    try:
-        response = client.get("/flow/settings_validation", params={"flow_id": flow_id})
-        assert response.status_code == 200
-        assert response.json()["nodes"] == [{
-            "node_id": 2,
-            "issues": [{"input_handle": "main", "missing_columns": [], "message": WRITER_NO_PATH,
-                        "kind": "invalid_path"}],
-        }]
-    finally:
-        flow_file_handler.delete_flow(flow_id)

@@ -1,5 +1,4 @@
 import type { FullCloudStorageConnectionInterface } from "../../../views/CloudConnectionView/CloudConnectionTypes";
-import type { CloudStorageKind } from "../../../utils/storagePath";
 
 // Native <select>/<option> values are strings, so options key off connectionName:
 // binding the connection object makes every option stringify to "[object Object]".
@@ -37,16 +36,8 @@ export interface NoConnectionChoice {
   disabled: boolean;
 }
 
-/**
- * The "No connection" choice of a cloud storage node: it runs on the credentials of the
- * machine running Flowfile for the provider the node's path names (core picks it by URI
- * scheme; AWS when there is none) and ignores every saved connection's endpoint.
- * Multi-user (docker) servers refuse their own credentials, so the choice is disabled there.
- */
-export function ambientCredentialsChoice(
-  multiUser: boolean,
-  storageType: CloudStorageKind | null = null,
-): NoConnectionChoice {
+/** "No connection" uses the server's own cloud credentials, which multi-user servers refuse. */
+export function ambientCredentialsChoice(multiUser: boolean): NoConnectionChoice {
   if (multiUser) {
     return {
       label: "No connection (not available on this server)",
@@ -54,31 +45,9 @@ export function ambientCredentialsChoice(
       disabled: true,
     };
   }
-  if (storageType === "adls") {
-    return {
-      label: "No connection (this machine's Azure credentials)",
-      warning:
-        "Uses the Azure credentials of the machine running Flowfile (AZURE_* environment " +
-        "variables), not a saved connection. Azurite and other emulators need a connection.",
-      disabled: false,
-    };
-  }
-  if (storageType === "gcs") {
-    return {
-      label: "No connection (this machine's Google Cloud credentials)",
-      warning:
-        "Uses the Google Cloud credentials of the machine running Flowfile " +
-        "(GOOGLE_APPLICATION_CREDENTIALS or gcloud application-default login), not a saved " +
-        "connection. GCS emulators need a connection.",
-      disabled: false,
-    };
-  }
   return {
-    label: "No connection (this machine's AWS credentials)",
-    warning:
-      "Uses the AWS credentials of the machine running Flowfile (the ~/.aws profile or AWS_* " +
-      "environment variables), not a saved connection's endpoint. MinIO and other " +
-      "S3-compatible storage need a connection (or AWS_ENDPOINT_URL in that environment).",
+    label: "No connection (this machine's credentials)",
+    warning: "Uses the cloud credentials of the machine running Flowfile, not a saved connection.",
     disabled: false,
   };
 }

@@ -118,12 +118,11 @@ In a **Database Reader** or **Database Writer** node:
 | **Storage Type** | **AWS S3**, **Azure Data Lake Storage**, or **Google Cloud Storage** |
 | **AWS Access Key ID** | Your access key |
 | **AWS Secret Access Key** | Stored as encrypted secret |
-| **AWS Session Token (Optional)** | Access Key only: for temporary credentials; stored as encrypted secret |
 | **AWS Profile (Optional)** | AWS CLI only: a profile from the AWS config on the machine running Flowfile; blank uses the default credentials |
 | **AWS Region** | e.g., `us-east-1` |
 | **Custom Endpoint URL** | For S3-compatible services (MinIO, etc.), with any authentication method |
-| **Verify SSL** | On by default; turn off only for an endpoint with a self-signed certificate (S3 and ADLS; no effect on GCS) |
-| **Allow HTTP (unencrypted) endpoint** | Allows plain `http://` endpoints (e.g., local MinIO) |
+| **Verify SSL** | Disable only for self-signed certificates |
+| **Allow Unsafe HTTP** | Enable for non-HTTPS endpoints (e.g., local MinIO) |
 
 !!! note "Provider-specific fields"
     The fields above describe an **AWS S3** connection. The credential fields adapt to the selected **Storage Type**: **Azure Data Lake Storage** uses an account name with service-principal or SAS-token credentials, and **Google Cloud Storage** uses a project ID with a service-account key.

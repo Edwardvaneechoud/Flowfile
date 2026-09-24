@@ -717,12 +717,7 @@ class FlowDataEngine:
         read_settings: cloud_storage_schemas.CloudStorageReadSettings,
         use_pyarrow: bool = False,
     ) -> FlowDataEngine:
-        """Reads CSV file(s) from cloud storage.
-
-        Unset CSV options fall back to the drawer's defaults (header, ``,``, ``utf8``); Polars
-        rejects ``None`` for each of them.
-        """
-        read_settings = read_settings.with_csv_defaults()
+        """Reads CSV file(s) from cloud storage."""
         try:
             if use_pyarrow and read_settings.scan_mode == "directory":
                 return cls._read_directory_via_gcsfs(resource_path, storage_options, "csv", read_settings)

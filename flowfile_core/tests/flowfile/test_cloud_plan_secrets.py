@@ -10,13 +10,9 @@ Every test here captures each plan core serializes during the run and asserts th
 while the run still reads the right data. MinIO's root credentials are the secret.
 """
 
-import io
 import os
-import subprocess
 import sys
-import textwrap
 import uuid
-from pathlib import Path
 
 import polars as pl
 import pytest
@@ -48,7 +44,6 @@ except ModuleNotFoundError:  # pragma: no cover - import shim for ad-hoc runs
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     from test_utils.s3.fixtures import MINIO_ACCESS_KEY, MINIO_ENDPOINT_URL, MINIO_SECRET_KEY, get_minio_client
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
 _BUCKET = "flowfile-test"
 SECRET = MINIO_SECRET_KEY.encode()
 _ROOT_OPTIONS = {
@@ -325,55 +320,6 @@ def test_iam_role_local_write_uses_the_assumed_role(stored_connection, minio_pre
     assert pl.read_parquet(target, storage_options=_ROOT_OPTIONS).height == 3
 
 
-@pytest.fixture
-def azurite_container():
-    from test_utils.azurite.fixtures import get_blob_service_client, is_azurite_reachable
-
-    if not is_azurite_reachable():
-        pytest.skip("Azurite not available")
-    client = get_blob_service_client()
-    name = f"plan-secrets-{uuid.uuid4().hex[:8]}"
-    client.create_container(name)
-    yield client.get_container_client(name)
-    client.delete_container(name)
-
-
-def test_adls_reader_plan_carries_no_account_key(execution_location, azurite_container, serialized_plans):
-    from test_utils.azurite.fixtures import AZURITE_ACCOUNT_KEY, AZURITE_ACCOUNT_NAME, AZURITE_BLOB_PORT, AZURITE_HOST
-
-    buffer = io.BytesIO()
-    pl.DataFrame(_ROWS).write_parquet(buffer)
-    azurite_container.upload_blob("data.parquet", buffer.getvalue())
-    connection_name = f"plan secrets adls {uuid.uuid4().hex[:6]}"
-    with get_db_context() as db:
-        store_cloud_connection(
-            db,
-            FullCloudStorageConnection(
-                connection_name=connection_name,
-                storage_type="adls",
-                auth_method="access_key",
-                azure_account_name=AZURITE_ACCOUNT_NAME,
-                azure_account_key=SecretStr(AZURITE_ACCOUNT_KEY),
-                endpoint_url=f"http://{AZURITE_HOST}:{AZURITE_BLOB_PORT}",
-            ),
-            user_id=1,
-        )
-    try:
-        graph = create_test_graph(flow_id=7406, execution_location=execution_location)
-        path = f"az://{azurite_container.container_name}/data.parquet"
-        _add_reader(graph, 1, connection_name, resource_path=path, file_format="parquet")
-        _add_record_count(graph, 2, 1)
-
-        _assert_run_succeeded(graph.run_graph())
-
-        assert _count(graph, 2) == 3
-        graph.get_node(1).get_resulting_data().data_frame.serialize()
-        _assert_no_secret(serialized_plans, AZURITE_ACCOUNT_KEY.encode())
-    finally:
-        with get_db_context() as db:
-            delete_cloud_connection(db, connection_name, user_id=1)
-
-
 @requires_minio
 class TestCatalogReadersOnObjectStorage:
     @pytest.fixture(autouse=True)
@@ -435,59 +381,3 @@ class TestCatalogReadersOnObjectStorage:
         for node_id in readers:
             graph.get_node(node_id).get_resulting_data().data_frame.serialize()
         _assert_no_secret(serialized_plans, SECRET)
-
-
-@requires_minio
-class TestPlanExecutesWhereItIsDecrypted:
-    """A core-built plan run in a fresh worker-shaped process, the way a spawned worker child runs it."""
-
-    @pytest.fixture
-    def reader_plan(self, stored_connection, minio_prefix) -> bytes:
-        paths = _seed_files(minio_prefix)
-        connection_name = stored_connection(
-            "access_key", aws_access_key_id=MINIO_ACCESS_KEY, aws_secret_access_key=SecretStr(MINIO_SECRET_KEY)
-        )
-        graph = create_test_graph(flow_id=7405, execution_location="local")
-        _add_reader(graph, 1, connection_name, resource_path=paths["single"], file_format="parquet")
-        _assert_run_succeeded(graph.run_graph())
-        plan = graph.get_node(1).get_resulting_data().data_frame.serialize()
-        assert SECRET not in plan
-        return plan
-
-    def _run_in_worker_child(self, plan: bytes, tmp_path: Path, **env_overrides) -> subprocess.CompletedProcess:
-        plan_file = tmp_path / "plan.bin"
-        plan_file.write_bytes(plan)
-        code = textwrap.dedent(
-            f"""
-            import io, multiprocessing
-            multiprocessing.current_process().name = "Worker-1"
-            import flowfile_worker.funcs  # the spawned child's entry surface registers the decryptor
-            import polars as pl
-            print(pl.LazyFrame.deserialize(io.BytesIO(open({str(plan_file)!r}, "rb").read())).collect().height)
-            """
-        )
-        env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_") and k != "TEST_MODE"}
-        env.update(
-            AWS_EC2_METADATA_DISABLED="true",
-            PYTHONPATH=os.pathsep.join([str(REPO_ROOT / "flowfile_worker"), str(REPO_ROOT)]),
-        )
-        env.update(env_overrides)
-        return subprocess.run(
-            [sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd=tmp_path, timeout=120
-        )
-
-    def test_worker_child_decrypts_with_the_shared_master_key(self, reader_plan, tmp_path):
-        ran = self._run_in_worker_child(reader_plan, tmp_path)
-        assert ran.returncode == 0, ran.stderr
-        assert ran.stdout.strip().splitlines()[-1] == "3"
-
-    def test_a_worker_without_the_master_key_fails_with_a_clear_error(self, reader_plan, tmp_path):
-        empty_store = tmp_path / "other_secure_store"
-        empty_store.mkdir()
-
-        ran = self._run_in_worker_child(reader_plan, tmp_path, FLOWFILE_SECURE_STORAGE_PATH=str(empty_store))
-
-        assert ran.returncode != 0
-        assert "Could not decrypt the cloud storage credentials embedded in this query plan" in ran.stderr
-        assert "Master key not found" in ran.stderr
-        assert MINIO_SECRET_KEY not in ran.stderr

@@ -34,16 +34,10 @@ import {
  * partitioned Delta writer, configured the way the reporter did and run with the writer's
  * settings drawer still open (no Apply).
  *
- * Prerequisites: MinIO on :9000 seeded with `poetry run seed_cloud_e2e`, a core + worker and a
- * web server (TEST_URL / API_URL). `make test_e2e_cloud` starts all of it on free ports, with a
- * static-key AWS profile and AWS_ENDPOINT_URL pointing at MinIO in the servers' environment, and
- * sets E2E_AWS_PROFILE_CONFIGURED=1. Everything is written under s3://flowfile-test/cloud-e2e-<run id>/,
+ * Prerequisites: MinIO on :9000 seeded with `poetry run seed_cloud_e2e`, and a core + worker and a
+ * web server (TEST_URL / API_URL). Everything is written under s3://flowfile-test/cloud-e2e-<run id>/,
  * which afterAll deletes. The spec skips without an explicit API_URL, so it never writes connections
  * and flows into a developer's live core by default.
- *
- * Because that environment reaches MinIO on its own, a connection whose endpoint or allow-HTTP flag
- * got lost would still pass here. tests/cloud_e2e covers that: its connection stack has no ambient
- * route to MinIO.
  */
 
 const RUN_ID = process.env.E2E_RUN_ID || Date.now().toString(36);
@@ -51,7 +45,6 @@ const SOURCE = "s3://flowfile-test/cloud-e2e/source.parquet";
 const PREFIX = `s3://flowfile-test/cloud-e2e-${RUN_ID}`;
 // Unique per run: a dev core may already hold a real "minio connection" that cleanup must not touch.
 const CONNECTION = `minio connection ${RUN_ID}`;
-const AWS_PROFILE_CONFIGURED = process.env.E2E_AWS_PROFILE_CONFIGURED === "1";
 const REPO_ROOT = path.resolve(__dirname, "../..");
 
 /** Best effort: the spec has no S3 client, so the Python seed module deletes this run's prefix. */
@@ -270,10 +263,7 @@ async function runFromUi(page: Page, request: APIRequestContext, flowId: number)
 }
 
 test.describe("cloud storage flow built through the UI", () => {
-  test.skip(
-    !process.env.API_URL,
-    "set API_URL (and TEST_URL) to a disposable stack; `make test_e2e_cloud` starts one",
-  );
+  test.skip(!process.env.API_URL, "set API_URL (and TEST_URL) to a disposable core + web server");
 
   test.beforeAll(async ({ request }) => {
     token = await getAuthToken(request);
@@ -368,10 +358,6 @@ test.describe("cloud storage flow built through the UI", () => {
     expect(created.columns.map((c: any) => c.name)).toEqual(
       expect.arrayContaining(["category", "output_field"]),
     );
-
-    const second = await runFromUi(page, request, userFlow.flowId);
-    expect(second.success, JSON.stringify(second.node_step_result)).toBe(true);
-    expect(await deltaInfo(request, target)).toMatchObject({ exists: true, current_version: 1 });
   });
 
   test("a writer left on 'No connection' with no path fails with a path error", async ({
@@ -413,40 +399,5 @@ test.describe("cloud storage flow built through the UI", () => {
       file_format: "delta",
       write_mode: "append",
     });
-  });
-
-  test("'No connection' with an s3:// path uses the server's AWS profile", async ({
-    page,
-    request,
-  }, testInfo) => {
-    test.skip(
-      !AWS_PROFILE_CONFIGURED,
-      "needs the servers to run with a static-key AWS profile and AWS_ENDPOINT_URL=MinIO " +
-        "(set E2E_AWS_PROFILE_CONFIGURED=1; `make test_e2e_cloud` and CI do)",
-    );
-    await ensureConnection(request);
-    const userFlow = await ensureUserFlow(page, request);
-    const writer = await ensureNoConnectionWriter(page, request, userFlow);
-    const target = `${PREFIX}/no_connection_table-${testInfo.retry}`;
-
-    await openNodeSettings(page, writer, "#connection-select");
-    await page.locator("#connection-select").selectOption("");
-    await page.locator("#file-path").fill(target);
-    await expect(page.getByTestId("cloud-path-warning")).toBeHidden();
-    await page.locator("#file-format").selectOption("delta");
-    await page.locator("#write-mode").selectOption("append");
-
-    const info = await runFromUi(page, request, userFlow.flowId);
-    expect(ranNodes(info), "the writer ran").toContain(writer);
-    expect(info.success, JSON.stringify(info.node_step_result)).toBe(true);
-    expect(nodeResult(info, writer)?.success).toBe(true);
-    await expect(nodeStatus(page, writer)).toHaveClass(/success/);
-
-    const saved = await readNodeSettings(request, token, userFlow.flowId, writer);
-    expect(saved.cloud_storage_settings).toMatchObject({
-      auth_mode: "aws-cli",
-      resource_path: target,
-    });
-    expect(await deltaInfo(request, target)).toMatchObject({ exists: true, current_version: 0 });
   });
 });

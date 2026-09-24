@@ -1,4 +1,4 @@
-import { CLOUD_URI_SCHEMES, schemeOf } from "./storagePath";
+import { CLOUD_URI_SCHEMES } from "./storagePath";
 
 export type CloudPathRole = "reader" | "writer";
 
@@ -27,12 +27,5 @@ export function cloudPathWarning(
   const value = path ?? "";
   if (!value.trim()) return EMPTY_PATH_WARNING[role];
   if (hasCloudScheme(value) || LEADING_PARAMETER.test(value)) return null;
-  const scheme = schemeOf(value);
-  if (scheme) {
-    return (
-      `'${value}' starts with ${value.slice(0, scheme.length)}, but the scheme is case-sensitive. ` +
-      `Use lower-case ${scheme} instead.`
-    );
-  }
   return `'${value}' is not a cloud storage URI. Use a path starting with s3://, az://, abfss:// or gs://.`;
 }

@@ -794,7 +794,6 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
     syncCellsToNode();
     const combinedCode = nodePythonScript.value?.python_script_input.code;
     if (!combinedCode?.trim()) {
-      ElMessage.warning("Enter some Python code before saving.");
       return false;
     }
     return true;

@@ -28,13 +28,13 @@ This page covers the canvas mechanics: creating a flow, adding and connecting no
 
 1. Drag a node from the left sidebar onto the canvas.
 2. Drag from a node's output handle to the next node's input to connect them.
-3. Click a node to configure it in the right sidebar — alongside each node's own settings there is a shared **General Settings** tab with the node's description, its reference name (used for edge labels, see below), and a toggle to cache its result between runs. Clicking the canvas or another node, or minimizing the panel, saves it first; if the settings cannot be saved, the panel stays open with a warning, and clicking away again discards the unsaved changes.
+3. Click a node to configure it in the right sidebar — alongside each node's own settings there is a shared **General Settings** tab with the node's description, its reference name (used for edge labels, see below), and a toggle to cache its result between runs.
 
 ![Node settings panel for a Formula node](../../assets/images/ui/node_settings_formula.gif)
 
 ## Run
 
-1. Click **Run** in the top toolbar. An open settings panel is saved first; if its settings cannot be saved, the flow does not start and a notification says so.
+1. Click **Run** in the top toolbar.
 2. Node borders show execution state: green success, red failure, orange warning, grey not yet executed. A hollow grey ring means the node was deliberately skipped behind a closed [Gate](nodes/combine.md#gate) — a successful outcome, not an error.
 3. Click any executed node to inspect its output in the bottom panel.
 

@@ -177,7 +177,6 @@ import {
   sortKernelsByMatch,
 } from "@/components/kernel/kernelMatch";
 import { useKernelMatch } from "@/composables/useKernelMatch";
-import { extractSaveErrorMessage } from "@/composables/saveError";
 import { CustomNodeSchema } from "./interface";
 import type { ArtifactOption, GlobalArtifactOption } from "./interface";
 import { getCustomNodeSchema, CustomNodeSchemaError } from "./interface";
@@ -542,11 +541,10 @@ async function hydrateArtifacts(nodeId: number, kernelId: string | null, seq: nu
   }
 }
 
-/** Awaited so Run's pre-run save lands before /flow/run/; resolves false when the save failed. */
-const pushNodeData = async (): Promise<boolean> => {
+const pushNodeData = async () => {
   if (!nodeData.value || currentNodeId.value === null) {
-    console.warn("Nothing to push: node data or ID is not available.");
-    return true;
+    console.warn("Cannot push data: node data or ID is not available.");
+    return;
   }
   if (nodeUserDefined.value) {
     nodeUserDefined.value.settings = formData.value;
@@ -557,13 +555,7 @@ const pushNodeData = async (): Promise<boolean> => {
       nodeUserDefined.value.output_names = schema.value.output_names;
     }
   }
-  try {
-    await nodeStore.updateUserDefinedSettings(nodeUserDefined);
-    return true;
-  } catch (err) {
-    ElMessage.error({ message: extractSaveErrorMessage(err), showClose: true, duration: 6000 });
-    return false;
-  }
+  nodeStore.updateUserDefinedSettings(nodeUserDefined);
 };
 
 defineExpose({

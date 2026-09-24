@@ -1,8 +1,7 @@
-import { ref, watch, type Ref } from "vue";
+import { ref, type Ref } from "vue";
 import { ElMessage } from "element-plus";
 import type { NodeBase } from "../types/node.types";
 import { useNodeStore } from "../stores/node-store";
-import { useEditorStore } from "../stores/editor-store";
 import { extractSaveErrorMessage } from "./saveError";
 
 export { extractSaveErrorMessage };
@@ -115,27 +114,14 @@ export function useNodeSettings<T extends NodeBase>(
   const nodeStore = useNodeStore();
   const isSaving = ref(false);
 
-  // The settings as last loaded or saved; reassigning nodeRef is a load, in-place changes are edits.
-  const snapshot = (): string | null => (nodeRef.value ? JSON.stringify(nodeRef.value) : null);
-  let cleanSnapshot: string | null = null;
-  watch(
-    nodeRef,
-    () => {
-      cleanSnapshot = snapshot();
-    },
-    { immediate: true },
-  );
-
   /**
    * Save settings to the backend.
    * Can be called without closing the drawer.
-   * Resolves true when nothing is loaded yet (or the load failed): there is nothing to save,
-   * so Run, a node switch or minimize must not be blocked by it.
    */
   const saveSettings = async (): Promise<boolean> => {
     if (!nodeRef.value) {
-      console.warn("useNodeSettings: nothing to save - nodeRef is null");
-      return true;
+      console.warn("useNodeSettings: Cannot save - nodeRef is null");
+      return false;
     }
 
     if (onBeforeSave) {
@@ -153,9 +139,6 @@ export function useNodeSettings<T extends NodeBase>(
       }
 
       await nodeStore.updateSettings(nodeRef);
-      cleanSnapshot = snapshot();
-      // Covers saves outside a leave, such as the request-save on the output-schema tab.
-      useEditorStore().disarmRefusedSave();
 
       if (onAfterSave) {
         await onAfterSave();
@@ -174,11 +157,8 @@ export function useNodeSettings<T extends NodeBase>(
   /**
    * Push node data - called when drawer closes.
    * This wraps saveSettings for the standard drawer lifecycle.
-   * A refused save of settings unchanged since they were loaded resolves true: the server already
-   * holds them, so a fresh, not-yet-valid node (e.g. a Read with no file) never blocks leaving it.
    */
-  const pushNodeData = async (): Promise<boolean> =>
-    (await saveSettings()) || (cleanSnapshot !== null && snapshot() === cleanSnapshot);
+  const pushNodeData = async (): Promise<boolean> => saveSettings();
 
   /**
    * Handle updates from genericNodeSettings component.

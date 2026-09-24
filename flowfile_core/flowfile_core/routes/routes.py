@@ -1511,10 +1511,10 @@ def add_generic_settings(
     node_id = int(input_data.get("node_id"))
     logger.info(f"Updating the data for flow: {flow_id}, node {node_id}")
     flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(404, "could not find the flow")
     if flow.flow_settings.is_running:
         raise HTTPException(422, "Flow is running")
+    if flow is None:
+        raise HTTPException(404, "could not find the flow")
     add_func = getattr(flow, "add_" + node_type)
     parsed_input = None
     setting_name_ref = "node" + node_type.replace("_", "")

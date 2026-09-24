@@ -250,7 +250,6 @@ const showEditModal = (connection: FullCloudStorageConnectionInterface) => {
     awsSecretAccessKey: "", // Password is not returned from the API
     awsRoleArn: connection.awsRoleArn || "",
     awsAllowUnsafeHtml: connection.awsAllowUnsafeHtml,
-    awsSessionToken: "", // Secret is not returned from the API
     awsProfile: connection.awsProfile || "",
 
     // Azure fields

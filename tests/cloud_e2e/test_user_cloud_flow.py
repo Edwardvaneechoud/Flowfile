@@ -2,13 +2,12 @@
 
 The fixture is the run-1390 snapshot of the reporter's flow: cloud reader → ``ifnull`` formula →
 literal ``output_field`` formula → Delta writer (append, partitioned on ``output_field``), saved
-with "No connection" (aws-cli) and an empty path. Every test runs in remote and local execution.
+with "No connection" (aws-cli) and an empty path. Most tests run in remote and local execution.
 Connection-based tests use ``stack``, where nothing but a connection's own settings reaches MinIO;
 "No connection" tests use ``ambient_stack``, whose AWS profile and endpoint are MinIO's.
 """
 
 import re
-import time
 import uuid
 
 import polars as pl
@@ -22,7 +21,6 @@ pytestmark = pytest.mark.cloud_e2e
 LOCATIONS = pytest.mark.parametrize("location", ["remote", "local"])
 READER_ID, WRITER_ID, IFNULL_ID, LITERAL_ID = 1, 3, 4, 5
 WRITER_NO_PATH = "Cloud storage writer has no target path."
-READER_NO_PATH = "Cloud storage reader has no source path."
 CRASH = re.compile(r"TypeError|is not an instance")
 
 
@@ -69,17 +67,14 @@ def test_exact_user_writer_fails_on_missing_path(stack, user_flow, minio_connect
     assert all(run["nodes"][node_id]["success"] for node_id in (READER_ID, IFNULL_ID, LITERAL_ID))
 
 
-@LOCATIONS
 @pytest.mark.parametrize(
     "path, message",
     [("", WRITER_NO_PATH), ("output/table", "Cloud storage path 'output/table' is not a URI.")],
     ids=["empty", "relative"],
 )
-def test_connection_without_uri_fails_instead_of_writing_locally(
-    stack, user_flow, minio_connection, location, path, message
-):
+def test_connection_without_uri_fails_instead_of_writing_locally(stack, user_flow, minio_connection, path, message):
     writer = {"auth_mode": "access_key", "connection_name": minio_connection, "resource_path": path}
-    run = stack.run_flow(user_flow(location, minio_connection, writer=writer))
+    run = stack.run_flow(user_flow("remote", minio_connection, writer=writer))
     error = run["nodes"][WRITER_ID]["error"]
     assert run["nodes"][WRITER_ID]["success"] is False
     assert message in error, error
@@ -87,7 +82,6 @@ def test_connection_without_uri_fails_instead_of_writing_locally(
 
 NO_CONNECTION_WRITES = {
     "append": {},
-    "append_track_changes": {"track_changes": True},
     "upsert": {"write_mode": "upsert", "merge_keys": ["id"], "partition_by": []},
 }
 
@@ -97,7 +91,7 @@ NO_CONNECTION_WRITES = {
 def test_no_connection_writes_with_local_aws_profile(
     ambient_stack, user_flow, ambient_minio_connection, new_target, location, case
 ):
-    """The reporter's writer shapes (runs 1386-1388 tracked changes) on the local AWS profile."""
+    """The reporter's writer shapes on the local AWS profile."""
     target = new_target("table")
     writer = {"resource_path": target, **NO_CONNECTION_WRITES[case]}
     run = ambient_stack.run_flow(user_flow(location, ambient_minio_connection, writer=writer))
@@ -151,74 +145,3 @@ def test_connection_stack_has_no_ambient_route_to_minio(stack, user_flow, minio_
         assert not list_keys(target)
     finally:
         stack.delete_connection(name)
-
-
-@LOCATIONS
-@pytest.mark.timeout(120)
-def test_reader_empty_directory_path_fails_fast(stack, user_flow, minio_connection, location):
-    flow = user_flow(location, minio_connection, reader={"resource_path": "", "scan_mode": "directory"})
-    started = time.monotonic()
-    run = stack.run_flow(flow)
-    elapsed = time.monotonic() - started
-    reader = run["nodes"][READER_ID]
-    assert reader["success"] is False
-    assert READER_NO_PATH in reader["error"], reader["error"]
-    assert not CRASH.search(reader["error"])
-    assert elapsed < 30, f"empty reader path took {elapsed:.1f}s"
-
-
-def _read_back(file_format: str, target: str) -> pl.DataFrame:
-    if file_format == "delta":
-        return pl.read_delta(target, storage_options=MINIO_OPTIONS)
-    if file_format == "parquet":
-        return pl.read_parquet(target, storage_options=MINIO_OPTIONS)
-    if file_format == "csv":
-        return pl.scan_csv(target, separator=";", storage_options=MINIO_OPTIONS).collect()
-    return pl.read_ndjson(target, storage_options=MINIO_OPTIONS)
-
-
-# Non-delta settings are what the drawer leaves after switching the saved Delta writer's format.
-_FILE_DEFAULTS = {"write_mode": "overwrite", "partition_by": [], "merge_keys": [], "track_changes": False}
-WRITE_CASES = {
-    "delta_overwrite": ({"file_format": "delta", "write_mode": "overwrite"}, "table", 6),
-    "delta_upsert": (
-        {"file_format": "delta", "write_mode": "upsert", "merge_keys": ["id"], "partition_by": []},
-        "table",
-        6,
-    ),
-    "delta_append_track_changes": (
-        {"file_format": "delta", "write_mode": "append", "track_changes": True},
-        "table",
-        12,
-    ),
-    "parquet_overwrite": ({"file_format": "parquet", **_FILE_DEFAULTS}, "out.parquet", 6),
-    "csv_overwrite": ({"file_format": "csv", **_FILE_DEFAULTS}, "out.csv", 6),
-    "json_overwrite": ({"file_format": "json", **_FILE_DEFAULTS}, "out.json", 6),
-}
-
-
-@LOCATIONS
-@pytest.mark.parametrize("case", list(WRITE_CASES))
-def test_writer_formats_and_modes(stack, user_flow, minio_connection, new_target, location, case):
-    settings, name, rows_after_rerun = WRITE_CASES[case]
-    target = new_target(name)
-    writer = {"auth_mode": "access_key", "connection_name": minio_connection, "resource_path": target, **settings}
-    first = stack.run_flow(user_flow(location, minio_connection, writer=writer))
-    _succeeded(first)
-    _assert_user_rows(_read_back(settings["file_format"], target))
-
-    _succeeded(stack.run(first["flow_id"]))
-    _assert_user_rows(_read_back(settings["file_format"], target), rows=rows_after_rerun)
-    if settings["file_format"] != "delta":
-        return
-    table = DeltaTable(target, storage_options=MINIO_OPTIONS)
-    last_commit = table.history(1)[0]
-    if settings["write_mode"] == "upsert":
-        assert last_commit["operation"] == "MERGE"
-    elif settings["write_mode"] == "overwrite":
-        assert last_commit["operationParameters"]["mode"] == "Overwrite"
-    if settings.get("track_changes"):
-        assert table.metadata().configuration.get("delta.enableChangeDataFeed") == "true"
-        changes = pl.from_arrow(table.load_cdf(starting_version=table.version()).read_all())
-        assert changes.height == 6
-        assert changes["_change_type"].unique().to_list() == ["insert"]

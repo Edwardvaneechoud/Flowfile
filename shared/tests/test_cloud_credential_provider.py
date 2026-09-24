@@ -2,18 +2,15 @@
 
 Polars inlines ``storage_options`` into a serialized LazyFrame, so a scan built with decrypted
 credentials carries them wherever the plan goes. These tests pin that a provider-based scan keeps
-only ciphertext in the plan, still reads the data with the same pushdown, and decrypts on the side
-that executes the plan. Encryption is the real ``$ffsec$`` scheme under the test master key.
+only ciphertext in the plan and still reads the data with the same pushdown. Encryption is the
+real ``$ffsec$`` scheme under the test master key.
 """
 
 import json
 import os
 import pickle
-import subprocess
 import sys
-import textwrap
 import uuid
-from pathlib import Path
 
 import polars as pl
 import pytest
@@ -34,7 +31,6 @@ except ModuleNotFoundError:  # pragma: no cover - import shim for ad-hoc runs
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     from test_utils.s3.fixtures import MINIO_ACCESS_KEY, MINIO_ENDPOINT_URL, MINIO_SECRET_KEY, get_minio_client
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUCKET = "flowfile-test"
 SENTINEL = "SENTINEL-SECRET-7f3a91"
 _NON_SECRET = {"aws_region": "us-east-1", "endpoint_url": MINIO_ENDPOINT_URL, "aws_allow_http": "true"}
@@ -86,29 +82,6 @@ def minio_prefix():
     client = get_minio_client()
     for obj in client.list_objects_v2(Bucket=_BUCKET, Prefix=prefix).get("Contents", []):
         client.delete_object(Bucket=_BUCKET, Key=obj["Key"])
-
-
-def _run_in_fresh_process(plan: bytes, tmp_path: Path, register_decryptor: bool) -> subprocess.CompletedProcess:
-    """Deserialize and collect *plan* in a new interpreter, as the worker does with a core-built plan."""
-    plan_file = tmp_path / "plan.bin"
-    plan_file.write_bytes(plan)
-    register = (
-        "from shared.cloud_credential_provider import register_secret_decryptor\n"
-        "from shared.notifications.crypto import decrypt_secret\n"
-        "register_secret_decryptor(decrypt_secret)\n"
-        if register_decryptor
-        else ""
-    )
-    code = register + textwrap.dedent(
-        f"""
-        import io
-        import polars as pl
-        print(pl.LazyFrame.deserialize(io.BytesIO(open({str(plan_file)!r}, "rb").read())).collect().height)
-        """
-    )
-    env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
-    env.update(TEST_MODE="1", AWS_EC2_METADATA_DISABLED="true", PYTHONPATH=str(REPO_ROOT))
-    return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env, cwd=tmp_path)
 
 
 class TestSplitCredentials:
@@ -190,19 +163,7 @@ class TestScansAgainstMinio:
         lf = pl.scan_parquet(path, storage_options=_NON_SECRET, credential_provider=ffsec(credentials))
         assert lf.select(pl.len()).collect().item() == 1000
 
-    def test_plan_decrypts_in_the_executing_process(self, ffsec, aws_free_env, minio_prefix, tmp_path):
-        path = self._put_parquet(minio_prefix)
-        plan = pl.scan_parquet(path, storage_options=_NON_SECRET, credential_provider=ffsec(_MINIO_CREDENTIALS))
-
-        ran = _run_in_fresh_process(plan.serialize(), tmp_path, register_decryptor=True)
-        assert ran.returncode == 0, ran.stderr
-        assert ran.stdout.strip() == "1000"
-
-        refused = _run_in_fresh_process(plan.serialize(), tmp_path, register_decryptor=False)
-        assert refused.returncode != 0
-        assert "no secret decryptor is registered" in refused.stderr
-
-    def test_change_feed_plan_has_no_credentials(self, ffsec, aws_free_env, minio_prefix, tmp_path):
+    def test_change_feed_plan_has_no_credentials(self, ffsec, aws_free_env, minio_prefix):
         from shared.delta_utils import get_delta_head_version, write_delta
 
         full = {**_NON_SECRET, **_MINIO_CREDENTIALS}
@@ -219,6 +180,3 @@ class TestScansAgainstMinio:
         assert MINIO_SECRET_KEY.encode() in plain.serialize()
         assert MINIO_SECRET_KEY.encode() not in protected.serialize()
         assert sorted(protected.collect()["k"].to_list()) == [1, 2, 3]
-        ran = _run_in_fresh_process(protected.serialize(), tmp_path, register_decryptor=True)
-        assert ran.returncode == 0, ran.stderr
-        assert ran.stdout.strip() == "3"

@@ -52,7 +52,6 @@ import {
   getStorageTypeLabel,
 } from "../../../views/CloudConnectionView/cloudConnectionFormatters";
 import { useMultiUser } from "../../../composables/useMultiUser";
-import { storageTypeForUri } from "../../../utils/storagePath";
 import {
   NO_CONNECTION_VALUE,
   ambientCredentialsChoice,
@@ -72,8 +71,6 @@ const props = withDefaults(
     helperText?: string;
     // "No connection" means the server's own cloud credentials (cloud storage nodes).
     ambientCredentials?: boolean;
-    // The node's path: its scheme picks whose ambient credentials "No connection" uses.
-    resourcePath?: string | null;
   }>(),
   {
     unavailableConnection: null,
@@ -82,7 +79,6 @@ const props = withDefaults(
     noConnectionLabel: "No connection (use local credentials)",
     helperText: "Will use local AWS CLI credentials or environment variables",
     ambientCredentials: false,
-    resourcePath: null,
   },
 );
 
@@ -90,7 +86,7 @@ const { isMultiUser } = useMultiUser();
 
 const noConnection = computed<NoConnectionChoice>(() =>
   props.ambientCredentials
-    ? ambientCredentialsChoice(isMultiUser.value, storageTypeForUri(props.resourcePath ?? ""))
+    ? ambientCredentialsChoice(isMultiUser.value)
     : { label: props.noConnectionLabel, warning: "", disabled: false },
 );
 

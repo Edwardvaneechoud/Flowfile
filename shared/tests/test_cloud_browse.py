@@ -141,16 +141,14 @@ class TestBuildS3Client:
         monkeypatch.setattr(boto3, "client", _fake_client)
         return captured
 
-    def test_allow_invalid_certificates_becomes_a_boolean_verify(self, captured_kwargs):
-        # build_s3_storage_options emits the object_store key as the *string* "true"; boto3 needs a bool.
-        browse._build_s3_client(
-            {"aws_access_key_id": "k", "aws_secret_access_key": "s", "allow_invalid_certificates": "true"}
-        )
+    def test_string_false_verify_is_coerced_to_a_boolean(self, captured_kwargs):
+        # build_s3_storage_options emits the *string* "False", which is truthy in Python.
+        browse._build_s3_client({"aws_access_key_id": "k", "aws_secret_access_key": "s", "verify": "False"})
         assert captured_kwargs["verify"] is False
 
-    def test_verification_stays_on_by_default(self, captured_kwargs):
-        browse._build_s3_client({"aws_access_key_id": "k", "allow_invalid_certificates": "false"})
-        assert "verify" not in captured_kwargs
+    def test_truthy_verify_stays_true(self, captured_kwargs):
+        browse._build_s3_client({"aws_access_key_id": "k", "verify": True})
+        assert captured_kwargs["verify"] is True
 
     def test_aws_region_is_translated_to_region_name(self, captured_kwargs):
         browse._build_s3_client({"aws_access_key_id": "k", "aws_region": "eu-west-1"})
@@ -401,7 +399,6 @@ class TestAdlsCredentials:
         def _fake_client(account_url, credential=None, **kwargs):
             captured["account_url"] = account_url
             captured["credential"] = credential
-            captured["connection_verify"] = kwargs.get("connection_verify")
             return object()
 
         monkeypatch.setattr(blob, "BlobServiceClient", _fake_client)
@@ -436,14 +433,6 @@ class TestAdlsCredentials:
     def test_default_endpoint_is_derived_from_the_account(self, captured_client):
         browse._build_blob_service_client({"account_name": "acct", "account_key": "KEY"})
         assert captured_client["account_url"] == "https://acct.blob.core.windows.net"
-
-    def test_tls_verification_follows_allow_invalid_certificates(self, captured_client):
-        browse._build_blob_service_client({"account_name": "acct", "account_key": "KEY"})
-        assert captured_client["connection_verify"] is True
-        browse._build_blob_service_client(
-            {"account_name": "acct", "account_key": "KEY", "allow_invalid_certificates": "true"}
-        )
-        assert captured_client["connection_verify"] is False
 
 
 class TestGcsCredentials:
