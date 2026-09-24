@@ -429,6 +429,11 @@ class CatalogService:
         catalog_name, _, schema_name = full_name.partition(".")
         return self._namespaces.resolve_namespace_id_by_path(catalog_name, schema_name or None)
 
+    def resolve_namespace_full_name(self, namespace_id: int | None) -> str | None:
+        """Inverse of :meth:`resolve_namespace_id_by_full_name`: the portable ``"catalog.schema"`` name
+        for *namespace_id*, or ``None`` when it is unset or no longer exists."""
+        return self._namespaces.resolve_namespace_path(namespace_id)
+
     def _resolve_viz_enrichment(self, viz: CatalogVisualization, table: CatalogTable | None) -> VizEnrichment:
         """Resolve table + namespace name fields attached to a visualization DTO."""
         return self._visualizations._resolve_viz_enrichment(viz, table)

@@ -232,6 +232,15 @@ class TestNamespaceFullNameThreading:
         settings = df.flow_graph.get_node(child.node_id).setting_input.catalog_write_settings
         assert settings.namespace_full_name is None
 
+    def test_namespace_full_name_resolves_read_catalog_table(self):
+        ns_id = _seed_namespace()
+        _register_table(ns_id, "ns_full_name_read_table")
+
+        frame = ff.read_catalog_table("ns_full_name_read_table", namespace_full_name="Scd2FrameCat.Scd2FrameSch")
+        settings = frame.flow_graph.get_node(frame.node_id).setting_input
+        assert settings.catalog_full_table_name == "Scd2FrameCat.Scd2FrameSch.ns_full_name_read_table"
+        assert frame.collect().height == 2
+
 
 class TestReadCatalogTableScd2Kwargs:
     def test_scd2_view_and_as_of_string_thread_into_settings(self):

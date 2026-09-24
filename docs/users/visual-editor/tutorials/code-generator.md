@@ -147,7 +147,7 @@ def run_etl_pipeline():
     ETL Pipeline: Catalog Read and Filter
     Generated from Flowfile
     """
-    df_1 = ff.read_catalog_table("sales_data", namespace_id=3).data
+    df_1 = ff.read_catalog_table("sales_data", namespace_full_name="sales.raw").data
     df_2 = df_1.filter(pl.col("amount") > 100)
     return df_2
 

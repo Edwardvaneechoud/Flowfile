@@ -188,6 +188,7 @@ def read_catalog_table(
     *,
     schema: SchemaReference | None = None,
     namespace_id: int | None = None,
+    namespace_full_name: str | None = None,
     delta_version: int | None = None,
     scd2_view: Literal["active", "all", "active_at"] | None = None,
     scd2_as_of: str | datetime | None = None,
@@ -206,6 +207,8 @@ def read_catalog_table(
         table_name: Name of the catalog table to read.
         schema: Target :class:`SchemaReference`. Preferred over ``namespace_id``.
         namespace_id: Legacy. Raw namespace id; mutually exclusive with ``schema``.
+        namespace_full_name: Portable ``"catalog.schema"`` name, resolved at run time.
+            Survives recreation of the catalog on another machine, unlike ``namespace_id``.
         delta_version: Optional Delta version to read (for time-travel queries).
         scd2_view: History view for an SCD2-tracked table: ``"active"`` (current rows
             only), ``"all"`` (every version), or ``"active_at"`` (rows valid at
@@ -252,6 +255,7 @@ def read_catalog_table(
         node_id=node_id,
         user_id=get_current_user_id(),
         catalog_table_name=table_name,
+        catalog_full_table_name=f"{namespace_full_name}.{table_name}" if namespace_full_name else None,
         catalog_namespace_id=resolved_namespace_id,
         delta_version=delta_version,
         scd2_view=scd2_view,
