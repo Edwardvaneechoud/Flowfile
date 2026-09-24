@@ -5,12 +5,12 @@ session that really binds the core port — both directions are pinned here.
 """
 
 import http.client
-import platform
 import socket
 import types
 
 import pytest
 
+from tests import core_log_sink
 from tests.core_log_sink import _PORT_CLAIMING_FIXTURES, _PORT_CLAIMING_MODULES, CoreLogSink, session_claims_core_port
 
 
@@ -106,15 +106,19 @@ class TestSinkServer:
             finally:
                 sink.stop()
 
-    @pytest.mark.skipif(platform.system() == "Windows", reason="a 0.0.0.0 bind raises a firewall prompt")
-    def test_does_not_start_next_to_a_wildcard_listener(self):
-        """A core on 0.0.0.0 must keep its loopback traffic; macOS would let a 127.0.0.1 bind through."""
+    def test_never_binds_a_port_that_already_answers(self, monkeypatch):
+        """The connect probe decides, not the bind.
+
+        On macOS a loopback bind succeeds next to a core listening on every interface and would take
+        over the loopback traffic meant for it, so the sink must not even try.
+        """
+
+        def _refuse(*args, **kwargs):
+            raise AssertionError("the sink tried to bind a port something already answers on")
+
+        monkeypatch.setattr(core_log_sink, "_SinkServer", _refuse)
         port = _free_port()
         with socket.socket() as holder:
-            holder.bind(("0.0.0.0", port))
+            holder.bind(("127.0.0.1", port))
             holder.listen(1)
-            sink = CoreLogSink(port=port)
-            try:
-                assert sink.start() is False
-            finally:
-                sink.stop()
+            assert CoreLogSink(port=port).start() is False
