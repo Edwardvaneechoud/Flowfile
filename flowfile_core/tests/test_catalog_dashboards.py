@@ -189,6 +189,85 @@ class TestDashboardCRUD:
         resp = client.post("/catalog/dashboards", json={"name": "Thin", "layout": layout})
         assert resp.status_code == 422
 
+    def test_create_with_kpi_tile(self, client):
+        kpi = {
+            "field": "amount",
+            "agg": "distinctCount",
+            "label": "Unique amounts",
+            "prefix": "$",
+            "suffix": " USD",
+            "decimals": 2,
+            "compact": False,
+            "comparison": "target",
+            "target": 1250.5,
+            "higher_is_better": False,
+            "value_size": "lg",
+        }
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append({"id": "kpi-1", "type": "kpi", "viz_id": 1, "kpi": kpi, "x": 0, "y": 6, "w": 3, "h": 2})
+        layout["tiles"].append({"id": "kpi-2", "type": "kpi", "kpi": None, "x": 3, "y": 6, "w": 3, "h": 2})
+        layout["tiles"].append(
+            {"id": "kpi-3", "type": "kpi", "viz_id": 2, "kpi": {"agg": "count"}, "x": 6, "y": 6, "w": 3, "h": 2}
+        )
+        resp = client.post("/catalog/dashboards", json={"name": "With KPI", "layout": layout})
+        assert resp.status_code == 201, resp.text
+        tiles = client.get(f"/catalog/dashboards/{resp.json()['id']}").json()["layout"]["tiles"]
+        assert tiles[0]["kpi"] is None
+        assert tiles[2]["type"] == "kpi"
+        assert tiles[2]["viz_id"] == 1
+        assert tiles[2]["kpi"] == kpi
+        assert tiles[3]["viz_id"] is None
+        assert tiles[3]["kpi"] is None
+        assert tiles[4]["kpi"] == {
+            "field": None,
+            "agg": "count",
+            "label": None,
+            "prefix": None,
+            "suffix": None,
+            "decimals": None,
+            "compact": True,
+            "comparison": "none",
+            "target": None,
+            "higher_is_better": True,
+            "value_size": "auto",
+        }
+
+    @pytest.mark.parametrize(
+        "bad_kpi",
+        [
+            {"agg": "variance"},
+            {"agg": "sum", "decimals": 7},
+            {"agg": "sum", "comparison": "bogus"},
+            {"agg": "sum", "label": "x" * 121},
+            {"agg": "sum", "value_size": "huge"},
+        ],
+    )
+    def test_invalid_kpi_config_returns_422(self, client, bad_kpi):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append({"id": "kpi", "type": "kpi", "viz_id": 1, "kpi": bad_kpi, "x": 0, "y": 6, "w": 3, "h": 2})
+        resp = client.post("/catalog/dashboards", json={"name": "Bad KPI", "layout": layout})
+        assert resp.status_code == 422
+
+    def test_filter_can_target_kpi_tile(self, client):
+        layout = _layout_with_two_tiles()
+        layout["tiles"].append(
+            {"id": "kpi-1", "type": "kpi", "viz_id": 1, "kpi": {"field": "amount"}, "x": 0, "y": 6, "w": 3, "h": 2}
+        )
+        layout["filters"] = [
+            {
+                "id": "f1",
+                "field_name": "region",
+                "kind": "categorical",
+                "state": {"selected": ["US"]},
+                "target": "tiles",
+                "target_tile_ids": ["kpi-1"],
+            }
+        ]
+        resp = client.post("/catalog/dashboards", json={"name": "KPI filter", "layout": layout})
+        assert resp.status_code == 201, resp.text
+        filters = client.get(f"/catalog/dashboards/{resp.json()['id']}").json()["layout"]["filters"]
+        assert filters[0]["target_tile_ids"] == ["kpi-1"]
+
     def test_create_with_unknown_tile_type_returns_422(self, client):
         layout = _layout_with_two_tiles()
         layout["tiles"].append({"id": "bad", "type": "image", "x": 0, "y": 6, "w": 12, "h": 1})

@@ -60,6 +60,7 @@
             v-else-if="rect.type === 'viz'"
             class="fa-solid fa-chart-column dash-preview-glyph"
           ></i>
+          <i v-else-if="rect.type === 'kpi'" class="fa-solid fa-hashtag dash-preview-glyph"></i>
         </div>
       </div>
       <p
@@ -208,6 +209,9 @@ const thumbnailFor = (rect: PreviewRect): string | undefined =>
 }
 .dash-preview-viz {
   background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+.dash-preview-kpi {
+  background: color-mix(in srgb, var(--color-success) 30%, transparent);
 }
 .dash-preview-text {
   background: color-mix(in srgb, var(--color-warning) 35%, transparent);
