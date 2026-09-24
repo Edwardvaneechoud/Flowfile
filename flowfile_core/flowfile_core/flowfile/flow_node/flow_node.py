@@ -606,12 +606,7 @@ class FlowNode:
             [mi.node_id for mi in self.node_inputs.main_inputs] if self.node_inputs.main_inputs is not None else None
         )
         node_information.setting_input = self.setting_input
-        node_information.outputs = [n.node_id for n in self.leads_to_nodes]
-        # Source-side handle for each downstream connection — the downstream
-        # node tracks this in ``_input_output_handles[from_node_id]``.
-        node_information.output_handles = [
-            n._input_output_handles.get(self.node_id, DEFAULT_OUTPUT_HANDLE) for n in self.leads_to_nodes
-        ]
+        node_information.outputs, node_information.output_handles = self._output_edges()
         if self.accepts_dynamic_inputs and self.node_inputs.keyed_inputs:
             source_handles = self.node_inputs.keyed_source_handles or {}
             node_information.input_connections = [
@@ -639,6 +634,59 @@ class FlowNode:
         node_information.y_position = self.setting_input.pos_y
         node_information.group_id = getattr(self.setting_input, "group_id", None)
         node_information.type = self.node_type
+
+    def _incoming_edges(self) -> list[tuple["FlowNode", str]]:
+        """``(source node, source output handle)`` for every connected input slot, one entry per edge."""
+        inputs = self.node_inputs
+        if self.accepts_dynamic_inputs:
+            source_handles = inputs.keyed_source_handles or {}
+            return [
+                (source, source_handles.get(handle, DEFAULT_OUTPUT_HANDLE)) for handle, source in inputs.slot_items()
+            ]
+        return [
+            (source, self._input_output_handles.get(source.node_id, DEFAULT_OUTPUT_HANDLE))
+            for source in inputs.get_all_inputs()
+        ]
+
+    def _output_edges(self) -> tuple[list[int], list[str]]:
+        """Target ids and parallel source handles of every outgoing edge, sorted by (target, handle).
+
+        Read from the targets' input slots, which is what a graph rebuild reproduces;
+        ``leads_to_nodes`` only says which targets to look at, so a stale entry there can
+        never surface as a phantom edge in a snapshot or a saved file.
+        """
+        edges: list[tuple[int, str]] = []
+        visited: set[int] = set()
+        for target in self.leads_to_nodes:
+            if id(target) in visited:
+                continue
+            visited.add(id(target))
+            edges.extend(
+                (target.node_id, handle)
+                for source, handle in target._incoming_edges()
+                if source.node_id == self.node_id
+            )
+        edges.sort()
+        return [target_id for target_id, _ in edges], [handle for _, handle in edges]
+
+    def _reads_from(self, node_id: int) -> bool:
+        """True when any input slot is still fed by node ``node_id``."""
+        return any(source.node_id == node_id for source in self.node_inputs.get_all_inputs())
+
+    def _forget_source_handle(self, node_id: int) -> None:
+        """Drop the remembered output handle of ``node_id`` once no input slot reads from it."""
+        if not self._reads_from(node_id):
+            self._input_output_handles.pop(node_id, None)
+
+    def _link_source(self, from_node: "FlowNode", output_handle: str, main: bool) -> None:
+        """Bookkeeping for a static edge that now feeds this node: reverse link, handle, dependency, resets."""
+        from_node.leads_to_nodes.append(self)
+        self._input_output_handles[from_node.node_id] = output_handle
+        settings = self.setting_input
+        if main and settings.is_setup and hasattr(settings, "depending_on_id"):
+            settings.depending_on_id = from_node.node_id
+        self.reset()
+        from_node.reset()
 
     def get_node_information(self) -> schemas.NodeInformation:
         """Updates and returns the node's information object.
@@ -760,6 +808,12 @@ class FlowNode:
     ) -> None:
         """Adds a connection from a source node to this node.
 
+        Every edge is exactly one input-slot entry plus one ``leads_to_nodes`` entry on its
+        source. A single-source slot (single main, left, right) already fed by this edge is
+        left as is; one fed by another source is replaced, and that source stops leading
+        here. A multi-input node's main inputs are positional, so the same source can be
+        added more than once (e.g. a polars_code self-join reads it as two inputs).
+
         Args:
             from_node: The node to connect from.
             insert_type: The type of input to connect to ('main', 'left', 'right').
@@ -773,25 +827,77 @@ class FlowNode:
         if self.accepts_dynamic_inputs:
             self._add_keyed_connection(from_node, target_handle or PARAM_INPUT_HANDLE, output_handle)
             return
-        from_node.leads_to_nodes.append(self)
+        inputs = self.node_inputs
+        single_main = self.node_template.input <= 2 or inputs.main_inputs is None
         if insert_type == "main":
-            if self.node_template.input <= 2 or self.node_inputs.main_inputs is None:
-                self.node_inputs.main_inputs = [from_node]
-            else:
-                self.node_inputs.main_inputs.append(from_node)
+            occupants = list(inputs.main_inputs or []) if single_main else []
         elif insert_type == "right":
-            self.node_inputs.right_input = from_node
+            occupants = [inputs.right_input] if inputs.right_input is not None else []
         elif insert_type == "left":
-            self.node_inputs.left_input = from_node
+            occupants = [inputs.left_input] if inputs.left_input is not None else []
         else:
             raise Exception("Cannot find the connection")
-        # Track which output handle of the source node this connection uses
-        self._input_output_handles[from_node.node_id] = output_handle
-        if self.setting_input.is_setup:
-            if hasattr(self.setting_input, "depending_on_id") and insert_type == "main":
-                self.setting_input.depending_on_id = from_node.node_id
-        self.reset()
-        from_node.reset()
+        if [n.node_id for n in occupants] == [from_node.node_id] and (
+            self._input_output_handles.get(from_node.node_id, DEFAULT_OUTPUT_HANDLE) == output_handle
+        ):
+            return
+        for occupant in occupants:
+            occupant.delete_lead_to_node(self.node_id)
+        if insert_type == "main":
+            if single_main:
+                inputs.main_inputs = [from_node]
+            else:
+                inputs.main_inputs.append(from_node)
+        elif insert_type == "right":
+            inputs.right_input = from_node
+        else:
+            inputs.left_input = from_node
+        for occupant in occupants:
+            self._forget_source_handle(occupant.node_id)
+        self._link_source(from_node, output_handle, main=insert_type == "main")
+
+    def input_edge_handle(self, source_id: int, connection_class: str) -> str | None:
+        """The source output handle of the edge ``source_id -> connection_class``, or None when there is none."""
+        inputs = self.node_inputs
+        if self.accepts_dynamic_inputs:
+            if not inputs.keyed_connection_exists(connection_class, source_id):
+                return None
+            return (inputs.keyed_source_handles or {}).get(connection_class, DEFAULT_OUTPUT_HANDLE)
+        slots = {"input-0": inputs.main_inputs or [], "input-1": [inputs.right_input], "input-2": [inputs.left_input]}
+        if not any(node is not None and node.node_id == source_id for node in slots.get(connection_class, [])):
+            return None
+        return self._input_output_handles.get(source_id, DEFAULT_OUTPUT_HANDLE)
+
+    def replace_input_source(
+        self,
+        old_source: "FlowNode",
+        new_source: "FlowNode",
+        connection_class: str = "input-0",
+        output_handle: str = DEFAULT_OUTPUT_HANDLE,
+    ) -> bool:
+        """Swap the source of one existing edge in place; False when ``old_source`` does not feed that slot.
+
+        The edge keeps its slot and its position: a multi-input node's main input stays at the
+        same index (``input_df_N`` and union order are unchanged) and a keyed dynamic-input edge
+        keeps its handle. Removing the edge and connecting the new source would append it instead.
+        """
+        if self.input_edge_handle(old_source.node_id, connection_class) is None:
+            return False
+        if self.accepts_dynamic_inputs:
+            self._add_keyed_connection(new_source, connection_class, output_handle)
+            return True
+        inputs = self.node_inputs
+        if connection_class == "input-1":
+            inputs.right_input = new_source
+        elif connection_class == "input-2":
+            inputs.left_input = new_source
+        else:
+            index = next(i for i, node in enumerate(inputs.main_inputs) if node.node_id == old_source.node_id)
+            inputs.main_inputs[index] = new_source
+        old_source.delete_lead_to_node(self.node_id)
+        self._forget_source_handle(old_source.node_id)
+        self._link_source(new_source, output_handle, main=connection_class == "input-0")
+        return True
 
     def _add_keyed_connection(self, from_node: "FlowNode", target_handle: str, output_handle: str) -> None:
         """Attach *from_node* to a specific handle of a dynamic-input node.
@@ -1843,12 +1949,12 @@ class FlowNode:
             return self._delete_keyed_connection(node_id, connection_type, complete)
         deleted: bool = False
         if connection_type == "input-0" or complete:
-            for i, node in enumerate(self.node_inputs.main_inputs or []):
-                if node.node_id == node_id:
-                    self.node_inputs.main_inputs.pop(i)
-                    deleted = True
-                    if not complete:
-                        continue
+            main_inputs = self.node_inputs.main_inputs or []
+            matches = [i for i, node in enumerate(main_inputs) if node.node_id == node_id]
+            # One edge is one slot entry: a single delete removes exactly one of them.
+            for i in reversed(matches if complete else matches[:1]):
+                main_inputs.pop(i)
+                deleted = True
         if connection_type == "input-1" or complete:
             if self.node_inputs.right_input is not None and self.node_inputs.right_input.node_id == node_id:
                 self.node_inputs.right_input = None
@@ -1860,7 +1966,7 @@ class FlowNode:
         if not deleted and connection_type not in ("input-0", "input-1", "input-2"):
             logger.warning("Could not find the connection to delete...")
         if deleted:
-            self._input_output_handles.pop(node_id, None)
+            self._forget_source_handle(node_id)
             self.reset()
         return deleted
 
@@ -2143,6 +2249,7 @@ class FlowNode:
             flow_id=flow_id,
             node_id=self.node_id,
             has_run=self.node_stats.has_run_with_current_setup,
+            is_setup=bool(self.is_setup),
             setting_input=self.setting_input,
             flow_type=self.node_type,
         )
@@ -2178,12 +2285,9 @@ class FlowNode:
             node.prediction_warning = warning
         if self.is_setup and include_output:
             node.main_output = self.get_table_example(include_example)
+        # Generated/updated settings are only a proposal for the panel; a save applies them.
         node = setting_generator.get_setting_generator(self.node_type)(node)
-
         node = setting_updator.get_setting_updator(self.node_type)(node)
-        # Save the updated settings back to the node so they persist across calls
-        if node.setting_input is not None and not isinstance(node.setting_input, input_schema.NodePromise):
-            self.setting_input = node.setting_input
         return node
 
     def get_output_data(self) -> TableExample:

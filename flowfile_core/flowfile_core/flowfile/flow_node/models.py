@@ -296,8 +296,9 @@ class NodeStepInputs:
             return any(node_input.node_information.id == node_input_id for node_input in self.main_inputs)
         if connection_name == "left" and self.left_input:
             return self.left_input.node_information.id == node_input_id
-        if connection_name == "right":
+        if connection_name == "right" and self.right_input:
             return self.right_input.node_information.id == node_input_id
+        return False
 
 
 class NodeSchemaInformation:

@@ -73,112 +73,98 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from "vue";
+import { onMounted, onUnmounted } from "vue";
+import { ElMessage } from "element-plus";
 import { FlowApi } from "../../api";
 import { useFlowStore } from "../../stores/flow-store";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
+import { useResultsStore } from "../../stores/results-store";
+import { useDrawerStore } from "../../stores/drawer-store";
+import { whenMutationsIdle } from "../../services/axios.config";
+import { flushPendingEdits } from "../../services/mutationChannel";
+import { recoverFromFailedMutation } from "../../services/mutationFailure";
+import { historyShortcutFor } from "../../composables/useFlowHotkeys";
 import { IS_MAC, MODIFIER_LABEL, SHIFT_LABEL } from "../../utils/shortcuts";
+import type { UndoRedoResult } from "../../types";
+import { prepareHistoryAction, type HistoryAction } from "./historyAction";
 
 const flowStore = useFlowStore();
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
+const resultsStore = useResultsStore();
+const drawerStore = useDrawerStore();
 
-const emit = defineEmits<{
-  (e: "refreshFlow"): void;
-}>();
+// Presses run one after another, so each sees the history its predecessor left.
+let pressChain: Promise<void> = Promise.resolve();
 
-const fetchHistoryState = async () => {
-  if (!(flowStore.flowId && flowStore.flowId > 0)) return;
-
-  try {
-    const state = await FlowApi.getHistoryStatus(flowStore.flowId);
-    flowStore.updateHistoryState(state);
-  } catch (error) {
-    flowStore.resetHistoryState();
+/**
+ * Close the drawer, saving only the user's edits there (they become the step undone); a
+ * refused save reports itself and keeps the drawer open.
+ */
+const closeSettingsDrawer = async (): Promise<boolean> => {
+  if ((await editorStore.executeDrawCloseFunction({ userEditsOnly: true }, true)) === false) {
+    return false;
   }
-};
-
-const closeOpenPanelsWithoutSave = () => {
-  nodeStore.clearCloseFunction();
   nodeStore.nodeId = -1;
   editorStore.activeDrawerComponent = null;
+  return true;
 };
 
-const handleUndo = async () => {
-  if (!flowStore.canUndo || !flowStore.flowId) return;
+const isNothingToDo = (result: UndoRedoResult) =>
+  /^nothing to (undo|redo)/i.test(result.error_message ?? "");
 
+const runHistoryAction = async (action: HistoryAction) => {
+  const flowId = await prepareHistoryAction(action, {
+    flowId: () => flowStore.flowId,
+    canRun: (candidate) => (candidate === "undo" ? flowStore.canUndo : flowStore.canRedo),
+    drawerHasPendingEdits: () => editorStore.hasPendingDrawerEdits(),
+    closeDrawer: closeSettingsDrawer,
+    flushPendingEdits,
+    whenMutationsIdle,
+  });
+  if (flowId === null) return;
+  let result: UndoRedoResult;
   try {
-    closeOpenPanelsWithoutSave();
-    const result = await FlowApi.undo(flowStore.flowId);
-    if (result.success) {
-      emit("refreshFlow");
-      await fetchHistoryState();
-    }
-  } catch (error: any) {
-    console.error("Failed to undo:", error);
+    result = action === "undo" ? await FlowApi.undo(flowId) : await FlowApi.redo(flowId);
+  } catch (error) {
+    recoverFromFailedMutation(error, `Could not ${action}`);
+    return;
   }
+  if (!result.success) {
+    if (isNothingToDo(result)) return;
+    // A restore that failed part-way may still have changed the graph.
+    ElMessage.error(result.error_message || `Could not ${action}`);
+    flowStore.requestReload();
+    return;
+  }
+  // Restore rebuilds the nodes, so the flow's run results no longer describe them.
+  if (flowStore.flowId !== flowId) return;
+  resultsStore.clearFlowResults(flowId);
+  drawerStore.clearPreview();
+  flowStore.requestReload();
 };
 
-const handleRedo = async () => {
-  if (!flowStore.canRedo || !flowStore.flowId) return;
-
-  try {
-    closeOpenPanelsWithoutSave();
-    const result = await FlowApi.redo(flowStore.flowId);
-    if (result.success) {
-      emit("refreshFlow");
-      await fetchHistoryState();
-    }
-  } catch (error: any) {
-    console.error("Failed to redo:", error);
-  }
+const enqueue = (action: HistoryAction) => {
+  pressChain = pressChain
+    .then(() => runHistoryAction(action))
+    .catch((error) => {
+      console.error(`Failed to ${action}:`, error);
+    });
 };
+
+const handleUndo = () => enqueue("undo");
+const handleRedo = () => enqueue("redo");
 
 const handleKeyDown = (event: KeyboardEvent) => {
-  const target = event.target as HTMLElement;
-  const isInputElement =
-    target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
-  const isInCodeMirror = target.closest(".cm-editor") !== null;
-
-  if (isInputElement || isInCodeMirror) return;
-
-  const ctrlOrCmd = IS_MAC ? event.metaKey : event.ctrlKey;
-
-  if (ctrlOrCmd && event.key.toLowerCase() === "z") {
-    if (event.shiftKey) {
-      event.preventDefault();
-      handleRedo();
-    } else {
-      event.preventDefault();
-      handleUndo();
-    }
-  } else if (ctrlOrCmd && event.key.toLowerCase() === "y") {
-    // Ctrl+Y = Redo (Windows convention)
-    event.preventDefault();
-    handleRedo();
-  }
+  const action = historyShortcutFor(event, IS_MAC);
+  if (!action) return;
+  event.preventDefault();
+  enqueue(action);
 };
 
-watch(
-  () => flowStore.flowId,
-  async (newId, oldId) => {
-    if (newId !== oldId && newId > 0) {
-      await fetchHistoryState();
-    }
-  },
-);
-
-onMounted(async () => {
-  window.addEventListener("keydown", handleKeyDown);
-  if (flowStore.flowId && flowStore.flowId > 0) {
-    await fetchHistoryState();
-  }
-});
-
-onUnmounted(() => {
-  window.removeEventListener("keydown", handleKeyDown);
-});
+onMounted(() => window.addEventListener("keydown", handleKeyDown));
+onUnmounted(() => window.removeEventListener("keydown", handleKeyDown));
 </script>
 
 <style scoped>

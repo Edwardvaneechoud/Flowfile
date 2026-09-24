@@ -2,6 +2,7 @@
 // keep free of Vue / VueFlow imports).
 import type { FlowParameter, FlowParamType } from "../../../../../types/flow.types";
 import type { FileColumn, RunFlowParameterBinding } from "../../../../../types/node.types";
+import type { EdgeLike } from "../../../../../utils/graphOperations";
 
 export const MAX_RUN_FLOW_INPUTS = 9;
 export const MAX_RUN_FLOW_OUTPUTS = 10;
@@ -108,14 +109,6 @@ export function subflowInterfaceChanged(
   return project(iface.parameters) !== project(parameterSpecs);
 }
 
-export interface EdgeLike {
-  id: string;
-  source: string;
-  target: string;
-  sourceHandle?: string | null;
-  targetHandle?: string | null;
-}
-
 // Edges touching nodeId whose handle no longer exists after an interface
 // refresh. Edges between other nodes are never returned.
 export function findDanglingEdges<T extends EdgeLike>(
@@ -135,4 +128,14 @@ export function findDanglingEdges<T extends EdgeLike>(
     }
     return false;
   });
+}
+
+/**
+ * The dangling edges a settings save leaves in place. Keyed data inputs (input-1..N)
+ * are not among them: core remaps those by slot name, dropping a vanished slot's edge.
+ */
+export function danglingEdgesToDelete<T extends EdgeLike>(dangling: T[], nodeId: string): T[] {
+  return dangling.filter(
+    (edge) => edge.target !== nodeId || (edge.targetHandle ?? "input-0") === "input-0",
+  );
 }

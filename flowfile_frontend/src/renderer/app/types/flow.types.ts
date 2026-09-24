@@ -1,6 +1,7 @@
 // Flow-related TypeScript interfaces and types
 
 import type { NodeResult } from "./node.types";
+import type { NodeConnection, NodePromise } from "./canvas.types";
 import type { Position } from "@vue-flow/core";
 
 // Flow Execution Types
@@ -85,6 +86,8 @@ export interface RunInformationDictionary {
 // History/Undo-Redo Types
 
 export interface HistoryState {
+  // The flow this state describes; null only for the local default.
+  flow_id: number | null;
   can_undo: boolean;
   can_redo: boolean;
   undo_description: string | null;
@@ -97,6 +100,7 @@ export interface UndoRedoResult {
   success: boolean;
   action_description: string | null;
   error_message: string | null;
+  history: HistoryState | null;
 }
 
 export interface OperationResponse {
@@ -283,6 +287,24 @@ export interface UpdateLayoutRequest {
   // false -> apply layout without a new undo entry (fold into a preceding op's snapshot)
   record_history?: boolean;
 }
+
+// One primitive step of POST /editor/apply_operations/ (mirrors the backend's op union).
+export type GraphOperation =
+  | { op: "add_node"; node_id: number; node_type: string; pos_x: number; pos_y: number }
+  | { op: "update_settings"; node_type: string; settings: Record<string, unknown> }
+  | { op: "delete_node"; node_id: number }
+  | { op: "connect"; connection: NodeConnection }
+  | { op: "delete_connection"; connection: NodeConnection }
+  // Replaces the existing edge in place: A -> node_id (input-0), node_id (output-0) -> B's same slot.
+  | { op: "insert_on_edge"; node_id: number; connection: NodeConnection }
+  | { op: "delete_comment"; comment_id: number }
+  | { op: "update_layout"; layout: UpdateLayoutRequest }
+  | {
+      op: "copy_node";
+      node_id_to_copy_from: number;
+      flow_id_to_copy_from: number;
+      node_promise: NodePromise;
+    };
 
 // mirrors routes.GroupOperationResponse
 export interface GroupOperationResponse extends OperationResponse {

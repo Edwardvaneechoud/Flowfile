@@ -3,6 +3,7 @@ import { Handle, Position, useVueFlow } from "@vue-flow/core";
 import { computed, nextTick, ref } from "vue";
 
 import { FlowApi } from "../../api";
+import { recoverFromFailedMutation } from "../../services/mutationFailure";
 import {
   GROUP_SOURCE_HANDLE,
   GROUP_TARGET_HANDLE,
@@ -45,8 +46,9 @@ const groupId = computed(() => props.data.id);
 
 async function persist(update: Parameters<typeof FlowApi.updateGroup>[2]): Promise<void> {
   if (flowStore.flowId === null) return;
-  const response = await FlowApi.updateGroup(flowStore.flowId, groupId.value, update);
-  flowStore.updateHistoryState(response.history);
+  await FlowApi.updateGroup(flowStore.flowId, groupId.value, update).catch((error) =>
+    recoverFromFailedMutation(error, "Could not update the group"),
+  );
 }
 
 function startEditing(): void {

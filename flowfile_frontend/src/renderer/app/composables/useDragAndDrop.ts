@@ -9,27 +9,39 @@
 // Keep this file as a thin façade re-exporting all five.
 import { useVueFlow, Node, Position, Edge } from "@vue-flow/core";
 import { ref, watch, markRaw, nextTick } from "vue";
-import { ElMessage } from "element-plus";
 import type {
   NodeTemplate,
   NodeInput,
   NodeHandle,
   VueFlowInput,
   NodeCopyInput,
+  NodeCopyValue,
   NodePromise,
   MultiNodeCopyValue,
-  NodeConnection,
-  OperationResponse,
+  GraphOperation,
 } from "../types";
-import { FlowApi, NodeApi } from "../api";
+import { FlowApi } from "../api";
+import { plural } from "../utils/text";
+import { recoverFromFailedMutation } from "../services/mutationFailure";
+import {
+  addConfiguredNodeOperations,
+  connection,
+  insertOnEdgeOperation,
+  isBackendEdge,
+} from "../utils/graphOperations";
 import { buildCommentNode } from "./useCanvasComments";
-import { buildGroupNode, groupNodeId, useNodeGroups } from "./useNodeGroups";
+import {
+  buildGroupNode,
+  groupNodeId,
+  useNodeGroups,
+  GROUP_PROXY_EDGE_PREFIX,
+} from "./useNodeGroups";
 import { fetchNodeTemplates } from "./useNodes";
 import { useEditorStore } from "../stores/editor-store";
 import { useTutorialStore } from "../stores/tutorial-store";
 import { parseTabularText, inferColumnDataType } from "../utils/clipboardUtils";
 import { DEFAULT_OUTPUT_HANDLE, outputHandle } from "../utils/outputHandle";
-import { buildOutputHandles, deriveHandles } from "../utils/nodeHandles";
+import { deriveHandles } from "../utils/nodeHandles";
 import {
   findAutoConnectMatch,
   preferUnusedOutputs,
@@ -42,11 +54,22 @@ import { desktop } from "../../lib/desktop";
 const EDGE_DROP_CLASS = "edge-drop-target";
 let hoveredEdgeId: string | null = null;
 
-// Edge ids whose UI removal should NOT trigger a backend deleteConnection call.
-// Used during drag-to-insert: we delete the backend connection ourselves first,
-// then call `removeEdges` for the UI update — without this set, Canvas.vue's
-// `@edges-change` handler would issue a second, failing deleteConnection.
-export const suppressedEdgeRemovals = new Set<string>();
+// Edges core already deleted; filled only for the synchronous span of removeCommittedEdges.
+const committedEdgeRemovals = new Set<string>();
+
+/** True while Canvas sees the removal of an edge core already deleted (so it sends nothing). */
+export const isCommittedEdgeRemoval = (edgeId: string): boolean =>
+  committedEdgeRemovals.has(edgeId);
+
+/** Remove edges core has already deleted from the canvas, without deleting them again. */
+export function removeCommittedEdges(removeEdges: (ids: string[]) => void, ids: string[]): void {
+  ids.forEach((id) => committedEdgeRemovals.add(id));
+  try {
+    removeEdges(ids);
+  } finally {
+    ids.forEach((id) => committedEdgeRemovals.delete(id));
+  }
+}
 
 function markHoveredEdge(nextId: string | null) {
   if (hoveredEdgeId === nextId) return;
@@ -88,28 +111,17 @@ function detectEdgeUnderPointer(clientX: number, clientY: number): string | null
   // edge even when a dragged node is painted on top and obscures it.
   const stack = document.elementsFromPoint(clientX, clientY);
   for (const el of stack) {
-    const edgeEl = (el as Element).closest(".vue-flow__edge");
-    if (edgeEl) return edgeEl.getAttribute("data-id");
+    const id = (el as Element).closest(".vue-flow__edge")?.getAttribute("data-id");
+    // A collapsed group's proxy edge has no core connection to splice into.
+    if (id && !id.startsWith(GROUP_PROXY_EDGE_PREFIX)) return id;
   }
   return null;
 }
 
-function buildConnection(
-  sourceId: number,
-  sourceHandle: string,
-  targetId: number,
-  targetHandle: string,
-): NodeConnection {
-  return {
-    input_connection: {
-      node_id: targetId,
-      connection_class: targetHandle as NodeConnection["input_connection"]["connection_class"],
-    },
-    output_connection: {
-      node_id: sourceId,
-      connection_class: sourceHandle as NodeConnection["output_connection"]["connection_class"],
-    },
-  };
+/** A gesture's backend ops plus the canvas update to apply once they are committed. */
+export interface GesturePlan {
+  operations: GraphOperation[];
+  apply: () => void;
 }
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
@@ -320,8 +332,6 @@ export default function useDragAndDrop() {
   const {
     addNodes,
     screenToFlowCoordinate,
-    onNodesInitialized,
-    updateNode,
     addEdges,
     removeEdges,
     findEdge,
@@ -518,92 +528,142 @@ export default function useDragAndDrop() {
   }
 
   /**
-   * Wire a dropped or dragged node to the neighbour picked by findAutoConnectMatch.
-   * Backend first, then the UI edge; on failure the node simply stays unconnected.
+   * The ops that wire a dropped or dragged node to the neighbour picked by
+   * findAutoConnectMatch, and the canvas edge to show once they are committed.
    */
-  async function autoConnectNode(
-    flowId: number,
-    newNodeId: number,
-    match: AutoConnectMatch,
-  ): Promise<OperationResponse | undefined> {
+  function planAutoConnect(newNodeId: number, match: AutoConnectMatch): GesturePlan {
     const existingId = parseInt(match.nodeId, 10);
     const upstream = match.direction === "upstream";
     const sourceId = upstream ? existingId : newNodeId;
     const sourceHandle = upstream ? match.existingHandle : match.newHandle;
     const targetId = upstream ? newNodeId : existingId;
     const targetHandle = upstream ? match.newHandle : match.existingHandle;
-    try {
-      const response = await FlowApi.connectNode(
-        flowId,
-        buildConnection(sourceId, sourceHandle, targetId, targetHandle),
-      );
-      addEdges([
-        {
-          id: `e${sourceId}-${targetId}-${sourceHandle}-${targetHandle}`,
-          source: String(sourceId),
-          target: String(targetId),
-          sourceHandle,
-          targetHandle,
-        },
-      ]);
-      useTutorialStore().notify({ type: "edge-connected", sourceId, targetId });
-      return response;
-    } catch (error) {
-      console.error("Auto-connect failed:", error);
-      ElMessage.warning("Node added, but it could not be connected automatically");
-      return undefined;
-    }
+    return {
+      operations: [
+        { op: "connect", connection: connection(sourceId, sourceHandle, targetId, targetHandle) },
+      ],
+      apply: () => {
+        addEdges([
+          {
+            id: `e${sourceId}-${targetId}-${sourceHandle}-${targetHandle}`,
+            source: String(sourceId),
+            target: String(targetId),
+            sourceHandle,
+            targetHandle,
+          },
+        ]);
+        useTutorialStore().notify({ type: "edge-connected", sourceId, targetId });
+      },
+    };
   }
 
-  async function createCopyNode(node: NodeCopyInput): Promise<OperationResponse | undefined> {
-    try {
-      const component = await getComponentRaw(node.type);
-      const nodeId: number = getId();
-      // Prefer the handle snapshots taken at copy time (exact for dynamic-handle
-      // nodes); fall back to deriving from the template counts.
-      const derived = deriveHandles({
-        input: node.numberOfInputs,
-        output: node.numberOfOutputs,
-        dynamic_inputs: node.nodeTemplate?.dynamic_inputs,
-        output_names: node.nodeTemplate?.output_names,
-        input_labels: node.nodeTemplate?.input_labels,
-      });
-      const newNode: Node = {
-        id: String(nodeId),
-        type: "custom-node",
-        position: {
-          x: node.posX,
-          y: node.posY,
-        },
-        data: {
-          id: nodeId,
-          label: node.label,
-          component: markRaw(component),
-          inputs: node.inputHandles ?? derived.inputs,
-          outputs: node.outputHandles ?? derived.outputs,
-          nodeTemplate: node.nodeTemplate,
-        },
-      };
-      const nodePromise: NodePromise = {
-        node_id: nodeId,
-        flow_id: node.flowId,
-        node_type: node.typeSnakeCase,
-        pos_x: node.posX,
-        pos_y: node.posY,
-        cache_results: true,
-      };
-      const response = await FlowApi.copyNode(
-        node.nodeIdToCopyFrom,
-        node.flowIdToCopyFrom,
-        nodePromise,
-      );
+  /**
+   * The op that splices a node into an existing edge (A -> B becomes A -> new -> B, B's
+   * input keeping its position), and the canvas edges to show once it is committed. Null
+   * when the edge is gone.
+   */
+  function planEdgeSplice(newNodeId: number, edgeId: string): GesturePlan | null {
+    const edge = findEdge(edgeId);
+    if (!edge || !isBackendEdge(edge)) return null;
 
-      addNodes(newNode);
-      return response;
+    const sourceId = parseInt(edge.source, 10);
+    const targetId = parseInt(edge.target, 10);
+    const sourceHandle = edge.sourceHandle ?? DEFAULT_OUTPUT_HANDLE;
+    const targetHandle = edge.targetHandle ?? "input-0";
+    const newOutputHandle = outputHandle(0);
+    const newInputHandle = "input-0";
+
+    return {
+      operations: [
+        insertOnEdgeOperation(newNodeId, {
+          source: edge.source,
+          target: edge.target,
+          sourceHandle,
+          targetHandle,
+        }),
+      ],
+      apply: () => {
+        removeCommittedEdges(removeEdges, [edge.id]);
+        addEdges([
+          {
+            id: `e${sourceId}-${newNodeId}-${sourceHandle}-${newInputHandle}`,
+            source: String(sourceId),
+            target: String(newNodeId),
+            sourceHandle,
+            targetHandle: newInputHandle,
+            ...(edge.label ? { label: edge.label } : {}),
+          },
+          {
+            id: `e${newNodeId}-${targetId}-${newOutputHandle}-${targetHandle}`,
+            source: String(newNodeId),
+            target: String(targetId),
+            sourceHandle: newOutputHandle,
+            targetHandle,
+          },
+        ]);
+        const tutorialStore = useTutorialStore();
+        tutorialStore.notify({ type: "edge-connected", sourceId, targetId: newNodeId });
+        tutorialStore.notify({ type: "edge-connected", sourceId: newNodeId, targetId });
+      },
+    };
+  }
+
+  /**
+   * Paste one copied node. The request goes out before anything is awaited, so the paste
+   * keeps its place among the user's edits; the canvas shows the node once core has it.
+   */
+  async function createCopyNode(node: NodeCopyInput): Promise<boolean> {
+    const nodeId: number = getId();
+    const nodePromise: NodePromise = {
+      node_id: nodeId,
+      flow_id: node.flowId,
+      node_type: node.typeSnakeCase,
+      pos_x: node.posX,
+      pos_y: node.posY,
+      cache_results: true,
+    };
+    const copied = FlowApi.copyNode(node.nodeIdToCopyFrom, node.flowIdToCopyFrom, nodePromise);
+    let newNode: Node;
+    try {
+      [newNode] = await Promise.all([
+        buildCopiedNode(node, nodeId, { x: node.posX, y: node.posY }),
+        copied,
+      ]);
     } catch (error) {
-      console.error("Error creating copy node:", error);
-      return undefined;
+      recoverFromFailedMutation(error, "Failed to paste node");
+      return false;
     }
+    addNodes(newNode);
+    return true;
+  }
+
+  /** A pasted node's canvas node; handle snapshots from copy time win over the template's counts. */
+  async function buildCopiedNode(
+    node: NodeCopyValue,
+    newNodeId: number,
+    position: { x: number; y: number },
+  ): Promise<Node> {
+    const component = await getComponentRaw(node.type);
+    const derived = deriveHandles({
+      input: node.numberOfInputs,
+      output: node.numberOfOutputs,
+      dynamic_inputs: node.nodeTemplate?.dynamic_inputs,
+      output_names: node.nodeTemplate?.output_names,
+      input_labels: node.nodeTemplate?.input_labels,
+    });
+    return {
+      id: String(newNodeId),
+      type: "custom-node",
+      position,
+      data: {
+        id: newNodeId,
+        label: node.label,
+        component: markRaw(component),
+        inputs: node.inputHandles ?? derived.inputs,
+        outputs: node.outputHandles ?? derived.outputs,
+        nodeTemplate: node.nodeTemplate,
+      },
+    };
   }
 
   const getMaxDataId = (nodes: NodeInput[]): number => {
@@ -735,7 +795,8 @@ export default function useDragAndDrop() {
     );
     // Groups first so a parent exists before its children reference it.
     addNodes([...groupNodes, ...childNodes, ...commentNodes]);
-    id = getMaxDataId(flowData.node_inputs);
+    // Never lower the counter: an undone node's id may still be referenced by a redo.
+    id = Math.max(id, getMaxDataId(flowData.node_inputs));
 
     // Add labels to edges from source node output handles, node_reference, or df_{nodeId} default
     const editorStore = useEditorStore();
@@ -773,28 +834,28 @@ export default function useDragAndDrop() {
     }
   }
 
-  async function onDrop(event: DragEvent, flowId: number): Promise<OperationResponse | undefined> {
+  async function onDrop(event: DragEvent, flowId: number): Promise<void> {
     const position = screenToFlowCoordinate({
       x: event.clientX,
       y: event.clientY,
     });
-    if (!event.dataTransfer) return undefined;
+    if (!event.dataTransfer) return;
 
     // Parse and validate the drag data to prevent unvalidated dynamic method calls
     const rawData = event.dataTransfer.getData("application/vueflow");
-    if (!rawData) return undefined;
+    if (!rawData) return;
 
     let parsedData: unknown;
     try {
       parsedData = JSON.parse(rawData);
     } catch {
       console.error("Invalid JSON in drag data");
-      return undefined;
+      return;
     }
 
     if (!isValidNodeTemplate(parsedData)) {
       console.error("Invalid node template data in drag event");
-      return undefined;
+      return;
     }
 
     const nodeData: NodeTemplate = parsedData;
@@ -811,310 +872,164 @@ export default function useDragAndDrop() {
     markAutoConnectNode(null);
     resetAutoConnectCandidates();
 
-    try {
-      const component = await getComponent(nodeData);
-      const { inputs, outputs } = deriveHandles(nodeData);
+    // Core stores integer positions, so the canvas shows the node where core puts it.
+    const placed = { x: Math.round(position.x), y: Math.round(position.y) };
 
-      const newNode: Node = {
-        id: String(nodeId),
-        type: "custom-node",
-        position,
-        data: {
-          id: nodeId,
-          label: nodeData.name,
-          component: markRaw(component),
-          inputs,
-          outputs,
-          nodeTemplate: nodeData,
-        },
-      };
+    // A `multi` node has one input handle whatever its backend input count; dynamic-input
+    // nodes never splice (their input-0 is the parameter handle).
+    const effectiveInputCount = nodeData.multi ? 1 : nodeData.input;
+    const splice =
+      droppedOnEdgeId &&
+      !nodeData.dynamic_inputs &&
+      effectiveInputCount === 1 &&
+      nodeData.output >= 1
+        ? planEdgeSplice(nodeId, droppedOnEdgeId)
+        : null;
+    const plan = splice ?? (autoConnectMatch ? planAutoConnect(nodeId, autoConnectMatch) : null);
 
-      const { off } = onNodesInitialized(() => {
-        updateNode(String(nodeId), (node) => ({
-          position: {
-            x: node.position.x - (node.dimensions?.width || 0) / 55,
-            y: node.position.y - (node.dimensions?.height || 0) / 55,
+    // Sent before any await so the drop keeps its place; the canvas shows it once core has it.
+    const added = plan
+      ? FlowApi.applyOperations(flowId, `${splice ? "Insert" : "Add"} ${nodeData.item} node`, [
+          {
+            op: "add_node",
+            node_id: nodeId,
+            node_type: nodeData.item,
+            pos_x: placed.x,
+            pos_y: placed.y,
           },
-        }));
-
-        off();
-      });
-
-      const response = await FlowApi.insertNode(
-        flowId,
-        nodeId,
-        nodeData.item,
-        position.x,
-        position.y,
-      );
-      addNodes(newNode);
-      useTutorialStore().notify({ type: "node-added", nodeItem: nodeData.item, nodeId });
-
-      // `multi` nodes render a single input handle that accepts many sources,
-      // so for splice purposes they behave like a 1-input node regardless of
-      // the backend's `input` count (e.g. polars_code/python_script have input=10).
-      // Dynamic-input nodes never splice: their input-0 is the parameter handle.
-      const effectiveInputCount = nodeData.multi ? 1 : nodeData.input;
-      if (
-        droppedOnEdgeId &&
-        !nodeData.dynamic_inputs &&
-        effectiveInputCount === 1 &&
-        nodeData.output >= 1
-      ) {
-        const insertResponse = await insertNodeOnEdge(flowId, nodeId, nodeData, droppedOnEdgeId);
-        if (insertResponse) return insertResponse;
-      }
-      if (autoConnectMatch) {
-        const connectResponse = await autoConnectNode(flowId, nodeId, autoConnectMatch);
-        if (connectResponse) return connectResponse;
-      }
-      return response;
-    } catch (error) {
-      console.error("Error importing component for:", nodeData.item, error);
-      return undefined;
-    }
-  }
-
-  /**
-   * Splice a freshly-created node into an existing edge: A -> B becomes
-   * A -> new -> B. The new node has already been created on both UI and
-   * backend by onDrop; this only reshuffles the edges.
-   *
-   * Returns the last OperationResponse on success, or undefined on failure
-   * (after a best-effort rollback — the original edge is re-added if
-   * possible so the user isn't stranded with a disconnected graph).
-   */
-  async function insertNodeOnEdge(
-    flowId: number,
-    newNodeId: number,
-    nodeData: NodeTemplate,
-    edgeId: string,
-  ): Promise<OperationResponse | undefined> {
-    const edge = findEdge(edgeId);
-    if (!edge) return undefined;
-
-    const sourceId = parseInt(edge.source, 10);
-    const targetId = parseInt(edge.target, 10);
-    const sourceHandle = edge.sourceHandle ?? DEFAULT_OUTPUT_HANDLE;
-    const targetHandle = edge.targetHandle ?? "input-0";
-    const newOutputHandle = outputHandle(0);
-    const newInputHandle = "input-0";
-
-    const oldConnection = buildConnection(sourceId, sourceHandle, targetId, targetHandle);
-    const upstream = buildConnection(sourceId, sourceHandle, newNodeId, newInputHandle);
-    const downstream = buildConnection(newNodeId, newOutputHandle, targetId, targetHandle);
-
-    // Keep a snapshot of the original edge so we can rehydrate the UI on rollback.
-    const originalEdge: Edge = {
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      sourceHandle: edge.sourceHandle,
-      targetHandle: edge.targetHandle,
-      ...(edge.label ? { label: edge.label } : {}),
-    };
-
-    let stage: "none" | "deleted-old" | "added-upstream" = "none";
+          ...plan.operations,
+        ])
+      : FlowApi.insertNode(flowId, nodeId, nodeData.item, placed.x, placed.y);
+    let component: any;
     try {
-      await FlowApi.deleteConnection(flowId, oldConnection);
-      stage = "deleted-old";
-      // Backend already knows the edge is gone; tell handleEdgeChange to skip it.
-      suppressedEdgeRemovals.add(edge.id);
-      removeEdges([edge.id]);
-
-      await FlowApi.connectNode(flowId, upstream);
-      stage = "added-upstream";
-
-      const lastResponse = await FlowApi.connectNode(flowId, downstream);
-
-      addEdges([
-        {
-          id: `e${sourceId}-${newNodeId}-${sourceHandle}-${newInputHandle}`,
-          source: String(sourceId),
-          target: String(newNodeId),
-          sourceHandle,
-          targetHandle: newInputHandle,
-          ...(edge.label ? { label: edge.label } : {}),
-        },
-        {
-          id: `e${newNodeId}-${targetId}-${newOutputHandle}-${targetHandle}`,
-          source: String(newNodeId),
-          target: String(targetId),
-          sourceHandle: newOutputHandle,
-          targetHandle,
-        },
-      ]);
-
-      const tutorialStore = useTutorialStore();
-      tutorialStore.notify({ type: "edge-connected", sourceId, targetId: newNodeId });
-      tutorialStore.notify({ type: "edge-connected", sourceId: newNodeId, targetId });
-
-      return lastResponse;
+      [component] = await Promise.all([getComponent(nodeData), added]);
     } catch (error) {
-      console.error("Insert-on-edge failed, attempting rollback:", error);
-      if (stage === "added-upstream") {
-        await FlowApi.deleteConnection(flowId, upstream).catch(() => undefined);
-      }
-      if (stage !== "none") {
-        await FlowApi.connectNode(flowId, oldConnection).catch(() => undefined);
-        addEdges([originalEdge]);
-      }
-      ElMessage.error(`Could not insert ${nodeData.name} onto the edge`);
-      return undefined;
+      recoverFromFailedMutation(error, `Could not add ${nodeData.name}`);
+      return;
+    }
+    const { inputs, outputs } = deriveHandles(nodeData);
+    addNodes({
+      id: String(nodeId),
+      type: "custom-node",
+      position: placed,
+      data: {
+        id: nodeId,
+        label: nodeData.name,
+        component: markRaw(component),
+        inputs,
+        outputs,
+        nodeTemplate: nodeData,
+      },
+    });
+    useTutorialStore().notify({ type: "node-added", nodeItem: nodeData.item, nodeId });
+    if (plan) {
+      await nextTick();
+      plan.apply();
     }
   }
 
-  /**
-   * Creates multiple copied nodes with their connections preserved
-   * Returns the last OperationResponse for history state updates
-   */
+  /** Paste several copied nodes plus the edges between them as one step. */
   async function createMultiCopyNodes(
     multiCopyValue: MultiNodeCopyValue,
     baseX: number,
     baseY: number,
     flowId: number,
-  ): Promise<OperationResponse | undefined> {
+  ): Promise<boolean> {
     const nodeIdMapping: Map<number, number> = new Map();
-
-    const nodeInfos: Array<{
-      node: (typeof multiCopyValue.nodes)[0];
-      newNodeId: number;
-      offsetX: number;
-      offsetY: number;
-    }> = [];
-
-    for (let i = 0; i < multiCopyValue.nodes.length; i++) {
-      const node = multiCopyValue.nodes[i];
+    const nodeInfos = multiCopyValue.nodes.map((node, i) => {
       const newNodeId = getId();
       nodeIdMapping.set(node.nodeIdToCopyFrom, newNodeId);
-
-      const offsetX = baseX + (node.relativeX ?? (i % 3) * 200);
-      const offsetY = baseY + (node.relativeY ?? Math.floor(i / 3) * 150);
-
-      nodeInfos.push({ node, newNodeId, offsetX, offsetY });
-    }
-
-    const uiNodePromises = nodeInfos.map(async ({ node, newNodeId, offsetX, offsetY }) => {
-      const component = await getComponentRaw(node.type);
-      const derived = deriveHandles({
-        input: node.numberOfInputs,
-        output: node.numberOfOutputs,
-        dynamic_inputs: node.nodeTemplate?.dynamic_inputs,
-        output_names: node.nodeTemplate?.output_names,
-        input_labels: node.nodeTemplate?.input_labels,
-      });
-      const newNode: Node = {
-        id: String(newNodeId),
-        type: "custom-node",
-        position: {
-          x: offsetX,
-          y: offsetY,
-        },
-        data: {
-          id: newNodeId,
-          label: node.label,
-          component: markRaw(component),
-          inputs: node.inputHandles ?? derived.inputs,
-          outputs: node.outputHandles ?? derived.outputs,
-          nodeTemplate: node.nodeTemplate,
-        },
+      return {
+        node,
+        newNodeId,
+        offsetX: Math.round(baseX + (node.relativeX ?? (i % 3) * 200)),
+        offsetY: Math.round(baseY + (node.relativeY ?? Math.floor(i / 3) * 150)),
       };
-      addNodes(newNode);
-      return { node, newNodeId, offsetX, offsetY };
     });
 
-    const createdNodes = await Promise.all(uiNodePromises);
-
-    let lastResponse: OperationResponse | undefined;
-    // Copy one node at a time: the backend reserves a unique subflow-port name per
-    // flow_output/flow_input, and firing the copies concurrently would race that
-    // check-then-add (two ports resolving to the same name, one failing to render).
-    for (const { node, newNodeId, offsetX, offsetY } of createdNodes) {
-      const nodePromise: NodePromise = {
-        node_id: newNodeId,
-        flow_id: flowId,
-        node_type: node.typeSnakeCase,
-        pos_x: offsetX,
-        pos_y: offsetY,
-        cache_results: true,
-      };
-      lastResponse = await FlowApi.copyNode(
-        node.nodeIdToCopyFrom,
-        multiCopyValue.flowIdToCopyFrom,
-        nodePromise,
-      );
-    }
-
-    await nextTick();
-
-    const connectionPromises = multiCopyValue.edges.map(async (edge) => {
+    const operations: GraphOperation[] = nodeInfos.map(
+      ({ node, newNodeId, offsetX, offsetY }): GraphOperation => ({
+        op: "copy_node",
+        node_id_to_copy_from: node.nodeIdToCopyFrom,
+        flow_id_to_copy_from: multiCopyValue.flowIdToCopyFrom,
+        node_promise: {
+          node_id: newNodeId,
+          flow_id: flowId,
+          node_type: node.typeSnakeCase,
+          pos_x: offsetX,
+          pos_y: offsetY,
+          cache_results: true,
+        },
+      }),
+    );
+    const newEdges: Edge[] = [];
+    for (const edge of multiCopyValue.edges) {
       const newSourceId = nodeIdMapping.get(edge.sourceNodeId);
       const newTargetId = nodeIdMapping.get(edge.targetNodeId);
-
-      if (newSourceId !== undefined && newTargetId !== undefined) {
-        const sourceNodeInfo = multiCopyValue.nodes.find(
-          (n) => n.nodeIdToCopyFrom === edge.sourceNodeId,
-        );
-        const outputIndex = parseInt(edge.sourceHandle.replace("output-", ""), 10);
-        const snapshotHandles = sourceNodeInfo?.outputHandles;
-        const snapshotLabel =
-          snapshotHandles && snapshotHandles.length > 1
-            ? snapshotHandles[outputIndex]?.label
-            : undefined;
-        const outputLabel =
-          snapshotLabel ??
-          (sourceNodeInfo?.nodeTemplate?.output_names &&
-          sourceNodeInfo.nodeTemplate.output_names.length > 1
-            ? sourceNodeInfo.nodeTemplate.output_names[outputIndex]
-            : undefined);
-
-        const newEdge = {
-          id: `e${newSourceId}-${newTargetId}-${edge.sourceHandle}-${edge.targetHandle}`,
-          source: String(newSourceId),
-          target: String(newTargetId),
-          sourceHandle: edge.sourceHandle,
-          targetHandle: edge.targetHandle,
-          ...(outputLabel ? { label: outputLabel } : {}),
-        };
-        addEdges([newEdge]);
-
-        const nodeConnection: NodeConnection = {
-          input_connection: {
-            node_id: newTargetId,
-            connection_class: edge.targetHandle as any,
-          },
-          output_connection: {
-            node_id: newSourceId,
-            connection_class: edge.sourceHandle as any,
-          },
-        };
-        return FlowApi.connectNode(flowId, nodeConnection);
-      }
-      return undefined;
-    });
-
-    const connectionResponses = await Promise.all(connectionPromises);
-    // Return the last successful connection response, or the last copy response
-    const validConnectionResponses = connectionResponses.filter(
-      (r): r is OperationResponse => r !== undefined,
-    );
-    if (validConnectionResponses.length > 0) {
-      lastResponse = validConnectionResponses[validConnectionResponses.length - 1];
+      if (newSourceId === undefined || newTargetId === undefined) continue;
+      const sourceNodeInfo = multiCopyValue.nodes.find(
+        (n) => n.nodeIdToCopyFrom === edge.sourceNodeId,
+      );
+      const outputIndex = parseInt(edge.sourceHandle.replace("output-", ""), 10);
+      const snapshotHandles = sourceNodeInfo?.outputHandles;
+      const snapshotLabel =
+        snapshotHandles && snapshotHandles.length > 1
+          ? snapshotHandles[outputIndex]?.label
+          : undefined;
+      const outputLabel =
+        snapshotLabel ??
+        (sourceNodeInfo?.nodeTemplate?.output_names &&
+        sourceNodeInfo.nodeTemplate.output_names.length > 1
+          ? sourceNodeInfo.nodeTemplate.output_names[outputIndex]
+          : undefined);
+      newEdges.push({
+        id: `e${newSourceId}-${newTargetId}-${edge.sourceHandle}-${edge.targetHandle}`,
+        source: String(newSourceId),
+        target: String(newTargetId),
+        sourceHandle: edge.sourceHandle,
+        targetHandle: edge.targetHandle,
+        ...(outputLabel ? { label: outputLabel } : {}),
+      });
+      operations.push({
+        op: "connect",
+        connection: connection(newSourceId, edge.sourceHandle, newTargetId, edge.targetHandle),
+      });
     }
 
-    return lastResponse;
+    // Sent before anything is awaited; the canvas shows the nodes once core has them.
+    const pasted = FlowApi.applyOperations(
+      flowId,
+      `Paste ${plural(nodeInfos.length, "node")}`,
+      operations,
+    );
+    const building = Promise.all(
+      nodeInfos.map(({ node, newNodeId, offsetX, offsetY }) =>
+        buildCopiedNode(node, newNodeId, { x: offsetX, y: offsetY }),
+      ),
+    );
+    let newNodes: Node[];
+    try {
+      [newNodes] = await Promise.all([building, pasted]);
+    } catch (error) {
+      recoverFromFailedMutation(error, "Failed to paste nodes");
+      return false;
+    }
+    addNodes(newNodes);
+    await nextTick();
+    addEdges(newEdges);
+    return true;
   }
 
   /**
    * Creates a manual_input node from clipboard tabular data pasted on the canvas.
-   * Returns the OperationResponse if successful, undefined otherwise.
+   * Returns true when a node was added.
    */
   async function createManualInputFromClipboard(
     flowId: number,
     x: number,
     y: number,
     clipboardText?: string | null,
-  ): Promise<OperationResponse | undefined> {
+  ): Promise<boolean> {
     // Callers on the ClipboardEvent path pass the already-read text. Otherwise
     // read the OS clipboard via desktop.readClipboardText() (native plugin on
     // desktop, navigator.clipboard on web) — bail if it rejects.
@@ -1125,12 +1040,12 @@ export default function useDragAndDrop() {
         // "Paste" pill); web mode falls back to navigator.clipboard.
         text = await desktop.readClipboardText();
       } catch {
-        return undefined;
+        return false;
       }
     }
 
     const parsed = parseTabularText(text);
-    if (!parsed || parsed.length < 2) return undefined;
+    if (!parsed || parsed.length < 2) return false;
 
     const headers = parsed[0];
     const dataRows = parsed.slice(1);
@@ -1143,57 +1058,46 @@ export default function useDragAndDrop() {
 
     const nodeId = getId();
 
+    // Node and data in one step, sent before any await; the canvas shows it once core has it.
+    const pasted = FlowApi.applyOperations(
+      flowId,
+      "Paste table",
+      addConfiguredNodeOperations(
+        flowId,
+        nodeId,
+        "manual_input",
+        { x, y },
+        { cache_results: false, is_setup: true, raw_data_format: { columns, data } },
+      ),
+    );
+    let component: any;
+    let nodeTemplate: NodeTemplate | undefined;
     try {
-      const [component, nodeTemplate] = await Promise.all([
+      [component, nodeTemplate] = await Promise.all([
         getComponent("manual_input"),
         getNodeTemplateByItem("manual_input"),
+        pasted,
       ]);
-
-      const response = await FlowApi.insertNode(flowId, nodeId, "manual_input", x, y);
-
-      // Ship the parsed data before showing the node — a settings failure must
-      // not leave a broken manual_input on the canvas (or in the backend).
-      try {
-        await NodeApi.updateSettingsDirectly("manual_input", {
-          flow_id: flowId,
-          node_id: nodeId,
-          pos_x: x,
-          pos_y: y,
-          cache_results: false,
-          is_setup: true,
-          raw_data_format: { columns, data },
-        });
-      } catch (error) {
-        console.error("Error creating manual input from clipboard:", error);
-        try {
-          await FlowApi.deleteNode(flowId, nodeId);
-        } catch {
-          // best-effort cleanup of the already-inserted backend node
-        }
-        return undefined;
-      }
-
-      const newNode: Node = {
-        id: String(nodeId),
-        type: "custom-node",
-        position: { x, y },
-        data: {
-          id: nodeId,
-          label: "Manual Input",
-          component: markRaw(component),
-          inputs: [],
-          outputs: [{ id: DEFAULT_OUTPUT_HANDLE, position: Position.Right }],
-          nodeTemplate,
-        },
-      };
-      addNodes(newNode);
-      useTutorialStore().notify({ type: "node-added", nodeItem: "manual_input", nodeId });
-
-      return response;
     } catch (error) {
-      console.error("Error creating manual input from clipboard:", error);
-      return undefined;
+      recoverFromFailedMutation(error, "Could not paste the table");
+      return false;
     }
+
+    addNodes({
+      id: String(nodeId),
+      type: "custom-node",
+      position: { x, y },
+      data: {
+        id: nodeId,
+        label: "Manual Input",
+        component: markRaw(component),
+        inputs: [],
+        outputs: [{ id: DEFAULT_OUTPUT_HANDLE, position: Position.Right }],
+        nodeTemplate,
+      },
+    });
+    useTutorialStore().notify({ type: "node-added", nodeItem: "manual_input", nodeId });
+    return true;
   }
 
   return {
@@ -1209,9 +1113,9 @@ export default function useDragAndDrop() {
     createManualInputFromClipboard,
     importFlow,
     createEmptyFlow,
-    insertNodeOnEdge,
+    planEdgeSplice,
+    planAutoConnect,
     detectAutoConnectForNode,
-    autoConnectNode,
     resetAutoConnectCandidates,
   };
 }

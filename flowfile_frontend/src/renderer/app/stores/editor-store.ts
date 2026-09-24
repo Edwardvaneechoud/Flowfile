@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 import { ref, shallowRef } from "vue";
 import type { Component } from "vue";
 import type { NodeTitleInfo } from "../types";
+import type { DrawerCloseOptions } from "../composables/settingsDrawerSession";
 
 export const useEditorStore = defineStore("editor", {
   state: () => ({
@@ -12,6 +13,7 @@ export const useEditorStore = defineStore("editor", {
     activeDrawerComponent: shallowRef<Component | null>(null),
     drawerProps: ref<Record<string, any>>({}),
     drawCloseFunction: null as any,
+    drawerHasPendingEdits: null as (() => boolean) | null,
 
     // Editor state
     initialEditorData: "" as string,
@@ -64,18 +66,48 @@ export const useEditorStore = defineStore("editor", {
   },
 
   actions: {
-    async executeDrawCloseFunction() {
-      if (this.drawCloseFunction) {
-        this.drawCloseFunction();
+    /**
+     * Run the pending close save once; false means refused or failed. With `keepOnRefusal` a
+     * refused close stays armed (unless the drawer closed or re-registered meanwhile).
+     */
+    async executeDrawCloseFunction(
+      options?: DrawerCloseOptions,
+      keepOnRefusal = false,
+    ): Promise<unknown> {
+      const close = this.drawCloseFunction;
+      const hasPendingEdits = this.drawerHasPendingEdits;
+      this.clearCloseFunction();
+      if (!close) return undefined;
+      let result: unknown;
+      try {
+        result = await close(options);
+      } catch (error) {
+        console.error("Saving the open settings failed:", error);
+        result = false;
       }
+      const stillOpen = this.activeDrawerComponent !== null && this.drawCloseFunction === null;
+      if (result === false && keepOnRefusal && stillOpen) {
+        this.setCloseFunction(close, hasPendingEdits ?? undefined);
+      }
+      return result;
     },
 
-    setCloseFunction(f: () => void): void {
+    setCloseFunction(
+      f: (options?: DrawerCloseOptions) => unknown,
+      hasPendingEdits?: () => boolean,
+    ): void {
       this.drawCloseFunction = f;
+      this.drawerHasPendingEdits = hasPendingEdits ?? null;
     },
 
     clearCloseFunction(): void {
       this.drawCloseFunction = null;
+      this.drawerHasPendingEdits = null;
+    },
+
+    /** Whether the open settings drawer holds user edits its close would save. */
+    hasPendingDrawerEdits(): boolean {
+      return !!this.drawCloseFunction && (this.drawerHasPendingEdits?.() ?? false);
     },
 
     openDrawer(
@@ -105,7 +137,7 @@ export const useEditorStore = defineStore("editor", {
     pushNodeData() {
       if (this.drawCloseFunction && !this.isRunning) {
         this.drawCloseFunction();
-        this.drawCloseFunction = null;
+        this.clearCloseFunction();
       }
     },
 

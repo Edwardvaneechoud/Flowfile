@@ -16,6 +16,21 @@
           <el-icon><WarningFilled /></el-icon>
         </span>
       </div>
+      <div
+        v-if="relativeHint && nodeOutput.output_settings.directory === relativeHint.directory"
+        class="directory-hint"
+      >
+        <span>Writes to {{ relativeHint.location }}</span>
+        <el-button
+          v-if="relativeHint.suggestion"
+          link
+          type="primary"
+          size="small"
+          @click="useSuggestedDirectory"
+        >
+          Use {{ relativeHint.suggestion }}
+        </el-button>
+      </div>
 
       <el-autocomplete
         v-model="nodeOutput.output_settings.name"
@@ -141,6 +156,7 @@
 import { ref } from "vue";
 import {
   NodeOutput,
+  OutputSettings,
   isOutputCsvTable,
   isOutputParquetTable,
   isOutputExcelTable,
@@ -380,11 +396,9 @@ async function resolveDefaultOutputDirectory(): Promise<string> {
 }
 
 /**
- * On open, make sure the directory field shows a real, writable location rather
- * than an unresolved "." — otherwise the user can't tell where the file will be
- * written. Resolves to the last-used output dir (else home) and remembers it.
- * For an already-configured node we persist the conversion immediately so the
- * saved flow stops carrying "." for good.
+ * For a never-configured node, pre-fill a real, writable location rather than an
+ * unresolved "." — the last-used output dir (else home), remembered. Closing the drawer
+ * of such a node saves what it shows, so the field never shows an unpersisted value.
  */
 async function ensureResolvedDirectory() {
   const settings = nodeOutput.value?.output_settings;
@@ -393,11 +407,43 @@ async function ensureResolvedDirectory() {
   const resolved = await resolveDefaultOutputDirectory();
   if (!isResolvedDirectory(resolved)) return; // backend unreachable — leave as-is
 
-  const wasConfigured = nodeOutput.value?.is_setup === true;
   settings.directory = resolved;
   rememberOutputDirectory(resolved);
+}
 
-  if (wasConfigured) await saveSettings();
+/** The directory part of core's absolute file path. */
+function directoryOf(settings: OutputSettings): string | null {
+  const absolute = settings.abs_file_path;
+  if (!absolute) return null;
+  const name = settings.name;
+  const withName = name && (absolute.endsWith(`/${name}`) || absolute.endsWith(`\\${name}`));
+  return withName ? absolute.slice(0, -name.length - 1) : absolute;
+}
+
+// A configured node's saved relative directory stays as stored; this says where core writes.
+const relativeHint = ref<{ directory: string; location: string; suggestion: string | null } | null>(
+  null,
+);
+
+async function describeRelativeDirectory() {
+  relativeHint.value = null;
+  const settings = nodeOutput.value?.output_settings;
+  if (!settings || isResolvedDirectory(settings.directory)) return;
+  const directory = settings.directory;
+  const suggestion = await resolveDefaultOutputDirectory();
+  relativeHint.value = {
+    directory,
+    location: directoryOf(settings) ?? directory,
+    suggestion: isResolvedDirectory(suggestion) ? suggestion : null,
+  };
+}
+
+function useSuggestedDirectory() {
+  const suggestion = relativeHint.value?.suggestion;
+  if (!nodeOutput.value || !suggestion) return;
+  nodeOutput.value.output_settings.directory = suggestion;
+  rememberOutputDirectory(suggestion);
+  fetchFiles();
 }
 
 async function loadNodeData(nodeId: number) {
@@ -418,7 +464,12 @@ async function loadNodeData(nodeId: number) {
       description: "",
     };
   }
-  await ensureResolvedDirectory();
+  if (nodeOutput.value?.is_setup === false) {
+    relativeHint.value = null;
+    await ensureResolvedDirectory();
+  } else {
+    await describeRelativeDirectory();
+  }
   dataLoaded.value = true;
 }
 
@@ -469,6 +520,17 @@ defineExpose({
   color: var(--color-danger);
   display: flex;
   align-items: center;
+}
+
+.directory-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: -12px 0 12px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  word-break: break-all;
 }
 
 .info-box {

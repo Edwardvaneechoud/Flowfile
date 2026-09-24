@@ -11,6 +11,7 @@ export const FLOW_ID_STORAGE_KEY = "last_flow_id";
 
 // Default history state
 const defaultHistoryState: HistoryState = {
+  flow_id: null,
   can_undo: false,
   can_redo: false,
   undo_description: null,
@@ -105,17 +106,11 @@ export const useFlowStore = defineStore("flow", {
       return this.vueFlowInstance;
     },
 
-    // Update history state from API response.
-    // Every canvas-level mutation (add/delete/connect/disconnect/undo/redo)
-    // routes through here, so this is also the hook point for bumping the
-    // dirty-state counter.
+    // Fed by the axios mutation channel and loadFlow; a late state for another flow is dropped.
     updateHistoryState(historyState: HistoryState) {
+      if (historyState.flow_id != null && historyState.flow_id !== this.flowId) return;
       this.historyState = historyState;
       useEditorStore().bumpGraphVersion();
-    },
-
-    resetHistoryState() {
-      this.historyState = { ...defaultHistoryState };
     },
 
     // Artifact actions. Caller may pass an explicit flowId to pin the request

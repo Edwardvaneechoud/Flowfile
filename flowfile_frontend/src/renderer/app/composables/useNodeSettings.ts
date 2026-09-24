@@ -1,8 +1,12 @@
 import { ref, type Ref } from "vue";
 import { ElMessage } from "element-plus";
 import type { NodeBase } from "../types/node.types";
+import type { GraphOperation } from "../types/flow.types";
 import { useNodeStore } from "../stores/node-store";
+import { useFlowStore } from "../stores/flow-store";
+import { deleteConnectionOperations, type EdgeLike } from "../utils/graphOperations";
 import { extractSaveErrorMessage } from "./saveError";
+import { removeCommittedEdges } from "./useDragAndDrop";
 
 export { extractSaveErrorMessage };
 
@@ -51,6 +55,18 @@ export interface UseNodeSettingsReturn {
    * the backend to have the latest settings.
    */
   saveSettings: () => Promise<boolean>;
+
+  /**
+   * Save settings together with extra graph operations as one atomic undo step
+   * (e.g. dropping the edges a settings change invalidates).
+   */
+  saveSettingsWithOperations: (label: string, operations: GraphOperation[]) => Promise<boolean>;
+
+  /**
+   * Save settings and delete the canvas edges the change invalidates, as one undo step.
+   * The edges leave the canvas only once core accepted the save.
+   */
+  saveSettingsDroppingEdges: (label: string, edges: EdgeLike[]) => Promise<boolean>;
 
   /**
    * Push node data - standard method called when drawer closes.
@@ -118,7 +134,10 @@ export function useNodeSettings<T extends NodeBase>(
    * Save settings to the backend.
    * Can be called without closing the drawer.
    */
-  const saveSettings = async (): Promise<boolean> => {
+  const save = async (batch?: {
+    label: string;
+    operations: GraphOperation[];
+  }): Promise<boolean> => {
     if (!nodeRef.value) {
       console.warn("useNodeSettings: Cannot save - nodeRef is null");
       return false;
@@ -138,7 +157,7 @@ export function useNodeSettings<T extends NodeBase>(
         nodeRef.value.is_setup = true;
       }
 
-      await nodeStore.updateSettings(nodeRef);
+      await nodeStore.updateSettings(nodeRef, undefined, batch);
 
       if (onAfterSave) {
         await onAfterSave();
@@ -152,6 +171,26 @@ export function useNodeSettings<T extends NodeBase>(
     } finally {
       isSaving.value = false;
     }
+  };
+
+  const saveSettings = (): Promise<boolean> => save();
+
+  const saveSettingsWithOperations = (
+    label: string,
+    operations: GraphOperation[],
+  ): Promise<boolean> => save(operations.length > 0 ? { label, operations } : undefined);
+
+  const saveSettingsDroppingEdges = async (label: string, edges: EdgeLike[]): Promise<boolean> => {
+    if (!(await saveSettingsWithOperations(label, deleteConnectionOperations(edges)))) return false;
+    const vfInstance = useFlowStore().vueFlowInstance;
+    // Any collapsed-group proxy among them goes too: it only stood for these edges.
+    if (vfInstance) {
+      removeCommittedEdges(
+        vfInstance.removeEdges,
+        edges.map((edge) => edge.id),
+      );
+    }
+    return true;
   };
 
   /**
@@ -196,6 +235,8 @@ export function useNodeSettings<T extends NodeBase>(
   return {
     isSaving,
     saveSettings,
+    saveSettingsWithOperations,
+    saveSettingsDroppingEdges,
     pushNodeData,
     handleGenericSettingsUpdate,
   };

@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, ClassVar, Literal, NamedTuple
+from typing import Annotated, Any, ClassVar, Literal, NamedTuple
 
 from pydantic import (
     BaseModel,
@@ -962,6 +962,101 @@ class UpdateLayoutRequest(BaseModel):
     comment_bounds: list[CommentBoundsUpdate] = Field(default_factory=list)
     # False -> apply without a new undo entry (folds into a preceding op's snapshot).
     record_history: bool = True
+
+
+class AddNodeOperation(BaseModel):
+    """Same as ``POST /editor/add_node/``."""
+
+    op: Literal["add_node"]
+    node_id: int
+    node_type: str
+    pos_x: float = 0
+    pos_y: float = 0
+
+
+class UpdateSettingsOperation(BaseModel):
+    """Same as ``POST /update_settings/``; ``settings`` is that route's body (incl. flow_id/node_id)."""
+
+    op: Literal["update_settings"]
+    node_type: str
+    settings: dict[str, Any]
+
+
+class DeleteNodeOperation(BaseModel):
+    """Same as ``POST /editor/delete_node/``."""
+
+    op: Literal["delete_node"]
+    node_id: int
+
+
+class ConnectOperation(BaseModel):
+    """Same as ``POST /editor/connect_node/``."""
+
+    op: Literal["connect"]
+    connection: input_schema.NodeConnection
+
+
+class DeleteConnectionOperation(BaseModel):
+    """Same as ``POST /editor/delete_connection/``."""
+
+    op: Literal["delete_connection"]
+    connection: input_schema.NodeConnection
+
+
+class UpdateLayoutOperation(BaseModel):
+    """Same as ``POST /editor/update_layout/``; ``record_history`` is ignored inside a batch."""
+
+    op: Literal["update_layout"]
+    layout: UpdateLayoutRequest
+
+
+class CopyNodeOperation(BaseModel):
+    """Same as ``POST /editor/copy_node``."""
+
+    op: Literal["copy_node"]
+    node_id_to_copy_from: int
+    flow_id_to_copy_from: int
+    node_promise: input_schema.NodePromise
+
+
+class DeleteCommentOperation(BaseModel):
+    """Same as ``POST /editor/delete_comment/``."""
+
+    op: Literal["delete_comment"]
+    comment_id: int
+
+
+class InsertOnEdgeOperation(BaseModel):
+    """Splice the existing node ``node_id`` into the edge ``connection`` (A -> B), keeping B's input slot and position.
+
+    Batch-only: A(handle) -> node(input-0) and node(output-0) -> B replace the edge; 422 when it does not exist.
+    """
+
+    op: Literal["insert_on_edge"]
+    node_id: int
+    connection: input_schema.NodeConnection
+
+
+EditorOperation = Annotated[
+    AddNodeOperation
+    | UpdateSettingsOperation
+    | DeleteNodeOperation
+    | ConnectOperation
+    | DeleteConnectionOperation
+    | UpdateLayoutOperation
+    | CopyNodeOperation
+    | DeleteCommentOperation
+    | InsertOnEdgeOperation,
+    Field(discriminator="op"),
+]
+
+
+class ApplyOperationsRequest(BaseModel):
+    """Body for ``POST /editor/apply_operations/``: ordered primitive ops applied atomically as one undo step."""
+
+    flow_id: int
+    label: str
+    operations: list[EditorOperation]
 
 
 class NodeDefault(BaseModel):

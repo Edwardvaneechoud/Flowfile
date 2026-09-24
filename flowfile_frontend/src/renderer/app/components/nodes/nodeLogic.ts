@@ -59,24 +59,6 @@ export async function getSavedFlows(): Promise<LocalFileInfo[]> {
   return FlowApi.getSavedFlows();
 }
 
-export async function deleteConnection(flow_id: number, nodeConnection: object): Promise<any> {
-  try {
-    const response: AxiosResponse = await axios.post("/editor/delete_connection/", nodeConnection, {
-      params: {
-        flow_id,
-      },
-      headers: {
-        accept: "application/json",
-      },
-    });
-
-    return response.data;
-  } catch (error) {
-    console.error("There was an error:", error);
-    throw error;
-  }
-}
-
 export const getNodeData = async (flow_id: number, node_id: number): Promise<Ref<NodeData>> => {
   const response = await axios.get("/node", {
     params: { flow_id: flow_id, node_id: node_id },
@@ -92,10 +74,6 @@ export const addNodeSettings = async (node_type: string, nodeSettings: any) => {
   });
   console.log(response);
 };
-
-export async function deleteNode(flow_id: number, node_id: number): Promise<any> {
-  return FlowApi.deleteNode(flow_id, node_id);
-}
 
 const isResponseSuccessful = (status: number): boolean => status >= 200 && status < 300;
 

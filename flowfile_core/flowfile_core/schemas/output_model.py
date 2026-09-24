@@ -199,6 +199,8 @@ class NodeData(BaseModel):
     right_output: TableExample | None = None
     has_run: bool = False
     is_cached: bool = False
+    # The live node's state; setting_input may be a display-only proposal or derived copy.
+    is_setup: bool = False
     setting_input: Any = None
     # Set when column prediction for this node (or one of its inputs) would
     # require executing an un-run kernel node — the user-facing warning text.
