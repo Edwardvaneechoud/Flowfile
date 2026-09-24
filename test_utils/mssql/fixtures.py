@@ -144,6 +144,11 @@ def is_docker_available() -> bool:
         return False
 
 
+def is_image_present(image: str) -> bool:
+    """True when the image is already local, so no registry round-trip is needed."""
+    return subprocess.run(["docker", "image", "inspect", image], capture_output=True, check=False).returncode == 0
+
+
 def is_container_running(container_name: str) -> bool:
     """Check if the SQL Server container is already running."""
     if not is_docker_available():
@@ -286,15 +291,16 @@ def start_mssql_container(
         check=False,
     )
 
-    # Pull the image first (may take a while on first run)
+    # Pull only when missing: a pull of a present tag still round-trips to the registry.
     try:
-        logger.info(f"Pulling Docker image {image}...")
-        subprocess.run(
-            ["docker", "pull", image],
-            capture_output=True,
-            timeout=300,
-            check=True,
-        )
+        if not is_image_present(image):
+            logger.info(f"Pulling Docker image {image}...")
+            subprocess.run(
+                ["docker", "pull", image],
+                capture_output=True,
+                timeout=300,
+                check=True,
+            )
     except subprocess.TimeoutExpired:
         logger.error(f"Timed out pulling Docker image {image}")
         return None, False

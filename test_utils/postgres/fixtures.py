@@ -78,6 +78,11 @@ def is_docker_available() -> bool:
         return False
 
 
+def is_image_present(image: str) -> bool:
+    """True when the image is already local, so no registry round-trip is needed."""
+    return subprocess.run(["docker", "image", "inspect", image], capture_output=True, check=False).returncode == 0
+
+
 def is_container_running(container_name: str) -> bool:
     """Check if the postgres container is already running."""
     if not is_docker_available():
@@ -182,8 +187,12 @@ DOCKER_IMAGE_TAG={image_tag}
         subprocess.run(["chmod", "+x", "build.sh"], check=True)
         subprocess.run(["chmod", "+x", "run.sh"], check=True)
 
-        logger.info(f"Building Docker image {image_tag}")
-        subprocess.run(["bash", "build.sh"], check=True)
+        # Reuse a local image; remove it (docker rmi) to rebuild after changing the sample data.
+        if is_image_present(image_tag):
+            logger.info(f"Docker image {image_tag} is already present, skipping the build")
+        else:
+            logger.info(f"Building Docker image {image_tag}")
+            subprocess.run(["bash", "build.sh"], check=True)
 
         os.chdir(original_dir)
         return True
