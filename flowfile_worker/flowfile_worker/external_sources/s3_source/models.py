@@ -35,6 +35,7 @@ class FullCloudStorageConnection(BaseModel):
     aws_secret_access_key: SecretStr | None = None
     aws_role_arn: str | None = None
     aws_allow_unsafe_html: bool | None = None
+    aws_session_token: SecretStr | None = None
     aws_profile: str | None = None
 
     # Azure ADLS
@@ -70,6 +71,7 @@ class FullCloudStorageConnection(BaseModel):
             aws_secret_access_key=self._extract_secret(self.aws_secret_access_key),
             aws_role_arn=self.aws_role_arn,
             aws_allow_unsafe_html=self.aws_allow_unsafe_html,
+            aws_session_token=self._extract_secret(self.aws_session_token),
             aws_profile=self.aws_profile,
             azure_account_name=self.azure_account_name,
             azure_account_key=self._extract_secret(self.azure_account_key),

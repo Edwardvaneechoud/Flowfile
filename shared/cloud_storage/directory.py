@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from shared.cloud_storage.storage_options import tls_verification_disabled
+
 
 def get_first_file_from_cloud_dir(source: str, storage_options: dict[str, Any] | None = None) -> str:
     """Get the first file matching the extension from a cloud storage directory.
@@ -83,7 +85,9 @@ def get_first_file_from_adls_dir(source: str, storage_options: dict[str, Any] | 
     account_key = opts.get("account_key")
     endpoint = opts.get("azure_storage_endpoint", f"https://{account_name}.blob.core.windows.net")
 
-    client = BlobServiceClient(account_url=endpoint, credential=account_key)
+    client = BlobServiceClient(
+        account_url=endpoint, credential=account_key, connection_verify=not tls_verification_disabled(opts)
+    )
     container_client = client.get_container_client(container_name)
 
     for blob in container_client.list_blobs(name_starts_with=base_prefix):
@@ -140,19 +144,27 @@ def _remove_wildcards_from_prefix(prefix: str) -> str:
     return prefix.split("*")[0]
 
 
+_S3_CLIENT_KEYS = ("aws_access_key_id", "aws_secret_access_key", "aws_session_token", "endpoint_url")
+
+
 def _create_s3_client(storage_options: dict[str, Any] | None):
-    """Create boto3 S3 client with optional credentials."""
+    """Create a boto3 S3 client from Polars-shaped storage options.
+
+    Only the keys boto3 understands are forwarded; ``allow_invalid_certificates`` becomes ``verify=False``
+    (a bool: boto3 reads a string ``verify`` as a CA-bundle path).
+    """
     import boto3
 
     if storage_options is None:
         return boto3.client("s3")
 
-    # Handle both 'aws_region' and 'region_name' keys
-    client_options = storage_options.copy()
-    if "aws_region" in client_options:
-        client_options["region_name"] = client_options.pop("aws_region")
-
-    return boto3.client("s3", **{k: v for k, v in client_options.items() if k != "aws_allow_http"})
+    kwargs: dict[str, Any] = {key: storage_options[key] for key in _S3_CLIENT_KEYS if storage_options.get(key)}
+    region = storage_options.get("aws_region") or storage_options.get("region_name")
+    if region:
+        kwargs["region_name"] = region
+    if tls_verification_disabled(storage_options):
+        kwargs["verify"] = False
+    return boto3.client("s3", **kwargs)
 
 
 def _get_first_file(s3_client, bucket_name: str, base_prefix: str, file_extension: str) -> dict[Any, Any]:

@@ -46,7 +46,7 @@ ff.FullCloudStorageConnection(
 )
 ```
 
-`aws_profile` names a profile in the AWS config on the machine running Flowfile. The connection name is never used as the profile. An `aws-cli` connection also honours `endpoint_url` and `aws_allow_unsafe_html`, so it can target MinIO with a local profile.
+`aws_profile` names a profile in the AWS config on the machine running Flowfile. The connection name is never used as the profile. An `aws-cli` connection also honours `endpoint_url`, `aws_allow_unsafe_html` and `verify_ssl`, so it can target MinIO with a local profile.
 
 !!! warning "The CLI auth literal is `aws-cli` (hyphen)"
     `auth_method="aws_cli"` (underscore) raises a Pydantic `ValidationError`.
@@ -58,7 +58,8 @@ ff.FullCloudStorageConnection(
 | Field group | Fields | Used by |
 |---|---|---|
 | Identity | `connection_name`, `storage_type` (`"s3"` / `"adls"` / `"gcs"`), `auth_method` | all |
-| AWS S3 | `aws_region`, `aws_access_key_id`, `aws_secret_access_key`, `aws_role_arn`, `aws_session_token`, `aws_profile` (`aws-cli` only), `aws_allow_unsafe_html`, `endpoint_url` | `s3` |
+| Endpoint | `endpoint_url`, `verify_ssl` (default `True`) | all |
+| AWS S3 | `aws_region`, `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token` (`access_key` only, for temporary credentials), `aws_role_arn`, `aws_profile` (`aws-cli` only), `aws_allow_unsafe_html` | `s3` |
 | Azure ADLS | `azure_account_name`, `azure_account_key`, `azure_tenant_id`, `azure_client_id`, `azure_client_secret`, `azure_sas_token` | `adls` |
 | Google GCS | `gcs_service_account_key`, `gcs_project_id` | `gcs` |
 
@@ -66,6 +67,8 @@ ff.FullCloudStorageConnection(
 
 !!! note "`aws_allow_unsafe_html`"
     This flag permits plain-HTTP (non-TLS) S3 endpoints. Set it to `True` only for local or dev stacks such as MinIO reached over `http://`; leave it unset for real AWS.
+
+`verify_ssl=False` skips TLS certificate verification for S3 and ADLS reads, writes and listings, for an endpoint with a self-signed certificate. It has no effect on GCS.
 
 ### Round-trip example
 

@@ -209,7 +209,12 @@ Cloud Storage Reader and Writer nodes cannot fall back to the server's own cloud
 
 - **No connection** is disabled in the node settings, for administrators too. A flow saved with it, including one run on a schedule or from the CLI, fails with *Select a cloud storage connection; server credentials are not available in multi-user mode.*
 - A local path such as `/data/out` fails with *Cloud storage path '/data/out' is a local path, which this server does not allow…* An empty or relative path fails in every mode, before anything is read or written.
-- Four authentication methods store no credentials of their own and authenticate as the server: **AWS CLI** (`aws-cli`), **IAM Role** (`iam_role`, assumed with the server's credentials), **Managed Identity** (`managed_identity`) and **Application Default Credentials** (`env_vars`). Only an administrator can own such a connection: other users cannot create one, switch a connection to one of these methods, or edit one shared with them, and one owned by anyone else, such as one saved before an upgrade, is refused wherever it is used (node runs, the storage browser, the Delta table checks and catalog storage). An administrator's connection keeps working, including for members of the groups it is [shared](sharing.md#connections-and-the-credential-re-entry-rule) with.
+
+Four connection authentication methods store no credentials of their own and also authenticate as the server: `aws-cli` (**AWS CLI**), `iam_role` (**IAM Role**, assumed with the server's credentials), `managed_identity` (**Managed Identity**) and `env_vars` (**Application Default Credentials**). Only an administrator can own a connection that uses one of them:
+
+- A user who is not an administrator cannot create a connection with one of these methods, switch a connection to one, or edit one shared with them. The save fails with, for example, *The aws-cli method authenticates with this server's own credentials, which only an administrator's cloud connections may do in multi-user mode. Use an access key, SAS token, service principal or service account instead.*
+- A connection of this kind that an administrator owns keeps working, including for members of the groups it is [shared](sharing.md#connections-and-the-credential-re-entry-rule) with.
+- A connection of this kind owned by anyone else, such as one saved before an upgrade, is refused wherever it is used: node runs, the storage browser, the Delta table checks and catalog storage.
 
 The storage browser and the Delta table checks in the node settings refuse **No connection** the same way. The desktop app and the pip-installed package keep all of these options.
 

@@ -9,8 +9,10 @@ Single-user installs (electron/package) keep the ambient fallback and local path
 
 import os
 import re
+import uuid
 
 import boto3
+import polars as pl
 import pytest
 from fastapi import HTTPException
 
@@ -19,19 +21,34 @@ from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile import flow_graph
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import (
     _cloud_change_read_target,
     add_connection,
     get_cloud_connection_settings,
 )
 from flowfile_core.flowfile.handler import FlowfileHandler
+from flowfile_core.routes import storage_browser
 from flowfile_core.schemas import input_schema, schemas
+from shared.cloud_storage.utils import validate_cloud_resource_path
 
 GATE = "Select a cloud storage connection; server credentials are not available in multi-user mode."
 ROWS = [{"id": 1, "category": "A"}, {"id": 2, "category": "B"}]
 S3_PATH = "s3://flowfile-test/docker_gate/table"
 CONNECTION = "docker_gate_minio"
 MINIO_ENDPOINT = "http://localhost:9000"
+
+
+def _minio_available() -> bool:
+    try:
+        from test_utils.s3.fixtures import is_docker_available, wait_for_minio
+
+        return is_docker_available() and bool(wait_for_minio(max_retries=2, interval=0.5))
+    except Exception:
+        return False
+
+
+requires_minio = pytest.mark.skipif(not _minio_available(), reason="MinIO is not running (poetry run start_minio)")
 
 
 @pytest.fixture
@@ -84,8 +101,8 @@ def _graph(execution_location: str = "local", flow_id: int = 1):
     return handler.get_flow(flow_id)
 
 
-def _writer_graph(user_id: int, **settings):
-    graph = _graph()
+def _writer_graph(user_id: int, execution_location: str = "local", **settings):
+    graph = _graph(execution_location)
     graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=1, node_type="manual_input"))
     graph.add_manual_input(
         input_schema.NodeManualInput(flow_id=1, node_id=1, raw_data_format=input_schema.RawData.from_pylist(ROWS))
@@ -173,9 +190,15 @@ def alice_minio(users, client_for) -> int:
 class TestNoConnectionIsRefused:
     """A node with no saved connection never falls back to the server's credentials."""
 
-    def test_resolution_refuses_before_any_lookup(self, users, ambient_probe):
+    def test_gate_is_shared_with_the_storage_browser(self):
+        assert storage_browser.ambient_credentials_allowed is sharing.ambient_credentials_allowed
+        assert sharing.ambient_credentials_allowed() is False
+
+    @pytest.mark.parametrize("auth_mode", ["auto", "env_vars", "aws-cli"])
+    @pytest.mark.parametrize("path", [S3_PATH, "az://container/table", "gs://bucket/table"])
+    def test_resolution_refuses_before_any_lookup(self, users, ambient_probe, auth_mode, path):
         with pytest.raises(ValueError, match=re.escape(GATE)):
-            get_cloud_connection_settings(None, users["bob"].id, "aws-cli", resource_path=S3_PATH)
+            get_cloud_connection_settings(None, users["bob"].id, auth_mode, resource_path=path)
         assert ambient_probe == []
 
     def test_a_named_connection_that_does_not_resolve_is_still_not_found(self, users, ambient_probe):
@@ -203,15 +226,51 @@ class TestNoConnectionIsRefused:
         assert GATE in _error_of(graph.run_graph(), 2)
         assert ambient_probe == []
 
+    @pytest.mark.parametrize("location", ["local", "remote"])
+    def test_writer_refuses_before_any_worker_offload(self, users, ambient_probe, location):
+        # Called directly: a remote run in docker mode would need the internal token to offload the input.
+        graph = _writer_graph(users["bob"].id, location, auth_mode="aws-cli", file_format="parquet")
+
+        with pytest.raises(ValueError, match=re.escape(GATE)):
+            graph.get_node(2)._function(FlowDataEngine(pl.DataFrame(ROWS)))
+        assert ambient_probe == []
+
+    @pytest.mark.parametrize(
+        "settings",
+        [
+            {"file_format": "delta", "write_mode": "upsert", "merge_keys": ["id"]},
+            {"file_format": "delta", "write_mode": "append", "track_changes": True},
+            {"file_format": "delta", "write_mode": "append", "partition_by": ["category"]},
+        ],
+        ids=["merge", "track_changes", "partitioned_append"],
+    )
+    def test_delta_writer_modes_fail_with_the_gate(self, users, ambient_probe, settings):
+        graph = _writer_graph(users["bob"].id, auth_mode="aws-cli", **settings)
+
+        assert GATE in _error_of(graph.run_graph(), 2)
+        assert ambient_probe == []
+
 
 class TestChangeReadsAreRefused:
-    """Change-feed reads resolve their connection via ``_cloud_change_read_target`` and the freshness probe."""
+    """Change-feed reads resolve their connection in three places; each hits the gate first."""
 
     CDC = {"file_format": "delta", "cdc_mode": "since_version", "cdc_from_version": 0, "auth_mode": "aws-cli"}
 
     def test_change_read_target(self, users, ambient_probe):
         with pytest.raises(ValueError, match=re.escape(GATE)):
             _cloud_change_read_target(_read_settings(**self.CDC), users["bob"].id)
+        assert ambient_probe == []
+
+    def test_change_read_run(self, users, ambient_probe):
+        run_info = _reader_graph(users["bob"].id, **self.CDC).run_graph()
+
+        assert GATE in _error_of(run_info, 1)
+        assert ambient_probe == []
+
+    def test_change_read_schema_callback(self, users, ambient_probe):
+        graph = _reader_graph(users["bob"].id, **self.CDC)
+
+        assert not graph.get_node(1).get_predicted_schema()
         assert ambient_probe == []
 
     def test_freshness_probe(self, users, ambient_probe):
@@ -228,6 +287,23 @@ class TestLocalPathsAreRefused:
 
     LOCAL = "is a local path, which this server does not allow"
 
+    def test_helper_refuses_an_absolute_local_path_only_when_asked(self, tmp_path):
+        path = str(tmp_path / "table")
+        assert validate_cloud_resource_path(path, role="writer") == path
+        with pytest.raises(ValueError, match=re.escape(f"Cloud storage path '{path}' {self.LOCAL}")):
+            validate_cloud_resource_path(path, role="writer", allow_local_paths=False)
+
+    @pytest.mark.parametrize("allow_local_paths", [True, False])
+    @pytest.mark.parametrize("path", ["s3://b/k", "az://c/p", "abfss://c@acct.dfs.core.windows.net/p", "gs://b/k"])
+    def test_helper_passes_cloud_uris_in_both_modes(self, path, allow_local_paths):
+        assert validate_cloud_resource_path(path, role="reader", allow_local_paths=allow_local_paths) == path
+
+    @pytest.mark.parametrize("allow_local_paths", [True, False])
+    @pytest.mark.parametrize("path", ["file:///etc/passwd", "https://example.com/x.parquet", "relative/table"])
+    def test_helper_refuses_non_uri_paths_in_both_modes(self, path, allow_local_paths):
+        with pytest.raises(ValueError, match="is not a URI"):
+            validate_cloud_resource_path(path, role="reader", allow_local_paths=allow_local_paths)
+
     def test_writer_with_a_connection_cannot_write_the_server_disk(self, users, alice_minio, hermetic_aws, tmp_path):
         target = tmp_path / "table"
         graph = _writer_graph(
@@ -238,6 +314,14 @@ class TestLocalPathsAreRefused:
 
         assert self.LOCAL in error
         assert not target.exists()
+
+    def test_reader_with_a_connection_cannot_read_the_server_disk(self, users, alice_minio, hermetic_aws, tmp_path):
+        source = tmp_path / "secret.parquet"
+        pl.DataFrame(ROWS).write_parquet(source)
+        graph = _reader_graph(users["alice"].id, connection_name=CONNECTION, resource_path=str(source))
+
+        assert self.LOCAL in _error_of(graph.run_graph(), 1)
+        assert not graph.get_node(1).get_predicted_schema()
 
     @pytest.mark.parametrize("path", ["file:///etc/hosts", "https://example.com/data.parquet"])
     def test_reader_refuses_file_and_web_uris(self, users, alice_minio, hermetic_aws, path):
@@ -265,6 +349,29 @@ class TestSavedConnectionsStillWork:
             get_cloud_connection_settings(CONNECTION, users["carol"].id, "auto", resource_path=S3_PATH)
         assert exc_info.value.status_code == 400
         assert ambient_probe == []
+
+    @requires_minio
+    def test_grantee_writes_and_reads_minio(self, users, client_for, alice_minio, team, hermetic_aws):
+        from test_utils.s3.fixtures import get_minio_client
+
+        _share(client_for("alice"), alice_minio, team)
+        prefix = f"docker_gate_{uuid.uuid4().hex[:12]}"
+        path = f"s3://flowfile-test/{prefix}/out.parquet"
+        try:
+            writer = _writer_graph(users["bob"].id, connection_name=CONNECTION, resource_path=path)
+            write_run = writer.run_graph()
+            assert write_run.success, [step.error for step in write_run.node_step_result]
+
+            reader = _reader_graph(users["bob"].id, connection_name=CONNECTION, resource_path=path)
+            read_run = reader.run_graph()
+            assert read_run.success, [step.error for step in read_run.node_step_result]
+            result = reader.get_node(1).get_resulting_data().data_frame
+            assert result.lazy().collect().sort("id").to_dicts() == ROWS
+        finally:
+            client = get_minio_client()
+            listed = client.list_objects_v2(Bucket="flowfile-test", Prefix=f"{prefix}/")
+            for obj in listed.get("Contents", []):
+                client.delete_object(Bucket="flowfile-test", Key=obj["Key"])
 
 
 SERVER_IDENTITY = "authenticates with this server's own credentials"
@@ -377,9 +484,9 @@ class TestServerIdentityConnections:
 class TestSingleUserModesKeepAmbientCredentials:
     """Electron and package mode run on the caller's own machine: the ambient fallback stays."""
 
-    @pytest.fixture(autouse=True)
-    def single_user_mode(self, monkeypatch):
-        monkeypatch.setenv("FLOWFILE_MODE", "electron")
+    @pytest.fixture(params=["electron", "package"], autouse=True)
+    def single_user_mode(self, request, monkeypatch):
+        monkeypatch.setenv("FLOWFILE_MODE", request.param)
 
     def test_gate_allows(self):
         assert sharing.ambient_credentials_allowed() is True

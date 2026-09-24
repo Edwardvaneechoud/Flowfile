@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import { cloudPathWarning } from "./cloudPathWarning";
+import { isCloudUri } from "./storagePath";
 
 describe("cloudPathWarning", () => {
   it.each([undefined, null, "", "   "])("warns about a missing writer path (%s)", (path) => {
@@ -23,7 +24,7 @@ describe("cloudPathWarning", () => {
     expect(cloudPathWarning(path, "reader")).toBeNull();
   });
 
-  it.each(["output/table", "/tmp/table", "C:\\data\\table", "s3:/bucket", "S3://bucket/key"])(
+  it.each(["output/table", "table", "/tmp/table", "C:\\data\\table", "s3:/bucket", " s3://b/k"])(
     "warns that %s is not a cloud URI",
     (path) => {
       expect(cloudPathWarning(path, "writer")).toBe(
@@ -31,6 +32,24 @@ describe("cloudPathWarning", () => {
       );
     },
   );
+
+  // The backend's is_cloud_uri is case-sensitive, so these would fail at run time.
+  it.each([
+    ["S3://bucket/key", "S3://", "s3://"],
+    ["Az://container/table", "Az://", "az://"],
+    ["ABFSS://container@account.dfs.core.windows.net/t", "ABFSS://", "abfss://"],
+    ["GS://bucket/file.parquet", "GS://", "gs://"],
+  ])("warns that %s needs a lower-case scheme", (path, typed, lower) => {
+    const expected =
+      `'${path}' starts with ${typed}, but the scheme is case-sensitive. ` +
+      `Use lower-case ${lower} instead.`;
+    expect(cloudPathWarning(path, "writer")).toBe(expected);
+    expect(cloudPathWarning(path, "reader")).toBe(expected);
+  });
+
+  it("leaves the file browser's case-insensitive scheme detection alone", () => {
+    expect(isCloudUri("S3://bucket/key")).toBe(true);
+  });
 
   it("leaves a path that starts with a flow parameter to run time", () => {
     expect(cloudPathWarning("${target_uri}", "writer")).toBeNull();

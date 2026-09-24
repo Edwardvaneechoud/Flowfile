@@ -40,12 +40,13 @@ logger = logging.getLogger(__name__)
 # (file field, model FK column) for cloud secrets that round-trip through the store fns.
 _CLOUD_SECRETS = [
     ("aws_secret_access_key", "aws_secret_access_key_id"),
+    ("aws_session_token", "aws_session_token_id"),
     ("azure_account_key", "azure_account_key_id"),
     ("azure_client_secret", "azure_client_secret_id"),
     ("azure_sas_token", "azure_sas_token_id"),
     ("gcs_service_account_key", "gcs_service_account_key_id"),
 ]
-_CLOUD_SECRET_FK_COLUMNS = [fk for _, fk in _CLOUD_SECRETS] + ["aws_session_token_id"]
+_CLOUD_SECRET_FK_COLUMNS = [fk for _, fk in _CLOUD_SECRETS]
 _PROJECTABLE_SCHEDULE_TYPES = ("interval", "cron")
 
 # Non-secret cloud-connection fields that round-trip verbatim (projection reads them off the ORM

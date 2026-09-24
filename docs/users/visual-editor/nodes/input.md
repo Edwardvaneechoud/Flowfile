@@ -160,7 +160,7 @@ Authenticate with a [saved cloud connection](../tutorials/cloud-connections.md),
 
 | Setting | Description |
 |---|---|
-| **File Path** | Full URI including the scheme, e.g. `s3://bucket/folder/file.csv`. **Browse** navigates the connection and picks one. The drawer warns while the path is empty or has no scheme, and such a node fails before reading anything. |
+| **File Path** | Full URI including the scheme, e.g. `s3://bucket/folder/file.csv`. **Browse** navigates the connection and picks one. The drawer warns while the path is empty or has no scheme, and such a node fails before reading anything: *Cloud storage reader has no source path…* or *Cloud storage path '…' is not a URI…*. |
 | **File Format** | CSV, Parquet, JSON, Delta Lake or Iceberg. |
 | **Scan Mode** | A single file, or a directory scan that reads every matching file in a folder. |
 

@@ -49,6 +49,7 @@ class TestSchemeOf:
         assert scheme_of("/tmp/data") == ""
 
 
+
 class TestStorageTypeForUri:
     @pytest.mark.parametrize(
         ("uri", "expected"),
@@ -73,6 +74,13 @@ class TestStorageTypeForUri:
     def test_non_cloud_paths_have_no_storage_type(self, value):
         assert storage_type_for_uri(value) is None
 
+    def test_every_known_scheme_has_a_storage_type(self):
+        for scheme in CLOUD_URI_SCHEMES:
+            assert storage_type_for_uri(f"{scheme}container/key") in ("s3", "adls", "gcs")
+
+    def test_round_trips_with_the_canonical_scheme(self):
+        for storage_type in ("s3", "adls", "gcs"):
+            assert storage_type_for_uri(canonical_scheme(storage_type) + "container") == storage_type
 
 class TestParseUri:
     def test_full_uri(self):

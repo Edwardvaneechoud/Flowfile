@@ -133,6 +133,7 @@
 <script lang="ts" setup>
 import { CodeLoader } from "vue-content-loader";
 import { computed, ref, watch } from "vue";
+import { ElMessage } from "element-plus";
 import ExcelTableConfig from "./readExcel.vue";
 import CsvTableConfig from "./readCsv.vue";
 import ParquetTableConfig from "./readParquet.vue";
@@ -181,6 +182,11 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   onBeforeSave: () => {
     if (!nodeRead.value || !receivedTable.value) {
       console.warn("No node read value available");
+      if (pathInput.value.trim()) {
+        ElMessage.warning(
+          `'${pathInput.value.trim()}' has no recognised file type. Pick a file, or type a path with its extension.`,
+        );
+      }
       return false;
     }
     nodeRead.value.received_file = receivedTable.value;

@@ -90,6 +90,34 @@
           </div>
         </div>
 
+        <!-- AWS Session Token (optional, for temporary access_key credentials) -->
+        <div v-if="connection.authMethod === 'access_key'" class="form-field">
+          <label for="aws-session-token" class="form-label">AWS Session Token (Optional)</label>
+          <div class="password-field">
+            <input
+              id="aws-session-token"
+              v-model="connection.awsSessionToken"
+              :type="showAwsSessionToken ? 'text' : 'password'"
+              class="form-input"
+              :placeholder="
+                props.isEditing ? 'Leave blank to keep existing' : 'Only for temporary credentials'
+              "
+            />
+            <button
+              type="button"
+              class="toggle-visibility"
+              aria-label="Toggle AWS session token visibility"
+              @click="showAwsSessionToken = !showAwsSessionToken"
+            >
+              <i :class="showAwsSessionToken ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'"></i>
+            </button>
+          </div>
+          <p v-if="props.isEditing" class="form-hint">
+            A stored token belongs to its key pair: entering a new access key ID or secret access
+            key without a token removes it.
+          </p>
+        </div>
+
         <!-- AWS Profile (for aws-cli auth) -->
         <div v-if="connection.authMethod === 'aws-cli'" class="form-field">
           <label for="aws-profile" class="form-label">AWS Profile (Optional)</label>
@@ -119,7 +147,7 @@
           />
         </div>
 
-        <!-- AWS Allow Unsafe HTML -->
+        <!-- AWS Allow HTTP (maps to aws_allow_http) -->
         <div class="form-field">
           <div class="checkbox-container">
             <input
@@ -128,7 +156,9 @@
               type="checkbox"
               class="checkbox-input"
             />
-            <label for="aws-allow-unsafe-html" class="form-label">Allow Unsafe HTML</label>
+            <label for="aws-allow-unsafe-html" class="form-label">
+              Allow HTTP (unencrypted) endpoint
+            </label>
           </div>
         </div>
       </template>
@@ -322,6 +352,7 @@ import type {
   CloudStorageType,
   AuthMethod,
 } from "./CloudConnectionTypes";
+import { authMethodsByStorageType } from "./CloudConnectionTypes";
 
 const props = defineProps<{
   initialConnection?: FullCloudStorageConnection;
@@ -333,24 +364,6 @@ const emit = defineEmits<{
   (e: "submit", connection: FullCloudStorageConnection): void;
   (e: "cancel"): void;
 }>();
-
-const authMethodsByStorageType = {
-  s3: [
-    { value: "access_key", label: "Access Key" },
-    { value: "iam_role", label: "IAM Role" },
-    { value: "aws-cli", label: "AWS CLI" },
-  ],
-  adls: [
-    { value: "access_key", label: "Access Key" },
-    { value: "service_principal", label: "Service Principal" },
-    { value: "managed_identity", label: "Managed Identity" },
-    { value: "sas_token", label: "SAS Token" },
-  ],
-  gcs: [
-    { value: "service_account", label: "Service Account" },
-    { value: "env_vars", label: "Application Default Credentials" },
-  ],
-};
 
 const defaultConnection = (): FullCloudStorageConnection => ({
   connectionName: "",
@@ -374,6 +387,7 @@ watch(
 );
 
 const showAwsSecret = ref(false);
+const showAwsSessionToken = ref(false);
 const showAzureKey = ref(false);
 const showAzureSecret = ref(false);
 const showAzureSasToken = ref(false);

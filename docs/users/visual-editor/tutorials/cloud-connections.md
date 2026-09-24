@@ -31,6 +31,7 @@ Choose one of the following authentication methods:
 ##### Access Key
 - **AWS Access Key ID**: Your AWS access key (e.g., `AKIAIOSFODNN7EXAMPLE`)
 - **AWS Secret Access Key**: Your AWS secret access key
+- **AWS Session Token (Optional)**: Only for temporary credentials, such as keys issued by AWS STS. Stored encrypted; leave it blank when editing to keep the stored token. Entering a new key ID or secret without a token removes the stored one.
 - **AWS Region**: The AWS region where your S3 buckets are located (e.g., `us-east-1`)
 
 ##### AWS CLI
@@ -50,8 +51,8 @@ These apply to every authentication method, AWS CLI included, so an AWS CLI conn
 | Field | Description |
 |-------|-------------|
 | **Custom Endpoint URL** | For S3-compatible services (e.g., MinIO) |
-| **Allow Unsafe HTTP** | Enable for non-HTTPS endpoints, such as a local MinIO server |
-| **Verify SSL** | Disable only for testing with self-signed certificates |
+| **Allow HTTP (unencrypted) endpoint** | Allows plain `http://` endpoints, such as a local MinIO server. Leave it off for AWS. |
+| **Verify SSL** | On by default. Turning it off skips TLS certificate checks for reads, writes and browsing; use it only for an endpoint with a self-signed certificate. The same checkbox applies to Azure Data Lake Storage connections and has no effect on Google Cloud Storage. |
 
 **3. Save.** Click **"Create Connection"**.
 
@@ -72,12 +73,14 @@ name instead — everything below it still browses normally.
 
 The path must start with `s3://`, `az://`, `abfss://` or `gs://`. The node's settings show a
 warning while the path is empty or has no scheme, and a run fails before anything is read or
-written.
+written, for example with *Cloud storage writer has no target path. Enter an object-storage URI
+such as s3://bucket/folder/table.*
 
 ## Running a node without a connection { #no-connection }
 
-The reader and writer nodes also offer **No connection (this machine's credentials)**. It uses the
-credentials of the machine running Flowfile, not a saved connection:
+The reader and writer nodes also offer **No connection (this machine's AWS credentials)**; the label
+names Azure or Google Cloud instead when the path starts with `az://`, `abfss://` or `gs://`. It uses
+the credentials of the machine running Flowfile, not a saved connection:
 
 - For `s3://` paths, the AWS default credential chain: `AWS_*` environment variables, the
   `default` profile in `~/.aws`, then an instance role. With no credentials at all, the run fails

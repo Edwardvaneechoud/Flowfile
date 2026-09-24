@@ -92,13 +92,28 @@ jobs:
           poetry run start_minio
           poetry run seed_cloud_e2e
 
-      # Start backend server in background
+      # MinIO-only static-key profile + endpoint: a "No connection" cloud node never reaches AWS.
+      - name: Write the MinIO AWS profile and server working directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/aws" "$RUNNER_TEMP/core_cwd" "$RUNNER_TEMP/worker_cwd"
+          printf '[default]\naws_access_key_id = minioadmin\naws_secret_access_key = minioadmin\n' > "$RUNNER_TEMP/aws/credentials"
+          printf '[default]\nregion = us-east-1\n' > "$RUNNER_TEMP/aws/config"
+          {
+            echo "AWS_SHARED_CREDENTIALS_FILE=$RUNNER_TEMP/aws/credentials"
+            echo "AWS_CONFIG_FILE=$RUNNER_TEMP/aws/config"
+            echo "AWS_ENDPOINT_URL=http://localhost:9000"
+            echo "AWS_ALLOW_HTTP=true"
+            echo "AWS_EC2_METADATA_DISABLED=true"
+          } >> "$GITHUB_ENV"
+
+      # Start backend server in background; `poetry -P` keeps the empty working directory (Poetry 2's -C cds into the repo).
       - name: Start backend server
+        working-directory: ${{ runner.temp }}/core_cwd
         # Telemetry off: an undecided consent renders a modal over the designer.
         env:
           FLOWFILE_TELEMETRY: '0'
         run: |
-          poetry run flowfile_core &
+          poetry -P "$GITHUB_WORKSPACE" run flowfile_core > "$RUNNER_TEMP/core.log" 2>&1 &
           echo "Waiting for backend to start..."
           for i in {1..30}; do
             if curl -s http://localhost:63578/auth/token -X POST > /dev/null 2>&1; then
@@ -111,8 +126,9 @@ jobs:
 
       # csp.spec.ts mounts graphic-walker, which needs chart data from the worker.
       - name: Start worker server
+        working-directory: ${{ runner.temp }}/worker_cwd
         run: |
-          poetry run flowfile_worker &
+          poetry -P "$GITHUB_WORKSPACE" run flowfile_worker > "$RUNNER_TEMP/worker.log" 2>&1 &
           echo "Waiting for worker to start..."
           for i in {1..30}; do
             if curl -s http://localhost:63579/docs > /dev/null 2>&1; then
@@ -144,7 +160,22 @@ jobs:
         env:
           TEST_URL: http://localhost:4173
           API_URL: http://localhost:63578
+          E2E_AWS_PROFILE_CONFIGURED: '1'
         run: npx playwright test tests/web-flow.spec.ts tests/tutorial.spec.ts tests/node-handle-labels.spec.ts tests/catalog-artifact-versions.spec.ts tests/notebook-interactions.spec.ts tests/csp.spec.ts tests/group-by.spec.ts tests/pivot-unpivot.spec.ts tests/cloud-storage-flow.spec.ts --reporter=html
+
+      # A server that writes into its working directory resolved a path it should have refused.
+      - name: Check the servers wrote nothing into their working directories
+        if: success() || failure()
+        run: |
+          status=0
+          for dir in core_cwd worker_cwd; do
+            if [ -d "$RUNNER_TEMP/$dir" ] && [ -n "$(ls -A "$RUNNER_TEMP/$dir")" ]; then
+              echo "::error::Files were written into the server working directory $dir:"
+              ls -laR "$RUNNER_TEMP/$dir"
+              status=1
+            fi
+          done
+          exit $status
 
       # Upload test results on failure
       - name: Upload Playwright report
@@ -153,6 +184,16 @@ jobs:
         with:
           name: playwright-report
           path: flowfile_frontend/playwright-report/
+          retention-days: 7
+
+      - name: Upload server logs
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: server-logs
+          path: |
+            ${{ runner.temp }}/core.log
+            ${{ runner.temp }}/worker.log
           retention-days: 7
 
       # Upload test results always (for debugging)

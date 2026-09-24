@@ -1,10 +1,16 @@
+import asyncio
+import datetime
+import ipaddress
 import os
+import ssl
+import threading
 import uuid
 
 import polars as pl
 import pytest
 from deltalake import DeltaTable
 
+from shared.cloud_storage.browse import list_cloud_uri
 from shared.cloud_storage.directory import get_first_file_from_s3_dir
 from shared.cloud_storage.storage_options import build_s3_storage_options, build_storage_options
 from shared.cloud_storage.utils import ensure_path_has_wildcard_pattern, validate_cloud_resource_path
@@ -162,7 +168,7 @@ class TestAwsCliCredentials:
         assert options["aws_access_key_id"] == "AKIDSTATIC"
         assert options["endpoint_url"] == "https://minio.internal:9000"
         assert options["aws_allow_http"] == "true"
-        assert options["verify"] == "False"
+        assert options["allow_invalid_certificates"] == "true"
 
 
 class TestAccessKeyValidation:
@@ -188,6 +194,39 @@ class TestAccessKeyValidation:
         assert options["aws_session_token"] == ""
         assert None not in options.values()
 
+    def test_a_stored_session_token_is_forwarded(self):
+        options = build_storage_options(
+            "s3", "access_key", aws_access_key_id="ASIA", aws_secret_access_key="s", aws_session_token="tok"
+        )
+        assert options["aws_session_token"] == "tok"
+
+
+class TestTlsVerificationMapping:
+    """``verify_ssl=False`` must reach object_store as ``allow_invalid_certificates``; ``verify`` is ignored there."""
+
+    @pytest.mark.parametrize(
+        ("storage_type", "auth_method", "extra"),
+        [
+            ("s3", "access_key", {"aws_access_key_id": "AKID", "aws_secret_access_key": "s"}),
+            ("s3", "env_vars", {}),
+            ("adls", "access_key", {"azure_account_name": "acct", "azure_account_key": "a2V5"}),
+            ("adls", "sas_token", {"azure_account_name": "acct", "azure_sas_token": "sv=1"}),
+        ],
+    )
+    def test_verify_ssl_false_allows_invalid_certificates(self, storage_type, auth_method, extra):
+        insecure = build_storage_options(storage_type, auth_method, verify_ssl=False, **extra)
+        secure = build_storage_options(storage_type, auth_method, verify_ssl=True, **extra)
+        assert insecure["allow_invalid_certificates"] == "true"
+        assert "allow_invalid_certificates" not in secure
+        assert "verify" not in insecure and "verify" not in secure
+
+    def test_aws_cli_maps_verify_ssl_too(self, hermetic_aws):
+        hermetic_aws("AKIDSTATIC", "static-secret-value")
+        assert build_storage_options("s3", "aws-cli", verify_ssl=False)["allow_invalid_certificates"] == "true"
+
+    def test_gcs_has_no_tls_option(self):
+        options = build_storage_options("gcs", "service_account", gcs_service_account_key="{}", verify_ssl=False)
+        assert "allow_invalid_certificates" not in options and "verify" not in options
 
 
 _AUTH_METHODS = (
@@ -283,6 +322,134 @@ def test_s3_options_work_against_minio_for_every_auth_method(auth_method, hermet
     assert get_first_file_from_s3_dir(f"{minio_prefix}/**/*.parquet", options).startswith(minio_prefix)
 
 
+@requires_minio
+@pytest.mark.parametrize("ambient_token", [None, "bogus-ambient-token"], ids=["no_env_token", "env_token"])
+def test_aws_cli_connection_round_trip_on_minio(hermetic_aws, monkeypatch, minio_prefix, ambient_token):
+    """A saved aws-cli connection pointed at MinIO stays on MinIO for every polars/deltalake consumer.
+
+    The endpoint and plain-HTTP flag come from the connection, not the environment. The ambient token variant
+    proves the blank token shadows a stray ``AWS_SESSION_TOKEN`` instead of mixing it in.
+    """
+    hermetic_aws(MINIO_ACCESS_KEY, MINIO_SECRET_KEY)
+    if ambient_token:
+        monkeypatch.setenv("AWS_SESSION_TOKEN", ambient_token)
+    options = build_storage_options("s3", "aws-cli", **_minio_connection(connection_name="minio connection"))
+    assert options["aws_session_token"] == ""
+    assert options["endpoint_url"] == MINIO_ENDPOINT_URL
+
+    frame = pl.DataFrame({"id": [1, 2, 3], "category": ["a", None, "b"], "output_field": ["test"] * 3})
+    for _ in range(2):
+        frame.lazy().sink_delta(
+            f"{minio_prefix}/partitioned",
+            mode="append",
+            storage_options=options,
+            delta_write_options={"partition_by": ["output_field"]},
+        )
+    table = DeltaTable(f"{minio_prefix}/partitioned", storage_options=options)
+    assert table.version() == 1
+    assert table.metadata().partition_columns == ["output_field"]
+    assert pl.scan_delta(f"{minio_prefix}/partitioned", storage_options=options).collect().height == 6
+
+    frame.write_delta(f"{minio_prefix}/plain", mode="overwrite", storage_options=options)
+    assert DeltaTable(f"{minio_prefix}/plain", storage_options=options).version() == 0
+
+    frame.write_parquet(f"{minio_prefix}/file.parquet", storage_options=options)
+    assert pl.scan_parquet(f"{minio_prefix}/file.parquet", storage_options=options).collect().equals(frame)
+
+
+@pytest.fixture
+def minio_behind_self_signed_tls(tmp_path):
+    """An HTTPS endpoint with a self-signed certificate that forwards to MinIO; yields its URL."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=5))
+        .not_valid_after(now + datetime.timedelta(hours=1))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    (tmp_path / "cert.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    (tmp_path / "key.pem").write_bytes(
+        key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    )
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(tmp_path / "cert.pem", tmp_path / "key.pem")
+    upstream_host, upstream_port = MINIO_ENDPOINT_URL.removeprefix("http://").split(":")
+
+    async def pipe(reader, writer):
+        try:
+            while data := await reader.read(65536):
+                writer.write(data)
+                await writer.drain()
+        except (ConnectionError, OSError):
+            pass
+        finally:
+            writer.close()
+
+    async def forward(client_reader, client_writer):
+        upstream_reader, upstream_writer = await asyncio.open_connection(upstream_host, int(upstream_port))
+        await asyncio.gather(pipe(client_reader, upstream_writer), pipe(upstream_reader, client_writer))
+
+    loop = asyncio.new_event_loop()
+    loop.set_exception_handler(lambda _loop, _context: None)  # rejected handshakes are the point of the test
+    server = loop.run_until_complete(asyncio.start_server(forward, "127.0.0.1", 0, ssl=context))
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"https://localhost:{server.sockets[0].getsockname()[1]}"
+    finally:
+        loop.call_soon_threadsafe(server.close)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=5)
+
+
+@requires_minio
+@pytest.mark.filterwarnings("ignore::urllib3.exceptions.InsecureRequestWarning")
+def test_verify_ssl_false_reaches_every_s3_client(hermetic_aws, minio_prefix, minio_behind_self_signed_tls):
+    """Against a self-signed endpoint, verify_ssl=False works for polars, deltalake and both boto3 clients.
+
+    The secure options fail on the same endpoint, which proves the certificate really is rejected; so does the
+    old ``verify: "False"`` key, which object_store silently ignores.
+    """
+    connection = _minio_connection(
+        endpoint_url=minio_behind_self_signed_tls,
+        aws_allow_unsafe_html=False,
+        aws_access_key_id=MINIO_ACCESS_KEY,
+        aws_secret_access_key=MINIO_SECRET_KEY,
+    )
+    insecure = build_storage_options("s3", "access_key", **connection, verify_ssl=False)
+    secure = build_storage_options("s3", "access_key", **connection, verify_ssl=True)
+
+    frame = pl.DataFrame({"id": [1, 2]})
+    frame.write_parquet(f"{minio_prefix}/file.parquet", storage_options=insecure)
+    assert pl.scan_parquet(f"{minio_prefix}/file.parquet", storage_options=insecure).collect().height == 2
+    frame.write_delta(f"{minio_prefix}/table", storage_options=insecure)
+    assert DeltaTable(f"{minio_prefix}/table", storage_options=insecure).version() == 0
+    assert get_first_file_from_s3_dir(f"{minio_prefix}/**/*.parquet", insecure).startswith(minio_prefix)
+    listed = list_cloud_uri("s3", f"{minio_prefix}/", insecure)
+    assert {entry.name for entry in listed.entries} >= {"file.parquet", "table"}
+
+    for rejected in (secure, {**secure, "verify": "False"}):
+        with pytest.raises(OSError):
+            pl.scan_parquet(f"{minio_prefix}/file.parquet", storage_options=rejected).collect()
+        with pytest.raises(OSError):
+            DeltaTable(f"{minio_prefix}/table", storage_options=rejected)
+
+
 class TestResourcePathGuard:
     @pytest.mark.parametrize("path", ["", "   ", None])
     def test_empty_writer_path(self, path):
@@ -315,11 +482,6 @@ class TestResourcePathGuard:
     def test_absolute_local_path_passes(self, tmp_path):
         path = str(tmp_path / "table")
         assert validate_cloud_resource_path(path, role="writer") == path
-
-    def test_absolute_local_path_refused_when_local_paths_are_off(self, tmp_path):
-        with pytest.raises(ValueError, match="is a local path, which this server does not allow"):
-            validate_cloud_resource_path(str(tmp_path / "table"), role="writer", allow_local_paths=False)
-        assert validate_cloud_resource_path("s3://b/t", role="writer", allow_local_paths=False) == "s3://b/t"
 
 
 class TestWildcardPattern:

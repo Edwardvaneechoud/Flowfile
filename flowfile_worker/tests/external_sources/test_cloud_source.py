@@ -193,3 +193,86 @@ def test_write_partitioned_delta_with_aws_cli_connection(minio_aws_cli_profile):
         if keys:
             s3_client.delete_objects(Bucket=bucket, Delete={"Objects": keys})
 
+
+@pytest.fixture
+def minio_named_profile(monkeypatch, tmp_path):
+    """A ``minio`` profile with the MinIO keys, a default profile MinIO rejects, and a dead AWS_ENDPOINT_URL.
+
+    Only an endpoint stored on the connection can reach MinIO, and nothing reaches real AWS.
+    """
+    for key in list(os.environ):
+        if key.startswith("AWS_"):
+            monkeypatch.delenv(key)
+    (tmp_path / "credentials").write_text(
+        "[default]\naws_access_key_id = AKIDNOTMINIO\naws_secret_access_key = wrong-secret\n"
+        "[minio]\naws_access_key_id = minioadmin\naws_secret_access_key = minioadmin\n"
+    )
+    (tmp_path / "config").write_text("[default]\nregion = us-east-1\n[profile minio]\nregion = us-east-1\n")
+    (tmp_path / "boto.cfg").write_text("")
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "credentials"))
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
+    monkeypatch.setenv("BOTO_CONFIG", str(tmp_path / "boto.cfg"))
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:9")
+
+
+def _sts_temporary_keys() -> dict:
+    import boto3
+
+    sts = boto3.client(
+        "sts",
+        endpoint_url="http://localhost:9000",
+        region_name="us-east-1",
+        aws_access_key_id="minioadmin",
+        aws_secret_access_key="minioadmin",
+    )
+    return sts.assume_role(RoleArn="arn:aws:iam::123456789012:role/flowfile-test", RoleSessionName="worker-test")[
+        "Credentials"
+    ]
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available so MinIO cannot be reached")
+@pytest.mark.parametrize("auth", ["aws-cli-profile", "access-key-session-token"])
+def test_saved_connection_credentials_reach_the_worker_write(minio_named_profile, auth):
+    """A saved connection as core ships it: aws-cli with an explicit profile, or temporary keys plus an
+    owner-encrypted session token; the endpoint comes from the connection in both cases.
+    """
+    from flowfile_worker.secrets import encrypt_secret
+
+    connection_fields = {
+        "connection_name": "minio connection",
+        "storage_type": "s3",
+        "aws_region": "us-east-1",
+        "endpoint_url": "http://localhost:9000",
+        "aws_allow_unsafe_html": True,
+    }
+    if auth == "aws-cli-profile":
+        connection = FullCloudStorageConnection(**connection_fields, auth_method="aws-cli", aws_profile="minio")
+    else:
+        keys = _sts_temporary_keys()
+        connection = FullCloudStorageConnection(
+            **connection_fields,
+            auth_method="access_key",
+            aws_access_key_id=keys["AccessKeyId"],
+            aws_secret_access_key=encrypt_secret(keys["SecretAccessKey"], user_id=1),
+            aws_session_token=encrypt_secret(keys["SessionToken"], user_id=1),
+        )
+    bucket, prefix = "worker-test-bucket", f"saved_connection_{uuid.uuid4().hex[:8]}"
+    s3_client = get_minio_client()
+    try:
+        s3_client.create_bucket(Bucket=bucket)
+    except Exception:
+        pass
+    settings = CloudStorageWriteSettings(
+        write_settings=WriteSettings(resource_path=f"s3://{bucket}/{prefix}", file_format="delta"),
+        connection=connection,
+    )
+    try:
+        write_df_to_cloud(pl.LazyFrame({"id": [1, 2, 3]}), settings, logger)
+        table = DeltaTable(f"s3://{bucket}/{prefix}", storage_options=connection.get_storage_options())
+        assert table.version() == 0
+    finally:
+        listed = s3_client.list_objects_v2(Bucket=bucket, Prefix=f"{prefix}/")
+        keys_to_delete = [{"Key": obj["Key"]} for obj in listed.get("Contents", [])]
+        if keys_to_delete:
+            s3_client.delete_objects(Bucket=bucket, Delete={"Objects": keys_to_delete})

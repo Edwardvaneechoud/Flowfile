@@ -42,6 +42,7 @@ class CloudConnectionEntry(_Entry):
     endpoint_url: str | None = None
     verify_ssl: bool = True
     aws_secret_access_key: str | None = None
+    aws_session_token: str | None = None
     azure_account_key: str | None = None
     azure_client_secret: str | None = None
     azure_sas_token: str | None = None

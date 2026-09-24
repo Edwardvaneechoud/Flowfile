@@ -281,6 +281,14 @@ def store_cloud_connection(
         ).id
     else:
         aws_secret_access_key_ref_id = None
+    if connection.auth_method == "access_key" and _secret_text(connection.aws_session_token):
+        aws_session_token_ref_id = store_secret(
+            db,
+            SecretInput(name=connection.connection_name + "_aws_session_token", value=connection.aws_session_token),
+            user_id,
+        ).id
+    else:
+        aws_session_token_ref_id = None
     if connection.azure_client_secret is not None:
         azure_client_secret_ref_id = store_secret(
             db,
@@ -327,6 +335,7 @@ def store_cloud_connection(
         aws_access_key_id=connection.aws_access_key_id,
         aws_role_arn=connection.aws_role_arn,
         aws_secret_access_key_id=aws_secret_access_key_ref_id,
+        aws_session_token_id=aws_session_token_ref_id,
         aws_allow_unsafe_html=connection.aws_allow_unsafe_html,
         aws_profile=_aws_profile_to_store(connection),
         # Azure ADLS fields
@@ -367,12 +376,28 @@ def _update_cloud_secret(
     return existing_secret_id
 
 
+def _secret_text(value) -> str:
+    return value.get_secret_value() if value else ""
+
+
+def _drop_cloud_secret(db: Session, secret_id: int | None) -> None:
+    """Delete a secret the connection no longer references (flush the cleared FK first)."""
+    if secret_id is not None:
+        db.flush()
+        db.query(Secret).filter(Secret.id == secret_id).delete(synchronize_session=False)
+
+
 def update_cloud_connection(
     db: Session, connection: FullCloudStorageConnection, user_id: int
 ) -> DBCloudStorageConnection:
     """
     Update an existing cloud storage connection. Secret fields are only updated
     if a new non-empty value is provided; otherwise the existing secret is kept.
+
+    The AWS session token is the exception: it is only valid with the key pair it was issued
+    with, so it is dropped unless re-entered whenever the access key ID or secret access key
+    changes, or the connection stops using access_key auth. A stale token would otherwise ride
+    along with new keys (or to a re-pointed endpoint) and fail every request.
 
     ``aws_profile`` is kept when the caller did not send the field, so an API client that omits
     it cannot silently switch an aws-cli connection to the default credential chain.
@@ -382,6 +407,8 @@ def update_cloud_connection(
     db_connection = _get_own_cloud_connection(db, connection.connection_name, user_id)
     if db_connection is None:
         raise ValueError(f"Cloud connection with name '{connection.connection_name}' not found for user {user_id}.")
+
+    previous_access_key_id = db_connection.aws_access_key_id
 
     # Update non-secret fields
     db_connection.storage_type = connection.storage_type
@@ -408,6 +435,21 @@ def update_cloud_connection(
         connection.connection_name + "_aws_secret_access_key",
         user_id,
     )
+
+    aws_token_value = _secret_text(connection.aws_session_token)
+    key_pair_changed = bool(aws_secret_value) or connection.aws_access_key_id != previous_access_key_id
+    if connection.auth_method == "access_key" and aws_token_value:
+        db_connection.aws_session_token_id = _update_cloud_secret(
+            db,
+            db_connection.aws_session_token_id,
+            aws_token_value,
+            connection.connection_name + "_aws_session_token",
+            user_id,
+        )
+    elif connection.auth_method != "access_key" or key_pair_changed:
+        stale_token_id = db_connection.aws_session_token_id
+        db_connection.aws_session_token_id = None
+        _drop_cloud_secret(db, stale_token_id)
 
     azure_key_value = connection.azure_account_key.get_secret_value() if connection.azure_account_key else ""
     db_connection.azure_account_key_id = _update_cloud_secret(
@@ -504,6 +546,12 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
         if secret_record:
             aws_secret_key = decrypt_secret(secret_record.encrypted_value)
 
+    aws_session_token = None
+    if db_connection.aws_session_token_id:
+        secret_record = db.query(Secret).filter(Secret.id == db_connection.aws_session_token_id).first()
+        if secret_record:
+            aws_session_token = decrypt_secret(secret_record.encrypted_value)
+
     azure_account_key = None
     if db_connection.azure_account_key_id:
         secret_record = db.query(Secret).filter(Secret.id == db_connection.azure_account_key_id).first()
@@ -536,6 +584,7 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
         aws_region=db_connection.aws_region,
         aws_access_key_id=db_connection.aws_access_key_id,
         aws_secret_access_key=aws_secret_key,
+        aws_session_token=aws_session_token,
         aws_role_arn=db_connection.aws_role_arn,
         aws_profile=db_connection.aws_profile,
         azure_account_name=db_connection.azure_account_name,

@@ -1305,10 +1305,11 @@ def _cloud_row(name: str):
         return db.query(CloudStorageConnection).filter_by(connection_name=name, user_id=OWNER).one()
 
 
-def test_cloud_connection_profile_round_trip(tmp_path):
-    """Re-importing a project never switches an aws-cli connection's identity."""
+def test_cloud_connection_profile_and_session_token_round_trip(tmp_path):
+    """Re-importing a project never switches an aws-cli connection's identity or drops a session token."""
     from flowfile_core.flowfile.database_connection_manager.db_connections import (
         delete_cloud_connection,
+        get_cloud_connection_schema,
         store_cloud_connection,
     )
     from flowfile_core.project.importer import _import_cloud_connection
@@ -1316,7 +1317,7 @@ def test_cloud_connection_profile_round_trip(tmp_path):
     from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 
     project_sync.close_project(OWNER)
-    cli = "proj_cloud_cli"
+    cli, key = "proj_cloud_cli", "proj_cloud_key"
     try:
         with get_db_context() as db:
             store_cloud_connection(
@@ -1326,11 +1327,29 @@ def test_cloud_connection_profile_round_trip(tmp_path):
                 ),
                 OWNER,
             )
+            store_cloud_connection(
+                db,
+                FullCloudStorageConnection(
+                    connection_name=key,
+                    storage_type="s3",
+                    auth_method="access_key",
+                    aws_access_key_id="ASIATEMP",
+                    aws_secret_access_key="temp-secret",
+                    aws_session_token="temp-token",
+                ),
+                OWNER,
+            )
             cli_file = yaml.safe_load(yaml.safe_dump(projection._cloud_connection_dict(db, _cloud_row(cli))))
+            key_file = yaml.safe_load(yaml.safe_dump(projection._cloud_connection_dict(db, _cloud_row(key))))
         assert cli_file["aws_profile"] == "analytics"
+        assert key_file["aws_session_token"] == f"${{secret:{key}_aws_session_token}}"
+        assert "temp-token" not in json.dumps(key_file)
 
-        _import_cloud_connection(cli_file, OWNER, {}, SetupResult())
+        for data in (cli_file, key_file):
+            _import_cloud_connection(data, OWNER, {}, SetupResult())
         assert _cloud_row(cli).aws_profile == "analytics"
+        with get_db_context() as db:
+            assert get_cloud_connection_schema(db, key, OWNER).aws_session_token.get_secret_value() == "temp-token"
 
         # A file written before aws_profile existed imports with the default chain, never the name.
         with get_db_context() as db:
@@ -1340,4 +1359,5 @@ def test_cloud_connection_profile_round_trip(tmp_path):
         assert _cloud_row(cli).aws_profile is None
     finally:
         with get_db_context() as db:
-            delete_cloud_connection(db, cli, OWNER)
+            for name in (cli, key):
+                delete_cloud_connection(db, name, OWNER)

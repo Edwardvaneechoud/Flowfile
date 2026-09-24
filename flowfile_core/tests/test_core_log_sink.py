@@ -10,6 +10,7 @@ import types
 
 import pytest
 
+from tests import core_log_sink
 from tests.core_log_sink import _PORT_CLAIMING_FIXTURES, _PORT_CLAIMING_MODULES, CoreLogSink, session_claims_core_port
 
 
@@ -104,3 +105,20 @@ class TestSinkServer:
                 assert sink.start() is False
             finally:
                 sink.stop()
+
+    def test_never_binds_a_port_that_already_answers(self, monkeypatch):
+        """The connect probe decides, not the bind.
+
+        On macOS a loopback bind succeeds next to a core listening on every interface and would take
+        over the loopback traffic meant for it, so the sink must not even try.
+        """
+
+        def _refuse(*args, **kwargs):
+            raise AssertionError("the sink tried to bind a port something already answers on")
+
+        monkeypatch.setattr(core_log_sink, "_SinkServer", _refuse)
+        port = _free_port()
+        with socket.socket() as holder:
+            holder.bind(("127.0.0.1", port))
+            holder.listen(1)
+            assert CoreLogSink(port=port).start() is False

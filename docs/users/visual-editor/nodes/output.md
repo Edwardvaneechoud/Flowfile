@@ -87,7 +87,7 @@ Authenticate with a [saved cloud connection](../tutorials/cloud-connections.md),
 
 | Setting | Description |
 |---|---|
-| **File Path** | Full URI including scheme, bucket or container, and file name, e.g. `s3://bucket/folder/output.parquet`. A Delta table is a folder, so its path names the table, e.g. `s3://bucket/warehouse/orders`. **Browse** picks a folder and names the file. The drawer warns while the path is empty or has no scheme, and such a node fails before writing anything. |
+| **File Path** | Full URI including scheme, bucket or container, and file name, e.g. `s3://bucket/folder/output.parquet`. A Delta table is a folder, so its path names the table, e.g. `s3://bucket/warehouse/orders`. **Browse** picks a folder and names the file. The drawer warns while the path is empty or has no scheme, and such a node fails before writing anything: *Cloud storage writer has no target path…* or *Cloud storage path '…' is not a URI…*. |
 | **File Format** | CSV, Parquet, JSON or Delta Lake. |
 | **Write Mode** | CSV, Parquet and JSON always overwrite. Delta Lake offers the modes in the next table. |
 

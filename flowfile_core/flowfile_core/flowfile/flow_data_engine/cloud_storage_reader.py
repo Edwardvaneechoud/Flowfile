@@ -50,6 +50,9 @@ class CloudStorageReader:
             ),
             aws_role_arn=connection.aws_role_arn,
             aws_allow_unsafe_html=connection.aws_allow_unsafe_html,
+            aws_session_token=(
+                connection.aws_session_token.get_secret_value() if connection.aws_session_token else None
+            ),
             aws_profile=connection.aws_profile,
             azure_account_name=connection.azure_account_name,
             azure_account_key=(
