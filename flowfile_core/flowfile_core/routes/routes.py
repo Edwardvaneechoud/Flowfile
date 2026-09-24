@@ -1820,8 +1820,8 @@ def _reference_error(flow, node_id: int, reference: str) -> str | None:
         return "Reference must be lowercase"
     try:
         input_schema.NodeBase.validate_node_reference(reference)
-    except ValueError as e:
-        return str(e)
+    except ValueError:
+        return "Reference must start with a letter and contain only lowercase letters, digits, and underscores"
     for other_node in flow.nodes:
         if other_node.node_id != node_id and getattr(other_node.setting_input, "node_reference", None) == reference:
             return f'Reference "{reference}" is already used by another node'
