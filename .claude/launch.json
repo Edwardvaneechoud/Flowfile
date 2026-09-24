@@ -111,6 +111,24 @@
         "FLOWFILE_CORE_PORT=63590 npm run dev:web --prefix flowfile_frontend -- --port 8084"
       ],
       "port": 8084
+    },
+    {
+      "name": "core-63594",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "FLOWFILE_OFFLOAD_TO_WORKER=0 poetry run flowfile_core --port 63594"
+      ],
+      "port": 63594
+    },
+    {
+      "name": "web-63594",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "FLOWFILE_CORE_PORT=63594 npm run dev:web --prefix flowfile_frontend -- --port 8085"
+      ],
+      "port": 8085
     }
   ]
 }

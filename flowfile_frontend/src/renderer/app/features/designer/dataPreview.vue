@@ -86,11 +86,27 @@
           @body-scroll="onBodyScroll"
           @column-resized="closeStatsPanel"
           @column-moved="closeStatsPanel"
+          @selection-changed="selectedCount = gridApi?.getSelectedNodes().length ?? 0"
         />
 
         <div v-if="dataAvailable" class="dp-status-bar">
-          showing {{ formatCount(sampleRowCount) }} of {{ formatCount(dataLength) }} rows ·
-          {{ formatCount(columnLength) }} columns
+          <span>
+            showing {{ formatCount(sampleRowCount) }} of {{ formatCount(dataLength) }} rows ·
+            {{ formatCount(columnLength) }} columns
+          </span>
+          <TableExportMenu
+            :selected-count="selectedCount"
+            :row-count="dataLength"
+            :column-count="columnLength"
+            :table-disabled="
+              dataPreview?.has_run_with_current_setup
+                ? null
+                : 'Run the flow to export this step\'s current result.'
+            "
+            :busy="exportBusy"
+            @copy="onExportCopy"
+            @download="onExportDownload"
+          />
         </div>
 
         <div v-if="showFetchButton" class="fetch-data-section">
@@ -142,9 +158,19 @@
 import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import ArtifactsPanel from "./ArtifactsPanel.vue";
 import debounce from "lodash/debounce";
+import { ElMessage } from "element-plus";
 import { TableExample, FileColumn } from "../../components/nodes/baseNode/nodeInterfaces";
-import { NodeApi } from "../../api/node.api";
-import { cellValueFormatter, formatCellValue } from "../../utils/cellFormat";
+import TableExportMenu from "../../components/common/TableExportMenu/TableExportMenu.vue";
+import { NodeApi, blobErrorDetail } from "../../api/node.api";
+import { cellValueFormatter } from "../../utils/cellFormat";
+import { copyTextEverywhere, parseCsvText } from "../../utils/clipboardUtils";
+import {
+  DOWNLOAD_DEFAULT_ROWS,
+  buildDelimited,
+  copyRows,
+  rowsForCellCap,
+  saveCsv,
+} from "../../utils/tableExport";
 import { geometryCellFormatter, isGeometryColumn } from "../../utils/geometry";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowStore } from "../../stores/flow-store";
@@ -286,29 +312,51 @@ const defaultColDef = {
   headerComponent: ColumnStatsHeader,
 };
 
-// Cells with tab/newline/carriage-return/quote chars need Excel-style quoting,
-// otherwise they corrupt the TSV (a tab inside a value becomes a column break,
-// a newline becomes a row break). Wrap in double-quotes and double any existing
-// quotes — matches what Excel and Google Sheets emit when copying.
-const serializeCell = (v: unknown): string => {
-  const raw = formatCellValue(v);
-  if (/[\t\n\r"]/.test(raw)) {
-    return `"${raw.replace(/"/g, '""')}"`;
-  }
-  return raw;
-};
+const exportColumns = () =>
+  (columnDefs.value as Array<{ field?: string }>).flatMap((c) => (c?.field ? [c.field] : []));
 
-const buildTsvFromRows = (rows: Record<string, any>[]): string => {
-  const cols = (columnDefs.value as Array<{ field?: string; headerName?: string }>).filter(
-    (c) => c && c.field,
-  );
-  if (!cols.length || !rows.length) return "";
-  const headerLine = cols.map((c) => serializeCell(c.headerName ?? c.field ?? "")).join("\t");
-  const dataLines = rows.map((row) =>
-    cols.map((c) => serializeCell(row[c.field as string])).join("\t"),
-  );
-  return [headerLine, ...dataLines].join("\n");
-};
+const selectedCount = ref(0);
+const exportBusy = ref(false);
+const copyRowCap = computed(() => rowsForCellCap(columnLength.value));
+
+async function fetchExport(format: "csv" | "tsv", limit: number): Promise<Blob | null> {
+  const nodeId = currentNodeId.value;
+  if (nodeId == null) return null;
+  exportBusy.value = true;
+  try {
+    return await NodeApi.exportNodeData(props.flowId || nodeStore.flow_id, nodeId, {
+      outputHandle: selectedOutputHandle.value,
+      format,
+      limit,
+    });
+  } catch (error) {
+    ElMessage.error((await blobErrorDetail(error)) ?? "Could not export the data.");
+    return null;
+  } finally {
+    exportBusy.value = false;
+  }
+}
+
+async function onExportCopy(scope: "selection" | "table") {
+  if (scope === "selection")
+    return copyRows(exportColumns(), gridApi.value?.getSelectedRows() ?? []);
+  const total = dataLength.value;
+  const blob = await fetchExport("tsv", copyRowCap.value);
+  if (!blob) return;
+  // Re-quote the worker's always-quoted TSV the way selection copy does.
+  const [header = [], ...cells] = parseCsvText((await blob.text()).replace(/\n$/, ""), "tab");
+  const rows = cells.map((r) => Object.fromEntries(header.map((h, i) => [h, r[i]])));
+  await copyRows(header, rows, total ?? rows.length);
+}
+
+async function onExportDownload() {
+  const nodeId = currentNodeId.value;
+  const total = dataLength.value;
+  const blob = await fetchExport("csv", DOWNLOAD_DEFAULT_ROWS);
+  if (!blob) return;
+  const partial = total == null || total > DOWNLOAD_DEFAULT_ROWS;
+  await saveCsv(blob, `node_${nodeId}${partial ? `_first_${DOWNLOAD_DEFAULT_ROWS}` : ""}.csv`);
+}
 
 const onGridReady = (params: { api: GridApi }) => {
   gridApi.value = params.api;
@@ -628,17 +676,13 @@ const windowKeyHandler = async (e: KeyboardEvent) => {
   const selected = gridApi.value.getSelectedRows();
   if (!selected.length) return;
 
-  const tsv = buildTsvFromRows(selected);
+  const tsv = buildDelimited(exportColumns(), selected, "\t");
   if (!tsv) return;
 
   // preventDefault must run before the await (post-await it's a no-op and the
   // copy event would fall through to the canvas's document-level handler).
   e.preventDefault();
-  try {
-    await navigator.clipboard.writeText(tsv);
-  } catch {
-    // Clipboard write rejected (permissions, insecure context).
-  }
+  await copyTextEverywhere(tsv);
 };
 
 // Dismiss the stats panel on Escape or any press outside it. Capture-phase
@@ -824,6 +868,10 @@ onUnmounted(() => {
 
 .dp-status-bar {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 3px 10px;
   border-top: 1px solid var(--color-border-primary);
   background: var(--color-background-secondary);

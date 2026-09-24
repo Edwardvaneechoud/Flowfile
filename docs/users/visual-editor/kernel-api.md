@@ -126,6 +126,10 @@ display(df)               # interactive table
 display(df, max_rows=500) # smaller cap
 ```
 
+The table's **Copy** and **Download CSV** work on the rows the table loaded, and a
+download holds at most 10,000 rows. To export a full frame, publish it as a node
+output and connect a [Write data](nodes/output.md) node.
+
 For ad-hoc visual exploration of a frame, use `explore()` — it opens the full
 Graphic Walker explorer (a data grid plus a drag-to-chart visualization builder)
 inline:

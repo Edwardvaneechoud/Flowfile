@@ -38,6 +38,8 @@ This page covers the canvas mechanics: creating a flow, adding and connecting no
 2. Node borders show execution state: green success, red failure, orange warning, grey not yet executed. A hollow grey ring means the node was deliberately skipped behind a closed [Gate](nodes/combine.md#gate) — a successful outcome, not an error.
 3. Click any executed node to inspect its output in the bottom panel.
 
+The preview's status bar has **Copy** and **Download CSV**. Copy puts the selected rows, or the node's result, on the clipboard as tab-separated text that pastes into Excel or Google Sheets; it is capped at 10,000 rows and 100,000 cells (rows × columns). Download CSV saves up to 10,000 rows; to export a full result, add a [Write data](nodes/output.md) node. Copying the result or downloading needs a run with the node's current settings and cannot include list or struct columns.
+
 In **Development** mode (the default) every node's data is available for preview after a run. Switch to **Performance** mode when the flow is done: only the steps needed for outputs execute, and the query optimizer works across nodes.
 
 ## Flow settings

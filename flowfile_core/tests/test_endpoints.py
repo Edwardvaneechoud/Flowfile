@@ -3523,6 +3523,78 @@ def test_get_node_column_stats_special_character_column():
     assert body["number_of_empty_values"] + body["number_of_filled_values"] == 2
 
 
+def _export_node_data(flow_id: int, node_id: int = 2, **params):
+    return client.get("/node/data/export", params={"flow_id": flow_id, "node_id": node_id, **params})
+
+
+def _run_export_flow(node_id: int = 2) -> FlowId:
+    flow_id = create_flow_with_manual_input_and_select()
+    flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = "Development"
+    client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": node_id})
+    return flow_id
+
+
+def test_export_node_data_csv():
+    flow_id = create_flow_with_manual_input_and_select()
+    flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = "Development"
+    assert _export_node_data(flow_id).status_code == 409, "Nothing to export before the node has run"
+
+    client.post("/node/trigger_fetch_data", params={"flow_id": flow_id, "node_id": 2})
+    before = set(storage.temp_directory.glob("export_*"))
+    response = _export_node_data(flow_id)
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/csv")
+    lines = response.text.strip().splitlines()
+    assert [line.strip('"') for line in lines] == ["name", "John", "Jane", "Edward", "Courtney"]
+    assert set(storage.temp_directory.glob("export_*")) == before, "The temp file is removed after the response"
+
+
+def test_export_node_data_tsv_with_limit():
+    flow_id = _run_export_flow(node_id=1)
+    response = _export_node_data(flow_id, node_id=1, format="tsv", limit="2")
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/tab-separated-values")
+    lines = response.text.strip().splitlines()
+    assert len(lines) == 3, "header + 2 rows"
+    assert lines[0].replace('"', "").split("\t") == ["name", "city"]
+
+
+def test_export_node_data_stale_after_settings_change():
+    flow_id = _run_export_flow()
+    assert _export_node_data(flow_id).status_code == 200
+    settings = input_schema.NodeSelect(
+        flow_id=flow_id, node_id=2, select_input=[SelectInput(old_name="name", new_name="full_name")]
+    )
+    client.post("/update_settings/", json=settings.model_dump(), params={"node_type": "select"})
+    response = _export_node_data(flow_id)
+    assert response.status_code == 409, "A stale result must not be exported"
+    assert "Run the flow first" in response.json()["detail"]
+
+
+def test_export_node_data_blocked_when_run_flags_cleared():
+    flow_id = _run_export_flow()
+    assert _export_node_data(flow_id).status_code == 200
+    node = flow_file_handler.get_flow(flow_id).get_node(2)
+    node.invalidate_cache()
+    assert node.results.resulting_data is not None
+    response = _export_node_data(flow_id)
+    assert response.status_code == 409
+    assert "current settings" in response.json()["detail"]
+
+
+def test_export_node_data_uses_cached_result_in_performance_mode():
+    flow_id = _run_export_flow()
+    flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = "Performance"
+    assert _export_node_data(flow_id).status_code == 200
+
+
+def test_export_node_data_invalid_limit():
+    flow_id = _run_export_flow()
+    assert _export_node_data(flow_id, limit="abc").status_code == 422
+    assert _export_node_data(flow_id, limit="all").status_code == 422
+    assert _export_node_data(flow_id, limit="10001").status_code == 422
+
+
 def test_flow_run_status():
     flow_id = create_flow_with_manual_input_and_select()
     response = client.get("/flow/run_status", params={"flow_id": flow_id})

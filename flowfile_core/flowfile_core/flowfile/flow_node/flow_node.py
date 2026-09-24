@@ -1232,6 +1232,8 @@ class FlowNode:
             with self._execution_lock_held():
                 if self.results.resulting_data is None and self.results.errors is None:
                     self.print("getting resulting data")
+                    # Drop handles from a previous run; multi-output nodes repopulate them below.
+                    self._named_outputs = {}
                     try:
                         if self._execution_state.is_canceled:
                             raise Exception("Node execution canceled")
@@ -2095,6 +2097,34 @@ class FlowNode:
             engine = self.results.resulting_data
         return engine
 
+    def _sink_source(self) -> tuple["FlowNode", str] | None:
+        """The upstream node and handle a sink previews; None for a node that previews itself."""
+        if self.node_template.node_group != "output" or getattr(self.setting_input, "output_names", None):
+            return None
+        if not self.main_input:
+            raise ColumnStatsUnavailable("Output node has no input connected.")
+        src = self.main_input[0]
+        return src, self._input_output_handles.get(src.node_id, DEFAULT_OUTPUT_HANDLE)
+
+    def get_cached_result(self, output_handle: str = DEFAULT_OUTPUT_HANDLE) -> FlowDataEngine:
+        """Returns the cached result engine of the last run with the current settings.
+
+        Never executes or re-pulls data. Raises ``ColumnStatsUnavailable`` when
+        there is no such result.
+        """
+        if sink := self._sink_source():
+            return sink[0].get_cached_result(sink[1])
+        engine = self.peek_output_engine(output_handle)
+        if engine is None:
+            raise ColumnStatsUnavailable("Node has no cached result. Run the flow first.")
+        if not self.node_stats.has_run_with_current_setup:
+            raise ColumnStatsUnavailable("Run the flow first: this node has no result for its current settings.")
+        if engine.external_source is not None:
+            raise ColumnStatsUnavailable("Result is an external source; reading it would re-pull the data.")
+        if engine.is_future and not engine.is_collected:
+            raise ColumnStatsUnavailable("Result is still being computed.")
+        return engine
+
     def get_column_stats(
         self,
         column_name: str,
@@ -2112,18 +2142,9 @@ class FlowNode:
         aggregate over without executing or re-pulling data, and
         ``pl.exceptions.ColumnNotFoundError`` for an unknown column.
         """
-        if self.node_template.node_group == "output" and not getattr(self.setting_input, "output_names", None):
-            # A sink previews its upstream input; one declaring an output handle previews itself.
-            if not self.main_input:
-                raise ColumnStatsUnavailable("Output node has no input connected.")
-            return self.main_input[0].get_column_stats(column_name, offload_to_worker=offload_to_worker)
-        engine = self.peek_output_engine(output_handle)
-        if engine is None:
-            raise ColumnStatsUnavailable("Node has no cached result. Run the flow first.")
-        if engine.external_source is not None:
-            raise ColumnStatsUnavailable("Result is an external source; stats would re-pull it.")
-        if engine.is_future and not engine.is_collected:
-            raise ColumnStatsUnavailable("Result is still being computed.")
+        if sink := self._sink_source():
+            return sink[0].get_column_stats(column_name, output_handle=sink[1], offload_to_worker=offload_to_worker)
+        engine = self.get_cached_result(output_handle)
         stats = compute_column_stats(engine, column_name, offload_to_worker=offload_to_worker)
         # compute rebinds the engine's schema list (copy-on-write); follow it on
         # this node so previews via self.schema carry the stats too.
@@ -2152,7 +2173,8 @@ class FlowNode:
             if self.node_template.node_group == "output" and not getattr(self.setting_input, "output_names", None):
                 # A sink previews its upstream input; one declaring an output handle previews itself.
                 self.print("getting the table example")
-                return self.main_input[0].get_table_example(include_data)
+                src, handle = self._sink_source()
+                return src.get_table_example(include_data, output_handle=handle)
 
             logger.info("getting the table example since the node has run")
             # For multi-output nodes, pull the sample from the requested named

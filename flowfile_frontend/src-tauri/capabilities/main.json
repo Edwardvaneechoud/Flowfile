@@ -21,6 +21,8 @@
     "updater:default",
     "window-state:default",
     "clipboard-manager:allow-read-text",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "dialog:allow-save",
+    "fs:allow-write-file"
   ]
 }
