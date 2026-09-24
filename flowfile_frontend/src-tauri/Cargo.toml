@@ -1,6 +1,6 @@
 [package]
 name = "flowfile"
-version = "0.19.1"
+version = "0.20.0"
 description = "Flowfile — visual ETL platform"
 authors = ["Edwardvaneechoud"]
 license = "MIT"
@@ -23,6 +23,8 @@ tauri-plugin-log = "2"
 tauri-plugin-os = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -3369,6 +3369,28 @@ def test_filter_split_mode_off_is_backwards_compatible():
     assert node._named_outputs == {}
 
 
+def test_filter_split_mode_toggled_off_drops_stale_named_outputs():
+    """Leaving split mode must not keep serving the split-mode outputs to previews/exports."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, [{"id": i} for i in range(10)], node_id=1)
+    _add_filter_to_graph(graph, 'pl.col("id") < 3', split_mode=True)
+    graph.run_graph()
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(advanced_filter='pl.col("id") > 7', filter_type="advanced"),
+            split_mode=False,
+        )
+    )
+    graph.run_graph()
+
+    node = graph.get_node(2)
+    assert node._named_outputs == {}
+    assert node.get_cached_result().collect()["id"].to_list() == [8, 9]
+
+
 def test_filter_split_mode_default_is_false():
     """NodeFilter constructed without split_mode defaults to single-output."""
     settings = input_schema.NodeFilter(

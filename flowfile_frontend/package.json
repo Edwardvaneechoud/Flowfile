@@ -1,6 +1,6 @@
 {
   "name": "Flowfile",
-  "version": "0.19.1",
+  "version": "0.20.0",
   "description": "A tool for designing and executing data flows",
   "scripts": {
     "dev": "tauri dev",
@@ -70,6 +70,8 @@
     "@kanaries/graphic-walker": "^0.5.2",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-fs": "^2.0.0",
     "@tauri-apps/plugin-log": "^2.0.0",
     "@tauri-apps/plugin-os": "^2.0.0",
     "@tauri-apps/plugin-process": "^2.0.0",

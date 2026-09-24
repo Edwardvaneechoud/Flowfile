@@ -160,7 +160,7 @@ After executing a cell, the output area shows results, stdout, and any errors.
 
 Output types rendered:
 
-- **Tables** — Polars DataFrames/LazyFrames as interactive sortable tables
+- **Tables** — Polars DataFrames/LazyFrames as interactive sortable tables, with Copy and Download CSV ([limits](kernel-api.md#displaying-results))
 - **Charts** — matplotlib and plotly figures rendered inline
 - **Images** — PIL images displayed as PNG
 - **HTML** — rendered in a sandboxed iframe

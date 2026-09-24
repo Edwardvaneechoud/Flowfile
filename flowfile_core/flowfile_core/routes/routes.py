@@ -15,16 +15,18 @@ import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, status
-from fastapi.responses import JSONResponse, Response
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 # External dependencies
 from polars.exceptions import ColumnNotFoundError
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
 from flowfile_core import flow_file_handler
 
@@ -93,8 +95,10 @@ from flowfile_core.flowfile.extensions import (
 from flowfile_core.flowfile.flow_data_engine.column_stats import ColumnStatsUnavailable
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    ExternalOutputWriter,
     ExternalRestApiFetcher,
 )
+from flowfile_core.flowfile.flow_data_engine.utils import local_write_output
 from flowfile_core.flowfile.flow_graph import GraphTransaction, add_connection, delete_connection, insert_node_on_edge
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.settings_validation import FlowSettingsValidation, validate_flow_settings
@@ -1896,6 +1900,53 @@ def get_node_column_stats(flow_id: int, node_id: int, column_name: str, output_h
     except Exception as e:
         logger.error(f"Failed to compute column stats for node {node_id}, column '{column_name}': {e}")
         raise HTTPException(422, "Could not compute column statistics") from e
+
+
+@router.get("/node/data/export", tags=["editor"])
+def export_node_data(
+    flow_id: int,
+    node_id: int,
+    output_handle: str = DEFAULT_OUTPUT_HANDLE,
+    file_format: Literal["csv", "tsv"] = Query("csv", alias="format"),
+    limit: int = Query(10_000, ge=0, le=10_000),
+    current_user=Depends(get_current_active_user),
+):
+    """Downloads up to 10,000 rows of a node's cached result as CSV/TSV without re-executing it.
+
+    TSV is also capped at 100,000 cells. Larger exports belong in a write node.
+    """
+    _, node = _get_analysis_node(flow_id, node_id, current_user.id)
+    try:
+        engine = node.get_cached_result(output_handle)
+    except ColumnStatsUnavailable as e:
+        raise HTTPException(409, str(e)) from None
+    data = engine.data_frame
+    try:
+        schema = data.collect_schema()
+    except Exception:
+        raise HTTPException(409, "The cached result is no longer available. Run the flow again.") from None
+    if any(dtype.is_nested() for dtype in schema.dtypes()):
+        raise HTTPException(422, "CSV cannot hold list or struct columns.")
+    n = min(limit, 100_000 // max(len(schema), 1)) if file_format == "tsv" else limit
+    sep = "\t" if file_format == "tsv" else ","
+    path = storage.temp_directory / f"export_{uuid4().hex}.{file_format}"
+    try:
+        # head before lazy(): an in-memory DataFrame is sliced so only n rows get serialized.
+        lf = data.head(n).lazy()
+        writer = ExternalOutputWriter if OFFLOAD_TO_WORKER else local_write_output
+        writer(
+            lf, data_type="csv", path=str(path), write_mode="create", delimiter=sep, flow_id=flow_id, node_id=node_id
+        )
+    except Exception as e:
+        path.unlink(missing_ok=True)
+        logger.error(f"Failed to export data for node {node_id}: {e}")
+        raise HTTPException(422, "Could not export the data") from e
+    return FileResponse(
+        path,
+        media_type="text/tab-separated-values" if file_format == "tsv" else "text/csv",
+        filename=f"node_{node_id}.{file_format}",
+        background=BackgroundTask(path.unlink, missing_ok=True),
+    )
 
 
 @router.get("/node/downstream_node_ids", response_model=list[int], tags=["editor"])

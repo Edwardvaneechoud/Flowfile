@@ -36,10 +36,21 @@
         <NotebookDataTable
           :columns="tablePayloads[index]!.columns"
           :rows="tablePayloads[index]!.data"
+          @selection-change="selectedRows[index] = $event"
         />
-        <div v-if="tablePayloads[index]!.truncated" class="display-table-footer">
-          showing {{ formatCount(tablePayloads[index]!.loaded_rows) }} of
-          {{ formatCount(tablePayloads[index]!.total_rows) }} rows
+        <div class="display-table-footer">
+          <span v-if="tablePayloads[index]!.truncated">
+            showing {{ formatCount(tablePayloads[index]!.loaded_rows) }} of
+            {{ formatCount(tablePayloads[index]!.total_rows) }} rows
+          </span>
+          <TableExportMenu
+            class="display-table-export"
+            :selected-count="selectedRows[index]?.length ?? 0"
+            :row-count="tablePayloads[index]!.data.length"
+            :column-count="tablePayloads[index]!.columns.length"
+            @copy="onCopy(index, $event)"
+            @download="onDownload(index)"
+          />
         </div>
       </div>
 
@@ -85,10 +96,18 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, defineAsyncComponent } from "vue";
+import { computed, defineAsyncComponent, shallowReactive } from "vue";
 import type { CellOutput } from "../../../../../types/node.types";
 import NotebookDataTable from "./NotebookDataTable.vue";
+import TableExportMenu from "../../../../common/TableExportMenu/TableExportMenu.vue";
 import { useGraphicWalkerAppearance } from "@/composables/useGraphicWalkerAppearance";
+import {
+  DOWNLOAD_DEFAULT_ROWS,
+  buildDelimited,
+  copyRows,
+  rowsForCellCap,
+  saveCsv,
+} from "../../../../../utils/tableExport";
 import { TABLE_MIME, EXPLORE_MIME, isTableMime, parseTablePayload } from "./notebookDisplay";
 
 // Lazy — GW pulls in React; load only when an explore() output appears.
@@ -112,6 +131,23 @@ const tablePayloads = computed(() =>
 );
 
 const formatCount = (n: number): string => n.toLocaleString();
+
+const selectedRows = shallowReactive<Record<number, Record<string, unknown>[]>>({});
+
+function onCopy(index: number, scope: "selection" | "table") {
+  const p = tablePayloads.value[index]!;
+  const rows =
+    scope === "selection"
+      ? (selectedRows[index] ?? [])
+      : p.data.slice(0, rowsForCellCap(p.columns.length));
+  return copyRows(p.columns, rows, scope === "table" ? p.total_rows : rows.length, formatCount);
+}
+
+function onDownload(index: number) {
+  const p = tablePayloads.value[index]!;
+  const rows = p.data.slice(0, DOWNLOAD_DEFAULT_ROWS);
+  return saveCsv(buildDelimited(p.columns, rows, ","), "notebook_table.csv");
+}
 
 const formatTime = (ms: number): string => {
   if (ms < 1) return "<1ms";
@@ -211,10 +247,17 @@ const autoResizeIframe = (event: Event) => {
 
 .display-table-footer {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 2px 8px;
   font-size: 0.7rem;
   color: var(--el-text-color-secondary);
   border-top: 1px solid var(--el-border-color-lighter, #ebeef5);
+}
+
+.display-table-export {
+  margin-left: auto;
 }
 
 .output-stdout pre,
