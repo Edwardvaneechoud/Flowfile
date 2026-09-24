@@ -214,6 +214,11 @@ class Api:
     def reference(self, node_id: int, ref: str):
         return self.http.post("/node/reference/", params={"flow_id": self.flow_id, "node_id": node_id}, json=ref)
 
+    def shown_description(self, node_id: int) -> dict:
+        response = self.http.get("/node/description", params={"flow_id": self.flow_id, "node_id": node_id})
+        assert response.status_code == 200, response.text
+        return response.json()
+
     def apply(self, operations: list[dict], label: str = "Batch"):
         return self.http.post(
             "/editor/apply_operations/", json={"flow_id": self.flow_id, "label": label, "operations": operations}
@@ -776,6 +781,50 @@ class TestServerOwnedState:
 
         expect_no_step(api, api.settings("filter", loaded), before, history)
         assert api.flow_settings()["has_unsaved_changes"] is False
+
+
+class TestDescriptionProvenance:
+    def test_typed_text_equal_to_the_auto_text_survives_undo_redo(self):
+        api = new_flow(9260)
+        seed_two_sources_and_filter(api)
+        auto = api.shown_description(3)
+        assert auto["is_auto_generated"] is True and auto["description"]
+        typed = {"description": auto["description"], "is_auto_generated": False}
+
+        before, history = api.snapshot(), api.history()
+        expect_one_step(api, api.description(3, auto["description"]), before, history)
+        assert api.shown_description(3) == typed
+
+        assert api.layout({1: (40, 40)}).status_code == 200
+        assert api.undo().json()["success"] is True
+        assert api.shown_description(3) == typed
+        assert api.redo().json()["success"] is True
+        assert api.shown_description(3) == typed
+
+        assert api.undo().json()["success"] is True
+        assert api.undo().json()["success"] is True
+        assert api.shown_description(3) == auto
+
+    def test_auto_description_stays_auto_across_undo_redo_and_reopen(self, tmp_path):
+        path = tmp_path / "auto_description.yaml"
+        api = new_flow(9261, path=str(path))
+        seed_two_sources_and_filter(api)
+        auto = api.shown_description(3)
+        assert auto["is_auto_generated"] is True
+
+        assert api.layout({1: (40, 40)}).status_code == 200
+        assert api.undo().json()["success"] is True
+        assert api.shown_description(3) == auto
+        assert api.redo().json()["success"] is True
+        assert api.shown_description(3) == auto
+
+        api.flow.save_flow(str(path))
+        reopened = Api(flow_file_handler.import_flow(path))
+        assert reopened.shown_description(3) == auto
+        assert reopened.settings("filter", _filter_payload(reopened.flow_id, 3, 1, "2")).status_code == 200
+        followed = reopened.shown_description(3)
+        assert followed["is_auto_generated"] is True
+        assert followed["description"] != auto["description"]
 
 
 class TestDirtyState:

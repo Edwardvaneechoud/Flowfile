@@ -147,7 +147,12 @@ def _load_flowfile_json(flow_path: Path) -> schemas.FlowInformation:
 
 
 def _keep_auto_description_auto(setting_input) -> None:
-    """A stored description equal to the node's default stays auto-generated (empty) instead of freezing as text."""
+    """A file description equal to the node's default stays auto-generated (empty) instead of freezing as text.
+
+    Saved files carry only the rendered text, so this is a guess: a typed description
+    that happens to equal the auto text also loads as auto. In-memory snapshots record
+    ``description_is_auto_generated`` and never reach this.
+    """
     try:
         if setting_input.description and setting_input.description == setting_input.get_default_description():
             setting_input.description = ""
@@ -178,7 +183,7 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
             setting_data["pos_x"] = float(node.x_position or 0)
             setting_data["pos_y"] = float(node.y_position or 0)
             setting_data["group_id"] = node.group_id
-            setting_data["description"] = node.description or ""
+            setting_data["description"] = "" if node.description_is_auto_generated else node.description or ""
             setting_data["node_reference"] = node.node_reference
             setting_data["is_setup"] = True
 
@@ -210,7 +215,8 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
                         output_settings["table_settings"] = {"file_type": file_type}
 
             setting_input = model_class.model_validate(setting_data)
-            _keep_auto_description_auto(setting_input)
+            if node.description_is_auto_generated is None:
+                _keep_auto_description_auto(setting_input)
 
         node_info = schemas.NodeInformation(
             id=node.id,

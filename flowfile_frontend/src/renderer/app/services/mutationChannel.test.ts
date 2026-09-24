@@ -252,6 +252,27 @@ describe("installMutationChannel", () => {
     await later;
   });
 
+  it("frees a reserved slot before its request settles, so the caller's release is a no-op", async () => {
+    const { client, calls, queue, applied, refused } = makeClient();
+    const moved = queue.enqueue();
+    const layout = client.post("/editor/update_layout/", {}, { mutationSlot: moved });
+    await settle();
+    calls[0].resolve({ success: true, history: history(4) });
+    await layout;
+    expect(queue.release(moved)).toBe(false);
+    expect(applied).toEqual([history(4)]);
+
+    const spliced = queue.enqueue();
+    const failing = client
+      .post("/editor/apply_operations/", {}, { mutationSlot: spliced })
+      .catch((error) => error);
+    await settle();
+    calls[1].reject(422);
+    expect(await failing).toBeInstanceOf(AxiosError);
+    expect(queue.release(spliced)).toBe(false);
+    expect(refused).toHaveLength(1);
+  });
+
   it("applies each mutation response's history in order, and nothing else", async () => {
     const { client, calls, applied } = makeClient();
     const add = client.post("/editor/add_node/");

@@ -398,11 +398,15 @@ export class FlowApi {
     flowId: number,
     label: string,
     operations: GraphOperation[],
+    mutationSlot?: number,
   ): Promise<OperationResponse> {
     const response = await axios.post<OperationResponse>(
       "/editor/apply_operations/",
       { flow_id: flowId, label, operations },
-      { headers: { "Content-Type": "application/json", accept: "application/json" } },
+      {
+        headers: { "Content-Type": "application/json", accept: "application/json" },
+        mutationSlot,
+      },
     );
     return response.data;
   }

@@ -290,19 +290,30 @@ async function onNodeDragStop({ node, nodes: dragged }: { node: GraphNode; nodes
       ? planAutoConnect(nodeId, match)
       : null;
   if (moved.length === 0 && !plan) return;
-  const layout = moved.length > 0 ? await layoutForMovedNodes(moved) : null;
+  // Keep this drag's place in the channel while the layout is measured.
+  const slot = reserveMutationSlot();
+  let layout: Awaited<ReturnType<typeof layoutForMovedNodes>> | null;
+  try {
+    layout = moved.length > 0 ? await layoutForMovedNodes(moved) : null;
+  } catch (error) {
+    releaseMutationSlot(slot);
+    throw error;
+  }
   try {
     if (!plan) {
-      if (layout) await FlowApi.updateLayout(flowId, layout);
+      if (layout) await FlowApi.updateLayout(flowId, layout, slot);
       return;
     }
     const type = (node.data as { nodeTemplate?: NodeTemplate } | undefined)?.nodeTemplate?.item;
     const label = `${edgeId ? "Insert" : "Connect"} ${type ? `${type} ` : ""}node`;
     const operations: GraphOperation[] = layout ? [{ op: "update_layout", layout }] : [];
-    await FlowApi.applyOperations(flowId, label, [...operations, ...plan.operations]);
+    await FlowApi.applyOperations(flowId, label, [...operations, ...plan.operations], slot);
   } catch (error) {
     recoverFromFailedMutation(error, "Could not save the move");
     return;
+  } finally {
+    // Frees the slot if nothing was sent; a no-op once the channel has released it.
+    releaseMutationSlot(slot);
   }
   plan?.apply();
 }

@@ -12,6 +12,7 @@ import pytest
 from fastapi import HTTPException
 
 from flowfile_core.flowfile.flow_graph import delete_connection, insert_node_on_edge
+from flowfile_core.flowfile.history_manager import HistoryManager
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.schemas import history_schema, input_schema, schemas, transform_schema
 from tests.flowfile.history_graphs import (
@@ -205,6 +206,33 @@ class TestLosslessFields:
         assert is_auto is True, f"auto description frozen into user text: {description!r}"
         assert graph.get_node(2).setting_input.description == ""
 
+    def test_typed_description_equal_to_the_auto_text_survives_undo(self):
+        graph = make_graph(8132)
+        manual_input(graph, 1, [{"a": 1}])
+        promise(graph, "filter", 2)
+        graph.add_filter(
+            input_schema.NodeFilter(flow_id=graph.flow_id, node_id=2, depending_on_id=1, filter_input=basic_filter())
+        )
+        auto_text, _ = graph.get_node(2).resolve_description()
+        graph.get_node(2).setting_input.description = auto_text
+        promise(graph, "sort", 3)
+
+        assert graph.undo().success is True
+
+        assert graph.get_node(2).resolve_description() == (auto_text, False)
+
+    def test_description_provenance_stays_out_of_saved_files(self, tmp_path):
+        graph = build_rich_graph(8133, path=str(tmp_path / "rich.yaml"))
+        in_memory = graph.get_flowfile_data().model_dump()["nodes"]
+        assert {node["description_is_auto_generated"] for node in in_memory} == {True, False}
+        as_json = graph.get_flowfile_data().model_dump(mode="json")["nodes"]
+        assert all("description_is_auto_generated" not in node for node in as_json)
+
+        for suffix in (".yaml", ".json"):
+            path = tmp_path / f"saved{suffix}"
+            graph.save_flow(str(path))
+            assert "description_is_auto_generated" not in path.read_text(encoding="utf-8")
+
     def test_select_data_type_change_survives_undo(self):
         graph = make_graph(8131)
         manual_input(graph, 1, [{"a": 1}])
@@ -348,6 +376,61 @@ class TestTransactionContract:
         assert in_scope(graph) == before
         state = graph.get_history_state()
         assert (state.undo_count, state.redo_count) == (state_before.undo_count, state_before.redo_count)
+
+    def test_failed_history_record_rolls_back_and_keeps_both_stacks(self, monkeypatch):
+        graph = make_graph(8165)
+        manual_input(graph, 1, [{"a": 1}])
+        promise(graph, "filter", 2)
+        assert graph.undo().success is True
+        before, state_before = in_scope(graph), graph.get_history_state()
+        dirty_before = graph.has_unsaved_changes()
+        assert state_before.undo_count > 0 and state_before.redo_count > 0
+
+        original_record, failed = HistoryManager.record, []
+
+        def record_fails_once(self, *args, **kwargs):
+            if not failed:
+                failed.append(True)
+                raise RuntimeError("record failed")
+            return original_record(self, *args, **kwargs)
+
+        monkeypatch.setattr(HistoryManager, "record", record_fails_once)
+        with pytest.raises(RuntimeError, match="record failed"):
+            with graph.transaction("Add sort") as txn:
+                promise(graph, "sort", 3)
+
+        assert in_scope(graph) == before
+        assert graph.get_history_state() == state_before
+        assert graph.has_unsaved_changes() is dirty_before
+        assert (txn.entry, graph._transaction_depth) == (None, 0)
+
+        with graph.transaction("Add sort") as txn:
+            promise(graph, "sort", 3)
+        state = graph.get_history_state()
+        assert (state.undo_count, state.redo_count) == (state_before.undo_count + 1, 0)
+        assert state.undo_description == "Add sort" and txn.entry is not None
+
+    def test_failure_after_recording_discards_the_step_and_rolls_back(self, monkeypatch):
+        graph = make_graph(8166)
+        manual_input(graph, 1, [{"a": 1}])
+        before, state_before = in_scope(graph), graph.get_history_state()
+        original_state, failed = graph.get_history_state, []
+
+        def state_fails_once_recorded():
+            state = original_state()
+            if state.undo_count > state_before.undo_count and not failed:
+                failed.append(True)
+                raise RuntimeError("state failed")
+            return state
+
+        monkeypatch.setattr(graph, "get_history_state", state_fails_once_recorded)
+        with pytest.raises(RuntimeError, match="state failed"):
+            with graph.transaction("Add sort") as txn:
+                promise(graph, "sort", 3)
+
+        assert failed and in_scope(graph) == before
+        assert original_state() == state_before
+        assert (txn.entry, graph._transaction_depth) == (None, 0)
 
     def test_revert_if_top_retracts_only_the_latest_step(self):
         graph = make_graph(8163)

@@ -2210,12 +2210,14 @@ class FlowGraph:
         """Run one graph mutation atomically under the edit lock and record at most one undo step.
 
         The outermost transaction snapshots the graph before and after the block. A
-        failing block (or a failing post-snapshot) restores the pre-block graph and
-        re-raises, so a failed request changes nothing. A successful one records the
-        pre-block state as one undo entry iff the in-scope graph changed (and only then
-        clears redo), provided ``record`` and history tracking are on. The dirty flag is
-        refreshed either way, and ``txn.history`` is filled while the lock is still held.
-        Nested transactions and calls during a restore run the block as-is.
+        successful one records the pre-block state as one undo entry iff the in-scope graph
+        changed (and only then clears redo), provided ``record`` and history tracking are on.
+        The dirty flag is refreshed either way, and ``txn.history`` is filled while the lock
+        is still held. A failure anywhere in that sequence (the block, the post-snapshot,
+        recording, the dirty refresh or the history read) restores the pre-block graph,
+        discards any entry it already recorded and re-raises, so a failed request changes
+        nothing (except that a failure after recording cannot bring back the redo that the
+        recording cleared). Nested transactions and calls during a restore run the block as-is.
         """
         txn = GraphTransaction(description)
         with self.edit_lock():
@@ -2236,15 +2238,10 @@ class FlowGraph:
                 pre = None
             self._transaction_depth = 1
             try:
-                try:
-                    yield txn
-                    post = None
-                    if pre is not None:
-                        post = HistorySnapshot(self.get_flowfile_data().model_dump(), keep_payload=False)
-                except BaseException:
-                    if pre is not None:
-                        self._rollback_to(pre)
-                    raise
+                yield txn
+                post = None
+                if pre is not None:
+                    post = HistorySnapshot(self.get_flowfile_data().model_dump(), keep_payload=False)
                 if post is None:
                     self._history_manager.refresh_dirty_from(self)
                 else:
@@ -2252,6 +2249,13 @@ class FlowGraph:
                         txn.entry = self._history_manager.record(pre, post, action_type, txn.description, node_id)
                     self._history_manager.refresh_dirty(post)
                 txn.history = self.get_history_state()
+            except BaseException:
+                if txn.entry is not None:
+                    self._history_manager.discard_if_top(txn.entry)
+                    txn.entry = None
+                if pre is not None:
+                    self._rollback_to(pre)
+                raise
             finally:
                 self._transaction_depth = 0
 
@@ -7663,6 +7667,7 @@ class FlowGraph:
                 type=node_info.type,
                 is_start_node=node.node_id in start_node_ids,
                 description=node_info.description,
+                description_is_auto_generated=not getattr(node.setting_input, "description", ""),
                 node_reference=node_info.node_reference,
                 x_position=int(node_info.x_position),
                 y_position=int(node_info.y_position),

@@ -298,6 +298,17 @@ class HistoryManager:
         self.refresh_dirty_from(flow_graph)
         return True
 
+    def discard_if_top(self, entry: HistoryEntry) -> bool:
+        """Drop ``entry`` without restoring it when it is still the latest step; redo is left untouched.
+
+        Used by a transaction that fails after recording: its own rollback restores the
+        graph, so the step must not stay behind. Returns False when ``entry`` is not the top.
+        """
+        if not self._undo_stack or self._undo_stack[-1] is not entry:
+            return False
+        self._undo_stack.pop()
+        return True
+
     def get_state(self) -> HistoryState:
         """Get the current state of the history system.
 

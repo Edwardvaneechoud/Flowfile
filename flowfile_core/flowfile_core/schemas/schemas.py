@@ -5,9 +5,12 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
     ValidationInfo,
     field_serializer,
     field_validator,
+    model_serializer,
 )
 
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
@@ -293,12 +296,22 @@ class FlowfileInputConnection(BaseModel):
 
 
 class FlowfileNode(BaseModel):
-    """Node representation for flowfile serialization (YAML/JSON)."""
+    """Node representation for flowfile serialization (YAML/JSON).
+
+    ``description`` is the rendered canvas text: the user's, else the auto-generated one.
+    ``description_is_auto_generated`` records which of the two it is, so an undo snapshot
+    restores a typed description even when it equals the auto text. It is emitted only by
+    python-mode dumps of a live graph (the in-memory history snapshots, which are python-mode
+    anyway so secrets survive); JSON dumps (saved files, share links, run snapshots) omit it,
+    which keeps the on-disk format unchanged and leaves file loads to compare the text with
+    the auto text.
+    """
 
     id: int
     type: str
     is_start_node: bool = False
     description: str | None = ""
+    description_is_auto_generated: bool | None = None
     node_reference: str | None = None  # Unique reference identifier for code generation
     x_position: int | None = 0
     y_position: int | None = 0
@@ -348,6 +361,17 @@ class FlowfileNode(BaseModel):
             data["is_user_defined"] = True
             return data
         return value.model_dump(exclude=self._setting_input_exclude)
+
+    @model_serializer(mode="wrap")
+    def _keep_description_provenance_in_memory(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo):
+        """Drop ``description_is_auto_generated`` from JSON dumps and whenever it is unset.
+
+        Deliberately unannotated: a return annotation would replace the model's serialization JSON schema.
+        """
+        data = handler(self)
+        if info.mode_is_json() or self.description_is_auto_generated is None:
+            data.pop("description_is_auto_generated", None)
+        return data
 
 
 # Allowed group tints. Single source of truth — mirrored by the frontend `GroupColor` union.
