@@ -59,6 +59,16 @@
           </button>
         </div>
 
+        <div v-if="hiddenColumnCount > 0" class="dp-column-limit-warning" role="status">
+          <span class="material-icons dp-column-limit-warning__icon">warning_amber</span>
+          <span>
+            This table has more columns than the preview supports. Showing the first
+            {{ formatCount(MAX_PREVIEW_COLUMNS) }} of
+            {{ formatCount(MAX_PREVIEW_COLUMNS + hiddenColumnCount) }} columns to keep the app
+            responsive. With this many columns you may run into performance issues.
+          </span>
+        </div>
+
         <!-- AG Grid -->
         <ag-grid-vue
           ref="gridComponentRef"
@@ -169,6 +179,7 @@ import ColumnStatsHeader from "./dataPreview/ColumnStatsHeader.vue";
 import GeometryCellRenderer from "./dataPreview/GeometryCellRenderer.vue";
 import ColumnStatsPanel from "./dataPreview/ColumnStatsPanel.vue";
 import { formatCount, totalRowCount } from "./dataPreview/columnQuality";
+import { MAX_PREVIEW_COLUMNS, limitPreviewColumns } from "./dataPreview/columnLimit";
 import { classifyStatsError, statsCacheKey, type StatsVerdict } from "./dataPreview/statsRequest";
 import { AgGridVue } from "@ag-grid-community/vue3";
 import { GridApi, BodyScrollEvent } from "@ag-grid-community/core";
@@ -191,6 +202,7 @@ const dataAvailable = ref(false);
 // null ⇒ the backend doesn't know the total row count (shown as "? rows").
 const dataLength = ref<number | null>(null);
 const columnLength = ref(0);
+const hiddenColumnCount = ref(0);
 const gridApi = ref<GridApi | null>(null);
 // Component ref on <ag-grid-vue> — `.value.$el` gives us this grid's root DOM
 // node so the window-level Cmd+C/A handler can scope itself to *this* grid
@@ -521,7 +533,9 @@ async function downloadData(nodeId: number) {
 
     if (resp) {
       dataPreview.value = resp;
-      columnDefs.value = (dataPreview.value.table_schema ?? []).map((item) => {
+      const limited = limitPreviewColumns(resp.table_schema ?? [], resp.data ?? []);
+      hiddenColumnCount.value = limited.hiddenColumnCount;
+      columnDefs.value = limited.columns.map((item) => {
         const isGeometry = isGeometryColumn(item);
         return {
           field: item.name,
@@ -540,7 +554,7 @@ async function downloadData(nodeId: number) {
         dataAvailable.value = false;
       } else {
         if (dataPreview.value) {
-          rowData.value = dataPreview.value.data;
+          rowData.value = limited.rows;
           dataLength.value = dataPreview.value.number_of_records;
           columnLength.value = dataPreview.value.number_of_columns;
         }
@@ -599,6 +613,7 @@ function removeData() {
   showTable.value = false;
   dataAvailable.value = false;
   dataLength.value = null;
+  hiddenColumnCount.value = 0;
   columnDefs.value = [{}];
   showFetchButton.value = false;
   currentNodeId.value = null;
@@ -831,6 +846,24 @@ onUnmounted(() => {
 
 .dp-grid--collapsed {
   flex: 0 0 80px;
+}
+
+.dp-column-limit-warning {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-warning);
+  background: var(--color-warning-light);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.dp-column-limit-warning__icon {
+  font-size: 16px;
+  color: var(--color-warning);
 }
 
 .dp-status-bar {
