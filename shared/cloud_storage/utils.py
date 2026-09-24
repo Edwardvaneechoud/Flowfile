@@ -61,6 +61,11 @@ def normalize_delta_path(resource_path: str) -> str:
     return resource_path
 
 
+def session_token_option(token: str | None) -> str:
+    """``""`` rather than an absent key, so polars never mixes an ambient AWS_SESSION_TOKEN into explicit keys."""
+    return token or ""
+
+
 def create_storage_options_from_boto_credentials(
     profile_name: str | None, region_name: str | None = None
 ) -> dict[str, Any]:
@@ -105,8 +110,7 @@ def create_storage_options_from_boto_credentials(
     storage_options = {
         "aws_access_key_id": frozen_creds.access_key,
         "aws_secret_access_key": frozen_creds.secret_key,
-        # "" rather than a dropped key: polars would otherwise mix in an ambient AWS_SESSION_TOKEN.
-        "aws_session_token": frozen_creds.token or "",
+        "aws_session_token": session_token_option(frozen_creds.token),
     }
     if session.region_name:
         storage_options["aws_region"] = session.region_name

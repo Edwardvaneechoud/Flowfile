@@ -12,8 +12,13 @@ from deltalake import DeltaTable
 
 from shared.cloud_storage.browse import list_cloud_uri
 from shared.cloud_storage.directory import get_first_file_from_s3_dir
-from shared.cloud_storage.storage_options import build_s3_storage_options, build_storage_options
-from shared.cloud_storage.utils import ensure_path_has_wildcard_pattern, validate_cloud_resource_path
+from shared.cloud_storage.storage_options import build_s3_client, build_s3_storage_options, build_storage_options
+from shared.cloud_storage.utils import (
+    create_storage_options_from_boto_credentials,
+    ensure_path_has_wildcard_pattern,
+    session_token_option,
+    validate_cloud_resource_path,
+)
 
 try:
     from test_utils.s3.fixtures import MINIO_ACCESS_KEY, MINIO_ENDPOINT_URL, MINIO_SECRET_KEY, get_minio_client
@@ -191,6 +196,101 @@ class TestAccessKeyValidation:
         options = build_s3_storage_options("access_key", aws_access_key_id="AKID", aws_secret_access_key="secret")
         assert options["aws_session_token"] == ""
         assert None not in options.values()
+
+
+class TestSessionTokenRule:
+    """One helper owns "blank, never absent": both credential producers go through it."""
+
+    @pytest.mark.parametrize(("token", "expected"), [(None, ""), ("", ""), ("tok", "tok")])
+    def test_helper_blanks_a_missing_token(self, token, expected):
+        assert session_token_option(token) == expected
+
+    def test_static_profile_credentials_carry_a_blank_token(self, hermetic_aws):
+        hermetic_aws("AKIDSTATIC", "static-secret-value")
+        assert create_storage_options_from_boto_credentials(None)["aws_session_token"] == ""
+
+    def test_finalize_no_longer_special_cases_the_token(self):
+        # A builder that emits None would now drop the key; the producers, not _finalize, own the rule.
+        from shared.cloud_storage.storage_options import _finalize
+
+        assert _finalize({"aws_session_token": None, "aws_allow_http": True}) == {"aws_allow_http": "true"}
+
+
+class TestBuildS3Client:
+    """The one boto3 client builder; browse.py adds timeouts + path style, directory.py takes the defaults."""
+
+    @pytest.fixture
+    def captured_kwargs(self, monkeypatch):
+        """Capture what build_s3_client hands boto3, without constructing a real client."""
+        import boto3
+
+        captured = {}
+
+        def _fake_client(service, **kwargs):
+            captured["service"] = service
+            captured.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(boto3, "client", _fake_client)
+        return captured
+
+    def test_allow_invalid_certificates_becomes_a_boolean_verify(self, captured_kwargs):
+        # build_s3_storage_options emits the object_store key as the *string* "true"; boto3 needs a bool.
+        build_s3_client({"aws_access_key_id": "k", "aws_secret_access_key": "s", "allow_invalid_certificates": "true"})
+        assert captured_kwargs["verify"] is False
+
+    def test_verification_stays_on_by_default(self, captured_kwargs):
+        build_s3_client({"aws_access_key_id": "k", "allow_invalid_certificates": "false"})
+        assert "verify" not in captured_kwargs
+
+    def test_aws_region_is_translated_to_region_name(self, captured_kwargs):
+        build_s3_client({"aws_access_key_id": "k", "aws_region": "eu-west-1"})
+        assert captured_kwargs["region_name"] == "eu-west-1"
+        assert "aws_region" not in captured_kwargs
+
+    def test_object_store_only_keys_are_dropped_not_forwarded(self, captured_kwargs):
+        # boto3.client() raises on unknown kwargs, so forwarding these would break every listing and read.
+        build_s3_client(
+            {
+                "aws_access_key_id": "k",
+                "aws_secret_access_key": "s",
+                "aws_allow_http": "true",
+                "aws_virtual_hosted_style_request": "false",
+            }
+        )
+        assert set(captured_kwargs) == {"service", "aws_access_key_id", "aws_secret_access_key", "config"}
+
+    def test_blank_session_token_is_not_forwarded(self, captured_kwargs):
+        # The builders blank aws_session_token to defeat ambient env tokens; boto3 must not see "".
+        build_s3_client({"aws_access_key_id": "k", "aws_secret_access_key": "s", "aws_session_token": ""})
+        assert "aws_session_token" not in captured_kwargs
+
+    def test_no_options_keeps_botocore_defaults(self, captured_kwargs):
+        build_s3_client(None)
+        assert captured_kwargs == {"service": "s3", "config": None}
+
+    def test_timeouts_bound_the_client_and_cap_retries(self, captured_kwargs):
+        build_s3_client({"aws_access_key_id": "k"}, timeouts=(5, 15))
+        config = captured_kwargs["config"]
+        assert (config.connect_timeout, config.read_timeout) == (5, 15)
+        assert config.retries == {"max_attempts": 2, "mode": "standard"}
+
+    def test_path_style_applies_to_a_custom_endpoint(self, captured_kwargs):
+        build_s3_client({"aws_access_key_id": "k", "endpoint_url": "http://localhost:9000"}, path_style=True)
+        assert captured_kwargs["endpoint_url"] == "http://localhost:9000"
+        assert captured_kwargs["config"].s3["addressing_style"] == "path"
+
+    def test_aws_endpoint_keeps_default_addressing(self, captured_kwargs):
+        build_s3_client({"aws_access_key_id": "k"}, path_style=True)
+        assert captured_kwargs["config"] is None
+
+    def test_path_style_merges_into_the_timeout_config(self, captured_kwargs):
+        build_s3_client(
+            {"aws_access_key_id": "k", "endpoint_url": "http://localhost:9000"}, timeouts=(5, 15), path_style=True
+        )
+        config = captured_kwargs["config"]
+        assert config.connect_timeout == 5
+        assert config.s3["addressing_style"] == "path"
 
     def test_a_stored_session_token_is_forwarded(self):
         options = build_storage_options(

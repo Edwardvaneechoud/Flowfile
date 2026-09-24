@@ -10,15 +10,53 @@ from __future__ import annotations
 
 from typing import Any
 
-from shared.cloud_storage.utils import create_storage_options_from_boto_credentials
+from shared.cloud_storage.utils import create_storage_options_from_boto_credentials, session_token_option
 
 # object_store's client option for skipping TLS verification; polars and deltalake silently ignore "verify".
 ALLOW_INVALID_CERTIFICATES = "allow_invalid_certificates"
+# Object-store option keys boto3 accepts as client kwargs; anything else (aws_allow_http, ...) would raise.
+_S3_CLIENT_KEYS = ("aws_access_key_id", "aws_secret_access_key", "aws_session_token", "endpoint_url")
 
 
 def tls_verification_disabled(storage_options: dict[str, Any] | None) -> bool:
     """Whether built storage options ask to skip TLS certificate verification (for boto3/Azure SDK clients)."""
     return str((storage_options or {}).get(ALLOW_INVALID_CERTIFICATES)).lower() == "true"
+
+
+def build_s3_client(
+    storage_options: dict[str, Any] | None,
+    *,
+    timeouts: tuple[float, float] | None = None,
+    path_style: bool = False,
+):
+    """A boto3 S3 client from Polars-shaped storage options; only the keys boto3 understands are forwarded.
+
+    *timeouts* is ``(connect, read)`` seconds and also caps retries at 2, for interactive listings.
+    *path_style* addresses a custom endpoint path-style: S3-compatible stores do not serve virtual-hosted URLs.
+    """
+    import boto3
+    from botocore.config import Config
+
+    options = storage_options or {}
+    kwargs: dict[str, Any] = {key: options[key] for key in _S3_CLIENT_KEYS if options.get(key)}
+    region = options.get("aws_region") or options.get("region_name")
+    if region:
+        kwargs["region_name"] = region
+    if tls_verification_disabled(options):
+        kwargs["verify"] = False  # a bool: boto3 reads a string verify as a CA-bundle path
+
+    config = None
+    if timeouts:
+        connect_timeout, read_timeout = timeouts
+        config = Config(
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            retries={"max_attempts": 2, "mode": "standard"},
+        )
+    if path_style and kwargs.get("endpoint_url"):
+        path_config = Config(s3={"addressing_style": "path"})
+        config = path_config if config is None else config.merge(path_config)
+    return boto3.client("s3", config=config, **kwargs)
 
 
 def build_storage_options(
@@ -93,14 +131,11 @@ def build_storage_options(
 def _finalize(options: dict[str, Any] | None) -> dict[str, str]:
     """Coerce builder output to the all-string dict that polars, deltalake and object_store accept.
 
-    ``None`` is dropped, except ``aws_session_token``, which becomes ``""`` so polars never mixes in an
-    ambient ``AWS_SESSION_TOKEN``; bools become ``"true"``/``"false"``.
+    ``None`` is dropped; bools become ``"true"``/``"false"``.
     """
     finalized: dict[str, str] = {}
     for key, value in (options or {}).items():
         if value is None:
-            if key == "aws_session_token":
-                finalized[key] = ""
             continue
         if isinstance(value, bool):
             finalized[key] = "true" if value else "false"
@@ -158,8 +193,7 @@ def build_s3_storage_options(
             )
         storage_options["aws_access_key_id"] = aws_access_key_id
         storage_options["aws_secret_access_key"] = aws_secret_access_key
-        # "" rather than absent, so an ambient AWS_SESSION_TOKEN is never mixed in
-        storage_options["aws_session_token"] = aws_session_token or ""
+        storage_options["aws_session_token"] = session_token_option(aws_session_token)
 
     elif auth_method == "iam_role":
         sts_client = boto3.client("sts", region_name=aws_region)

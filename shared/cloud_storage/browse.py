@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
-from shared.cloud_storage.storage_options import tls_verification_disabled
+from shared.cloud_storage.storage_options import build_s3_client, tls_verification_disabled
 from shared.cloud_storage.uri import (
     ParsedUri,
     build_uri,
@@ -246,8 +246,6 @@ def _slice_page(
 
 # --- S3 ---------------------------------------------------------------------
 
-# Object-store option keys that boto3 would reject; anything not listed is dropped.
-_S3_CLIENT_KEYS = ("aws_access_key_id", "aws_secret_access_key", "aws_session_token", "endpoint_url")
 _S3_DENIED_CODES = {
     "AccessDenied",
     "AllAccessDisabled",
@@ -258,35 +256,6 @@ _S3_DENIED_CODES = {
     "UnauthorizedOperation",
 }
 _S3_MISSING_CODES = {"NoSuchBucket", "NoSuchKey", "404", "NotFound"}
-
-
-def _build_s3_client(storage_options: dict[str, Any] | None):
-    """Build a boto3 S3 client from Polars-shaped storage options, by allow-list.
-
-    Separate from ``directory.py::_create_s3_client``: listing needs bounded timeouts and path-style addressing.
-    """
-    import boto3
-    from botocore.config import Config
-
-    options = storage_options or {}
-    kwargs: dict[str, Any] = {key: options[key] for key in _S3_CLIENT_KEYS if options.get(key)}
-
-    region = options.get("aws_region") or options.get("region_name")
-    if region:
-        kwargs["region_name"] = region
-
-    if tls_verification_disabled(options):
-        kwargs["verify"] = False
-
-    config = Config(
-        connect_timeout=_CONNECT_TIMEOUT_SECONDS,
-        read_timeout=_READ_TIMEOUT_SECONDS,
-        retries={"max_attempts": 2, "mode": "standard"},
-    )
-    if kwargs.get("endpoint_url"):
-        # MinIO and other S3-compatible endpoints do not serve virtual-hosted-style URLs.
-        config = config.merge(Config(s3={"addressing_style": "path"}))
-    return boto3.client("s3", config=config, **kwargs)
 
 
 def _s3_error_code(exc: Any) -> str:
@@ -323,7 +292,9 @@ def _translate_generic_error(exc: Exception, location: str) -> BrowseError:
 def _list_s3(
     parsed: ParsedUri, storage_options: dict[str, Any] | None, page_size: int, page_token: str | None
 ) -> BrowseResult:
-    client = _build_s3_client(storage_options)
+    client = build_s3_client(
+        storage_options, timeouts=(_CONNECT_TIMEOUT_SECONDS, _READ_TIMEOUT_SECONDS), path_style=True
+    )
     if parsed.is_root:
         return _list_s3_buckets(client, parsed.scheme, page_size, page_token)
 
