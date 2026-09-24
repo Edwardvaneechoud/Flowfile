@@ -48,7 +48,7 @@ def _client_error(code: str):
 @pytest.fixture
 def use_fake_s3(monkeypatch):
     def _install(client):
-        monkeypatch.setattr(browse, "_build_s3_client", lambda _options: client)
+        monkeypatch.setattr(browse, "build_s3_client", lambda _options, **_kwargs: client)
         return client
 
     return _install
@@ -125,67 +125,23 @@ class TestPageTokens:
             browse._decode_token("s3o", "!!!not-base64!!!")
 
 
-class TestBuildS3Client:
-    @pytest.fixture
-    def captured_kwargs(self, monkeypatch):
-        """Capture what _build_s3_client hands boto3, without constructing a real client."""
-        import boto3
+class TestListingClient:
+    """The listing asks the shared builder for a fail-fast, path-style client; the builder itself is tested with it."""
 
+    def test_listing_builds_a_fail_fast_path_style_client(self, monkeypatch):
         captured = {}
 
-        def _fake_client(service, **kwargs):
-            captured["service"] = service
+        def _capture(options, **kwargs):
+            captured["options"] = options
             captured.update(kwargs)
-            return object()
+            return FakeS3Client(pages=[{"CommonPrefixes": [], "Contents": [], "IsTruncated": False}])
 
-        monkeypatch.setattr(boto3, "client", _fake_client)
-        return captured
-
-    def test_string_false_verify_is_coerced_to_a_boolean(self, captured_kwargs):
-        # build_s3_storage_options emits the *string* "False", which is truthy in Python.
-        browse._build_s3_client({"aws_access_key_id": "k", "aws_secret_access_key": "s", "verify": "False"})
-        assert captured_kwargs["verify"] is False
-
-    def test_truthy_verify_stays_true(self, captured_kwargs):
-        browse._build_s3_client({"aws_access_key_id": "k", "verify": True})
-        assert captured_kwargs["verify"] is True
-
-    def test_aws_region_is_translated_to_region_name(self, captured_kwargs):
-        browse._build_s3_client({"aws_access_key_id": "k", "aws_region": "eu-west-1"})
-        assert captured_kwargs["region_name"] == "eu-west-1"
-        assert "aws_region" not in captured_kwargs
-
-    def test_object_store_only_keys_are_dropped_not_forwarded(self, captured_kwargs):
-        # boto3.client() raises on unknown kwargs, so forwarding these would break every listing.
-        browse._build_s3_client(
-            {
-                "aws_access_key_id": "k",
-                "aws_secret_access_key": "s",
-                "aws_allow_http": "true",
-                "aws_virtual_hosted_style_request": "false",
-            }
-        )
-        assert set(captured_kwargs) == {"service", "aws_access_key_id", "aws_secret_access_key", "config"}
-
-    def test_blank_session_token_is_not_forwarded(self, captured_kwargs):
-        # build_s3_storage_options blanks aws_session_token to defeat ambient env tokens.
-        browse._build_s3_client({"aws_access_key_id": "k", "aws_secret_access_key": "s", "aws_session_token": ""})
-        assert "aws_session_token" not in captured_kwargs
-
-    def test_timeouts_and_retries_are_bounded(self, captured_kwargs):
-        browse._build_s3_client({"aws_access_key_id": "k"})
-        config = captured_kwargs["config"]
-        assert config.connect_timeout == 5
-        assert config.read_timeout == 15
-
-    def test_custom_endpoint_gets_path_style_addressing(self, captured_kwargs):
-        browse._build_s3_client({"aws_access_key_id": "k", "endpoint_url": "http://localhost:9000"})
-        assert captured_kwargs["endpoint_url"] == "http://localhost:9000"
-        assert captured_kwargs["config"].s3["addressing_style"] == "path"
-
-    def test_aws_endpoint_keeps_default_addressing(self, captured_kwargs):
-        browse._build_s3_client({"aws_access_key_id": "k"})
-        assert captured_kwargs["config"].s3 is None
+        monkeypatch.setattr(browse, "build_s3_client", _capture)
+        options = {"aws_access_key_id": "k", "endpoint_url": "http://localhost:9000"}
+        list_cloud_uri("s3", "s3://bucket/prefix", options)
+        assert captured["options"] is options
+        assert captured["timeouts"] == (browse._CONNECT_TIMEOUT_SECONDS, browse._READ_TIMEOUT_SECONDS)
+        assert captured["path_style"] is True
 
 
 class TestListS3Prefix:
@@ -399,6 +355,7 @@ class TestAdlsCredentials:
         def _fake_client(account_url, credential=None, **kwargs):
             captured["account_url"] = account_url
             captured["credential"] = credential
+            captured["connection_verify"] = kwargs.get("connection_verify")
             return object()
 
         monkeypatch.setattr(blob, "BlobServiceClient", _fake_client)
@@ -433,6 +390,14 @@ class TestAdlsCredentials:
     def test_default_endpoint_is_derived_from_the_account(self, captured_client):
         browse._build_blob_service_client({"account_name": "acct", "account_key": "KEY"})
         assert captured_client["account_url"] == "https://acct.blob.core.windows.net"
+
+    def test_tls_verification_follows_allow_invalid_certificates(self, captured_client):
+        browse._build_blob_service_client({"account_name": "acct", "account_key": "KEY"})
+        assert captured_client["connection_verify"] is True
+        browse._build_blob_service_client(
+            {"account_name": "acct", "account_key": "KEY", "allow_invalid_certificates": "true"}
+        )
+        assert captured_client["connection_verify"] is False
 
 
 class TestGcsCredentials:

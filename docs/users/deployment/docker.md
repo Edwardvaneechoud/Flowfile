@@ -203,6 +203,21 @@ How they work together:
 4. The value is encrypted with a per-user key derived from the master key before storage.
 5. At runtime, secrets are decrypted for use inside flow execution — never returned to the API.
 
+### Cloud storage access { #cloud-storage-access }
+
+Cloud Storage Reader and Writer nodes cannot fall back to the server's own cloud credentials or reach its local disk. Each node must select a saved [cloud connection](../visual-editor/tutorials/cloud-connections.md) and a path starting with `s3://`, `az://`, `abfss://` or `gs://`:
+
+- **No connection** is disabled in the node settings, for administrators too. A flow saved with it, including one run on a schedule or from the CLI, fails with *Select a cloud storage connection; server credentials are not available in multi-user mode.*
+- A local path such as `/data/out` fails with *Cloud storage path '/data/out' is a local path, which this server does not allow…* An empty or relative path fails in every mode, before anything is read or written.
+
+Four connection authentication methods store no credentials of their own and also authenticate as the server: `aws-cli` (**AWS CLI**), `iam_role` (**IAM Role**, assumed with the server's credentials), `managed_identity` (**Managed Identity**) and `env_vars` (**Application Default Credentials**). Only an administrator can own a connection that uses one of them:
+
+- A user who is not an administrator cannot create a connection with one of these methods, switch a connection to one, or edit one shared with them. The save fails with, for example, *The aws-cli method authenticates with this server's own credentials, which only an administrator's cloud connections may do in multi-user mode. Use an access key, SAS token, service principal or service account instead.*
+- A connection of this kind that an administrator owns keeps working, including for members of the groups it is [shared](sharing.md#connections-and-the-credential-re-entry-rule) with.
+- A connection of this kind owned by anyone else, such as one saved before an upgrade, is refused wherever it is used: node runs, the storage browser, the Delta table checks and catalog storage.
+
+The storage browser and the Delta table checks in the node settings refuse **No connection** the same way. The desktop app and the pip-installed package keep all of these options.
+
 ### Production checklist
 
 - [ ] Replace the compose's insecure dev fallbacks for `JWT_SECRET_KEY` and `FLOWFILE_INTERNAL_TOKEN` (both are literals published in `docker-compose.yml`, and both are effectively required in Docker mode) — generate each with `openssl rand -hex 32`

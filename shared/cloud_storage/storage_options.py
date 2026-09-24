@@ -10,7 +10,53 @@ from __future__ import annotations
 
 from typing import Any
 
-from shared.cloud_storage.utils import create_storage_options_from_boto_credentials
+from shared.cloud_storage.utils import create_storage_options_from_boto_credentials, session_token_option
+
+# object_store's client option for skipping TLS verification; polars and deltalake silently ignore "verify".
+ALLOW_INVALID_CERTIFICATES = "allow_invalid_certificates"
+# Object-store option keys boto3 accepts as client kwargs; anything else (aws_allow_http, ...) would raise.
+_S3_CLIENT_KEYS = ("aws_access_key_id", "aws_secret_access_key", "aws_session_token", "endpoint_url")
+
+
+def tls_verification_disabled(storage_options: dict[str, Any] | None) -> bool:
+    """Whether built storage options ask to skip TLS certificate verification (for boto3/Azure SDK clients)."""
+    return str((storage_options or {}).get(ALLOW_INVALID_CERTIFICATES)).lower() == "true"
+
+
+def build_s3_client(
+    storage_options: dict[str, Any] | None,
+    *,
+    timeouts: tuple[float, float] | None = None,
+    path_style: bool = False,
+):
+    """A boto3 S3 client from Polars-shaped storage options; only the keys boto3 understands are forwarded.
+
+    *timeouts* is ``(connect, read)`` seconds and also caps retries at 2, for interactive listings.
+    *path_style* addresses a custom endpoint path-style: S3-compatible stores do not serve virtual-hosted URLs.
+    """
+    import boto3
+    from botocore.config import Config
+
+    options = storage_options or {}
+    kwargs: dict[str, Any] = {key: options[key] for key in _S3_CLIENT_KEYS if options.get(key)}
+    region = options.get("aws_region") or options.get("region_name")
+    if region:
+        kwargs["region_name"] = region
+    if tls_verification_disabled(options):
+        kwargs["verify"] = False  # a bool: boto3 reads a string verify as a CA-bundle path
+
+    config = None
+    if timeouts:
+        connect_timeout, read_timeout = timeouts
+        config = Config(
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            retries={"max_attempts": 2, "mode": "standard"},
+        )
+    if path_style and kwargs.get("endpoint_url"):
+        path_config = Config(s3={"addressing_style": "path"})
+        config = path_config if config is None else config.merge(path_config)
+    return boto3.client("s3", config=config, **kwargs)
 
 
 def build_storage_options(
@@ -25,6 +71,7 @@ def build_storage_options(
     aws_role_arn: str | None = None,
     aws_allow_unsafe_html: bool | None = None,
     aws_session_token: str | None = None,
+    aws_profile: str | None = None,
     # ADLS fields
     azure_account_name: str | None = None,
     azure_account_key: str | None = None,
@@ -38,25 +85,27 @@ def build_storage_options(
     # Common
     endpoint_url: str | None = None,
     verify_ssl: bool = True,
-) -> dict[str, Any]:
+) -> dict[str, str]:
     """Build storage options dict based on the storage type and auth method.
 
-    All secret values must be provided as plain strings (already decrypted).
+    All secret values must be provided as plain strings (already decrypted); the result is all strings (``_finalize``).
     """
     if storage_type == "s3":
-        return build_s3_storage_options(
+        options = build_s3_storage_options(
             auth_method=auth_method,
             connection_name=connection_name,
             aws_region=aws_region,
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
             aws_role_arn=aws_role_arn,
             aws_allow_unsafe_html=aws_allow_unsafe_html,
+            aws_profile=aws_profile,
             endpoint_url=endpoint_url,
             verify_ssl=verify_ssl,
         )
     elif storage_type == "adls":
-        return build_adls_storage_options(
+        options = build_adls_storage_options(
             auth_method=auth_method,
             azure_account_name=azure_account_name,
             azure_account_key=azure_account_key,
@@ -65,9 +114,10 @@ def build_storage_options(
             azure_client_secret=azure_client_secret,
             azure_sas_token=azure_sas_token,
             endpoint_url=endpoint_url,
+            verify_ssl=verify_ssl,
         )
     elif storage_type == "gcs":
-        return build_gcs_storage_options(
+        options = build_gcs_storage_options(
             auth_method=auth_method,
             gcs_service_account_key=gcs_service_account_key,
             gcs_project_id=gcs_project_id,
@@ -75,6 +125,25 @@ def build_storage_options(
         )
     else:
         raise ValueError(f"Unsupported storage type: {storage_type}")
+    return _finalize(options)
+
+
+def _finalize(options: dict[str, Any] | None) -> dict[str, str]:
+    """Coerce builder output to the all-string dict that polars, deltalake and object_store accept.
+
+    ``None`` is dropped; bools become ``"true"``/``"false"``.
+    """
+    finalized: dict[str, str] = {}
+    for key, value in (options or {}).items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            finalized[key] = "true" if value else "false"
+        elif isinstance(value, int | float):
+            finalized[key] = str(value)
+        else:
+            finalized[key] = value
+    return finalized
 
 
 def build_s3_storage_options(
@@ -84,37 +153,47 @@ def build_s3_storage_options(
     aws_region: str | None = None,
     aws_access_key_id: str | None = None,
     aws_secret_access_key: str | None = None,
+    aws_session_token: str | None = None,
     aws_role_arn: str | None = None,
     aws_allow_unsafe_html: bool | None = None,
+    aws_profile: str | None = None,
     endpoint_url: str | None = None,
     verify_ssl: bool = True,
 ) -> dict[str, Any]:
     """Build S3-specific storage options.
 
-    For iam_role auth, this function assumes the role via boto3 STS.
+    The auth method decides only the credentials (aws-cli via boto3 from ``aws_profile``, never the
+    connection name); the endpoint, plain-HTTP and TLS options apply to every method.
     """
     import boto3
-
-    if auth_method == "aws-cli":
-        return create_storage_options_from_boto_credentials(
-            profile_name=connection_name, region_name=aws_region
-        )
 
     storage_options: dict[str, Any] = {}
     if aws_region:
         storage_options["aws_region"] = aws_region
-    if endpoint_url:
-        storage_options["endpoint_url"] = endpoint_url
-    if not verify_ssl:
-        storage_options["verify"] = "False"
-    if aws_allow_unsafe_html:
-        storage_options["aws_allow_http"] = "true"
 
-    if auth_method == "access_key":
+    if auth_method == "aws-cli":
+        storage_options.update(
+            create_storage_options_from_boto_credentials(profile_name=aws_profile, region_name=aws_region)
+        )
+
+    elif auth_method == "access_key":
+        missing = [
+            field
+            for field, value in (
+                ("aws_access_key_id", aws_access_key_id),
+                ("aws_secret_access_key", aws_secret_access_key),
+            )
+            if not value
+        ]
+        if missing:
+            label = f" '{connection_name}'" if connection_name not in (None, "", "None") else ""
+            raise ValueError(
+                f"Cloud connection{label} uses access_key auth but is missing {' and '.join(missing)}. "
+                "Edit the connection and enter both the access key ID and the secret access key."
+            )
         storage_options["aws_access_key_id"] = aws_access_key_id
         storage_options["aws_secret_access_key"] = aws_secret_access_key
-        # Explicitly clear any session token from the environment
-        storage_options["aws_session_token"] = ""
+        storage_options["aws_session_token"] = session_token_option(aws_session_token)
 
     elif auth_method == "iam_role":
         sts_client = boto3.client("sts", region_name=aws_region)
@@ -126,6 +205,13 @@ def build_s3_storage_options(
         storage_options["aws_access_key_id"] = credentials["AccessKeyId"]
         storage_options["aws_secret_access_key"] = credentials["SecretAccessKey"]
         storage_options["aws_session_token"] = credentials["SessionToken"]
+
+    if endpoint_url:
+        storage_options["endpoint_url"] = endpoint_url
+    if aws_allow_unsafe_html:
+        storage_options["aws_allow_http"] = "true"
+    if not verify_ssl:
+        storage_options[ALLOW_INVALID_CERTIFICATES] = "true"
 
     return storage_options
 
@@ -140,9 +226,12 @@ def build_adls_storage_options(
     azure_client_secret: str | None = None,
     azure_sas_token: str | None = None,
     endpoint_url: str | None = None,
+    verify_ssl: bool = True,
 ) -> dict[str, Any]:
     """Build Azure ADLS-specific storage options."""
     storage_options: dict[str, Any] = {}
+    if not verify_ssl:
+        storage_options[ALLOW_INVALID_CERTIFICATES] = "true"
 
     if auth_method == "access_key":
         if azure_account_name:
@@ -190,7 +279,7 @@ def build_gcs_storage_options(
     gcs_project_id: str | None = None,
     endpoint_url: str | None = None,
 ) -> dict[str, Any]:
-    """Build GCS-specific storage options (fsspec/gcsfs-compatible)."""
+    """Build GCS-specific storage options (fsspec/gcsfs-compatible); ``verify_ssl`` is not applied, gcsfs has none."""
     storage_options: dict[str, Any] = {}
 
     if auth_method == "service_account" and gcs_service_account_key:

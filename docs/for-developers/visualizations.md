@@ -101,7 +101,7 @@ Two details are load-bearing:
 - **The session key is content-addressed.** `sha256(plan_bytes)[:16]` plus a run token. Not `flow_id` — `create_unique_id()` regenerates that on every flow open, so keying on it would spawn a new child per open.
 - **The run token still matters.** A serialised plan records source *paths*, not data snapshots, so its hash doesn't move when the underlying data does — the same trap that forces the `kernel_shared` target to always rebuild. `node_viz` folds `flow.latest_run_info.start_time` (microsecond resolution) into the key, so repeated drawer opens reuse one warm child while a re-run rotates to a fresh one.
 
-Cloud-backed plans are **refused**, not shipped: Polars inlines `storage_options`, so a cloud scan's blob carries the connection's decrypted credentials, and a viz session child is long-lived.
+Cloud-backed plans are **refused**, not shipped: a cloud scan's blob carries the connection's credentials as they were when the plan was built (S3 and Azure key credentials as a `$ffsec$` ciphertext inside an `EncryptedCredentialProvider`, an Azure client secret or GCS key still inline in `storage_options`), and a viz session child is long-lived.
 
 Routes are `POST /analysis_data/compute` and `POST /analysis_data/fields` (`routes/routes.py`), alongside `GET /analysis_data/graphic_walker_input`, which returns the saved specs and the node's field list — never rows.
 

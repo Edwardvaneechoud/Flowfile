@@ -4,7 +4,7 @@ import base64
 from typing import Literal
 
 import polars as pl
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from flowfile_core.schemas.change_feed import ChangeFeedReadSettings
 from flowfile_core.schemas.delta_write import MERGE_MODES, validate_delta_write_rules
@@ -76,6 +76,7 @@ class FullCloudStorageConnectionWorkerInterface(AuthSettingsInput):
     aws_role_arn: str | None = None
     aws_allow_unsafe_html: bool | None = None
     aws_session_token: str | None = None
+    aws_profile: str | None = None
 
     # Azure ADLS
     azure_account_name: str | None = None
@@ -104,6 +105,8 @@ class FullCloudStorageConnection(AuthSettingsInput):
     aws_role_arn: str | None = None
     aws_allow_unsafe_html: bool | None = None
     aws_session_token: SecretStr | None = None
+    # aws-cli only: the local AWS profile; blank uses boto3's default credential chain
+    aws_profile: str | None = None
 
     # Azure ADLS
     azure_account_name: str | None = None
@@ -141,6 +144,7 @@ class FullCloudStorageConnection(AuthSettingsInput):
             aws_access_key_id=self.aws_access_key_id,
             aws_role_arn=self.aws_role_arn,
             aws_session_token=encrypt_for_worker(self.aws_session_token, user_id),
+            aws_profile=self.aws_profile,
             azure_account_name=self.azure_account_name,
             azure_tenant_id=self.azure_tenant_id,
             azure_account_key=encrypt_for_worker(self.azure_account_key, user_id),
@@ -162,6 +166,7 @@ class FullCloudStorageConnectionInterface(AuthSettingsInput):
     aws_region: str | None = None
     aws_access_key_id: str | None = None
     aws_role_arn: str | None = None
+    aws_profile: str | None = None
     azure_account_name: str | None = None
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
@@ -176,15 +181,8 @@ class CloudStorageSettings(BaseModel):
     """Settings for cloud storage nodes in the visual designer"""
 
     auth_mode: CloudStorageAuthMode = "auto"
-    connection_name: str | None = None  # Required only for 'reference' mode
+    connection_name: str | None = None
     resource_path: str  # s3://bucket/path/to/file.csv
-
-    @field_validator("auth_mode", mode="after")
-    def validate_auth_requirements(cls, v, values):
-        data = values.data
-        if v == "reference" and not data.get("connection_name"):
-            raise ValueError("connection_name required when using reference mode")
-        return v
 
 
 class CloudStorageReadSettings(ChangeFeedReadSettings, CloudStorageSettings):
@@ -211,6 +209,16 @@ class CloudStorageReadSettings(ChangeFeedReadSettings, CloudStorageSettings):
         if self.delta_version is not None:
             raise ValueError("Change modes cannot be combined with a pinned table version")
         return self
+
+    def with_csv_defaults(self) -> "CloudStorageReadSettings":
+        """A copy with the drawer's defaults for unset CSV options; the engine and the FlowFrame export share it."""
+        return self.model_copy(
+            update={
+                "csv_has_header": True if self.csv_has_header is None else self.csv_has_header,
+                "csv_delimiter": self.csv_delimiter or ",",
+                "csv_encoding": self.csv_encoding or "utf8",
+            }
+        )
 
 
 class CloudStorageReadSettingsInternal(BaseModel):

@@ -3,12 +3,20 @@
 Provides the CloudStorageReader class that translates FullCloudStorageConnection
 objects into storage_options dicts and credential providers, delegating the
 actual options building to shared.cloud_storage.storage_options.
+
+Importing it registers core's secret decryptor, so provider-carrying plans can execute in core.
 """
 
-from collections.abc import Callable
+import json
 from typing import Any
 
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
+from flowfile_core.secret_manager.secret_manager import _encrypt_with_master_key, decrypt_secret, encrypt_secret
+from shared.cloud_credential_provider import (
+    EncryptedCredentialProvider,
+    register_secret_decryptor,
+    split_credentials,
+)
 
 # Re-export from shared for backward compatibility of callers that import from here
 from shared.cloud_storage.directory import get_first_file_from_cloud_dir  # noqa: F401
@@ -41,6 +49,10 @@ class CloudStorageReader:
             ),
             aws_role_arn=connection.aws_role_arn,
             aws_allow_unsafe_html=connection.aws_allow_unsafe_html,
+            aws_session_token=(
+                connection.aws_session_token.get_secret_value() if connection.aws_session_token else None
+            ),
+            aws_profile=connection.aws_profile,
             azure_account_name=connection.azure_account_name,
             azure_account_key=(
                 connection.azure_account_key.get_secret_value() if connection.azure_account_key else None
@@ -65,24 +77,49 @@ class CloudStorageReader:
         return _use_pyarrow_for_gcs(connection.storage_type, connection.endpoint_url)
 
     @staticmethod
-    def get_credential_provider(connection: "FullCloudStorageConnection") -> Callable | None:
-        """Get a credential provider function if needed for the authentication method.
+    def get_credential_provider(
+        storage_options: dict[str, Any] | None, user_id: int | None
+    ) -> EncryptedCredentialProvider | None:
+        """A provider carrying the credentials in *storage_options* encrypted, or None when there are none.
 
-        Args:
-            connection: Full connection details
-
-        Returns:
-            Credential provider function or None
+        Encrypted under *user_id*, else in the legacy master-key format the worker also decrypts.
         """
-        if connection.storage_type == "s3" and connection.auth_method == "iam_role":
+        if not storage_options:
+            return None
+        credentials = split_credentials(storage_options)[1]
+        if not credentials:
+            return None
+        payload = json.dumps(credentials)
+        encrypted = encrypt_secret(payload, user_id) if user_id is not None else _encrypt_with_master_key(payload)
+        return EncryptedCredentialProvider(encrypted)
 
-            def aws_credential_provider():
-                return {
-                    "aws_access_key_id": "...",
-                    "aws_secret_access_key": "...",
-                    "aws_session_token": "...",
-                }, None  # expiry
+    @staticmethod
+    def get_scan_kwargs(
+        storage_options: dict[str, Any] | None, credential_provider: EncryptedCredentialProvider | None
+    ) -> dict[str, Any]:
+        """``storage_options``/``credential_provider`` kwargs for a lazy scan, with no credential in the options."""
+        kwargs: dict[str, Any] = {}
+        if storage_options:
+            kwargs["storage_options"] = (
+                split_credentials(storage_options)[0] if credential_provider is not None else storage_options
+            )
+        if credential_provider is not None:
+            kwargs["credential_provider"] = credential_provider
+        return kwargs
 
-            return aws_credential_provider
+    @staticmethod
+    def get_secure_scan_kwargs(storage_options: dict[str, Any] | None, user_id: int | None) -> dict[str, Any]:
+        """Scan kwargs for a plan that may be serialized: the credentials travel only encrypted.
 
-        return None
+        Polars inlines ``storage_options`` into a serialized plan, and core ships plans to the worker.
+        """
+        return CloudStorageReader.get_scan_kwargs(
+            storage_options, CloudStorageReader.get_credential_provider(storage_options, user_id)
+        )
+
+
+def _decrypt_plan_credentials(encrypted: str) -> str:
+    return decrypt_secret(encrypted).get_secret_value()
+
+
+register_secret_decryptor(_decrypt_plan_credentials)

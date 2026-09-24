@@ -18,6 +18,7 @@ from __future__ import annotations
 import importlib
 import os
 import platform
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -88,7 +89,12 @@ class CoreLogSink:
         self._thread: threading.Thread | None = None
 
     def start(self) -> bool:
-        """Bind and serve. Returns False when something else already listens."""
+        """Bind and serve. Returns False when something else already listens.
+
+        Probes with a connect first: on macOS a loopback bind succeeds next to a 0.0.0.0 listener.
+        """
+        if _accepts_connections(self.host, self.port):
+            return False
         try:
             self._server = _SinkServer((self.host, self.port), _LogSinkHandler)
         except OSError:
@@ -108,6 +114,15 @@ class CoreLogSink:
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
+
+
+def _accepts_connections(host: str, port: int, timeout: float = 0.25) -> bool:
+    # Short timeout: a refused loopback connect can stall ~2s on Windows.
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def _imported_predicate(module_name: str, attr: str):

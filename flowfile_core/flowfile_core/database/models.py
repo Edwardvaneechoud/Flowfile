@@ -77,6 +77,7 @@ class CloudStorageConnection(Base):
     aws_session_token_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
     aws_role_arn = Column(String, nullable=True)
     aws_allow_unsafe_html = Column(Boolean, nullable=True)
+    aws_profile = Column(String, nullable=True)  # aws-cli only; NULL uses boto3's default credential chain
 
     # Azure ADLS fields
     azure_account_name = Column(String, nullable=True)
@@ -607,7 +608,7 @@ class CatalogTable(Base):  # Pydantic schemas: schemas/catalog_schema.py; interf
     table_type = Column(String, nullable=False, default="physical", server_default="physical")
     producer_registration_id = Column(Integer, ForeignKey("flow_registrations.id"), nullable=True)
     # Cached plan for optimized virtual tables; only local, secret-free plans (a serialized cloud
-    # scan would embed decrypted credentials, so cloud sources are excluded).
+    # scan would embed its build-time credentials, so cloud sources are excluded).
     serialized_lazy_frame = Column(LargeBinary, nullable=True)
     is_optimized = Column(Boolean, nullable=True, default=False)
     sql_query = Column(Text, nullable=True)  # SQL definition for query-based virtual tables

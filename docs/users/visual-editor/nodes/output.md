@@ -76,7 +76,7 @@ Writes the incoming table to a database table.
 <div markdown>
 Writes directly to cloud object storage: AWS S3 (including S3-compatible services like MinIO), Azure Data Lake Storage, and Google Cloud Storage.
 
-Authenticate with a [saved cloud connection](../tutorials/cloud-connections.md), or — for S3 only — with local AWS credentials from a CLI profile or environment variables.
+Authenticate with a [saved cloud connection](../tutorials/cloud-connections.md), or with **No connection** to use the credentials of the machine running Flowfile. **No connection** ignores saved endpoints and is unavailable on a multi-user server; see [Running a node without a connection](../tutorials/cloud-connections.md#no-connection).
 </div>
 
 ![Screenshot of the Cloud Storage Writer configuration](../../../assets/images/ui/screenshot_cloud_writer_output.png)
@@ -87,7 +87,7 @@ Authenticate with a [saved cloud connection](../tutorials/cloud-connections.md),
 
 | Setting | Description |
 |---|---|
-| **File Path** | Full URI including scheme, bucket or container, and file name, e.g. `s3://bucket/folder/output.parquet`. A Delta table is a folder, so its path names the table, e.g. `s3://bucket/warehouse/orders`. **Browse** picks a folder and names the file. |
+| **File Path** | Full URI including scheme, bucket or container, and file name, e.g. `s3://bucket/folder/output.parquet`. A Delta table is a folder, so its path names the table, e.g. `s3://bucket/warehouse/orders`. **Browse** picks a folder and names the file. The drawer warns while the path is empty or has no scheme, and such a node fails before writing anything: *Cloud storage writer has no target path…* or *Cloud storage path '…' is not a URI…*. |
 | **File Format** | CSV, Parquet, JSON or Delta Lake. |
 | **Write Mode** | CSV, Parquet and JSON always overwrite. Delta Lake offers the modes in the next table. |
 

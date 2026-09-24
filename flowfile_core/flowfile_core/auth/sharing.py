@@ -76,6 +76,37 @@ def sharing_enabled() -> bool:
     return os.environ.get("FLOWFILE_MODE", "electron") != "electron"
 
 
+def ambient_credentials_allowed() -> bool:
+    """Whether cloud access may fall back to the process's own credentials and local disk.
+
+    False in docker, where both belong to the server. Read live, like ``sharing_enabled``.
+    """
+    return os.environ.get("FLOWFILE_MODE", "electron") != "docker"
+
+
+# Auth methods with no credentials of their own: the connection authenticates as the process.
+SERVER_IDENTITY_AUTH_METHODS = frozenset({"aws-cli", "env_vars", "iam_role", "managed_identity"})
+
+SERVER_IDENTITY_REFUSED_MESSAGE = (
+    "authenticates with this server's own credentials, which only an administrator's cloud connections may do "
+    "in multi-user mode. Use an access key, SAS token, service principal or service account instead."
+)
+
+
+def uses_server_identity(auth_method: str | None) -> bool:
+    """Whether a saved cloud connection with *auth_method* would run on the deployment's identity.
+
+    In docker only an administrator may own one: its endpoint would aim the server's identity anywhere.
+    """
+    return auth_method in SERVER_IDENTITY_AUTH_METHODS and not ambient_credentials_allowed()
+
+
+def is_admin_user(db: Session, user_id: int | None) -> bool:
+    if user_id is None:
+        return False
+    return bool(db.query(db_models.User.is_admin).filter(db_models.User.id == user_id).scalar())
+
+
 def is_synthetic_principal(user) -> bool:
     return getattr(user, "username", None) == INTERNAL_SERVICE_USERNAME
 

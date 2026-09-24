@@ -68,6 +68,10 @@
                 <span v-else-if="connection.storageType === 'adls' && connection.azureAccountName">
                   Account: {{ connection.azureAccountName }}
                 </span>
+                <span v-if="connection.authMethod === 'aws-cli' && connection.awsProfile">
+                  <span class="separator">•</span>
+                  Profile: {{ connection.awsProfile }}
+                </span>
                 <span v-if="connection.endpointUrl">
                   <span class="separator">•</span>
                   Custom endpoint
@@ -246,6 +250,8 @@ const showEditModal = (connection: FullCloudStorageConnectionInterface) => {
     awsSecretAccessKey: "", // Password is not returned from the API
     awsRoleArn: connection.awsRoleArn || "",
     awsAllowUnsafeHtml: connection.awsAllowUnsafeHtml,
+    awsSessionToken: "", // Secret is not returned from the API
+    awsProfile: connection.awsProfile || "",
 
     // Azure fields
     azureAccountName: connection.azureAccountName || "",

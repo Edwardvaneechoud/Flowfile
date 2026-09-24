@@ -1097,3 +1097,85 @@ class TestNotificationsMigration:
         command.upgrade(cfg, "031")
         assert self.NEW_TABLES <= set(_get_tables(db_path))
         assert "notification_processed_at" in self._columns(db_path, "flow_runs")
+
+
+# Migration 033: cloud_storage_connections.aws_profile
+
+
+class TestCloudConnectionAwsProfileMigration:
+    @staticmethod
+    def _columns(db_path: Path, table: str) -> set[str]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        names = {c["name"] for c in inspect(engine).get_columns(table)}
+        engine.dispose()
+        return names
+
+    def test_fresh_install_has_the_column(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        assert "aws_profile" in self._columns(db_path, "cloud_storage_connections")
+
+    def test_upgrade_from_032_never_uses_the_connection_name_as_profile(self, tmp_path, monkeypatch):
+        """Every existing row, aws-cli included, upgrades with a NULL profile: boto3's default chain."""
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "032")
+        assert "aws_profile" not in self._columns(db_path, "cloud_storage_connections")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            for name, auth_method in (("prod", "aws-cli"), ("minio", "access_key"), ("None", "aws-cli")):
+                conn.execute(
+                    text(
+                        "INSERT INTO cloud_storage_connections (connection_name, storage_type, auth_method, user_id) "
+                        "VALUES (:name, 's3', :auth_method, 1)"
+                    ),
+                    {"name": name, "auth_method": auth_method},
+                )
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            rows = dict(conn.execute(text("SELECT connection_name, aws_profile FROM cloud_storage_connections")).all())
+        engine.dispose()
+        assert rows == {"prod": None, "minio": None, "None": None}
+
+    def test_downgrade_then_upgrade_round_trips(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        cfg = _get_alembic_config()
+
+        command.downgrade(cfg, "032")
+        assert "aws_profile" not in self._columns(db_path, "cloud_storage_connections")
+
+        command.upgrade(cfg, "033")
+        assert "aws_profile" in self._columns(db_path, "cloud_storage_connections")
+
+    def test_upgrade_is_guarded_when_the_column_already_exists(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "032")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE cloud_storage_connections ADD COLUMN aws_profile VARCHAR"))
+            conn.commit()
+        engine.dispose()
+
+        _run_migration(db_path, monkeypatch)
+        assert "aws_profile" in self._columns(db_path, "cloud_storage_connections")

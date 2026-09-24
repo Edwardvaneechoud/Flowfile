@@ -1090,11 +1090,8 @@ class TestWorkerOffloadedFailuresKeepTheirClass:
     description core parses back out.
 
     That description is the precondition: the worker must be built from a branch
-    that prefixes failures with the exception class. The fixture reuses whatever
-    already answers on the worker port, so a running desktop app's packaged
-    worker is what these bind to — and an older one reports ``OtherError`` here.
-    Start your own (``poetry run flowfile_worker --port 63679``) and point the
-    suite at it with ``FLOWFILE_WORKER_PORT=63679``.
+    that prefixes failures with the exception class; a stale one reached through
+    ``FLOWFILE_TEST_REUSE_WORKER=1`` or an explicit ``FLOWFILE_WORKER_PORT`` reports ``OtherError`` here.
     """
 
     @staticmethod

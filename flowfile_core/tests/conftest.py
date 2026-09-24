@@ -37,6 +37,36 @@ from tests.secure_storage_isolation import (  # noqa: E402
     worker_is_listening,
 )
 
+DEFAULT_WORKER_PORT = 63579
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def _claim_worker_port() -> str | None:
+    """Move the session off a taken default worker port; returns a note for the report header.
+
+    Reuse needs FLOWFILE_TEST_REUSE_WORKER=1; an explicit FLOWFILE_WORKER_PORT is used as is.
+    """
+    if os.environ.get("FLOWFILE_WORKER_PORT") or os.environ.get("FLOWFILE_TEST_REUSE_WORKER") == "1":
+        return None
+    if not worker_is_listening(port=DEFAULT_WORKER_PORT):
+        return None
+    port = _free_port()
+    os.environ["FLOWFILE_WORKER_PORT"] = str(port)
+    return (
+        f"port {DEFAULT_WORKER_PORT} is taken, this session's worker uses {port} "
+        "(set FLOWFILE_TEST_REUSE_WORKER=1 to reuse the running one)"
+    )
+
+
+_worker_port_note = _claim_worker_port()
+
 _explicit_secure_store = bool(os.environ.get('FLOWFILE_SECURE_STORAGE_PATH'))
 _test_secure_store = resolve_test_secure_storage_path(worker_is_listening(), os.environ)
 if _test_secure_store is not None:
@@ -69,10 +99,11 @@ def _secure_store_is_isolated() -> bool:
 
 
 def pytest_report_header(config):
-    """Surface which secure store the suite is using — a split store is silent otherwise."""
+    """Surface which secure store and worker port the suite is using — both are silent otherwise."""
+    lines = [f"worker: {_worker_port_note}"] if _worker_port_note else []
     if not _secure_store_is_isolated():
-        return f'secure store: {_NOT_ISOLATED_MSG}'
-    return f"secure store: isolated at {os.environ.get('FLOWFILE_SECURE_STORAGE_PATH')}"
+        return [*lines, f'secure store: {_NOT_ISOLATED_MSG}']
+    return [*lines, f"secure store: isolated at {os.environ.get('FLOWFILE_SECURE_STORAGE_PATH')}"]
 
 
 def pytest_configure(config):
@@ -114,7 +145,7 @@ logger = logging.getLogger("flowfile_fixture")
 WORKER_HOST = os.environ.get(
     "FLOWFILE_WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1"
 )
-WORKER_PORT = int(os.environ.get("FLOWFILE_WORKER_PORT", 63579))
+WORKER_PORT = int(os.environ.get("FLOWFILE_WORKER_PORT", DEFAULT_WORKER_PORT))
 WORKER_URL = f"http://{WORKER_HOST}:{WORKER_PORT}/docs"
 STARTUP_TIMEOUT = int(os.environ.get("FLOWFILE_STARTUP_TIMEOUT", 30))  # seconds
 STARTUP_CHECK_INTERVAL = 2  # seconds
@@ -209,12 +240,12 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
     Returns:
         Tuple containing the process object and a success flag
     """
-    logger.info("Starting flowfile_worker process...")
+    logger.info("Starting flowfile_worker process on port %s...", WORKER_PORT)
 
     if platform.system() == "Windows":
         # Use shell=True on Windows
         proc = subprocess.Popen(
-            "poetry run flowfile_worker",
+            f"poetry run flowfile_worker --port {WORKER_PORT}",
             shell=True,
             stdout=sys.stdout,
             stderr=sys.stderr,
@@ -226,7 +257,7 @@ def start_worker() -> tuple[subprocess.Popen, bool]:
         # Use shell=False on Unix-like systems and provide the full args list
         # This is safer and allows for proper process group handling
         proc = subprocess.Popen(
-            ["poetry", "run", "flowfile_worker"],
+            ["poetry", "run", "flowfile_worker", "--port", str(WORKER_PORT)],
             shell=False,
             stdout=sys.stdout,
             stderr=sys.stderr,
@@ -307,6 +338,8 @@ def managed_worker() -> Generator[None, None, None]:
     Context manager for flowfile worker process management.
     Ensures proper cleanup even when tests fail.
 
+    A worker on ``WORKER_PORT`` is reused only with FLOWFILE_TEST_REUSE_WORKER=1 or an explicit FLOWFILE_WORKER_PORT.
+
     A failure here aborts the session instead of skipping. This runs inside a
     session-scoped autouse fixture, so a ``pytest.skip`` would skip every test in
     the suite and still exit 0 — which is how a broken worker probe turned a whole
@@ -316,7 +349,7 @@ def managed_worker() -> Generator[None, None, None]:
     proc = None
     try:
         if is_worker_running():
-            logger.info("flowfile_worker is already running, using existing instance")
+            logger.info("flowfile_worker is already running on port %s, using existing instance", WORKER_PORT)
             yield
         else:
             proc, success = start_worker()

@@ -173,6 +173,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
     CloudStorageAuthMode,
     CloudStorageReadSettings,
     CloudStorageReadSettingsInternal,
+    CloudStorageSettings,
     CloudStorageWriteSettings,
     CloudStorageWriteSettingsInternal,
     FullCloudStorageConnection,
@@ -188,7 +189,8 @@ from flowfile_core.secret_manager.secret_manager import (
     get_encrypted_secret,
 )
 from shared._version import get_version
-from shared.cloud_storage.utils import normalize_delta_path
+from shared.cloud_storage.uri import storage_type_for_uri
+from shared.cloud_storage.utils import normalize_delta_path, validate_cloud_resource_path
 from shared.db_dialects import get_dialect_or_generic
 from shared.delta_utils import (
     enable_change_data_feed,
@@ -444,32 +446,55 @@ def get_directory_schema_callback(received_file: input_schema.ReceivedTable):
 
 
 def get_cloud_connection_settings(
-    connection_name: str, user_id: int, auth_mode: CloudStorageAuthMode
+    connection_name: str | None,
+    user_id: int,
+    auth_mode: CloudStorageAuthMode,
+    resource_path: str | None = None,
 ) -> FullCloudStorageConnection:
-    """Retrieves cloud storage connection settings, falling back to environment variables if needed.
+    """Resolve a cloud node's connection: the referenced saved one, else the process's own credentials.
+
+    The ambient fallback is refused in multi-user (docker) mode before any credential lookup.
 
     Args:
-        connection_name: The name of the saved connection.
-        user_id: The ID of the user owning the connection.
-        auth_mode: The authentication method specified by the user.
+        connection_name: The name of the saved connection, if any.
+        user_id: The ID of the user running the node (own connections first, then group-granted).
+        auth_mode: The authentication method specified on the node.
+        resource_path: The node's parameter-resolved path; selects the ambient storage type.
 
     Returns:
         A FullCloudStorageConnection object with the connection details.
 
     Raises:
-        HTTPException: If the connection settings cannot be found.
+        HTTPException: If the referenced connection cannot be found, or no ambient mode applies.
+        ValueError: If no connection is referenced and ambient credentials are not allowed.
     """
-    cloud_connection_settings = get_local_cloud_connection(connection_name, user_id)
-    # Only fabricate a connection from the environment when no saved connection was referenced.
-    # A referenced-but-missing connection_name must still error, not silently fall back.
-    if cloud_connection_settings is None and not connection_name:
-        if auth_mode in ("env_vars", "auto"):
-            cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="env_vars")
-        elif auth_mode == "aws-cli":
-            cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")
-    if cloud_connection_settings is None:
+    if connection_name:
+        connection = get_local_cloud_connection(connection_name, user_id)
+        if connection is None:
+            raise HTTPException(status_code=400, detail="Cloud connection settings not found")
+        return connection
+    if not sharing.ambient_credentials_allowed():
+        raise ValueError("Select a cloud storage connection; server credentials are not available in multi-user mode.")
+    storage_type = storage_type_for_uri(resource_path or "") or "s3"
+    if auth_mode == "aws-cli" and storage_type == "s3":
+        auth_method = "aws-cli"
+    elif auth_mode in ("env_vars", "auto", "aws-cli"):
+        auth_method = "env_vars"
+    else:
         raise HTTPException(status_code=400, detail="Cloud connection settings not found")
-    return cloud_connection_settings
+    return FullCloudStorageConnection(storage_type=storage_type, auth_method=auth_method, connection_name=None)
+
+
+def _resolve_cloud_node_connection(
+    settings: CloudStorageSettings, user_id: int, role: Literal["reader", "writer"]
+) -> FullCloudStorageConnection:
+    """Guard a cloud node's path (docker also refuses local paths), then resolve its connection."""
+    validate_cloud_resource_path(
+        settings.resource_path, role=role, allow_local_paths=sharing.ambient_credentials_allowed()
+    )
+    return get_cloud_connection_settings(
+        settings.connection_name, user_id, settings.auth_mode, resource_path=settings.resource_path
+    )
 
 
 # Catalog writer/reader helpers (extracted for testability)
@@ -974,7 +999,7 @@ def _scd2_writer_output(
     *version* is what makes a concurrent writer unable to change what this run passes on. The plan
     stays lazy — core never materialises it.
     """
-    scan_kwargs: dict = {} if storage_options is None else {"storage_options": storage_options}
+    scan_kwargs = CloudStorageReader.get_secure_scan_kwargs(storage_options, None)
     if version is not None:
         scan_kwargs["version"] = version
     system_dtypes = _scd2_system_column_dtypes(scd2_config)
@@ -1231,7 +1256,7 @@ def _is_cloud_change_read(settings: CloudStorageReadSettings) -> bool:
 
 def _cloud_change_read_target(settings: CloudStorageReadSettings, user_id: int) -> tuple[str, dict]:
     """The normalised Delta path and storage options a cloud change read opens the table with."""
-    connection = get_cloud_connection_settings(settings.connection_name, user_id, settings.auth_mode)
+    connection = _resolve_cloud_node_connection(settings, user_id, role="reader")
     if connection.storage_type == "gcs":
         raise ValueError("Reading Delta changes is not supported on Google Cloud Storage yet")
     return normalize_delta_path(settings.resource_path), CloudStorageReader.get_storage_options(connection)
@@ -5227,7 +5252,10 @@ class FlowGraph:
             ctx = pl.SQLContext()
             for name, path in table_paths.items():
                 if _is_cloud_uri(path):
-                    ctx.register(name, pl.scan_delta(path, storage_options=storage_options_by_name.get(name)))
+                    scan_kwargs = CloudStorageReader.get_secure_scan_kwargs(
+                        storage_options_by_name.get(name), node_catalog_reader.user_id
+                    )
+                    ctx.register(name, pl.scan_delta(path, **scan_kwargs))
                 else:
                     ctx.register(name, pl.scan_delta(path))
             for name, (is_opt, ser_lf, tid, stv) in virtual_tables.items():
@@ -5380,7 +5408,7 @@ class FlowGraph:
                 table_path,
                 starting_version,
                 head,
-                storage_options=_reader_storage_options,
+                **CloudStorageReader.get_secure_scan_kwargs(_reader_storage_options, _user_id),
                 include_preimage=node_catalog_reader.cdc_include_preimage,
             )
             if cursor_consumer is not None:
@@ -5438,9 +5466,8 @@ class FlowGraph:
                 scan_kwargs["version"] = delta_version
             if _is_cloud_uri(resolved_path):
                 # Cloud catalog table: scan directly (stays lazy ⇒ no collect in core).
-                return _apply_scd2_filter(
-                    pl.scan_delta(resolved_path, storage_options=_reader_storage_options, **scan_kwargs)
-                )
+                scan_kwargs.update(CloudStorageReader.get_secure_scan_kwargs(_reader_storage_options, _user_id))
+                return _apply_scd2_filter(pl.scan_delta(resolved_path, **scan_kwargs))
             if is_delta_table(resolved_path):
                 return _apply_scd2_filter(pl.scan_delta(resolved_path, **scan_kwargs))
             return _apply_scd2_filter(pl.scan_parquet(resolved_path))
@@ -6118,10 +6145,8 @@ class FlowGraph:
         def _func(df: FlowDataEngine):
             df.lazy = True
             execute_remote = self.execution_location != "local"
-            cloud_connection_settings = get_cloud_connection_settings(
-                connection_name=node_cloud_storage_writer.cloud_storage_settings.connection_name,
-                user_id=node_cloud_storage_writer.user_id,
-                auth_mode=node_cloud_storage_writer.cloud_storage_settings.auth_mode,
+            cloud_connection_settings = _resolve_cloud_node_connection(
+                node_cloud_storage_writer.cloud_storage_settings, node_cloud_storage_writer.user_id, role="writer"
             )
             full_cloud_storage_connection = cloud_connection_settings
             if _cloud_write_uses_delta_ops(node_cloud_storage_writer.cloud_storage_settings):
@@ -6219,7 +6244,7 @@ class FlowGraph:
                     path,
                     starting_version,
                     head,
-                    storage_options=storage_options,
+                    **CloudStorageReader.get_secure_scan_kwargs(storage_options, node_cloud_storage_reader.user_id),
                     include_preimage=cloud_storage_read_settings.cdc_include_preimage,
                 )
             )
@@ -6244,13 +6269,11 @@ class FlowGraph:
             self.flow_logger.info("Starting to run the schema callback for cloud storage reader")
             settings = CloudStorageReadSettingsInternal(
                 read_settings=cloud_storage_read_settings,
-                connection=get_cloud_connection_settings(
-                    connection_name=cloud_storage_read_settings.connection_name,
-                    user_id=node_cloud_storage_reader.user_id,
-                    auth_mode=cloud_storage_read_settings.auth_mode,
+                connection=_resolve_cloud_node_connection(
+                    cloud_storage_read_settings, node_cloud_storage_reader.user_id, role="reader"
                 ),
             )
-            fl = FlowDataEngine.from_cloud_storage_obj(settings)
+            fl = FlowDataEngine.from_cloud_storage_obj(settings, user_id=node_cloud_storage_reader.user_id)
             return fl
 
         node = self.add_node_step(

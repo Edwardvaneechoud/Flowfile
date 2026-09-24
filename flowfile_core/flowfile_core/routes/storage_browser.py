@@ -9,7 +9,6 @@ node already uses, so browsing never exposes a path the caller could not already
 read through that connection.
 """
 
-import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,9 +16,13 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth.jwt import get_current_active_user
+from flowfile_core.auth.sharing import ambient_credentials_allowed
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
-from flowfile_core.flowfile.database_connection_manager.db_connections import get_cloud_connection_schema
+from flowfile_core.flowfile.database_connection_manager.db_connections import (
+    CloudConnectionNotAllowedError,
+    get_cloud_connection_schema,
+)
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageType, FullCloudStorageConnection
 from shared.cloud_storage.browse import (
@@ -77,20 +80,6 @@ class CloudBrowseResponse(BaseModel):
     current_is_delta_table: bool = False
 
 
-def ambient_credentials_allowed() -> bool:
-    """Whether browsing may fall back to the process's own cloud credentials.
-
-    In docker the credentials belong to the server, so letting any authenticated user
-    enumerate with them would hand out reconnaissance over the whole deployment.
-    Electron and package mode run on the caller's own machine, where they are already
-    the caller's own credentials.
-
-    Read live rather than through ``configs.settings``, which caches FLOWFILE_MODE at
-    import time (cf. ``auth.sharing.sharing_enabled``).
-    """
-    return os.environ.get("FLOWFILE_MODE", "electron") != "docker"
-
-
 def _error(status_code: int, error_code: str, message: str) -> HTTPException:
     """Build a typed error. Never 401 — the axios interceptor reads that as JWT expiry."""
     return HTTPException(status_code=status_code, detail={"error_code": error_code, "message": message})
@@ -100,7 +89,10 @@ def _resolve_connection(
     db: Session, user_id: int, connection_name: str | None, storage_type: CloudStorageType | None
 ) -> FullCloudStorageConnection:
     if connection_name not in _UNSET_CONNECTION_NAMES:
-        connection = get_cloud_connection_schema(db, connection_name, user_id)
+        try:
+            connection = get_cloud_connection_schema(db, connection_name, user_id)
+        except CloudConnectionNotAllowedError as exc:
+            raise _error(400, "CONNECTION_NOT_ALLOWED", str(exc)) from None
         if connection is None:
             # Same 404 whether it is missing or simply not shared with this user.
             raise _error(404, "CONNECTION_NOT_FOUND", "Cloud connection not found.")
@@ -150,7 +142,11 @@ def browse_cloud_storage(
     if not supported:
         raise _error(409, "BROWSE_UNSUPPORTED_AUTH", reason)
 
-    storage_options = CloudStorageReader.get_storage_options(connection)
+    try:
+        storage_options = CloudStorageReader.get_storage_options(connection)
+    except ValueError as exc:
+        # Unknown AWS profile, no local credentials, or an incomplete connection: fixable, not a 500.
+        raise _error(400, "CONNECTION_INVALID", str(exc)) from None
     try:
         result = list_cloud_uri(
             connection.storage_type, path, storage_options, page_size=page_size, page_token=page_token

@@ -26,8 +26,8 @@ from flowfile_core.database.connection import get_db
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.routes.storage_browser import _error, _resolve_connection
 from flowfile_core.schemas.catalog_schema import ColumnSchema
-from flowfile_core.schemas.cloud_storage_schemas import CloudStorageAuthMode, CloudStorageType
-from shared.cloud_storage.uri import is_cloud_uri
+from flowfile_core.schemas.cloud_storage_schemas import CloudStorageAuthMode
+from shared.cloud_storage.uri import storage_type_for_uri
 from shared.cloud_storage.utils import normalize_delta_path
 from shared.delta_models import DeltaVersionCommit
 from shared.delta_utils import enable_change_data_feed, format_delta_timestamp, get_change_data_feed_floor
@@ -62,29 +62,24 @@ class CloudDeltaInfoOut(BaseModel):
     cdc_enabled_version: int | None = None
 
 
-def _storage_type_of(resource_path: str) -> CloudStorageType:
-    if resource_path.startswith(("s3://", "s3a://")):
-        return "s3"
-    if resource_path.startswith(("gs://", "gcs://")):
-        return "gcs"
-    return "adls"
-
-
 def _resolve_target(db: Session, user_id: int, target: CloudDeltaTarget) -> tuple[str, dict[str, Any]]:
     """Validate *target* and resolve its connection for the caller -> (delta path, storage options).
 
     Only object-storage URIs are accepted: a local path would read the server's own disk.
     GCS is refused because delta-rs does not take Flowfile's gcsfs-style GCS options.
     """
-    if not is_cloud_uri(target.resource_path):
+    storage_type = storage_type_for_uri(target.resource_path)
+    if storage_type is None:
         raise _error(400, "INVALID_PATH", "Enter an object-storage path such as s3://bucket/table.")
-    storage_type = _storage_type_of(target.resource_path)
     connection = _resolve_connection(db, user_id, target.connection_name, storage_type)
     if connection.storage_type == "gcs" or storage_type == "gcs":
         raise _error(400, "GCS_UNSUPPORTED", "Delta table inspection is not supported on GCS yet.")
     if connection.connection_name is None and target.auth_mode == "aws-cli":
         connection = connection.model_copy(update={"auth_method": "aws-cli"})
-    return normalize_delta_path(target.resource_path), CloudStorageReader.get_storage_options(connection)
+    # Missing local AWS credentials or an incomplete connection is a 400, not a 500.
+    with _delta_errors({}):
+        storage_options = CloudStorageReader.get_storage_options(connection)
+    return normalize_delta_path(target.resource_path), storage_options
 
 
 def _scrub(message: str, storage_options: dict[str, Any]) -> str:

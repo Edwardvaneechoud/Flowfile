@@ -9,6 +9,7 @@ from contextlib import contextmanager
 import boto3
 from botocore.client import Config
 
+from test_utils.docker_images import is_image_present
 from test_utils.s3.data_generator import populate_test_data
 from test_utils.s3.demo_data_generator import create_demo_data
 
@@ -160,7 +161,7 @@ _PERMANENT_PULL_ERRORS = ("denied", "unauthorized", "not found", "manifest unkno
 
 def _image_available(image: str, attempts: int = 3) -> bool:
     """True if the image is already local or can be pulled, retrying transient pull failures."""
-    if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode == 0:
+    if is_image_present(image):
         return True
     for attempt in range(1, attempts + 1):
         logger.info(f"Pulling {image} (attempt {attempt}/{attempts})...")

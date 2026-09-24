@@ -21,6 +21,20 @@ else
 	CHECK_POETRY := if ! poetry check 2>/dev/null; then echo "Lock file needs updating. Running poetry lock..."; poetry lock --no-update; fi
 endif
 
+# Ports the local servers listen on: core, worker, vite dev, vite preview.
+FLOWFILE_PORTS := 63578 63579 8080 4173
+# Stops only the listeners on those ports (POSIX); other listeners such as Docker Desktop are left alone.
+STOP_LISTENERS = command -v lsof >/dev/null || command -v ss >/dev/null || echo "Neither lsof nor ss found: nothing stopped."; \
+	for port in $(FLOWFILE_PORTS); do \
+		for pid in $$(lsof -nP -t -iTCP:$$port -sTCP:LISTEN 2>/dev/null || \
+			ss -Hltnp "sport = :$$port" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u); do \
+			case "$$(ps -p $$pid -o args= 2>/dev/null)" in \
+				*flowfile_core*|*flowfile_worker*|*vite*) echo "Stopping PID $$pid (port $$port)"; kill $$pid 2>/dev/null;; \
+				*) echo "Leaving PID $$pid on port $$port alone: not a Flowfile or Vite process";; \
+			esac; \
+		done; \
+	done; true
+
 # Kernel image flavour to (re)build locally: base (default), ml, or lite.
 KERNEL_FLAVOUR ?= base
 ifeq ($(KERNEL_FLAVOUR),ml)
@@ -212,8 +226,14 @@ else
 	sleep 3
 endif
 	@echo "Running tests..."
+ifeq ($(OS),Windows_NT)
 	$(CD) "$(FRONTEND_DIR)" && TEST_URL=http://localhost:4173 npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts || true
 	@$(MAKE) stop_servers
+else
+	@status=0; \
+	($(CD) "$(FRONTEND_DIR)" && TEST_URL=http://localhost:4173 PLAYWRIGHT_HTML_OPEN=never npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts) || status=$$?; \
+	$(STOP_LISTENERS); exit $$status
+endif
 
 test_e2e_dev: install_python_deps
 	@echo "Running E2E tests (dev mode)..."
@@ -234,8 +254,14 @@ else
 	sleep 3
 endif
 	@echo "Running tests..."
+ifeq ($(OS),Windows_NT)
 	$(CD) "$(FRONTEND_DIR)" && npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts || true
 	@$(MAKE) stop_servers
+else
+	@status=0; \
+	($(CD) "$(FRONTEND_DIR)" && PLAYWRIGHT_HTML_OPEN=never npx playwright test tests/web-flow.spec.ts tests/csp.spec.ts) || status=$$?; \
+	$(STOP_LISTENERS); exit $$status
+endif
 
 stop_servers:
 	@echo "Stopping servers..."
@@ -243,11 +269,83 @@ ifeq ($(OS),Windows_NT)
 	-@taskkill /F /IM python.exe $(NULL_OUTPUT)
 	-@taskkill /F /IM node.exe $(NULL_OUTPUT)
 else
-	-@pkill -f "flowfile_core" 2>/dev/null || true
-	-@pkill -f "flowfile_worker" 2>/dev/null || true
-	-@pkill -f "vite" 2>/dev/null || true
+	-@$(STOP_LISTENERS)
 endif
 	@echo "Servers stopped."
+
+# Cloud storage E2E (macOS/Linux + Docker): MinIO + an isolated core/worker/preview on free ports; kills only its PIDs.
+# Servers use `poetry run` from empty cwds: -P (Poetry 2) / -C (1.x) find the project without a chdir.
+test_e2e_cloud: SHELL := /bin/bash
+test_e2e_cloud:
+ifeq ($(OS),Windows_NT)
+	@echo "test_e2e_cloud needs bash and Docker; run it on macOS or Linux." && exit 1
+else
+	@set -uo pipefail; \
+	repo=$$(pwd); \
+	py=$$($(POETRY_RUN) python -c 'import sys; print(sys.executable)') || exit 1; \
+	venv=$$(dirname "$$(dirname "$$py")"); \
+	poetry=$$(command -v poetry); \
+	if "$$poetry" --version | grep -q 'version 1\.'; then project=(-C "$$repo"); else project=(-P "$$repo"); fi; \
+	tmp=$$(mktemp -d "$${TMPDIR:-/tmp}/flowfile-e2e-cloud.XXXXXX"); \
+	run_id=make$$(date +%s); \
+	pids=""; \
+	cleanup() { \
+		status=$$?; \
+		for pid in $$pids; do kill "$$pid" 2>/dev/null; done; \
+		for pid in $$pids; do \
+			for _ in $$(seq 50); do kill -0 "$$pid" 2>/dev/null || break; sleep 0.2; done; \
+			kill -9 "$$pid" 2>/dev/null; \
+		done; \
+		(cd "$$repo" && "$$py" -c 'import sys; from test_utils.s3.fixtures import get_minio_client; c = get_minio_client(); pages = c.get_paginator("list_objects_v2").paginate(Bucket="flowfile-test", Prefix=sys.argv[1]); keys = [{"Key": o["Key"]} for p in pages for o in p.get("Contents", [])]; [c.delete_objects(Bucket="flowfile-test", Delete={"Objects": keys[i : i + 1000]}) for i in range(0, len(keys), 1000)]' "cloud-e2e-$$run_id/") \
+			|| echo "Could not clean s3://flowfile-test/cloud-e2e-$$run_id/"; \
+		if [ $$status -eq 0 ]; then rm -rf "$$tmp"; else echo "Server logs kept in $$tmp"; fi; \
+		exit $$status; \
+	}; \
+	trap cleanup EXIT; trap 'exit 130' INT TERM; \
+	wait_for() { \
+		for _ in $$(seq 240); do \
+			curl -sf -o /dev/null "$$1" && return 0; \
+			kill -0 "$$2" 2>/dev/null || { echo "$$3 exited early:"; tail -40 "$$tmp/$$3.log"; return 1; }; \
+			sleep 0.5; \
+		done; \
+		echo "$$3 did not come up at $$1:"; tail -40 "$$tmp/$$3.log"; return 1; \
+	}; \
+	$(POETRY_RUN) start_minio && $(POETRY_RUN) seed_cloud_e2e || exit 1; \
+	mkdir -p "$$tmp"/{home,aws,core_cwd,worker_cwd}; \
+	printf '[default]\naws_access_key_id = minioadmin\naws_secret_access_key = minioadmin\n' > "$$tmp/aws/credentials"; \
+	printf '[default]\nregion = us-east-1\n' > "$$tmp/aws/config"; \
+	read -r core worker web < <("$$py" -c 'import socket; s = [socket.socket() for _ in range(3)]; [x.bind(("127.0.0.1", 0)) for x in s]; print(*[x.getsockname()[1] for x in s])'); \
+	server_env=(env -i PATH="$$PATH" HOME="$$tmp/home" VIRTUAL_ENV="$$venv" TMPDIR="$${TMPDIR:-/tmp}" LANG="$${LANG:-en_US.UTF-8}" \
+		FLOWFILE_MODE=electron FLOWFILE_DB_PATH="$$tmp/catalog.db" FLOWFILE_STORAGE_DIR="$$tmp/storage" \
+		FLOWFILE_SECURE_STORAGE_PATH="$$tmp/secure" FLOWFILE_SHARED_DIR="$$tmp/shared" \
+		FLOWFILE_TELEMETRY=0 FLOWFILE_KERNEL_WARMUP=0 FLOWFILE_KERNEL_GC=0 \
+		WORKER_HOST=127.0.0.1 CORE_HOST=127.0.0.1 CORE_PORT=$$core FLOWFILE_WORKER_PORT=$$worker \
+		AWS_SHARED_CREDENTIALS_FILE="$$tmp/aws/credentials" AWS_CONFIG_FILE="$$tmp/aws/config" \
+		AWS_ENDPOINT_URL=http://localhost:9000 AWS_ALLOW_HTTP=true AWS_EC2_METADATA_DISABLED=true); \
+	echo "Starting worker :$$worker and core :$$core (logs in $$tmp)"; \
+	(cd "$$tmp/worker_cwd" && exec "$${server_env[@]}" "$$poetry" "$${project[@]}" run flowfile_worker --port $$worker --core-port $$core) > "$$tmp/worker.log" 2>&1 & \
+	pids="$$pids $$!"; worker_pid=$$!; \
+	(cd "$$tmp/core_cwd" && exec "$${server_env[@]}" "$$poetry" "$${project[@]}" run flowfile_core --host 127.0.0.1 --port $$core --worker-port $$worker) > "$$tmp/core.log" 2>&1 & \
+	pids="$$pids $$!"; core_pid=$$!; \
+	wait_for "http://127.0.0.1:$$worker/docs" $$worker_pid worker || exit 1; \
+	wait_for "http://127.0.0.1:$$core/health/status" $$core_pid core || exit 1; \
+	echo "Building the web frontend..."; \
+	(cd "$(FRONTEND_DIR)" && node_modules/.bin/vite build --config vite.config.mjs --outDir "$$tmp/web" --emptyOutDir --logLevel error) || exit 1; \
+	(cd "$(FRONTEND_DIR)" && FLOWFILE_CORE_PORT=$$core exec node_modules/.bin/vite preview --config vite.config.mjs --outDir "$$tmp/web" --host 127.0.0.1 --port $$web --strictPort) > "$$tmp/preview.log" 2>&1 & \
+	pids="$$pids $$!"; preview_pid=$$!; \
+	wait_for "http://127.0.0.1:$$web/" $$preview_pid preview || exit 1; \
+	rc=0; \
+	echo "Running the cloud storage pytest suite..."; \
+	$(POETRY_RUN) pytest tests/cloud_e2e -m cloud_e2e -p no:cacheprovider || rc=1; \
+	echo "Running the cloud storage Playwright spec against http://127.0.0.1:$$web ..."; \
+	(cd "$(FRONTEND_DIR)" && TEST_URL=http://127.0.0.1:$$web API_URL=http://127.0.0.1:$$core E2E_RUN_ID=$$run_id \
+		E2E_AWS_PROFILE_CONFIGURED=1 PLAYWRIGHT_HTML_OPEN=never \
+		npm run test:cloud -- --reporter=list,html) || rc=1; \
+	for dir in core_cwd worker_cwd; do \
+		if [ -n "$$(ls -A "$$tmp/$$dir")" ]; then echo "A server wrote into its working directory ($$dir):"; ls -A "$$tmp/$$dir"; rc=1; fi; \
+	done; \
+	exit $$rc
+endif
 
 # Remove all local kernels: their Docker containers + per-kernel derived images,
 # and (when Core is stopped) their catalog-DB records. See tools/clean_kernels.py.
@@ -383,4 +481,4 @@ bump-version-kernel:
 	@$(MAKE) kernel_manifest
 
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_kernels clean_kernel_images rebuild_kernel clean_test test_coverage stubs check_stubs formula_docs check_formula_docs kernel_manifest check_kernel_manifest check_kernel_data wasm_node_manifest check_wasm_node_manifest check_share_data bump-version check-version bump-version-kernel
+.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev test_e2e_cloud stop_servers clean_kernels clean_kernel_images rebuild_kernel clean_test test_coverage stubs check_stubs formula_docs check_formula_docs kernel_manifest check_kernel_manifest check_kernel_data wasm_node_manifest check_wasm_node_manifest check_share_data bump-version check-version bump-version-kernel

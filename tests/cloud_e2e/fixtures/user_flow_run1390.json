@@ -1,0 +1,181 @@
+{
+  "flowfile_version": "0.19.1",
+  "flowfile_id": 2339524295,
+  "flowfile_name": "Untitled flow 2026-09-23 18:24:33",
+  "flowfile_settings": {
+    "description": null,
+    "execution_mode": "Performance",
+    "execution_location": "remote",
+    "auto_save": false,
+    "show_detailed_progress": true,
+    "validate_settings": true,
+    "max_parallel_workers": 4,
+    "source_registration_id": 235,
+    "parameters": []
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "type": "cloud_storage_reader",
+      "is_start_node": true,
+      "description": "Read s3://flowfile-test/cloud-e2e/source.parquet (parquet)",
+      "node_reference": null,
+      "x_position": 482,
+      "y_position": 281,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": null,
+      "outputs": [
+        4
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "output_field_config": null,
+        "cloud_storage_settings": {
+          "auth_mode": "access_key",
+          "connection_name": "minio connection",
+          "resource_path": "s3://flowfile-test/cloud-e2e/source.parquet",
+          "cdc_mode": "off",
+          "cdc_from_version": null,
+          "cdc_from_timestamp": null,
+          "cdc_include_preimage": false,
+          "scan_mode": "single_file",
+          "file_format": "parquet",
+          "csv_has_header": false,
+          "csv_delimiter": ",",
+          "csv_encoding": "utf8",
+          "delta_version": null
+        },
+        "fields": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "cloud_storage_writer",
+      "is_start_node": false,
+      "description": "Write to  (delta, append)",
+      "node_reference": null,
+      "x_position": 870,
+      "y_position": 281,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        5
+      ],
+      "outputs": [],
+      "output_handles": [],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "output_field_config": null,
+        "cloud_storage_settings": {
+          "resource_path": "",
+          "write_mode": "append",
+          "file_format": "delta",
+          "parquet_compression": "snappy",
+          "csv_delimiter": ";",
+          "csv_encoding": "utf8-lossy",
+          "partition_by": [
+            "output_field"
+          ],
+          "merge_keys": [],
+          "track_changes": false,
+          "auth_mode": "aws-cli",
+          "connection_name": null
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "formula",
+      "is_start_node": false,
+      "description": "category = ifnull([category], \"na\")",
+      "node_reference": null,
+      "x_position": 666,
+      "y_position": 169,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        1
+      ],
+      "outputs": [
+        5
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "output_field_config": null,
+        "function": {
+          "field": {
+            "name": "category",
+            "data_type": "Auto"
+          },
+          "function": "ifnull([category], \"na\")"
+        },
+        "functions": [
+          {
+            "field": {
+              "name": "category",
+              "data_type": "Auto"
+            },
+            "function": "ifnull([category], \"na\")"
+          }
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "type": "formula",
+      "is_start_node": false,
+      "description": "output_field = \"test\"",
+      "node_reference": null,
+      "x_position": 746,
+      "y_position": 261,
+      "group_id": null,
+      "left_input_id": null,
+      "right_input_id": null,
+      "input_ids": [
+        4
+      ],
+      "outputs": [
+        3
+      ],
+      "output_handles": [
+        "output-0"
+      ],
+      "input_connections": null,
+      "setting_input": {
+        "cache_results": false,
+        "output_field_config": null,
+        "function": {
+          "field": {
+            "name": "output_field",
+            "data_type": "Auto"
+          },
+          "function": "\"test\""
+        },
+        "functions": [
+          {
+            "field": {
+              "name": "output_field",
+              "data_type": "Auto"
+            },
+            "function": "\"test\""
+          }
+        ]
+      }
+    }
+  ],
+  "groups": [],
+  "comments": []
+}
