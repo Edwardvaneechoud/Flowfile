@@ -69,6 +69,8 @@
     "@kanaries/graphic-walker": "^0.5.2",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-fs": "^2.0.0",
     "@tauri-apps/plugin-log": "^2.0.0",
     "@tauri-apps/plugin-os": "^2.0.0",
     "@tauri-apps/plugin-process": "^2.0.0",

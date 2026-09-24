@@ -200,6 +200,23 @@ export const desktop = {
   },
 
   /**
+   * Save `bytes` via the native Save dialog; returns the chosen path, or null if cancelled/web.
+   * The dialog adds that path to the fs scope, so main.json grants only save + write-file.
+   */
+  async saveFile(defaultName: string, bytes: Uint8Array): Promise<string | null> {
+    if (!isDesktop) return null;
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const path = await save({
+      defaultPath: defaultName,
+      filters: [{ name: "CSV", extensions: ["csv"] }],
+    });
+    if (!path) return null;
+    const { writeFile } = await import("@tauri-apps/plugin-fs");
+    await writeFile(path, bytes);
+    return path;
+  },
+
+  /**
    * Filesystem paths of the drag currently over the window. WebKit blanks file://
    * URLs out of DataTransfer, so during a drop the renderer asks the shell to read
    * the macOS drag pasteboard instead. Empty in web mode and on platforms with no

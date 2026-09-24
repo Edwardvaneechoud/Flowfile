@@ -83,6 +83,26 @@ export class NodeApi {
   }
 
   /**
+   * Export a node's cached result as a CSV/TSV file body. 409 means the node has no
+   * current result (not run, stale, or Performance mode); read it with blobErrorDetail.
+   */
+  static async exportNodeData(
+    flowId: number,
+    nodeId: number,
+    opts: { outputHandle?: string; format: "csv" | "tsv"; limit?: number | "all" },
+  ): Promise<Blob> {
+    const params: Record<string, string | number> = {
+      flow_id: flowId,
+      node_id: nodeId,
+      format: opts.format,
+    };
+    if (opts.outputHandle) params.output_handle = opts.outputHandle;
+    if (opts.limit !== undefined) params.limit = opts.limit;
+    const response = await axios.get<Blob>("/node/data/export", { params, responseType: "blob" });
+    return response.data;
+  }
+
+  /**
    * Get downstream node IDs for a given node
    */
   static async getDownstreamNodeIds(flowId: number, nodeId: number): Promise<number[]> {
@@ -216,5 +236,17 @@ export class NodeApi {
       },
     );
     return response.data;
+  }
+}
+
+/** The `{detail}` of an axios error whose body arrived as a Blob (responseType "blob"). */
+export async function blobErrorDetail(error: unknown): Promise<string | null> {
+  const data = (error as { response?: { data?: unknown } })?.response?.data;
+  if (!(data instanceof Blob)) return null;
+  try {
+    const detail = JSON.parse(await data.text())?.detail;
+    return typeof detail === "string" ? detail : null;
+  } catch {
+    return null;
   }
 }
