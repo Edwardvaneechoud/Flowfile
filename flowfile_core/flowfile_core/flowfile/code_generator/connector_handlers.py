@@ -3,6 +3,7 @@ import typing
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
 from flowfile_core.flowfile.code_generator.param_codegen import SENTINEL_PREFIX
 from flowfile_core.schemas import input_schema
+from flowfile_core.schemas.change_feed import ChangeFeedReadSettings
 
 
 class ConnectorHandlersMixin(ConverterMixinBase):
@@ -334,24 +335,35 @@ class ConnectorHandlersMixin(ConverterMixinBase):
             self._add_code(f"    scd2_view={self._py_str(settings.scd2_view)},")
         if settings.scd2_as_of is not None:
             self._add_code(f"    scd2_as_of={self._py_str(settings.scd2_as_of)},")
-        if settings.cdc_mode == "since_last_run":
+        self._emit_change_feed_kwargs(settings, settings.cdc_consumer_name, settings.cdc_start)
+        self._add_code(f"){suffix}")
+        self._add_code("")
+
+    def _emit_change_feed_kwargs(
+        self, feed: ChangeFeedReadSettings, consumer_name: str | None = None, start: str = "now"
+    ) -> None:
+        """Emit the change-feed kwargs shared by ``ff.read_catalog_table`` and ``ff.read_from_cloud_storage``.
+
+        ``consumer_name`` and ``start`` are cursor settings only the catalog reader has; the cloud
+        reader has no cursor store and leaves them at their defaults, which emit nothing.
+        """
+        if feed.cdc_mode == "since_last_run":
             self._add_code('    changes_since="last_run",')
-        elif settings.cdc_mode == "since_version":
-            version = settings.cdc_from_version
+        elif feed.cdc_mode == "since_version":
+            version = feed.cdc_from_version
             # A ${param} ref arrives as a bare sentinel name; the post-pass rewrites it to the kwarg.
             bare = isinstance(version, int) or str(version).startswith(SENTINEL_PREFIX)
             self._add_code(f"    changes_since={version if bare else self._py_str(str(version))},")
-        elif settings.cdc_mode == "since_timestamp":
-            self._add_code(f"    changes_since={self._py_str(settings.cdc_from_timestamp)},")
-        if settings.cdc_mode != "off":
-            if settings.cdc_consumer_name:
-                self._add_code(f"    changes_consumer={self._py_str(settings.cdc_consumer_name)},")
-            if settings.cdc_start != "now":
-                self._add_code(f"    changes_start={self._py_str(settings.cdc_start)},")
-            if settings.cdc_include_preimage:
-                self._add_code("    include_change_preimage=True,")
-        self._add_code(f"){suffix}")
-        self._add_code("")
+        elif feed.cdc_mode == "since_timestamp":
+            self._add_code(f"    changes_since={self._py_str(feed.cdc_from_timestamp)},")
+        if feed.cdc_mode == "off":
+            return
+        if consumer_name:
+            self._add_code(f"    changes_consumer={self._py_str(consumer_name)},")
+        if start != "now":
+            self._add_code(f"    changes_start={self._py_str(start)},")
+        if feed.cdc_include_preimage:
+            self._add_code("    include_change_preimage=True,")
 
     def _handle_catalog_sql_reader(self, settings: input_schema.NodeCatalogReader, var_name: str) -> None:
         sql_code = settings.sql_query.replace('"""', '\\"\\"\\"')

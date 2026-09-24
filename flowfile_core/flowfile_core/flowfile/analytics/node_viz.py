@@ -86,10 +86,10 @@ def resolve_node_viz_source(flow: FlowGraph, node: FlowNode) -> dict:
 
     plan_bytes = resulting_data.data_frame.serialize()
     if serialized_frame_uses_cloud(plan_bytes):
-        # Polars inlines storage_options, so a cloud scan's plan carries credentials.
+        # The plan freezes build-time credentials ($ffsec$ ciphertext, some still inline); viz children live long.
         raise CloudPlanNotVisualizableError(
             "Visualizing a node that reads from object storage (cloud) is not supported; "
-            "its query plan embeds the connection's credentials. Write the result to a "
+            "its query plan embeds the connection's credentials from when the node ran. Write the result to a "
             "local file or catalog table and explore that instead."
         )
 

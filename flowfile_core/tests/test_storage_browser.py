@@ -15,6 +15,7 @@ from flowfile_core.routes import storage_browser
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from shared.cloud_storage import browse
 from shared.cloud_storage.browse import BrowseEntry, BrowseResult
+from test_utils.s3.aws_profiles import isolate_aws
 
 NOW = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 BROWSE_URL = "/storage_browser/cloud"
@@ -289,6 +290,43 @@ class TestErrorMapping:
         )
         assert "s3secret" not in response.text
         assert "AKIAEXAMPLE" not in response.text
+
+
+class TestConnectionErrors:
+    """A connection that cannot build credentials is a fixable 400, never an unhandled 500 ("CORS error")."""
+
+    @pytest.fixture
+    def broken_connection(self, tmp_path, monkeypatch):
+        isolate_aws(monkeypatch, tmp_path, endpoint=None)
+        created = []
+
+        def _create(name: str, **fields) -> str:
+            _drop_connection(name)
+            with get_db_context() as db:
+                store_cloud_connection(
+                    db, FullCloudStorageConnection(connection_name=name, storage_type="s3", **fields), 1
+                )
+            created.append(name)
+            return name
+
+        yield _create
+        for name in created:
+            _drop_connection(name)
+
+    @pytest.mark.parametrize(
+        "fields,message",
+        [
+            ({"auth_method": "aws-cli", "aws_profile": "no-such-profile"}, "no-such-profile"),
+            ({"auth_method": "access_key", "aws_access_key_id": "AKIAEXAMPLE"}, "aws_secret_access_key"),
+        ],
+    )
+    def test_credential_errors_are_typed_400s(self, stub_listing, broken_connection, fields, message):
+        stub_listing()
+        response = client.get(BROWSE_URL, params={"connection_name": broken_connection("browse_broken", **fields)})
+
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"]["error_code"] == "CONNECTION_INVALID"
+        assert message in response.json()["detail"]["message"]
 
 
 class TestAuthentication:

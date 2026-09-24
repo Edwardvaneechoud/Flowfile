@@ -177,6 +177,7 @@ import {
   sortKernelsByMatch,
 } from "@/components/kernel/kernelMatch";
 import { useKernelMatch } from "@/composables/useKernelMatch";
+import { extractSaveErrorMessage } from "@/composables/saveError";
 import { CustomNodeSchema } from "./interface";
 import type { ArtifactOption, GlobalArtifactOption } from "./interface";
 import { getCustomNodeSchema, CustomNodeSchemaError } from "./interface";
@@ -541,10 +542,11 @@ async function hydrateArtifacts(nodeId: number, kernelId: string | null, seq: nu
   }
 }
 
-const pushNodeData = async () => {
+/** Awaited so Run's pre-run save lands before /flow/run/; resolves false when the save failed. */
+const pushNodeData = async (): Promise<boolean> => {
   if (!nodeData.value || currentNodeId.value === null) {
-    console.warn("Cannot push data: node data or ID is not available.");
-    return;
+    console.warn("Nothing to push: node data or ID is not available.");
+    return true;
   }
   if (nodeUserDefined.value) {
     nodeUserDefined.value.settings = formData.value;
@@ -555,7 +557,13 @@ const pushNodeData = async () => {
       nodeUserDefined.value.output_names = schema.value.output_names;
     }
   }
-  nodeStore.updateUserDefinedSettings(nodeUserDefined);
+  try {
+    await nodeStore.updateUserDefinedSettings(nodeUserDefined);
+    return true;
+  } catch (err) {
+    ElMessage.error({ message: extractSaveErrorMessage(err), showClose: true, duration: 6000 });
+    return false;
+  }
 };
 
 defineExpose({

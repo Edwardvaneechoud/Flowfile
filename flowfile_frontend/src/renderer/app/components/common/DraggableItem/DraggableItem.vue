@@ -132,7 +132,7 @@
 // against the shared canvas container — see layoutGeometry.ts for the
 // intent-vs-derived contract. During a gesture the local gestureRect
 // overrides the derived rect at 60Hz; intent is committed once, at mouseup.
-import { computed, onBeforeUnmount, ref, watch, watchEffect } from "vue";
+import { computed, onBeforeUnmount, ref, watch, watchEffect, type PropType } from "vue";
 
 import {
   clampRectToBounds,
@@ -148,6 +148,7 @@ import {
   type PanelIntent,
   type RenderRect,
 } from "./layoutGeometry";
+import { nextMinimizedState } from "./minimize";
 import { useItemStore } from "./stateStore";
 import { useDraggablePosition } from "./useDraggablePosition";
 import { useDraggableResize } from "./useDraggableResize";
@@ -211,7 +212,7 @@ const props = defineProps({
     default: "",
   },
   onMinimize: {
-    type: Function,
+    type: Function as PropType<() => unknown>,
     default: null,
   },
   allowFreeMove: {
@@ -374,10 +375,7 @@ const {
 });
 
 const toggleMinimize = async () => {
-  if (!isMinimized.value && props.onMinimize) {
-    await props.onMinimize();
-  }
-  isMinimized.value = !isMinimized.value;
+  isMinimized.value = await nextMinimizedState(isMinimized.value, props.onMinimize);
 };
 
 const setFullScreen = (makeFull: boolean) => {

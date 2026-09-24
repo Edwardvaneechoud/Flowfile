@@ -68,6 +68,19 @@ class FlowExecutionState {
 
 const isResponseSuccessful = (status: number): boolean => status >= 200 && status < 300;
 
+// Starts in progress, marked synchronously: a second click during the pre-run save must not start a second run.
+const startsInProgress = new Set<string>();
+
+const startOnce = async (key: string, start: () => Promise<void>): Promise<void> => {
+  if (startsInProgress.has(key)) return;
+  startsInProgress.add(key);
+  try {
+    await start();
+  } finally {
+    startsInProgress.delete(key);
+  }
+};
+
 const getRunStatus = async (flowId: number) => {
   const response = await axios.get("/flow/run_status/", {
     params: { flow_id: flowId },
@@ -275,7 +288,31 @@ export function useFlowExecution(
     return div.innerHTML;
   };
 
-  const runFlow = async () => {
+  /**
+   * Saves the open settings drawer so the run sees its edits; false when that save was refused.
+   * A refusal arms the drawer's discard, so the next click away from it drops the edits.
+   */
+  const saveOpenDrawer = async (notStartedTitle: string): Promise<boolean> => {
+    if (!editorStore.isDrawerOpen || nodeStore.nodeId === -1) return true;
+    try {
+      if (await editorStore.executeDrawCloseFunction()) return true;
+    } catch (error) {
+      console.error("Error saving the open node settings:", error);
+    }
+    editorStore.rememberRefusedSave(editorStore.drawCloseFunction);
+    showNotification(
+      notStartedTitle,
+      "The settings in the open panel could not be saved. Fix them, or click away from the panel " +
+        "to discard them, then run again.",
+      "error",
+    );
+    return false;
+  };
+
+  const runFlow = () => startOnce(getPollingKey(), startFlowRun);
+
+  const startFlowRun = async () => {
+    if (!(await saveOpenDrawer("Flow not started"))) return;
     const flowSettings: FlowSettings | null = await FlowApi.getFlowSettings(getFlowId());
     if (!flowSettings) {
       throw new Error("Failed to retrieve flow settings");
@@ -335,15 +372,17 @@ export function useFlowExecution(
     }
   };
 
-  const triggerNodeFetch = async (
-    nodeId: number,
-    opts: {
-      focusResultPanels?: boolean;
-      performanceMode?: boolean;
-      /** Fired once when the run reaches a terminal state, however it got there. */
-      onComplete?: () => void;
-    } = {},
-  ) => {
+  type NodeFetchOptions = {
+    focusResultPanels?: boolean;
+    performanceMode?: boolean;
+    /** Fired once when the run reaches a terminal state, however it got there. */
+    onComplete?: () => void;
+  };
+
+  const triggerNodeFetch = (nodeId: number, opts: NodeFetchOptions = {}) =>
+    startOnce(getPollingKey(`node_${nodeId}`), () => startNodeFetch(nodeId, opts));
+
+  const startNodeFetch = async (nodeId: number, opts: NodeFetchOptions) => {
     const pollingKeySuffix = `node_${nodeId}`;
     // Fetches driven from a panel (Data tab, Explore Data) opt out so that
     // panel keeps focus; canvas "Run node" keeps the default (show logs).
@@ -356,6 +395,7 @@ export function useFlowExecution(
       console.log(`Node ${nodeId} fetch already in progress`);
       return;
     }
+    if (!(await saveOpenDrawer("Node not run"))) return;
 
     freezeFlow();
     nodeStore.resetNodeResult();

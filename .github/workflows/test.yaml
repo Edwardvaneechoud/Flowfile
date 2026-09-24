@@ -38,6 +38,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       formula_docs: ${{ steps.filter.outputs.formula_docs }}
       shared: ${{ steps.filter.outputs.shared }}
+      cloud_e2e: ${{ steps.filter.outputs.cloud_e2e }}
       any_backend: ${{ steps.filter.outputs.any_backend }}
       test_workflow: ${{ steps.filter.outputs.test_workflow }}
     steps:
@@ -95,6 +96,8 @@ jobs:
               - 'test_utils/**'
               - 'pyproject.toml'
               - 'poetry.lock'
+            cloud_e2e:
+              - 'tests/cloud_e2e/**'
             any_backend:
               - 'flowfile_core/**'
               - 'flowfile_worker/**'
@@ -103,6 +106,7 @@ jobs:
               - 'shared/**'
               - 'test_utils/**'
               - 'tools/**'
+              - 'tests/cloud_e2e/**'
               - 'pyproject.toml'
             test_workflow:
               - '.github/workflows/test.yaml'
@@ -216,6 +220,19 @@ jobs:
           needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         run: poetry run pytest flowfile_worker/tests --disable-warnings --durations=300 --durations-min=0.05
+
+      # Real core + worker subprocesses driven over HTTP against the MinIO started above.
+      - name: Run cloud storage end-to-end tests
+        if: |
+          runner.os == 'Linux' && (
+            needs.detect-changes.outputs.backend_core == 'true' ||
+            needs.detect-changes.outputs.backend_worker == 'true' ||
+            needs.detect-changes.outputs.shared == 'true' ||
+            needs.detect-changes.outputs.cloud_e2e == 'true' ||
+            needs.detect-changes.outputs.test_workflow == 'true' ||
+            github.event.inputs.run_all_tests == 'true'
+          )
+        run: poetry run pytest tests/cloud_e2e -m cloud_e2e --disable-warnings
 
       - name: Stop Mock Database
         run: poetry run stop_postgres

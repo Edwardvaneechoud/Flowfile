@@ -194,8 +194,10 @@ export function useDashboardDatasources(
     if (!tile) return tileId;
     if (tile.type === "text") return "Text tile";
     if (tile.type === "separator") return "Separator";
-    if (tile.viz_id == null) return `Tile ${tileId.slice(0, 6)}`;
-    return vizNameById.value[tile.viz_id] ?? `Viz #${tile.viz_id}`;
+    if (tile.type === "kpi" && tile.kpi?.label) return tile.kpi.label;
+    if (tile.viz_id == null) return tile.type === "kpi" ? "KPI" : `Tile ${tileId.slice(0, 6)}`;
+    const vizName = vizNameById.value[tile.viz_id] ?? `Viz #${tile.viz_id}`;
+    return tile.type === "kpi" ? `KPI · ${vizName}` : vizName;
   };
 
   return {

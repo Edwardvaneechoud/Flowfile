@@ -206,6 +206,53 @@ def add_test_manual_input(graph: FlowGraph, data: list[dict], node_id: int = 1):
     graph.add_manual_input(manual)
 
 
+WRITER_NO_PATH = (
+    "Cloud storage writer has no target path. Enter an object-storage URI such as s3://bucket/folder/table."
+)
+READER_NO_PATH = (
+    "Cloud storage reader has no source path. Enter an object-storage URI such as s3://bucket/folder/file.parquet."
+)
+# The cloud writer shape the UI saves: "No connection", empty path, format moved off CSV.
+USER_CLOUD_WRITER_SETTINGS = {
+    "resource_path": "",
+    "write_mode": "append",
+    "file_format": "delta",
+    "parquet_compression": "snappy",
+    "csv_delimiter": ";",
+    "csv_encoding": "utf8-lossy",
+    "partition_by": ["output_field"],
+    "merge_keys": [],
+    "track_changes": False,
+    "auth_mode": "aws-cli",
+    "connection_name": None,
+}
+CLOUD_WRITER_ROWS = [
+    {"id": 1, "category": "A", "output_field": "test"},
+    {"id": 2, "category": "na", "output_field": "test"},
+]
+
+
+def add_user_cloud_writer(graph: FlowGraph, **overrides) -> FlowGraph:
+    """Nodes 1 -> 2: manual-input rows feeding the user's cloud writer, with *overrides* on its settings."""
+    add_test_manual_input(graph, CLOUD_WRITER_ROWS, node_id=1)
+    graph.add_node_promise(
+        input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="cloud_storage_writer")
+    )
+    graph.add_cloud_storage_writer(
+        input_schema.NodeCloudStorageWriter.model_validate(
+            {
+                "flow_id": graph.flow_id,
+                "node_id": 2,
+                "user_id": 1,
+                "depending_on_id": 1,
+                "cloud_storage_settings": {**USER_CLOUD_WRITER_SETTINGS, **overrides},
+            }
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2))
+    return graph
+
+
 def add_test_catalog_writer(
     graph: FlowGraph,
     node_id: int,

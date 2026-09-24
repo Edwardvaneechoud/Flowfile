@@ -37,7 +37,7 @@
         :w="item.w"
         :h="item.h"
         :min-w="tileById[item.i]?.type === 'separator' ? 1 : Math.max(2, layout.grid.cols / 6)"
-        :min-h="tileById[item.i]?.type === 'viz' ? 2 : 1"
+        :min-h="tileById[item.i]?.type === 'viz' || tileById[item.i]?.type === 'kpi' ? 2 : 1"
         drag-allow-from=".tile-handle"
       >
         <DashboardTile
@@ -63,6 +63,7 @@ import { GridItem, GridLayout } from "grid-layout-plus";
 import DashboardTile from "./DashboardTile.vue";
 import {
   useDashboardDragAndDrop,
+  KPI_MIME,
   SEPARATOR_MIME,
   TEXT_MIME,
   VIZ_MIME,
@@ -90,23 +91,35 @@ const emit = defineEmits<{
   (e: "edit-viz", vizId: number | null): void;
   (e: "add-viz-at", payload: { vizId: number; x: number; y: number }): void;
   (e: "add-text-at", payload: { x: number; y: number }): void;
+  (e: "add-kpi-at", payload: { x: number; y: number }): void;
   (
     e: "add-separator-at",
     payload: { x: number; y: number; orientation: SeparatorOrientation },
   ): void;
 }>();
 
-const { isDraggingViz, isDraggingText, isDraggingSeparator } = useDashboardDragAndDrop();
+const { isDraggingViz, isDraggingText, isDraggingSeparator, isDraggingKpi } =
+  useDashboardDragAndDrop();
 const canvasRef = ref<HTMLElement | null>(null);
 const gridRef = ref<ComponentPublicInstance | null>(null);
 const dragOver = ref(false);
 
 const dragHasOurPayload = (e: DragEvent): boolean => {
-  if (isDraggingViz.value || isDraggingText.value || isDraggingSeparator.value) return true;
+  if (
+    isDraggingViz.value ||
+    isDraggingText.value ||
+    isDraggingSeparator.value ||
+    isDraggingKpi.value
+  ) {
+    return true;
+  }
   const types = e.dataTransfer?.types;
   return (
     !!types &&
-    (types.includes(VIZ_MIME) || types.includes(TEXT_MIME) || types.includes(SEPARATOR_MIME))
+    (types.includes(VIZ_MIME) ||
+      types.includes(TEXT_MIME) ||
+      types.includes(SEPARATOR_MIME) ||
+      types.includes(KPI_MIME))
   );
 };
 
@@ -139,19 +152,26 @@ const onCanvasDrop = (e: DragEvent) => {
   if (!dt) return;
   const isText = dt.types.includes(TEXT_MIME);
   const isSeparator = dt.types.includes(SEPARATOR_MIME);
+  const isKpi = dt.types.includes(KPI_MIME);
   const orientation: SeparatorOrientation =
     dt.getData(SEPARATOR_MIME) === "vertical" ? "vertical" : "horizontal";
   const rawViz = dt.getData(VIZ_MIME);
   const vizId = rawViz ? Number(rawViz) : NaN;
   const isViz = Number.isFinite(vizId);
-  if (!isText && !isSeparator && !isViz) return;
+  if (!isText && !isSeparator && !isKpi && !isViz) return;
   e.preventDefault();
 
-  // Text and horizontal separators span the full width, viz tiles half,
-  // vertical separators two columns; the width drives the x-clamp so a
+  // Text and horizontal separators span the full width, viz tiles half, KPIs a
+  // quarter, vertical separators two columns; the width drives the x-clamp so a
   // tile never overflows the grid.
   const cols = props.layout.grid.cols;
-  const w = isViz ? cols / 2 : isSeparator && orientation === "vertical" ? 2 : cols;
+  const w = isViz
+    ? cols / 2
+    : isKpi
+      ? cols / 4
+      : isSeparator && orientation === "vertical"
+        ? 2
+        : cols;
   const layoutEl =
     (gridRef.value?.$el as HTMLElement | undefined) ??
     canvasRef.value?.querySelector<HTMLElement>(".vgl-layout") ??
@@ -172,6 +192,7 @@ const onCanvasDrop = (e: DragEvent) => {
   }
   if (isText) emit("add-text-at", { x: cell.x, y: cell.y });
   else if (isSeparator) emit("add-separator-at", { x: cell.x, y: cell.y, orientation });
+  else if (isKpi) emit("add-kpi-at", { x: cell.x, y: cell.y });
   else emit("add-viz-at", { vizId, x: cell.x, y: cell.y });
 };
 

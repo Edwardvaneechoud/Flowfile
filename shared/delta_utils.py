@@ -7,6 +7,7 @@ Small, dependency-light functions used by both ``flowfile_core`` and
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -15,6 +16,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import polars as pl
 
 logger = logging.getLogger(__name__)
@@ -126,20 +129,6 @@ def _open_delta_or_none(output_path: str, storage_options: dict[str, str] | None
         return None
 
 
-def _delta_table_exists(output_path: str, storage_options: dict[str, str] | None) -> bool:
-    """Return ``True`` if a Delta table exists at *output_path* (local or object storage).
-
-    Locally a cheap ``_delta_log`` probe; for object storage it opens the table. Only a genuine
-    "not found" returns ``False`` — any other error propagates rather than masquerading as missing.
-    """
-    if storage_options is None:
-        import os
-
-        return os.path.isdir(output_path) and os.path.isdir(os.path.join(output_path, "_delta_log"))
-
-    return _open_delta_or_none(output_path, storage_options) is not None
-
-
 # Catalog path validation
 
 
@@ -213,8 +202,12 @@ def write_delta(
     When *storage_options* is set, *output_path* is an object-storage URI and the write
     targets that backend; ``None`` is a local filesystem write.
 
-    *enable_cdf* turns the change data feed on for a table this write **creates**; an existing
-    table is left alone (``enable_change_data_feed`` is the explicit, commit-producing path).
+    *enable_cdf* makes sure the change data feed is on. A table this write creates carries the
+    property from its first commit; an existing table without it is switched on first by
+    ``enable_change_data_feed`` (its own ``SET TBLPROPERTIES`` commit), so this write's commit
+    lands above the enablement floor. An already-enabled table gets no extra commit, and neither
+    does a skipped no-op append or an ``error`` / ``ignore`` write, which never changes an
+    existing table.
     """
     import os
 
@@ -246,8 +239,12 @@ def write_delta(
         _validate_partition_columns(df, partition_by)
         delta_write_options["partition_by"] = partition_by
 
-    if enable_cdf and not _delta_table_exists(output_path, storage_options):
-        delta_write_options["configuration"] = {CDF_PROPERTY: "true"}
+    if enable_cdf:
+        existing = _open_delta_or_none(output_path, storage_options)
+        if existing is None:
+            delta_write_options["configuration"] = {CDF_PROPERTY: "true"}
+        elif mode in ("append", "overwrite") and not _cdf_enabled(existing):
+            enable_change_data_feed(output_path, storage_options)
 
     write_kwargs: dict[str, object] = {"mode": mode, "delta_write_options": delta_write_options}
     if storage_options is not None:
@@ -281,8 +278,11 @@ def merge_into_delta(
     *commit_metadata* (when set) is stamped onto the Delta commit as custom metadata
     (``userMetadata`` in the log), so table history can attribute the change.
 
-    *enable_cdf* turns the change data feed on for a table this merge **creates**; an existing
-    table is left alone (see ``enable_change_data_feed``).
+    *enable_cdf* makes sure the change data feed is on. A table this merge creates carries the
+    property from its first commit; an existing table without it is switched on by
+    ``enable_change_data_feed`` before any schema-evolution or merge commit, so the merge lands
+    above the enablement floor. An already-enabled table and a skipped no-op update get no extra
+    commit.
 
     Returns ``True`` if data was written, ``False`` if the write was a no-op.
     """
@@ -323,6 +323,10 @@ def merge_into_delta(
             logger.warning("Ignoring partition_by on merge into existing table: Delta partitioning is immutable")
         if not merge_keys:
             raise ValueError("merge_keys is required for merge operations on existing tables")
+
+        if enable_cdf and not _cdf_enabled(dt):
+            enable_change_data_feed(output_path, storage_options)
+            dt = DeltaTable(str(output_path), storage_options=storage_options)
 
         # Schema evolution: add new source columns to the target before merging
         if merge_mode in ("upsert", "update"):
@@ -370,12 +374,16 @@ CDF_COLUMNS = ("_change_type", "_commit_version", "_commit_timestamp")
 """The three columns ``load_cdf`` appends to every change row."""
 
 
+def _cdf_enabled(dt) -> bool:
+    """Return ``True`` when the opened ``DeltaTable`` carries the change-data-feed property."""
+    return str(dt.metadata().configuration.get(CDF_PROPERTY, "")).lower() == "true"
+
+
 def is_change_data_feed_enabled(path: str | Path, storage_options: dict[str, str] | None = None) -> bool:
     """Return ``True`` when the Delta table at *path* carries the change-data-feed property."""
     from deltalake import DeltaTable
 
-    dt = DeltaTable(str(path), without_files=True, storage_options=storage_options)
-    return str(dt.metadata().configuration.get(CDF_PROPERTY, "")).lower() == "true"
+    return _cdf_enabled(DeltaTable(str(path), without_files=True, storage_options=storage_options))
 
 
 def enable_change_data_feed(path: str | Path, storage_options: dict[str, str] | None = None) -> int:
@@ -389,9 +397,40 @@ def enable_change_data_feed(path: str | Path, storage_options: dict[str, str] | 
     from deltalake import DeltaTable
 
     dt = DeltaTable(str(path), storage_options=storage_options)
-    if str(dt.metadata().configuration.get(CDF_PROPERTY, "")).lower() != "true":
+    if not _cdf_enabled(dt):
         dt.alter.set_table_properties({CDF_PROPERTY: "true"})
     return get_delta_head_version(path, storage_options=storage_options)
+
+
+def get_change_data_feed_floor(path: str | Path, storage_options: dict[str, str] | None = None) -> int | None:
+    """The version every change read on the table at *path* must be clamped to, or ``None`` when
+    the change data feed is off. Metadata only (the transaction log), no data I/O.
+
+    This is the **enablement floor** derived from the Delta log, for tables with no recorded one
+    (a bare object-storage path rather than a catalog table): reads below it error at v0 or
+    return silently synthesized rows. The newest ``SET TBLPROPERTIES`` commit that turned
+    ``delta.enableChangeDataFeed`` on is the floor. With none in the log the property was set at
+    creation, so the floor is the oldest retained commit: ``0``, unless log cleanup has dropped
+    early commits, where reading from ``0`` would silently return nothing.
+    """
+    from deltalake import DeltaTable
+
+    dt = DeltaTable(str(path), without_files=True, storage_options=storage_options)
+    if not _cdf_enabled(dt):
+        return None
+    history = sorted(dt.history(), key=lambda entry: int(entry["version"]), reverse=True)
+    for entry in history:
+        if entry.get("operation") != "SET TBLPROPERTIES":
+            continue
+        properties = (entry.get("operationParameters") or {}).get("properties") or {}
+        if isinstance(properties, str):
+            try:
+                properties = json.loads(properties)
+            except json.JSONDecodeError:
+                continue
+        if str(properties.get(CDF_PROPERTY, "")).lower() == "true":
+            return int(entry["version"])
+    return min((int(entry["version"]) for entry in history), default=0)
 
 
 def get_delta_head_version(path: str | Path, storage_options: dict[str, str] | None = None) -> int:
@@ -447,6 +486,7 @@ def scan_delta_changes(
     *,
     starting_timestamp: str | None = None,
     storage_options: dict[str, str] | None = None,
+    credential_provider: Callable[[], tuple[dict[str, str], int | None]] | None = None,
     include_preimage: bool = False,
 ) -> pl.LazyFrame:
     """Lazily scan a Delta table's change data feed between two commit versions.
@@ -456,12 +496,19 @@ def scan_delta_changes(
     never materialises it. The schema is derived from the reader's arrow schema without reading
     data, and projection / predicate / row-limit pushdown are honoured inside the source.
 
+    The source closure is pickled into the plan, so pass credentials via *credential_provider*, not *storage_options*.
+
     Unless *include_preimage* is set, ``update_preimage`` rows are dropped: a consumer wants one
     row per change, not the before/after pair.
     """
     import polars as pl_
 
-    reader = _load_cdf_reader(path, starting_version, ending_version, starting_timestamp, storage_options)
+    def _options() -> dict[str, str] | None:
+        if credential_provider is None:
+            return storage_options
+        return {**(storage_options or {}), **credential_provider()[0]}
+
+    reader = _load_cdf_reader(path, starting_version, ending_version, starting_timestamp, _options())
     schema = pl_.DataFrame(reader.schema.empty_table()).schema
 
     def _source(with_columns, predicate, n_rows, batch_size):
@@ -469,7 +516,7 @@ def scan_delta_changes(
         if n_rows == 0:
             yield pl_.DataFrame(schema=schema)
             return
-        reader = _load_cdf_reader(path, starting_version, ending_version, starting_timestamp, storage_options)
+        reader = _load_cdf_reader(path, starting_version, ending_version, starting_timestamp, _options())
         df = pl_.DataFrame(reader.read_all())
         if predicate is not None:
             df = df.filter(predicate)

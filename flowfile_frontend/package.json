@@ -15,6 +15,7 @@
     "tauri:build:debug": "tauri build --debug",
     "test:web": "playwright test tests/web-flow.spec.ts",
     "test:all": "playwright test",
+    "test:cloud": "playwright test tests/cloud-storage-flow.spec.ts",
     "test:unit": "vitest run --config vitest.config.ts",
     "test:unit:watch": "vitest --config vitest.config.ts"
   },

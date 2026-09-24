@@ -50,7 +50,7 @@ export interface SettingsValidationIssue {
   input_handle: "main" | "left" | "right";
   missing_columns: string[];
   message: string;
-  kind: "missing_columns" | "invalid_expression";
+  kind: "missing_columns" | "invalid_expression" | "duplicate_output" | "invalid_path";
 }
 
 export interface NodeSettingsValidation {

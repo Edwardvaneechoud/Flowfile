@@ -34,6 +34,7 @@ from flowfile_core.routes.api_consumers import router as api_consumers_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
+from flowfile_core.routes.cloud_delta import router as cloud_delta_router
 from flowfile_core.routes.community_github import router as community_github_router
 from flowfile_core.routes.community_nodes import router as community_nodes_router
 from flowfile_core.routes.converters import router as converters_router
@@ -227,6 +228,7 @@ app.include_router(notifications_router, prefix="/notifications", tags=["notific
 app.include_router(project_router, prefix="/project", tags=["project"])
 app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=["cloud_connections"])
 app.include_router(storage_browser_router, prefix="/storage_browser", tags=["storage_browser"])
+app.include_router(cloud_delta_router, prefix="/cloud_storage/delta", tags=["cloud_delta"])
 app.include_router(ga_connections_router, prefix="/ga_connections", tags=["ga_connections"])
 app.include_router(kafka_router)
 app.include_router(user_defined_components_router, prefix="/user_defined_components", tags=["user_defined_components"])

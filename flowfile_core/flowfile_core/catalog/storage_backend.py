@@ -31,8 +31,8 @@ def _is_cloud_uri(value: str) -> bool:
 def serialized_frame_uses_cloud(blob: bytes | None) -> bool:
     """Return ``True`` when a serialized Polars LazyFrame embeds an object-storage scan.
 
-    Polars serializes ``storage_options`` inline, so a cloud scan means the blob carries the
-    source's decrypted credentials; such a blob must never be replayed (re-run the producer instead).
+    Such a blob carries the source's credentials frozen at build time, so it must never be replayed
+    (re-run the producer instead).
     """
     if not blob:
         return False

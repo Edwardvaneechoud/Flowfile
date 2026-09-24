@@ -204,6 +204,7 @@ def _import_cloud_connection(data: dict, owner_id: int, dotenv: dict, result: Se
         "aws_access_key_id": entry.aws_access_key_id,
         "aws_role_arn": entry.aws_role_arn,
         "aws_allow_unsafe_html": entry.aws_allow_unsafe_html,
+        "aws_profile": entry.aws_profile,
         "azure_account_name": entry.azure_account_name,
         "azure_tenant_id": entry.azure_tenant_id,
         "azure_client_id": entry.azure_client_id,

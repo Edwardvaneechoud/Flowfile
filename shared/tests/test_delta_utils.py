@@ -7,7 +7,7 @@ Covers:
 - vacuum_delta (dry_run, <168h retention guard)
 - optimize_delta (compact + z_order)
 - fixed-size Array -> List normalization on the way into a Delta write
-- the Delta change data feed: enablement, the scan plugin, and the vacuum caveats
+- the Delta change data feed: enablement, the floor, the scan plugin, and the vacuum caveats
 """
 
 import subprocess
@@ -20,6 +20,7 @@ from deltalake import DeltaTable
 from shared.delta_utils import (
     CDF_COLUMNS,
     enable_change_data_feed,
+    get_change_data_feed_floor,
     get_delta_head_version,
     get_delta_partition_columns,
     is_change_data_feed_enabled,
@@ -254,18 +255,54 @@ class TestChangeDataFeedEnablement:
         assert enable_change_data_feed(p) == 0
         assert enable_change_data_feed(p) == 0
 
-    def test_enable_cdf_does_not_touch_an_existing_table(self, tmp_path):
-        """``enable_cdf`` only configures a table the write creates; enabling is its own commit."""
+    def test_append_with_enable_cdf_enables_an_existing_table_before_writing(self, tmp_path):
+        """The enablement is its own commit below the append's, so the append is a tracked change."""
         p = tmp_path / "t"
         write_delta(pl.DataFrame({"a": [1]}), str(p), mode="overwrite")
         write_delta(pl.DataFrame({"a": [2]}), str(p), mode="append", enable_cdf=True)
-        assert not is_change_data_feed_enabled(p)
+        assert is_change_data_feed_enabled(p)
+        floor, head = get_change_data_feed_floor(p), get_delta_head_version(p)
+        assert (floor, head) == (1, 2)
+        assert scan_delta_changes(str(p), floor, head).collect()["a"].to_list() == [2]
+
+    def test_merge_with_enable_cdf_enables_an_existing_table_before_merging(self, tmp_path):
+        p = tmp_path / "t"
+        merge_into_delta(pl.DataFrame({"k": [1], "v": ["a"]}), str(p), merge_mode="upsert", merge_keys=["k"])
+        merge_into_delta(
+            pl.DataFrame({"k": [1, 2], "v": ["A", "b"]}), str(p), merge_mode="upsert", merge_keys=["k"], enable_cdf=True
+        )
+        floor, head = get_change_data_feed_floor(p), get_delta_head_version(p)
+        assert (floor, head) == (1, 2)
+        changes = scan_delta_changes(str(p), floor, head).collect().sort("k")
+        assert changes["_change_type"].to_list() == ["update_postimage", "insert"]
 
     def test_property_survives_an_overwrite(self, tmp_path):
         p = tmp_path / "t"
         write_delta(pl.DataFrame({"a": [1]}), str(p), mode="overwrite", enable_cdf=True)
         write_delta(pl.DataFrame({"a": [2]}), str(p), mode="overwrite")
         assert is_change_data_feed_enabled(p)
+
+
+class TestChangeDataFeedFloor:
+    def test_created_with_the_property_floors_at_zero(self, tmp_path):
+        p = tmp_path / "t"
+        write_delta(pl.DataFrame({"a": [1]}), str(p), mode="overwrite", enable_cdf=True)
+        write_delta(pl.DataFrame({"a": [2]}), str(p), mode="append")
+        assert get_change_data_feed_floor(p) == 0
+
+    def test_enabled_later_floors_at_the_enabling_commit(self, tmp_path):
+        p = tmp_path / "t"
+        write_delta(pl.DataFrame({"a": [1]}), str(p), mode="overwrite")
+        write_delta(pl.DataFrame({"a": [2]}), str(p), mode="append")
+        enabled_version = enable_change_data_feed(p)
+        write_delta(pl.DataFrame({"a": [3]}), str(p), mode="append")
+        assert enabled_version == 2
+        assert get_change_data_feed_floor(p) == enabled_version
+
+    def test_untracked_table_has_no_floor(self, tmp_path):
+        p = tmp_path / "t"
+        write_delta(pl.DataFrame({"a": [1]}), str(p), mode="overwrite")
+        assert get_change_data_feed_floor(p) is None
 
 
 class TestScanDeltaChanges:

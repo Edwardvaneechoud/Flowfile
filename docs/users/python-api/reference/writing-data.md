@@ -118,7 +118,10 @@ ff.write_to_cloud_storage(
 - `delimiter`: CSV field separator (default: `;`). Only used for CSV
 - `encoding`: CSV encoding (default: `utf8`). Only used for CSV
 - `compression`: Parquet compression: `"snappy"`, `"gzip"`, `"brotli"`, `"lz4"`, `"zstd"` (default: `"snappy"`). Only used for Parquet
-- `write_mode`: `"overwrite"` or `"append"` (default: `"overwrite"`). Only used for Delta
+- `write_mode`: `"overwrite"` (default), `"append"`, `"error"`, `"upsert"`, `"update"` or `"delete"`. Only used for Delta; see [Cloud Storage Write Modes](#cloud-storage-write-modes)
+- `partition_by`: Delta partition columns, applied when the write creates the table. Only used for Delta
+- `merge_keys`: Key columns rows are matched on, required for `upsert`, `update` and `delete`. Only used for Delta
+- `track_changes`: Turn the table's change feed on. Only used for Delta; see [Delta Lake Writing](#delta-lake-writing)
 
 !!! tip "Recommended Approach"
     `write_to_cloud_storage()` is the recommended way to write to cloud storage. The format-specific methods below still work and are useful when you want a more concise call for a known format.
@@ -177,7 +180,7 @@ df.write_json_to_cloud_storage(
 #### Delta Lake Writing
 
 ```python
-# Write Delta table (supports append mode)
+# Replace the table (the default mode)
 df.write_delta(
     "s3://warehouse/customer_dim",
     connection_name="warehouse-connection",
@@ -188,7 +191,7 @@ df.write_delta(
 # Append to existing Delta table
 new_data.write_delta(
     "s3://warehouse/customer_dim",
-    connection_name="warehouse-connection", 
+    connection_name="warehouse-connection",
     write_mode="append",
     description="Add new customers to dimension"
 )
@@ -196,9 +199,19 @@ new_data.write_delta(
 
 **Parameters:**
 
-- `path`: S3 path for the Delta table
+- `path`: Cloud storage path of the Delta table — the table's folder, e.g. `s3://warehouse/customer_dim`
 - `connection_name`: Name of configured cloud storage connection
-- `write_mode`: `overwrite` (replace) or `append` (add to existing)
+- `write_mode`: `"overwrite"` (default), `"append"`, `"error"`, `"upsert"`, `"update"` or `"delete"`. See [Cloud Storage Write Modes](#cloud-storage-write-modes)
+- `partition_by`: Partition columns, applied when the write creates the table; later writes must match
+- `merge_keys`: Key columns rows are matched on, required for `upsert`, `update` and `delete`
+- `track_changes`: Turn the table's [change feed](../../visual-editor/catalog/change-tracking.md#cloud-delta-tables) on, so a reader can ask for only what each later write changed. Enable-only: `False` never turns it off. Not allowed with `write_mode="overwrite"`
+- `description`: Optional description for this operation
+
+The tested example upserts into a change-tracked Delta table on S3 twice, then reads back only the rows the second write changed:
+
+```python
+--8<-- "docs/examples/integrations/cloud_delta_changes.py:example"
+```
 
 ## Catalog Writing
 
@@ -231,8 +244,9 @@ ff.write_catalog_table(
 - `df`: The `LazyFrame` to write
 - `table_name`: Name of the catalog table to write to (required)
 - `schema`: A [`SchemaReference`](catalog-references.md) identifying the target catalog/schema. Preferred over `namespace_id`.
-- `write_mode`: How to handle existing data (default: `"overwrite"`). See [Write Modes](#write-modes)
+- `write_mode`: How to handle existing data (default: `"overwrite"`). See [Catalog Write Modes](#catalog-write-modes)
 - `merge_keys`: Column names for merge operations (required for `upsert`, `update`, `delete`)
+- `track_changes`: Turn [change tracking](../../visual-editor/catalog/change-tracking.md) on for the table. Enable-only; rejected with `write_mode` `"overwrite"`, `"virtual"` or `"scd2"`
 - `description`: Optional description for the table
 
 !!! info "Catalog handles vs raw IDs"
@@ -288,17 +302,27 @@ Returns a new child `FlowFrame`.
 
 ## Write Modes
 
-### Overwrite vs Append
+### Cloud Storage Write Modes
+
+CSV, Parquet and JSON cloud writes always replace the target file. Delta tables take a `write_mode`:
+
+| Mode | Description |
+|------|-------------|
+| `overwrite` | Replace the entire table (default) |
+| `error` | Fail if the table already exists |
+| `append` | Add rows to the existing table |
+| `upsert` | Insert new rows or update existing rows matched by `merge_keys` |
+| `update` | Update only existing rows matched by `merge_keys` |
+| `delete` | Delete rows matching `merge_keys` |
 
 ```python
-# Overwrite existing data (default)
+# CSV, Parquet and JSON: no write_mode, the file is replaced
 df.write_parquet_to_cloud_storage(
     "s3://bucket/data.parquet",
     connection_name="conn",
-    write_mode="overwrite"  # Default for most formats
 )
 
-# Append to existing (Delta Lake only)
+# Delta: append to the existing table
 df.write_delta(
     "s3://warehouse/events",
     connection_name="conn",
@@ -306,8 +330,10 @@ df.write_delta(
 )
 ```
 
-!!! info "Append Mode"
-    For cloud storage, append is only supported for Delta Lake format. Other formats always overwrite.
+`upsert` and `update` first add any source column the table does not have yet.
+
+!!! info "Google Cloud Storage"
+    `upsert`, `update`, `delete` and `track_changes=True` are not supported for `gs://` paths. They work on S3 and Azure Data Lake Storage.
 
 ### Catalog Write Modes
 

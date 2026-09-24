@@ -12,6 +12,10 @@ export const createNodeCloudStorageReader = (
     csv_has_header: false,
     csv_encoding: "utf8",
     delta_version: undefined,
+    cdc_mode: "off",
+    cdc_from_version: null,
+    cdc_from_timestamp: null,
+    cdc_include_preimage: false,
   };
   const nodePolarsCode: NodeCloudStorageReader = {
     flow_id: flowId,

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 # Core modules
+from flowfile_core.auth import sharing
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
@@ -26,6 +27,12 @@ from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnecti
 router = APIRouter()
 
 
+def _refuse_server_identity(input_connection: FullCloudStorageConnection, current_user) -> None:
+    """Only an administrator may save a connection that authenticates as the server in multi-user mode."""
+    if sharing.uses_server_identity(input_connection.auth_method) and not getattr(current_user, "is_admin", False):
+        raise HTTPException(422, f"The {input_connection.auth_method} method {sharing.SERVER_IDENTITY_REFUSED_MESSAGE}")
+
+
 @router.post("/cloud_connection", tags=["cloud_connections"])
 def create_cloud_storage_connection(
     input_connection: FullCloudStorageConnection,
@@ -42,6 +49,7 @@ def create_cloud_storage_connection(
         Dict with a success message
     """
     logger.info(f"Create cloud connection {input_connection.connection_name}")
+    _refuse_server_identity(input_connection, current_user)
     try:
         store_cloud_connection(db, input_connection, current_user.id)
     except ValueError:
@@ -63,6 +71,7 @@ def update_cloud_storage_connection(
     db_connection = get_cloud_connection(db, input_connection.connection_name, current_user.id)
     if db_connection is None:
         raise HTTPException(404, "Cloud connection not found")
+    _refuse_server_identity(input_connection, current_user)
     if authorize_connection_mutation(db, current_user, "cloud_connection", db_connection):
         changed = changed_target_fields(
             db_connection, input_connection, ("storage_type", "auth_method", "endpoint_url", "verify_ssl")

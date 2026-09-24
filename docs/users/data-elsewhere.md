@@ -47,6 +47,8 @@ Results leave the way they came in, to whichever system consumes them: a Databas
 --8<-- "docs/examples/integrations/cloud_storage_s3.py:example"
 ```
 
+A Delta table on S3 or ADLS also takes the catalog's merge modes — upsert, update or delete on key columns — and **Track changes**, after which a Cloud Storage Reader downstream can return only the rows committed since a version or time instead of the whole table. [Change Tracking](visual-editor/catalog/change-tracking.md#cloud-delta-tables) covers how that works on a bare path, which keeps no cursor.
+
 ## 5. Turn one-off pulls into standing syncs
 
 The pattern that compounds: one small flow per source — read, normalize, land in the catalog — each on a [schedule](visual-editor/catalog/schedules.md). Kafka topics [sync into catalog tables](connect/kafka.md#kafka-to-catalog-sync) the same way. Downstream flows trigger off the tables they consume, so a fresh sync cascades through everything built on it, and the catalog becomes the one place where scattered systems meet as queryable, versioned tables.

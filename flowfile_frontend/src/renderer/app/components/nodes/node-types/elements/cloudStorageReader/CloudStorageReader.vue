@@ -1,5 +1,5 @@
 <template>
-  <div v-if="dataLoaded && nodeCloudStorageReader" class="cloud-storage-container">
+  <div v-if="loadView === 'form' && nodeCloudStorageReader" class="cloud-storage-container">
     <generic-node-settings
       v-model="nodeCloudStorageReader"
       @update:model-value="handleGenericSettingsUpdate"
@@ -12,6 +12,8 @@
           :connections="connectionInterfaces"
           :unavailable-connection="unavailableConnection"
           :loading="connectionsAreLoading"
+          :resource-path="nodeCloudStorageReader.cloud_storage_settings.resource_path"
+          ambient-credentials
           @change="updateConnection"
         />
       </div>
@@ -40,6 +42,9 @@
               Browse
             </el-button>
           </div>
+          <p v-if="pathWarning" class="field-warning" data-testid="cloud-path-warning">
+            {{ pathWarning }}
+          </p>
           <p class="field-hint">
             Full URI including the scheme &mdash; <code>s3://</code>, <code>az://</code> or
             <code>gs://</code>.
@@ -127,15 +132,47 @@
         </div>
 
         <!-- Delta-specific options -->
-        <div
-          v-if="nodeCloudStorageReader.cloud_storage_settings.file_format === 'delta'"
-          class="format-options"
-        >
+        <div v-if="isDelta" class="format-options">
           <h5 class="subsection-title">Delta Lake Options</h5>
+          <p v-if="probeHint" class="field-warning" data-testid="delta-probe-hint">
+            {{ probeHint }}
+          </p>
+
+          <div class="form-group">
+            <ChangeFeedReadSection
+              :model-value="cdcSettings"
+              :node-id="nodeCloudStorageReader.node_id"
+              :status="cdcStatus"
+              :version-options="versionOptions"
+              :disabled-reason="readChangesDisabledReason"
+              :can-enable="!!deltaInfo?.exists"
+              :enabling="enablingCdc"
+              :allow-last-run="false"
+              persist-key="cloudReader.cdc"
+              @update:model-value="applyCdcSettings"
+              @enable="enableTracking"
+            />
+          </div>
 
           <div class="form-group">
             <label for="delta-version">Version (optional)</label>
+            <el-select
+              v-if="versionOptions.length > 0"
+              id="delta-version"
+              v-model="nodeCloudStorageReader.cloud_storage_settings.delta_version"
+              size="small"
+              placeholder="Latest"
+              clearable
+            >
+              <el-option
+                v-for="v in versionOptions"
+                :key="v.version"
+                :label="v.label"
+                :value="v.version"
+              />
+            </el-select>
             <input
+              v-else
               id="delta-version"
               v-model.number="nodeCloudStorageReader.cloud_storage_settings.delta_version"
               type="number"
@@ -172,12 +209,16 @@
       @select="applyBrowsedPath"
     />
   </div>
+  <div v-else-if="loadView === 'error'" class="load-error" data-testid="node-load-error">
+    <p>{{ loadError }}</p>
+    <el-button size="small" @click="loadNodeData(requestedNodeId)">Retry</el-button>
+  </div>
   <code-loader v-else />
 </template>
 
 <script lang="ts" setup>
 import { CodeLoader } from "vue-content-loader";
-import { computed, ref } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { NodeCloudStorageReader } from "../../../baseNode/nodeInput";
 import { createNodeCloudStorageReader } from "./utils";
 import { useNodeStore } from "../../../../../stores/node-store";
@@ -186,7 +227,7 @@ import { fetchCloudStorageConnectionsInterfaces } from "../../../../../views/Clo
 import { FullCloudStorageConnectionInterface } from "../../../../../views/CloudConnectionView/CloudConnectionTypes";
 import { ElMessage } from "element-plus";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
-import { CloudConnectionPicker } from "../../../../common";
+import { ChangeFeedReadSection, CloudConnectionPicker } from "../../../../common";
 import {
   resolveConnection,
   unavailableConnectionName,
@@ -198,7 +239,22 @@ import {
   formatMismatchWarning,
   scanModeForSelection,
 } from "../../../../common/FileBrowser/cloudPathMapping";
-import { storageTypeForUri } from "../../../../../utils/storagePath";
+import { isCloudUri, storageTypeForUri } from "../../../../../utils/storagePath";
+import { cloudPathWarning } from "../../../../../utils/cloudPathWarning";
+import { settingsLoadView } from "../../../../../utils/settingsLoadView";
+import { deltaProbeHint } from "../../../../../utils/cloudDeltaProbe";
+import { cdcFieldErrors, deltaVersionOptions } from "../../../../../utils/catalogCdc";
+import {
+  CloudDeltaApi,
+  type CloudDeltaInfo,
+  type CloudDeltaTarget,
+} from "../../../../../api/cloudDelta.api";
+import type { DeltaVersionCommit, TableCdcStatus } from "../../../../../types/catalog.types";
+import {
+  DEFAULT_CDC_SETTINGS,
+  type CdcReaderSettings,
+  type CloudStorageReadSettings,
+} from "../../../../../types/node.types";
 
 interface Props {
   nodeId: number;
@@ -207,10 +263,25 @@ interface Props {
 defineProps<Props>();
 const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
+const loadError = ref<string | null>(null);
+const requestedNodeId = ref(-1);
+let loadSeq = 0;
 const nodeCloudStorageReader = ref<NodeCloudStorageReader | null>(null);
+const loadView = computed(() =>
+  settingsLoadView(dataLoaded.value && nodeCloudStorageReader.value !== null, loadError.value),
+);
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeCloudStorageReader,
+  onBeforeSave: () => {
+    if (!isDelta.value) return;
+    const errors = cdcFieldErrors(cdcSettings.value);
+    const error = errors.version ?? errors.timestamp;
+    if (error) {
+      ElMessage.error(error);
+      return false;
+    }
+  },
 });
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
@@ -222,6 +293,10 @@ const showBrowser = ref(false);
 // array literal would re-list on every parent render — a paid request per render.
 const browseFileTypes = computed(() =>
   browseFileTypesForFormat(nodeCloudStorageReader.value?.cloud_storage_settings.file_format),
+);
+
+const pathWarning = computed(() =>
+  cloudPathWarning(nodeCloudStorageReader.value?.cloud_storage_settings.resource_path, "reader"),
 );
 
 const formatWarning = computed(() =>
@@ -244,6 +319,133 @@ const browseDisabledReason = computed<string | null>(() => {
   if (storageTypeForUri(currentPath)) return null;
   return "Pick a connection, or type a path starting with s3://, az:// or gs:// to browse.";
 });
+
+const readSettings = computed(() => nodeCloudStorageReader.value?.cloud_storage_settings ?? null);
+
+const isDelta = computed(() => readSettings.value?.file_format === "delta");
+
+/** Change reads go through delta-rs, which takes no gcsfs-style GCS options. */
+const isGcs = computed(
+  () =>
+    storageTypeForUri(readSettings.value?.resource_path ?? "") === "gcs" ||
+    selectedConnection.value?.storageType === "gcs",
+);
+
+const cdcSettings = computed<CdcReaderSettings>(() => ({
+  cdc_mode: readSettings.value?.cdc_mode ?? "off",
+  cdc_from_version: readSettings.value?.cdc_from_version ?? null,
+  cdc_from_timestamp: readSettings.value?.cdc_from_timestamp ?? null,
+  cdc_include_preimage: readSettings.value?.cdc_include_preimage ?? false,
+}));
+
+function applyCdcSettings(next: CdcReaderSettings) {
+  const settings = readSettings.value;
+  if (!settings) return;
+  // The section never offers since_last_run without allowLastRun.
+  settings.cdc_mode = next.cdc_mode as NonNullable<CloudStorageReadSettings["cdc_mode"]>;
+  settings.cdc_from_version = next.cdc_from_version;
+  settings.cdc_from_timestamp = next.cdc_from_timestamp;
+  settings.cdc_include_preimage = next.cdc_include_preimage;
+}
+
+const readChangesDisabledReason = computed<string | null>(() => {
+  if (isGcs.value) return "Reading changes is not supported on Google Cloud Storage yet.";
+  if (typeof readSettings.value?.delta_version === "number") {
+    return "Reading changes and time travel are mutually exclusive — clear the version to read changes.";
+  }
+  return null;
+});
+
+// A disabled Read selector must not keep a change mode the backend would reject.
+watch(readChangesDisabledReason, (reason) => {
+  if (reason !== null && cdcSettings.value.cdc_mode !== "off") {
+    applyCdcSettings(DEFAULT_CDC_SETTINGS);
+  }
+});
+
+// Table state at the path: null while unknown, when the probe failed, or for gs://.
+const deltaInfo = ref<CloudDeltaInfo | null>(null);
+const deltaHistory = ref<DeltaVersionCommit[]>([]);
+const probeHint = ref<string | null>(null);
+const enablingCdc = ref(false);
+let probeTimer: ReturnType<typeof setTimeout> | null = null;
+let probeSeq = 0;
+
+const cdcStatus = computed<TableCdcStatus | null>(() =>
+  deltaInfo.value?.exists
+    ? {
+        cdc_enabled: deltaInfo.value.cdc_enabled,
+        cdc_enabled_version: deltaInfo.value.cdc_enabled_version,
+        current_version: deltaInfo.value.current_version,
+        cursors: [],
+      }
+    : null,
+);
+
+const versionOptions = computed(() => deltaVersionOptions(deltaHistory.value));
+
+function deltaTarget(): CloudDeltaTarget | null {
+  const settings = readSettings.value;
+  if (!settings || !isDelta.value || isGcs.value || !isCloudUri(settings.resource_path)) {
+    return null;
+  }
+  return {
+    resource_path: settings.resource_path,
+    connection_name: settings.connection_name ?? null,
+    auth_mode: settings.auth_mode,
+  };
+}
+
+async function loadDeltaState() {
+  const target = deltaTarget();
+  if (!target) return;
+  const seq = probeSeq;
+  try {
+    const info = await CloudDeltaApi.getInfo(target);
+    if (seq !== probeSeq) return;
+    deltaInfo.value = info;
+    if (!info.exists) return;
+    const history = await CloudDeltaApi.getHistory(target, 100);
+    if (seq === probeSeq) deltaHistory.value = history;
+  } catch (error) {
+    // Unknown state: no tracking warning, and the version fields fall back to plain inputs.
+    if (seq === probeSeq) probeHint.value = deltaProbeHint(error);
+  }
+}
+
+function scheduleDeltaProbe() {
+  if (probeTimer) clearTimeout(probeTimer);
+  probeSeq += 1;
+  deltaInfo.value = null;
+  deltaHistory.value = [];
+  probeHint.value = null;
+  if (deltaTarget()) probeTimer = setTimeout(loadDeltaState, 350);
+}
+
+onUnmounted(() => {
+  if (probeTimer) clearTimeout(probeTimer);
+});
+
+async function enableTracking() {
+  const target = deltaTarget();
+  if (!target) return;
+  const seq = probeSeq;
+  enablingCdc.value = true;
+  try {
+    const info = await CloudDeltaApi.enableCdc(target);
+    if (seq !== probeSeq) return;
+    deltaInfo.value = info;
+    ElMessage.success("Change tracking enabled");
+    // Enabling is itself a commit, so the version list moved.
+    const history = await CloudDeltaApi.getHistory(target, 100).catch(() => null);
+    if (history && seq === probeSeq) deltaHistory.value = history;
+  } catch (e: any) {
+    const detail = e?.response?.data?.detail;
+    ElMessage.error(detail?.message ?? e?.message ?? "Could not enable change tracking");
+  } finally {
+    enablingCdc.value = false;
+  }
+}
 
 const applyBrowsedPath = (selectedPath: string, isDirectory: boolean) => {
   const settings = nodeCloudStorageReader.value?.cloud_storage_settings;
@@ -280,16 +482,18 @@ const handleFileFormatChange = () => {
 
     if (format !== "delta") {
       nodeCloudStorageReader.value.cloud_storage_settings.delta_version = undefined;
+      applyCdcSettings(DEFAULT_CDC_SETTINGS);
     }
   }
 };
 
-// Only invalidates the cached schema — must not touch the connection, or editing
-// the file path would wipe a connection the picker merely failed to resolve.
+// Only invalidates cached state (schema, Delta table probe) — must not touch the connection,
+// or editing the file path would wipe a connection the picker merely failed to resolve.
 const resetFields = () => {
   if (nodeCloudStorageReader.value) {
     nodeCloudStorageReader.value.fields = [];
   }
+  scheduleDeltaProbe();
 };
 
 const updateConnection = () => {
@@ -316,25 +520,43 @@ const setConnectionOnConnectionName = (connectionName: string | null) => {
   );
 };
 
+// Nothing stale stays behind to save; the drawer shows a retry instead of a skeleton.
+const failLoad = () => {
+  nodeCloudStorageReader.value = null;
+  dataLoaded.value = false;
+  loadError.value =
+    "Could not load this node's settings. Check that Flowfile is running, then retry.";
+};
+
 const loadNodeData = async (nodeId: number) => {
+  const seq = ++loadSeq;
+  requestedNodeId.value = nodeId;
+  loadError.value = null;
   try {
     const [nodeData] = await Promise.all([
       nodeStore.getNodeData(nodeId, false),
       fetchConnections(),
     ]);
-    if (nodeData) {
-      const hasValidSetup = Boolean(nodeData.setting_input?.is_setup);
-      nodeCloudStorageReader.value = hasValidSetup
-        ? nodeData.setting_input
-        : createNodeCloudStorageReader(nodeStore.flow_id, nodeId);
-      setConnectionOnConnectionName(
-        nodeCloudStorageReader.value?.cloud_storage_settings.connection_name ?? null,
-      );
+    if (seq !== loadSeq) return;
+    if (!nodeData) {
+      failLoad();
+      return;
     }
+    const hasValidSetup = Boolean(nodeData.setting_input?.is_setup);
+    nodeCloudStorageReader.value = hasValidSetup
+      ? nodeData.setting_input
+      : createNodeCloudStorageReader(nodeStore.flow_id, nodeId);
+    // Backfill change-feed fields for nodes saved before change reads
+    applyCdcSettings(cdcSettings.value);
+    setConnectionOnConnectionName(
+      nodeCloudStorageReader.value?.cloud_storage_settings.connection_name ?? null,
+    );
+    scheduleDeltaProbe();
     dataLoaded.value = true;
   } catch (error) {
+    if (seq !== loadSeq) return;
     console.error("Error loading node data:", error);
-    dataLoaded.value = false;
+    failLoad();
   }
 };
 
@@ -354,6 +576,8 @@ defineExpose({
   loadNodeData,
   pushNodeData,
   saveSettings,
+  // A failed load has nothing to apply; the drawer hides its Apply footer.
+  canApply: computed(() => loadError.value === null),
 });
 </script>
 
@@ -435,6 +659,20 @@ defineExpose({
   background-color: var(--color-background-tertiary);
   padding: 0 0.25rem;
   border-radius: 3px;
+}
+
+.load-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 1rem;
+  font-size: 0.875rem;
+  color: var(--color-danger);
+}
+
+.load-error p {
+  margin: 0;
 }
 
 .field-warning {

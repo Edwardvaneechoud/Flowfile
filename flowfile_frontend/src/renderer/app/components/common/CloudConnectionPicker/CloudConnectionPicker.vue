@@ -12,7 +12,9 @@
         class="form-control"
         @change="onChange"
       >
-        <option :value="NO_CONNECTION_VALUE">{{ noConnectionLabel }}</option>
+        <option :value="NO_CONNECTION_VALUE" :disabled="noConnection.disabled">
+          {{ noConnection.label }}
+        </option>
         <option v-if="unavailableConnection" :value="unavailableConnection" disabled>
           {{ unavailableConnection }} (unavailable)
         </option>
@@ -26,6 +28,14 @@
         Connection "{{ unavailableConnection }}" is no longer available. Pick another connection, or
         this node will fail when it runs.
       </div>
+      <div
+        v-else-if="!modelValue && noConnection.warning"
+        class="warning-text"
+        data-testid="no-connection-warning"
+      >
+        <i class="fa-solid fa-triangle-exclamation" />
+        {{ noConnection.warning }}
+      </div>
       <div v-else-if="!modelValue" class="helper-text">
         <i class="fa-solid fa-info-circle" />
         {{ helperText }}
@@ -35,12 +45,21 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import type { FullCloudStorageConnectionInterface } from "../../../views/CloudConnectionView/CloudConnectionTypes";
 import {
   getAuthMethodLabel,
   getStorageTypeLabel,
 } from "../../../views/CloudConnectionView/cloudConnectionFormatters";
-import { NO_CONNECTION_VALUE, connectionSelectValue, resolveConnection } from "./connectionOptions";
+import { useMultiUser } from "../../../composables/useMultiUser";
+import { storageTypeForUri } from "../../../utils/storagePath";
+import {
+  NO_CONNECTION_VALUE,
+  ambientCredentialsChoice,
+  connectionSelectValue,
+  resolveConnection,
+  type NoConnectionChoice,
+} from "./connectionOptions";
 
 const props = withDefaults(
   defineProps<{
@@ -51,6 +70,10 @@ const props = withDefaults(
     label?: string;
     noConnectionLabel?: string;
     helperText?: string;
+    // "No connection" means the server's own cloud credentials (cloud storage nodes).
+    ambientCredentials?: boolean;
+    // The node's path: its scheme picks whose ambient credentials "No connection" uses.
+    resourcePath?: string | null;
   }>(),
   {
     unavailableConnection: null,
@@ -58,7 +81,17 @@ const props = withDefaults(
     label: "Cloud Storage Connection",
     noConnectionLabel: "No connection (use local credentials)",
     helperText: "Will use local AWS CLI credentials or environment variables",
+    ambientCredentials: false,
+    resourcePath: null,
   },
+);
+
+const { isMultiUser } = useMultiUser();
+
+const noConnection = computed<NoConnectionChoice>(() =>
+  props.ambientCredentials
+    ? ambientCredentialsChoice(isMultiUser.value, storageTypeForUri(props.resourcePath ?? ""))
+    : { label: props.noConnectionLabel, warning: "", disabled: false },
 );
 
 const emit = defineEmits(["update:modelValue", "change"]);

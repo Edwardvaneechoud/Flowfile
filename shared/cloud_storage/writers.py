@@ -11,7 +11,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import polars as pl
-from polars.exceptions import PanicException
+from polars.exceptions import InvalidOperationError, PanicException
 
 from shared.cloud_storage.gcs import sink_to_gcs, write_delta_to_gcs
 from shared.cloud_storage.utils import normalize_delta_path
@@ -72,6 +72,10 @@ def write_parquet_to_cloud(
         raise Exception(f"Failed to write Parquet to cloud storage: {e}") from e
 
 
+# Only "cannot sink this" falls back; storage, auth and data errors would fail the eager retry too.
+_SINK_DELTA_UNSUPPORTED = (AttributeError, NotImplementedError, InvalidOperationError)
+
+
 def write_delta_to_cloud(
     df: pl.LazyFrame,
     resource_path: str,
@@ -114,7 +118,7 @@ def write_delta_to_cloud(
 
     try:
         df.sink_delta(**sink_kwargs)
-    except Exception as e:
+    except _SINK_DELTA_UNSUPPORTED as e:
         log.warning(f"Failed to use sink_delta, falling back to collect and write_delta: {e}")
         write_kwargs: dict[str, Any] = {
             "target": normalize_delta_path(resource_path),
@@ -122,6 +126,8 @@ def write_delta_to_cloud(
         }
         if storage_options:
             write_kwargs["storage_options"] = storage_options
+        if credential_provider:
+            write_kwargs["credential_provider"] = credential_provider
         if delta_write_options:
             write_kwargs["delta_write_options"] = delta_write_options
         _collect_lazy_frame(df).write_delta(**write_kwargs)

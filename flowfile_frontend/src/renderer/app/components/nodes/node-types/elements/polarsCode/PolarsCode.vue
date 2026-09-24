@@ -28,6 +28,7 @@
 <script lang="ts" setup>
 import { ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
+import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import pythonEditor from "../../../../../features/designer/editor/pythonEditor.vue";
@@ -57,6 +58,7 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   nodeRef: nodePolarsCode,
   onBeforeSave: () => {
     if (!nodePolarsCode.value || !nodePolarsCode.value.polars_code_input.polars_code) {
+      if (nodePolarsCode.value) ElMessage.warning("Enter some Polars code before saving.");
       return false;
     }
     return true;

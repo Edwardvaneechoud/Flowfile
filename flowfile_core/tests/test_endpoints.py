@@ -826,6 +826,15 @@ def test_update_settings_invalid_identifier_returns_422():
     assert "table_name" in detail, detail
 
 
+def test_update_settings_unknown_flow_returns_404():
+    missing_flow_id = 987_654_321
+    assert flow_file_handler.get_flow(missing_flow_id) is None
+    settings = {"flow_id": missing_flow_id, "node_id": 1, "raw_data_format": {"columns": [], "data": []}}
+    r = client.post("/update_settings/", json=settings, params={"node_type": "manual_input"})
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"] == "could not find the flow"
+
+
 def test_connect_node():
     flow_id = ensure_clean_flow()
     add_node(flow_id, 1, node_type="manual_input", pos_x=0, pos_y=0)

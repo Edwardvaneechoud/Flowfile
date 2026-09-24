@@ -2324,8 +2324,10 @@ class FlowFrame:
         self,
         path: str,
         connection_name: str | None = None,
-        write_mode: Literal["overwrite", "append"] = "overwrite",
+        write_mode: Literal["overwrite", "append", "error", "upsert", "update", "delete"] = "overwrite",
         partition_by: list[str] | None = None,
+        merge_keys: list[str] | None = None,
+        track_changes: bool = False,
         description: str | None = None,
     ) -> FlowFrame:
         """
@@ -2335,10 +2337,18 @@ class FlowFrame:
             path (str): The destination path in cloud storage where the Delta table will be written.
             connection_name (Optional[str], optional): The name of the storage connection
                 that a user can create. If None, uses the default connection. Defaults to None.
-            write_mode (Literal["overwrite", "append"], optional): The write mode for the Delta table.
-                "overwrite" replaces existing data, "append" adds to existing data. Defaults to "overwrite".
+            write_mode (optional): How to handle existing data. ``"overwrite"`` replaces it,
+                ``"append"`` adds to it, ``"error"`` fails if the table already exists, and
+                ``"upsert"`` / ``"update"`` / ``"delete"`` merge on ``merge_keys``.
+                Defaults to ``"overwrite"``.
             partition_by (Optional[List[str]], optional): Delta partition columns (applied at table
                 creation; writes to an existing table must match its partitioning).
+            merge_keys (Optional[List[str]], optional): Column names for merge operations
+                (required for upsert/update/delete).
+            track_changes (bool, optional): Turn the table's change feed on so readers can ask for
+                changes only (see ``changes_since`` on :func:`flowfile_frame.scan_delta`).
+                Enable-only: ``False`` never turns tracking off. Not allowed with
+                ``write_mode="overwrite"``.
             description (Optional[str], optional): Description of this operation for the ETL graph.
         Returns:
             FlowFrame: A new child data frame representing the written data.
@@ -2351,6 +2361,8 @@ class FlowFrame:
             write_mode=write_mode,
             file_format="delta",
             partition_by=partition_by,
+            merge_keys=merge_keys,
+            track_changes=track_changes,
             description=description,
         )
         return self._create_child_frame(new_node_id)

@@ -4,17 +4,20 @@ import type { SeparatorOrientation } from "../types";
 export const VIZ_MIME = "application/flowfile-viz";
 export const TEXT_MIME = "application/flowfile-text";
 export const SEPARATOR_MIME = "application/flowfile-separator";
+export const KPI_MIME = "application/flowfile-kpi";
 
 const draggedVizId = ref<number | null>(null);
 const isDraggingViz = ref(false);
 const isDraggingText = ref(false);
 const isDraggingSeparator = ref(false);
+const isDraggingKpi = ref(false);
 
 export function useDashboardDragAndDrop() {
   const onDragEnd = () => {
     isDraggingViz.value = false;
     isDraggingText.value = false;
     isDraggingSeparator.value = false;
+    isDraggingKpi.value = false;
     draggedVizId.value = null;
   };
 
@@ -47,14 +50,22 @@ export function useDashboardDragAndDrop() {
     armDragEnd(event);
   };
 
+  const onKpiDragStart = (event: DragEvent) => {
+    event.dataTransfer?.setData(KPI_MIME, "1");
+    isDraggingKpi.value = true;
+    armDragEnd(event);
+  };
+
   return {
     draggedVizId,
     isDraggingViz,
     isDraggingText,
     isDraggingSeparator,
+    isDraggingKpi,
     onVizDragStart,
     onTextDragStart,
     onSeparatorDragStart,
+    onKpiDragStart,
     onDragEnd,
   };
 }

@@ -13,6 +13,8 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 
+from test_utils.docker_images import is_image_present
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -182,8 +184,12 @@ DOCKER_IMAGE_TAG={image_tag}
         subprocess.run(["chmod", "+x", "build.sh"], check=True)
         subprocess.run(["chmod", "+x", "run.sh"], check=True)
 
-        logger.info(f"Building Docker image {image_tag}")
-        subprocess.run(["bash", "build.sh"], check=True)
+        # Reuse a local image; remove it (docker rmi) to rebuild after changing the sample data.
+        if is_image_present(image_tag):
+            logger.info(f"Docker image {image_tag} is already present, skipping the build")
+        else:
+            logger.info(f"Building Docker image {image_tag}")
+            subprocess.run(["bash", "build.sh"], check=True)
 
         os.chdir(original_dir)
         return True

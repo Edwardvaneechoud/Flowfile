@@ -1,4 +1,10 @@
-import type { CatalogTable, CdcCursor, CdcStart } from "../types";
+import type {
+  CatalogTable,
+  CdcCursor,
+  CdcReaderSettings,
+  CdcStart,
+  DeltaVersionCommit,
+} from "../types";
 import { timeAgoShort } from "./time";
 
 /** Columns Delta's change feed adds to every row it returns. */
@@ -74,4 +80,37 @@ export function readModeDisabledReason(
     return "This reader is pinned to a table version — clear the version to read changes.";
   }
   return null;
+}
+
+/** Picker options for a Delta history: "v12 (MERGE) - 2026-09-22T10:00:00". */
+export function deltaVersionOptions(
+  history: DeltaVersionCommit[],
+): { version: number; label: string }[] {
+  return history.map((v) => ({
+    version: v.version,
+    label: `v${v.version}${v.operation ? ` (${v.operation})` : ""}${v.timestamp ? ` - ${v.timestamp}` : ""}`,
+  }));
+}
+
+/** Per-field problems with a change-feed read configuration; null where a field is fine. */
+export function cdcFieldErrors(settings: CdcReaderSettings): {
+  version: string | null;
+  timestamp: string | null;
+  consumerName: string | null;
+} {
+  const name = settings.cdc_consumer_name?.trim();
+  return {
+    version:
+      settings.cdc_mode === "since_version" && settings.cdc_from_version == null
+        ? "Pick the version to read changes after"
+        : null,
+    timestamp:
+      settings.cdc_mode === "since_timestamp" && !settings.cdc_from_timestamp
+        ? "Pick the date and time to read changes from"
+        : null,
+    consumerName:
+      name && !/^[A-Za-z0-9_.:-]+$/.test(name)
+        ? "Cursor name: use letters, digits and _ . : - only"
+        : null,
+  };
 }

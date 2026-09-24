@@ -187,6 +187,8 @@ df = ff.read_from_cloud_storage(
 - `has_header`: Whether CSV has headers (default: `True`). Only used for CSV
 - `encoding`: CSV encoding (default: `utf8`). Only used for CSV
 - `delta_version`: Delta table version for time-travel queries. Only used for Delta
+- `changes_since`: Read the table's change feed instead of its rows. Only used for Delta; see [Delta Lake Reading](#delta-lake-reading)
+- `include_change_preimage`: Keep the before-image rows of each update in the change feed (default: `False`). Only used for Delta
 
 !!! tip "Recommended Approach"
     `read_from_cloud_storage()` is the recommended way to read from cloud storage. The format-specific `scan_*` functions below still work and are useful when you want a more concise call for a known format.
@@ -256,7 +258,24 @@ df = ff.scan_delta(
     connection_name="data-lake-connection",
     version=5,
 )
+
+# Only the rows changed by commits after version 5
+changes = ff.scan_delta(
+    "s3://data-lake/delta-table",
+    connection_name="data-lake-connection",
+    changes_since=5,
+)
 ```
+
+**Parameters:**
+
+- `source`: Cloud storage path of the Delta table
+- `connection_name`: Name of the stored cloud storage connection
+- `version`: Delta table version for time travel
+- `changes_since`: Read the table's change feed instead of its rows — an `int` returns the changes committed *after* that version, an ISO-8601 string or a `datetime` the changes committed at or after that instant. The result adds `_change_type`, `_commit_version` and `_commit_timestamp`
+- `include_change_preimage`: Keep the `update_preimage` rows (the before-image of each update). Dropped by default
+
+A change read needs the table to be change-tracked — write it with `track_changes=True` (see [Writing Data](writing-data.md#delta-lake-writing)) or turn tracking on from the visual reader. `changes_since` and `version` are mutually exclusive, `changes_since="last_run"` raises a `ValueError` because cursors exist for catalog tables only, and change reads are not supported for `gs://` paths. [Change Tracking](../../visual-editor/catalog/change-tracking.md#cloud-delta-tables) covers how cloud paths differ from catalog tables and has a tested end-to-end example.
 
 ## Catalog Reading
 

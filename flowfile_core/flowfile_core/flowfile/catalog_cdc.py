@@ -1,6 +1,7 @@
-"""Cursor bookkeeping for catalog change-feed (CDC) readers.
+"""Change-window resolution and cursor bookkeeping for change-feed (CDC) readers.
 
-A cursor is the last Delta commit version one consumer fully processed, keyed by
+``resolve_change_window`` is shared by the catalog reader and the cloud Delta reader; cursors are
+catalog-only. A cursor is the last Delta commit version one consumer fully processed, keyed by
 ``(table_id, consumer_key)``. Advancing it is **at-least-once**: the commit callback is stored on
 ``FlowNode._on_flow_complete`` and only ``run_graph`` invokes those, after a full run in which the
 reader and everything downstream of it completed — so a preview, a single-node run or a cancel
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import CatalogCdcCursor, FlowRegistration
+from shared.delta_utils import get_delta_version_at_or_after, scd2_parse_iso_utc
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +89,62 @@ def init_cursor_value(cdc_start: str, head: int, cdc_enabled_version: int | None
         floor = cdc_enabled_version if cdc_enabled_version is not None else 0
         return floor - 1
     return head
+
+
+def _resolved_cdc_version(value: object) -> int:
+    """The commit version a since-version reader starts after, once ``${param}`` refs are substituted."""
+    if value is None or isinstance(value, bool):
+        raise ValueError(f"cdc_from_version must resolve to a commit version, got {value!r}")
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"cdc_from_version must resolve to a commit version, got {value!r} — is that flow parameter defined?"
+        ) from exc
+
+
+def _resolved_cdc_instant(value: object) -> datetime:
+    """The UTC instant a since-time reader starts from, once ``${param}`` refs are substituted."""
+    try:
+        return scd2_parse_iso_utc(str(value))
+    except ValueError as exc:
+        raise ValueError(
+            f"cdc_from_timestamp must resolve to an ISO-8601 instant, got {value!r} — is that flow parameter defined?"
+        ) from exc
+
+
+def resolve_change_window(
+    cdc_mode: str,
+    from_version: object,
+    from_timestamp: object,
+    *,
+    head: int,
+    floor: int | None,
+    path: str,
+    storage_options: dict | None,
+    last_version: int | None = None,
+    cdc_start: str = "now",
+) -> int:
+    """The first commit version a change read covers; the window ends at *head*.
+
+    ``since_version`` starts after the resolved *from_version*. ``since_timestamp`` starts at the
+    first commit at or after the resolved *from_timestamp* — resolved to a version here so the floor
+    clamp applies to it too — or at ``head + 1`` (an empty window) when every commit predates it.
+    ``since_last_run`` starts after the stored cursor *last_version*, or where ``init_cursor_value``
+    places a first read. Every start is clamped to the enablement *floor* (``None`` ⇒ no clamp),
+    since reads below it are inconsistent.
+    """
+    if cdc_mode == "since_timestamp":
+        instant = _resolved_cdc_instant(from_timestamp)
+        resolved = get_delta_version_at_or_after(path, instant, storage_options=storage_options)
+        starting_version = resolved if resolved is not None else head + 1
+    elif cdc_mode == "since_version":
+        starting_version = _resolved_cdc_version(from_version) + 1
+    else:
+        if last_version is None:
+            last_version = init_cursor_value(cdc_start, head, floor)
+        starting_version = last_version + 1
+    return starting_version if floor is None else max(starting_version, floor)
 
 
 def commit_cursor(

@@ -2,11 +2,12 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from flowfile_worker.secrets import decrypt_secret
 from shared.cloud_storage.gcs import use_pyarrow_for_gcs as _use_pyarrow_for_gcs
 from shared.cloud_storage.storage_options import build_storage_options
+from shared.cloud_storage.utils import validate_cloud_resource_path
 
 CloudStorageType = Literal["s3", "adls", "gcs"]
 AuthMethod = Literal[
@@ -34,6 +35,8 @@ class FullCloudStorageConnection(BaseModel):
     aws_secret_access_key: SecretStr | None = None
     aws_role_arn: str | None = None
     aws_allow_unsafe_html: bool | None = None
+    aws_session_token: SecretStr | None = None
+    aws_profile: str | None = None
 
     # Azure ADLS
     azure_account_name: str | None = None
@@ -68,6 +71,8 @@ class FullCloudStorageConnection(BaseModel):
             aws_secret_access_key=self._extract_secret(self.aws_secret_access_key),
             aws_role_arn=self.aws_role_arn,
             aws_allow_unsafe_html=self.aws_allow_unsafe_html,
+            aws_session_token=self._extract_secret(self.aws_session_token),
+            aws_profile=self.aws_profile,
             azure_account_name=self.azure_account_name,
             azure_account_key=self._extract_secret(self.azure_account_key),
             azure_tenant_id=self.azure_tenant_id,
@@ -90,7 +95,7 @@ class WriteSettings(BaseModel):
 
     resource_path: str  # s3://bucket/path/to/file.csv
 
-    write_mode: Literal["overwrite", "append"] = "overwrite"
+    write_mode: Literal["overwrite", "append", "error", "upsert", "update", "delete"] = "overwrite"
     file_format: Literal["csv", "parquet", "json", "delta"] = "parquet"
 
     parquet_compression: Literal["snappy", "gzip", "brotli", "lz4", "zstd"] = "snappy"
@@ -100,6 +105,15 @@ class WriteSettings(BaseModel):
 
     # Delta only: partition columns, applied at table creation
     partition_by: list[str] | None = None
+    # Delta only: the key columns an upsert/update/delete matches on
+    merge_keys: list[str] = Field(default_factory=list)
+    # Delta only, enable-only: True turns the change data feed on; False never turns it off
+    track_changes: bool = False
+
+    @field_validator("resource_path")
+    @classmethod
+    def _validate_resource_path(cls, value: str) -> str:
+        return validate_cloud_resource_path(value, role="writer")
 
 
 class CloudStorageWriteSettings(BaseModel):

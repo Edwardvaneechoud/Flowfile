@@ -34,6 +34,7 @@ class CloudConnectionEntry(_Entry):
     aws_access_key_id: str | None = None
     aws_role_arn: str | None = None
     aws_allow_unsafe_html: bool | None = None
+    aws_profile: str | None = None
     azure_account_name: str | None = None
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
@@ -41,6 +42,7 @@ class CloudConnectionEntry(_Entry):
     endpoint_url: str | None = None
     verify_ssl: bool = True
     aws_secret_access_key: str | None = None
+    aws_session_token: str | None = None
     azure_account_key: str | None = None
     azure_client_secret: str | None = None
     azure_sas_token: str | None = None

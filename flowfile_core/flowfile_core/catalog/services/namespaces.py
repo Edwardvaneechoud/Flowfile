@@ -60,10 +60,16 @@ def _validate_namespace_storage(owner_id: int, storage_uri: str | None, storage_
     if not storage_connection_name:
         raise InvalidNamespaceStorageError("storage_uri requires a storage_connection_name.")
     from flowfile_core.database.connection import get_db_context
-    from flowfile_core.flowfile.database_connection_manager.db_connections import get_cloud_connection_schema
+    from flowfile_core.flowfile.database_connection_manager.db_connections import (
+        CloudConnectionNotAllowedError,
+        get_cloud_connection_schema,
+    )
 
-    with get_db_context() as db:
-        conn = get_cloud_connection_schema(db, storage_connection_name, owner_id)
+    try:
+        with get_db_context() as db:
+            conn = get_cloud_connection_schema(db, storage_connection_name, owner_id)
+    except CloudConnectionNotAllowedError as exc:
+        raise InvalidNamespaceStorageError(str(exc)) from None
     if conn is None:
         raise InvalidNamespaceStorageError(
             f"Cloud connection {storage_connection_name!r} was not found or is not accessible for the catalog owner."

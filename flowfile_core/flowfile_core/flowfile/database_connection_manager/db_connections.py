@@ -251,6 +251,13 @@ def get_all_database_connections_interface(db: Session, user_id: int) -> list[Fu
     return result
 
 
+def _aws_profile_to_store(connection: FullCloudStorageConnection) -> str | None:
+    """The profile only applies to aws-cli; a blank one is stored as NULL (boto3's default credential chain)."""
+    if connection.auth_method != "aws-cli":
+        return None
+    return (connection.aws_profile or "").strip() or None
+
+
 def store_cloud_connection(
     db: Session, connection: FullCloudStorageConnection, user_id: int
 ) -> DBCloudStorageConnection:
@@ -274,6 +281,14 @@ def store_cloud_connection(
         ).id
     else:
         aws_secret_access_key_ref_id = None
+    if connection.auth_method == "access_key" and _secret_text(connection.aws_session_token):
+        aws_session_token_ref_id = store_secret(
+            db,
+            SecretInput(name=connection.connection_name + "_aws_session_token", value=connection.aws_session_token),
+            user_id,
+        ).id
+    else:
+        aws_session_token_ref_id = None
     if connection.azure_client_secret is not None:
         azure_client_secret_ref_id = store_secret(
             db,
@@ -320,7 +335,9 @@ def store_cloud_connection(
         aws_access_key_id=connection.aws_access_key_id,
         aws_role_arn=connection.aws_role_arn,
         aws_secret_access_key_id=aws_secret_access_key_ref_id,
+        aws_session_token_id=aws_session_token_ref_id,
         aws_allow_unsafe_html=connection.aws_allow_unsafe_html,
+        aws_profile=_aws_profile_to_store(connection),
         # Azure ADLS fields
         azure_account_name=connection.azure_account_name,
         azure_tenant_id=connection.azure_tenant_id,
@@ -359,18 +376,34 @@ def _update_cloud_secret(
     return existing_secret_id
 
 
+def _secret_text(value) -> str:
+    return value.get_secret_value() if value else ""
+
+
+def _drop_cloud_secret(db: Session, secret_id: int | None) -> None:
+    """Delete a secret the connection no longer references (flush the cleared FK first)."""
+    if secret_id is not None:
+        db.flush()
+        db.query(Secret).filter(Secret.id == secret_id).delete(synchronize_session=False)
+
+
 def update_cloud_connection(
     db: Session, connection: FullCloudStorageConnection, user_id: int
 ) -> DBCloudStorageConnection:
     """
     Update an existing cloud storage connection. Secret fields are only updated
     if a new non-empty value is provided; otherwise the existing secret is kept.
+
+    The AWS session token is dropped unless re-entered whenever the key pair or auth method changes;
+    ``aws_profile`` is kept when the caller omits the field.
     """
     # Own-only: routes authorize manage-grantees and then pass the OWNER's user_id,
     # so rotated secrets below are always re-encrypted under the owner's key.
     db_connection = _get_own_cloud_connection(db, connection.connection_name, user_id)
     if db_connection is None:
         raise ValueError(f"Cloud connection with name '{connection.connection_name}' not found for user {user_id}.")
+
+    previous_access_key_id = db_connection.aws_access_key_id
 
     # Update non-secret fields
     db_connection.storage_type = connection.storage_type
@@ -379,6 +412,8 @@ def update_cloud_connection(
     db_connection.aws_access_key_id = connection.aws_access_key_id
     db_connection.aws_role_arn = connection.aws_role_arn
     db_connection.aws_allow_unsafe_html = connection.aws_allow_unsafe_html
+    if "aws_profile" in connection.model_fields_set or connection.auth_method != "aws-cli":
+        db_connection.aws_profile = _aws_profile_to_store(connection)
     db_connection.azure_account_name = connection.azure_account_name
     db_connection.azure_tenant_id = connection.azure_tenant_id
     db_connection.azure_client_id = connection.azure_client_id
@@ -395,6 +430,21 @@ def update_cloud_connection(
         connection.connection_name + "_aws_secret_access_key",
         user_id,
     )
+
+    aws_token_value = _secret_text(connection.aws_session_token)
+    key_pair_changed = bool(aws_secret_value) or connection.aws_access_key_id != previous_access_key_id
+    if connection.auth_method == "access_key" and aws_token_value:
+        db_connection.aws_session_token_id = _update_cloud_secret(
+            db,
+            db_connection.aws_session_token_id,
+            aws_token_value,
+            connection.connection_name + "_aws_session_token",
+            user_id,
+        )
+    elif connection.auth_method != "access_key" or key_pair_changed:
+        stale_token_id = db_connection.aws_session_token_id
+        db_connection.aws_session_token_id = None
+        _drop_cloud_secret(db, stale_token_id)
 
     azure_key_value = connection.azure_account_key.get_secret_value() if connection.azure_account_key else ""
     db_connection.azure_account_key_id = _update_cloud_secret(
@@ -452,6 +502,7 @@ def get_full_cloud_storage_interface_from_db(
         aws_region=db_cloud_connection.aws_region,
         aws_access_key_id=db_cloud_connection.aws_access_key_id,
         aws_role_arn=db_cloud_connection.aws_role_arn,
+        aws_profile=db_cloud_connection.aws_profile,
         azure_account_name=db_cloud_connection.azure_account_name,
         azure_tenant_id=db_cloud_connection.azure_tenant_id,
         azure_client_id=db_cloud_connection.azure_client_id,
@@ -461,13 +512,25 @@ def get_full_cloud_storage_interface_from_db(
     )
 
 
+class CloudConnectionNotAllowedError(ValueError):
+    """A saved cloud connection that would authenticate as the server, refused in multi-user mode."""
+
+
 def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int) -> FullCloudStorageConnection | None:
     """
     Retrieves a full cloud storage connection schema, including decrypted secrets, by its name and user ID.
+
+    Raises:
+        CloudConnectionNotAllowedError: In multi-user mode, for a server-identity connection not owned by an admin.
     """
     db_connection = get_cloud_connection(db, connection_name, user_id)
     if not db_connection:
         return None
+    if sharing.uses_server_identity(db_connection.auth_method) and not sharing.is_admin_user(db, db_connection.user_id):
+        raise CloudConnectionNotAllowedError(
+            f"Cloud connection '{connection_name}' ({db_connection.auth_method}) "
+            f"{sharing.SERVER_IDENTITY_REFUSED_MESSAGE}"
+        )
 
     # Decrypt secrets associated with the connection
     aws_secret_key = None
@@ -475,6 +538,12 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
         secret_record = db.query(Secret).filter(Secret.id == db_connection.aws_secret_access_key_id).first()
         if secret_record:
             aws_secret_key = decrypt_secret(secret_record.encrypted_value)
+
+    aws_session_token = None
+    if db_connection.aws_session_token_id:
+        secret_record = db.query(Secret).filter(Secret.id == db_connection.aws_session_token_id).first()
+        if secret_record:
+            aws_session_token = decrypt_secret(secret_record.encrypted_value)
 
     azure_account_key = None
     if db_connection.azure_account_key_id:
@@ -508,7 +577,9 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
         aws_region=db_connection.aws_region,
         aws_access_key_id=db_connection.aws_access_key_id,
         aws_secret_access_key=aws_secret_key,
+        aws_session_token=aws_session_token,
         aws_role_arn=db_connection.aws_role_arn,
+        aws_profile=db_connection.aws_profile,
         azure_account_name=db_connection.azure_account_name,
         azure_account_key=azure_account_key,
         azure_tenant_id=db_connection.azure_tenant_id,
@@ -538,6 +609,7 @@ def cloud_connection_interface_from_db_connection(
         aws_region=db_connection.aws_region,
         aws_access_key_id=db_connection.aws_access_key_id,
         aws_role_arn=db_connection.aws_role_arn,
+        aws_profile=db_connection.aws_profile,
         azure_account_name=db_connection.azure_account_name,
         azure_tenant_id=db_connection.azure_tenant_id,
         azure_client_id=db_connection.azure_client_id,

@@ -16,6 +16,7 @@ from tests.flowfile.conftest import (
 from tests.flowfile.conftest import (
     create_test_namespace as _create_namespace,
 )
+from tests.flowfile.conftest import READER_NO_PATH, WRITER_NO_PATH, add_user_cloud_writer
 
 
 def create_graph(flow_id: int = 1) -> FlowGraph:
@@ -851,3 +852,86 @@ def test_add_filter_returns_the_dtype_error():
         filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="year([d]) > 2010")))
     assert valid is False
     assert "year needs a Date or Datetime column" in msg
+
+
+def cloud_writer_graph(graph: FlowGraph | None = None, **overrides) -> FlowGraph:
+    return add_user_cloud_writer(graph or create_graph(), **overrides)
+
+
+def cloud_reader_graph(resource_path: str) -> FlowGraph:
+    graph = create_graph()
+    add_promise(graph, "cloud_storage_reader", 1)
+    graph.add_cloud_storage_reader(input_schema.NodeCloudStorageReader.model_validate({
+        "flow_id": graph.flow_id, "node_id": 1, "user_id": 1,
+        "cloud_storage_settings": {"resource_path": resource_path, "file_format": "parquet", "auth_mode": "aws-cli"},
+    }))
+    return graph
+
+
+def test_user_cloud_writer_without_a_path_warns():
+    (issue,) = issues_by_node(validate_flow_settings(cloud_writer_graph()))[2]
+    assert issue.kind == "invalid_path"
+    assert issue.message == WRITER_NO_PATH
+    assert issue.missing_columns == []
+
+
+@pytest.mark.parametrize("path", ["   ", "output_folder/table"])
+def test_cloud_writer_blank_or_relative_path_warns(path):
+    (issue,) = issues_by_node(validate_flow_settings(cloud_writer_graph(resource_path=path)))[2]
+    assert issue.kind == "invalid_path"
+
+
+@pytest.mark.parametrize("path", ["s3://flowfile-test/output/table", "abfss://container@account/table", "gs://b/t"])
+def test_cloud_writer_with_a_cloud_uri_stays_silent(path):
+    assert validate_flow_settings(cloud_writer_graph(resource_path=path)).nodes == []
+
+
+@pytest.mark.parametrize("path", ["${target}", "${root}/table"])
+def test_cloud_writer_parameter_path_stays_silent(path):
+    graph = create_graph()
+    graph.flow_settings.parameters = [FlowParameter(name="target", default_value="")]
+    assert validate_flow_settings(cloud_writer_graph(graph, resource_path=path)).nodes == []
+
+
+def test_cloud_writer_absolute_local_path_warns_only_in_docker_mode(tmp_path, monkeypatch):
+    graph = cloud_writer_graph(resource_path=str(tmp_path / "table"))
+    monkeypatch.setenv("FLOWFILE_MODE", "electron")
+    assert validate_flow_settings(graph).nodes == []
+
+    monkeypatch.setenv("FLOWFILE_MODE", "docker")
+    (issue,) = issues_by_node(validate_flow_settings(graph))[2]
+    assert issue.kind == "invalid_path"
+    assert "local path" in issue.message
+
+
+def test_cloud_reader_without_a_path_warns():
+    (issue,) = issues_by_node(validate_flow_settings(cloud_reader_graph("")))[1]
+    assert (issue.kind, issue.message) == ("invalid_path", READER_NO_PATH)
+    assert validate_flow_settings(cloud_reader_graph("s3://flowfile-test/data.parquet")).nodes == []
+
+
+def test_cloud_path_issue_sits_beside_column_issues():
+    graph = cloud_writer_graph(partition_by=["gone"])
+    kinds = sorted(issue.kind for issue in issues_by_node(validate_flow_settings(graph))[2])
+    assert kinds == ["invalid_path", "missing_columns"]
+
+
+def test_endpoint_reports_the_cloud_path_issue():
+    from flowfile_core import flow_file_handler
+
+    client = _get_test_client()
+    flow_id = 9872
+    if flow_file_handler.get_flow(flow_id) is not None:
+        flow_file_handler.delete_flow(flow_id)
+    flow_file_handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name="sv_cloud", path="."))
+    cloud_writer_graph(flow_file_handler.get_flow(flow_id))
+    try:
+        response = client.get("/flow/settings_validation", params={"flow_id": flow_id})
+        assert response.status_code == 200
+        assert response.json()["nodes"] == [{
+            "node_id": 2,
+            "issues": [{"input_handle": "main", "missing_columns": [], "message": WRITER_NO_PATH,
+                        "kind": "invalid_path"}],
+        }]
+    finally:
+        flow_file_handler.delete_flow(flow_id)
