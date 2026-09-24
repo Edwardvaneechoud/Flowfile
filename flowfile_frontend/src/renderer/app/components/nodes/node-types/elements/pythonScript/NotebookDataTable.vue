@@ -16,6 +16,7 @@ interface Props {
 }
 
 const props = defineProps<Props>();
+const emit = defineEmits<{ "selection-change": [rows: Record<string, unknown>[]] }>();
 
 const defaultColDef = {
   editable: false,
@@ -39,8 +40,12 @@ const columnDefs = computed(() =>
     :column-defs="columnDefs"
     :row-data="rows"
     :suppress-field-dot-notation="true"
+    row-selection="multiple"
+    :rows-multi-select-with-click="true"
     class="ag-theme-balham notebook-data-table"
     :style="{ width: '100%', height: '100%' }"
+    @grid-ready="emit('selection-change', [])"
+    @selection-changed="emit('selection-change', $event.api.getSelectedRows())"
   />
 </template>
 
