@@ -304,6 +304,7 @@ df = ff.read_catalog_table("my_table", delta_version=5)
 
 - `table_name`: Name of the catalog table to read (required)
 - `schema`: A [`SchemaReference`](catalog-references.md) identifying the catalog/schema to read from. Preferred over `namespace_id`.
+- `namespace_full_name`: The schema as a plain `"catalog.schema"` string, resolved when the flow runs. Exported flow code uses this form
 - `delta_version`: Optional Delta version for time-travel queries (physical tables only)
 
 Returns a `FlowFrame`. Use `.collect()` to materialize, `.data` to access the underlying `LazyFrame`, or `open_graph_in_editor()` to visualize in the UI.

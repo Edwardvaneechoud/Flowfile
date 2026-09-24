@@ -244,6 +244,7 @@ ff.write_catalog_table(
 - `df`: The `LazyFrame` to write
 - `table_name`: Name of the catalog table to write to (required)
 - `schema`: A [`SchemaReference`](catalog-references.md) identifying the target catalog/schema. Preferred over `namespace_id`.
+- `namespace_full_name`: The target schema as a plain `"catalog.schema"` string, resolved when the flow runs. Exported flow code uses this form
 - `write_mode`: How to handle existing data (default: `"overwrite"`). See [Catalog Write Modes](#catalog-write-modes)
 - `merge_keys`: Column names for merge operations (required for `upsert`, `update`, `delete`)
 - `track_changes`: Turn [change tracking](../../visual-editor/catalog/change-tracking.md) on for the table. Enable-only; rejected with `write_mode` `"overwrite"`, `"virtual"` or `"scd2"`

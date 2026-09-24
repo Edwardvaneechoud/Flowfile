@@ -1,5 +1,10 @@
 import typing
 
+from sqlalchemy.exc import SQLAlchemyError
+
+from flowfile_core.catalog import CatalogService
+from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
 from flowfile_core.flowfile.code_generator.param_codegen import SENTINEL_PREFIX
 from flowfile_core.schemas import input_schema
@@ -327,8 +332,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         self._add_code(f"# Read from catalog table: {table_name}")
         self._add_code(f"{var_name} = ff.read_catalog_table(")
         self._add_code(f"    {self._py_str(table_name)},")
-        if settings.catalog_namespace_id is not None:
-            self._add_code(f"    namespace_id={settings.catalog_namespace_id},")
+        self._emit_catalog_namespace(None, settings.catalog_namespace_id)
         if settings.delta_version is not None:
             self._add_code(f"    delta_version={settings.delta_version},")
         if settings.scd2_view is not None:
@@ -365,6 +369,28 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         if feed.cdc_include_preimage:
             self._add_code("    include_change_preimage=True,")
 
+    def _emit_catalog_namespace(self, full_name: str | None, namespace_id: int | None) -> None:
+        """Emit the catalog target as a portable ``namespace_full_name="catalog.schema"`` kwarg.
+
+        The numeric id is install-local and meaningless to a reader of the script, so it is only
+        emitted when no name is stored and the id no longer resolves in this catalog.
+        """
+        full_name = full_name or self._resolve_catalog_namespace_full_name(namespace_id)
+        if full_name:
+            self._add_code(f"    namespace_full_name={self._py_str(full_name)},")
+        elif namespace_id is not None:
+            self._add_code(f"    namespace_id={namespace_id},")
+
+    @staticmethod
+    def _resolve_catalog_namespace_full_name(namespace_id: int | None) -> str | None:
+        if namespace_id is None:
+            return None
+        try:
+            with get_db_context() as db:
+                return CatalogService(SQLAlchemyCatalogRepository(db)).resolve_namespace_full_name(namespace_id)
+        except SQLAlchemyError:
+            return None
+
     def _handle_catalog_sql_reader(self, settings: input_schema.NodeCatalogReader, var_name: str) -> None:
         sql_code = settings.sql_query.replace('"""', '\\"\\"\\"')
         suffix = ".data" if self.framework == "pl" else ""
@@ -395,10 +421,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         self._add_code(f"{var_name} = ff.write_catalog_table(" if is_scd2 else "ff.write_catalog_table(")
         self._add_code(f"    {input_df},")
         self._add_code(f"    {self._py_str(ws.table_name)},")
-        if ws.namespace_id is not None:
-            self._add_code(f"    namespace_id={ws.namespace_id},")
-        if ws.namespace_full_name is not None:
-            self._add_code(f"    namespace_full_name={self._py_str(ws.namespace_full_name)},")
+        self._emit_catalog_namespace(ws.namespace_full_name, ws.namespace_id)
         self._add_code(f"    write_mode={self._py_str(ws.write_mode)},")
         if ws.merge_keys:
             self._add_code(f"    merge_keys={ws.merge_keys},")

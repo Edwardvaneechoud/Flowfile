@@ -5571,7 +5571,7 @@ def test_catalog_reader_by_table_name():
 
 
 def test_catalog_reader_with_namespace_and_version():
-    """Test catalog reader code generation with namespace and delta version."""
+    """An id that no longer resolves to a namespace falls back to ``namespace_id=``."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 
     flow = create_basic_flow()
@@ -5580,7 +5580,7 @@ def test_catalog_reader_with_namespace_and_version():
         flow_id=1,
         node_id=1,
         catalog_table_name="versioned_table",
-        catalog_namespace_id=5,
+        catalog_namespace_id=987654,
         delta_version=3,
     )
 
@@ -5591,7 +5591,7 @@ def test_catalog_reader_with_namespace_and_version():
 
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
-        code_output, "ff.read_catalog_table(", '"versioned_table"', "namespace_id=5", "delta_version=3"
+        code_output, "ff.read_catalog_table(", '"versioned_table"', "namespace_id=987654", "delta_version=3"
     )
 
 
@@ -5809,7 +5809,7 @@ def test_catalog_writer_upsert_with_merge_keys():
         depending_on_id=1,
         catalog_write_settings=input_schema.CatalogWriteSettings(
             table_name="target_table",
-            namespace_id=3,
+            namespace_id=987654,
             write_mode="upsert",
             merge_keys=["id", "name"],
             description="My upsert table",
@@ -5823,7 +5823,7 @@ def test_catalog_writer_upsert_with_merge_keys():
 
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
-        code_output, "ff.write_catalog_table(", '"target_table"', "namespace_id=3",
+        code_output, "ff.write_catalog_table(", '"target_table"', "namespace_id=987654",
         'write_mode="upsert"', "merge_keys=[", 'description="My upsert table"',
     )
 
@@ -5900,6 +5900,31 @@ def test_catalog_writer_scd2_emits_all_settings():
         'scd2_valid_to_column="effective_to"',
         'scd2_is_current_column="current_flag"',
     )
+
+
+def test_catalog_writer_stored_namespace_name_replaces_the_id():
+    """A stored ``namespace_full_name`` is emitted on its own; the install-local id is dropped."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+
+    flow = create_basic_flow()
+    catalog_writer = input_schema.NodeCatalogWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        catalog_write_settings=input_schema.CatalogWriteSettings(
+            table_name="scores",
+            namespace_id=987654,
+            namespace_full_name="Demo.sales_analytics",
+            write_mode="append",
+        ),
+    )
+
+    converter = FlowGraphToFlowFrameConverter(flow)
+    converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
+
+    code_output = "\n".join(converter.code_lines)
+    assert 'namespace_full_name="Demo.sales_analytics"' in code_output
+    assert "namespace_id=" not in code_output
 
 
 def test_catalog_writer_scd2_defaults_are_not_emitted():
@@ -6121,6 +6146,8 @@ def test_catalog_reader_code_executes():
     flow.add_catalog_reader(reader)
 
     code = export_flow_to_flowframe(flow)
+    assert 'namespace_full_name="CodeGenCat.CodeGenSch"' in code
+    assert "namespace_id=" not in code
     result = get_result_from_generated_code(code)
     if hasattr(result, "collect"):
         result = result.collect()
@@ -6159,6 +6186,8 @@ def test_catalog_writer_code_executes():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     code = export_flow_to_flowframe(flow)
+    assert 'namespace_full_name="CodeGenCat.CodeGenSch"' in code
+    assert "namespace_id=" not in code
     verify_if_execute(code)
 
     with get_db_context() as db:
