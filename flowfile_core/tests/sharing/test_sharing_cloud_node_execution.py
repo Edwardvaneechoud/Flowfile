@@ -3,7 +3,6 @@
 The server's own credentials and disk are refused before anything consults them; saved connections keep working.
 """
 
-import os
 import re
 import uuid
 
@@ -27,6 +26,7 @@ from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.routes import storage_browser
 from flowfile_core.schemas import input_schema, schemas
 from shared.cloud_storage.utils import validate_cloud_resource_path
+from test_utils.s3.aws_profiles import isolate_aws
 
 GATE = "Select a cloud storage connection; server credentials are not available in multi-user mode."
 ROWS = [{"id": 1, "category": "A"}, {"id": 2, "category": "B"}]
@@ -50,16 +50,13 @@ requires_minio = pytest.mark.skipif(not _minio_available(), reason="MinIO is not
 @pytest.fixture
 def hermetic_aws(tmp_path, monkeypatch):
     """Sentinel server credentials aimed at a closed port: a leak can never reach real AWS or MinIO."""
-    for key in list(os.environ):
-        if key.startswith("AWS_"):
-            monkeypatch.delenv(key)
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-credentials"))
-    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-config"))
-    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIASERVERAMBIENT")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "server-ambient-secret")
-    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:9")
-    monkeypatch.setenv("AWS_ALLOW_HTTP", "true")
+    isolate_aws(
+        monkeypatch,
+        tmp_path,
+        AWS_ACCESS_KEY_ID="AKIASERVERAMBIENT",
+        AWS_SECRET_ACCESS_KEY="server-ambient-secret",
+        AWS_ALLOW_HTTP="true",
+    )
 
 
 @pytest.fixture

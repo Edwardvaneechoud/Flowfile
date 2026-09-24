@@ -11,7 +11,9 @@ import polars as pl
 import pytest
 from deltalake import DeltaTable
 
-from .helpers import MINIO_OPTIONS, NAMED_PROFILE, list_keys
+from test_utils.s3.aws_profiles import MINIO_PROFILE
+
+from .helpers import MINIO_OPTIONS, list_keys
 
 pytestmark = pytest.mark.cloud_e2e
 
@@ -119,7 +121,7 @@ def aws_cli_connection(stack):
     """A saved aws-cli connection naming the ``minio`` profile and MinIO's endpoint."""
     name = f"minio aws-cli {uuid.uuid4().hex[:6]}"
     stack.create_minio_connection(
-        name, auth_method="aws-cli", aws_profile=NAMED_PROFILE, aws_access_key_id=None, aws_secret_access_key=None
+        name, auth_method="aws-cli", aws_profile=MINIO_PROFILE, aws_access_key_id=None, aws_secret_access_key=None
     )
     yield name
     stack.delete_connection(name)

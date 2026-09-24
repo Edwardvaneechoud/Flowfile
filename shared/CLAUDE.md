@@ -54,7 +54,7 @@ Tests live in `shared/tests/` and run from the repo root:
 poetry run pytest shared/tests
 ```
 - `tests/test_artifact_storage.py`, `tests/test_ml_metrics.py` — plain unit tests.
-- `tests/test_cloud_storage_options.py` — real boto3 against temp `AWS_SHARED_CREDENTIALS_FILE`/`AWS_CONFIG_FILE` (ambient `AWS_*` stripped, `AWS_EC2_METADATA_DISABLED=true`), plus polars/deltalake/boto3 round trips per S3 auth method against an already-running MinIO (`requires_minio` skips without it; `iam_role` uses MinIO's STS). Keep new credential tests hermetic the same way so nothing can reach real AWS.
+- `tests/test_cloud_storage_options.py` — real boto3 against temp `AWS_SHARED_CREDENTIALS_FILE`/`AWS_CONFIG_FILE` (ambient `AWS_*` stripped, `AWS_EC2_METADATA_DISABLED=true`), plus polars/deltalake/boto3 round trips per S3 auth method against an already-running MinIO (`requires_minio` skips without it; `iam_role` uses MinIO's STS). Every suite gets that hermetic setup from `test_utils/s3/aws_profiles.py::isolate_aws` (temp files, `DEAD_ENDPOINT`, `MINIO_PROFILE` / `NOT_MINIO_KEYS`); use it for new credential tests so nothing can reach real AWS.
 - `tests/kafka/` — needs a Redpanda container; `tests/kafka/conftest.py` auto-starts it via `test_utils.kafka.fixtures` and `pytest.skip`s when Docker is unavailable. No custom pytest marker is applied to shared tests (none of the root `pyproject.toml` markers are used here).
 
 ## Gotchas

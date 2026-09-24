@@ -13,6 +13,8 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 
+from test_utils.docker_images import is_image_present
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -76,11 +78,6 @@ def is_docker_available() -> bool:
     except (subprocess.SubprocessError, OSError):
         logger.warning("Error running Docker command")
         return False
-
-
-def is_image_present(image: str) -> bool:
-    """True when the image is already local, so no registry round-trip is needed."""
-    return subprocess.run(["docker", "image", "inspect", image], capture_output=True, check=False).returncode == 0
 
 
 def is_container_running(container_name: str) -> bool:

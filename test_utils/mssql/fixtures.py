@@ -21,6 +21,8 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
+from test_utils.docker_images import pull_image_if_missing
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -142,11 +144,6 @@ def is_docker_available() -> bool:
     except (subprocess.SubprocessError, OSError):
         logger.warning("Error running Docker command")
         return False
-
-
-def is_image_present(image: str) -> bool:
-    """True when the image is already local, so no registry round-trip is needed."""
-    return subprocess.run(["docker", "image", "inspect", image], capture_output=True, check=False).returncode == 0
 
 
 def is_container_running(container_name: str) -> bool:
@@ -291,21 +288,7 @@ def start_mssql_container(
         check=False,
     )
 
-    # Pull only when missing: a pull of a present tag still round-trips to the registry.
-    try:
-        if not is_image_present(image):
-            logger.info(f"Pulling Docker image {image}...")
-            subprocess.run(
-                ["docker", "pull", image],
-                capture_output=True,
-                timeout=300,
-                check=True,
-            )
-    except subprocess.TimeoutExpired:
-        logger.error(f"Timed out pulling Docker image {image}")
-        return None, False
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to pull Docker image {image}: {e}")
+    if not pull_image_if_missing(image, logger):
         return None, False
 
     try:

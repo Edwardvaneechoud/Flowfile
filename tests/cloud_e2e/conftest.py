@@ -30,7 +30,9 @@ from cryptography.fernet import Fernet
 from test_utils.s3 import fixtures as s3
 from test_utils.s3.cloud_e2e_seed import SEED_BUCKET, seed_cloud_e2e
 
-from .helpers import MINIO_OPTIONS, NAMED_PROFILE, list_keys
+from test_utils.s3.aws_profiles import DEAD_ENDPOINT, MINIO_KEYS, MINIO_PROFILE, NOT_MINIO_KEYS, strip_aws_env, write_aws_files
+
+from .helpers import MINIO_OPTIONS, list_keys
 
 FLOW_FIXTURE = Path(__file__).parent / "fixtures" / "user_flow_run1390.json"
 RUN_ID = uuid.uuid4().hex[:8]
@@ -222,8 +224,7 @@ def _running_stack(root: Path, mode: str, extra_env: dict[str, str], login: dict
 def hermetic_aws_env() -> Iterator[None]:
     """Keep the test process's own reads and writes off any ambient AWS credentials."""
     with pytest.MonkeyPatch.context() as mp:
-        for key in [key for key in os.environ if key.startswith("AWS_")]:
-            mp.delenv(key)
+        strip_aws_env(mp)
         mp.setenv("AWS_EC2_METADATA_DISABLED", "true")
         yield
 
@@ -273,31 +274,21 @@ def new_target(run_prefix, request) -> Callable[[str], str]:
 
 def _aws_files(root: Path, default_keys: tuple[str, str]) -> dict[str, str]:
     """A default profile with *default_keys* and a ``minio`` profile with the real MinIO keys; no session token."""
-    (root / "credentials").write_text(
-        f"[default]\naws_access_key_id = {default_keys[0]}\naws_secret_access_key = {default_keys[1]}\n"
-        f"[{NAMED_PROFILE}]\naws_access_key_id = {s3.MINIO_ACCESS_KEY}\n"
-        f"aws_secret_access_key = {s3.MINIO_SECRET_KEY}\n"
-    )
-    (root / "config").write_text(f"[default]\nregion = us-east-1\n[profile {NAMED_PROFILE}]\nregion = us-east-1\n")
-    return {
-        "AWS_SHARED_CREDENTIALS_FILE": str(root / "credentials"),
-        "AWS_CONFIG_FILE": str(root / "config"),
-        "AWS_EC2_METADATA_DISABLED": "true",
-    }
+    return write_aws_files(root, {"default": default_keys, MINIO_PROFILE: MINIO_KEYS})
 
 
 @pytest.fixture(scope="session")
 def aws_profile(tmp_path_factory) -> dict[str, str]:
     """Ambient MinIO: static MinIO keys in the default profile plus the MinIO endpoint and plain HTTP."""
-    files = _aws_files(tmp_path_factory.mktemp("aws"), (s3.MINIO_ACCESS_KEY, s3.MINIO_SECRET_KEY))
+    files = _aws_files(tmp_path_factory.mktemp("aws"), MINIO_KEYS)
     return {**files, "AWS_ENDPOINT_URL": s3.MINIO_ENDPOINT_URL, "AWS_ALLOW_HTTP": "true"}
 
 
 @pytest.fixture(scope="session")
 def connection_only_aws(tmp_path_factory) -> dict[str, str]:
     """No ambient route to MinIO: default keys it rejects, a dead endpoint and no plain HTTP."""
-    files = _aws_files(tmp_path_factory.mktemp("aws_connection_only"), ("AKIANOTMINIO", "not-the-minio-secret"))
-    return {**files, "AWS_ENDPOINT_URL": "http://127.0.0.1:9"}
+    files = _aws_files(tmp_path_factory.mktemp("aws_connection_only"), NOT_MINIO_KEYS)
+    return {**files, "AWS_ENDPOINT_URL": DEAD_ENDPOINT}
 
 
 @pytest.fixture(scope="session")

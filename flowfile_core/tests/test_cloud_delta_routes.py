@@ -1,6 +1,5 @@
 """Routes for a Delta table at a bare object-storage path (``/cloud_storage/delta/*``) against MinIO."""
 
-import os
 import uuid
 
 import polars as pl
@@ -25,6 +24,8 @@ except ModuleNotFoundError:  # pragma: no cover - import shim for ad-hoc runs
 
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     from test_utils.s3.fixtures import get_minio_client, is_docker_available
+
+from test_utils.s3.aws_profiles import isolate_aws
 
 _BUCKET = "flowfile-test"
 _CONNECTION_NAME = "cloud_delta_routes_minio"
@@ -126,15 +127,7 @@ def test_info_enable_and_history_on_a_bare_path(client):
 
 def test_aws_cli_without_local_credentials_is_a_400(monkeypatch, tmp_path):
     """"No connection" resolves to aws-cli; with no local AWS credentials that is a caller error, not a 500."""
-    for key in list(os.environ):
-        if key.startswith("AWS_"):
-            monkeypatch.delenv(key)
-    for name in ("credentials", "config", "boto.cfg"):
-        (tmp_path / name).write_text("")
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "credentials"))
-    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
-    monkeypatch.setenv("BOTO_CONFIG", str(tmp_path / "boto.cfg"))
-    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    isolate_aws(monkeypatch, tmp_path, endpoint=None)
     with TestClient(main.app) as bootstrap:
         token = bootstrap.post("/auth/token").json()["access_token"]
 

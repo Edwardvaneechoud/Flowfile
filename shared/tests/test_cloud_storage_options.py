@@ -5,6 +5,7 @@ import os
 import ssl
 import threading
 import uuid
+from functools import partial
 
 import polars as pl
 import pytest
@@ -28,9 +29,9 @@ except ModuleNotFoundError:  # pragma: no cover - import shim for ad-hoc runs
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     from test_utils.s3.fixtures import MINIO_ACCESS_KEY, MINIO_ENDPOINT_URL, MINIO_SECRET_KEY, get_minio_client
 
+from test_utils.s3.aws_profiles import NOT_MINIO_KEYS, append_aws_profile, isolate_aws
+
 _BUCKET = "flowfile-test"
-# Discard port: anything that falls back to the environment fails fast here instead of reaching real AWS.
-_DEAD_ENDPOINT = "http://127.0.0.1:9"
 
 
 def _minio_available() -> bool:
@@ -47,32 +48,9 @@ requires_minio = pytest.mark.skipif(not _minio_available(), reason="MinIO mock S
 
 @pytest.fixture
 def hermetic_aws(monkeypatch, tmp_path):
-    """Point boto3 at empty temp AWS files with every ambient AWS_* variable removed.
-
-    ``AWS_ENDPOINT_URL`` is a dead local port, so only a connection's endpoint reaches MinIO. Returns a profile writer.
-    """
-    for key in list(os.environ):
-        if key.startswith("AWS_"):
-            monkeypatch.delenv(key)
-    credentials, config, boto_config = tmp_path / "credentials", tmp_path / "config", tmp_path / "boto.cfg"
-    for path in (credentials, config, boto_config):
-        path.write_text("")
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(credentials))
-    monkeypatch.setenv("AWS_CONFIG_FILE", str(config))
-    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-    monkeypatch.setenv("BOTO_CONFIG", str(boto_config))
-    monkeypatch.setenv("AWS_ENDPOINT_URL", _DEAD_ENDPOINT)
-
-    def write_static_profile(
-        access_key: str, secret_key: str, region: str = "us-east-1", profile: str = "default"
-    ) -> None:
-        with credentials.open("a") as handle:
-            handle.write(f"[{profile}]\naws_access_key_id = {access_key}\naws_secret_access_key = {secret_key}\n")
-        section = "default" if profile == "default" else f"profile {profile}"
-        with config.open("a") as handle:
-            handle.write(f"[{section}]\nregion = {region}\n")
-
-    return write_static_profile
+    """Empty temp AWS files, no ambient AWS_* and a dead endpoint; returns a static-profile writer."""
+    isolate_aws(monkeypatch, tmp_path)
+    return partial(append_aws_profile, tmp_path)
 
 
 def _minio_connection(**overrides) -> dict:
@@ -395,7 +373,7 @@ def test_s3_options_work_against_minio_for_every_auth_method(auth_method, hermet
     elif auth_method == "aws-cli":
         hermetic_aws(MINIO_ACCESS_KEY, MINIO_SECRET_KEY)
     elif auth_method == "aws-cli-named-profile":
-        hermetic_aws("AKIDNOTMINIO", "wrong-secret")
+        hermetic_aws(*NOT_MINIO_KEYS)
         hermetic_aws(MINIO_ACCESS_KEY, MINIO_SECRET_KEY, profile="minio")
         auth_method, connection["aws_profile"] = "aws-cli", "minio"
     elif auth_method == "env_vars":

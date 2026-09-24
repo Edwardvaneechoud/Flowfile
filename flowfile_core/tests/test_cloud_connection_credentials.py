@@ -42,6 +42,8 @@ except ModuleNotFoundError:  # pragma: no cover - import shim for ad-hoc runs
         is_docker_available,
     )
 
+from test_utils.s3.aws_profiles import MINIO_KEYS, MINIO_PROFILE, NOT_MINIO_KEYS, isolate_aws
+
 _BUCKET = "flowfile-test"
 _CONNECTION_NAME = f"credentials lane {uuid.uuid4().hex[:6]}"
 
@@ -62,20 +64,7 @@ requires_minio = pytest.mark.skipif(not _minio_available(), reason="MinIO mock S
 @pytest.fixture
 def hermetic_aws(monkeypatch, tmp_path):
     """A default profile with keys MinIO rejects and a ``minio`` profile with the real ones."""
-    for key in list(os.environ):
-        if key.startswith("AWS_"):
-            monkeypatch.delenv(key)
-    (tmp_path / "credentials").write_text(
-        "[default]\naws_access_key_id = AKIDNOTMINIO\naws_secret_access_key = wrong-secret\n"
-        f"[minio]\naws_access_key_id = {MINIO_ACCESS_KEY}\naws_secret_access_key = {MINIO_SECRET_KEY}\n"
-    )
-    (tmp_path / "config").write_text("[default]\nregion = us-east-1\n[profile minio]\nregion = us-east-1\n")
-    (tmp_path / "boto.cfg").write_text("")
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "credentials"))
-    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
-    monkeypatch.setenv("BOTO_CONFIG", str(tmp_path / "boto.cfg"))
-    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:9")
+    isolate_aws(monkeypatch, tmp_path, {"default": NOT_MINIO_KEYS, MINIO_PROFILE: MINIO_KEYS})
 
 
 @pytest.fixture

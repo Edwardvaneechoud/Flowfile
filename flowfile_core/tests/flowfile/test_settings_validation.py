@@ -16,6 +16,7 @@ from tests.flowfile.conftest import (
 from tests.flowfile.conftest import (
     create_test_namespace as _create_namespace,
 )
+from tests.flowfile.conftest import READER_NO_PATH, WRITER_NO_PATH, add_user_cloud_writer
 
 
 def create_graph(flow_id: int = 1) -> FlowGraph:
@@ -853,39 +854,8 @@ def test_add_filter_returns_the_dtype_error():
     assert "year needs a Date or Datetime column" in msg
 
 
-WRITER_NO_PATH = (
-    "Cloud storage writer has no target path. Enter an object-storage URI such as s3://bucket/folder/table."
-)
-READER_NO_PATH = (
-    "Cloud storage reader has no source path. Enter an object-storage URI such as s3://bucket/folder/file.parquet."
-)
-# The writer shape the UI saves: "No connection", empty path, format moved off CSV.
-USER_CLOUD_WRITER_SETTINGS = {
-    "resource_path": "",
-    "write_mode": "append",
-    "file_format": "delta",
-    "parquet_compression": "snappy",
-    "csv_delimiter": ";",
-    "csv_encoding": "utf8-lossy",
-    "partition_by": ["output_field"],
-    "merge_keys": [],
-    "track_changes": False,
-    "auth_mode": "aws-cli",
-    "connection_name": None,
-}
-CLOUD_ROWS = [{"id": 1, "category": "A", "output_field": "test"}, {"id": 2, "category": "na", "output_field": "test"}]
-
-
 def cloud_writer_graph(graph: FlowGraph | None = None, **overrides) -> FlowGraph:
-    graph = graph or create_graph()
-    add_manual_input(graph, CLOUD_ROWS, node_id=1)
-    add_promise(graph, "cloud_storage_writer", 2)
-    graph.add_cloud_storage_writer(input_schema.NodeCloudStorageWriter.model_validate({
-        "flow_id": graph.flow_id, "node_id": 2, "user_id": 1, "depending_on_id": 1,
-        "cloud_storage_settings": {**USER_CLOUD_WRITER_SETTINGS, **overrides},
-    }))
-    connect(graph, 1, 2)
-    return graph
+    return add_user_cloud_writer(graph or create_graph(), **overrides)
 
 
 def cloud_reader_graph(resource_path: str) -> FlowGraph:

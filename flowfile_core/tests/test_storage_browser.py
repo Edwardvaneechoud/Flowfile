@@ -15,6 +15,7 @@ from flowfile_core.routes import storage_browser
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from shared.cloud_storage import browse
 from shared.cloud_storage.browse import BrowseEntry, BrowseResult
+from test_utils.s3.aws_profiles import isolate_aws
 
 NOW = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 BROWSE_URL = "/storage_browser/cloud"
@@ -296,11 +297,7 @@ class TestConnectionErrors:
 
     @pytest.fixture
     def broken_connection(self, tmp_path, monkeypatch):
-        for key in ("AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
-            monkeypatch.delenv(key, raising=False)
-        monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
-        monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "credentials"))
-        monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+        isolate_aws(monkeypatch, tmp_path, endpoint=None)
         created = []
 
         def _create(name: str, **fields) -> str:

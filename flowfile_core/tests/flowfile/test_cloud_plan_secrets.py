@@ -41,6 +41,8 @@ except ModuleNotFoundError:  # pragma: no cover - import shim for ad-hoc runs
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     from test_utils.s3.fixtures import MINIO_ACCESS_KEY, MINIO_ENDPOINT_URL, MINIO_SECRET_KEY, get_minio_client
 
+from test_utils.s3.aws_profiles import isolate_aws
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 _BUCKET = "flowfile-test"
 SECRET = MINIO_SECRET_KEY.encode()
@@ -109,20 +111,19 @@ def stored_connection():
 
 
 @pytest.fixture
-def minio_sts(monkeypatch):
+def minio_sts(monkeypatch, tmp_path):
     """Route iam_role's STS AssumeRole to MinIO, with MinIO's root keys as core's ambient credentials.
 
     Only core gets these, so a remote read can succeed only through the credentials encrypted into the plan.
     """
-    for key in list(os.environ):
-        if key.startswith("AWS_"):
-            monkeypatch.delenv(key)
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", MINIO_ACCESS_KEY)
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", MINIO_SECRET_KEY)
-    monkeypatch.setenv("AWS_ENDPOINT_URL_STS", MINIO_ENDPOINT_URL)
-    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", os.devnull)
-    monkeypatch.setenv("AWS_CONFIG_FILE", os.devnull)
+    isolate_aws(
+        monkeypatch,
+        tmp_path,
+        endpoint=None,
+        AWS_ACCESS_KEY_ID=MINIO_ACCESS_KEY,
+        AWS_SECRET_ACCESS_KEY=MINIO_SECRET_KEY,
+        AWS_ENDPOINT_URL_STS=MINIO_ENDPOINT_URL,
+    )
 
 
 @pytest.fixture

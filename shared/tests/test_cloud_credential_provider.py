@@ -31,6 +31,8 @@ except ModuleNotFoundError:  # pragma: no cover - import shim for ad-hoc runs
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     from test_utils.s3.fixtures import MINIO_ACCESS_KEY, MINIO_ENDPOINT_URL, MINIO_SECRET_KEY, get_minio_client
 
+from test_utils.s3.aws_profiles import isolate_aws
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUCKET = "flowfile-test"
 SENTINEL = "SENTINEL-SECRET-7f3a91"
@@ -66,14 +68,9 @@ def ffsec(monkeypatch):
 
 
 @pytest.fixture
-def aws_free_env(monkeypatch):
+def aws_free_env(monkeypatch, tmp_path):
     """No ambient AWS credentials or profile, so only the provider can authenticate."""
-    for key in list(os.environ):
-        if key.startswith("AWS_"):
-            monkeypatch.delenv(key)
-    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", os.devnull)
-    monkeypatch.setenv("AWS_CONFIG_FILE", os.devnull)
+    isolate_aws(monkeypatch, tmp_path, endpoint=None)
 
 
 @pytest.fixture

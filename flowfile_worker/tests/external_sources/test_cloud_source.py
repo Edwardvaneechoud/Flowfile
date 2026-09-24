@@ -1,4 +1,3 @@
-import os
 import uuid
 from dataclasses import dataclass
 from logging import getLogger
@@ -31,6 +30,9 @@ except ModuleNotFoundError:
     from utils import is_docker_available
 
     from test_utils.s3.fixtures import get_minio_client
+
+from test_utils.s3.aws_profiles import MINIO_KEYS, MINIO_PROFILE, NOT_MINIO_KEYS, isolate_aws
+from test_utils.s3.fixtures import MINIO_ENDPOINT_URL
 
 
 @dataclass
@@ -132,20 +134,7 @@ def test_write_settings_accept_cloud_uris_and_absolute_paths(path):
 @pytest.fixture
 def minio_aws_cli_profile(monkeypatch, tmp_path):
     """Static-key default profile for MinIO in temp AWS files; "No connection" reaches MinIO via AWS_ENDPOINT_URL."""
-    for key in list(os.environ):
-        if key.startswith("AWS_"):
-            monkeypatch.delenv(key)
-    (tmp_path / "credentials").write_text(
-        "[default]\naws_access_key_id = minioadmin\naws_secret_access_key = minioadmin\n"
-    )
-    (tmp_path / "config").write_text("[default]\nregion = us-east-1\n")
-    (tmp_path / "boto.cfg").write_text("")
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "credentials"))
-    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
-    monkeypatch.setenv("BOTO_CONFIG", str(tmp_path / "boto.cfg"))
-    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://localhost:9000")
-    monkeypatch.setenv("AWS_ALLOW_HTTP", "true")
+    isolate_aws(monkeypatch, tmp_path, {"default": MINIO_KEYS}, endpoint=MINIO_ENDPOINT_URL, AWS_ALLOW_HTTP="true")
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available so MinIO cannot be reached")
@@ -194,20 +183,7 @@ def test_write_partitioned_delta_with_aws_cli_connection(minio_aws_cli_profile):
 @pytest.fixture
 def minio_named_profile(monkeypatch, tmp_path):
     """A ``minio`` profile with the MinIO keys, a default profile MinIO rejects, and a dead AWS_ENDPOINT_URL."""
-    for key in list(os.environ):
-        if key.startswith("AWS_"):
-            monkeypatch.delenv(key)
-    (tmp_path / "credentials").write_text(
-        "[default]\naws_access_key_id = AKIDNOTMINIO\naws_secret_access_key = wrong-secret\n"
-        "[minio]\naws_access_key_id = minioadmin\naws_secret_access_key = minioadmin\n"
-    )
-    (tmp_path / "config").write_text("[default]\nregion = us-east-1\n[profile minio]\nregion = us-east-1\n")
-    (tmp_path / "boto.cfg").write_text("")
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "credentials"))
-    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "config"))
-    monkeypatch.setenv("BOTO_CONFIG", str(tmp_path / "boto.cfg"))
-    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
-    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:9")
+    isolate_aws(monkeypatch, tmp_path, {"default": NOT_MINIO_KEYS, MINIO_PROFILE: MINIO_KEYS})
 
 
 def _sts_temporary_keys() -> dict:

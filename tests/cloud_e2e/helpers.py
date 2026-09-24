@@ -2,9 +2,6 @@
 
 from test_utils.s3 import fixtures as s3
 
-# The AWS profile, besides the default one, that holds MinIO's real keys in every stack's config.
-NAMED_PROFILE = "minio"
-
 MINIO_OPTIONS = {
     "aws_access_key_id": s3.MINIO_ACCESS_KEY,
     "aws_secret_access_key": s3.MINIO_SECRET_KEY,

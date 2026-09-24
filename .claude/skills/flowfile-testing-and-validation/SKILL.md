@@ -101,7 +101,7 @@ Package layout: `test_utils/{postgres,mysql,s3,gcs,azurite,kafka}/`, each with `
 | Service | Container name | Host port(s) | Started by | Skip behavior |
 |---|---|---|---|---|
 | Postgres | `test-postgres-sample` | **5433**→5432 | `poetry run start_postgres`; core+worker conftest autouse (reuses if already listening) | `is_docker_available()` False → tests `skipif`; if Docker present but start fails → `pytest.fail` (core), soft-skip (worker uses same pattern but less strict) |
-| MySQL | `test-mysql-sample` | **3307**→3306 | `poetry run start_mysql`; core conftest autouse | Core: soft-fail with a log message, tests skip; image pull can take up to 300s first time |
+| MySQL | `test-mysql-sample` | **3307**→3306 | `poetry run start_mysql`; core conftest autouse | Core: soft-fail with a log message, tests skip; image pull (only when the tag is absent locally, `test_utils/docker_images.py`) can take up to 300s first time |
 | MinIO (S3) | `test-minio-s3` | **9000** API, **9001** console | `poetry run start_minio`; `poetry run seed_cloud_e2e` (`test_utils/s3/cloud_e2e_seed.py`) idempotently seeds the cloud E2E source | `_minio_available()` / `requires_minio` guards; frame conftest assumes :9000. Never write test data under the pre-existing `sample-data/` bucket — use a unique prefix you delete |
 | GCS | `test-fake-gcs` | **4443** | `poetry run start_gcs` | `is_gcs_available()` guard; also re-populates data if container is up but empty |
 | Azurite | `test-azurite` | **10000** (blob) | `poetry run start_azurite` | `is_azurite_available()` guard; well-known devstoreaccount1 creds hardcoded |
@@ -215,7 +215,7 @@ A green run is only as strong as what actually executed. Docker-gated suites **s
 | `flowfile_frame` public API change | `make stubs` and stage the `.pyi` diff (do not commit it yourself — hand off per `flowfile-change-control`'s no-agent-commit policy) — `make check_stubs` is a hard CI gate (regenerates then `git diff --exit-code`). |
 | Kafka path change | `poetry run pytest tests/kafka -m kafka` plus `shared/tests/kafka`. |
 | Frontend renderer change | `npm run test:unit` + `npm run build:web` (lint + `vue-tsc --noEmit` run inside the build script) — that's what CI's `test-web` job enforces. Canvas/flow behavior changes additionally need `make test_e2e` (on Windows read its Playwright output — that branch still ignores the exit code, see §2). |
-| Cloud storage node / connection change | `poetry run pytest shared/tests/test_cloud_storage_options.py` plus `tests/cloud_e2e -m cloud_e2e` (real core + worker over HTTP); UI-facing changes also `make test_e2e_cloud`. Tests must not reach real AWS: temp `AWS_SHARED_CREDENTIALS_FILE`/`AWS_CONFIG_FILE`, `AWS_EC2_METADATA_DISABLED=true`, and an explicit endpoint. |
+| Cloud storage node / connection change | `poetry run pytest shared/tests/test_cloud_storage_options.py` plus `tests/cloud_e2e -m cloud_e2e` (real core + worker over HTTP); UI-facing changes also `make test_e2e_cloud`. Tests must not reach real AWS: temp `AWS_SHARED_CREDENTIALS_FILE`/`AWS_CONFIG_FILE`, `AWS_EC2_METADATA_DISABLED=true`, and an explicit endpoint — `test_utils/s3/aws_profiles.py::isolate_aws` sets all of that up. |
 | WASM engine change | Pinned-env pytest (`tests/python`) **and** the Pyodide smoke test — a green CPython run does not prove the browser namespace still works. |
 | Full-stack / deploy-shaped change | `poetry run pytest tests/integration -m docker_integration -v` with ports 63578/63579 free. |
 
