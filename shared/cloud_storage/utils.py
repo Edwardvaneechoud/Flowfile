@@ -29,9 +29,7 @@ def validate_cloud_resource_path(
 ) -> str:
     """Reject a cloud node path that polars would silently resolve against the process's working directory.
 
-    An empty path or a schemeless relative one would read from or write into the server's cwd. Absolute
-    local paths pass unless ``allow_local_paths`` is False: single-user installs deliberately accept them
-    (local Delta tables in tests), while a multi-user server must not open its own disk to every user.
+    Absolute local paths pass unless ``allow_local_paths`` is False (a multi-user server's own disk).
     """
     if not path or not path.strip():
         raise ValueError(_MISSING_PATH_MESSAGES[role])
@@ -74,8 +72,7 @@ def create_storage_options_from_boto_credentials(
     Parameters
     ----------
     profile_name
-        The explicit AWS profile from the connection's ``aws_profile`` field. Blank uses boto3's default
-        credential chain (environment variables, then the default profile, then instance metadata).
+        The connection's explicit ``aws_profile``; blank uses boto3's default credential chain.
     region_name
         The AWS region to use.
 
@@ -87,7 +84,7 @@ def create_storage_options_from_boto_credentials(
     Raises
     ------
     ValueError
-        When the named profile does not exist, or boto3 resolves no credentials at all.
+        For an unknown profile, or when boto3 resolves no credentials.
     """
     import boto3
     from botocore.exceptions import ProfileNotFound
@@ -118,11 +115,7 @@ def create_storage_options_from_boto_credentials(
 
 
 def ensure_path_has_wildcard_pattern(resource_path: str, file_format: Literal["csv", "parquet", "json"]) -> str:
-    """Ensure a cloud storage path ends with a wildcard pattern for directory scanning.
-
-    Raises:
-        ValueError: On an empty or slash-only path, which would otherwise become the filesystem-root glob ``/**/*``.
-    """
+    """Ensure a cloud storage path ends with a wildcard pattern; an empty or slash-only path raises (root glob)."""
     if not resource_path or not resource_path.strip():
         raise ValueError(_MISSING_PATH_MESSAGES["reader"])
     if not resource_path.rstrip("/"):

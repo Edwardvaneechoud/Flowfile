@@ -1,8 +1,6 @@
 """The worker decrypts the cloud credentials core encrypts into a query plan.
 
-Core ships cloud reads as plans whose credentials ride in an ``EncryptedCredentialProvider``.
-``flowfile_worker.utils`` (imported by every child that collects a plan) registers the worker's own
-``$ffsec$`` decryption, so the provider resolves here without core.
+Importing ``flowfile_worker.utils`` registers the worker's own ``$ffsec$`` decryption, so no core is needed.
 """
 
 import io
@@ -46,8 +44,7 @@ def _provider(credentials: dict, user_id: int = 7) -> EncryptedCredentialProvide
 def worker_decryptor():
     """Install the worker's decryptor for one test.
 
-    The registry is process-global and the last import wins, so a test in this session that imported
-    flowfile_core has replaced it with core's, which resolves a different test master key.
+    The registry is process-global and the last import wins; a test that imported flowfile_core replaced it.
     """
     previous = cp._decrypt
     cp.register_secret_decryptor(utils._decrypt_plan_credentials)

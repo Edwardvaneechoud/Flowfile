@@ -91,8 +91,7 @@ class CoreLogSink:
     def start(self) -> bool:
         """Bind and serve. Returns False when something else already listens.
 
-        Probes with a connect first: on macOS a loopback bind succeeds next to a core listening
-        on 0.0.0.0 and would take over the loopback traffic meant for it.
+        Probes with a connect first: on macOS a loopback bind succeeds next to a 0.0.0.0 listener.
         """
         if _accepts_connections(self.host, self.port):
             return False

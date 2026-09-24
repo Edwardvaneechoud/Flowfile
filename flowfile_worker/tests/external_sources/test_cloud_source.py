@@ -131,10 +131,7 @@ def test_write_settings_accept_cloud_uris_and_absolute_paths(path):
 
 @pytest.fixture
 def minio_aws_cli_profile(monkeypatch, tmp_path):
-    """Static-key default profile for MinIO in temp AWS files, every ambient AWS_* variable removed.
-
-    The node-level "No connection" carries no endpoint of its own, so MinIO is reached through AWS_ENDPOINT_URL.
-    """
+    """Static-key default profile for MinIO in temp AWS files; "No connection" reaches MinIO via AWS_ENDPOINT_URL."""
     for key in list(os.environ):
         if key.startswith("AWS_"):
             monkeypatch.delenv(key)
@@ -155,7 +152,7 @@ def minio_aws_cli_profile(monkeypatch, tmp_path):
 def test_write_partitioned_delta_with_aws_cli_connection(minio_aws_cli_profile):
     """The UI's "No connection" writer: aws-cli auth from a static-key profile, delta append partitioned.
 
-    Runs in-process because the spawned worker's environment is fixed at session start.
+    In-process: the spawned worker's environment is fixed at session start.
     """
     bucket, prefix = "worker-test-bucket", f"aws_cli_partitioned_{uuid.uuid4().hex[:8]}"
     s3_client = get_minio_client()
@@ -196,10 +193,7 @@ def test_write_partitioned_delta_with_aws_cli_connection(minio_aws_cli_profile):
 
 @pytest.fixture
 def minio_named_profile(monkeypatch, tmp_path):
-    """A ``minio`` profile with the MinIO keys, a default profile MinIO rejects, and a dead AWS_ENDPOINT_URL.
-
-    Only an endpoint stored on the connection can reach MinIO, and nothing reaches real AWS.
-    """
+    """A ``minio`` profile with the MinIO keys, a default profile MinIO rejects, and a dead AWS_ENDPOINT_URL."""
     for key in list(os.environ):
         if key.startswith("AWS_"):
             monkeypatch.delenv(key)
@@ -234,9 +228,7 @@ def _sts_temporary_keys() -> dict:
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available so MinIO cannot be reached")
 @pytest.mark.parametrize("auth", ["aws-cli-profile", "access-key-session-token"])
 def test_saved_connection_credentials_reach_the_worker_write(minio_named_profile, auth):
-    """A saved connection as core ships it: aws-cli with an explicit profile, or temporary keys plus an
-    owner-encrypted session token; the endpoint comes from the connection in both cases.
-    """
+    """A saved connection as core ships it: an aws-cli profile, or temporary keys plus an encrypted session token."""
     from flowfile_worker.secrets import encrypt_secret
 
     connection_fields = {

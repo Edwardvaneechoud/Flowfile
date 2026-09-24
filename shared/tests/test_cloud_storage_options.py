@@ -24,8 +24,7 @@ except ModuleNotFoundError:  # pragma: no cover - import shim for ad-hoc runs
     from test_utils.s3.fixtures import MINIO_ACCESS_KEY, MINIO_ENDPOINT_URL, MINIO_SECRET_KEY, get_minio_client
 
 _BUCKET = "flowfile-test"
-# Discard port: anything that ignores the connection's endpoint and falls back to the environment fails fast
-# here instead of sending the test credentials to real AWS.
+# Discard port: anything that falls back to the environment fails fast here instead of reaching real AWS.
 _DEAD_ENDPOINT = "http://127.0.0.1:9"
 
 
@@ -45,8 +44,7 @@ requires_minio = pytest.mark.skipif(not _minio_available(), reason="MinIO mock S
 def hermetic_aws(monkeypatch, tmp_path):
     """Point boto3 at empty temp AWS files with every ambient AWS_* variable removed.
 
-    ``AWS_ENDPOINT_URL`` is set to a dead local port, so only an endpoint taken from the connection can
-    reach MinIO and nothing reaches real AWS. Returns a writer that adds a static-key profile.
+    ``AWS_ENDPOINT_URL`` is a dead local port, so only a connection's endpoint reaches MinIO. Returns a profile writer.
     """
     for key in list(os.environ):
         if key.startswith("AWS_"):
@@ -290,10 +288,7 @@ def test_sparse_connections_return_a_dict_without_none(storage_type, auth_method
 @requires_minio
 @pytest.mark.parametrize("auth_method", ["access_key", "aws-cli", "aws-cli-named-profile", "env_vars", "iam_role"])
 def test_s3_options_work_against_minio_for_every_auth_method(auth_method, hermetic_aws, monkeypatch, minio_prefix):
-    """Every S3 auth method builds options polars, deltalake and boto3 accept, with the endpoint from the connection.
-
-    ``AWS_ENDPOINT_URL`` points at a dead port, so a builder that dropped the connection's endpoint fails here.
-    """
+    """Every S3 auth method builds options polars, deltalake and boto3 accept, with the endpoint from the connection."""
     connection = _minio_connection(connection_name="minio connection")
     if auth_method == "access_key":
         connection.update(aws_access_key_id=MINIO_ACCESS_KEY, aws_secret_access_key=MINIO_SECRET_KEY)
@@ -327,8 +322,7 @@ def test_s3_options_work_against_minio_for_every_auth_method(auth_method, hermet
 def test_aws_cli_connection_round_trip_on_minio(hermetic_aws, monkeypatch, minio_prefix, ambient_token):
     """A saved aws-cli connection pointed at MinIO stays on MinIO for every polars/deltalake consumer.
 
-    The endpoint and plain-HTTP flag come from the connection, not the environment. The ambient token variant
-    proves the blank token shadows a stray ``AWS_SESSION_TOKEN`` instead of mixing it in.
+    The ambient token variant proves the blank token shadows a stray ``AWS_SESSION_TOKEN``.
     """
     hermetic_aws(MINIO_ACCESS_KEY, MINIO_SECRET_KEY)
     if ambient_token:
@@ -422,8 +416,7 @@ def minio_behind_self_signed_tls(tmp_path):
 def test_verify_ssl_false_reaches_every_s3_client(hermetic_aws, minio_prefix, minio_behind_self_signed_tls):
     """Against a self-signed endpoint, verify_ssl=False works for polars, deltalake and both boto3 clients.
 
-    The secure options fail on the same endpoint, which proves the certificate really is rejected; so does the
-    old ``verify: "False"`` key, which object_store silently ignores.
+    The secure options and the old ``verify: "False"`` key fail on it, proving the certificate is rejected.
     """
     connection = _minio_connection(
         endpoint_url=minio_behind_self_signed_tls,

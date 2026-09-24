@@ -129,8 +129,7 @@ export function useNodeSettings<T extends NodeBase>(
   /**
    * Save settings to the backend.
    * Can be called without closing the drawer.
-   * Resolves true when nothing is loaded yet (or the load failed): there is nothing to save,
-   * so Run, a node switch or minimize must not be blocked by it.
+   * Resolves true when nothing is loaded yet: there is nothing to save, so a leave is never blocked.
    */
   const saveSettings = async (): Promise<boolean> => {
     if (!nodeRef.value) {
@@ -174,8 +173,7 @@ export function useNodeSettings<T extends NodeBase>(
   /**
    * Push node data - called when drawer closes.
    * This wraps saveSettings for the standard drawer lifecycle.
-   * A refused save of settings unchanged since they were loaded resolves true: the server already
-   * holds them, so a fresh, not-yet-valid node (e.g. a Read with no file) never blocks leaving it.
+   * A refused save of settings unchanged since load resolves true, so a fresh node never blocks leaving.
    */
   const pushNodeData = async (): Promise<boolean> =>
     (await saveSettings()) || (cleanSnapshot !== null && snapshot() === cleanSnapshot);

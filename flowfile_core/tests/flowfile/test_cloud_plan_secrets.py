@@ -1,13 +1,6 @@
 """Cloud reads never put decrypted credentials into a serialized query plan.
 
-A cloud reader builds its scan in core, and core serializes plans to ship them to the worker (and
-into stored virtual-table plans). Polars inlines ``storage_options`` into those bytes, so a scan
-built with the connection's decrypted secret used to carry it in plaintext. The credentials now
-ride in an ``EncryptedCredentialProvider`` as ``$ffsec$`` ciphertext and are decrypted by whichever
-process executes the plan: core for local runs, the worker for offloaded ones.
-
-Every test here captures each plan core serializes during the run and asserts the secret is absent,
-while the run still reads the right data. MinIO's root credentials are the secret.
+Every test captures each plan core serializes and asserts MinIO's root secret is absent while the data still reads.
 """
 
 import io
@@ -119,8 +112,7 @@ def stored_connection():
 def minio_sts(monkeypatch):
     """Route iam_role's STS AssumeRole to MinIO, with MinIO's root keys as core's ambient credentials.
 
-    Only core gets these: the worker's environment was fixed at session start, so a remote read can
-    succeed only through the credentials core encrypted into the plan.
+    Only core gets these, so a remote read can succeed only through the credentials encrypted into the plan.
     """
     for key in list(os.environ):
         if key.startswith("AWS_"):
@@ -274,11 +266,7 @@ def test_cloud_reader_plans_carry_no_secret(execution_location, stored_connectio
 def test_iam_role_reader_plan_carries_no_temporary_credentials(
     execution_location, stored_connection, minio_prefix, minio_sts, storage_options_spy, serialized_plans
 ):
-    """iam_role assumes the role in core; the temporary key, secret and session token stay encrypted.
-
-    Before, a placeholder provider returning ``'...'`` overrode these real STS credentials and every
-    core-side iam_role read failed with access denied.
-    """
+    """iam_role assumes the role in core; the temporary key, secret and session token stay encrypted."""
     paths = _seed_files(minio_prefix)
     connection_name = stored_connection("iam_role", aws_role_arn="arn:aws:iam::123456789012:role/flowfile-test")
     graph = create_test_graph(flow_id=7402, execution_location=execution_location)

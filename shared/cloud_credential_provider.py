@@ -1,21 +1,9 @@
 """Keep decrypted cloud credentials out of serialized Polars query plans.
 
-Polars inlines ``storage_options`` into a LazyFrame's serialized plan. A cloud scan built in core
-with decrypted credentials would therefore carry them in plaintext wherever the plan goes: the
-worker, logs, caches, stored virtual-table plans. ``EncryptedCredentialProvider`` carries the
-credentials only as a ``$ffsec$`` ciphertext and hands them to Polars through its
-``credential_provider`` hook, decrypting on the side that executes the plan.
-
-Core and the worker resolve the master key independently, so each process that executes plans
-registers its own decryptor with :func:`register_secret_decryptor`. The decryption logic itself
-stays in core's secret manager and the worker's ``secrets`` module; nothing here knows the key.
-
-Polars accepts provider credentials only for S3 (access key, secret, session token) and Azure
-(``account_key``, ``sas_token``, ``bearer_token``). Other secrets, such as an Azure client secret or a
-GCS service-account key, stay in the storage options.
-
-Stdlib-only and deliberately outside ``shared.cloud_storage``: that package's ``__init__`` loads
-``shared.delta_utils``, and every spawned worker child imports this module to register its decryptor.
+Polars inlines ``storage_options`` into a serialized plan; ``EncryptedCredentialProvider`` carries the
+credentials as a ``$ffsec$`` ciphertext instead and decrypts through whatever the executing process
+registered with :func:`register_secret_decryptor`. Stdlib-only and outside ``shared.cloud_storage``
+(whose ``__init__`` loads ``shared.delta_utils``): every spawned worker child imports this module.
 """
 
 from __future__ import annotations
@@ -54,11 +42,7 @@ def split_credentials(storage_options: Mapping[str, Any]) -> tuple[dict[str, Any
 
 
 class EncryptedCredentialProvider:
-    """A Polars ``credential_provider`` whose only state is the encrypted credentials.
-
-    Pickles, and therefore serializes into a plan, as the ciphertext alone. Polars calls it when
-    the plan executes; the decrypted credentials then live only in that process's memory.
-    """
+    """A Polars ``credential_provider`` whose only state is the ciphertext; it decrypts where the plan executes."""
 
     def __init__(self, encrypted_credentials: str):
         self.encrypted_credentials = encrypted_credentials

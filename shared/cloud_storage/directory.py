@@ -150,8 +150,7 @@ _S3_CLIENT_KEYS = ("aws_access_key_id", "aws_secret_access_key", "aws_session_to
 def _create_s3_client(storage_options: dict[str, Any] | None):
     """Create a boto3 S3 client from Polars-shaped storage options.
 
-    Only the keys boto3 understands are forwarded; ``allow_invalid_certificates`` becomes ``verify=False``
-    (a bool: boto3 reads a string ``verify`` as a CA-bundle path).
+    ``allow_invalid_certificates`` becomes a bool ``verify=False``: boto3 reads a string as a CA-bundle path.
     """
     import boto3
 

@@ -453,10 +453,7 @@ def get_cloud_connection_settings(
 ) -> FullCloudStorageConnection:
     """Resolve a cloud node's connection: the referenced saved one, else the process's own credentials.
 
-    A referenced-but-missing connection errors rather than silently falling back. The ambient fallback
-    is refused in multi-user (docker) mode before any credential lookup: those credentials belong to the
-    server, not to the user running the node. Its storage type follows the path's scheme (S3 when it has
-    none); aws-cli profiles are S3-only, so an ADLS or GCS path reads that provider's environment instead.
+    The ambient fallback is refused in multi-user (docker) mode before any credential lookup.
 
     Args:
         connection_name: The name of the saved connection, if any.
@@ -491,11 +488,7 @@ def get_cloud_connection_settings(
 def _resolve_cloud_node_connection(
     settings: CloudStorageSettings, user_id: int, role: Literal["reader", "writer"]
 ) -> FullCloudStorageConnection:
-    """Guard a cloud node's path, then resolve its connection; nothing touches storage or credentials first.
-
-    Multi-user mode also refuses absolute local paths: the server's disk is no more the user's than its
-    credentials are.
-    """
+    """Guard a cloud node's path (docker also refuses local paths), then resolve its connection."""
     validate_cloud_resource_path(
         settings.resource_path, role=role, allow_local_paths=sharing.ambient_credentials_allowed()
     )

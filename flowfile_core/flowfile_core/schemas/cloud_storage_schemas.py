@@ -211,10 +211,7 @@ class CloudStorageReadSettings(ChangeFeedReadSettings, CloudStorageSettings):
         return self
 
     def with_csv_defaults(self) -> "CloudStorageReadSettings":
-        """A copy whose unset CSV options take the drawer's defaults (header, ``,``, ``utf8``).
-
-        The engine and the FlowFrame export both read through this, so they agree on an unset option.
-        """
+        """A copy with the drawer's defaults for unset CSV options; the engine and the FlowFrame export share it."""
         return self.model_copy(
             update={
                 "csv_has_header": True if self.csv_has_header is None else self.csv_has_header,

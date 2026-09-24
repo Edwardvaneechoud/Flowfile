@@ -1,10 +1,6 @@
-"""The cloud-writer bug report's flow, replayed over HTTP against a real core + worker.
+"""The cloud-writer bug report's flow (run-1390 snapshot), replayed over HTTP against a real core + worker.
 
-The fixture is the run-1390 snapshot of the reporter's flow: cloud reader → ``ifnull`` formula →
-literal ``output_field`` formula → Delta writer (append, partitioned on ``output_field``), saved
-with "No connection" (aws-cli) and an empty path. Every test runs in remote and local execution.
-Connection-based tests use ``stack``, where nothing but a connection's own settings reaches MinIO;
-"No connection" tests use ``ambient_stack``, whose AWS profile and endpoint are MinIO's.
+Every test runs in remote and local execution; connection tests use ``stack``, "No connection" tests ``ambient_stack``.
 """
 
 import re

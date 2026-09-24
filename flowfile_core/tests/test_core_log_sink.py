@@ -107,11 +107,7 @@ class TestSinkServer:
                 sink.stop()
 
     def test_never_binds_a_port_that_already_answers(self, monkeypatch):
-        """The connect probe decides, not the bind.
-
-        On macOS a loopback bind succeeds next to a core listening on every interface and would take
-        over the loopback traffic meant for it, so the sink must not even try.
-        """
+        """The connect probe decides, not the bind: on macOS a loopback bind succeeds next to a 0.0.0.0 listener."""
 
         def _refuse(*args, **kwargs):
             raise AssertionError("the sink tried to bind a port something already answers on")

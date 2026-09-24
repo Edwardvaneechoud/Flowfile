@@ -263,8 +263,7 @@ _S3_MISSING_CODES = {"NoSuchBucket", "NoSuchKey", "404", "NotFound"}
 def _build_s3_client(storage_options: dict[str, Any] | None):
     """Build a boto3 S3 client from Polars-shaped storage options, by allow-list.
 
-    Separate from ``directory.py::_create_s3_client`` (the read hot path) because listing needs
-    bounded timeouts and path-style addressing. ``allow_invalid_certificates`` becomes ``verify=False``.
+    Separate from ``directory.py::_create_s3_client``: listing needs bounded timeouts and path-style addressing.
     """
     import boto3
     from botocore.config import Config

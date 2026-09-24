@@ -51,9 +51,7 @@ def _free_port() -> int:
 def _claim_worker_port() -> str | None:
     """Move the session off a taken default worker port; returns a note for the report header.
 
-    Whatever listens on the default port may be a developer's live worker running other code, so
-    it is reused only with FLOWFILE_TEST_REUSE_WORKER=1. An explicit FLOWFILE_WORKER_PORT is the
-    caller's choice and is used as is. Runs before anything reads FLOWFILE_WORKER_PORT.
+    Reuse needs FLOWFILE_TEST_REUSE_WORKER=1; an explicit FLOWFILE_WORKER_PORT is used as is.
     """
     if os.environ.get("FLOWFILE_WORKER_PORT") or os.environ.get("FLOWFILE_TEST_REUSE_WORKER") == "1":
         return None
@@ -340,9 +338,7 @@ def managed_worker() -> Generator[None, None, None]:
     Context manager for flowfile worker process management.
     Ensures proper cleanup even when tests fail.
 
-    A worker already answering on ``WORKER_PORT`` is reused. That only happens for an explicit
-    FLOWFILE_WORKER_PORT or FLOWFILE_TEST_REUSE_WORKER=1: ``_claim_worker_port`` moves the session
-    off a taken default port at import.
+    A worker on ``WORKER_PORT`` is reused only with FLOWFILE_TEST_REUSE_WORKER=1 or an explicit FLOWFILE_WORKER_PORT.
 
     A failure here aborts the session instead of skipping. This runs inside a
     session-scoped autouse fixture, so a ``pytest.skip`` would skip every test in

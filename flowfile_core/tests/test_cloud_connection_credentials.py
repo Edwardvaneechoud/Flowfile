@@ -1,7 +1,6 @@
 """Saved cloud connections' AWS profile and session token, end to end through the routes against MinIO.
 
-Every test runs with hermetic AWS config files and ``AWS_ENDPOINT_URL`` pointing at a dead local port, so only
-an endpoint stored on the connection can reach MinIO and nothing reaches real AWS.
+Hermetic AWS files and a dead ``AWS_ENDPOINT_URL``: only an endpoint stored on the connection reaches MinIO.
 """
 
 import os

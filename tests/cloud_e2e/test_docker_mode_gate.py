@@ -1,7 +1,6 @@
 """Docker mode must never run a "No connection" cloud node on the server's own AWS credentials.
 
-The docker stack's process environment holds a working AWS profile and a MinIO endpoint, so a
-node that fell back to ambient credentials would succeed; only the docker-mode gate fails it.
+The docker stack's environment can reach MinIO, so only the docker-mode gate can fail the node.
 """
 
 import pytest

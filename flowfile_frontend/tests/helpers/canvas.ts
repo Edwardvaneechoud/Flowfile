@@ -4,10 +4,7 @@ import { BASE_URL } from "./api";
 
 /** Designer interactions shared by specs that build flows through the real canvas. */
 
-/**
- * Store the token the way the login flow does, then open `hash` (e.g. `#/main/designer`).
- * `flowId` becomes the designer's last-used flow, which it opens first.
- */
+/** Store the token the way the login flow does, then open `hash`; `flowId` becomes the last-used flow. */
 export async function login(page: Page, token: string, hash: string, flowId?: number) {
   await page.goto(BASE_URL);
   await page.waitForLoadState("networkidle");

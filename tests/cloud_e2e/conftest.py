@@ -1,16 +1,8 @@
 """Real core + worker processes for the cloud storage end-to-end suite.
 
-Each stack is started from whatever code the interpreter resolves (the checkout, or the roots a
-``PYTHONPATH`` puts first) with a private DB, storage dir, secure store, HOME and AWS profile,
-free ports, and an empty working directory per process, which ``no_local_writes`` checks after
-every test. Nothing here imports flowfile_core, so collecting the suite never runs migrations
-against a live catalog DB.
-
-Two electron stacks keep saved connections honest. ``stack`` (connection-based tests) points
-``AWS_ENDPOINT_URL`` at a dead port, does not allow plain HTTP and gives its default profile keys
-MinIO rejects, so MinIO is reachable only through a connection's own endpoint, allow-HTTP flag and
-profile. ``ambient_stack`` ("No connection" tests) holds the MinIO keys and endpoint instead, so
-the aws-cli fallback can only ever reach MinIO.
+Each stack gets a private DB, storage dir, secure store, HOME, AWS profile, free ports and an empty working
+directory (checked by ``no_local_writes``); nothing here imports flowfile_core. ``stack`` reaches MinIO only
+through a connection's own endpoint, allow-HTTP flag and profile; ``ambient_stack`` reaches it ambiently.
 """
 
 from __future__ import annotations
@@ -99,8 +91,7 @@ class Stack:
     def run(self, flow_id: int, timeout: float = 180) -> dict:
         """Start a run like the Run button and poll until a run newer than the previous one ends.
 
-        ``nodes`` maps node id to its step result. Requiring a ``start_time`` after the previous
-        run's guards against reading that run's result before the new one has registered.
+        Requiring a newer ``start_time`` guards against reading the previous run's result.
         """
         previous = _started(self._status(flow_id).json())
         response = self.http.post(f"{self.base}/flow/run/", params={"flow_id": flow_id})
@@ -367,9 +358,7 @@ def docker_minio_connection(docker_stack) -> Iterator[str]:
 def user_flow(source_path) -> Callable[..., dict]:
     """The reporter's saved flow, with only its id, connection names, paths and overrides patched in.
 
-    Each build gets a fresh flow id, since importing replaces any open flow with the same id. The
-    reader always points at this session's seeded source through ``connection``; ``reader`` and
-    ``writer`` are merged into the saved ``cloud_storage_settings`` of those nodes.
+    A fresh id per build, since importing replaces any open flow with the same id.
     """
     template = json.loads(FLOW_FIXTURE.read_text())
 

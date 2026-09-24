@@ -4,8 +4,7 @@ Provides the CloudStorageReader class that translates FullCloudStorageConnection
 objects into storage_options dicts and credential providers, delegating the
 actual options building to shared.cloud_storage.storage_options.
 
-Importing this module registers core's secret decryptor, so plans carrying an
-``EncryptedCredentialProvider`` can execute in core (local runs, previews).
+Importing it registers core's secret decryptor, so provider-carrying plans can execute in core.
 """
 
 import json
@@ -83,8 +82,7 @@ class CloudStorageReader:
     ) -> EncryptedCredentialProvider | None:
         """A provider carrying the credentials in *storage_options* encrypted, or None when there are none.
 
-        The credentials are re-encrypted under *user_id* (the principal running the flow); without one
-        they use the legacy master-key format, which core and the worker also decrypt.
+        Encrypted under *user_id*, else in the legacy master-key format the worker also decrypts.
         """
         if not storage_options:
             return None

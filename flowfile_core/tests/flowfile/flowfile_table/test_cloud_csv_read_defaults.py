@@ -1,8 +1,4 @@
-"""A cloud CSV read with unset CSV options uses the drawer's defaults instead of crashing.
-
-The three options are Optional on ``CloudStorageReadSettings`` (the drawer clears them when the
-format moves off CSV), and Polars raises a TypeError for ``None`` on each of them.
-"""
+"""A cloud CSV read with unset CSV options uses the drawer's defaults instead of crashing on ``None``."""
 
 import uuid
 

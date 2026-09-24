@@ -50,8 +50,7 @@ def build_storage_options(
 ) -> dict[str, str]:
     """Build storage options dict based on the storage type and auth method.
 
-    All secret values must be provided as plain strings (already decrypted). The result is always a dict
-    of strings (see ``_finalize``), whatever the storage type and auth method.
+    All secret values must be provided as plain strings (already decrypted); the result is all strings (``_finalize``).
     """
     if storage_type == "s3":
         options = build_s3_storage_options(
@@ -94,10 +93,8 @@ def build_storage_options(
 def _finalize(options: dict[str, Any] | None) -> dict[str, str]:
     """Coerce builder output to the all-string dict that polars, deltalake and object_store accept.
 
-    polars and deltalake raise on a ``None`` value (``'None' is not an instance of 'str'``), so ``None`` is dropped,
-    except ``aws_session_token``, which becomes ``""``: without the key, polars mixes an ambient
-    ``AWS_SESSION_TOKEN`` into explicit static keys and the request fails to authenticate.
-    Booleans become ``"true"``/``"false"`` and numbers their string form.
+    ``None`` is dropped, except ``aws_session_token``, which becomes ``""`` so polars never mixes in an
+    ambient ``AWS_SESSION_TOKEN``; bools become ``"true"``/``"false"``.
     """
     finalized: dict[str, str] = {}
     for key, value in (options or {}).items():
@@ -130,10 +127,8 @@ def build_s3_storage_options(
 ) -> dict[str, Any]:
     """Build S3-specific storage options.
 
-    The auth method only decides the credentials: aws-cli resolves them through boto3 from
-    ``aws_profile`` (the default credential chain when blank; never the connection's display name),
-    and iam_role assumes the role via boto3 STS. The endpoint, plain-HTTP and TLS options apply to
-    every method, so an aws-cli connection pointed at MinIO stays on MinIO.
+    The auth method decides only the credentials (aws-cli via boto3 from ``aws_profile``, never the
+    connection name); the endpoint, plain-HTTP and TLS options apply to every method.
     """
     import boto3
 
@@ -250,10 +245,7 @@ def build_gcs_storage_options(
     gcs_project_id: str | None = None,
     endpoint_url: str | None = None,
 ) -> dict[str, Any]:
-    """Build GCS-specific storage options (fsspec/gcsfs-compatible).
-
-    ``verify_ssl`` is not applied: gcsfs has no option for it, and the same dict also feeds gcsfs.
-    """
+    """Build GCS-specific storage options (fsspec/gcsfs-compatible); ``verify_ssl`` is not applied, gcsfs has none."""
     storage_options: dict[str, Any] = {}
 
     if auth_method == "service_account" and gcs_service_account_key:

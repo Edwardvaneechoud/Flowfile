@@ -1,7 +1,4 @@
-/**
- * Minimized state after a header toggle. Minimizing runs `onMinimize` first; when that
- * resolves `false` (e.g. the open node settings could not be saved) the panel stays open.
- */
+/** Minimized state after a header toggle; when `onMinimize` resolves `false` the panel stays open. */
 export async function nextMinimizedState(
   isMinimized: boolean,
   onMinimize?: (() => unknown) | null,

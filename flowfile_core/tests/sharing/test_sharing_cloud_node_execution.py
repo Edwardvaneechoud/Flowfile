@@ -1,10 +1,6 @@
 """Cloud storage reader/writer nodes in multi-user (docker) mode.
 
-The process's own cloud credentials and its disk belong to the server, not to the user running a
-node. A node with no saved connection, or pointed at a local path, must therefore fail before
-anything consults them: at run time, during schema prediction, and in the freshness probe. A node
-that references an owned or group-granted connection keeps working with the owner's credentials.
-Single-user installs (electron/package) keep the ambient fallback and local paths.
+The server's own credentials and disk are refused before anything consults them; saved connections keep working.
 """
 
 import os
@@ -397,11 +393,7 @@ def _own_rows(user_id: int, name: str) -> int:
 
 
 class TestServerIdentityConnections:
-    """A saved aws-cli/env_vars/iam_role/managed_identity connection authenticates as the server.
-
-    With its endpoint honoured, a regular user could aim the deployment's identity at a host they control.
-    Only an administrator may own one in multi-user mode; rows saved before that rule fail closed.
-    """
+    """A saved aws-cli/env_vars/iam_role/managed_identity connection runs as the server: admin-only in docker."""
 
     @pytest.mark.parametrize("auth_method", ["aws-cli", "env_vars", "iam_role", "managed_identity"])
     def test_regular_user_cannot_create_one(self, users, client_for, auth_method):

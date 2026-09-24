@@ -496,8 +496,7 @@ def scan_delta_changes(
     never materialises it. The schema is derived from the reader's arrow schema without reading
     data, and projection / predicate / row-limit pushdown are honoured inside the source.
 
-    The source closure is pickled into the plan, so pass credentials through *credential_provider*
-    (a Polars-style provider, called where the plan executes) rather than inside *storage_options*.
+    The source closure is pickled into the plan, so pass credentials via *credential_provider*, not *storage_options*.
 
     Unless *include_preimage* is set, ``update_preimage`` rows are dropped: a consumer wants one
     row per change, not the before/after pair.

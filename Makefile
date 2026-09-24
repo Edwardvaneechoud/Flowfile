@@ -23,8 +23,7 @@ endif
 
 # Ports the local servers listen on: core, worker, vite dev, vite preview.
 FLOWFILE_PORTS := 63578 63579 8080 4173
-# Kills the core/worker/vite processes listening on those ports (POSIX); any other listener, such as
-# Docker Desktop publishing the compose stack's ports, is left alone.
+# Stops only the listeners on those ports (POSIX); other listeners such as Docker Desktop are left alone.
 STOP_LISTENERS = command -v lsof >/dev/null || command -v ss >/dev/null || echo "Neither lsof nor ss found: nothing stopped."; \
 	for port in $(FLOWFILE_PORTS); do \
 		for pid in $$(lsof -nP -t -iTCP:$$port -sTCP:LISTEN 2>/dev/null || \
@@ -274,8 +273,7 @@ else
 endif
 	@echo "Servers stopped."
 
-# Cloud storage E2E (macOS/Linux + Docker): MinIO, then an isolated core/worker/preview on free ports
-# with a MinIO-only AWS profile; runs tests/cloud_e2e and cloud-storage-flow.spec.ts, kills only its PIDs.
+# Cloud storage E2E (macOS/Linux + Docker): MinIO + an isolated core/worker/preview on free ports; kills only its PIDs.
 # Servers use `poetry run` from empty cwds: -P (Poetry 2) / -C (1.x) find the project without a chdir.
 test_e2e_cloud: SHELL := /bin/bash
 test_e2e_cloud:

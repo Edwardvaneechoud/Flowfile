@@ -1,9 +1,6 @@
 """Deterministic source data for the cloud storage end-to-end suites.
 
-The frame mirrors the columns of the parquet file the cloud-writer bug report was built on
-(``number_of_records`` … ``right_value_right``) and carries null ``category`` values, so the
-replayed ``ifnull([category], "na")`` formula has something to fill. Seeding overwrites the
-object with identical bytes, so it is safe to repeat.
+Mirrors the bug report's parquet columns, with null ``category`` values for the replayed ``ifnull`` formula.
 """
 
 import io
@@ -61,10 +58,7 @@ def delete_prefix(prefix: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Console script: seed the fixed ``cloud-e2e`` prefix the Playwright spec reads.
-
-    ``--delete <prefix>`` instead removes a run's output prefix (the spec's own cleanup).
-    """
+    """Console script: seed the fixed ``cloud-e2e`` prefix; ``--delete <prefix>`` removes a run's output instead."""
     argv = sys.argv[1:] if argv is None else argv
     if not wait_for_minio(max_retries=5):
         print(f"MinIO is not reachable at {MINIO_ENDPOINT_URL}; start it with 'poetry run start_minio'.")

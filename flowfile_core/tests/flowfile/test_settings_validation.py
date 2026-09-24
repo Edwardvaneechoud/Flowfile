@@ -853,15 +853,13 @@ def test_add_filter_returns_the_dtype_error():
     assert "year needs a Date or Datetime column" in msg
 
 
-# Cloud reader/writer targets: the run-time path guard's verdict, shown before the run.
-
 WRITER_NO_PATH = (
     "Cloud storage writer has no target path. Enter an object-storage URI such as s3://bucket/folder/table."
 )
 READER_NO_PATH = (
     "Cloud storage reader has no source path. Enter an object-storage URI such as s3://bucket/folder/file.parquet."
 )
-# The writer exactly as the UI saved it in the failing runs: "No connection", empty path, format moved off CSV.
+# The writer shape the UI saves: "No connection", empty path, format moved off CSV.
 USER_CLOUD_WRITER_SETTINGS = {
     "resource_path": "",
     "write_mode": "append",

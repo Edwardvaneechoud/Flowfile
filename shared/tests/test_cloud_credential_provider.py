@@ -1,9 +1,6 @@
 """EncryptedCredentialProvider keeps cloud credentials out of serialized Polars plans.
 
-Polars inlines ``storage_options`` into a serialized LazyFrame, so a scan built with decrypted
-credentials carries them wherever the plan goes. These tests pin that a provider-based scan keeps
-only ciphertext in the plan, still reads the data with the same pushdown, and decrypts on the side
-that executes the plan. Encryption is the real ``$ffsec$`` scheme under the test master key.
+A provider-based scan keeps only ciphertext in the plan, reads with the same pushdown, and decrypts where it executes.
 """
 
 import json

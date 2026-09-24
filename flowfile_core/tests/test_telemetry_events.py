@@ -1090,11 +1090,8 @@ class TestWorkerOffloadedFailuresKeepTheirClass:
     description core parses back out.
 
     That description is the precondition: the worker must be built from a branch
-    that prefixes failures with the exception class. With the default port taken,
-    the session starts its own worker from this checkout on a free port; only
-    ``FLOWFILE_TEST_REUSE_WORKER=1`` or an explicit ``FLOWFILE_WORKER_PORT`` reuses
-    a running one, and an older one (e.g. a desktop app's packaged worker) reports
-    ``OtherError`` here.
+    that prefixes failures with the exception class; a stale one reached through
+    ``FLOWFILE_TEST_REUSE_WORKER=1`` or an explicit ``FLOWFILE_WORKER_PORT`` reports ``OtherError`` here.
     """
 
     @staticmethod

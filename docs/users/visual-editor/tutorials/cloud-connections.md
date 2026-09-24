@@ -42,7 +42,7 @@ Choose one of the following authentication methods:
 The connection name is only a label; it is never used as the profile name.
 
 !!! note "Upgrading AWS CLI connections"
-    Earlier versions used the connection name as the AWS profile. After upgrading, existing AWS CLI connections use the default AWS credential chain. If a connection needs a named profile, set its **AWS Profile** field.
+    Earlier versions used the connection name as the AWS profile. After upgrading, existing AWS CLI connections use the default credential chain until their **AWS Profile** field is set.
 
 #### Advanced Settings (Optional)
 

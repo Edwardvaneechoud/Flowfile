@@ -31,10 +31,7 @@ def _is_cloud_uri(value: str) -> bool:
 def serialized_frame_uses_cloud(blob: bytes | None) -> bool:
     """Return ``True`` when a serialized Polars LazyFrame embeds an object-storage scan.
 
-    A cloud scan's blob carries the source's credentials frozen at build time: S3 keys and Azure account
-    keys/SAS tokens as an ``EncryptedCredentialProvider`` ``$ffsec$`` ciphertext, and the secrets Polars
-    cannot take through a provider (an Azure client secret, a GCS key) inline in ``storage_options``.
-    Replaying it would skip rotation, expiry and access changes, so such a blob must never be replayed
+    Such a blob carries the source's credentials frozen at build time, so it must never be replayed
     (re-run the producer instead).
     """
     if not blob:

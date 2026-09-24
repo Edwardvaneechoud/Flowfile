@@ -1,9 +1,8 @@
 export type SettingsLoadView = "form" | "error" | "loading";
 
 /**
- * Which body a node settings drawer shows: its form once the settings loaded, the load error
- * with a Retry button after a failed load, else the loading skeleton. A failed load must never
- * leave the skeleton up forever.
+ * Which body a node settings drawer shows: the form once loaded, the load error with Retry after a
+ * failed load, else the skeleton.
  */
 export function settingsLoadView(
   settingsLoaded: boolean,

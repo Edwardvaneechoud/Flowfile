@@ -1,9 +1,4 @@
-"""A cloud reader/writer without an object-storage path fails before any I/O.
-
-Polars and deltalake resolve an empty or relative path against the process's working directory, so
-before the guard a writer left on its factory-default path wrote a Delta table into core's (or the
-worker's) cwd, and a directory-mode reader globbed the local disk from ``/``.
-"""
+"""A cloud reader/writer without an object-storage path fails before any I/O, instead of resolving against the cwd."""
 
 import os
 import re
@@ -24,7 +19,7 @@ READER_NO_PATH = (
 )
 MISLEADING_ERROR = re.compile("TypeError|is not an instance of")
 
-# The writer exactly as the UI saved it in the failing runs: "No connection", empty path, format moved off CSV.
+# The writer shape the UI saves: "No connection", empty path, format moved off CSV.
 USER_WRITER_SETTINGS = {
     "resource_path": "",
     "write_mode": "append",
@@ -55,10 +50,7 @@ def isolated_cwd(tmp_path, monkeypatch):
 
 @pytest.fixture
 def static_aws_profile(tmp_path, monkeypatch):
-    """Give aws-cli usable static credentials, so only the path guard can stop the write.
-
-    The endpoint points at the local MinIO mock: nothing in these tests may reach real AWS.
-    """
+    """Give aws-cli static credentials aimed at the local MinIO mock, so only the path guard can stop the write."""
     for key in list(os.environ):
         if key.startswith("AWS_"):
             monkeypatch.delenv(key)

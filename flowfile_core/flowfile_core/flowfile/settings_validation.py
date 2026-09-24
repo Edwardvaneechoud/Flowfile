@@ -27,8 +27,7 @@ the schema — are reported. The formula node takes a chained variant of the sam
 entries above it produce, so a reference to an earlier output is correct and a forward reference
 is not.
 
-Cloud reader/writer nodes get the run-time path guard's verdict (``validate_cloud_resource_path``)
-ahead of the run, so an unconfigured target shows on the canvas instead of only failing the run.
+Cloud reader/writer nodes also get the run-time path guard's verdict (``validate_cloud_resource_path``).
 """
 
 from collections.abc import Callable, Sequence
@@ -485,12 +484,7 @@ _CLOUD_PATH_ROLES: dict[str, Literal["reader", "writer"]] = {
 
 
 def _cloud_path_issues(node: "FlowNode") -> list[SettingsValidationIssue]:
-    """The run-time path guard's refusal of a cloud node's target, as a warning.
-
-    Same rule as ``flow_graph._resolve_cloud_node_connection``: empty or relative paths are refused,
-    and absolute local paths too when ambient access is off (docker). A path carrying a ``${param}``
-    reference is left alone — its value is only known at run time.
-    """
+    """The run-time path guard's verdict on a cloud node's target; a ``${param}`` path is left to run time."""
     role = _CLOUD_PATH_ROLES.get(node.node_type)
     if role is None or not node.is_setup:
         return []

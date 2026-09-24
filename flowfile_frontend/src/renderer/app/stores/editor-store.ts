@@ -81,13 +81,9 @@ export const useEditorStore = defineStore("editor", {
     },
 
     /**
-     * Saves the open settings drawer before something closes it or switches node.
-     * Resolves false when the save was refused; the caller must then keep the drawer open.
-     * A second attempt to leave the same refused drawer discards its unsaved edits instead, so a
-     * setting the user cannot fix never traps them. Concurrent calls share one attempt.
-     * On success the registration is cleared so the drawer's own cleanup does not save twice.
-     * While a flow runs the server refuses every save; the panel then keeps the edits so they can be
-     * applied after the run, and a second attempt still discards them.
+     * Saves the open settings drawer before something closes it or switches node; resolves false
+     * when the save was refused. A second attempt on the same refused drawer discards its edits, so
+     * an unfixable setting never traps the user.
      */
     saveDrawerBeforeLeave(): Promise<boolean> {
       if (!this.isDrawerOpen || !this.drawCloseFunction) return Promise.resolve(true);

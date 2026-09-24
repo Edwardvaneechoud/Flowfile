@@ -1,13 +1,7 @@
 """Add an explicit AWS profile to cloud storage connections.
 
-``cloud_storage_connections.aws_profile`` names the local AWS profile an
-``aws-cli`` connection resolves its credentials from; NULL means boto3's
-default credential chain. Before this revision the connection's display name
-was passed to boto3 as the profile name, implicitly.
-
-Existing rows are deliberately not backfilled: the connection name is a label,
-never a profile, so every existing ``aws-cli`` connection moves to the default
-credential chain until a profile is set explicitly.
+``aws_profile`` names the local profile an ``aws-cli`` connection reads; NULL is boto3's default
+chain. Existing rows are deliberately not backfilled from the connection name.
 
 Revision ID: 033
 Revises: 032

@@ -38,10 +38,8 @@ export interface NoConnectionChoice {
 }
 
 /**
- * The "No connection" choice of a cloud storage node: it runs on the credentials of the
- * machine running Flowfile for the provider the node's path names (core picks it by URI
- * scheme; AWS when there is none) and ignores every saved connection's endpoint.
- * Multi-user (docker) servers refuse their own credentials, so the choice is disabled there.
+ * The "No connection" choice: this machine's credentials for the provider the path's scheme names,
+ * ignoring saved endpoints; disabled on multi-user (docker) servers, which refuse it.
  */
 export function ambientCredentialsChoice(
   multiUser: boolean,

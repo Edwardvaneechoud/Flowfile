@@ -489,9 +489,7 @@ class FlowDataEngine:
         Azure Data Lake Storage, and Google Cloud Storage, with support for
         various authentication methods.
 
-        The scan's credentials ride in an ``EncryptedCredentialProvider`` rather than in its
-        ``storage_options``, because the plan is serialized to the worker (see
-        ``CloudStorageReader.get_secure_scan_kwargs``).
+        The credentials ride in an ``EncryptedCredentialProvider``, since the plan is serialized to the worker.
 
         Args:
             settings: A `CloudStorageReadSettingsInternal` object containing connection
@@ -717,11 +715,7 @@ class FlowDataEngine:
         read_settings: cloud_storage_schemas.CloudStorageReadSettings,
         use_pyarrow: bool = False,
     ) -> FlowDataEngine:
-        """Reads CSV file(s) from cloud storage.
-
-        Unset CSV options fall back to the drawer's defaults (header, ``,``, ``utf8``); Polars
-        rejects ``None`` for each of them.
-        """
+        """Reads CSV file(s) from cloud storage; unset CSV options take the drawer's defaults (Polars rejects None)."""
         read_settings = read_settings.with_csv_defaults()
         try:
             if use_pyarrow and read_settings.scan_mode == "directory":

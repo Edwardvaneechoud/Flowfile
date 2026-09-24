@@ -394,13 +394,8 @@ def update_cloud_connection(
     Update an existing cloud storage connection. Secret fields are only updated
     if a new non-empty value is provided; otherwise the existing secret is kept.
 
-    The AWS session token is the exception: it is only valid with the key pair it was issued
-    with, so it is dropped unless re-entered whenever the access key ID or secret access key
-    changes, or the connection stops using access_key auth. A stale token would otherwise ride
-    along with new keys (or to a re-pointed endpoint) and fail every request.
-
-    ``aws_profile`` is kept when the caller did not send the field, so an API client that omits
-    it cannot silently switch an aws-cli connection to the default credential chain.
+    The AWS session token is dropped unless re-entered whenever the key pair or auth method changes;
+    ``aws_profile`` is kept when the caller omits the field.
     """
     # Own-only: routes authorize manage-grantees and then pass the OWNER's user_id,
     # so rotated secrets below are always re-encrypted under the owner's key.
@@ -526,9 +521,7 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
     Retrieves a full cloud storage connection schema, including decrypted secrets, by its name and user ID.
 
     Raises:
-        CloudConnectionNotAllowedError: In multi-user mode, for a connection that authenticates as the
-            server (``sharing.uses_server_identity``) and is not owned by an administrator. Rows saved before
-            the create/update refusal existed fail closed here, on every resolution path.
+        CloudConnectionNotAllowedError: In multi-user mode, for a server-identity connection not owned by an admin.
     """
     db_connection = get_cloud_connection(db, connection_name, user_id)
     if not db_connection:

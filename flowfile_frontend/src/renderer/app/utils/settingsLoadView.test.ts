@@ -1,4 +1,4 @@
-// The cloud reader/writer drawers pick their body from this; a failed node fetch once left the skeleton up forever.
+// The cloud reader/writer drawers pick their body from this.
 
 import { describe, expect, it } from "vitest";
 

@@ -16,10 +16,7 @@ const LEADING_PARAMETER = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/;
 const hasCloudScheme = (value: string): boolean =>
   CLOUD_URI_SCHEMES.some((scheme) => value.startsWith(scheme));
 
-/**
- * Non-blocking hint for a cloud reader/writer path, or null when the path looks
- * like an object-storage URI. The backend rejects empty and relative paths at run time.
- */
+/** Non-blocking hint for a cloud reader/writer path, or null when it looks like an object-storage URI. */
 export function cloudPathWarning(
   path: string | null | undefined,
   role: CloudPathRole,

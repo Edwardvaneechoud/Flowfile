@@ -1,8 +1,4 @@
-"""The suite never silently reuses whatever answers on the default worker port.
-
-A developer's live worker on 63579 may run other code than the checkout under test, so conftest moves
-the session to a free port unless reuse is asked for explicitly.
-"""
+"""The suite never silently reuses whatever answers on the default worker port; conftest moves to a free one."""
 
 import os
 

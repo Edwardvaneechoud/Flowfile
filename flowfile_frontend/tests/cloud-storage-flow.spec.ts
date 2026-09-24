@@ -30,20 +30,9 @@ import {
 
 /**
  * The cloud storage flow from the "TypeError: 'None' is not an instance of 'str'" report, built
- * through the real UI against a real core + worker + MinIO: a cloud reader, two formulas and a
- * partitioned Delta writer, configured the way the reporter did and run with the writer's
- * settings drawer still open (no Apply).
- *
- * Prerequisites: MinIO on :9000 seeded with `poetry run seed_cloud_e2e`, a core + worker and a
- * web server (TEST_URL / API_URL). `make test_e2e_cloud` starts all of it on free ports, with a
- * static-key AWS profile and AWS_ENDPOINT_URL pointing at MinIO in the servers' environment, and
- * sets E2E_AWS_PROFILE_CONFIGURED=1. Everything is written under s3://flowfile-test/cloud-e2e-<run id>/,
- * which afterAll deletes. The spec skips without an explicit API_URL, so it never writes connections
- * and flows into a developer's live core by default.
- *
- * Because that environment reaches MinIO on its own, a connection whose endpoint or allow-HTTP flag
- * got lost would still pass here. tests/cloud_e2e covers that: its connection stack has no ambient
- * route to MinIO.
+ * through the real UI against a real core + worker + MinIO, and run with the writer's drawer open.
+ * Needs a seeded MinIO (`poetry run seed_cloud_e2e`) and an explicit API_URL (it skips otherwise);
+ * `make test_e2e_cloud` starts all of it. See flowfile_frontend/CLAUDE.md "Testing".
  */
 
 const RUN_ID = process.env.E2E_RUN_ID || Date.now().toString(36);
