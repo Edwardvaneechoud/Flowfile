@@ -206,10 +206,10 @@ class SelectInput(BaseModel):
             result["new_name"] = self.new_name
         if not self.keep:
             result["keep"] = self.keep
-        # Always include data_type if it's set, not just when data_type_change is True
-        # This ensures undo/redo snapshots preserve the data_type field
+        # data_type travels even without a cast; data_type_change says whether it is one (older files infer it).
         if self.data_type:
             result["data_type"] = self.data_type
+            result["data_type_change"] = self.data_type_change
         return result
 
     @classmethod
@@ -218,15 +218,15 @@ class SelectInput(BaseModel):
         old_name = data["old_name"]
         new_name = data.get("new_name", old_name)
         data_type = data.get("data_type")
-        # is_altered should be True if either name was changed OR data_type was explicitly set
-        # This ensures updateNodeSelect in the frontend won't overwrite user-specified data_type
-        is_altered = (old_name != new_name) or (data_type is not None)
+        data_type_change = data.get("data_type_change", data_type is not None)
+        # is_altered marks a user rename or cast so updateNodeSelect in the frontend won't overwrite it
+        is_altered = (old_name != new_name) or data_type_change
         return cls(
             old_name=old_name,
             new_name=new_name,
             keep=data.get("keep", True),
             data_type=data_type,
-            data_type_change=data_type is not None,
+            data_type_change=data_type_change,
             is_altered=is_altered,
         )
 

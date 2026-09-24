@@ -10,8 +10,10 @@ import type {
   NodeReferenceDictionary,
   ExpressionsOverview,
   NodeInput,
+  GraphOperation,
+  OperationResponse,
 } from "../types";
-import { NodeApi, ExpressionsApi } from "../api";
+import { FlowApi, NodeApi, ExpressionsApi } from "../api";
 import { useFlowStore } from "./flow-store";
 import { useResultsStore } from "./results-store";
 import { useEditorStore } from "./editor-store";
@@ -306,7 +308,7 @@ export const useNodeStore = defineStore("node", {
         this.cacheNodeDescriptionDict(flowStore.flowId, nodeId, description, false);
         const result = await NodeApi.setNodeDescription(flowStore.flowId, nodeId, description);
 
-        if (result === true) {
+        if (result?.success) {
           useEditorStore().bumpGraphVersion();
         } else {
           console.warn("Unexpected response:", result);
@@ -394,7 +396,7 @@ export const useNodeStore = defineStore("node", {
         this.cacheNodeReferenceDict(flowStore.flowId, nodeId, reference);
         const result = await NodeApi.setNodeReference(flowStore.flowId, nodeId, reference);
 
-        if (result === true) {
+        if (result?.success) {
           editorStore.bumpGraphVersion();
           const vf = flowStore.vueFlowInstance;
           if (vf) {
@@ -472,14 +474,12 @@ export const useNodeStore = defineStore("node", {
       }
     },
 
-    async updateSettingsDirectly(inputData: any): Promise<any> {
+    // Settings saves never send positions: the server keeps pos_x/pos_y/group_id of the live node.
+    async updateSettingsDirectly(inputData: any): Promise<OperationResponse> {
       const flowStore = useFlowStore();
 
       try {
         const node = flowStore.vueFlowInstance?.findNode(String(inputData.node_id)) as Node;
-        inputData.pos_x = node.position.x;
-        inputData.pos_y = node.position.y;
-
         const response = await NodeApi.updateSettingsDirectly(
           node.data.nodeTemplate.item,
           inputData,
@@ -496,15 +496,12 @@ export const useNodeStore = defineStore("node", {
       }
     },
 
-    async updateUserDefinedSettings(inputData: any): Promise<any> {
+    async updateUserDefinedSettings(inputData: any): Promise<OperationResponse> {
       const flowStore = useFlowStore();
 
       try {
         const node = flowStore.vueFlowInstance?.findNode(String(inputData.value.node_id)) as Node;
         const nodeType = node.data.nodeTemplate.item;
-        inputData.value.pos_x = node.position.x;
-        inputData.value.pos_y = node.position.y;
-
         const response = await NodeApi.updateUserDefinedSettings(nodeType, inputData.value);
         useEditorStore().bumpGraphVersion();
         flowStore.fetchSettingsValidation();
@@ -518,17 +515,27 @@ export const useNodeStore = defineStore("node", {
       }
     },
 
-    async updateSettings(inputData: any, inputNodeType?: string): Promise<any> {
+    /**
+     * Save a node's settings. With `batch`, the save and the batch's operations are one
+     * atomic step (e.g. a settings change plus the edges it invalidates).
+     */
+    async updateSettings(
+      inputData: any,
+      inputNodeType?: string,
+      batch?: { label: string; operations: GraphOperation[] },
+    ): Promise<OperationResponse> {
       const flowStore = useFlowStore();
 
       try {
         const node = flowStore.vueFlowInstance?.findNode(String(inputData.value.node_id)) as Node;
         const nodeType = inputNodeType ?? node.data.nodeTemplate.item;
 
-        inputData.value.pos_x = node.position.x;
-        inputData.value.pos_y = node.position.y;
-
-        const response = await NodeApi.updateSettingsDirectly(nodeType, inputData.value);
+        const response = batch
+          ? await FlowApi.applyOperations(Number(inputData.value.flow_id), batch.label, [
+              { op: "update_settings", node_type: nodeType, settings: inputData.value },
+              ...batch.operations,
+            ])
+          : await NodeApi.updateSettingsDirectly(nodeType, inputData.value);
         useEditorStore().bumpGraphVersion();
         flowStore.fetchSettingsValidation();
 
@@ -688,12 +695,6 @@ export const useNodeStore = defineStore("node", {
     pushNodeData() {
       const editorStore = useEditorStore();
       editorStore.pushNodeData();
-    },
-
-    /** @deprecated Use `useEditorStore().setCloseFunction()` directly instead. */
-    setCloseFunction(f: () => void) {
-      const editorStore = useEditorStore();
-      editorStore.setCloseFunction(f);
     },
 
     /** @deprecated Use `useEditorStore().executeDrawCloseFunction()` directly instead. */

@@ -1,6 +1,8 @@
 // src/app/services/axios-setup.ts
 import axios, { InternalAxiosRequestConfig, AxiosResponse, AxiosError } from "axios";
 import authService from "./auth.service";
+import { createMutationQueue, installMutationChannel } from "./mutationChannel";
+import { useFlowStore } from "../stores/flow-store";
 import { flowfileCorebaseURL } from "../../config/constants";
 
 axios.defaults.baseURL = flowfileCorebaseURL;
@@ -55,5 +57,31 @@ axios.interceptors.response.use(
     return Promise.reject(error);
   },
 );
+
+// Registered after the auth interceptors on purpose; see installMutationChannel.
+const mutationQueue = createMutationQueue();
+// The store is resolved per response: this module and the stores import each other.
+installMutationChannel(
+  axios,
+  mutationQueue,
+  (history) => useFlowStore().updateHistoryState(history),
+  () => useFlowStore().requestReload(),
+);
+
+/** Resolves once every graph mutation enqueued so far has completed. */
+export const whenMutationsIdle = (): Promise<void> => mutationQueue.whenIdle();
+
+/** Bumped each time a graph mutation is enqueued; lets a reload detect it was overtaken. */
+export const mutationGeneration = (): number => mutationQueue.generation();
+
+/**
+ * Take a slot now for a request that is sent later (pass it as `mutationSlot`), so the
+ * gesture keeps its place in the order. A slot that ends up unused must be released.
+ */
+export const reserveMutationSlot = (): number => mutationQueue.enqueue();
+
+export const releaseMutationSlot = (slot: number): void => {
+  mutationQueue.release(slot);
+};
 
 export default axios;

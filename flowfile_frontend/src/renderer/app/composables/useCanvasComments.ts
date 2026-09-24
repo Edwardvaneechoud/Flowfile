@@ -6,6 +6,7 @@ import { type GraphNode, type Node, type XYPosition, useVueFlow } from "@vue-flo
 import { nextTick } from "vue";
 
 import { FlowApi } from "../api";
+import { recoverFromFailedMutation } from "../services/mutationFailure";
 import { useFlowStore } from "../stores/flow-store";
 import type { CommentBoundsUpdate, CommentInput, CommentNodeData } from "../types";
 
@@ -52,13 +53,19 @@ export function useCanvasComments() {
   /** Create an empty comment at an absolute canvas position and open it for editing. */
   const addCommentAt = async (position: XYPosition): Promise<void> => {
     if (flowStore.flowId === null || flowStore.flowId <= 0) return;
-    const response = await FlowApi.createComment(flowStore.flowId, {
-      text: "",
-      x_position: position.x,
-      y_position: position.y,
-      width: COMMENT_DEFAULT_WIDTH,
-      height: COMMENT_DEFAULT_HEIGHT,
-    });
+    let response: Awaited<ReturnType<typeof FlowApi.createComment>>;
+    try {
+      response = await FlowApi.createComment(flowStore.flowId, {
+        text: "",
+        x_position: position.x,
+        y_position: position.y,
+        width: COMMENT_DEFAULT_WIDTH,
+        height: COMMENT_DEFAULT_HEIGHT,
+      });
+    } catch (error) {
+      recoverFromFailedMutation(error, "Could not add the comment");
+      return;
+    }
     if (response.comment) {
       const vueId = commentNodeId(response.comment.id);
       addNodes([buildCommentNode(response.comment, true)]);
@@ -67,27 +74,26 @@ export function useCanvasComments() {
       await nextTick();
       updateNodeInternals([vueId]);
     }
-    flowStore.updateHistoryState(response.history);
   };
 
   /** Persist edited text (the node's data is updated optimistically). */
   const persistCommentText = async (commentId: number, text: string): Promise<void> => {
     if (flowStore.flowId === null) return;
     updateNodeData(commentNodeId(commentId), { text, autoEdit: false });
-    const response = await FlowApi.updateComment(flowStore.flowId, commentId, { text });
-    flowStore.updateHistoryState(response.history);
+    await FlowApi.updateComment(flowStore.flowId, commentId, { text }).catch((error) =>
+      recoverFromFailedMutation(error, "Could not save the comment"),
+    );
   };
 
   /** Persist a resize (position + size) as one undoable step. */
   const persistCommentBounds = async (bounds: CommentBoundsUpdate): Promise<void> => {
     if (flowStore.flowId === null) return;
-    const response = await FlowApi.updateComment(flowStore.flowId, bounds.comment_id, {
+    await FlowApi.updateComment(flowStore.flowId, bounds.comment_id, {
       x_position: bounds.x_position,
       y_position: bounds.y_position,
       width: bounds.width,
       height: bounds.height,
-    });
-    flowStore.updateHistoryState(response.history);
+    }).catch((error) => recoverFromFailedMutation(error, "Could not resize the comment"));
   };
 
   return { addCommentAt, persistCommentText, persistCommentBounds };

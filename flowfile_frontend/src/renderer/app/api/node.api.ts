@@ -7,6 +7,7 @@ import type {
   FormulaInput,
   FormulaChainCheck,
   InstantFuncResult,
+  OperationResponse,
 } from "../types";
 
 export class NodeApi {
@@ -133,7 +134,7 @@ export class NodeApi {
     flowId: number,
     nodeId: number,
     description: string,
-  ): Promise<boolean> {
+  ): Promise<OperationResponse> {
     const response = await axios.post("/node/description/", JSON.stringify(description), {
       params: { flow_id: flowId, node_id: nodeId },
       headers: { "Content-Type": "application/json" },
@@ -158,7 +159,7 @@ export class NodeApi {
     flowId: number,
     nodeId: number,
     reference: string,
-  ): Promise<boolean> {
+  ): Promise<OperationResponse> {
     const response = await axios.post("/node/reference/", JSON.stringify(reference), {
       params: { flow_id: flowId, node_id: nodeId },
       headers: { "Content-Type": "application/json" },
@@ -217,7 +218,10 @@ export class NodeApi {
   /**
    * Update node settings directly
    */
-  static async updateSettingsDirectly(nodeType: string, inputData: any): Promise<any> {
+  static async updateSettingsDirectly(
+    nodeType: string,
+    inputData: any,
+  ): Promise<OperationResponse> {
     const response = await axios.post("/update_settings/", inputData, {
       params: { node_type: nodeType },
     });
@@ -227,7 +231,10 @@ export class NodeApi {
   /**
    * Update user-defined node settings
    */
-  static async updateUserDefinedSettings(nodeType: string, inputData: any): Promise<any> {
+  static async updateUserDefinedSettings(
+    nodeType: string,
+    inputData: any,
+  ): Promise<OperationResponse> {
     const response = await axios.post(
       "/user_defined_components/update_user_defined_node",
       inputData,

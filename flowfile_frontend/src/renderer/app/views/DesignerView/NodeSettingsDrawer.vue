@@ -5,7 +5,16 @@
       :intro="nodeStore.drawerProps.intro"
       :docs-url="nodeStore.drawerProps.docsUrl"
     />
-    <div class="node-settings-body">
+    <div
+      class="node-settings-body"
+      @pointerdown.capture="noteEdit"
+      @keydown.capture="noteEdit"
+      @input.capture="noteEdit"
+      @change.capture="noteEdit"
+      @paste.capture="noteEdit"
+      @cut.capture="noteEdit"
+      @drop.capture="noteEdit"
+    >
       <component
         :is="nodeStore.activeDrawerComponent"
         v-bind="componentProps"
@@ -21,13 +30,20 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from "vue";
+import { ref, computed, watch, nextTick, onBeforeUnmount } from "vue";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
+import { useFlowStore } from "../../stores/flow-store";
 import NodeTitle from "../../components/nodes/baseNode/nodeTitle.vue";
+import { IS_MAC } from "../../utils/shortcuts";
+import {
+  createDrawerSession,
+  isDrawerEdit,
+  type DrawerSession,
+} from "../../composables/settingsDrawerSession";
 
 interface DrawerComponentInstance {
-  loadNodeData: (nodeId: number) => void;
+  loadNodeData: (nodeId: number) => void | Promise<void>;
   pushNodeData: () => void | boolean | Promise<void | boolean>;
   // Opt-in: a component that can have nothing to save (ExploreData before its
   // data is fetched) exposes this to hide the Apply footer. Undefined keeps
@@ -47,7 +63,17 @@ const componentProps = computed(() =>
   ),
 );
 const editorStore = useEditorStore();
+const flowStore = useFlowStore();
 const drawerComponentInstance = ref<DrawerComponentInstance | null>(null);
+
+// The shown node's pending save; the drawer's close function is its conditional close.
+let session: DrawerSession | null = null;
+let stopLoadedWatch: (() => void) | null = null;
+onBeforeUnmount(() => stopLoadedWatch?.());
+
+const noteEdit = (event: Event) => {
+  if (isDrawerEdit(event, IS_MAC)) session?.noteEdit();
+};
 
 // Universal Apply: every drawer-entry node component exposes pushNodeData (the
 // same save that runs on drawer-close), so this works for all node types,
@@ -59,11 +85,13 @@ let appliedTimer: ReturnType<typeof setTimeout> | null = null;
 const canApply = computed(() => drawerComponentInstance.value?.canApply !== false);
 
 const applySettings = async () => {
-  if (!drawerComponentInstance.value?.pushNodeData || !canApply.value) return;
+  const instance = drawerComponentInstance.value;
+  if (!instance?.pushNodeData || !canApply.value) return;
   isApplying.value = true;
   try {
     // A component that reports a refused save keeps the button on "Apply".
-    if ((await drawerComponentInstance.value.pushNodeData()) === false) return;
+    const result = session ? await session.save() : await instance.pushNodeData();
+    if (result === false) return;
     editorStore.disarmRefusedSave();
     justApplied.value = true;
     if (appliedTimer) clearTimeout(appliedTimer);
@@ -84,20 +112,38 @@ const lastExecutedState = ref({
 // Fallback for unconditional closes (flow switch); a failed save must not block the next load.
 const executeCleanup = async () => {
   if (!lastExecutedState.value.componentInstance) return;
-  try {
-    await nodeStore.executeDrawCloseFunction();
-  } catch (error) {
-    console.error("Error saving node settings on close:", error);
-  }
+  await editorStore.executeDrawCloseFunctionOnce();
 };
 
 const setupNewNode = () => {
-  if (drawerComponentInstance.value?.loadNodeData && nodeStore.node_id !== -1) {
-    drawerComponentInstance.value.loadNodeData(nodeStore.node_id);
-    nodeStore.setCloseFunction(drawerComponentInstance.value.pushNodeData);
+  const instance = drawerComponentInstance.value;
+  const nodeId = nodeStore.node_id;
+  if (instance?.loadNodeData && nodeId !== -1) {
+    const current = createDrawerSession({
+      push: () => instance.pushNodeData(),
+      nodeExists: () => !!flowStore.vueFlowInstance?.findNode(String(nodeId)),
+    });
+    session = current;
+    const previous = nodeStore.nodeData;
+    // is_setup comes from the first fresh response for this node, not the draft or the load promise.
+    stopLoadedWatch?.();
+    stopLoadedWatch = watch(
+      () => nodeStore.nodeData,
+      (loaded) => {
+        if (loaded && loaded !== previous && Number(loaded.node_id) === nodeId) {
+          current.loaded(loaded.is_setup);
+          stopLoadedWatch?.();
+          stopLoadedWatch = null;
+        }
+      },
+    );
+    Promise.resolve(instance.loadNodeData(nodeId)).catch((error) =>
+      console.error("Loading the node settings failed:", error),
+    );
+    editorStore.setCloseFunction(current.close, current.hasPendingEdits);
     lastExecutedState.value = {
-      nodeId: nodeStore.node_id,
-      componentInstance: drawerComponentInstance.value,
+      nodeId,
+      componentInstance: instance,
     };
   }
 };

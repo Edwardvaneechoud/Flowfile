@@ -582,8 +582,8 @@ import { useFlowStore } from "../../stores/flow-store";
 import { useNotificationsStore } from "../../stores/notifications-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { FlowApi } from "../../api/flow.api";
-import { NodeApi } from "../../api/node.api";
 import { copyToClipboard } from "../../utils/clipboardUtils";
+import { addConfiguredNodeOperations } from "../../utils/graphOperations";
 import type { NotebookSummary } from "../../api/notebook.api";
 import { EmptyState } from "../../components/common";
 import ContextMenu from "../../components/common/ContextMenu/ContextMenu.vue";
@@ -1087,31 +1087,29 @@ function onFlowMenuSelect(action: string) {
   }
 }
 
+const NEW_FLOW_NODE_POSITION = { x: 200, y: 200 };
+
 // Spin up a fresh flow whose only node is a catalog reader pre-configured for the
 // given table, then open it in the designer. Mirrors the setting_input the
 // CatalogReader node persists for a configured table (is_setup: true).
 async function createReadInFlow(table: CatalogTable) {
   try {
     const flowId = await FlowApi.createFlow(null, null, null, false);
-    const nodeId = 1;
-    const posX = 200;
-    const posY = 200;
-    await FlowApi.insertNode(flowId, nodeId, "catalog_reader", posX, posY);
-    await NodeApi.updateSettingsDirectly("catalog_reader", {
-      catalog_table_id: table.id,
-      catalog_table_name: table.name,
-      catalog_full_table_name: null,
-      catalog_namespace_id: table.namespace_id,
-      delta_version: null,
-      sql_query: null,
-      flow_id: flowId,
-      node_id: nodeId,
-      cache_results: false,
-      pos_x: posX,
-      pos_y: posY,
-      is_setup: true,
-      description: "",
-    });
+    await FlowApi.applyOperations(
+      flowId,
+      "Add catalog_reader node",
+      addConfiguredNodeOperations(flowId, 1, "catalog_reader", NEW_FLOW_NODE_POSITION, {
+        catalog_table_id: table.id,
+        catalog_table_name: table.name,
+        catalog_full_table_name: null,
+        catalog_namespace_id: table.namespace_id,
+        delta_version: null,
+        sql_query: null,
+        cache_results: false,
+        is_setup: true,
+        description: "",
+      }),
+    );
     flowStore.setFlowId(flowId);
     router.push({ name: "designer" });
   } catch (e: any) {
@@ -1125,9 +1123,6 @@ async function createReadInFlow(table: CatalogTable) {
 async function createReadInFlowFromArtifact(artifact: GlobalArtifact) {
   try {
     const flowId = await FlowApi.createFlow(null, null, null, false);
-    const nodeId = 1;
-    const posX = 200;
-    const posY = 200;
     const id = artifact.namespace_id;
     let nsArg = "";
     if (id !== null && id !== undefined) {
@@ -1136,19 +1131,18 @@ async function createReadInFlowFromArtifact(artifact: GlobalArtifact) {
     }
     // Omit version so the flow always reads the latest model (picks up retrains).
     const code = `obj = flowfile_ctx.get_global("${artifact.name}"${nsArg})\nobj`;
-    await FlowApi.insertNode(flowId, nodeId, "python_script", posX, posY);
-    await NodeApi.updateSettingsDirectly("python_script", {
-      flow_id: flowId,
-      node_id: nodeId,
-      cache_results: false,
-      pos_x: posX,
-      pos_y: posY,
-      is_setup: true,
-      description: "",
-      depending_on_ids: [],
-      output_names: ["main"],
-      python_script_input: { code, kernel_id: null },
-    });
+    await FlowApi.applyOperations(
+      flowId,
+      "Add python_script node",
+      addConfiguredNodeOperations(flowId, 1, "python_script", NEW_FLOW_NODE_POSITION, {
+        cache_results: false,
+        is_setup: true,
+        description: "",
+        depending_on_ids: [],
+        output_names: ["main"],
+        python_script_input: { code, kernel_id: null },
+      }),
+    );
     flowStore.setFlowId(flowId);
     router.push({ name: "designer" });
   } catch (e: any) {

@@ -121,6 +121,8 @@ class TestCrossJoinSettingUpdator:
         left_cols = {r.old_name: r for r in initial_data.setting_input.cross_join_input.left_select.renames}
         assert 'extra' in left_cols
         assert left_cols['extra'].is_available is True
+        # The drawer saves what it was shown; reading alone never configures the node.
+        basic_flow.add_cross_join(initial_data.setting_input)
 
         # Update left input to remove 'extra' column
         basic_flow.add_manual_input(input_schema.NodeManualInput(
@@ -227,7 +229,7 @@ class TestJoinSettingUpdator:
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
 
         node = basic_flow.get_node(3)
-        node.get_node_data(basic_flow.flow_id)
+        basic_flow.add_join(node.get_node_data(basic_flow.flow_id).setting_input)
 
         # Update left input to remove 'extra'
         basic_flow.add_manual_input(input_schema.NodeManualInput(
@@ -258,7 +260,7 @@ class TestJoinSettingUpdator:
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
 
         node = basic_flow.get_node(3)
-        node.get_node_data(basic_flow.flow_id)
+        basic_flow.add_join(node.get_node_data(basic_flow.flow_id).setting_input)
 
         # Update right input to remove 'extra'
         basic_flow.add_manual_input(input_schema.NodeManualInput(
@@ -656,3 +658,40 @@ class TestCrossJoinExecution:
         result2 = node.get_resulting_data()
 
         assert 'c' in result2.columns
+
+
+class TestDrawerReadsAreSafe:
+    """Reading a node for its drawer must never fail on, or lose, what the user stored."""
+
+    def test_between_filter_without_upper_bound_still_loads(self, basic_flow: FlowGraph):
+        create_manual_input_node(basic_flow, 1, [{'id': 1}, {'id': 5}])
+        basic_flow.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=2, node_type='filter'))
+        add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        basic_flow.add_filter(input_schema.NodeFilter(
+            flow_id=1, node_id=2, depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                mode='basic',
+                basic_filter=transform_schema.BasicFilter(field='id', operator='between', value='1', value2=None),
+            ),
+        ))
+
+        node_data = basic_flow.get_node(2).get_node_data(basic_flow.flow_id)
+
+        assert node_data.setting_input.filter_input.basic_filter.operator == 'between'
+        assert node_data.setting_input.filter_input.advanced_filter == ''
+
+    def test_generated_join_proposal_keeps_the_placeholder_description(self, basic_flow: FlowGraph):
+        create_manual_input_node(basic_flow, 1, [{'id': 1, 'a': 'x'}])
+        create_manual_input_node(basic_flow, 2, [{'id': 1, 'b': 'y'}])
+        basic_flow.add_node_promise(input_schema.NodePromise(
+            flow_id=1, node_id=3, node_type='join', description='my join note', node_reference='my_join'
+        ))
+        add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(1, 3))
+        add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(2, 3, 'right'))
+
+        node_data = basic_flow.get_node(3).get_node_data(basic_flow.flow_id)
+
+        assert isinstance(node_data.setting_input, input_schema.NodeJoin)
+        assert node_data.setting_input.description == 'my join note'
+        assert node_data.setting_input.node_reference == 'my_join'
+        assert node_data.is_setup is False

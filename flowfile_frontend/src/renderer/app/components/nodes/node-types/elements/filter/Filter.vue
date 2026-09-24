@@ -110,6 +110,7 @@
 <script lang="ts" setup>
 import { ref, computed, nextTick, watch } from "vue";
 import { CodeLoader } from "vue-content-loader";
+import { ElMessage } from "element-plus";
 
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
 import { useNodeStore } from "../../../../../stores/node-store";
@@ -120,6 +121,7 @@ import { NodeFilter } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { buildOutputHandles } from "../../../../../utils/nodeHandles";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { advancedFilterError } from "./filterValidation";
 import {
   FilterOperator,
   FILTER_OPERATOR_LABELS,
@@ -137,14 +139,14 @@ const flowStore = useFlowStore();
 const nodeFilter = ref<NodeFilter | null>(null);
 const nodeData = ref<NodeData | null>(null);
 
+// Shows the saved split mode (on load and after a save), never an unsaved toggle.
 const updateNodeOutputHandles = () => {
   const vfInstance = flowStore.vueFlowInstance;
   if (!vfInstance || !nodeFilter.value) return;
   const vfNode = vfInstance.findNode(String(nodeFilter.value.node_id));
   if (!vfNode) return;
-  // Same derivation the canvas uses on flow open (NodeFilter.output_names), so
-  // toggling split mode live and reloading the flow agree on the handles.
-  vfNode.data.outputs = splitModeEnabled.value
+  // Same derivation the canvas uses on flow open (NodeFilter.output_names).
+  vfNode.data.outputs = nodeFilter.value.split_mode
     ? buildOutputHandles(2, ["pass", "fail"])
     : buildOutputHandles(1);
 };
@@ -154,6 +156,11 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   onBeforeSave: () => {
     if (nodeFilter.value) {
       if (isAdvancedFilter.value) {
+        const error = advancedFilterError(nodeStore.inputCode);
+        if (error) {
+          ElMessage.error(error);
+          return false;
+        }
         updateAdvancedFilter();
         nodeFilter.value.filter_input.mode = "advanced";
         nodeFilter.value.filter_input.filter_type = "advanced";
@@ -165,10 +172,7 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
     }
     return true;
   },
-});
-
-watch(splitModeEnabled, () => {
-  updateNodeOutputHandles();
+  onAfterSave: () => updateNodeOutputHandles(),
 });
 
 interface EditorChildType {

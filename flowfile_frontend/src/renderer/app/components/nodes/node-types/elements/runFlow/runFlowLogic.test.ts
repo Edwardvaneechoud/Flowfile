@@ -8,6 +8,7 @@ import {
   mergeBindingRows,
   reconcileBindings,
   findDanglingEdges,
+  danglingEdgesToDelete,
   hasColumnBinding,
   columnMatchesParamType,
   matchingColumnNames,
@@ -179,6 +180,17 @@ describe("matchingColumnNames", () => {
     expect(matchingColumnNames(cols, "integer")).toEqual(["id"]);
     expect(matchingColumnNames(cols, "float")).toEqual(["id", "amount"]);
     expect(matchingColumnNames(cols, "string")).toEqual(["label"]);
+  });
+});
+
+describe("danglingEdgesToDelete", () => {
+  it("leaves keyed data inputs to core but deletes the parameter input and outputs", () => {
+    const dangling = [
+      { id: "param", source: "1", target: "5", sourceHandle: "output-0", targetHandle: "input-0" },
+      { id: "keyed", source: "1", target: "5", sourceHandle: "output-0", targetHandle: "input-2" },
+      { id: "out", source: "5", target: "9", sourceHandle: "output-1", targetHandle: "input-0" },
+    ];
+    expect(danglingEdgesToDelete(dangling, "5").map((e) => e.id)).toEqual(["param", "out"]);
   });
 });
 

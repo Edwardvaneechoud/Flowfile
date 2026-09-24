@@ -272,16 +272,13 @@ import { useFlowStore } from "../../../../../stores/flow-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
 import { useWritableNamespaces } from "../../../../../composables/useWritableNamespaces";
 import { validateCatalogName } from "../../../../../composables/catalogNameValidation";
-import { suppressedEdgeRemovals } from "../../../../../composables/useDragAndDrop";
 import { CatalogApi } from "../../../../../api/catalog.api";
-import { FlowApi } from "../../../../../api";
 import { SYSTEM_NAMESPACE_NAMES } from "../../../../../types";
 import axios from "../../../../../services/axios.config";
 import { buildOutputHandles } from "../../../../../utils/nodeHandles";
 import * as writeModes from "../../../../../utils/deltaWriteModes";
 import { CollapsibleSection, DeltaTableStatusLine, MergeKeysSelect } from "../../../../common";
 import type { CatalogTable } from "../../../../../types/catalog.types";
-import type { NodeConnection } from "../../../../../types/canvas.types";
 import {
   DEFAULT_SCD2_SETTINGS,
   type CatalogWriteMode,
@@ -301,7 +298,7 @@ const tableNameError = computed(() =>
   validateCatalogName(nodeData.value?.catalog_write_settings.table_name ?? "", "Table"),
 );
 
-const { saveSettings, pushNodeData } = useNodeSettings({
+const { saveSettings, saveSettingsDroppingEdges, pushNodeData } = useNodeSettings({
   nodeRef: nodeData,
   onBeforeSave: () => {
     if (tableNameError.value) {
@@ -319,6 +316,9 @@ const { saveSettings, pushNodeData } = useNodeSettings({
         return false;
       }
     }
+  },
+  onAfterSave: () => {
+    if (nodeData.value) updateNodeOutputHandles(nodeData.value.catalog_write_settings.write_mode);
   },
 });
 
@@ -366,8 +366,8 @@ const activeTab = ref<"physical" | "virtual">("physical");
 // Track the last-used physical write mode so we can restore it when switching back
 const physicalWriteMode = ref<CatalogWriteMode>("overwrite");
 
-// Same derivation the canvas uses on flow open (NodeCatalogWriter.output_names), so switching
-// modes live and reloading the flow agree on the handle. SCD2 is the only mode with an output.
+// Same derivation the canvas uses on flow open (NodeCatalogWriter.output_names); called with the
+// saved mode only (on load and after a save). SCD2 is the only mode with an output.
 const updateNodeOutputHandles = (mode: CatalogWriteMode) => {
   const vfInstance = flowStore.vueFlowInstance;
   const nodeId = nodeData.value?.node_id;
@@ -379,7 +379,6 @@ const updateNodeOutputHandles = (mode: CatalogWriteMode) => {
 
 // Fired only on user changes (not on load), so drawer opens never prompt.
 const handleWriteModeChange = async (mode: CatalogWriteMode) => {
-  updateNodeOutputHandles(mode);
   if (mode !== "scd2") await removeStaleOutputEdges();
 };
 
@@ -408,60 +407,8 @@ const removeStaleOutputEdges = async () => {
   } catch {
     return;
   }
-  await deleteOutputEdges(staleEdges);
-};
-
-// Same backend-first prune as Gate.vue's removeElseEdges.
-const deleteOutputEdges = async (
-  edges: {
-    id: string;
-    source: string;
-    target: string;
-    sourceHandle?: string | null;
-    targetHandle?: string | null;
-  }[],
-) => {
-  const vfInstance = flowStore.vueFlowInstance;
-  if (!vfInstance || !nodeData.value) return;
-  const removedIds: string[] = [];
-  let failedCount = 0;
-  for (const edge of edges) {
-    const connection: NodeConnection = {
-      input_connection: {
-        node_id: Number(edge.target),
-        connection_class: (edge.targetHandle ??
-          "input-0") as NodeConnection["input_connection"]["connection_class"],
-      },
-      output_connection: {
-        node_id: Number(edge.source),
-        connection_class: (edge.sourceHandle ??
-          "output-0") as NodeConnection["output_connection"]["connection_class"],
-      },
-    };
-    try {
-      await FlowApi.deleteConnection(Number(nodeData.value.flow_id), connection);
-    } catch (error) {
-      // 422 = already gone server-side; the edge is stale either way.
-      const status = (error as { response?: { status?: number } })?.response?.status;
-      if (status !== 422) {
-        console.error("Failed to delete stale catalog writer connection:", error);
-        failedCount += 1;
-        continue;
-      }
-    }
-    suppressedEdgeRemovals.add(edge.id);
-    removedIds.push(edge.id);
-  }
-  // One removal per call: Canvas.handleEdgeChange ignores batched change events.
-  for (const id of removedIds) {
-    vfInstance.removeEdges([id]);
-  }
-  if (failedCount > 0) {
-    ElMessage.error(
-      `Could not remove ${failedCount} connection${failedCount === 1 ? "" : "s"}; ` +
-        "they remain on the canvas.",
-    );
-  }
+  // A mode change and dropping its dead output edges are one step.
+  await saveSettingsDroppingEdges("Update catalog_writer settings", staleEdges);
 };
 
 const lazinessCheck = ref<{ is_optimizable: boolean; blockers: string[] } | null>(null);

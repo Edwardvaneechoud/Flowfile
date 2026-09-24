@@ -131,6 +131,7 @@
 import { Handle } from "@vue-flow/core";
 import { computed, ref, onMounted, nextTick, watch, onUnmounted } from "vue";
 import { useNodeStore } from "../../stores/column-store";
+import { recoverFromFailedMutation } from "../../services/mutationFailure";
 import GenericNode from "./GenericNode.vue";
 import ArtifactBadge from "./ArtifactBadge.vue";
 import type { NodeTemplate, NodeHandle } from "../../types";
@@ -212,7 +213,9 @@ const toggleEditMode = (state: boolean) => {
   } else {
     window.removeEventListener("click", handleClickOutside);
     if (description.value !== descriptionAtEditStart) {
-      nodeStore.setNodeDescription(props.data.id, description.value);
+      nodeStore
+        .setNodeDescription(props.data.id, description.value)
+        .catch((error) => recoverFromFailedMutation(error, "Could not save the description"));
     }
   }
 };

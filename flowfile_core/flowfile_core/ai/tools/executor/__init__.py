@@ -23,8 +23,8 @@ nodes already", all data-touching paths go through the existing
 Coordination with the diff layer: ``mode="stage"`` returns
 ``staged_node_payload`` with the validated settings + predicted schema;
 the diff layer composes a list of those into a ``GraphDiff`` and wires
-the accept path through ``HistoryManager.capture_if_changed`` for a
-single undo point. The executor does NOT call
+the accept path through one ``FlowGraph.transaction`` for a single
+undo point. The executor does NOT call
 ``audit.update_diff_action`` — that's the diff layer's contract.
 
 The module was split into a package for navigability. The public API

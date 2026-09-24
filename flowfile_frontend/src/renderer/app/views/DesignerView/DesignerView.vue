@@ -9,7 +9,7 @@
             @refresh-flow="refreshFlow"
             @flow-saved="handleFlowSaved"
           />
-          <undo-redo-controls v-if="hasOpenFlow" @refresh-flow="refreshFlow" />
+          <undo-redo-controls v-if="hasOpenFlow" />
         </div>
       </div>
       <div class="header-bottom">

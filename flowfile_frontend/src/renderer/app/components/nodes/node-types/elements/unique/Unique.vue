@@ -138,7 +138,7 @@ const calculateSelects = (updatedInputs: SelectInput[]) => {
 };
 
 const loadNodeData = async (nodeId: number) => {
-  loadData(nodeId);
+  await loadData(nodeId);
   dataLoaded.value = true;
 };
 

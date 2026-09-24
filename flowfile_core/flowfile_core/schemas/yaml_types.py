@@ -21,6 +21,7 @@ class SelectInputYaml(TypedDict, total=False):
     new_name: str
     keep: bool
     data_type: str
+    data_type_change: bool
 
 
 class OutputFieldInfoYaml(TypedDict, total=False):

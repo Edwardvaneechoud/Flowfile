@@ -275,6 +275,41 @@ def inject_followup_message(
 # Public entry + loop
 
 
+class _RejectedLiveApply(Exception):
+    """Carries a rejected ``agent_live`` result out of its transaction so partial edits roll back."""
+
+    def __init__(self, result: Any):
+        super().__init__("rejected live apply")
+        self.result = result
+
+
+def _dispatch_tool_call(**kwargs: Any) -> tuple[Any, Any]:
+    """Run ``execute_tool_call``; a live apply (``mode="apply"``) runs as one atomic undo step.
+
+    Returns ``(result, transaction)``; the transaction is None unless a live apply succeeded.
+    """
+    flow: FlowGraph | None = kwargs.get("flow")
+    if kwargs.get("mode") != "apply" or flow is None:
+        return execute_tool_call(**kwargs), None
+    try:
+        with flow.transaction(f"AI: {kwargs['tool_name']}") as txn:
+            result = execute_tool_call(**kwargs)
+            if result.status == "rejected":
+                raise _RejectedLiveApply(result)
+    except _RejectedLiveApply as rejected:
+        return rejected.result, None
+    return result, txn
+
+
+def _retract_live_step(flow: FlowGraph, live_step: Any, node_id: int) -> None:
+    """Undo exactly the step ``live_step`` recorded; fall back to deleting the node it added."""
+    if live_step is not None and flow.revert_if_top(live_step.entry):
+        return
+    with flow.transaction(f"AI: remove node {node_id}"):
+        if flow.get_node(node_id) is not None:
+            flow.delete_node(node_id)
+
+
 async def run_planner_session(
     *,
     session: sessions.AgentSession,
@@ -948,9 +983,10 @@ async def _run_planner_loop(
             # call must not run on the FastAPI event loop or the worker's
             # completion frames pile up against an unread socket and the
             # whole core process freezes.
+            live_step = None
             try:
-                result = await asyncio.to_thread(
-                    execute_tool_call,
+                result, live_step = await asyncio.to_thread(
+                    _dispatch_tool_call,
                     flow_id=session.flow_id,
                     tool_name=tc.name,
                     tool_args=tool_args,
@@ -1090,13 +1126,13 @@ async def _run_planner_loop(
                 tool_msg.content = (tool_msg.content or "").rstrip() + "\n\n" + obs_block
 
                 if not obs.success:
-                    # Auto-undo: delete the just-added node so the
+                    # Auto-undo: retract the just-applied step so the
                     # canvas returns to the last successful state.
                     try:
-                        await asyncio.to_thread(flow.delete_node, live_node_id)
+                        await asyncio.to_thread(_retract_live_step, flow, live_step, live_node_id)
                     except Exception:
                         logger.exception(
-                            "agent_live: undo (delete_node=%s) failed",
+                            "agent_live: undo (node=%s) failed",
                             live_node_id,
                         )
 

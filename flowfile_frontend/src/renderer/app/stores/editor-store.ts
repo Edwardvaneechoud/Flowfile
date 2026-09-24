@@ -4,6 +4,7 @@ import { ElMessage } from "element-plus";
 import { ref, shallowRef } from "vue";
 import type { Component } from "vue";
 import type { NodeTitleInfo } from "../types";
+import type { DrawerCloseOptions } from "../composables/settingsDrawerSession";
 
 // One leave attempt at a time: a double-click must not save (or refuse) the same drawer three times.
 let leaveInFlight: Promise<boolean> | null = null;
@@ -16,6 +17,7 @@ export const useEditorStore = defineStore("editor", {
     activeDrawerComponent: shallowRef<Component | null>(null),
     drawerProps: ref<Record<string, any>>({}),
     drawCloseFunction: null as any,
+    drawerHasPendingEdits: null as (() => boolean) | null,
     // The close function whose save was refused on the last leave attempt; the next attempt discards.
     refusedCloseFunction: null as any,
     // Whether that refusal came during a run; once the run state changes, a refusal warns again first.
@@ -138,16 +140,52 @@ export const useEditorStore = defineStore("editor", {
       this.refusedWhileRunning = false;
     },
 
-    setCloseFunction(f: () => void): void {
+    /**
+     * Run the pending close save once and forget it; false means refused or failed. With
+     * `keepOnRefusal` a refused close stays armed (unless the drawer closed or re-registered meanwhile).
+     */
+    async executeDrawCloseFunctionOnce(
+      options?: DrawerCloseOptions,
+      keepOnRefusal = false,
+    ): Promise<unknown> {
+      const close = this.drawCloseFunction;
+      const hasPendingEdits = this.drawerHasPendingEdits;
+      this.clearCloseFunction();
+      if (!close) return undefined;
+      let result: unknown;
+      try {
+        result = await close(options);
+      } catch (error) {
+        console.error("Saving the open settings failed:", error);
+        result = false;
+      }
+      const stillOpen = this.activeDrawerComponent !== null && this.drawCloseFunction === null;
+      if (result === false && keepOnRefusal && stillOpen) {
+        this.setCloseFunction(close, hasPendingEdits ?? undefined);
+      }
+      return result;
+    },
+
+    setCloseFunction(
+      f: (options?: DrawerCloseOptions) => unknown,
+      hasPendingEdits?: () => boolean,
+    ): void {
       this.drawCloseFunction = f;
+      this.drawerHasPendingEdits = hasPendingEdits ?? null;
       this.refusedCloseFunction = null;
       this.refusedWhileRunning = false;
     },
 
     clearCloseFunction(): void {
       this.drawCloseFunction = null;
+      this.drawerHasPendingEdits = null;
       this.refusedCloseFunction = null;
       this.refusedWhileRunning = false;
+    },
+
+    /** Whether the open settings drawer holds user edits its close would save. */
+    hasPendingDrawerEdits(): boolean {
+      return !!this.drawCloseFunction && (this.drawerHasPendingEdits?.() ?? false);
     },
 
     openDrawer(
@@ -177,7 +215,7 @@ export const useEditorStore = defineStore("editor", {
     pushNodeData() {
       if (this.drawCloseFunction && !this.isRunning) {
         this.drawCloseFunction();
-        this.drawCloseFunction = null;
+        this.clearCloseFunction();
       }
     },
 

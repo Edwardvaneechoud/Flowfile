@@ -1,6 +1,10 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createFlowHotkeysHandler, isEditableKeydownTarget } from "./useFlowHotkeys";
+import {
+  createFlowHotkeysHandler,
+  historyShortcutFor,
+  isEditableKeydownTarget,
+} from "./useFlowHotkeys";
 import type { FlowHotkeyActions } from "./useFlowHotkeys";
 
 const makeActions = (flowId = 1): { actions: FlowHotkeyActions; spies: Record<string, ReturnType<typeof vi.fn>> } => {
@@ -132,5 +136,92 @@ describe("createFlowHotkeysHandler guard policy", () => {
     expect(c.preventDefault).not.toHaveBeenCalled();
     expect(v.preventDefault).not.toHaveBeenCalled();
     for (const spy of Object.values(spies)) expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("historyShortcutFor", () => {
+  const press = (
+    key: string,
+    target: EventTarget | null,
+    { mac = true, shift = false, alt = false, handled = false, ctrl = false } = {},
+  ) =>
+    historyShortcutFor(
+      {
+        key,
+        metaKey: mac && !ctrl,
+        ctrlKey: !mac || ctrl,
+        shiftKey: shift,
+        altKey: alt,
+        defaultPrevented: handled,
+        target,
+      } as unknown as KeyboardEvent,
+      mac,
+    );
+
+  const mount = (html: string, id: string): Element => {
+    document.body.innerHTML = html;
+    return document.getElementById(id)!;
+  };
+
+  it("maps Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z and Ctrl+Y", () => {
+    const body = document.body;
+    expect(press("z", body)).toBe("undo");
+    expect(press("Z", body, { shift: true })).toBe("redo");
+    expect(press("z", body, { mac: false })).toBe("undo");
+    expect(press("z", body, { mac: false, shift: true })).toBe("redo");
+    expect(press("y", body, { mac: false })).toBe("redo");
+  });
+
+  it("needs the platform modifier and no Alt", () => {
+    expect(press("z", document.body, { ctrl: true })).toBeNull();
+    expect(press("z", document.body, { alt: true })).toBeNull();
+    expect(press("x", document.body)).toBeNull();
+  });
+
+  it("leaves an already-handled event alone", () => {
+    expect(press("z", document.body, { handled: true })).toBeNull();
+  });
+
+  it.each([
+    ["an input", `<input id="t" />`],
+    ["a textarea", `<textarea id="t"></textarea>`],
+    ["a select", `<select id="t"><option>a</option></select>`],
+    ["a combobox", `<div role="combobox"><span id="t"></span></div>`],
+    ["a listbox", `<ul role="listbox"><li id="t"></li></ul>`],
+    ["CodeMirror", `<div class="cm-editor"><div id="t"></div></div>`],
+    [
+      "a dialog",
+      `<div class="el-overlay"><div class="el-dialog"><button id="t"></button></div></div>`,
+    ],
+    ["a message box", `<div class="el-message-box"><button id="t"></button></div>`],
+    ["a popper", `<div class="el-popper"><div id="t"></div></div>`],
+    ["the context menu", `<div class="context-menu"><div id="t"></div></div>`],
+    ["a modal", `<div aria-modal="true"><button id="t"></button></div>`],
+  ])("does not fire inside %s", (_, html) => {
+    expect(press("z", mount(html, "t"))).toBeNull();
+  });
+
+  it("fires on a non-editable spot of the settings drawer (it closes the drawer, then undoes)", () => {
+    const target = mount(
+      `<div class="node-settings-drawer nokey"><div id="t">Filter settings</div><input /></div>`,
+      "t",
+    );
+    expect(press("z", target)).toBe("undo");
+  });
+
+  it("does not fire for a text field inside a shadow root (GraphicWalker)", () => {
+    const host = mount(`<div class="node-settings-drawer"><div id="t"></div></div>`, "t");
+    const input = host.attachShadow({ mode: "open" }).appendChild(document.createElement("input"));
+    const event = {
+      key: "z",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      target: host,
+      composedPath: () => [input, host.shadowRoot, host, document.body],
+    } as unknown as KeyboardEvent;
+    expect(historyShortcutFor(event, true)).toBeNull();
   });
 });

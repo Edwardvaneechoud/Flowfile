@@ -344,7 +344,7 @@ def test_blocked_prediction_upstream_suppresses_expression_issue():
 
     select_node = graph.get_node(2)
     select_node._executes_on_kernel = True
-    select_node.reset()
+    select_node.reset(deep=True)  # the flag is placement state outside the hash
     assert validate_flow_settings(graph).nodes == []
 
 
@@ -354,7 +354,7 @@ def test_blocked_prediction_upstream_suppresses_warning():
 
     select_node = graph.get_node(2)
     select_node._executes_on_kernel = True
-    select_node.reset()
+    select_node.reset(deep=True)  # the flag is placement state outside the hash
     assert validate_flow_settings(graph).nodes == []
 
 

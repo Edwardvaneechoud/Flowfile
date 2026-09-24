@@ -60,6 +60,8 @@ export interface NodeData {
   right_output?: TableExample | null;
   has_run: boolean;
   is_cached: boolean;
+  /** The live node's configuration state; setting_input may be a display-only proposal. */
+  is_setup?: boolean;
   setting_input?: any | null;
   /** Column prediction needs an un-run kernel node to run first; warning text to show. */
   prediction_warning?: string | null;
@@ -348,6 +350,8 @@ export interface OutputSettings {
   fields?: string[];
   write_mode: "overwrite" | "append" | "new file" | "create" | "update";
   table_settings: OutputTableSettings;
+  /** Resolved by core from directory + name (a relative directory resolves against its cwd). */
+  abs_file_path?: string | null;
 }
 
 // Field Types

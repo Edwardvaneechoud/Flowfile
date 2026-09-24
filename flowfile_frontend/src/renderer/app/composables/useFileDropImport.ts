@@ -2,21 +2,23 @@
 // on desktop, or uploaded to core first (with a confirmation dialog) everywhere else.
 import { Position, useVueFlow, type XYPosition } from "@vue-flow/core";
 import { ElMessage, ElNotification } from "element-plus";
-import { computed, markRaw, nextTick, onMounted, onUnmounted, ref } from "vue";
+import { computed, markRaw, onMounted, onUnmounted, ref } from "vue";
 
 import { FlowApi } from "../api";
 import { FALLBACK_UPLOAD_LIMITS, FileManagerApi, type UploadLimits } from "../api/fileManager.api";
 import { useEditorStore } from "../stores/editor-store";
 import { useFlowStore } from "../stores/flow-store";
-import { useNodeStore } from "../stores/node-store";
 import { useTutorialStore } from "../stores/tutorial-store";
-import type { OperationResponse } from "../types";
+import { recoverFromFailedMutation } from "../services/mutationFailure";
+import type { GraphOperation } from "../types";
 import {
   resolveDropStrategy,
   summarizeDragTypes,
   type DragSummary,
 } from "../utils/fileDropStrategy";
 import { DEFAULT_OUTPUT_HANDLE } from "../utils/outputHandle";
+import { addConfiguredNodeOperations } from "../utils/graphOperations";
+import { plural } from "../utils/text";
 import {
   buildReceivedTable,
   detectFileType,
@@ -84,10 +86,6 @@ export function formatBytes(bytes: number): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
 }
 
-function plural(count: number, word: string): string {
-  return `${count} ${word}${count === 1 ? "" : "s"}`;
-}
-
 function hasFiles(event: DragEvent): boolean {
   return Array.from(event.dataTransfer?.types ?? []).includes("Files");
 }
@@ -137,10 +135,9 @@ function uploadSummaryMessage(done: number, failed: number, cancelled: number): 
 }
 
 export function useFileDropImport() {
-  const { addNodes, removeNodes, screenToFlowCoordinate } = useVueFlow();
+  const { addNodes, screenToFlowCoordinate } = useVueFlow();
   const editorStore = useEditorStore();
   const flowStore = useFlowStore();
-  const nodeStore = useNodeStore();
 
   const phase = ref<DropPhase>("idle");
   const isDragActive = ref(false);
@@ -443,48 +440,48 @@ export function useFileDropImport() {
       return 0;
     }
 
-    let added = 0;
-    let lastResponse: OperationResponse | undefined;
-    for (const [index, item] of items.entries()) {
-      const position = { x: point.x + index * STAGGER_X, y: point.y + index * STAGGER_Y };
-      // The shared counter: a local one would collide with existing node ids.
-      const nodeId = getId();
-      try {
-        const response = await FlowApi.insertNode(flowId, nodeId, "read", position.x, position.y);
-        addNodes({
-          id: String(nodeId),
-          type: "custom-node",
-          position,
-          data: {
-            id: nodeId,
-            label: nodeTemplate.name,
-            component: markRaw(component),
-            inputs: [],
-            outputs: [{ id: DEFAULT_OUTPUT_HANDLE, position: Position.Right }],
-            nodeTemplate,
-          },
-        });
-        useTutorialStore().notify({ type: "node-added", nodeItem: "read", nodeId });
-        await nextTick();
-        await nodeStore.updateSettingsDirectly({
-          flow_id: flowId,
-          node_id: nodeId,
-          pos_x: position.x,
-          pos_y: position.y,
-          cache_results: false,
-          is_setup: true,
-          received_file: buildReceivedTable(item),
-        });
-        lastResponse = response;
-        added += 1;
-      } catch (error) {
-        console.error("Failed to add a Read node for", item.name, error);
-        removeNodes([String(nodeId)]);
-        ElMessage.error(`Could not add a Read node for "${item.name}".`);
-      }
+    // One drop is one undo step: every Read node and its file settings in a single batch.
+    const placed = items.map((item, index) => ({
+      item,
+      nodeId: getId(),
+      position: {
+        x: Math.round(point.x + index * STAGGER_X),
+        y: Math.round(point.y + index * STAGGER_Y),
+      },
+    }));
+    const operations: GraphOperation[] = placed.flatMap(({ item, nodeId, position }) =>
+      addConfiguredNodeOperations(flowId, nodeId, "read", position, {
+        cache_results: false,
+        is_setup: true,
+        received_file: buildReceivedTable(item),
+      }),
+    );
+    try {
+      await FlowApi.applyOperations(flowId, `Import ${plural(items.length, "file")}`, operations);
+    } catch (error) {
+      recoverFromFailedMutation(error, "Could not add Read nodes for the dropped files.");
+      return 0;
     }
-    if (lastResponse?.history) flowStore.updateHistoryState(lastResponse.history);
-    return added;
+    addNodes(
+      placed.map(({ nodeId, position }) => ({
+        id: String(nodeId),
+        type: "custom-node",
+        position,
+        data: {
+          id: nodeId,
+          label: nodeTemplate.name,
+          component: markRaw(component),
+          inputs: [],
+          outputs: [{ id: DEFAULT_OUTPUT_HANDLE, position: Position.Right }],
+          nodeTemplate,
+        },
+      })),
+    );
+    for (const { nodeId } of placed) {
+      useTutorialStore().notify({ type: "node-added", nodeItem: "read", nodeId });
+    }
+    flowStore.fetchSettingsValidation();
+    return placed.length;
   }
 
   onMounted(() => window.addEventListener("blur", resetDrag));
