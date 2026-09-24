@@ -417,18 +417,25 @@ const dismissSettingsDrawer = () => {
   editorStore.activeDrawerComponent = null;
 };
 
-const handleCanvasClick = () => {
+// False when the open drawer refused to save (it stays open) or the selection moved meanwhile.
+const releaseOpenSettings = async (): Promise<boolean> => {
+  const nodeId = nodeStore.nodeId;
+  return (await editorStore.saveDrawerBeforeLeave()) && nodeStore.nodeId === nodeId;
+};
+
+const handleCanvasClick = async () => {
+  ghostNode.onViewportClick();
+  window.getSelection()?.removeAllRanges();
+  if (!(await releaseOpenSettings())) return;
   drawerStore.clearPreview();
   dismissSettingsDrawer();
   nodeStore.hideLogViewer();
-  ghostNode.onViewportClick();
-  window.getSelection()?.removeAllRanges();
 };
 
 // VueFlow only emits @pane-click — there's no @pane-dblclick. We listen for
 // native dblclick on <main> instead, then ignore double-clicks that landed on
 // a node, edge, handle, or any floating panel. What's left is the empty pane.
-const handleMainDblClick = (event: MouseEvent) => {
+const handleMainDblClick = async (event: MouseEvent) => {
   const target = event.target as HTMLElement | null;
   if (!target) return;
 
@@ -440,8 +447,7 @@ const handleMainDblClick = (event: MouseEvent) => {
     const dataId = nodeEl.getAttribute("data-id");
     if (dataId && !isGroupNodeId(dataId) && !isCommentNodeId(dataId)) {
       const id = parseInt(dataId);
-      openNodeSettings(id);
-      openNodeData(id);
+      if (await openNodeSettings(id)) openNodeData(id);
     }
     return;
   }
@@ -455,10 +461,11 @@ const handleMainDblClick = (event: MouseEvent) => {
   ) {
     return;
   }
+  window.getSelection()?.removeAllRanges();
+  if (!(await releaseOpenSettings())) return;
   // Hide every floating overlay (right-side + bottom). Left palette stays.
   editorStore.hideAllPanels();
   nodeStore.nodeId = -1;
-  window.getSelection()?.removeAllRanges();
 };
 
 function onEdgeUpdate({ edge, connection }: { edge: any; connection: any }) {
@@ -703,10 +710,23 @@ async function onConnect(params: Connection & { label?: string }) {
   flowStore.fetchSettingsValidation();
 }
 
+// A double-click fires nodeClick twice plus the dblclick handler: they share one switch per node.
+let pendingSettingsOpen: { nodeId: number; done: Promise<boolean> } | null = null;
+
 // Open + front a node's Settings drawer. Settings only ever opens by setting
 // nodeStore.nodeId, which the per-node nodeButton watcher turns into openDrawer.
-const openNodeSettings = async (nodeId: number) => {
-  if (isGroupNodeId(String(nodeId))) return;
+// Resolves false when the open drawer refused to save, so it kept its node.
+const openNodeSettings = (nodeId: number): Promise<boolean> => {
+  if (pendingSettingsOpen?.nodeId === nodeId) return pendingSettingsOpen.done;
+  const done = switchNodeSettings(nodeId).finally(() => {
+    if (pendingSettingsOpen?.done === done) pendingSettingsOpen = null;
+  });
+  pendingSettingsOpen = { nodeId, done };
+  return done;
+};
+
+const switchNodeSettings = async (nodeId: number): Promise<boolean> => {
+  if (isGroupNodeId(String(nodeId))) return true;
   if (nodeStore.nodeId === nodeId && editorStore.drawerOpen) {
     // Already the selected node and the drawer is open — just front it. (Don't
     // re-trigger the watcher; that would reload settings, e.g. the second click
@@ -714,8 +734,9 @@ const openNodeSettings = async (nodeId: number) => {
     itemStore.bringToFront("rightDrawer");
     drawerStore.setActiveTab("rightDrawer", "settings");
     useTutorialStore().notify({ type: "node-settings-opened", nodeId });
-    return;
+    return true;
   }
+  if (!(await editorStore.saveDrawerBeforeLeave())) return false;
   if (nodeStore.nodeId === nodeId) {
     // Same node but the drawer is closed/minimized: assigning the same value is
     // a no-op and won't reopen it. Bounce through -1 across a tick so the
@@ -728,6 +749,7 @@ const openNodeSettings = async (nodeId: number) => {
   itemStore.bringToFront("rightDrawer");
   drawerStore.setActiveTab("rightDrawer", "settings");
   useTutorialStore().notify({ type: "node-settings-opened", nodeId });
+  return true;
 };
 
 // Open + front the bottom Data preview for a node. The dock's Data tab reacts to
@@ -739,11 +761,11 @@ const openNodeData = (nodeId: number) => {
   nextTick().then(() => itemStore.bringToFront("bottomDock"));
 };
 
-const nodeClick = (mouseEvent: any) => {
+const nodeClick = async (mouseEvent: any) => {
   // Single click opens Settings; if the dock is already open (data or logs), show this node's Data.
   const rawId = String(mouseEvent.node.id);
   if (isCommentNodeId(rawId)) return; // comments have no settings or data
-  openNodeSettings(parseInt(rawId));
+  if (!(await openNodeSettings(parseInt(rawId)))) return;
   const dockOpen = drawerStore.previewNodeId !== null || editorStore.isShowingLogViewer;
   if (!isGroupNodeId(rawId) && dockOpen) {
     drawerStore.setPreviewNode(parseInt(rawId));

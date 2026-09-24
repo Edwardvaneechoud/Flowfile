@@ -114,6 +114,7 @@ start_mssql = "test_utils.mssql.commands:start_mssql"
 stop_mssql = "test_utils.mssql.commands:stop_mssql"
 start_minio = "test_utils.s3.commands:start_minio"
 stop_minio = "test_utils.s3.commands:stop_minio"
+seed_cloud_e2e = "test_utils.s3.cloud_e2e_seed:main"
 start_azurite = "test_utils.azurite.commands:start_azurite"
 stop_azurite = "test_utils.azurite.commands:stop_azurite"
 start_gcs = "test_utils.gcs.commands:start_gcs"
@@ -165,6 +166,7 @@ markers = [
     "kafka: Integration tests requiring a Kafka/Redpanda broker (Docker)",
     "lsp: Tests for the notebook LSP (Jedi) code-intelligence surface",
     "slow: Tests with a heavy workload or long runtime (deselect with -m 'not slow')",
+    "cloud_e2e: Real core + worker processes driven over HTTP against MinIO (Docker)",
 ]
 
 [tool.coverage.run]

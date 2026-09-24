@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import polars as pl
 
 logger = logging.getLogger(__name__)
@@ -484,6 +486,7 @@ def scan_delta_changes(
     *,
     starting_timestamp: str | None = None,
     storage_options: dict[str, str] | None = None,
+    credential_provider: Callable[[], tuple[dict[str, str], int | None]] | None = None,
     include_preimage: bool = False,
 ) -> pl.LazyFrame:
     """Lazily scan a Delta table's change data feed between two commit versions.
@@ -493,12 +496,19 @@ def scan_delta_changes(
     never materialises it. The schema is derived from the reader's arrow schema without reading
     data, and projection / predicate / row-limit pushdown are honoured inside the source.
 
+    The source closure is pickled into the plan, so pass credentials via *credential_provider*, not *storage_options*.
+
     Unless *include_preimage* is set, ``update_preimage`` rows are dropped: a consumer wants one
     row per change, not the before/after pair.
     """
     import polars as pl_
 
-    reader = _load_cdf_reader(path, starting_version, ending_version, starting_timestamp, storage_options)
+    def _options() -> dict[str, str] | None:
+        if credential_provider is None:
+            return storage_options
+        return {**(storage_options or {}), **credential_provider()[0]}
+
+    reader = _load_cdf_reader(path, starting_version, ending_version, starting_timestamp, _options())
     schema = pl_.DataFrame(reader.schema.empty_table()).schema
 
     def _source(with_columns, predicate, n_rows, batch_size):
@@ -506,7 +516,7 @@ def scan_delta_changes(
         if n_rows == 0:
             yield pl_.DataFrame(schema=schema)
             return
-        reader = _load_cdf_reader(path, starting_version, ending_version, starting_timestamp, storage_options)
+        reader = _load_cdf_reader(path, starting_version, ending_version, starting_timestamp, _options())
         df = pl_.DataFrame(reader.read_all())
         if predicate is not None:
             df = df.filter(predicate)

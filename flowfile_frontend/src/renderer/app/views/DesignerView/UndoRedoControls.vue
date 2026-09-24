@@ -103,7 +103,7 @@ let pressChain: Promise<void> = Promise.resolve();
  * refused save reports itself and keeps the drawer open.
  */
 const closeSettingsDrawer = async (): Promise<boolean> => {
-  if ((await editorStore.executeDrawCloseFunction({ userEditsOnly: true }, true)) === false) {
+  if ((await editorStore.executeDrawCloseFunctionOnce({ userEditsOnly: true }, true)) === false) {
     return false;
   }
   nodeStore.nodeId = -1;

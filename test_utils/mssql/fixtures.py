@@ -21,6 +21,8 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
+from test_utils.docker_images import pull_image_if_missing
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -286,20 +288,7 @@ def start_mssql_container(
         check=False,
     )
 
-    # Pull the image first (may take a while on first run)
-    try:
-        logger.info(f"Pulling Docker image {image}...")
-        subprocess.run(
-            ["docker", "pull", image],
-            capture_output=True,
-            timeout=300,
-            check=True,
-        )
-    except subprocess.TimeoutExpired:
-        logger.error(f"Timed out pulling Docker image {image}")
-        return None, False
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to pull Docker image {image}: {e}")
+    if not pull_image_if_missing(image, logger):
         return None, False
 
     try:

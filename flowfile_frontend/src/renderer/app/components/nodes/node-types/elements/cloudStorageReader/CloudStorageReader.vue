@@ -1,5 +1,5 @@
 <template>
-  <div v-if="dataLoaded && nodeCloudStorageReader" class="cloud-storage-container">
+  <div v-if="loadView === 'form' && nodeCloudStorageReader" class="cloud-storage-container">
     <generic-node-settings
       v-model="nodeCloudStorageReader"
       @update:model-value="handleGenericSettingsUpdate"
@@ -12,6 +12,8 @@
           :connections="connectionInterfaces"
           :unavailable-connection="unavailableConnection"
           :loading="connectionsAreLoading"
+          :resource-path="nodeCloudStorageReader.cloud_storage_settings.resource_path"
+          ambient-credentials
           @change="updateConnection"
         />
       </div>
@@ -40,6 +42,9 @@
               Browse
             </el-button>
           </div>
+          <p v-if="pathWarning" class="field-warning" data-testid="cloud-path-warning">
+            {{ pathWarning }}
+          </p>
           <p class="field-hint">
             Full URI including the scheme &mdash; <code>s3://</code>, <code>az://</code> or
             <code>gs://</code>.
@@ -129,6 +134,9 @@
         <!-- Delta-specific options -->
         <div v-if="isDelta" class="format-options">
           <h5 class="subsection-title">Delta Lake Options</h5>
+          <p v-if="probeHint" class="field-warning" data-testid="delta-probe-hint">
+            {{ probeHint }}
+          </p>
 
           <div class="form-group">
             <ChangeFeedReadSection
@@ -201,6 +209,10 @@
       @select="applyBrowsedPath"
     />
   </div>
+  <div v-else-if="loadView === 'error'" class="load-error" data-testid="node-load-error">
+    <p>{{ loadError }}</p>
+    <el-button size="small" @click="loadNodeData(requestedNodeId)">Retry</el-button>
+  </div>
   <code-loader v-else />
 </template>
 
@@ -228,6 +240,9 @@ import {
   scanModeForSelection,
 } from "../../../../common/FileBrowser/cloudPathMapping";
 import { isCloudUri, storageTypeForUri } from "../../../../../utils/storagePath";
+import { cloudPathWarning } from "../../../../../utils/cloudPathWarning";
+import { settingsLoadView } from "../../../../../utils/settingsLoadView";
+import { deltaProbeHint } from "../../../../../utils/cloudDeltaProbe";
 import { cdcFieldErrors, deltaVersionOptions } from "../../../../../utils/catalogCdc";
 import {
   CloudDeltaApi,
@@ -248,7 +263,13 @@ interface Props {
 defineProps<Props>();
 const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
+const loadError = ref<string | null>(null);
+const requestedNodeId = ref(-1);
+let loadSeq = 0;
 const nodeCloudStorageReader = ref<NodeCloudStorageReader | null>(null);
+const loadView = computed(() =>
+  settingsLoadView(dataLoaded.value && nodeCloudStorageReader.value !== null, loadError.value),
+);
 
 const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSettings({
   nodeRef: nodeCloudStorageReader,
@@ -272,6 +293,10 @@ const showBrowser = ref(false);
 // array literal would re-list on every parent render — a paid request per render.
 const browseFileTypes = computed(() =>
   browseFileTypesForFormat(nodeCloudStorageReader.value?.cloud_storage_settings.file_format),
+);
+
+const pathWarning = computed(() =>
+  cloudPathWarning(nodeCloudStorageReader.value?.cloud_storage_settings.resource_path, "reader"),
 );
 
 const formatWarning = computed(() =>
@@ -341,6 +366,7 @@ watch(readChangesDisabledReason, (reason) => {
 // Table state at the path: null while unknown, when the probe failed, or for gs://.
 const deltaInfo = ref<CloudDeltaInfo | null>(null);
 const deltaHistory = ref<DeltaVersionCommit[]>([]);
+const probeHint = ref<string | null>(null);
 const enablingCdc = ref(false);
 let probeTimer: ReturnType<typeof setTimeout> | null = null;
 let probeSeq = 0;
@@ -381,8 +407,9 @@ async function loadDeltaState() {
     if (!info.exists) return;
     const history = await CloudDeltaApi.getHistory(target, 100);
     if (seq === probeSeq) deltaHistory.value = history;
-  } catch {
+  } catch (error) {
     // Unknown state: no tracking warning, and the version fields fall back to plain inputs.
+    if (seq === probeSeq) probeHint.value = deltaProbeHint(error);
   }
 }
 
@@ -391,6 +418,7 @@ function scheduleDeltaProbe() {
   probeSeq += 1;
   deltaInfo.value = null;
   deltaHistory.value = [];
+  probeHint.value = null;
   if (deltaTarget()) probeTimer = setTimeout(loadDeltaState, 350);
 }
 
@@ -492,28 +520,43 @@ const setConnectionOnConnectionName = (connectionName: string | null) => {
   );
 };
 
+// Nothing stale stays behind to save; the drawer shows a retry instead of a skeleton.
+const failLoad = () => {
+  nodeCloudStorageReader.value = null;
+  dataLoaded.value = false;
+  loadError.value =
+    "Could not load this node's settings. Check that Flowfile is running, then retry.";
+};
+
 const loadNodeData = async (nodeId: number) => {
+  const seq = ++loadSeq;
+  requestedNodeId.value = nodeId;
+  loadError.value = null;
   try {
     const [nodeData] = await Promise.all([
       nodeStore.getNodeData(nodeId, false),
       fetchConnections(),
     ]);
-    if (nodeData) {
-      const hasValidSetup = Boolean(nodeData.setting_input?.is_setup);
-      nodeCloudStorageReader.value = hasValidSetup
-        ? nodeData.setting_input
-        : createNodeCloudStorageReader(nodeStore.flow_id, nodeId);
-      // Backfill change-feed fields for nodes saved before change reads
-      applyCdcSettings(cdcSettings.value);
-      setConnectionOnConnectionName(
-        nodeCloudStorageReader.value?.cloud_storage_settings.connection_name ?? null,
-      );
-      scheduleDeltaProbe();
+    if (seq !== loadSeq) return;
+    if (!nodeData) {
+      failLoad();
+      return;
     }
+    const hasValidSetup = Boolean(nodeData.setting_input?.is_setup);
+    nodeCloudStorageReader.value = hasValidSetup
+      ? nodeData.setting_input
+      : createNodeCloudStorageReader(nodeStore.flow_id, nodeId);
+    // Backfill change-feed fields for nodes saved before change reads
+    applyCdcSettings(cdcSettings.value);
+    setConnectionOnConnectionName(
+      nodeCloudStorageReader.value?.cloud_storage_settings.connection_name ?? null,
+    );
+    scheduleDeltaProbe();
     dataLoaded.value = true;
   } catch (error) {
+    if (seq !== loadSeq) return;
     console.error("Error loading node data:", error);
-    dataLoaded.value = false;
+    failLoad();
   }
 };
 
@@ -533,6 +576,8 @@ defineExpose({
   loadNodeData,
   pushNodeData,
   saveSettings,
+  // A failed load has nothing to apply; the drawer hides its Apply footer.
+  canApply: computed(() => loadError.value === null),
 });
 </script>
 
@@ -614,6 +659,20 @@ defineExpose({
   background-color: var(--color-background-tertiary);
   padding: 0 0.25rem;
   border-radius: 3px;
+}
+
+.load-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 1rem;
+  font-size: 0.875rem;
+  color: var(--color-danger);
+}
+
+.load-error p {
+  margin: 0;
 }
 
 .field-warning {

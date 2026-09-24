@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { FullCloudStorageConnectionInterface } from "../../../views/CloudConnectionView/CloudConnectionTypes";
 import {
   NO_CONNECTION_VALUE,
+  ambientCredentialsChoice,
   connectionSelectValue,
   resolveConnection,
   unavailableConnectionName,
@@ -85,5 +86,32 @@ describe("connectionSelectValue with an unavailable connection", () => {
 
   it("prefers a resolved connection over the placeholder", () => {
     expect(connectionSelectValue(production, "deleted-connection")).toBe("production-data");
+  });
+});
+
+describe("ambientCredentialsChoice", () => {
+  it("warns that no connection means this machine's AWS credentials and no endpoint", () => {
+    const choice = ambientCredentialsChoice(false);
+    expect(choice.disabled).toBe(false);
+    expect(choice.label).toMatch(/AWS credentials/);
+    expect(choice.warning).toMatch(/~\/\.aws profile or AWS_\* environment variables/);
+    expect(choice.warning).toMatch(/not a saved connection's endpoint/);
+    expect(choice.warning).toMatch(/MinIO/);
+  });
+
+  it("names the provider core picks from the node's path", () => {
+    expect(ambientCredentialsChoice(false, "s3").label).toMatch(/AWS credentials/);
+    expect(ambientCredentialsChoice(false, "adls").label).toMatch(/Azure credentials/);
+    expect(ambientCredentialsChoice(false, "adls").warning).toMatch(/AZURE_\*/);
+    expect(ambientCredentialsChoice(false, "gcs").label).toMatch(/Google Cloud credentials/);
+    expect(ambientCredentialsChoice(false, "gcs").warning).not.toMatch(/AWS/);
+    expect(ambientCredentialsChoice(true, "gcs").disabled).toBe(true);
+  });
+
+  it("is disabled on a multi-user server, which refuses its own credentials", () => {
+    const choice = ambientCredentialsChoice(true);
+    expect(choice.disabled).toBe(true);
+    expect(choice.label).toMatch(/not available on this server/);
+    expect(choice.warning).toMatch(/Select a cloud connection/);
   });
 });

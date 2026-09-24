@@ -542,10 +542,10 @@ async function hydrateArtifacts(nodeId: number, kernelId: string | null, seq: nu
   }
 }
 
-// Resolves when the save is done (false on failure), so callers can order work after it.
+/** Awaited so Run's pre-run save lands before /flow/run/; resolves false when the save failed. */
 const pushNodeData = async (): Promise<boolean> => {
   if (!nodeData.value || currentNodeId.value === null) {
-    console.warn("Cannot push data: node data or ID is not available.");
+    console.warn("Nothing to push: node data or ID is not available.");
     return true;
   }
   if (nodeUserDefined.value) {
@@ -560,8 +560,8 @@ const pushNodeData = async (): Promise<boolean> => {
   try {
     await nodeStore.updateUserDefinedSettings(nodeUserDefined);
     return true;
-  } catch (error) {
-    ElMessage.error({ message: extractSaveErrorMessage(error), showClose: true, duration: 6000 });
+  } catch (err) {
+    ElMessage.error({ message: extractSaveErrorMessage(err), showClose: true, duration: 6000 });
     return false;
   }
 };

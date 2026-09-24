@@ -270,9 +270,11 @@ isolated — never set `FLOWFILE_SKIP_STARTUP_MIGRATION` for this). Results, so 
 
 ### The one security wrinkle you must respect
 
-Polars serializes `storage_options` (i.e. **decrypted credentials**) *inline* into a serialized
-LazyFrame blob. `serialized_frame_uses_cloud(blob)` (`storage_backend.py:31`) exists precisely to
-catch this: a cloud-scan blob **must never be replayed** — re-run the producer instead. A
+A serialized cloud-scan LazyFrame blob carries its source's **credentials, frozen at build time**:
+S3/Azure keys as an `EncryptedCredentialProvider` `$ffsec$` ciphertext (decryptable by any process
+holding the master key), ADLS service-principal secrets and GCS keys still inline in `storage_options`.
+`serialized_frame_uses_cloud(blob)` (`storage_backend.py:31`) exists precisely to catch this: a
+cloud-scan blob **must never be replayed** — re-run the producer instead. A
 decentralized catalog makes this sharper: a replayed blob would ship one instance's credentials to
 another. Any cross-instance data path must route through `resolve_for_namespace` (owner-keyed
 credentials, worker re-derives), never through a shipped blob.

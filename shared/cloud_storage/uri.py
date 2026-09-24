@@ -13,18 +13,22 @@ container-listing root.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Literal
 
-CLOUD_URI_SCHEMES: Final[tuple[str, ...]] = (
-    "s3://",
-    "s3a://",
-    "az://",
-    "abfs://",
-    "abfss://",
-    "adl://",
-    "gs://",
-    "gcs://",
-)
+StorageType = Literal["s3", "adls", "gcs"]
+
+_SCHEME_STORAGE_TYPES: Final[dict[str, StorageType]] = {
+    "s3://": "s3",
+    "s3a://": "s3",
+    "az://": "adls",
+    "abfs://": "adls",
+    "abfss://": "adls",
+    "adl://": "adls",
+    "gs://": "gcs",
+    "gcs://": "gcs",
+}
+
+CLOUD_URI_SCHEMES: Final[tuple[str, ...]] = tuple(_SCHEME_STORAGE_TYPES)
 
 # The scheme each storage type reads and writes by default. ADLS also accepts
 # abfs(s)://; delta-rs needs abfss://, which normalize_delta_path handles at read time.
@@ -64,6 +68,11 @@ def scheme_of(uri: str) -> str:
         if uri.startswith(scheme):
             return scheme
     return ""
+
+
+def storage_type_for_uri(uri: str) -> StorageType | None:
+    """Return the storage type a cloud URI addresses (``az://c/p`` -> ``adls``), or None for a non-cloud path."""
+    return _SCHEME_STORAGE_TYPES.get(scheme_of(uri))
 
 
 def parse_uri(uri: str) -> ParsedUri:

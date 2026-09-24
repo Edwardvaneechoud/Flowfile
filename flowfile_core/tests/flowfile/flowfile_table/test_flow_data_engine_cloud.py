@@ -37,7 +37,7 @@ def s3_env_vars():
     original_vars = {
         key: os.environ.get(key) for key in [
             "AWS_ENDPOINT_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
-            "AWS_REGION", "AWS_ALLOW_HTTP"
+            "AWS_REGION", "AWS_ALLOW_HTTP", "AWS_SESSION_TOKEN"
         ]
     }
 
@@ -202,7 +202,7 @@ S3_WRITE_TEST_CASES = [
             file_format="parquet",
             write_mode="overwrite",
             parquet_compression="snappy",
-            auth_mode="aws-cli"
+            auth_mode="access_key"
         ),
         expected_columns=4,
     ),
@@ -213,7 +213,7 @@ S3_WRITE_TEST_CASES = [
             file_format="csv",
             write_mode="overwrite",
             csv_delimiter="|",
-            auth_mode="aws-cli"
+            auth_mode="access_key"
         ),
         expected_columns=5,
     ),
@@ -223,7 +223,7 @@ S3_WRITE_TEST_CASES = [
             resource_path="s3://flowfile-test/write_test.json",
             file_format="json",
             write_mode="overwrite",
-            auth_mode="aws-cli"
+            auth_mode="access_key"
         ),
         expected_columns=5,
     ),
@@ -233,7 +233,7 @@ S3_WRITE_TEST_CASES = [
             resource_path="s3://flowfile-test/write_test_delta",
             file_format="delta",
             write_mode="overwrite",
-            auth_mode="aws-cli"
+            auth_mode="access_key"
         ),
         expected_columns=5,
     ),
@@ -243,7 +243,7 @@ S3_WRITE_TEST_CASES = [
             resource_path="s3://flowfile-test/write_test_append",
             file_format="delta",
             write_mode="append",
-            auth_mode="aws-cli"
+            auth_mode="access_key"
         ),
         expected_columns=5,
     ),

@@ -7,8 +7,6 @@
     >
       <p>
         This node helps you quickly retrieve the total number of records from the selected table.
-        It's a simple yet powerful tool to keep track of the data volume as you work through your
-        tasks.
       </p>
       <p>This node does not need a setup</p>
     </generic-node-settings>

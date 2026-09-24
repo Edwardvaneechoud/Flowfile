@@ -1,9 +1,13 @@
 // Editor Store - Manages drawer, editor UI state, log viewer, and code generator
 import { defineStore } from "pinia";
+import { ElMessage } from "element-plus";
 import { ref, shallowRef } from "vue";
 import type { Component } from "vue";
 import type { NodeTitleInfo } from "../types";
 import type { DrawerCloseOptions } from "../composables/settingsDrawerSession";
+
+// One leave attempt at a time: a double-click must not save (or refuse) the same drawer three times.
+let leaveInFlight: Promise<boolean> | null = null;
 
 export const useEditorStore = defineStore("editor", {
   state: () => ({
@@ -14,6 +18,10 @@ export const useEditorStore = defineStore("editor", {
     drawerProps: ref<Record<string, any>>({}),
     drawCloseFunction: null as any,
     drawerHasPendingEdits: null as (() => boolean) | null,
+    // The close function whose save was refused on the last leave attempt; the next attempt discards.
+    refusedCloseFunction: null as any,
+    // Whether that refusal came during a run; once the run state changes, a refusal warns again first.
+    refusedWhileRunning: false,
 
     // Editor state
     initialEditorData: "" as string,
@@ -66,11 +74,77 @@ export const useEditorStore = defineStore("editor", {
   },
 
   actions: {
+    /** Awaits the open drawer's save; resolves false when that save was refused. */
+    async executeDrawCloseFunction(): Promise<boolean> {
+      if (!this.drawCloseFunction) return true;
+      const saved = (await this.drawCloseFunction()) !== false;
+      if (saved) this.disarmRefusedSave();
+      return saved;
+    },
+
     /**
-     * Run the pending close save once; false means refused or failed. With `keepOnRefusal` a
-     * refused close stays armed (unless the drawer closed or re-registered meanwhile).
+     * Saves the open settings drawer before something closes it or switches node; resolves false
+     * when the save was refused. A second attempt on the same refused drawer discards its edits, so
+     * an unfixable setting never traps the user.
      */
-    async executeDrawCloseFunction(
+    saveDrawerBeforeLeave(): Promise<boolean> {
+      if (!this.isDrawerOpen || !this.drawCloseFunction) return Promise.resolve(true);
+      if (!leaveInFlight) {
+        leaveInFlight = this.leaveOpenDrawer().finally(() => {
+          leaveInFlight = null;
+        });
+      }
+      return leaveInFlight;
+    },
+
+    async leaveOpenDrawer(): Promise<boolean> {
+      const closeFunction = this.drawCloseFunction;
+      let saved = false;
+      try {
+        saved = await this.executeDrawCloseFunction();
+      } catch (error) {
+        console.error("Error saving the open node settings:", error);
+      }
+      if (!saved) {
+        const armed =
+          this.refusedCloseFunction === closeFunction &&
+          this.refusedWhileRunning === this.isRunning;
+        if (!armed) {
+          this.rememberRefusedSave(closeFunction);
+          ElMessage.warning({
+            message: this.isRunning
+              ? "The flow is running, so these settings can't be saved yet. Your changes are kept " +
+                "in the open panel: click Apply when the run finishes, or click away again to " +
+                "discard them."
+              : "The node settings could not be saved, so the panel stays open. " +
+                "Fix them, or click away again to discard the changes.",
+            showClose: true,
+          });
+          return false;
+        }
+        ElMessage.info({ message: "Unsaved node settings were discarded.", showClose: true });
+      }
+      this.clearCloseFunction();
+      return true;
+    },
+
+    /** Arms the discard: the next attempt to leave this drawer, in the same run state, drops its edits. */
+    rememberRefusedSave(closeFunction: any): void {
+      this.refusedCloseFunction = closeFunction;
+      this.refusedWhileRunning = this.isRunning;
+    },
+
+    /** A successful save leaves nothing to discard, so the next refusal warns first again. */
+    disarmRefusedSave(): void {
+      this.refusedCloseFunction = null;
+      this.refusedWhileRunning = false;
+    },
+
+    /**
+     * Run the pending close save once and forget it; false means refused or failed. With
+     * `keepOnRefusal` a refused close stays armed (unless the drawer closed or re-registered meanwhile).
+     */
+    async executeDrawCloseFunctionOnce(
       options?: DrawerCloseOptions,
       keepOnRefusal = false,
     ): Promise<unknown> {
@@ -98,11 +172,15 @@ export const useEditorStore = defineStore("editor", {
     ): void {
       this.drawCloseFunction = f;
       this.drawerHasPendingEdits = hasPendingEdits ?? null;
+      this.refusedCloseFunction = null;
+      this.refusedWhileRunning = false;
     },
 
     clearCloseFunction(): void {
       this.drawCloseFunction = null;
       this.drawerHasPendingEdits = null;
+      this.refusedCloseFunction = null;
+      this.refusedWhileRunning = false;
     },
 
     /** Whether the open settings drawer holds user edits its close would save. */

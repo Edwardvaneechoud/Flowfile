@@ -1,6 +1,6 @@
 ---
 name: flowfile-testing-and-validation
-description: Exact per-package pytest/vitest/playwright commands, the 6 pytest markers and which need Docker, the test_utils Docker fixture matrix, the shared-test-DB isolation model and its failure modes, xfail/skip discipline, and coverage/CI test-matrix mechanics for the Flowfile monorepo. Use when running or writing tests, diagnosing "no such table" or phantom test failures, deciding whether a change is "validated," seeing XPASS in test output, wiring a new Docker-backed fixture, or asking "which suite proves this change works."
+description: Exact per-package pytest/vitest/playwright commands, the registered pytest markers and which need Docker, the test_utils Docker fixture matrix, the shared-test-DB isolation model and its failure modes, xfail/skip discipline, and coverage/CI test-matrix mechanics for the Flowfile monorepo. Use when running or writing tests, diagnosing "no such table" or phantom test failures, deciding whether a change is "validated," seeing XPASS in test output, wiring a new Docker-backed fixture, or asking "which suite proves this change works."
 ---
 
 # Flowfile Testing and Validation
@@ -22,11 +22,11 @@ If you just need "how do I run the core tests" — that's this skill, keep readi
 
 `pyproject.toml` `[tool.pytest.ini_options]` is the **only** pytest config for the monorepo (exception: `flowfile_wasm/pytest.ini`, scoped so `cd flowfile_wasm && pytest` runs only `tests/python`). There is **no `addopts`, no `testpaths`, no `norecursedirs`**.
 
-Consequence: running bare `pytest` from repo root collects **everything**, including slow Docker-compose E2E tests (`tests/integration`) and Kafka tests (`tests/kafka`). Any doc claiming "pytest excludes these by default" is wrong at the config level — they're only skipped in practice because everyone targets a specific directory.
+Consequence: running bare `pytest` from repo root collects **everything**, including slow Docker-compose E2E tests (`tests/integration`), Kafka tests (`tests/kafka`) and the cloud storage stack tests (`tests/cloud_e2e`). Any doc claiming "pytest excludes these by default" is wrong at the config level — they're only skipped in practice because everyone targets a specific directory.
 
 **Rule: always pass an explicit directory.** `poetry run pytest flowfile_core/tests`, never bare `poetry run pytest`.
 
-### The 6 registered markers (root `CLAUDE.md`'s marker table is stale — it omits `lsp`)
+### The registered markers (as of 2026-09-23; re-check `pyproject.toml`)
 
 ```toml
 markers = [
@@ -36,6 +36,8 @@ markers = [
     "docker_integration: Full Docker-based E2E tests (require Docker, slow)",
     "kafka: Integration tests requiring a Kafka/Redpanda broker (Docker)",
     "lsp: Tests for the notebook LSP (Jedi) code-intelligence surface",
+    "slow: Tests with a heavy workload or long runtime (deselect with -m 'not slow')",
+    "cloud_e2e: Real core + worker processes driven over HTTP against MinIO (Docker)",
 ]
 ```
 
@@ -47,8 +49,10 @@ markers = [
 | `docker_integration` | **Yes** | `tests/integration` — full docker-compose E2E |
 | `kafka` | **Yes** | `tests/kafka`, `shared/tests/kafka` — needs Redpanda |
 | `lsp` | No | `flowfile_core/tests/lsp/test_lsp_routes.py` (hermetic); `test_lsp_kernel_integration.py` also carries `@pytest.mark.kernel` |
+| `slow` | No | `flowfile_worker/tests/test_catalog_visualize.py`, `flowfile_core/tests/test_kernel_dependency_gate.py` |
+| `cloud_e2e` | **Yes** (MinIO) | `tests/cloud_e2e` — spawns its own core + worker per session; skips locally without MinIO, **fails** when `CI` is set |
 
-Two more markers are used but **not registered** (pytest warns, doesn't fail): `@pytest.mark.slow` (`flowfile_worker/tests/test_catalog_visualize.py`), and `slow`/`requires_yaml` registered locally by `tools/migrate/tests/conftest.py`.
+`requires_yaml` (and a local `slow`) is registered only by `tools/migrate/tests/conftest.py`.
 
 ---
 
@@ -65,6 +69,7 @@ All commands run from the repo root through the single Poetry env; there is **no
 | shared (no kafka) | `poetry run pytest shared/tests --ignore=shared/tests/kafka` | ~89 collected. |
 | shared kafka | `poetry run pytest shared/tests/kafka/ -v` | session-autouse conftest starts/reuses Redpanda; skips without Docker. |
 | kafka integration | `poetry run pytest tests/kafka -m kafka` | Needs Redpanda (auto-managed) + a running worker. |
+| cloud storage E2E | `poetry run pytest tests/cloud_e2e -m cloud_e2e` | MinIO on :9000 (started if Docker is up). Spawns its own core + worker stacks per session on free ports with an isolated DB, storage, secure store, `HOME` and AWS profile (safe next to a live stack; never imports `flowfile_core`). Connection-based tests run on a stack whose ambient `AWS_ENDPOINT_URL` is a dead port, so only a connection's own endpoint/allow-HTTP/profile reaches MinIO; "No connection" tests run on a second stack whose ambient profile and endpoint are MinIO's. Asserts the servers' working directories stay empty. A couple of minutes. POSIX only. |
 | kernel (core-side) | `poetry run pytest flowfile_core/tests -m kernel -v` | Builds `flowfile-kernel` image unless `FLOWFILE_KERNEL_IMAGE` is preset; needs Docker. ~76 tests. |
 | kernel_runtime unit | `poetry run pytest kernel_runtime/tests` | No Docker — `TestClient` only. ~327 collected. |
 | docker E2E | `poetry run pytest tests/integration -m docker_integration -v` | Docker + compose v2; ports 63578/63579 must be **free** or tests skip; builds core+worker+kernel images (minutes). |
@@ -74,7 +79,8 @@ All commands run from the repo root through the single Poetry env; there is **no
 | coverage | `make test_coverage` | Core+worker sequential, `--cov-append` (see §5). |
 | frontend unit | `cd flowfile_frontend && npm run test:unit` | Vitest, node env, no jsdom/happy-dom. ~30 test files. Watch mode: `npm run test:unit:watch`. |
 | frontend E2E | `cd flowfile_frontend && npm run test:web` (web-flow only) or `npm run test:all` (adds canvas-overlays) | **No `webServer` block in `playwright.config.ts`** — core (:63578) and a Vite server must already be running. `npx playwright install chromium` first. Single worker, 2 retries in CI. |
-| frontend E2E orchestrated | `make test_e2e` / `make test_e2e_dev` | Builds/starts core + preview(:4173) or dev(:8080), runs `web-flow.spec.ts`, then `make stop_servers`. **The make target itself never fails on test failure** (`|| true` after the playwright call) — read the Playwright output, not the make exit code. |
+| frontend E2E orchestrated | `make test_e2e` / `make test_e2e_dev` | Builds/starts core + worker + preview(:4173) or dev(:8080), runs `web-flow.spec.ts` + `csp.spec.ts`, then stops whatever listens on 63578/63579/8080/4173. On macOS/Linux the target exits with Playwright's status; the **Windows** branch still ends in `\|\| true`, so read the Playwright output there. |
+| cloud storage E2E orchestrated | `make test_e2e_cloud` (or `cd flowfile_frontend && API_URL=… TEST_URL=… npm run test:cloud` against a disposable stack; it skips without `API_URL`) | macOS/Linux + Docker. Starts and seeds MinIO (`poetry run seed_cloud_e2e` → `s3://flowfile-test/cloud-e2e/source.parquet`), an isolated core/worker/vite-preview on free ports, then `tests/cloud_e2e` and `cloud-storage-flow.spec.ts`; kills only its own PIDs and fails if a server wrote into its working dir. The spec's "No connection" test runs only with `E2E_AWS_PROFILE_CONFIGURED=1`. |
 | wasm JS | `cd flowfile_wasm && npm run test:run` | Vitest, happy-dom, globals on. ~348 cases. |
 | wasm Python engine | `cd flowfile_wasm && pip install -r tests/python/requirements.txt && python -m pytest tests/python` | Own `pytest.ini`. **Pins polars==1.18.0 / pydantic==2.10.5 / polars-expr-transformer==0.6.0 — the exact Pyodide 0.27.7 versions.** Running through the monorepo Poetry env resolves a different Polars; use the pinned env for parity. ~85 test fns. |
 | wasm Pyodide smoke | `cd flowfile_wasm && npm install --no-save pyodide@0.27.7 parquet-wasm@0.7.1 && node tests/pyodide-smoke/smoke.cjs` | The only guard for browser-namespace/bootstrap breakage — CPython tests can't catch it. |
@@ -95,8 +101,8 @@ Package layout: `test_utils/{postgres,mysql,s3,gcs,azurite,kafka}/`, each with `
 | Service | Container name | Host port(s) | Started by | Skip behavior |
 |---|---|---|---|---|
 | Postgres | `test-postgres-sample` | **5433**→5432 | `poetry run start_postgres`; core+worker conftest autouse (reuses if already listening) | `is_docker_available()` False → tests `skipif`; if Docker present but start fails → `pytest.fail` (core), soft-skip (worker uses same pattern but less strict) |
-| MySQL | `test-mysql-sample` | **3307**→3306 | `poetry run start_mysql`; core conftest autouse | Core: soft-fail with a log message, tests skip; image pull can take up to 300s first time |
-| MinIO (S3) | `test-minio-s3` | **9000** API, **9001** console | `poetry run start_minio` | `_minio_available()` / `requires_minio` guards; frame conftest assumes :9000 |
+| MySQL | `test-mysql-sample` | **3307**→3306 | `poetry run start_mysql`; core conftest autouse | Core: soft-fail with a log message, tests skip; image pull (only when the tag is absent locally, `test_utils/docker_images.py`) can take up to 300s first time |
+| MinIO (S3) | `test-minio-s3` | **9000** API, **9001** console | `poetry run start_minio`; `poetry run seed_cloud_e2e` (`test_utils/s3/cloud_e2e_seed.py`) idempotently seeds the cloud E2E source | `_minio_available()` / `requires_minio` guards; frame conftest assumes :9000. Never write test data under the pre-existing `sample-data/` bucket — use a unique prefix you delete |
 | GCS | `test-fake-gcs` | **4443** | `poetry run start_gcs` | `is_gcs_available()` guard; also re-populates data if container is up but empty |
 | Azurite | `test-azurite` | **10000** (blob) | `poetry run start_azurite` | `is_azurite_available()` guard; well-known devstoreaccount1 creds hardcoded |
 | Redpanda (Kafka) | `test-redpanda-kafka` | **19092**→9092 | `poetry run start_redpanda`; `tests/kafka` + `shared/tests/kafka` conftest autouse | Skips without Docker; topics are UUID-suffixed per test so container reuse is safe |
@@ -162,11 +168,15 @@ FLOWFILE_DB_PATH=/tmp/fresh.db poetry run pytest flowfile_core/tests
 
 `flowfile_core/tests/conftest.py`'s session-autouse `flowfile_worker` fixture checks `os.environ.get("SKIP_WORKER_TESTS") == "1"` and no-ops if set (no worker spawned, no reuse-probe). The `execution_location` fixture (parametrized `["local", "remote"]`, used by catalog/flow-API/run-node tests) then auto-skips its `remote` half. Use this to run core tests fast without a worker; do **not** use it when validating a core↔worker contract change (§6 below).
 
+### `FLOWFILE_TEST_REUSE_WORKER=1`
+
+With `FLOWFILE_WORKER_PORT` unset and something already answering on the default 63579 (a dev worker or the desktop app's sidecar), `conftest.py::_claim_worker_port` moves the session to a free port at import and the `flowfile_worker` fixture starts a worker from this checkout there with `--port`; `pytest_report_header` prints `worker: port 63579 is taken, this session's worker uses N`. Set `FLOWFILE_TEST_REUSE_WORKER=1` (exactly `"1"`) to reuse the running worker instead. An explicit `FLOWFILE_WORKER_PORT` is used as given, and a worker already listening on it is reused. The suite's worker still sends its logs to `CORE_PORT` (default 63578), so give the run a private `CORE_PORT` when a live core is up.
+
 ### Other fragile points (verified in code, worth knowing)
 
 - **Catalog seed erosion**: many core test modules call a `catalog_cleanup()` helper that wipes *all* `CatalogNamespace` rows, including the init_db-seeded `'General'` namespace. `flowfile_core/tests/project/conftest.py` has an autouse re-seed specifically to paper over this — a new suite depending on seeded catalog rows needs the same treatment.
 - **Worker virtual-result cache**: `catalog_cleanup()` also deletes `.arrow` files under the worker's virtual-results directory, because table-id recycling would otherwise let a stale cached file satisfy the next test's resolve.
-- **Session-global services**: worker (:63579), Postgres (:5433), MySQL (:3307), Redpanda are reused if already listening — a dirty long-running instance from a previous session can leak state into a new run.
+- **Session-global services**: Postgres (:5433), MySQL (:3307), Redpanda are reused if already listening — a dirty long-running instance from a previous session can leak state into a new run. The worker is the exception: see `FLOWFILE_TEST_REUSE_WORKER=1` above.
 - **Process-wide env mutation**: the sharing test suite flips `FLOWFILE_MODE=docker` via `monkeypatch.setenv` **per test only** — several core test modules construct a `TestClient` and mint auth tokens at **import time** under electron mode; flipping the mode process-wide before those imports breaks them.
 - **bcrypt monkeypatch**: core conftest patches `bcrypt.hashpw` at import to truncate >72-byte passwords (passlib/bcrypt compat) — password-hashing tests behave differently from a prod bcrypt install without it.
 
@@ -204,7 +214,8 @@ A green run is only as strong as what actually executed. Docker-gated suites **s
 | Kernel-touching change | `poetry run pytest flowfile_core/tests -m kernel` locally with Docker running. |
 | `flowfile_frame` public API change | `make stubs` and stage the `.pyi` diff (do not commit it yourself — hand off per `flowfile-change-control`'s no-agent-commit policy) — `make check_stubs` is a hard CI gate (regenerates then `git diff --exit-code`). |
 | Kafka path change | `poetry run pytest tests/kafka -m kafka` plus `shared/tests/kafka`. |
-| Frontend renderer change | `npm run test:unit` + `npm run build:web` (lint + `vue-tsc --noEmit` run inside the build script) — that's what CI's `test-web` job enforces. Canvas/flow behavior changes additionally need `make test_e2e` — **read its Playwright output, the make exit code is unreliable** (see §2). |
+| Frontend renderer change | `npm run test:unit` + `npm run build:web` (lint + `vue-tsc --noEmit` run inside the build script) — that's what CI's `test-web` job enforces. Canvas/flow behavior changes additionally need `make test_e2e` (on Windows read its Playwright output — that branch still ignores the exit code, see §2). |
+| Cloud storage node / connection change | `poetry run pytest shared/tests/test_cloud_storage_options.py` plus `tests/cloud_e2e -m cloud_e2e` (real core + worker over HTTP); UI-facing changes also `make test_e2e_cloud`. Tests must not reach real AWS: temp `AWS_SHARED_CREDENTIALS_FILE`/`AWS_CONFIG_FILE`, `AWS_EC2_METADATA_DISABLED=true`, and an explicit endpoint — `test_utils/s3/aws_profiles.py::isolate_aws` sets all of that up. |
 | WASM engine change | Pinned-env pytest (`tests/python`) **and** the Pyodide smoke test — a green CPython run does not prove the browser namespace still works. |
 | Full-stack / deploy-shaped change | `poetry run pytest tests/integration -m docker_integration -v` with ports 63578/63579 free. |
 
@@ -242,7 +253,7 @@ Other skip inventory:
 
 - **Concurrency**: group `${{ github.workflow }}-${{ github.ref }}`, `cancel-in-progress: ${{ github.event_name == 'pull_request' }}` — PR runs cancel their own superseded runs; **main-branch runs are never cancelled** (docker-publish/release pipelines key off completed main builds). This is the only workflow file in the repo with a `concurrency` block.
 - **`detect-changes`** (`dorny/paths-filter`) gates every downstream job by which paths changed; `workflow_dispatch` input `run_all_tests: true` forces everything regardless.
-- **`backend-tests` matrix**: `fail-fast: false`; `ubuntu-latest` × Python 3.10/3.11/3.12/3.13, plus `macos-latest` × 3.11. Starts Postgres/MySQL/MinIO/Azurite/GCS via the `poetry run start_*` scripts (no-op on macOS CI runners — Docker reports unavailable there). Core runs `-m "not kernel"`.
+- **`backend-tests` matrix**: `fail-fast: false`; `ubuntu-latest` × Python 3.10/3.11/3.12/3.13, plus `macos-latest` × 3.11. Starts Postgres/MySQL/MinIO/Azurite/GCS via the `poetry run start_*` scripts (no-op on macOS CI runners — Docker reports unavailable there). Core runs `-m "not kernel"`. Linux entries then run `tests/cloud_e2e -m cloud_e2e` after the worker tests, while MinIO is still up (gated on core/worker/shared/`tests/cloud_e2e`/workflow changes).
 - **`coverage`**: separate ubuntu/3.12 job, `COVERAGE_CORE=sysmon` (see §5).
 - **`backend-tests-windows`**: windows-latest, Python 3.11 only, pwsh shell.
 - **`kernel-tests`**: ubuntu/3.11, 15-min timeout, builds the kernel image, runs `kernel_runtime` unit tests then `flowfile_core/tests -m kernel`.
@@ -251,7 +262,7 @@ Other skip inventory:
 - **`docs-test`**: `mkdocs build`.
 - **`test-summary`**: `if: always()`, aggregates all jobs *except* `version-sync`, fails if any non-skipped job failed. Treat this as the real pass/fail signal for the whole run — but note it is **not** wired into required branch-protection checks (a CI-mechanics fact, not this skill's territory beyond flagging it).
 
-Separate, path-filtered workflows cover what `test.yaml` doesn't: `e2e-tests.yml` (Playwright web E2E), `test-docker-auth.yml`, `test-kernel-integration.yml`, `test-docker-kernel-e2e.yml`, `test-kafka-integration.yml`, `flowfile-wasm-build.yml`.
+Separate, path-filtered workflows cover what `test.yaml` doesn't: `e2e-tests.yml` (Playwright web E2E; also starts and seeds MinIO, runs core + worker from empty `runner.temp` dirs with a MinIO-only AWS profile, and fails if either wrote into its working dir), `test-docker-auth.yml`, `test-kernel-integration.yml`, `test-docker-kernel-e2e.yml`, `test-kafka-integration.yml`, `flowfile-wasm-build.yml`.
 
 ---
 
