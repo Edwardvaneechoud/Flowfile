@@ -118,6 +118,14 @@ function detectEdgeUnderPointer(clientX: number, clientY: number): string | null
   return null;
 }
 
+// Floating panels and the minimap sit inside the canvas drop zone.
+const CANVAS_PANEL_SELECTOR = "[data-canvas-overlay], .vue-flow__panel";
+
+/** A node released here would land on the canvas hidden underneath the panel. */
+function isOverCanvasPanel(event: DragEvent): boolean {
+  return !!(event.target as Element | null)?.closest?.(CANVAS_PANEL_SELECTOR);
+}
+
 /** A gesture's backend ops plus the canvas update to apply once they are committed. */
 export interface GesturePlan {
   operations: GraphOperation[];
@@ -384,9 +392,18 @@ export default function useDragAndDrop() {
     isDragging.value = true;
 
     document.addEventListener("drop", onDragEnd);
+    // A refused drop (over a panel, outside the window, Esc) fires no drop event.
+    document.addEventListener("dragend", onDragEnd);
   }
 
   function onDragOver(event: DragEvent) {
+    // Leaving dragover uncancelled makes the browser refuse the drop over a panel.
+    if (draggedType.value && isOverCanvasPanel(event)) {
+      isDragOver.value = false;
+      markHoveredEdge(null);
+      markAutoConnectNode(null);
+      return;
+    }
     event.preventDefault();
 
     if (draggedType.value) {
@@ -421,6 +438,7 @@ export default function useDragAndDrop() {
     markAutoConnectNode(null);
     resetAutoConnectCandidates();
     document.removeEventListener("drop", onDragEnd);
+    document.removeEventListener("dragend", onDragEnd);
   }
 
   // A node's rectangle in flow coordinates, read from the DOM like the edge
@@ -835,6 +853,7 @@ export default function useDragAndDrop() {
   }
 
   async function onDrop(event: DragEvent, flowId: number): Promise<void> {
+    if (isOverCanvasPanel(event)) return;
     const position = screenToFlowCoordinate({
       x: event.clientX,
       y: event.clientY,
