@@ -9,8 +9,10 @@ export interface UpstreamColumn {
 }
 
 /**
- * Fetches column schemas for each upstream input by calling NodeApi.getTableExample
- * on the source node. Returns an empty list if no upstream node has run yet —
+ * Fetches column schemas for each upstream input from the source node's output
+ * schema (`GET /node` with include_output, no inputs). Schema-only on purpose: the
+ * data preview (`/node/data`) is capped at MAX_PREVIEW_COLUMNS and ships sample
+ * rows this never reads. Returns an empty list if no upstream node has run yet —
  * schemas only exist post-execution, matching the behaviour of Sort/Pivot/GroupBy nodes.
  */
 export function useUpstreamColumns(
@@ -31,8 +33,8 @@ export function useUpstreamColumns(
     }
     const results = await Promise.allSettled(
       ins.map(async (input) => {
-        const example = await NodeApi.getTableExample(fid, input.source_node_id);
-        return (example?.table_schema ?? []).map((col) => ({
+        const nodeData = await NodeApi.getNodeData(fid, input.source_node_id, true, false);
+        return (nodeData.main_output?.table_schema ?? []).map((col) => ({
           name: col.name,
           data_type: col.data_type,
           source_input: input.name,

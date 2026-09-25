@@ -149,11 +149,18 @@ def make_preview_cell_json_safe(value: Any, _depth: int = 0) -> Any:
     return _object_repr(value)
 
 
+MAX_PREVIEW_COLUMNS = 5_000
+
+
 class TableExample(BaseModel):
     """Represents a preview of a table, including schema and sample data.
 
     ``number_of_records`` is None when the total is unknown (e.g. a lazy result
     whose count was never computed); 0 always means a genuinely empty result.
+
+    A data preview carries at most ``MAX_PREVIEW_COLUMNS`` columns in
+    ``table_schema``/``columns``/``data`` so very wide results stay cheap to
+    build and render; ``number_of_columns`` is always the full width.
     """
 
     node_id: int

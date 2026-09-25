@@ -51,7 +51,7 @@ from flowfile_core.flowfile.parameter_resolver import apply_parameters_in_place,
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from flowfile_core.flowfile.utils import get_hash
 from flowfile_core.schemas import input_schema, schemas
-from flowfile_core.schemas.output_model import FileColumn, NodeData, TableExample
+from flowfile_core.schemas.output_model import MAX_PREVIEW_COLUMNS, FileColumn, NodeData, TableExample
 from flowfile_core.utils.arrow_reader import get_read_top_n
 
 ExternalTaskHandle = (
@@ -2140,7 +2140,9 @@ class FlowNode:
         nodes, ``output_handle`` selects which named output to preview.
 
         Args:
-            include_data: If True, includes a data sample in the result.
+            include_data: If True, includes a data sample in the result, limited
+                to the first ``MAX_PREVIEW_COLUMNS`` columns (schema included);
+                ``number_of_columns`` still reports the full width.
             output_handle: The output handle to preview (e.g. ``"output-0"``).
                 For single-output nodes the default is the only choice.
 
@@ -2148,6 +2150,7 @@ class FlowNode:
             A `TableExample` object, or None if the node is not set up.
         """
         self.print("Getting a table example")
+        column_limit = MAX_PREVIEW_COLUMNS if include_data else None
         if self.is_setup and include_data and self.node_stats.has_completed_last_run:
             if self.node_template.node_group == "output" and not getattr(self.setting_input, "output_names", None):
                 # A sink previews its upstream input; one declaring an output handle previews itself.
@@ -2159,16 +2162,19 @@ class FlowNode:
             # output instead of the default cached example_data_generator.
             if self._named_outputs and output_handle in self._named_outputs:
                 engine = self._named_outputs[output_handle]
+                full_schema = engine.schema
                 preview_df = engine.data_frame.head(100)
+                if len(full_schema) > column_limit:
+                    preview_df = preview_df.select([c.column_name for c in full_schema[:column_limit]])
                 if isinstance(preview_df, pl.LazyFrame):
                     preview_df = preview_df.collect()
                 data = preview_df.to_dicts() if preview_df is not None else []
-                schema = [FileColumn.model_validate(c.get_column_repr()) for c in engine.schema]
+                schema = [FileColumn.model_validate(c.get_column_repr()) for c in full_schema[:column_limit]]
                 return TableExample(
                     node_id=self.node_id,
                     name=str(self.node_id),
                     number_of_records=self._preview_record_count(engine, len(data)),
-                    number_of_columns=len(schema),
+                    number_of_columns=len(full_schema),
                     table_schema=schema,
                     columns=[c.name for c in schema],
                     data=data,
@@ -2178,12 +2184,16 @@ class FlowNode:
 
             example_data_getter = self.results.example_data_generator
             if example_data_getter is not None:
-                data = example_data_getter().to_pylist()
+                sample = example_data_getter()
+                if sample.num_columns > column_limit:
+                    sample = sample.select(sample.column_names[:column_limit])
+                data = sample.to_pylist()
                 if data is None:
                     data = []
             else:
                 data = []
-            schema = [FileColumn.model_validate(c.get_column_repr()) for c in self.schema]
+            full_schema = self.schema
+            schema = [FileColumn.model_validate(c.get_column_repr()) for c in full_schema[:column_limit]]
             has_example_data = self.results.example_data_generator is not None
 
             return TableExample(
@@ -2192,7 +2202,7 @@ class FlowNode:
                 number_of_records=self._preview_record_count(
                     self.results.resulting_data, len(data) if has_example_data else None
                 ),
-                number_of_columns=len(schema),
+                number_of_columns=len(full_schema),
                 table_schema=schema,
                 columns=[c.name for c in schema],
                 data=data,
@@ -2202,16 +2212,17 @@ class FlowNode:
         else:
             logger.warning("getting the table example but the node has not run")
             try:
-                schema = [FileColumn.model_validate(c.get_column_repr()) for c in self.schema]
+                full_schema = self.schema
+                schema = [FileColumn.model_validate(c.get_column_repr()) for c in full_schema[:column_limit]]
             except Exception as e:
                 logger.warning(e)
-                schema = []
+                full_schema, schema = [], []
             columns = [s.name for s in schema]
             return TableExample(
                 node_id=self.node_id,
                 name=str(self.node_id),
                 number_of_records=None,
-                number_of_columns=len(columns),
+                number_of_columns=len(full_schema),
                 table_schema=schema,
                 columns=columns,
                 data=[],

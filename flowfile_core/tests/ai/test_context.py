@@ -1106,23 +1106,18 @@ def test_safe_get_sample_data_reads_from_example_data_generator(
     cached rows up to ``n``. Mirrors what ``GET /node/data`` does.
     """
 
+    import pyarrow as pa
+
     from flowfile_core.ai.context.builder import _safe_get_sample_data
 
     node = linear_flow.get_node(1)
-
-    class _FakeArrowTable:
-        def __init__(self, rows: list[dict[str, Any]]) -> None:
-            self._rows = rows
-
-        def to_pylist(self) -> list[dict[str, Any]]:
-            return self._rows
 
     fake_rows = [
         {"order_id": 1, "customer_id": 10, "amount": 100.0, "region": "EU"},
         {"order_id": 2, "customer_id": 20, "amount": 200.0, "region": "US"},
         {"order_id": 3, "customer_id": 30, "amount": 50.0, "region": "EU"},
     ]
-    node.results.example_data_generator = lambda: _FakeArrowTable(fake_rows)
+    node.results.example_data_generator = lambda: pa.Table.from_pylist(fake_rows)
     node.node_stats.has_run_with_current_setup = True
     node.node_stats.has_completed_last_run = True
 

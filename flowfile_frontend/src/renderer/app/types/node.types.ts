@@ -37,6 +37,7 @@ export interface TableExample {
   node_id: string | number;
   // null when the backend doesn't know the total (never fabricated).
   number_of_records: number | null;
+  // Full width; a data preview's table_schema/columns/data hold at most core's MAX_PREVIEW_COLUMNS.
   number_of_columns: number;
   name: string;
   table_schema: FileColumn[];
