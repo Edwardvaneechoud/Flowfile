@@ -32,6 +32,7 @@ from flowfile_frame.native import (
     DEFERRED_NODE_TYPES,
     NativeNodeError,
     add_connection_checked,
+    ancestors,
     is_side_effect_node_type,
     lost_placeholder_error,
     merge_frames,
@@ -2681,13 +2682,18 @@ class FlowFrame:
     def collect(self, *args, **kwargs) -> pl.DataFrame:
         """Collect lazy data into memory.
 
-        On a deferred frame this runs the whole flow first (see :meth:`_materialised_lazyframe`).
+        On a deferred frame this runs the whole flow first (see :meth:`_materialised_lazyframe`), and so
+        does a frame below a gate, because only a run decides which gate exit is live.
         """
-        if self._deferred:
+        if self._deferred or self._below_a_gate():
             return self._materialised_lazyframe().collect(*args, **kwargs)
         if hasattr(self.data, "collect"):
             return self.data.collect(*args, **kwargs)
         return self.data
+
+    def _below_a_gate(self) -> bool:
+        """Whether this node or any ancestor is a gate (a gate exit's frame points at the gate node)."""
+        return any(n.node_type == "gate" for n in ancestors(self.flow_graph.get_node(self.node_id)).values())
 
     def _materialised_lazyframe(self) -> pl.LazyFrame:
         """The LazyFrame to materialise: ``self.data``, or a deferred frame's real output.
@@ -2697,19 +2703,15 @@ class FlowFrame:
         an unrelated branch does not fail it. An ancestor without a run result was skipped by the
         planner (not configured, or below a failed node) and fails it too; a deliberately skipped
         node keeps a result. When a gate routed this frame away (the node was deliberately
-        skipped, or this is a gate's dead exit) the zero-row typed frame is returned.
+        skipped, or this is a gate's dead exit) the zero-row typed frame is returned. A frame
+        below a gate takes the same path, because its build-time plan passes through both exits.
         """
-        if not self._deferred:
+        if not (self._deferred or self._below_a_gate()):
             return self.data
         run_info = self.flow_graph.run_graph()
         results = {result.node_id: result for result in run_info.node_step_result}
         node = self.flow_graph.get_node(self.node_id)
-        lineage, stack = {}, [node]
-        while stack:
-            current = stack.pop()
-            if current.node_id not in lineage:
-                lineage[current.node_id] = current
-                stack.extend(current.all_inputs)
+        lineage = ancestors(node)
         problems = [
             f"  node {node_id}: {results[node_id].error}"
             for node_id in lineage

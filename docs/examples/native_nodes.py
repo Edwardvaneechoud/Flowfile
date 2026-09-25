@@ -21,9 +21,11 @@ combined = ff.concat([full, quick], how="diagonal_relaxed")
 ff.set_flow_parameter(flow, "mode", "quick")
 run = flow.run_graph()
 skipped = {result.node_id: result.skipped for result in run.node_step_result}
+routed = combined.collect()
 # --8<-- [end:gate]
 
 assert run.success
+assert routed["tier"].to_list() == ["quick"] * 3
 assert gate.is_open is False
 assert skipped[full.node_id] is True
 assert skipped[quick.node_id] is False

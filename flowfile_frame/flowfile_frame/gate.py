@@ -45,9 +45,8 @@ class Gate(NativeNode):
     least one row of ``control``, else of ``frame``, matches) or a flow ``parameter`` compared
     with ``operator`` and ``value`` (declare it first with ``fl.add_flow_parameter``). With
     ``else_output`` (the default) the gate routes: ``.then`` is live when the condition holds,
-    ``.otherwise`` when it does not. Both exits are pass-through frames; only
-    ``flow_graph.run_graph()`` and ``collect()`` on a deferred frame honour the routing, a
-    plain frame's ``collect()`` reads through the gate.
+    ``.otherwise`` when it does not. Both exits are pass-through frames while building;
+    ``collect()`` on any frame below the gate runs the flow and returns only the live side.
     """
 
     def __init__(

@@ -18,6 +18,7 @@ import flowfile_frame as ff
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
 DATA = {"a": [1, 2, 3], "g": ["x", "x", "y"]}
+SALES = {"region": ["EU", "US", "EU"], "amount": [10, 20, 30]}
 TEN_X = "output_df = input_df.with_columns((pl.col('a') * 10).alias('a10'))"
 
 
@@ -62,7 +63,8 @@ def test_parameter_gate_node_settings_and_exits():
     assert (gate.then.output_handle, gate.otherwise.output_handle) == ("output-0", "output-1")
     assert gate.else_ is gate.otherwise and gate.output is gate.then and gate["else"] is gate.otherwise
     assert node.node_inputs.main_inputs[0].node_id == source.node_id
-    assert_frame_equal(gate.otherwise.collect(), pl.DataFrame(DATA))
+    assert_frame_equal(gate.then.collect(), pl.DataFrame(DATA))
+    assert_frame_equal(gate.otherwise.collect(), pl.DataFrame(DATA).clear())
 
 
 def test_values_are_stored_in_their_canvas_form():
@@ -192,6 +194,55 @@ def test_gate_on_a_deferred_frame_collects_live_and_dead_exits(env):
     assert_frame_equal(live.collect(), expected)
     dead_rows = dead.collect()
     assert dead_rows.height == 0 and dead_rows.columns == ["a", "g", "a10"]
+
+
+# collect() below a gate runs the flow
+
+
+def _routed_union(gate: ff.Gate) -> ff.FlowFrame:
+    full = gate.then.group_by("region").agg(ff.col("amount").sum().alias("revenue")).head(2)
+    quick = gate.otherwise.head(1)
+    return ff.concat([full, quick], how="diagonal_relaxed")
+
+
+def test_union_below_a_parameter_gate_collects_only_the_live_side():
+    sales = ff.from_dict(SALES)
+    ff.add_flow_parameter(sales, "mode", default="full", type="enum", enum_values=["full", "quick"])
+    gate = ff.Gate(sales, parameter="mode", operator=ff.GateOperator.EQUALS, value="full")
+    output = _routed_union(gate)
+    assert output._deferred is False
+
+    full_rows = output.collect()
+    assert sorted(full_rows["revenue"].to_list()) == [20, 40]
+    ff.set_flow_parameter(sales, "mode", "quick")
+    quick_rows = output.collect()
+    assert quick_rows.height == 1 and quick_rows["amount"].to_list() == [10]
+
+
+@pytest.mark.parametrize("formula, height", [("[amount] > 15", 2), ("[amount] > 100", 1)])
+def test_union_below_a_formula_gate_collects_only_the_live_side(formula, height):
+    gate = ff.Gate(ff.from_dict(SALES), formula)
+    assert _routed_union(gate).collect().height == height
+    dead = gate.otherwise if height == 2 else gate.then
+    assert dead.head(1).collect().height == 0
+
+
+@pytest.mark.parametrize("env", ["prod", "dev"])
+def test_fluent_node_below_an_exit_follows_the_routing(env):
+    _, gate = _env_gate(env)
+    live, dead = (gate.then, gate.otherwise) if env == "prod" else (gate.otherwise, gate.then)
+
+    assert_frame_equal(live.head(1).collect(), pl.DataFrame(DATA).head(1))
+    dead_rows = dead.head(1).collect()
+    assert dead_rows.height == 0 and dead_rows.columns == ["a", "g"]
+
+
+def test_describe_below_a_gate_runs_the_flow():
+    _, gate = _env_gate("dev")
+    count = pl.col("statistic") == "count"
+    assert gate.then.select("a").describe().filter(count)["a"].item() == 0
+    assert gate.otherwise.select("a").describe().filter(count)["a"].item() == 3
+    assert gate.flow_graph.latest_run_info is not None
 
 
 # exits into other nodes

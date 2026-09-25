@@ -112,11 +112,11 @@ The string and the enum member are interchangeable:
 
 `.is_open` on a parameter gate evaluates the graph's current parameter values. On a formula gate it evaluates the probed frame lazily plus a one-row collect; when that frame is deferred it raises, because the placeholder has no rows.
 
-**Routing.** `.then` and `.otherwise` are pass-through frames. Only `flow_graph.run_graph()` and `collect()` on a deferred frame honour the gate: the dead exit's downstream is deliberately skipped (`NodeResult.skipped` is `True`, the run stays green). A plain frame's `collect()` reads through the gate.
+**Routing.** `.then` and `.otherwise` are pass-through frames while you build. `collect()` on any frame below a gate runs the flow and returns only the live side, and so do `describe()`, `profile()` and `fetch()`: a frame on the dead side collects to a zero-row frame with its columns. In the run, the dead exit's downstream is deliberately skipped (`NodeResult.skipped` is `True`, the run stays green). Each such call runs the whole graph, writers included.
 
 To bring the two sides back together, use a `union` node, which runs when at least one input survived: `fl.concat([...], how="diagonal_relaxed")` places one. Every other node below a dead exit is skipped too, including the Polars-code node the default `fl.concat` places.
 
-This diamond routes on a parameter and checks which side the run skipped:
+This diamond routes on a parameter, checks which side the run skipped, and collects only the live side:
 
 ```python
 --8<-- "docs/examples/native_nodes.py:gate"
@@ -365,7 +365,6 @@ Every build or materialisation failure raises `fl.NativeNodeError`, a subclass o
 
 ## Known limits
 
-- **Gates route only on a run.** A gate exit that is not deferred collects through the gate; only `flow_graph.run_graph()` and `collect()` on a deferred frame skip the dead side.
 - **`pivot` below a deferred frame raises at build.** Its columns come from the pivot column's values, which the zero-row placeholder does not have: `ValueError: Failed to fetch unique values`. When a `flowfile_worker` process answers that probe instead, the pivot builds with only its index columns. Collect the input first.
 - **Changing a deferred frame's node after building on it raises.** `set_group()` or `cache()` on a deferred frame, followed by another operation on it, raises `NativeNodeError`. Apply the change before building further, or collect first.
 - **Build-time effects are refused on deferred frames.** `sink_*`, `inspect`, the Polars-code fallbacks of `write_parquet` / `write_csv` / `write_excel`, and expressions without a code form raise `NativeNodeError`. Use a `write_*` method with a native writer node, or collect first.

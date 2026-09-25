@@ -105,22 +105,31 @@ def seed_from_predicted_schema(node: FlowNode) -> None:
     seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: predicted_schema_without_running(node)})
 
 
+def ancestors(node: FlowNode) -> dict[int, FlowNode]:
+    """``node`` plus every node it transitively reads from (``all_inputs``), keyed by id in visit order."""
+    lineage, stack = {}, [node]
+    while stack:
+        current = stack.pop()
+        if current.node_id not in lineage:
+            lineage[current.node_id] = current
+            stack.extend(current.all_inputs)
+    return lineage
+
+
 def lost_placeholder_error(node: FlowNode) -> NativeNodeError:
     """The error for a deferred node (``node`` or an ancestor) whose seed was reset away.
 
     A seeded node whose settings change after it was built (``set_group``, ``cache()``) is
     reset when the next edge is wired, which drops its placeholder output.
     """
-    lost_id, stack, seen = node.node_id, [node], set()
-    while stack:
-        current = stack.pop()
-        if current.node_id in seen:
-            continue
-        seen.add(current.node_id)
-        if current.deferred_until_run and current.results.resulting_data is None:
-            lost_id = current.node_id
-            break
-        stack.extend(current.all_inputs)
+    lost_id = next(
+        (
+            node_id
+            for node_id, current in ancestors(node).items()
+            if current.deferred_until_run and current.results.resulting_data is None
+        ),
+        node.node_id,
+    )
     return NativeNodeError(
         f"node {lost_id} lost its deferred placeholder because its settings changed after it was built; "
         "collect the frame first or apply the change before building on it"
