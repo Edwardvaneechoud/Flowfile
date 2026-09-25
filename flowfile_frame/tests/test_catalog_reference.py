@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import pickle
 
+import polars as pl
 import pytest
 
 from flowfile_core.catalog import (
+    AmbiguousFlowError,
     CatalogService,
+    FlowNotFoundError,
     NamespaceNotFoundError,
     SQLAlchemyCatalogRepository,
 )
@@ -22,8 +25,11 @@ from flowfile_core.database.models import (
 )
 from flowfile_frame import (
     CatalogReference,
+    FlowInput,
+    FlowRef,
     SchemaReference,
     default_schema,
+    get_catalog,
     list_catalogs,
 )
 from flowfile_frame.catalog_reference import _resolve_namespace_id
@@ -240,3 +246,59 @@ class TestDefaultSchema:
         assert schema.id == default_id
         assert schema.catalog.name == "General"
         assert schema.catalog.id == general_id
+
+
+def _child_flow():
+    """A registrable child flow: one input passed straight to one output."""
+    frame = FlowInput("orders", schema={"id": pl.Int64})
+    return frame.to_flow_output("orders_out")
+
+
+class TestCatalogNavigation:
+    def test_get_catalog_resolves_eagerly(self):
+        cat_id = _seed_catalog("NavCat")
+        assert get_catalog("NavCat") == CatalogReference("NavCat")
+        assert get_catalog("NavCat").id == cat_id
+        with pytest.raises(NamespaceNotFoundError):
+            get_catalog("NoSuchCatalog")
+
+    def test_get_schema_is_an_alias_of_schema(self):
+        cat = CatalogReference("AliasCat", auto_create=True)
+        created = cat.get_schema("s", auto_create=True)
+        assert created == cat.schema("s")
+        assert isinstance(created, SchemaReference)
+        with pytest.raises(NamespaceNotFoundError):
+            cat.get_schema("missing")
+
+    def test_register_get_and_list_flows(self):
+        schema = CatalogReference("FlowCat", auto_create=True).schema("sales", auto_create=True)
+        first = schema.register_flow(_child_flow(), name="Clean orders")
+        second = schema.register_flow(_child_flow(), name="Archive orders")
+        assert isinstance(first, FlowRef)
+        assert get_catalog("FlowCat").get_schema("sales").get_flow("Clean orders") == first
+        assert schema.list_flows() == [second, first]
+        assert CatalogReference("FlowCat").schema("sales", auto_create=True).list_flows() == [second, first]
+        with pytest.raises(FlowNotFoundError):
+            schema.get_flow("Missing flow")
+
+    def test_flow_ref_keeps_its_schema_handle(self):
+        schema = CatalogReference("HandleCat", auto_create=True).schema("raw", auto_create=True)
+        ref = schema.get_flow(schema.register_flow(_child_flow(), name="Loader").name)
+        assert ref.schema == schema
+        assert ref.schema.catalog == schema.catalog
+        assert ref.namespace_full_name == "HandleCat.raw"
+        assert ref.schema.list_tables() == []
+        revived = pickle.loads(pickle.dumps(ref))
+        assert revived == ref and revived.schema == schema and revived.flow_path == ref.flow_path
+
+    def test_duplicate_name_in_one_schema_is_ambiguous(self):
+        schema = CatalogReference("DupCat", auto_create=True).schema("raw", auto_create=True)
+        ref = schema.register_flow(_child_flow(), name="Twice")
+        with get_db_context() as db:
+            copy = FlowRegistration(name="Twice", flow_path=f"{ref.flow_path}.copy", namespace_id=schema.id, owner_id=1)
+            db.add(copy)
+            db.commit()
+        with pytest.raises(AmbiguousFlowError) as info:
+            schema.get_flow("Twice")
+        assert len(info.value.candidates) == 2
+        assert {c["namespace_name"] for c in info.value.candidates} == {"DupCat.raw"}

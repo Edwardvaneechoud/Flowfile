@@ -1,8 +1,15 @@
+import atexit
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
 os.environ['TESTING'] = 'True'
+
+# The storage singleton caches its base directory at import; keep registered flows out of ~/.flowfile.
+if 'FLOWFILE_STORAGE_DIR' not in os.environ:
+    os.environ['FLOWFILE_STORAGE_DIR'] = tempfile.mkdtemp(prefix='flowfile_frame_tests_')
+    atexit.register(shutil.rmtree, os.environ['FLOWFILE_STORAGE_DIR'], ignore_errors=True)
 
 # Keep jwt_secret / master_key / internal_token out of the developer's real
 # ~/.config/flowfile store (flowfile_frame imports flowfile_core in-process).

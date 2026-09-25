@@ -71,6 +71,8 @@ def write_inputs_to_parquet(
     flow_id: int,
     node_id: int,
     input_names: list[str] | None = None,
+    *,
+    local: bool = False,
 ) -> dict[str, list[str]]:
     """Serialize input tables to parquet on the shared volume.
 
@@ -82,9 +84,12 @@ def write_inputs_to_parquet(
     When *input_names* is ``None``, falls back to the original behaviour
     where every input is grouped under ``"main"``.
 
+    With *local* set (a graph whose ``execution_location`` is ``"local"``) the
+    files are written in-process even when worker offload is on.
+
     Returns the ``input_paths`` dict expected by :class:`ExecuteRequest`.
     """
-    use_local = not OFFLOAD_TO_WORKER
+    use_local = local or not OFFLOAD_TO_WORKER
 
     if input_names is None:
         main_paths: list[str] = []

@@ -113,5 +113,20 @@ def test_cloud_storage_reader_signatures_accept_output_field_config():
     assert isinstance(config, CoreOutputFieldConfig)
 
 
+def test_create_flow_graph_defaults():
+    graph = ff.create_flow_graph()
+    assert graph.flow_id > 0
+    assert graph.flow_settings.path == ""
+    assert graph.flow_settings.track_history is False
+    assert graph.execution_location == "local"
+
+    pinned = ff.create_flow_graph(flow_id=4242)
+    assert pinned.flow_id == 4242
+    assert pinned.flow_settings.name == "Flow_4242"
+    assert pinned.flow_settings.path == ""
+    assert pinned.flow_settings.track_history is False
+    assert pinned.execution_location == "local"
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

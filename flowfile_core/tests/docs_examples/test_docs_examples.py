@@ -45,10 +45,35 @@ def _skip_unless_remote_data_available(example_path: Path) -> None:
             pytest.skip(f"remote sample data not reachable: {url} ({exc})")
 
 
+# Examples that register flows and custom node classes: flow files go to tmp_path, node classes are removed after.
+EXAMPLES_WITH_PROCESS_SIDE_EFFECTS = {"native_nodes"}
+
+
+@pytest.fixture
+def restore_custom_node_store():
+    """Undo the custom node classes an example registers in the process-wide store and palette."""
+    from flowfile_core.configs import node_store
+
+    saved_store = dict(node_store.CUSTOM_NODE_STORE)
+    saved_dict = dict(node_store.node_dict)
+    saved_list = list(node_store.nodes_list)
+    yield
+    node_store.CUSTOM_NODE_STORE.clear()
+    node_store.CUSTOM_NODE_STORE.update(saved_store)
+    node_store.node_dict.clear()
+    node_store.node_dict.update(saved_dict)
+    node_store.nodes_list[:] = saved_list
+
+
 @pytest.mark.parametrize("example_path", _core_examples(), ids=lambda p: p.stem)
-def test_core_example_runs(example_path: Path, monkeypatch):
+def test_core_example_runs(example_path: Path, monkeypatch, tmp_path, request):
     """A core docs example runs cleanly with the repo root as CWD."""
     _skip_unless_remote_data_available(example_path)
+    if example_path.stem in EXAMPLES_WITH_PROCESS_SIDE_EFFECTS:
+        from shared.storage_config import storage
+
+        monkeypatch.setattr(storage, "_base_dir", tmp_path)
+        request.getfixturevalue("restore_custom_node_store")
     monkeypatch.chdir(REPO_ROOT)
     runpy.run_path(str(example_path), run_name="__main__")
 

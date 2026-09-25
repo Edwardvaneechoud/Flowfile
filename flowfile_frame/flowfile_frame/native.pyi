@@ -1,0 +1,46 @@
+# Auto-generated stub for flowfile_frame.native — do not edit.
+# Run `make stubs` to regenerate from the Python source.
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Any
+from pydantic import BaseModel
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.schemas import input_schema
+from flowfile_frame.enums import NodeType, NodeTypes
+from flowfile_frame.flow_frame import FlowFrame
+
+DEFERRED_NODE_TYPES: frozenset[str]
+SIDE_EFFECT_NODE_TYPES: frozenset[str]
+
+class NativeNodeError(ValueError):
+    ...
+
+class NativeNode:
+    node_type: str
+    node_id: int
+    flow_graph: FlowGraph
+    output_names: list[str]
+    deferred: bool
+    @property
+    def node(self) -> FlowNode: ...
+    @property
+    def outputs(self) -> list[str]: ...
+    @property
+    def output(self) -> FlowFrame: ...
+    def __getitem__(self, name: str) -> FlowFrame: ...
+
+class Node(NativeNode):
+    def __init__(self, node_type: NodeType | NodeTypes, *inputs: FlowFrame, settings: dict[str, Any] | BaseModel | None=None, deferred: bool | None=None, description: str | None=None, flow_graph: FlowGraph | None=None) -> None: ...
+
+
+def is_side_effect_node_type(node_type: str) -> bool: ...
+def seed_deferred_node(node: FlowNode, schemas: dict[str, list[FlowfileColumn]]) -> None: ...
+def predicted_schema_without_running(node: FlowNode) -> list[FlowfileColumn]: ...
+def seed_from_predicted_schema(node: FlowNode) -> None: ...
+def lost_placeholder_error(node: FlowNode) -> NativeNodeError: ...
+def allocate_node_id(flow_graph: FlowGraph) -> int: ...
+def add_connection_checked(flow_graph: FlowGraph, connection: input_schema.NodeConnection) -> None: ...
+def merge_frames(frames: Sequence[FlowFrame]) -> FlowGraph: ...

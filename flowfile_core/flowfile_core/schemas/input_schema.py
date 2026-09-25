@@ -2,7 +2,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 import polars as pl
 from pydantic import (
@@ -2069,10 +2069,14 @@ class NodeConnection(BaseModel):
         cls,
         from_id: int,
         to_id: int,
-        input_type: InputType = "input-0",
+        input_type: InputType | InputConnectionClass = "input-0",
         output_handle: OutputConnectionClass = "output-0",
     ):
-        """Creates a standard connection between two nodes."""
+        """Creates a standard connection between two nodes.
+
+        ``input_type`` is either a semantic slot (``main``/``right``/``left``) or an
+        explicit target handle (``input-N``), which is used as-is.
+        """
         match input_type:
             case "main":
                 connection_class: InputConnectionClass = "input-0"
@@ -2080,6 +2084,8 @@ class NodeConnection(BaseModel):
                 connection_class: InputConnectionClass = "input-1"
             case "left":
                 connection_class: InputConnectionClass = "input-2"
+            case _ if input_type in get_args(InputConnectionClass):
+                connection_class: InputConnectionClass = input_type
             case _:
                 connection_class: InputConnectionClass = "input-0"
         node_input = NodeInputConnection(node_id=to_id, connection_class=connection_class)

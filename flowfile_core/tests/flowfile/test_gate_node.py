@@ -1569,6 +1569,15 @@ class TestElseOutputDiamond:
         assert by_id[3].skipped is False
         assert by_id[5].skipped is False
 
+    @pytest.mark.parametrize("env, dead", [("prod", {"output-1"}), ("dev", {"output-0"})])
+    def test_run_keeps_its_routing_on_the_graph(self, env, dead):
+        graph = build_split_diamond(env=env, flow_id=90)
+        assert graph._last_closed_gate_handles == {}
+
+        assert graph.run_graph().success is True
+
+        assert graph._last_closed_gate_handles[2] == dead
+
 
 class TestElseOutputFormulaGate:
     def build(self, control_rows: list[dict], flow_id: int) -> FlowGraph:
@@ -1604,6 +1613,14 @@ class TestElseOutputFormulaGate:
         assert by_id[gated_node].skipped is True
         assert by_id[live_node].skipped is False
         assert_branch(collect_node(graph, 6), live, gated, [1, 2, 3])
+
+    @pytest.mark.parametrize("flag, dead", [(True, {"output-1"}), (False, {"output-0"})])
+    def test_run_keeps_formula_routing_on_the_graph(self, flag, dead):
+        graph = self.build([{"flag": flag}], flow_id=91)
+
+        assert graph.run_graph().success is True
+
+        assert graph._last_closed_gate_handles[2] == dead
 
     def test_routing_re_evaluates_when_the_control_data_flips(self):
         graph = self.build([{"flag": True}], flow_id=55)

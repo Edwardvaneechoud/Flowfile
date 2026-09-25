@@ -335,6 +335,52 @@ def test_zero_input_hook_node_never_executes_at_placement():
     assert process_calls == [], "placement of a 0-input hook node must never run process()"
 
 
+def test_zero_input_hookless_kernel_node_never_executes_at_placement(monkeypatch):
+    """A hookless kernel source gets the blocked callback, so the eager prefetch never reaches the kernel."""
+    import time
+
+    import flowfile_core.flowfile.flow_graph as flow_graph_module
+    import flowfile_core.kernel as kernel_module
+
+    kernel_calls: list[str] = []
+
+    def _no_kernel():
+        kernel_calls.append("touched")
+        raise AssertionError("kernel touched at add time")
+
+    monkeypatch.setattr(kernel_module, "get_kernel_manager", _no_kernel)
+    monkeypatch.setattr(flow_graph_module, "get_kernel_manager", _no_kernel)
+
+    class KernelSourceNoHook(CustomNodeBase):
+        node_name: str = "Kernel Source No Hook"
+        node_category: str = "Testing"
+        number_of_inputs: int = 0
+        environment: str = "kernel"
+        settings_schema: NodeSettings = NodeSettings(
+            main_section=Section(title="Config", note=TextInput(label="Note")),
+        )
+
+        def process(self, *inputs):
+            return pl.LazyFrame({"generated": [1]})
+
+    node_store.add_to_custom_node_store(KernelSourceNoHook)
+    flow = create_graph()
+    flow.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=1, node_type="kernel_source_no_hook"))
+    flow.add_user_defined_node(
+        custom_node=KernelSourceNoHook.from_settings({}),
+        user_defined_node_settings=input_schema.UserDefinedNode(
+            flow_id=1, node_id=1, settings={}, is_user_defined=True, kernel_id="k"
+        ),
+    )
+    node = flow.get_node(1)
+    assert node._executes_on_kernel is True
+    assert not node.get_predicted_schema()
+    time.sleep(0.3)  # let any orphaned background prefetch surface
+    assert kernel_calls == [], "placement of a hookless kernel source must never reach the kernel"
+    assert "kernel node 'kernel_source_no_hook' (id 1) has not run" in node._schema_prediction_blocked
+    assert node.results.warnings == node._schema_prediction_blocked
+
+
 def test_multi_output_single_schema_falls_back_to_execution():
     """A single frame from a multi-output hook is ambiguous — exec tier must fill handles."""
 

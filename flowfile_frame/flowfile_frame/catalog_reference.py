@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph import FlowGraph
     from flowfile_core.schemas.catalog_schema import CatalogTableOut
     from flowfile_frame.flow_frame import FlowFrame
+    from flowfile_frame.run_flow import FlowRef
 
 WriteMode: TypeAlias = Literal["overwrite", "error", "append", "upsert", "update", "delete", "scd2", "virtual"]
 
@@ -163,6 +164,16 @@ class CatalogReference:
         """
         return SchemaReference(self, name, auto_create=auto_create, description=description)
 
+    def get_schema(
+        self,
+        name: str,
+        *,
+        auto_create: bool = False,
+        description: str | None = None,
+    ) -> SchemaReference:
+        """Alias of :meth:`schema`, named like ``flowfile_ctx.get_catalog(...).get_schema(...)``."""
+        return self.schema(name, auto_create=auto_create, description=description)
+
     def list_schemas(self) -> list[SchemaReference]:
         """Return all schemas (level-1 namespaces) under this catalog."""
         with get_db_context() as db:
@@ -283,6 +294,38 @@ class SchemaReference:
                 user_id=_get_current_user_id(),
             )
 
+    def get_flow(self, name: str) -> FlowRef:
+        """Return the flow registered under ``name`` in this schema.
+
+        Raises :class:`flowfile_core.catalog.FlowNotFoundError` when there is none and
+        :class:`flowfile_core.catalog.AmbiguousFlowError` when the name is registered twice.
+        Equivalent to ``flowfile_frame.flow_ref(self, name)``.
+        """
+        from flowfile_frame.run_flow import flow_ref
+
+        return flow_ref(self, name)
+
+    def list_flows(self) -> list[FlowRef]:
+        """Return the flows registered in this schema, by name."""
+        from flowfile_frame.run_flow import _list_flow_refs
+
+        return _list_flow_refs(self)
+
+    def register_flow(
+        self,
+        flow_or_frame: FlowGraph | FlowFrame,
+        *,
+        name: str,
+        overwrite: bool = False,
+    ) -> FlowRef:
+        """Save a flow and register it in this schema under ``name``.
+
+        Equivalent to ``flowfile_frame.register_flow(flow_or_frame, name=name, schema=self)``.
+        """
+        from flowfile_frame.run_flow import register_flow
+
+        return register_flow(flow_or_frame, name=name, schema=self, overwrite=overwrite)
+
     def read_table(
         self,
         name: str,
@@ -357,6 +400,20 @@ class SchemaReference:
             track_changes=track_changes,
             description=description,
         )
+
+
+def get_catalog(name: str) -> CatalogReference:
+    """Return the existing catalog ``name``, like ``CatalogReference(name)``.
+
+    Named like ``flowfile_ctx.get_catalog`` so ``get_catalog(...).get_schema(...).get_flow(...)``
+    reads the same in a script and in a kernel.
+
+    Raises
+    ------
+    flowfile_core.catalog.NamespaceNotFoundError
+        The catalog does not exist.
+    """
+    return CatalogReference(name)
 
 
 def list_catalogs() -> list[CatalogReference]:

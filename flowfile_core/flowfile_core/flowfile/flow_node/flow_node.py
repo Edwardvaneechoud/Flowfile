@@ -54,6 +54,11 @@ from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.output_model import FileColumn, NodeData, TableExample
 from flowfile_core.utils.arrow_reader import get_read_top_n
 
+
+class DeferredNodeError(RuntimeError):
+    """Raised when a node marked ``deferred_until_run`` would be executed outside a flow run."""
+
+
 ExternalTaskHandle = (
     ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter | ExternalCloudWriter | ExternalOutputWriter
 )
@@ -76,12 +81,17 @@ def kernel_block_reason(node: "FlowNode", include_self: bool) -> str | None:
         if current.node_stats.has_completed_last_run:
             continue
         if current._executes_on_kernel:
-            return (
-                f"Columns can't be predicted yet: kernel node '{current.name}' (id {current.node_id}) "
-                f"has not run. Run it to resolve them."
-            )
+            return kernel_not_run_reason(current)
         stack.extend(n for n, _ in current._slot_input_pairs() if n is not None)
     return None
+
+
+def kernel_not_run_reason(node: "FlowNode") -> str:
+    """A kernel node's columns are only known once it has run; prediction never executes it."""
+    return (
+        f"Columns can't be predicted yet: kernel node '{node.name}' (id {node.node_id}) "
+        f"has not run. Run it to resolve them."
+    )
 
 
 def data_needed_block_reason(node: "FlowNode") -> str:
@@ -173,6 +183,7 @@ class FlowNode:
     _schema_prediction_blocked: str | None
     _prediction_requires_data: bool  # stamped at placement: prediction needs a collect
     _executes_on_kernel: bool  # stamped at placement: function runs on a kernel container
+    deferred_until_run: bool  # seeded placeholder output; only a real run may execute the node
 
     def __init__(
         self,
@@ -264,6 +275,7 @@ class FlowNode:
         self._schema_prediction_blocked = None
         self._prediction_requires_data = False
         self._executes_on_kernel = False
+        self.deferred_until_run = False
 
     @property
     def state_needs_reset(self) -> bool:
@@ -322,6 +334,8 @@ class FlowNode:
         """
 
         def schema_callback() -> list[FlowfileColumn]:
+            if self.deferred_until_run:
+                raise DeferredNodeError(f"node {self.node_id} is deferred until the flow runs")
             try:
                 logger.info("Executing the schema callback function based on the node function")
                 with self._execution_lock:
@@ -1231,6 +1245,8 @@ class FlowNode:
         if self.is_setup:
             with self._execution_lock_held():
                 if self.results.resulting_data is None and self.results.errors is None:
+                    if self.deferred_until_run:
+                        raise DeferredNodeError(f"node {self.node_id} is deferred until the flow runs")
                     self.print("getting resulting data")
                     # Drop handles from a previous run; multi-output nodes repopulate them below.
                     self._named_outputs = {}
@@ -1322,7 +1338,12 @@ class FlowNode:
 
         Returns:
             A FlowDataEngine instance with predicted data, or an empty one on error.
+
+        Raises:
+            DeferredNodeError: The node is deferred until the flow runs.
         """
+        if self.deferred_until_run:
+            raise DeferredNodeError(f"node {self.node_id} is deferred until the flow runs")
         restorations = []
         flow_params = self._params_getter() if self._params_getter else {}
         if flow_params:
@@ -1863,7 +1884,9 @@ class FlowNode:
     def reset(self, deep: bool = False):
         """Resets the node's execution state and schema information.
 
-        This also triggers a reset on all downstream nodes.
+        This also triggers a reset on all downstream nodes. A start node's eager schema
+        prefetch is skipped while ``deferred_until_run`` is set: without a declared schema
+        callback that prefetch runs the node function.
 
         Args:
             deep: If True, forces a reset even if the hash hasn't changed.
@@ -1896,7 +1919,7 @@ class FlowNode:
                 # masks I/O latency. Downstream nodes' callbacks read upstream
                 # node state, so eagerly starting them races with the cascade
                 # of resets that graph.reset() is currently performing.
-                if self.is_start and self.schema_callback:
+                if self.is_start and not self.deferred_until_run and self.schema_callback:
                     logger.info(f"{self.node_id}: Resetting the schema callback")
                     self.schema_callback.start()
             self.evaluate_nodes()

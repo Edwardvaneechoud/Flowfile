@@ -236,6 +236,20 @@ class AmbiguousTableError(CatalogError):
         super().__init__(f"Table name '{name}' is ambiguous; candidates: {rendered}")
 
 
+class AmbiguousFlowError(CatalogError):
+    """Raised when a flow name matches more than one registration and no narrower
+    namespace was supplied.
+
+    Carries the list of candidate ``{id, name, namespace_id, namespace_name}`` dicts so
+    callers can render them in an error message."""
+
+    def __init__(self, name: str, candidates: list[dict]):
+        self.name = name
+        self.candidates = candidates
+        rendered = ", ".join(f"{c.get('namespace_name') or '<root>'}.{c['name']} (id={c['id']})" for c in candidates)
+        super().__init__(f"Flow name '{name}' is ambiguous; candidates: {rendered}")
+
+
 class TableFavoriteNotFoundError(CatalogError):
     """Raised when a table favorite record is not found."""
 

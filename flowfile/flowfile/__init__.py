@@ -66,7 +66,17 @@ from flowfile_core.schemas.schemas import FlowInformation, FlowSettings
 from flowfile_frame import (
     CatalogReference,
     FuzzyMapping,
+    Gate,
+    GateOperator,
+    GateOperatorLiteral,
+    NativeNodeError,
+    Node,
+    NodeType,
+    NodeTypes,
+    ParamType,
+    ParamTypeLiteral,
     SchemaReference,
+    add_flow_parameter,
     concat,
     create_cloud_storage_connection,
     create_cloud_storage_connection_if_not_exists,
@@ -83,6 +93,7 @@ from flowfile_frame import (
     list_catalogs,
     list_files,
     read_api,
+    read_catalog_sql,
     read_catalog_table,
     read_csv,
     read_database,
@@ -90,22 +101,25 @@ from flowfile_frame import (
     read_from_cloud_storage,
     read_kafka,
     read_parquet,
+    register_flow_with_catalog,
     scan_csv,
     scan_csv_from_cloud_storage,
     scan_delta,
     scan_json_from_cloud_storage,
     scan_parquet,
     scan_parquet_from_cloud_storage,
+    set_flow_parameter,
     write_catalog_table,
     write_database,
     write_to_cloud_storage,
 )
-
-# TODO(catalog): add a top-level get_catalog(name) helper (delegating to CatalogReference/
-# list_catalogs) and re-export read_catalog_sql, so scripts skip `from flowfile_frame import ...`.
+from flowfile_frame.catalog_reference import get_catalog
+from flowfile_frame.custom_node import CustomNode, CustomNodeFactory, custom_node
 from flowfile_frame.expr import col, column, count, cum_count, len, lit, max, mean, min, sum, when
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.group_frame import GroupByFrame
+from flowfile_frame.python_script import PythonScript
+from flowfile_frame.run_flow import FlowInput, FlowRef, RunFlow, flow_ref, register_flow
 from flowfile_frame.selectors import (
     all_,
     boolean,
@@ -152,9 +166,12 @@ __all__ = [
     "from_raw_data",
     "list_files",
     "read_catalog_table",
+    "read_catalog_sql",
     "write_catalog_table",
+    "register_flow_with_catalog",
     "CatalogReference",
     "SchemaReference",
+    "get_catalog",
     "list_catalogs",
     "default_schema",
     "concat",
@@ -188,6 +205,27 @@ __all__ = [
     "FlowfileColumn",
     "FlowInformation",
     "FuzzyMapping",
+    # Native node classes
+    "Gate",
+    "Node",
+    "NativeNodeError",
+    "FlowInput",
+    "RunFlow",
+    "FlowRef",
+    "flow_ref",
+    "register_flow",
+    "CustomNode",
+    "CustomNodeFactory",
+    "custom_node",
+    "PythonScript",
+    "add_flow_parameter",
+    "set_flow_parameter",
+    "GateOperator",
+    "GateOperatorLiteral",
+    "ParamType",
+    "ParamTypeLiteral",
+    "NodeTypes",
+    "NodeType",
     # Expression API
     "col",
     "lit",

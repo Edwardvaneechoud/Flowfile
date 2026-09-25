@@ -194,6 +194,7 @@ nav:
       - Joins: users/python-api/reference/joins.md
       - Cloud Storage: users/python-api/reference/cloud-connections.md
       - Visual UI Integration: users/python-api/reference/visual-ui.md
+      - Native Node Classes: users/python-api/reference/native-nodes.md
     - Tutorials:
       - users/python-api/tutorials/index.md
       - Building Flows with Code: users/python-api/tutorials/flowfile_frame_api.md

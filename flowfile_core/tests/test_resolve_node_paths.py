@@ -553,6 +553,31 @@ class TestWriteInputsToParquet:
             with pytest.raises(OSError, match="disk full"):
                 write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2)
 
+    def test_local_flag_writes_in_process_with_offload_on(self, tmp_path: Path):
+        """local=True writes the parquet files in-process even when worker offload is on."""
+
+        class _PathManager:
+            def to_kernel_path(self, path: str) -> str:
+                return path
+
+        def _no_worker(**kwargs):
+            raise AssertionError("worker must not be used for a local graph")
+
+        input_dir = str(tmp_path / "inputs")
+        ft1 = FlowDataEngine(pl.LazyFrame({"a": [1, 2]}))
+        ft2 = FlowDataEngine(pl.LazyFrame({"b": ["x"]}))
+        with (
+            patch("flowfile_core.kernel.execution.OFFLOAD_TO_WORKER", MutableBool(True)),
+            patch("flowfile_core.kernel.execution.ExternalDfFetcher", side_effect=_no_worker),
+        ):
+            result = write_inputs_to_parquet(
+                (ft1, ft2), _PathManager(), input_dir, 1, 2, input_names=["orders", "clients"], local=True
+            )
+
+        assert pl.read_parquet(result["orders"][0]).to_dict(as_series=False) == {"a": [1, 2]}
+        assert pl.read_parquet(result["clients"][0]).to_dict(as_series=False) == {"b": ["x"]}
+        assert result["main"] == result["orders"] + result["clients"]
+
 
 class TestWriteParquetLocally:
     """Unit tests for _write_parquet_locally."""

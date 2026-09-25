@@ -166,6 +166,32 @@ def test_create_graph():
     assert graph.__name__ == 'new_flow', 'Flow name should be new_flow'
 
 
+def test_create_graph_without_settings_is_standalone_and_local():
+    graph = FlowGraph()
+    assert graph.flow_id > 0
+    assert graph.flow_settings.flow_id == graph.flow_id
+    assert graph.flow_settings.name == f"Flow_{graph.flow_id}"
+    assert graph.flow_settings.path == ""
+    assert graph.flow_settings.track_history is False
+    assert graph.execution_location == "local"
+    assert FlowGraph().flow_id != graph.flow_id
+
+
+def test_standalone_graph_adopts_the_file_stem_on_its_first_save(tmp_path):
+    from flowfile_core.flowfile.manage.io_flowfile import open_flow
+
+    graph = FlowGraph()
+    assert graph.__name__ == graph.flow_settings.name == f"Flow_{graph.flow_id}"
+    target = tmp_path / "my_pipeline.yaml"
+
+    graph.save_flow(str(target))
+
+    assert graph.__name__ == graph.flow_settings.name == "my_pipeline"
+    assert graph.flow_settings.save_location == str(target.absolute())
+    reopened = open_flow(target)
+    assert reopened.__name__ == reopened.flow_settings.name == "my_pipeline"
+
+
 def test_add_node_promise_for_manual_input():
     graph = create_graph()
     node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='manual_input')

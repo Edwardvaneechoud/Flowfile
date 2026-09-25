@@ -91,7 +91,12 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     MLTrainFetcher,
     fetch_kafka_offsets,
 )
-from flowfile_core.flowfile.flow_node.flow_node import FlowNode, data_needed_block_reason, kernel_block_reason
+from flowfile_core.flowfile.flow_node.flow_node import (
+    FlowNode,
+    data_needed_block_reason,
+    kernel_block_reason,
+    kernel_not_run_reason,
+)
 from flowfile_core.flowfile.flow_node.input_handles import input_handle, input_handle_index
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
@@ -153,7 +158,7 @@ from flowfile_core.flowfile.util.skip_rules import (
     gate_has_else_output,
     uses_any_rule,
 )
-from flowfile_core.flowfile.utils import snake_case_to_camel_case
+from flowfile_core.flowfile.utils import create_unique_id, snake_case_to_camel_case
 from flowfile_core.kafka.connection_manager import (
     build_consumer_config,
     get_kafka_connection,
@@ -2086,7 +2091,7 @@ class FlowGraph:
 
     def __init__(
         self,
-        flow_settings: schemas.FlowSettings | schemas.FlowGraphConfig,
+        flow_settings: schemas.FlowSettings | schemas.FlowGraphConfig | None = None,
         name: str = None,
         input_cols: list[str] = None,
         output_cols: list[str] = None,
@@ -2097,7 +2102,9 @@ class FlowGraph:
         """Initializes a new FlowGraph instance.
 
         Args:
-            flow_settings: The configuration settings for the flow.
+            flow_settings: The configuration settings for the flow. When omitted, a standalone
+                in-process graph is created: a fresh flow id, no file path, history off and
+                local execution.
             name: The name of the flow.
             input_cols: A list of input column names.
             output_cols: A list of output column names.
@@ -2105,7 +2112,13 @@ class FlowGraph:
             input_flow: An optional existing data object to start the flow with.
             cache_results: A global flag to enable or disable result caching.
         """
-        if isinstance(flow_settings, schemas.FlowGraphConfig):
+        if flow_settings is None:
+            flow_id = create_unique_id()
+            name = name or f"Flow_{flow_id}"
+            flow_settings = schemas.FlowSettings(
+                flow_id=flow_id, name=name, path="", track_history=False, execution_location="local"
+            )
+        elif isinstance(flow_settings, schemas.FlowGraphConfig):
             flow_settings = schemas.FlowSettings.from_flow_settings_input(flow_settings)
 
         self._flow_settings = flow_settings
@@ -2129,6 +2142,8 @@ class FlowGraph:
         # previous run's partial concat. In-memory only: a fresh graph instance
         # rotates parent_uuid, so caches are cold anyway.
         self._any_input_liveness: dict[str | int, frozenset] = {}
+        # Gate id -> dead output handles of the last run_graph (parameter and formula gates).
+        self._last_closed_gate_handles: dict[str | int, frozenset[str]] = {}
         # Visual node groups: organizational only, never read by the executor.
         # Membership lives on each node's setting_input.group_id; this is the box registry.
         self._groups: dict[int, schemas.GroupInformation] = {}
@@ -3056,9 +3071,11 @@ class FlowGraph:
                 node_id=user_defined_node_settings.node_id,
                 output_names=output_names,
             )
-        elif not kernel_id and bool(getattr(custom_node, "requires_data_for_prediction", False)):
-            # Hookless data-dependent node: never predict by executing; block until run.
-            schema_callback = self._make_blocked_prediction_callback(node_id=user_defined_node_settings.node_id)
+        elif kernel_id or bool(getattr(custom_node, "requires_data_for_prediction", False)):
+            # Hookless kernel or data-dependent node: never predict by executing; block until run.
+            schema_callback = self._make_blocked_prediction_callback(
+                node_id=user_defined_node_settings.node_id, on_kernel=bool(kernel_id)
+            )
         else:
             # Traceability: a stale registry class (or a genuinely hook-less node)
             # lands here and schema prediction degrades to the execution tier.
@@ -3146,11 +3163,11 @@ class FlowGraph:
             return pl_schema_to_flowfile_columns(value)
         return None
 
-    def _make_blocked_prediction_callback(self, *, node_id: int) -> Callable:
-        """Hookless ``requires_data_for_prediction=True``: prediction must never
-        execute ``process()``. Wired through ``add_node_step`` so a 0-input
+    def _make_blocked_prediction_callback(self, *, node_id: int, on_kernel: bool = False) -> Callable:
+        """Hookless ``requires_data_for_prediction=True`` or kernel node: prediction must
+        never execute ``process()``. Wired through ``add_node_step`` so a 0-input
         node's eager prefetch hits this cheap callback instead of the real
-        function."""
+        function. ``on_kernel`` selects the kernel wording of the warning."""
 
         def schema_callback() -> list[FlowfileColumn]:
             node = self.get_node(node_id)
@@ -3159,7 +3176,7 @@ class FlowGraph:
             if node.node_stats.has_completed_last_run and node.node_schema.result_schema:
                 node._schema_prediction_blocked = None
                 return node.node_schema.result_schema
-            reason = data_needed_block_reason(node)
+            reason = kernel_not_run_reason(node) if on_kernel else data_needed_block_reason(node)
             node._schema_prediction_blocked = reason
             node.results.warnings = reason
             return []
@@ -3380,7 +3397,13 @@ class FlowGraph:
         node = self.get_node(node_id)
         input_names = self._resolve_input_names(node, len(flow_data_engine))
         input_paths = write_inputs_to_parquet(
-            flow_data_engine, manager, input_dir, flow_id, node_id, input_names=input_names
+            flow_data_engine,
+            manager,
+            input_dir,
+            flow_id,
+            node_id,
+            input_names=input_names,
+            local=self.execution_location == "local",
         )
 
         request = build_execute_request(
@@ -7590,6 +7613,8 @@ class FlowGraph:
             # classifies each dead handle's downstream as deliberately skipped
             # (green, not failed). Formula gates are decided when they execute.
             closed_gate_handles = self._evaluate_gate_conditions()
+            # Same dict the stage loop folds formula-gate decisions into, so it ends as the run's final routing.
+            self._last_closed_gate_handles = closed_gate_handles
 
             execution_plan = compute_execution_plan(
                 nodes=self.nodes,
@@ -7770,12 +7795,15 @@ class FlowGraph:
     def _handle_flow_renaming(self, new_name: str, new_path: Path):
         """Adopt the target file's stem as the flow name, but only when a save relocates the flow.
 
-        A same-path save must never rename — the name can have been set from the
-        catalog (``POST /editor/rename_flow/``) and the file stem is not authoritative.
+        A graph without a path (``FlowGraph()``, a Python-built flow) has never been saved, so
+        its first save relocates it and adopts the stem. A same-path save must never rename —
+        the name can have been set from the catalog (``POST /editor/rename_flow/``) and the
+        file stem is not authoritative.
         """
         if not self.flow_settings:
             return
-        if self.flow_settings.path and Path(self.flow_settings.path).absolute() != new_path.absolute():
+        current_path = self.flow_settings.path
+        if not current_path or Path(current_path).absolute() != new_path.absolute():
             self.__name__ = new_name
             self.flow_settings.save_location = str(new_path.absolute())
             self.flow_settings.name = new_name

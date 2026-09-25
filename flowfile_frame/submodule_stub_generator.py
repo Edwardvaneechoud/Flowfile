@@ -41,9 +41,12 @@ def _unparse(node: ast.AST) -> str:
         return "Any"
 
 
+_PUBLIC_DUNDERS = frozenset({"__init__", "__call__", "__getitem__", "__iter__", "__len__"})
+
+
 def _is_public(name: str) -> bool:
-    """Public names: don't start with `_`, plus `__init__` always allowed."""
-    return name == "__init__" or not name.startswith("_")
+    """Public names: don't start with `_`, plus the allow-listed dunders in ``_PUBLIC_DUNDERS``."""
+    return name in _PUBLIC_DUNDERS or not name.startswith("_")
 
 
 def _render_function(node: ast.FunctionDef | ast.AsyncFunctionDef, indent: str) -> str:
@@ -73,14 +76,19 @@ def _render_class(cls: ast.ClassDef, indent: str = "") -> list[str]:
 
     body_indent = indent + "    "
     body: list[str] = []
+    is_enum = any(base.rsplit(".", 1)[-1].endswith("Enum") for base in bases)
 
-    # Annotated class attributes (`name: Type` or `name: Type = default`).
+    # Annotated class attributes (`name: Type` or `name: Type = default`), and enum members.
     for stmt in cls.body:
         if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
             name = stmt.target.id
             if not _is_public(name):
                 continue
             body.append(f"{body_indent}{name}: {_unparse(stmt.annotation)}")
+        elif is_enum and isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            target = stmt.targets[0]
+            if isinstance(target, ast.Name) and _is_public(target.id):
+                body.append(f"{body_indent}{target.id} = {_unparse(stmt.value)}")
 
     # Methods, properties, nested classes.
     for stmt in cls.body:
@@ -376,7 +384,11 @@ def generate_stub(src_path: Path, module_name: str) -> Path:
         # works, but ``flowfile_frame.expr`` resolves to "Cannot find
         # reference 'expr'" even though ``expr.pyi`` is right there. Listing
         # every sibling as ``from . import name as name`` re-exposes them.
-        sibling_imports = _sibling_submodule_reexports(src_path)
+        exported = {name for line in imports for name in _imported_names(line)}
+        # A submodule shadowed by a same-named export (the ``custom_node`` function) is not re-exported.
+        sibling_imports = [
+            line for line in _sibling_submodule_reexports(src_path) if not _imported_names(line) & exported
+        ]
         if sibling_imports:
             imports = sibling_imports + imports
         # Re-export imports always bind both halves into scope.

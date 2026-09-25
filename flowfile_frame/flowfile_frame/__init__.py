@@ -45,6 +45,7 @@ from polars.datatypes import (  # noqa: F401
     Utf8,
 )
 
+from flowfile_core.flowfile.flow_graph import FlowGraph  # noqa: F401
 from flowfile_core.schemas.input_schema import OutputFieldConfig, OutputFieldInfo  # noqa: F401
 from flowfile_frame.catalog import (  # noqa: F401
     read_catalog_sql,
@@ -56,6 +57,7 @@ from flowfile_frame.catalog_reference import (  # noqa: F401
     CatalogReference,
     SchemaReference,
     default_schema,
+    get_catalog,
     list_catalogs,
 )
 from flowfile_frame.cloud_storage.frame_helpers import (  # noqa: F401
@@ -68,6 +70,7 @@ from flowfile_frame.cloud_storage.secret_manager import (  # noqa: F401
     del_cloud_storage_connection,
     get_all_available_cloud_storage_connections,
 )
+from flowfile_frame.custom_node import CustomNode, CustomNodeFactory, custom_node  # noqa: F401
 
 # Database I/O
 from flowfile_frame.database import (  # noqa: F401
@@ -78,6 +81,14 @@ from flowfile_frame.database import (  # noqa: F401
     get_database_connection_by_name,
     read_database,
     write_database,
+)
+from flowfile_frame.enums import (  # noqa: F401
+    GateOperator,
+    GateOperatorLiteral,
+    NodeType,
+    NodeTypes,
+    ParamType,
+    ParamTypeLiteral,
 )
 
 # Commonly used functions
@@ -123,11 +134,16 @@ from flowfile_frame.flow_frame_methods import (  # noqa: F401
     scan_parquet,
     scan_parquet_from_cloud_storage,
 )
+from flowfile_frame.gate import Gate  # noqa: F401
 
 # File I/O
 from flowfile_frame.kafka import read_kafka  # noqa: F401
 from flowfile_frame.lazy import fold  # noqa: F401
+from flowfile_frame.native import NativeNodeError, Node  # noqa: F401
+from flowfile_frame.parameters import add_flow_parameter, set_flow_parameter  # noqa: F401
+from flowfile_frame.python_script import PythonScript  # noqa: F401
 from flowfile_frame.rest_api import read_api  # noqa: F401
+from flowfile_frame.run_flow import FlowInput, FlowRef, RunFlow, flow_ref, register_flow  # noqa: F401
 
 # Selector utilities
 from flowfile_frame.selectors import (  # noqa: F401

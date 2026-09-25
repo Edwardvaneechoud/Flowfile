@@ -419,6 +419,10 @@ class NodeExecutor:
         self.node.results.errors = None
         self.node.results.resulting_data = None
         self.node.results.example_data = None
+        if self.node.deferred_until_run:
+            self.node.deferred_until_run = False
+            # the seed's per-handle schemas would outlive the run: multi-output refills skip them
+            self.node._named_schemas = {}
 
     def _clear_cache(self, state: NodeExecutionState) -> None:
         """Clear cached results."""

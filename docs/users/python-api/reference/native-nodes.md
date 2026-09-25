@@ -1,0 +1,385 @@
+# Native Node Classes
+
+This page covers the canvas node types that have no fluent `FlowFrame` method, and the Python classes that place them: `Gate`, `FlowInput` / `to_flow_output`, `RunFlow`, `custom_node` / `CustomNode`, `PythonScript` and the generic `Node`, plus the helpers they use (flow parameters, flow references, flow registration). Each call adds one node to the same `FlowGraph` the fluent methods build, so the flow opens in the designer like any other.
+
+Prose fragments use `import flowfile as fl`. The tested examples, which run in CI on every commit, use `ff`; both names refer to the same module. The examples share these imports:
+
+```python
+--8<-- "docs/examples/native_nodes.py:imports"
+```
+
+## Common surface
+
+Every class returns an object with the same accessors:
+
+| Accessor | Returns |
+|---|---|
+| `.output` | The only output frame (on a `Gate`, the `.then` exit). Raises `NativeNodeError` naming the outputs when the node has more than one. |
+| `node["name"]` | The output frame with that name. |
+| `.outputs` | The output names, in handle order (`output-0` first). |
+| `.node_id`, `.node`, `.flow_graph` | The node id, the placed core `FlowNode`, and the graph it lives on. |
+
+Every class takes `description: str | None = None`, the label shown on the canvas. Classes that can be built without input frames take `flow_graph: FlowGraph | None = None`, the graph to place the node on; when it is omitted a new graph is created, as the readers do. Input frames that live on different graphs are merged onto one graph first, as `join` does.
+
+## Deferred frames
+
+Most nodes produce their output lazily in-process, so building a chain predicts each step's schema without reading data. Some nodes cannot: a subflow call, code that runs in a kernel container, a source that reads an external system. Their output frames are **deferred**.
+
+- A deferred frame holds a typed, zero-row placeholder with the node's predicted columns. **Building never runs the node**; its output exists once the flow runs.
+- Operations on a deferred frame build nodes as usual and return deferred frames. Their schemas are predicted from the placeholder.
+- A writer, `output`, `api_response`, `flow_output`, `explore_data` or model node (`train_model`, `apply_model`, `evaluate_model`) below a deferred frame is placed, but it does not write, publish or train until the flow runs.
+- `collect()` on a deferred frame runs the **whole graph** with `flow_graph.run_graph()`, then returns this node's output; every call runs it again. `describe()`, `profile()`, `fetch()` and `collect_async()` do the same.
+
+| Deferred output | Why |
+|---|---|
+| `fl.RunFlow` | The child flow runs with the parent. |
+| `fl.PythonScript` | The code runs in a kernel container. |
+| `fl.CustomNode` with `kernel=`, a custom node whose schema needs data, or any custom node on a graph that does not execute locally | The node runs in a kernel or the worker, or its columns are only known after it ran. |
+| `fl.Node("google_analytics_reader" / "external_source", ...)` | The node reads an external system. |
+| `fl.Node(..., deferred=True)` | Requested. |
+| Any frame built from a deferred frame | Inherited. |
+
+What `collect()` on a deferred frame does:
+
+1. Runs every node in the graph, including writers and output nodes on other branches.
+2. Judges the result on this node and its ancestors only. A failure on an unrelated branch does not fail the call; a failed or unconfigured ancestor raises `NativeNodeError` with the node errors.
+3. Returns the zero-row frame with the predicted columns when a gate routed this frame away (the node was deliberately skipped, or the frame is a gate's dead exit).
+4. Otherwise returns the node's real output.
+
+!!! warning "Kernel nodes need Docker at run time"
+    When the graph holds a kernel node (`PythonScript`, a kernel `CustomNode`), running it contacts Docker to reach the kernel container. Building those nodes needs neither Docker nor a running kernel.
+
+A frame that is not deferred keeps its plain behaviour: `collect()` evaluates its lazy plan in-process.
+
+## `Gate`
+
+A pass-through node whose downstream only runs when its condition holds. See [Gate](../../visual-editor/nodes/combine.md#gate) for the canvas node.
+
+```python
+fl.Gate(
+    frame: FlowFrame,
+    formula: str | None = None,
+    *,
+    parameter: str | None = None,
+    operator: GateOperatorLiteral | GateOperator = "equals",
+    value: Any = None,
+    control: FlowFrame | None = None,
+    else_output: bool = True,
+    description: str | None = None,
+)
+```
+
+Give exactly one condition:
+
+- **Formula** (positional): a [flowfile formula](../../formulas/index.md). The gate is open when at least one row of `control`, else of `frame`, matches. `control` is wired to the gate's control input, the bottom pip on the canvas.
+- **Parameter**: a flow parameter compared with `operator` and `value`. The parameter must be declared first with [`add_flow_parameter`](#flow-parameters); an undeclared name raises at build.
+
+| `operator` | `fl.GateOperator` | Open when the parameter |
+|---|---|---|
+| `"equals"` | `EQUALS` | equals `value` |
+| `"not_equals"` | `NOT_EQUALS` | differs from `value` |
+| `"in"` | `IN` | is one of `value` (a list) |
+| `"not_in"` | `NOT_IN` | is none of `value` (a list) |
+| `"is_true"` | `IS_TRUE` | reads as boolean true (`true`, `1`, `yes`, `on`) |
+| `"is_false"` | `IS_FALSE` | does not read as true |
+| `"is_set"` | `IS_SET` | is not empty |
+
+The string and the enum member are interchangeable:
+
+=== "Literal"
+
+    ```python
+    gate = fl.Gate(orders, parameter="mode", operator="equals", value="full")
+    ```
+
+=== "Enum"
+
+    ```python
+    gate = fl.Gate(orders, parameter="mode", operator=fl.GateOperator.EQUALS, value="full")
+    ```
+
+`value` is stored in the form the canvas stores: booleans as `"true"` / `"false"`, lists comma-joined. A list with any operator other than `in` / `not_in` raises.
+
+| Accessor | Returns |
+|---|---|
+| `.then` | The exit that is live when the condition holds (`output-0`). |
+| `.otherwise`, `.else_` | The exit that is live when it does not (`output-1`). |
+| `.output` | Same as `.then`. |
+| `.outputs` | `["then", "else"]`, or `["main"]` with `else_output=False`. |
+| `.is_open` | Whether the condition holds now. |
+
+`else_output=False` builds a single-exit gate; `.otherwise` then raises. Both exits of one gate cannot feed the same node; that raises `NativeNodeError`.
+
+`.is_open` on a parameter gate evaluates the graph's current parameter values. On a formula gate it evaluates the probed frame lazily plus a one-row collect; when that frame is deferred it raises, because the placeholder has no rows.
+
+**Routing.** `.then` and `.otherwise` are pass-through frames. Only `flow_graph.run_graph()` and `collect()` on a deferred frame honour the gate: the dead exit's downstream is deliberately skipped (`NodeResult.skipped` is `True`, the run stays green). A plain frame's `collect()` reads through the gate.
+
+To bring the two sides back together, use a `union` node, which runs when at least one input survived: `fl.concat([...], how="diagonal_relaxed")` places one. Every other node below a dead exit is skipped too, including the Polars-code node the default `fl.concat` places.
+
+This diamond routes on a parameter and checks which side the run skipped:
+
+```python
+--8<-- "docs/examples/native_nodes.py:gate"
+```
+
+## Flow parameters
+
+Parameters are the `${name}` values that gates and node settings read. They are what **Flow settings** lists in the designer and what `flowfile run flow --param` overrides on a [headless run](../../deployment/cli.md).
+
+```python
+fl.add_flow_parameter(
+    flow: FlowGraph | FlowFrame,
+    name: str,
+    *,
+    default: Any = "",
+    type: ParamTypeLiteral | ParamType = "string",
+    description: str = "",
+    enum_values: list[str] | None = None,
+) -> FlowParameter
+
+fl.set_flow_parameter(flow: FlowGraph | FlowFrame, name: str, value: Any) -> None
+```
+
+`type` is one of `"string"`, `"integer"`, `"float"`, `"boolean"`, `"enum"` (or the `fl.ParamType` member of the same name); `"enum"` needs `enum_values`. Values are stored as strings (booleans lowercase) and checked against the type. Declaring a name twice raises, and so does setting a name that was never declared.
+
+!!! note "Pass a frame after a merge"
+    Joining frames from two graphs, or a native node over them, merges them into a new graph object. An older `FlowGraph` handle no longer holds the nodes. Pass a frame to the parameter helpers, or re-read `frame.flow_graph`.
+
+## Catalog navigation
+
+Registered flows are reached through the same catalog handles as tables. Each call looks the name up immediately and raises when it is missing:
+
+```python
+clean = fl.get_catalog("Demo").get_schema("sales").get_flow("Clean orders")   # FlowRef
+flows = fl.get_catalog("Demo").get_schema("sales").list_flows()               # list[FlowRef]
+```
+
+The `get_catalog(...).get_schema(...)` chain reads the same as `flowfile_ctx.get_catalog(...).get_schema(...)` inside a kernel. See [Catalog References](catalog-references.md) for `get_catalog`, `get_flow`, `list_flows` and `register_flow` on a schema.
+
+## `FlowInput` and `to_flow_output`
+
+A child flow receives data through Flow Input nodes and returns it through Flow Output nodes. See [Subflows](../../visual-editor/subflows.md) for how a parent calls it.
+
+```python
+fl.FlowInput(
+    name: str,
+    *,
+    schema: Mapping[str, PolarsDataType] | Sequence[tuple[str, PolarsDataType]] | None = None,
+    sample: Mapping[str, Sequence[Any]] | pl.DataFrame | None = None,
+    flow_graph: FlowGraph | None = None,
+    description: str | None = None,
+) -> FlowFrame
+
+FlowFrame.to_flow_output(name: str, *, description: str | None = None) -> FlowFrame
+```
+
+`FlowInput` places a Flow Input node and returns its frame. Give at most one of `schema` and `sample`. `schema` (a dict, `pl.Schema` or list of `(name, dtype)` pairs) declares the columns as a zero-row typed frame; write nested dtypes in full, for example `fl.List(fl.Int64)`. `sample` (a dict of columns or a DataFrame) stores rows that a standalone run of the child reads. With neither, the input is empty. A duplicate input name raises.
+
+`to_flow_output` places a Flow Output node below the frame and returns the **same frame**: the Flow Output node has no outgoing handle, so nothing chains from it.
+
+**Port order is creation order.** A caller sees the child's inputs and outputs in the order the `FlowInput` and `to_flow_output` calls were made.
+
+## `register_flow`
+
+```python
+fl.register_flow(
+    flow_or_frame: FlowGraph | FlowFrame,
+    *,
+    name: str,
+    schema: SchemaReference | None = None,
+    overwrite: bool = False,
+) -> FlowRef
+```
+
+Saves the flow as a YAML file and registers it in the catalog **when it is called**, then returns a [`FlowRef`](#flowref-and-flow_ref). `schema` defaults to the `General > Python Editor` schema. The graph is laid out first so it opens cleanly on the canvas; the file lands in the Python-editor flows folder (`~/.flowfile/flows/python_editor_flows/` by default), and the graph's `flow_settings.path` points at it afterwards.
+
+Re-running a script is idempotent: an existing registration with the same name in the same schema whose file is in that folder is rewritten in place and keeps its id and uuid. A same-name registration whose file is elsewhere (a flow saved from the designer) raises `FlowExistsError`; `overwrite=True` writes over that file instead.
+
+## `FlowRef` and `flow_ref`
+
+`FlowRef` is an immutable, hashable and picklable handle to one registered flow. Get one from `flow_ref`, `register_flow` or a schema's `get_flow`; the constructor only holds values and checks nothing.
+
+| Attribute | Meaning |
+|---|---|
+| `registration_id` | Catalog registration id. |
+| `flow_uuid` | Stable uuid of the flow. |
+| `flow_path` | Absolute path of the flow file. |
+| `name` | Registration name. |
+| `schema` | The `SchemaReference` it is registered under (`None` outside a schema), so `ref.schema.read_table(...)` works from the same handle. |
+| `namespace_full_name` | `"catalog.schema"`, or `None` outside a schema. |
+| `to_subflow_reference()` | The reference a Run Flow node stores. |
+
+```python
+fl.flow_ref(
+    namespace: str | SchemaReference | CatalogReference | None = None,
+    name: str | None = None,
+    *,
+    uuid: str | None = None,
+    registration_id: int | None = None,
+) -> FlowRef
+```
+
+`flow_ref` resolves a flow by name, by `uuid`, or by `registration_id`, looking it up immediately. `namespace` narrows a name lookup: a `"catalog.schema"` string (a bare catalog name selects the catalog itself), a schema or catalog handle, or `None` for every namespace. A `uuid` or `registration_id` is exact and is cross-checked against `name` and `namespace` when those are given too. The registration must point at an existing flow file by absolute path.
+
+```python
+fl.flow_ref("Demo.sales", "Clean orders")
+fl.flow_ref(uuid="4c1f...")
+fl.flow_ref(registration_id=12)
+```
+
+Flow names are unique neither across schemas nor within one. A name that matches more than one registration raises `AmbiguousFlowError` listing the candidates instead of picking one; a missing flow raises `FlowNotFoundError`, and a flow shared with nobody you belong to is left out of name matches (`NotAuthorizedError` for an exact `uuid` / id). All three come from `flowfile_core.catalog`.
+
+## `RunFlow`
+
+Calls a registered flow as a subflow, like the [Run Flow](../../visual-editor/nodes/combine.md#run-flow) node on the canvas.
+
+```python
+fl.RunFlow(
+    flow: FlowRef | int | FlowGraph | FlowFrame,
+    *,
+    name: str | None = None,
+    params: dict[str, Any] | None = None,
+    param_frame: FlowFrame | None = None,
+    iterate: bool = False,
+    append_metadata: bool = True,
+    description: str | None = None,
+    flow_graph: FlowGraph | None = None,
+    **input_frames: FlowFrame,
+)
+```
+
+- `flow`: a `FlowRef`, a registration id, or an unregistered `FlowGraph` / `FlowFrame`. An unregistered flow needs `name=`; it is then registered with [`register_flow`](#register_flow) at build time.
+- `**input_frames`: one keyword per child Flow Input name. An unknown name raises and lists the child's inputs. An input left out falls back to the child's sample data.
+- `params`: keyed by child parameter name; a name the child does not declare raises, and an omitted parameter keeps the child's default. A constant is stored as a string (booleans lowercase) and checked against the parameter's type at build. A plain column (`fl.col("region")`) binds the parameter to that column of `param_frame`, which is then required and must have the column. `param_frame` without any column binding raises.
+- `iterate=True` runs the child once per row of `param_frame` and concatenates the outputs; `False` uses the first row. With `iterate` and `append_metadata`, each output gets a `run_index` column and a `param_<name>` column per bound parameter.
+
+Outputs are [deferred](#deferred-frames) and named after the child's Flow Outputs: `run["large_orders"]`, or `run.output` when there is exactly one. A child without Flow Outputs has one output, `"main"`: a summary row per run (`run_index`, `success`, and a `param_<name>` column per bound parameter). `run.flow` is the `FlowRef` that runs.
+
+```python
+--8<-- "docs/examples/native_nodes.py:subflow"
+```
+
+## `custom_node` and `CustomNode`
+
+Places a [custom node](../../visual-editor/node-designer.md) authored with `node_designer`.
+
+### `custom_node(...)` factory
+
+```python
+fl.custom_node(node: type[CustomNodeBase] | CustomNodeBase | str) -> CustomNodeFactory
+```
+
+Resolves the node class once and returns a callable whose keyword arguments are the node's settings components, flat:
+
+```python
+trim = fl.custom_node(TrimNode)
+cleaned = trim(orders, upper=True)                      # FlowFrame
+kept = fl.custom_node("deduper").node(a, b)["kept"]     # CustomNode, for several outputs
+```
+
+- `factory(*inputs, kernel=None, description=None, settings=None, flow_graph=None, **components) -> FlowFrame` returns the single output frame. A node with several outputs raises and points at `.node(...)`.
+- `factory.node(*inputs, ...) -> CustomNode` takes the same arguments and returns the node object.
+- An unknown keyword raises and lists the valid names. A component name that appears in two sections, or that clashes with `kernel`, `description`, `settings` or `flow_graph`, is only reachable as `section__component`. Naming a component both in `settings=` and as a keyword raises.
+- `help(factory)` and `inspect.signature(factory)` list the components with their defaults.
+
+### `CustomNode`
+
+The canonical form, one-to-one with what the node stores: settings nested per section.
+
+```python
+fl.CustomNode(
+    node: type[CustomNodeBase] | CustomNodeBase | str,
+    *inputs: FlowFrame,
+    settings: dict[str, dict[str, Any]] | None = None,
+    kernel: str | None = None,
+    description: str | None = None,
+    flow_graph: FlowGraph | None = None,
+)
+```
+
+`node` is a class, an instance (its settings values are the base; an instance that overrides any other field raises, since only settings are saved), or the type name of an installed node. An unknown section or component raises, and so does a class whose node name collides with a built-in node or a different installed node. The number of input frames must match the node's `number_of_inputs`. A class defined in your script is registered for the session: a flow saved with it opens on the canvas only in the same process, and elsewhere shows the node as not installed until it is installed there. `.node_class`, `.settings` (the stored envelope) and `.kernel` hold what was placed.
+
+Kernel rules: an `environment="kernel"` node needs `kernel=` (a kernel id, not validated at build), and `kernel=` on an `environment="local"` node raises. Outputs are deferred for a kernel node, for a node whose schema cannot be predicted without data (`requires_data_for_prediction` without a `predict_output_schema` hook), and for a local node on a graph that does not execute locally. Otherwise the output is built eagerly: the local node's `process()` runs at build to produce its lazy plan, as canvas schema prediction does.
+
+The same settings two ways, built but not run:
+
+```python
+--8<-- "docs/examples/native_nodes.py:custom-node"
+```
+
+## `PythonScript`
+
+Places a [Python Script](../../visual-editor/kernels.md) node, whose code runs in a kernel container.
+
+```python
+fl.PythonScript(
+    *inputs: FlowFrame,
+    code: str | None = None,
+    cells: list[str] | None = None,
+    kernel: str | Any | None = None,
+    outputs: list[str] | None = None,
+    description: str | None = None,
+    flow_graph: FlowGraph | None = None,
+)
+```
+
+- Give exactly one of `code` or `cells`. The node stores both forms: the cells, and `code` as the non-empty cells joined by blank lines (what the kernel executes).
+- `kernel` is a kernel id, or an object with an `.id`, stored as given. It is **not** checked at build: a missing or unknown kernel fails when the flow runs.
+- `outputs` names the output handles (default `["main"]`); publish to them with `flowfile_ctx.publish_output(df, "name")`.
+- Inputs are wired in order. Inside the kernel, `flowfile_ctx.read_input()` reads all of them; each is also readable by name, which is the upstream node's reference if set, else `df_<node_id>`.
+
+Outputs are [deferred](#deferred-frames), with the first input's schema (no columns without inputs). `.code`, `.cells` and `.kernel` hold what was stored. See the [`flowfile_ctx` API](../../visual-editor/kernel-api.md) for the code side.
+
+```python
+--8<-- "docs/examples/native_nodes.py:script"
+```
+
+## `Node`
+
+Places any built-in node type from its type name and settings.
+
+```python
+fl.Node(
+    node_type: NodeType | NodeTypes,
+    *inputs: FlowFrame,
+    settings: dict[str, Any] | BaseModel | None = None,
+    deferred: bool | None = None,
+    description: str | None = None,
+    flow_graph: FlowGraph | None = None,
+)
+```
+
+- `node_type` is a type name (`"sql_query"`) or its `fl.NodeTypes` member (`fl.NodeTypes.SQL_QUERY`).
+- `settings` is the node's settings model or a dict of its fields; the models live in `flowfile_core.schemas.input_schema`. An unknown top-level key raises. The node sets `flow_id`, `node_id`, the position, `is_setup`, `user_id` and `depending_on_id(s)` itself and refuses them in `settings`.
+- Multi-input nodes (`union`, `polars_code`, `sql_query`, `python_script`) take every frame on one input, in order; `sql_query` reads them as `input_1`, `input_2`, .... Other nodes take frame *i* on input *i*, at most three.
+- `deferred` overrides whether the output is deferred.
+- `"promise"`, `"polars_lazy_frame"` and custom node types are refused; use `fl.FlowFrame(lazy_frame)` or [`fl.CustomNode`](#customnode) for those. `run_flow` is refused too, because its inputs are keyed by slot; use [`fl.RunFlow`](#runflow). `flow_input` and `flow_output` work, but the dedicated helpers above are the normal route.
+
+```python
+--8<-- "docs/examples/native_nodes.py:sql"
+```
+
+## Errors
+
+Every build or materialisation failure raises `fl.NativeNodeError`, a subclass of `ValueError`: bad arguments, wrong input counts, refused connections, a failed ancestor during `collect()`. Catalog lookups raise the `flowfile_core.catalog` errors (`NamespaceNotFoundError`, `FlowNotFoundError`, `AmbiguousFlowError`, `FlowExistsError`, `NotAuthorizedError`). A node that fails to build is removed from the graph again.
+
+## Known limits
+
+- **Gates route only on a run.** A gate exit that is not deferred collects through the gate; only `flow_graph.run_graph()` and `collect()` on a deferred frame skip the dead side.
+- **`pivot` below a deferred frame raises at build.** Its columns come from the pivot column's values, which the zero-row placeholder does not have: `ValueError: Failed to fetch unique values`. When a `flowfile_worker` process answers that probe instead, the pivot builds with only its index columns. Collect the input first.
+- **Changing a deferred frame's node after building on it raises.** `set_group()` or `cache()` on a deferred frame, followed by another operation on it, raises `NativeNodeError`. Apply the change before building further, or collect first.
+- **Build-time effects are refused on deferred frames.** `sink_*`, `inspect`, the Polars-code fallbacks of `write_parquet` / `write_csv` / `write_excel`, and expressions without a code form raise `NativeNodeError`. Use a `write_*` method with a native writer node, or collect first.
+- **Three inputs at most** on nodes with fixed inputs, custom nodes included; the canvas has the same limit.
+- **Local custom nodes run `process()` at build** to build their lazy plan, as canvas schema prediction does.
+- **Kernel ids are not validated at build.** `collect()` on a deferred frame re-runs every output and writer node in the graph, and contacts Docker when the graph holds a kernel node.
+- **`${param}` in a Polars code node fails at build.** A child flow built in Python cannot use `${param}` inside a `polars_code` node: the add-time syntax check runs before parameters are substituted, so `fl.Node("polars_code", ...)` raises `NativeNodeError`. An advanced filter that references `${param}` builds, but logs a parse warning unless it is placed with `fl.Node(..., deferred=True)`.
+- **Registration writes at build time.** `register_flow` and `RunFlow(graph, name=...)` write a YAML file and a catalog row when called.
+- **`train_model(publish_to_catalog=True)` needs a registered flow.** On a graph built in Python, call `fl.register_flow(flow, name=...)` first.
+- **Reopened flow names.** A registered flow keeps its registration name when reopened only if its file is in the Python-editor flows folder; elsewhere the designer names it after the file.
+- **`FlowFrame(data, flow)` treats the second positional argument as `schema`.** Pass `flow_graph=` by keyword.
+- **`custom_node(...)` keywords are checked at call time** from the node's settings schema; IDEs do not complete them.
+- **Code export does not emit these classes.** Exporting a flow to Python renders a gate as `if` blocks and a custom node as its inlined `process()`.
+- **No typed class per built-in node.** Node types without a dedicated class above are placed with `fl.Node` and a settings dict or model.
+
+---
+[← Previous: Catalog References](catalog-references.md)
