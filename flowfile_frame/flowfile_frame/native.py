@@ -27,6 +27,7 @@ from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_map
 from flowfile_core.flowfile.flow_node.flow_node import DeferredNodeError, FlowNode
 from flowfile_core.flowfile.flow_node.input_handles import input_handle
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
+from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model, node_parameters_resolved
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import GraphicWalkerInput
 from flowfile_core.schemas.schemas import NodeTemplate, get_settings_class_for_node_type
@@ -103,6 +104,41 @@ def predicted_schema_without_running(node: FlowNode) -> list[FlowfileColumn]:
 def seed_from_predicted_schema(node: FlowNode) -> None:
     """Seed ``node`` on output-0 with its own predicted schema, never executing it."""
     seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: predicted_schema_without_running(node)})
+
+
+def _undeclared_parameters_error(node: FlowNode, names: set[str]) -> NativeNodeError:
+    return NativeNodeError(
+        f"{node.node_type} node {node.node_id} references undeclared flow parameter(s) {sorted(names)}; "
+        "declare them with fl.add_flow_parameter(graph, fl.Parameter(name, default=...))"
+    )
+
+
+def materialise(node: FlowNode, handle: str | None = None) -> FlowDataEngine:
+    """Build-time read of ``node``'s output, with its flow ``${name}`` references resolved.
+
+    Every build-time read goes through here so a node sees its parameters the way the run loop
+    does (``node_parameters_resolved``): expression fields get typed literals, other strings plain
+    text, and the stored settings keep the reference. A reference to an undeclared parameter
+    raises instead of reaching Polars as text, also on a graph that declares no parameters (where
+    the run loop would leave it untouched).
+
+    Build-time data reflects the parameter values at the moment the node is built; ``run_graph()``
+    (and ``collect()`` on deferred or gated frames) re-resolves with the values of that run.
+    ``handle`` reads one output handle through ``get_output``; ``None`` reads the default output.
+    """
+    params_getter = getattr(node, "_params_getter", None)
+    params = params_getter() if params_getter is not None else {}
+    if not params:
+        unresolved = find_unresolved_in_model(node.setting_input)
+        if unresolved:
+            raise _undeclared_parameters_error(node, unresolved)
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(node_parameters_resolved(node))
+        except ValueError as exc:
+            undeclared = find_unresolved_in_model(node.setting_input) - set(params)
+            raise _undeclared_parameters_error(node, undeclared) from exc
+        return node.get_output(handle) if handle is not None else node.get_resulting_data()
 
 
 def ancestors(node: FlowNode) -> dict[int, FlowNode]:
@@ -407,7 +443,7 @@ class NativeNode:
         inherited = any(f._deferred for f in frames)
         self._frames = {
             handle: FlowFrame(
-                data=node.get_output(handle).data_frame,
+                data=materialise(node, handle).data_frame,
                 flow_graph=self.flow_graph,
                 node_id=self.node_id,
                 parent_node_id=frames[0].node_id if frames else None,

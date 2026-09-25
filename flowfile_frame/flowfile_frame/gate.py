@@ -12,7 +12,12 @@ from flowfile_core.flowfile.parameter_resolver import resolve_parameters
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_frame.enums import GateOperator, GateOperatorLiteral, _literal
 from flowfile_frame.native import NativeNode, NativeNodeError
-from flowfile_frame.parameters import _as_parameter_string
+from flowfile_frame.parameters import (
+    Parameter,
+    _as_parameter_string,
+    _param_name,
+    refuse_parameter_column_in_formula,
+)
 
 if TYPE_CHECKING:
     from flowfile_frame.flow_frame import FlowFrame
@@ -54,7 +59,7 @@ class Gate(NativeNode):
         frame: FlowFrame,
         formula: str | None = None,
         *,
-        parameter: str | None = None,
+        parameter: str | Parameter | None = None,
         operator: GateOperatorLiteral | GateOperator = "equals",
         value: Any = None,
         control: FlowFrame | None = None,
@@ -65,6 +70,8 @@ class Gate(NativeNode):
             raise NativeNodeError("Gate takes exactly one condition: a formula, or parameter=... with operator/value")
         if formula is not None and not formula.strip():
             raise NativeNodeError("Gate formula is empty")
+        refuse_parameter_column_in_formula(formula, "Gate formula")
+        parameter = None if parameter is None else _param_name(parameter)
         if control is not None and formula is None:
             raise NativeNodeError("control= only applies to a formula gate; a parameter gate reads no data")
         operator = _literal(operator)
@@ -86,7 +93,7 @@ class Gate(NativeNode):
                 if parameter not in {p.name for p in parameters}:
                     raise NativeNodeError(
                         f"Gate references flow parameter {parameter!r}, which is not declared; "
-                        f"declare it with fl.add_flow_parameter(flow, {parameter!r}, ...)"
+                        f"declare it with fl.add_flow_parameter(flow, fl.Parameter({parameter!r}, ...))"
                     )
                 _parameter_gate_is_open(gate_input, parameters)
             return input_schema.NodeGate(gate_input=gate_input, else_output=else_output, **base)

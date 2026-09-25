@@ -44,7 +44,7 @@ def test_literal_normalises_enum_members_only():
 
 def test_gate_stores_the_enum_operator_as_its_string():
     frame = ff.from_dict({"a": [1]})
-    ff.add_flow_parameter(frame, "env", default="prod")
+    ff.add_flow_parameter(frame, ff.Parameter("env", default="prod"))
     gate = ff.Gate(frame, parameter="env", operator=ff.GateOperator.EQUALS, value="prod")
     operator = gate.node.setting_input.gate_input.operator
     assert operator == "equals" and type(operator) is str
@@ -52,7 +52,8 @@ def test_gate_stores_the_enum_operator_as_its_string():
 
 def test_add_flow_parameter_stores_the_enum_type_as_its_string():
     frame = ff.from_dict({"a": [1]})
-    parameter = ff.add_flow_parameter(frame, "limit", default=5, type=ff.ParamType.INTEGER)
+    parameter = ff.add_flow_parameter(frame, ff.Parameter("limit", default=5, type=ff.ParamType.INTEGER))
     assert parameter.type == "integer" and type(parameter.type) is str
-    assert parameter.default_value == "5"
-    assert frame.flow_graph.flow_settings.parameters[-1] is parameter
+    stored = frame.flow_graph.flow_settings.parameters[-1]
+    assert stored.type == "integer" and type(stored.type) is str
+    assert stored.default_value == "5"

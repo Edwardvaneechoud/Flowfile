@@ -9,6 +9,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema
 from flowfile_frame.catalog_reference import CatalogReference, SchemaReference
 from flowfile_frame.native import NativeNode
+from flowfile_frame.parameters import Parameter
 from polars._typing import PolarsDataType
 from flowfile_frame.flow_frame import FlowFrame
 
@@ -25,7 +26,7 @@ class FlowRef:
 
 class RunFlow(NativeNode):
     flow: FlowRef
-    def __init__(self, flow: FlowRef | int | FlowGraph | FlowFrame, *, name: str | None=None, params: Mapping[str, Any] | None=None, param_frame: FlowFrame | None=None, iterate: bool=False, append_metadata: bool=True, description: str | None=None, flow_graph: FlowGraph | None=None, **input_frames: FlowFrame) -> None: ...
+    def __init__(self, flow: FlowRef | int | FlowGraph | FlowFrame, *, name: str | None=None, params: Mapping[str | Parameter, Any] | None=None, param_frame: FlowFrame | None=None, iterate: bool=False, append_metadata: bool=True, description: str | None=None, flow_graph: FlowGraph | None=None, **input_frames: FlowFrame) -> None: ...
 
 
 def flow_ref(namespace: str | SchemaReference | CatalogReference | None=None, name: str | None=None, *, uuid: str | None=None, registration_id: int | None=None) -> FlowRef: ...

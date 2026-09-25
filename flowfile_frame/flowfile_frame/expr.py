@@ -12,6 +12,7 @@ from flowfile_frame.adding_expr import add_expr_methods
 from flowfile_frame.config import logger
 from flowfile_frame.expr_name import ExprNameNameSpace
 from flowfile_frame.list_name_space import ExprListNameSpace
+from flowfile_frame.parameters import Parameter, refuse_parameter_as_column
 
 # --- TYPE CHECKING IMPORTS ---
 if TYPE_CHECKING:
@@ -79,6 +80,8 @@ def _get_ff_repr(value: Any) -> str | None:
     """Get flowfile function representation of a value."""
     if isinstance(value, Expr):
         return value._ff_repr
+    elif isinstance(value, Parameter):
+        return value.ref
     elif isinstance(value, bool):
         return "true" if value else "false"
     elif isinstance(value, int | float):
@@ -122,6 +125,8 @@ def _compute_cast_ff_repr(ff_repr: str | None, pl_dtype: pl.DataType | type) -> 
 
 def _get_expr_and_repr(value: Any) -> tuple[pl.Expr | None, str]:
     """Helper to get polars expr and repr string for operands."""
+    if isinstance(value, Parameter):
+        value = value.to_expr()
     if isinstance(value, Expr):
         inner_expr = value.expr if value.expr is not None else None
         return inner_expr, value._repr_str
@@ -1105,6 +1110,7 @@ class Expr:
 
     def alias(self, name):
         """Rename the expression result."""
+        refuse_parameter_as_column(name, "alias")
         new_pl_expr = self.expr.alias(name) if self.expr is not None else None
         new_repr = f"{self._repr_str}.alias({repr(name)})"
         # Alias preserves aggregation status and ff_repr
@@ -1381,6 +1387,7 @@ class Column(Expr):
     _select_input: transform_schema.SelectInput
 
     def __init__(self, name: str, select_input: transform_schema.SelectInput | None = None):
+        refuse_parameter_as_column(name, "fl.col")
         super().__init__(
             expr=pl.col(name),
             column_name=name,
@@ -1394,6 +1401,7 @@ class Column(Expr):
 
     def alias(self, new_name: str) -> Column:
         """Rename a column, returning a new Column instance."""
+        refuse_parameter_as_column(new_name, "alias")
         new_select = transform_schema.SelectInput(
             old_name=self._select_input.old_name,
             new_name=new_name,
@@ -1605,7 +1613,9 @@ def column(name: str) -> Column:
 
 
 def lit(value: Any) -> Expr:
-    """Creates a Literal expression."""
+    """Creates a Literal expression; a ``Parameter`` becomes its ``to_expr()``."""
+    if isinstance(value, Parameter):
+        return value.to_expr()
     # Literals don't have an agg_func
     return Expr(pl.lit(value, allow_object=True), repr_str=f"pl.lit({repr(value)})", agg_func=None,
                 ff_repr=_get_ff_repr(value))

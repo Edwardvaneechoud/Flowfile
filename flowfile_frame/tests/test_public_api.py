@@ -8,6 +8,7 @@ NATIVE_NODE_API = [
     "Gate",
     "Node",
     "NativeNodeError",
+    "Parameter",
     "add_flow_parameter",
     "set_flow_parameter",
     "GateOperator",

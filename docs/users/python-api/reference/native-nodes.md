@@ -60,7 +60,7 @@ fl.Gate(
     frame: FlowFrame,
     formula: str | None = None,
     *,
-    parameter: str | None = None,
+    parameter: str | Parameter | None = None,
     operator: GateOperatorLiteral | GateOperator = "equals",
     value: Any = None,
     control: FlowFrame | None = None,
@@ -72,7 +72,7 @@ fl.Gate(
 Give exactly one condition:
 
 - **Formula** (positional): a [flowfile formula](../../formulas/index.md). The gate is open when at least one row of `control`, else of `frame`, matches. `control` is wired to the gate's control input, the bottom pip on the canvas.
-- **Parameter**: a flow parameter compared with `operator` and `value`. The parameter must be declared first with [`add_flow_parameter`](#flow-parameters); an undeclared name raises at build.
+- **Parameter**: a flow parameter, by name or as an [`fl.Parameter`](#flow-parameters), compared with `operator` and `value`. The parameter must be declared first with [`add_flow_parameter`](#flow-parameters); an undeclared name raises at build.
 
 | `operator` | `fl.GateOperator` | Open when the parameter |
 |---|---|---|
@@ -127,20 +127,36 @@ This diamond routes on a parameter, checks which side the run skipped, and colle
 Parameters are the `${name}` values that gates and node settings read. They are what **Flow settings** lists in the designer and what `flowfile run flow --param` overrides on a [headless run](../../deployment/cli.md).
 
 ```python
-fl.add_flow_parameter(
-    flow: FlowGraph | FlowFrame,
+fl.Parameter(
     name: str,
     *,
     default: Any = "",
     type: ParamTypeLiteral | ParamType = "string",
     description: str = "",
     enum_values: list[str] | None = None,
-) -> FlowParameter
+)
 
-fl.set_flow_parameter(flow: FlowGraph | FlowFrame, name: str, value: Any) -> None
+fl.add_flow_parameter(flow: FlowGraph | FlowFrame, parameter: Parameter) -> Parameter
+
+fl.set_flow_parameter(flow: FlowGraph | FlowFrame, name: str | Parameter, value: Any) -> None
 ```
 
-`type` is one of `"string"`, `"integer"`, `"float"`, `"boolean"`, `"enum"` (or the `fl.ParamType` member of the same name); `"enum"` needs `enum_values`. Values are stored as strings (booleans lowercase) and checked against the type. Declaring a name twice raises, and so does setting a name that was never declared.
+A `Parameter` is the declaration: `type` is one of `"string"`, `"integer"`, `"float"`, `"boolean"`, `"enum"` (or the `fl.ParamType` member of the same name), and `"enum"` needs `enum_values`. The default is stored as a string (booleans lowercase) and checked against the type when the `Parameter` is created. It exposes `name`, `type`, `default` (typed), `dtype` (the Polars dtype: `String`, `Int64`, `Float64` or `Boolean`) and `ref` (`"${name}"`), is equal to another `Parameter` with the same name, and can key a dict.
+
+`add_flow_parameter` gives the graph its own copy of the declaration and returns the `Parameter`, so `set_flow_parameter` changes that graph only. Declaring a name twice on one graph raises, and so does setting a name that was never declared.
+
+### Referencing parameters in expressions
+
+A `Parameter` is a value. Use it directly in an expression, `fl.col("amount") >= min_amount`, or wrap it with `fl.lit(min_amount)`; it is typed from its declaration, so it needs no cast. Such a predicate still becomes a native Filter or Formula node that stores the bare `${min_amount}`, as the canvas does. Plain strings keep working: a bare `${name}` inside a formula or filter expression, `flowfile_formula="[amount] >= ${min_amount}"`, is rendered as a typed literal, and inside Polars code a reference sits in a string literal, `pl.lit("${min_amount}")`.
+
+Building a node uses the parameter's current value, so a frame collected while you build reflects the default at that moment. A run (`run_graph()`, `collect()` on a deferred frame or one below a gate, a `RunFlow` call) substitutes the values of that run. A reference to a parameter the graph does not declare raises `NativeNodeError` when the node is built, also on a graph that declares no parameters.
+
+**Not supported.** Parameters are values, never column names. A `Parameter`, or a string holding `${name}`, in a column-name position raises `NativeNodeError`:
+
+- `fl.col(...)`, `alias`, `rename`, `select`, `drop`, `sort`, `group_by`, `unique(subset=)`, `pivot`, `unpivot`, `with_row_index(name=)`, `text_to_rows` and the keyword constraints of `filter` / `filter_split`
+- join keys (`on=`, `left_on=`, `right_on=`)
+- `FlowInput(schema=)` and `FlowInput(sample=)` keys, `to_flow_output` names and `RunFlow` input keywords
+- a `[${name}]` column reference in a formula: `filter(flowfile_formula=...)`, `with_columns(flowfile_formulas=...)` and a `Gate` formula
 
 !!! note "Pass a frame after a merge"
     Joining frames from two graphs, or a native node over them, merges them into a new graph object. An older `FlowGraph` handle no longer holds the nodes. Pass a frame to the parameter helpers, or re-read `frame.flow_graph`.
@@ -238,7 +254,7 @@ fl.RunFlow(
     flow: FlowRef | int | FlowGraph | FlowFrame,
     *,
     name: str | None = None,
-    params: dict[str, Any] | None = None,
+    params: dict[str | Parameter, Any] | None = None,
     param_frame: FlowFrame | None = None,
     iterate: bool = False,
     append_metadata: bool = True,
@@ -250,7 +266,7 @@ fl.RunFlow(
 
 - `flow`: a `FlowRef`, a registration id, or an unregistered `FlowGraph` / `FlowFrame`. An unregistered flow needs `name=`; it is then registered with [`register_flow`](#register_flow) at build time.
 - `**input_frames`: one keyword per child Flow Input name. An unknown name raises and lists the child's inputs. An input left out falls back to the child's sample data.
-- `params`: keyed by child parameter name; a name the child does not declare raises, and an omitted parameter keeps the child's default. A constant is stored as a string (booleans lowercase) and checked against the parameter's type at build. A plain column (`fl.col("region")`) binds the parameter to that column of `param_frame`, which is then required and must have the column. `param_frame` without any column binding raises.
+- `params`: keyed by child parameter name or `fl.Parameter`; a name the child does not declare raises, and an omitted parameter keeps the child's default. A constant is stored as a string (booleans lowercase) and checked against the parameter's type at build. A plain column (`fl.col("region")`) binds the parameter to that column of `param_frame`, which is then required and must have the column. `param_frame` without any column binding raises.
 - `iterate=True` runs the child once per row of `param_frame` and concatenates the outputs; `False` uses the first row. With `iterate` and `append_metadata`, each output gets a `run_index` column and a `param_<name>` column per bound parameter.
 
 Outputs are [deferred](#deferred-frames) and named after the child's Flow Outputs: `run["large_orders"]`, or `run.output` when there is exactly one. A child without Flow Outputs has one output, `"main"`: a summary row per run (`run_index`, `success`, and a `param_<name>` column per bound parameter). `run.flow` is the `FlowRef` that runs.
@@ -371,7 +387,7 @@ Every build or materialisation failure raises `fl.NativeNodeError`, a subclass o
 - **Three inputs at most** on nodes with fixed inputs, custom nodes included; the canvas has the same limit.
 - **Local custom nodes run `process()` at build** to build their lazy plan, as canvas schema prediction does.
 - **Kernel ids are not validated at build.** `collect()` on a deferred frame re-runs every output and writer node in the graph, and contacts Docker when the graph holds a kernel node.
-- **`${param}` in a Polars code node fails at build.** A child flow built in Python cannot use `${param}` inside a `polars_code` node: the add-time syntax check runs before parameters are substituted, so `fl.Node("polars_code", ...)` raises `NativeNodeError`. An advanced filter that references `${param}` builds, but logs a parse warning unless it is placed with `fl.Node(..., deferred=True)`.
+- **A bare `${param}` token in Polars code fails at build.** Polars code is checked as Python when the node is added, before parameters are substituted. A reference inside a string literal, `pl.lit("${min_amount}")`, builds; a bare `${min_amount}` token outside one is a syntax error, so `fl.Node("polars_code", ...)` raises `NativeNodeError`.
 - **Registration writes at build time.** `register_flow` and `RunFlow(graph, name=...)` write a YAML file and a catalog row when called.
 - **`train_model(publish_to_catalog=True)` needs a registered flow.** On a graph built in Python, call `fl.register_flow(flow, name=...)` first.
 - **Reopened flow names.** A registered flow keeps its registration name when reopened only if its file is in the Python-editor flows folder; elsewhere the designer names it after the file.

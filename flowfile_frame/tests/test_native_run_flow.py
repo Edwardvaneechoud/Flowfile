@@ -39,7 +39,7 @@ def schema() -> ff.SchemaReference:
 def _clean_orders_child() -> ff.FlowFrame:
     """orders -> amount > ${min_amount} -> 'kept'; orders -> amount > 0 -> 'positive'."""
     child = ff.create_flow_graph()
-    ff.add_flow_parameter(child, "min_amount", default=0, type="integer")
+    ff.add_flow_parameter(child, ff.Parameter("min_amount", default=0, type="integer"))
     raw = ff.FlowInput("orders", schema=ORDER_SCHEMA, flow_graph=child)
     settings = {"filter_input": {"mode": "advanced", "advanced_filter": "[amount] > ${min_amount}"}}
     ff.Node("filter", raw, settings=settings, deferred=True).output.to_flow_output("kept")
@@ -278,6 +278,21 @@ def test_collect_runs_the_child_like_the_run_flow_node_does(schema):
     assert _run_node(run).deferred_until_run is False
 
 
+def test_run_resolves_the_bound_parameter_value_not_the_default(schema):
+    min_amount = ff.Parameter("min_amount", default=0, type="integer")
+    child = ff.create_flow_graph()
+    ff.add_flow_parameter(child, min_amount)
+    raw = ff.FlowInput("orders", schema=ORDER_SCHEMA, flow_graph=child)
+    raw.filter(ff.col("amount") >= min_amount).to_flow_output("orders_clean")
+    ref = schema.register_flow(child, name=_unique("param_clean"))
+
+    expected = pl.DataFrame(ORDERS).filter(pl.col("amount") >= 25)
+    for key in (min_amount, "min_amount"):
+        run = ff.RunFlow(ref, orders=ff.from_dict(ORDERS), params={key: 25})
+        assert [b.constant_value for b in _run_node(run).setting_input.parameter_bindings] == ["25"]
+        assert_frame_equal(run.output.collect(), expected)
+
+
 def test_column_binding_iterates_and_appends_run_metadata(schema):
     ref = _registered_child(schema)
     thresholds = ff.from_dict({"threshold": [0, 50, 100]})
@@ -365,7 +380,7 @@ def test_run_flow_takes_an_id_or_registers_a_graph(schema):
 
 def test_child_without_outputs_exposes_a_run_summary(schema):
     child = ff.create_flow_graph()
-    ff.add_flow_parameter(child, "region", default="eu")
+    ff.add_flow_parameter(child, ff.Parameter("region", default="eu"))
     ff.FlowInput("orders", schema=ORDER_SCHEMA, flow_graph=child)
     ref = schema.register_flow(child, name=_unique("no_outputs"))
 

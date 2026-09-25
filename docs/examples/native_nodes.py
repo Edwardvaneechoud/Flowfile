@@ -11,7 +11,7 @@ from flowfile import node_designer as nd
 # --8<-- [start:gate]
 orders = ff.from_dict({"id": [1, 2, 3], "amount": [120.0, 40.0, 900.0]})
 flow = orders.flow_graph
-ff.add_flow_parameter(flow, "mode", default="full", type="enum", enum_values=["full", "quick"])
+ff.add_flow_parameter(flow, ff.Parameter("mode", default="full", type="enum", enum_values=["full", "quick"]))
 
 gate = ff.Gate(orders, parameter="mode", operator="equals", value="full")
 full = gate.then.with_columns(ff.lit("full").alias("tier"))

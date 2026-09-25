@@ -19,6 +19,8 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import DeferredNodeError, FlowNode
 from flowfile_core.flowfile.formula_dependencies import entries_are_independent
+from flowfile_core.flowfile.param_types import ParamValue
+from flowfile_core.flowfile.parameter_resolver import resolve_expression_parameters
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.schemas import GroupColor
 from flowfile_frame.callable_utils import process_callable_args
@@ -35,9 +37,11 @@ from flowfile_frame.native import (
     ancestors,
     is_side_effect_node_type,
     lost_placeholder_error,
+    materialise,
     merge_frames,
     seed_from_predicted_schema,
 )
+from flowfile_frame.parameters import refuse_parameter_as_column, refuse_parameter_column_in_formula
 from flowfile_frame.selectors import Selector
 from flowfile_frame.utils import (
     _check_if_convertible_to_code,
@@ -63,26 +67,28 @@ def _contains_lambda_pattern(text: str) -> bool:
     return "<lambda> at" in text
 
 
-def _formula_parses(formula: str) -> bool:
+def _formula_parses(formula: str, params: dict[str, ParamValue] | None = None) -> bool:
     """Whether core's formula parser accepts ``formula``.
 
     Lowering onto a native Formula/Filter node is only safe when the generated
     formula parses: a Filter node silently keeps no rows on a parse error, so an
-    unparseable formula stays on the Polars-code path instead.
+    unparseable formula stays on the Polars-code path instead. ``params`` (the
+    flow's current parameter values) are substituted for this check only: the
+    node keeps the ``${name}`` reference, which the run resolves.
     """
     try:
-        simple_function_to_expr(formula)
+        simple_function_to_expr(resolve_expression_parameters(formula, params or {}))
     except Exception:
         return False
     return True
 
 
-def _filter_exprs_to_formula(exprs: list[Expr]) -> str | None:
+def _filter_exprs_to_formula(exprs: list[Expr], params: dict[str, ParamValue] | None = None) -> str | None:
     """AND-join the formula forms of filter predicates; None when any predicate lacks one."""
     if not exprs or any(e._ff_repr is None or e._function_sources for e in exprs):
         return None
     formula = " and ".join(e._ff_repr for e in exprs)
-    return formula if _formula_parses(formula) else None
+    return formula if _formula_parses(formula, params) else None
 
 
 _POLARS_CODE_LABELS = {
@@ -331,7 +337,7 @@ class FlowFrame:
             )
             flow_graph.add_manual_input(input_node)
         return FlowFrame(
-            data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
+            data=materialise(flow_graph.get_node(node_id)).data_frame,
             flow_graph=flow_graph,
             node_id=node_id,
             parent_node_id=parent_node_id,
@@ -437,7 +443,7 @@ class FlowFrame:
         else:
             source_graph.add_dependency_on_polars_lazy_frame(data, source_node_id)
 
-        final_data = source_graph.get_node(source_node_id).get_resulting_data().data_frame
+        final_data = materialise(source_graph.get_node(source_node_id)).data_frame
         return cls(data=final_data, flow_graph=source_graph, node_id=source_node_id, parent_node_id=parent_node_id)
 
     def __init__(self, *args, **kwargs):
@@ -503,7 +509,7 @@ class FlowFrame:
             )
         try:
             return FlowFrame(
-                data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+                data=materialise(self.flow_graph.get_node(new_node_id)).data_frame,
                 flow_graph=self.flow_graph,
                 node_id=new_node_id,
                 parent_node_id=self.node_id,
@@ -555,6 +561,7 @@ class FlowFrame:
         """
         Sort the dataframe by the given columns.
         """
+        refuse_parameter_as_column((by, more_by), "sort")
         initial_by_args = list(_parse_inputs_as_iterable((by,)))
         new_node_id = generate_node_id()
 
@@ -959,7 +966,7 @@ class FlowFrame:
         other._add_connection(other.node_id, new_node_id, "main", output_handle=other.output_handle)
 
         return FlowFrame(
-            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            data=materialise(self.flow_graph.get_node(new_node_id)).data_frame,
             flow_graph=self.flow_graph,
             node_id=new_node_id,
             parent_node_id=self.node_id,
@@ -1043,7 +1050,7 @@ class FlowFrame:
         self._add_connection(self.node_id, new_node_id, "main", output_handle=self.output_handle)
         other._add_connection(other.node_id, new_node_id, "right", output_handle=other.output_handle)
         return FlowFrame(
-            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            data=materialise(self.flow_graph.get_node(new_node_id)).data_frame,
             flow_graph=self.flow_graph,
             node_id=new_node_id,
             parent_node_id=self.node_id,
@@ -1107,6 +1114,7 @@ class FlowFrame:
 
     def rename(self, mapping: Mapping[str, str], *, strict: bool = True, description: str = None) -> FlowFrame:
         """Rename columns based on a mapping or function."""
+        refuse_parameter_as_column(mapping, "rename")
         return self.select(
             [col(old_name).alias(new_name) for old_name, new_name in mapping.items()],
             description=description,
@@ -1119,6 +1127,7 @@ class FlowFrame:
         """
         Select columns from the frame.
         """
+        refuse_parameter_as_column(columns, "select")
         columns_iterable = list(_parse_inputs_as_iterable(columns))
         new_node_id = generate_node_id()
         if (
@@ -1235,6 +1244,7 @@ class FlowFrame:
         ``strict=True``, take the Polars-code path — the latter raises
         ``ColumnNotFoundError`` when the schema resolves, as Polars does.
         """
+        refuse_parameter_as_column(columns, "drop")
         names: list[str] = []
         can_use_native = True
         for item in _parse_inputs_as_iterable(columns):
@@ -1291,7 +1301,7 @@ class FlowFrame:
         new_node_id = generate_node_id()
         if len(predicates) > 0 or len(constraints) > 0:
             all_input_expr_objects = self._collect_filter_exprs(predicates, constraints)
-            formula = _filter_exprs_to_formula(all_input_expr_objects)
+            formula = _filter_exprs_to_formula(all_input_expr_objects, self._param_values())
             if formula is not None:
                 self._add_native_filter(new_node_id, formula, description)
                 return self._create_child_frame(new_node_id)
@@ -1342,8 +1352,13 @@ class FlowFrame:
 
         return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
+    def _param_values(self) -> dict[str, ParamValue]:
+        """The flow's current parameter values, typed the way a node's ``_params_getter`` serves them."""
+        return {p.name: p.typed_default() for p in self.flow_graph.flow_settings.parameters or []}
+
     def _collect_filter_exprs(self, predicates: tuple, constraints: dict) -> list[Expr]:
         """Normalise filter arguments (nested iterables, column-name strings, literals, kwargs) to Exprs."""
+        refuse_parameter_as_column(list(constraints), "filter keyword constraints")
         available_columns = self.columns
         processed_predicates = []
         for pred_item in predicates:
@@ -1367,6 +1382,7 @@ class FlowFrame:
     def _add_native_filter(
         self, new_node_id: int, advanced_filter: str, description: str | None, *, split_mode: bool = False
     ) -> None:
+        refuse_parameter_column_in_formula(advanced_filter, "filter formula")
         filter_settings = input_schema.NodeFilter(
             flow_id=self.flow_graph.flow_id,
             node_id=new_node_id,
@@ -1389,7 +1405,7 @@ class FlowFrame:
         emptying the pass output.
         """
         exprs = self._collect_filter_exprs(predicates, constraints)
-        formula = _filter_exprs_to_formula(exprs)
+        formula = _filter_exprs_to_formula(exprs, self._param_values())
         if formula is None:
             raise ValueError(
                 "filter_split predicates must have a flowfile-formula form (comparisons, and/or/not, is_in, "
@@ -1437,8 +1453,8 @@ class FlowFrame:
         )
 
         filter_node = self.flow_graph.get_node(new_node_id)
-        pass_engine = filter_node.get_output("output-0")
-        fail_engine = filter_node.get_output("output-1")
+        pass_engine = materialise(filter_node, "output-0")
+        fail_engine = materialise(filter_node, "output-1")
 
         pass_frame = FlowFrame(
             data=pass_engine.data_frame if pass_engine is not None else None,
@@ -1499,7 +1515,7 @@ class FlowFrame:
         node = self.flow_graph.get_node(new_node_id)
         frames: list[FlowFrame] = []
         for i in range(len(settings.splits)):
-            engine = node.get_output(f"output-{i}") if node is not None else None
+            engine = materialise(node, f"output-{i}") if node is not None else None
             frames.append(
                 FlowFrame(
                     data=engine.data_frame if engine is not None else None,
@@ -2596,6 +2612,7 @@ class FlowFrame:
         Returns:
             GroupByFrame object for aggregations
         """
+        refuse_parameter_as_column((by, named_by), "group_by")
         new_node_id = generate_node_id()
         by_cols = []
         for col_expr in by:
@@ -3128,6 +3145,7 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with pivoted data
         """
+        refuse_parameter_as_column((on, index, values), "pivot")
         new_node_id = generate_node_id()
 
         on_value = on[0] if isinstance(on, list) and len(on) == 1 else on
@@ -3232,6 +3250,7 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with unpivoted data
         """
+        refuse_parameter_as_column((on, index, variable_name, value_name), "unpivot")
         new_node_id = generate_node_id()
 
         if index is None:
@@ -3424,7 +3443,7 @@ class FlowFrame:
                 seen_sources.add(f.node_id)
                 f._add_connection(f.node_id, new_node_id, "main", output_handle=f.output_handle)
         return FlowFrame(
-            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            data=materialise(self.flow_graph.get_node(new_node_id)).data_frame,
             flow_graph=self.flow_graph,
             node_id=new_node_id,
             parent_node_id=self.node_id,
@@ -3585,11 +3604,12 @@ class FlowFrame:
                 pass
 
             # Try flowfile formula conversion (all-or-nothing)
+            params = self._param_values()
             if all(
                 isinstance(e, Expr)
                 and e._ff_repr is not None
                 and e.column_name is not None
-                and _formula_parses(e._ff_repr)
+                and _formula_parses(e._ff_repr, params)
                 for e in actual_exprs_to_process
             ):
                 formula_entries = [(e.column_name, e._ff_repr) for e in actual_exprs_to_process]
@@ -3641,6 +3661,9 @@ class FlowFrame:
             return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
         elif flowfile_formulas is not None and output_column_names is not None:
+            refuse_parameter_as_column(output_column_names, "with_columns(output_column_names=)")
+            for formula in flowfile_formulas:
+                refuse_parameter_column_in_formula(formula, "with_columns(flowfile_formulas=)")
             if len(output_column_names) != len(flowfile_formulas):
                 raise ValueError("Length of both the formulas and the output columns names must be identical")
             if output_column_datatypes is not None and len(output_column_datatypes) != len(flowfile_formulas):
@@ -3724,6 +3747,7 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with the row index column added
         """
+        refuse_parameter_as_column(name, "with_row_index(name=)")
         new_node_id = generate_node_id()
 
         if name == "record_id" or (offset == 1 and name != "index"):
@@ -3829,7 +3853,7 @@ class FlowFrame:
         self._add_connection(self.node_id, new_node_id, "main", output_handle=self.output_handle)
         other._add_connection(other.node_id, new_node_id, "right", output_handle=other.output_handle)
         return FlowFrame(
-            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            data=materialise(self.flow_graph.get_node(new_node_id)).data_frame,
             flow_graph=self.flow_graph,
             node_id=new_node_id,
             parent_node_id=self.node_id,
@@ -3868,6 +3892,7 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with text split into multiple rows
         """
+        refuse_parameter_as_column((column, output_column, split_by_column), "text_to_rows")
         new_node_id = generate_node_id()
 
         if isinstance(column, Column):
@@ -3935,6 +3960,7 @@ class FlowFrame:
         FlowFrame
             DataFrame with unique rows.
         """
+        refuse_parameter_as_column(subset, "unique(subset=)")
         new_node_id = generate_node_id()
         processed_subset = None
         can_use_native = True

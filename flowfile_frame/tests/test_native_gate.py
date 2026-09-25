@@ -32,7 +32,7 @@ def _handle_into(target: ff.FlowFrame, source_id: int) -> str:
 
 def _env_gate(env: str, **gate_kwargs) -> tuple[ff.FlowFrame, ff.Gate]:
     source = ff.from_dict(DATA)
-    ff.add_flow_parameter(source, "env", default=env)
+    ff.add_flow_parameter(source, ff.Parameter("env", default=env))
     return source, ff.Gate(source, parameter="env", value="prod", **gate_kwargs)
 
 
@@ -69,8 +69,8 @@ def test_parameter_gate_node_settings_and_exits():
 
 def test_values_are_stored_in_their_canvas_form():
     source = ff.from_dict(DATA)
-    ff.add_flow_parameter(source, "flag", default=True, type="boolean")
-    ff.add_flow_parameter(source, "env", default="prod")
+    ff.add_flow_parameter(source, ff.Parameter("flag", default=True, type="boolean"))
+    ff.add_flow_parameter(source, ff.Parameter("env", default="prod"))
     as_bool = ff.Gate(source, parameter="flag", value=True)
     as_list = ff.Gate(source, parameter="env", operator="in", value=["prod", "staging"])
     assert as_bool.node.setting_input.gate_input.value == "true"
@@ -109,8 +109,8 @@ def test_undeclared_parameter_raises_and_leaves_no_node():
 )
 def test_invalid_conditions_raise(kwargs, match):
     source = ff.from_dict(DATA)
-    ff.add_flow_parameter(source, "env", default="prod")
-    ff.add_flow_parameter(source, "limit", default=3, type="integer")
+    ff.add_flow_parameter(source, ff.Parameter("env", default="prod"))
+    ff.add_flow_parameter(source, ff.Parameter("limit", default=3, type="integer"))
     if kwargs.get("control") == "frame":
         kwargs["control"] = source
     with pytest.raises(ff.NativeNodeError, match=match):
@@ -123,7 +123,7 @@ def test_invalid_conditions_raise(kwargs, match):
 @pytest.mark.parametrize("mode", ["full", "quick"])
 def test_parameter_diamond_skips_the_dead_side(mode):
     source = ff.from_dict(DATA)
-    ff.add_flow_parameter(source, "mode", default="full", type="enum", enum_values=["full", "quick"])
+    ff.add_flow_parameter(source, ff.Parameter("mode", default="full", type="enum", enum_values=["full", "quick"]))
     gate = ff.Gate(source, parameter="mode", operator=ff.GateOperator.EQUALS, value="full")
     full = gate.then.with_columns(ff.lit("full").alias("tag"))
     quick = gate.otherwise.with_columns(ff.lit("quick").alias("tag"))
@@ -185,7 +185,7 @@ def test_is_open_on_a_deferred_probe_raises():
 @pytest.mark.parametrize("env", ["prod", "dev"])
 def test_gate_on_a_deferred_frame_collects_live_and_dead_exits(env):
     deferred = _deferred_source()
-    ff.add_flow_parameter(deferred, "env", default=env)
+    ff.add_flow_parameter(deferred, ff.Parameter("env", default=env))
     gate = ff.Gate(deferred, parameter="env", value="prod")
     assert gate.then._deferred and gate.otherwise._deferred
     live, dead = (gate.then, gate.otherwise) if env == "prod" else (gate.otherwise, gate.then)
@@ -207,7 +207,7 @@ def _routed_union(gate: ff.Gate) -> ff.FlowFrame:
 
 def test_union_below_a_parameter_gate_collects_only_the_live_side():
     sales = ff.from_dict(SALES)
-    ff.add_flow_parameter(sales, "mode", default="full", type="enum", enum_values=["full", "quick"])
+    ff.add_flow_parameter(sales, ff.Parameter("mode", default="full", type="enum", enum_values=["full", "quick"]))
     gate = ff.Gate(sales, parameter="mode", operator=ff.GateOperator.EQUALS, value="full")
     output = _routed_union(gate)
     assert output._deferred is False
@@ -321,7 +321,7 @@ def test_dead_exit_built_after_an_earlier_run_still_collects_empty():
     from flowfile_frame.parameters import add_flow_parameter
 
     orders = ff.from_dict({"id": [1, 2], "amount": [5, 50]})
-    add_flow_parameter(orders, "mode", default="a")
+    add_flow_parameter(orders, ff.Parameter("mode", default="a"))
     orders.flow_graph.run_graph()
     gate = Gate(orders, parameter="mode", value="a")
     assert gate.then.collect().height == 2

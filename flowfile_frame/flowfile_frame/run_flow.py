@@ -42,7 +42,13 @@ from flowfile_frame.catalog_reference import CatalogReference, SchemaReference
 from flowfile_frame.config import logger
 from flowfile_frame.expr import Expr
 from flowfile_frame.native import NativeNode, NativeNodeError, Node
-from flowfile_frame.parameters import _as_parameter_string, _graph_of
+from flowfile_frame.parameters import (
+    Parameter,
+    _as_parameter_string,
+    _graph_of,
+    _param_name,
+    refuse_parameter_as_column,
+)
 from shared.storage_config import storage
 
 if TYPE_CHECKING:
@@ -378,6 +384,8 @@ def FlowInput(
     """
     if schema is not None and sample is not None:
         raise NativeNodeError("FlowInput takes schema= or sample=, not both")
+    refuse_parameter_as_column(schema, "FlowInput(schema=)")
+    refuse_parameter_as_column(list(sample) if isinstance(sample, Mapping) else None, "FlowInput(sample=)")
     if schema is not None:
         raw_data = _raw_data_from_schema(schema)
     elif sample is not None:
@@ -393,6 +401,7 @@ def _to_flow_output(frame: FlowFrame, name: str, description: str | None = None)
 
     The sink has no output handle on the canvas, so nothing may chain from it.
     """
+    refuse_parameter_as_column(name, "to_flow_output")
     Node("flow_output", frame, settings={"output_name": name}, description=description)
     return frame
 
@@ -521,7 +530,7 @@ class RunFlow(NativeNode):
         flow: FlowRef | int | FlowGraph | FlowFrame,
         *,
         name: str | None = None,
-        params: Mapping[str, Any] | None = None,
+        params: Mapping[str | Parameter, Any] | None = None,
         param_frame: FlowFrame | None = None,
         iterate: bool = False,
         append_metadata: bool = True,
@@ -531,6 +540,8 @@ class RunFlow(NativeNode):
     ) -> None:
         from flowfile_frame.flow_frame import FlowFrame
 
+        refuse_parameter_as_column(list(input_frames), "RunFlow input slots")
+        params = {_param_name(key): value for key, value in (params or {}).items()}
         self.flow = _as_flow_ref(flow, name)
         interface = _interface(self.flow)
         input_slots = [port.name for port in interface.inputs]
@@ -543,7 +554,7 @@ class RunFlow(NativeNode):
             not_frames.append("param_frame")
         if not_frames:
             raise NativeNodeError(f"{not_frames} must be FlowFrames; wrap a Polars frame with fl.FlowFrame(...)")
-        bindings = _parameter_bindings(self.flow.name, interface.parameters, params or {}, param_frame)
+        bindings = _parameter_bindings(self.flow.name, interface.parameters, params, param_frame)
         frames: list[FlowFrame] = [param_frame] if param_frame is not None else []
         handles = [input_handle(0)] if param_frame is not None else []
         for index, slot in enumerate(input_slots):
