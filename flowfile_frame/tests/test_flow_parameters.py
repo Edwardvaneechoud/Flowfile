@@ -16,12 +16,10 @@ from polars.testing import assert_frame_equal
 import flowfile_frame as ff
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
+from .native_helpers import core_node
+
 ORDERS = {"id": [1, 2, 3, 4], "amount": [10.0, 25.0, 70.0, 120.0], "flag": [True, False, True, False]}
 SUPPORTED_USES = "fl.lit(...), in comparisons, in fl.Gate(parameter=...) or in fl.RunFlow(params=...)"
-
-
-def _node(frame: ff.FlowFrame):
-    return frame.flow_graph.get_node(frame.node_id)
 
 
 def _orders() -> tuple[ff.FlowGraph, ff.FlowFrame]:
@@ -61,7 +59,7 @@ def test_parameter_predicate_lowers_onto_a_native_filter_keeping_the_reference(w
     ff.add_flow_parameter(child, min_amount)
     ff.set_flow_parameter(child, min_amount, 20)
     kept = raw.filter(ff.col("amount") >= wrap(min_amount))
-    node = _node(kept)
+    node = core_node(kept)
     assert node.node_type == "filter"
     assert node.setting_input.filter_input.advanced_filter == "([amount] >= ${min_amount})"
     assert kept.collect()["id"].to_list() == [2, 3, 4]
@@ -72,7 +70,7 @@ def test_string_parameter_lowers_onto_a_native_formula():
     region = ff.Parameter("region", default="EU")
     ff.add_flow_parameter(child, region)
     tagged = raw.with_columns(ff.lit(region).alias("r"))
-    node = _node(tagged)
+    node = core_node(tagged)
     assert node.node_type == "formula"
     assert [entry.function for entry in node.setting_input.entries] == ["${region}"]
     assert tagged.collect()["r"].to_list() == ["EU"] * 4
@@ -83,12 +81,12 @@ def test_boolean_parameter_compares_on_both_emission_paths():
     flag = ff.Parameter("flag_on", default=True, type="boolean")
     ff.add_flow_parameter(child, flag)
     native = raw.filter(ff.col("flag") == flag)
-    assert _node(native).node_type == "filter"
+    assert core_node(native).node_type == "filter"
     assert native.collect()["id"].to_list() == [1, 3]
 
     ff.set_flow_parameter(child, flag, False)
     as_code = raw.with_columns((ff.col("flag") == flag).map_elements(lambda v: v, return_dtype=ff.Boolean).alias("m"))
-    assert _node(as_code).node_type == "polars_code"
+    assert core_node(as_code).node_type == "polars_code"
     assert as_code.collect()["m"].to_list() == [False, True, False, True]
 
 
@@ -153,6 +151,62 @@ def test_gate_takes_a_parameter():
     assert gate.is_open is True
     ff.set_flow_parameter(source, env, "dev")
     assert gate.is_open is False
+
+
+def test_gate_value_takes_a_parameter_as_its_reference():
+    source = ff.from_dict({"a": [1, 2]})
+    env, wanted = ff.Parameter("env", default="prod"), ff.Parameter("wanted", default="prod")
+    ff.add_flow_parameter(source, env)
+    ff.add_flow_parameter(source, wanted)
+    gate = ff.Gate(source, parameter=env, value=wanted)
+    assert gate.node.setting_input.gate_input.value == "${wanted}"
+    assert gate.is_open is True
+    ff.set_flow_parameter(source, wanted, "dev")
+    assert gate.is_open is False
+
+
+def test_independent_parameter_expressions_lower_onto_one_formula_node():
+    child, raw = _orders()
+    min_amount, region = _min_amount(), ff.Parameter("region", default="EU")
+    ff.add_flow_parameter(child, min_amount)
+    ff.add_flow_parameter(child, region)
+    tagged = raw.with_columns(ff.lit(region).alias("r"), (ff.col("amount") + min_amount).alias("shifted"))
+    node = core_node(tagged)
+    assert node.node_type == "formula"
+    assert [entry.function for entry in node.setting_input.entries] == ["${region}", "([amount] + ${min_amount})"]
+    assert tagged.collect()["r"].to_list() == ["EU"] * 4
+
+
+@pytest.mark.parametrize(
+    "combine, expected_ids",
+    [
+        (lambda kept, other: kept.join(other.select("id"), on="id"), [2, 3]),
+        (lambda kept, other: ff.concat([kept, other]), [1, 2, 2, 3, 3]),
+    ],
+    ids=["join", "concat"],
+)
+def test_upstream_reference_resolves_when_a_merge_rebuilds_the_graph(combine, expected_ids):
+    """A merge rebuilds every node without its result, so reading the new node re-executes the filter."""
+    source = ff.from_dict({"id": [1, 2, 3], "amount": [5.0, 30.0, 50.0]})
+    min_amount = _min_amount()
+    ff.add_flow_parameter(source, min_amount)
+    ff.set_flow_parameter(source, min_amount, 20)
+    kept = source.filter(ff.col("amount") >= min_amount)
+    other = ff.from_dict({"id": [1, 2, 3], "amount": [0.0, 0.0, 0.0]})
+
+    combined = combine(kept, other)
+
+    assert sorted(combined.collect()["id"].to_list()) == expected_ids
+    assert kept.select("id").collect()["id"].to_list() == [2, 3]
+
+
+def test_upstream_reference_resolves_after_a_graph_reset():
+    child, raw = _orders()
+    ff.add_flow_parameter(child, _min_amount())
+    kept = raw.filter(ff.col("amount") >= _min_amount())
+    ff.set_flow_parameter(child, "min_amount", 50)
+    child.reset()
+    assert kept.select("id").collect()["id"].to_list() == [3, 4]
 
 
 @pytest.mark.parametrize("declare_other", [False, True], ids=["no-parameters", "other-parameters"])
@@ -228,6 +282,8 @@ def test_save_and_open_keeps_the_reference():
             "with_columns(flowfile_formulas=)",
         ),
         (lambda raw, p: ff.Gate(raw, "[${region}] == 'EU'"), "Gate formula"),
+        (lambda raw, p: ff.col("id").name.prefix(p), "name.prefix"),
+        (lambda raw, p: ff.col("id").name.suffix("_${region}"), "name.suffix"),
     ],
 )
 def test_parameter_in_a_column_name_position_raises(build, position):
@@ -246,5 +302,42 @@ def test_parameter_as_a_formula_value_is_supported():
     ff.add_flow_parameter(child, ff.Parameter("region", default="EU"))
     tagged = raw.with_columns(ff.lit("EU").alias("region"))
     kept = tagged.filter(flowfile_formula="[region] == ${region}")
-    assert _node(kept).node_type == "filter"
+    assert core_node(kept).node_type == "filter"
     assert kept.collect().height == 4
+
+
+def test_set_flow_parameter_refuses_another_parameter_as_the_value():
+    child, _ = _orders()
+    min_amount, floor = _min_amount(), ff.Parameter("floor", default=5, type="integer")
+    ff.add_flow_parameter(child, min_amount)
+    ff.add_flow_parameter(child, floor)
+    with pytest.raises(ff.NativeNodeError, match=r"cannot be another parameter \(\$\{floor\}\)"):
+        ff.set_flow_parameter(child, min_amount, floor)
+    assert child.flow_settings.parameters[0].default_value == "0"
+
+
+@pytest.mark.parametrize(
+    "build, method, hint",
+    [
+        (lambda p: ff.col("amount").clip(p), "clip", "fl.lit(parameter)"),
+        (lambda p: ff.col("amount").clip(upper_bound=[p]), "clip", "fl.lit(parameter)"),
+        (lambda p: ff.col("amount").shift(fill_value={"v": (p,)}), "shift", "fl.lit(parameter)"),
+        (lambda p: ff.col("amount").fill_null(p), "fill_null", "fl.when"),
+        (lambda p: ff.col("amount").is_in([p]), "is_in", "compare with =="),
+    ],
+)
+def test_parameter_as_an_expr_method_argument_raises(build, method, hint):
+    child, _ = _orders()
+    min_amount = _min_amount()
+    ff.add_flow_parameter(child, min_amount)
+    with pytest.raises(ff.NativeNodeError) as info:
+        build(min_amount)
+    message = str(info.value)
+    assert message.startswith(f"{method}() takes no fl.Parameter") and hint in message
+
+
+def test_parameter_through_lit_works_as_an_expr_method_argument():
+    child, raw = _orders()
+    ceiling = ff.add_flow_parameter(child, ff.Parameter("ceiling", default=50, type="integer"))
+    clipped = raw.select(ff.col("amount").clip(upper_bound=ff.lit(ceiling)))
+    assert clipped.collect()["amount"].to_list() == [10.0, 25.0, 50.0, 50.0]

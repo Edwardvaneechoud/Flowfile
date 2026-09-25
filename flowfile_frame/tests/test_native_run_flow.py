@@ -5,14 +5,12 @@ row in the shared test DB), so every test uses its own catalog and flow names. T
 run_flow outputs are deferred: building never runs the child, ``collect()`` does.
 """
 
-import os
 import tempfile
 from pathlib import Path
 from uuid import uuid4
 
 import polars as pl
 import pytest
-import yaml
 from polars.testing import assert_frame_equal
 
 import flowfile_frame as ff
@@ -22,6 +20,8 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_frame.run_flow import FlowRef
 from shared.storage_config import storage
+
+from .native_helpers import core_node, round_trip
 
 ORDERS = {"id": [1, 2, 3, 4], "amount": [10.0, -5.0, 70.0, 120.0]}
 ORDER_SCHEMA = {"id": ff.Int64, "amount": ff.Float64}
@@ -49,10 +49,6 @@ def _clean_orders_child() -> ff.FlowFrame:
 
 def _registered_child(schema: ff.SchemaReference) -> FlowRef:
     return schema.register_flow(_clean_orders_child(), name=_unique("clean"))
-
-
-def _run_node(run: ff.RunFlow):
-    return run.flow_graph.get_node(run.node_id)
 
 
 # FlowInput / to_flow_output
@@ -163,6 +159,18 @@ def test_register_flow_writes_an_absolute_file_and_is_idempotent(schema):
     assert rerun == ref
 
 
+def test_register_flow_moves_a_graph_saved_elsewhere_to_the_registered_file(schema):
+    child = _clean_orders_child()
+    elsewhere = Path(tempfile.mkdtemp()) / "scratch_copy.yaml"
+    child.save_graph(str(elsewhere))
+    name = _unique("moved")
+    ref = ff.register_flow(child, name=name, schema=schema)
+    settings = child.flow_graph.flow_settings
+    assert settings.path == ref.flow_path != str(elsewhere)
+    assert settings.name == name
+    assert open_flow(Path(ref.flow_path)).flow_settings.name == name
+
+
 def test_register_flow_defaults_to_the_python_editor_schema():
     ff.CatalogReference("General", auto_create=True)
     ref = ff.register_flow(_clean_orders_child(), name=_unique("default_schema"))
@@ -249,7 +257,7 @@ def test_run_flow_settings_mirror_the_child_interface(schema):
     ref = _registered_child(schema)
     orders = ff.from_dict(ORDERS)
     run = ff.RunFlow(ref, orders=orders, params={"min_amount": 50}, description="clean the orders")
-    settings = _run_node(run).setting_input
+    settings = core_node(run).setting_input
     assert settings.flow_reference.registration_id == ref.registration_id
     assert settings.flow_reference.flow_uuid == ref.flow_uuid
     assert settings.input_slots == ["orders"]
@@ -262,7 +270,7 @@ def test_run_flow_settings_mirror_the_child_interface(schema):
     assert settings.user_id is not None
     assert settings.description == "clean the orders"
     assert run.outputs == ["kept", "positive"]
-    assert _run_node(run).node_inputs.keyed_inputs["input-1"].node_id == orders.node_id
+    assert core_node(run).node_inputs.keyed_inputs["input-1"].node_id == orders.node_id
 
 
 def test_run_flow_does_not_run_the_child_at_build(schema, tmp_path):
@@ -273,7 +281,7 @@ def test_run_flow_does_not_run_the_child_at_build(schema, tmp_path):
     marker.unlink()  # written while the child itself was built
 
     run = ff.RunFlow(ref, orders=ff.from_dict(ORDERS))
-    node = _run_node(run)
+    node = core_node(run)
     assert node.deferred_until_run is True
     assert node.node_stats.has_run_with_current_setup is False
     assert node.results.resulting_data.number_of_records == 0
@@ -296,14 +304,14 @@ def test_collect_runs_the_child_like_the_run_flow_node_does(schema):
     kept = run["kept"].filter(ff.col("id") > 0)
 
     direct = subflow.execute_run_flow_node(
-        run.flow_graph, _run_node(run).setting_input, None, (FlowDataEngine(pl.DataFrame(ORDERS)),)
+        run.flow_graph, core_node(run).setting_input, None, (FlowDataEngine(pl.DataFrame(ORDERS)),)
     ).by_handle()
     expected_kept = pl.DataFrame(ORDERS).filter(pl.col("amount") > 50)
     assert_frame_equal(direct["output-0"].data_frame.collect(), expected_kept)
 
     assert_frame_equal(kept.collect(), expected_kept)
     assert_frame_equal(run["positive"].collect(), pl.DataFrame(ORDERS).filter(pl.col("amount") > 0))
-    assert _run_node(run).deferred_until_run is False
+    assert core_node(run).deferred_until_run is False
 
 
 def test_run_resolves_the_bound_parameter_value_not_the_default(schema):
@@ -317,8 +325,50 @@ def test_run_resolves_the_bound_parameter_value_not_the_default(schema):
     expected = pl.DataFrame(ORDERS).filter(pl.col("amount") >= 25)
     for key in (min_amount, "min_amount"):
         run = ff.RunFlow(ref, orders=ff.from_dict(ORDERS), params={key: 25})
-        assert [b.constant_value for b in _run_node(run).setting_input.parameter_bindings] == ["25"]
+        assert [b.constant_value for b in core_node(run).setting_input.parameter_bindings] == ["25"]
         assert_frame_equal(run.output.collect(), expected)
+
+
+def test_a_parameter_value_forwards_a_parent_parameter(schema):
+    min_amount = ff.Parameter("min_amount", default=0, type="integer")
+    child = ff.create_flow_graph()
+    ff.add_flow_parameter(child, min_amount)
+    raw = ff.FlowInput("orders", schema=ORDER_SCHEMA, flow_graph=child)
+    raw.filter(ff.col("amount") >= min_amount).to_flow_output("orders_clean")
+    ref = schema.register_flow(child, name=_unique("forward"))
+
+    threshold = ff.Parameter("threshold", default=25, type="integer")
+    for value in (threshold, "${threshold}"):
+        parent = ff.from_dict(ORDERS)
+        ff.add_flow_parameter(parent, threshold)
+        run = ff.RunFlow(ref, orders=parent, params={"min_amount": value})
+        assert [b.constant_value for b in core_node(run).setting_input.parameter_bindings] == ["${threshold}"]
+        assert_frame_equal(run.output.collect(), pl.DataFrame(ORDERS).filter(pl.col("amount") >= 25))
+        ff.set_flow_parameter(parent, threshold, 100)
+        assert run.output.collect()["id"].to_list() == [4]
+
+    with pytest.raises(ff.NativeNodeError, match=r"undeclared flow parameter\(s\) \['threshold'\]"):
+        ff.RunFlow(ref, orders=ff.from_dict(ORDERS), params={"min_amount": threshold})
+
+
+def test_a_collected_output_joined_across_graphs_does_not_rerun_the_child(schema, tmp_path):
+    """After a run the node is no longer flagged deferred; the merge must still carry its result."""
+    written = tmp_path / "child_ran.csv"
+    child = ff.create_flow_graph()
+    raw = ff.FlowInput("orders", schema=ORDER_SCHEMA, flow_graph=child)
+    raw.to_flow_output("orders_out")
+    raw.write_csv(str(written))
+    ref = schema.register_flow(child, name=_unique("side_effect"))
+    run = ff.RunFlow(ref, orders=ff.from_dict(ORDERS))
+    assert run.output.collect().height == 4
+    written.unlink()
+
+    joined = run.output.join(ff.from_dict({"id": [1, 3], "tag": ["a", "c"]}), on="id")
+
+    assert not written.exists()
+    assert joined.columns == ["id", "amount", "tag"]
+    assert sorted(joined.collect()["id"].to_list()) == [1, 3]
+    assert written.exists()
 
 
 def test_a_declared_output_names_the_child_sink_and_reads_the_run_output(schema):
@@ -347,11 +397,11 @@ def test_column_binding_iterates_and_appends_run_metadata(schema):
         param_frame=thresholds,
         iterate=True,
     )
-    settings = _run_node(run).setting_input
+    settings = core_node(run).setting_input
     assert settings.iteration_mode == "iterate"
     assert settings.parameter_bindings[0].source == "column"
     assert settings.parameter_bindings[0].column_name == "threshold"
-    assert _run_node(run).node_inputs.keyed_inputs["input-0"].node_id == thresholds.node_id
+    assert core_node(run).node_inputs.keyed_inputs["input-0"].node_id == thresholds.node_id
     assert run["kept"].data.collect_schema().names() == ["id", "amount", "param_min_amount", "run_index"]
 
     result = run["kept"].collect()
@@ -374,10 +424,10 @@ def test_slot_order_is_the_order_ports_were_created_in(schema):
 
     a, b = ff.from_dict({"v": [1, 10]}), ff.from_dict({"v": [2, 20]})
     run = ff.RunFlow(ref, a=a, b=b)
-    settings = _run_node(run).setting_input
+    settings = core_node(run).setting_input
     assert settings.input_slots == ["b", "a"]
     assert settings.output_slots == ["from_b", "from_a"]
-    keyed = _run_node(run).node_inputs.keyed_inputs
+    keyed = core_node(run).node_inputs.keyed_inputs
     assert {handle: node.node_id for handle, node in keyed.items()} == {"input-1": b.node_id, "input-2": a.node_id}
     assert run["from_a"].collect()["v"].to_list() == [1, 10]
     assert run["from_b"].collect()["v"].to_list() == [2, 20]
@@ -442,20 +492,8 @@ def test_round_trip_keeps_a_keyed_edge_from_output_1(schema):
     ref = _registered_child(schema)
     _, small = ff.from_dict(ORDERS).filter_split(ff.col("amount") > 50)
     run = ff.RunFlow(ref, orders=small)
-    assert _run_node(run).node_inputs.keyed_source_handles == {"input-1": "output-1"}
-    with tempfile.TemporaryDirectory() as first_dir, tempfile.TemporaryDirectory() as second_dir:
-        first = os.path.join(first_dir, "parent.yaml")
-        second = os.path.join(second_dir, "parent.yaml")
-        run["positive"].save_graph(first)
-        reopened = open_flow(Path(first))
-        reopened.save_flow(second)
-        with open(first, encoding="utf-8") as f:
-            first_doc = yaml.safe_load(f)
-        with open(second, encoding="utf-8") as f:
-            second_doc = yaml.safe_load(f)
-
-    for key in ("nodes", "flowfile_settings", "groups", "comments"):
-        assert first_doc[key] == second_doc[key], key
+    assert core_node(run).node_inputs.keyed_source_handles == {"input-1": "output-1"}
+    reopened, _ = round_trip(run["positive"], "parent.yaml")
     node = reopened.get_node(run.node_id)
     assert node.node_type == "run_flow"
     assert node.node_inputs.keyed_source_handles == {"input-1": "output-1"}

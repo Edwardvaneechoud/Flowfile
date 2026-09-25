@@ -9,20 +9,10 @@ from pydantic import ValidationError
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema
-from flowfile_frame.native import NativeNode, NativeNodeError
+from flowfile_frame.native import NativeNode, NativeNodeError, _kernel_id
 
 if TYPE_CHECKING:
     from flowfile_frame.flow_frame import FlowFrame
-
-
-def _kernel_id(kernel: str | Any | None) -> str | None:
-    """A kernel id as given, or the ``.id`` of a kernel object; never looked up here."""
-    if kernel is None or isinstance(kernel, str):
-        return kernel
-    kernel_id = getattr(kernel, "id", None)
-    if isinstance(kernel_id, str):
-        return kernel_id
-    raise NativeNodeError(f"kernel= takes a kernel id or an object with an .id, got {type(kernel).__name__}")
 
 
 class PythonScript(NativeNode):

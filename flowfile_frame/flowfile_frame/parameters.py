@@ -40,7 +40,12 @@ def _graph_of(flow: FlowGraph | FlowFrame) -> FlowGraph:
 
 
 def _as_parameter_string(value: Any) -> str:
-    """The stored string form of a parameter value: booleans lowercase, ``None`` empty."""
+    """The stored string form of a parameter value: booleans lowercase, ``None`` empty.
+
+    A ``Parameter`` given as a value is its ``${name}`` reference, which the run substitutes.
+    """
+    if isinstance(value, Parameter):
+        return value.ref
     value = _literal(value)
     return "" if value is None else stringify_param_value(value)
 
@@ -169,6 +174,17 @@ def refuse_parameter_as_column(value: Any, where: str) -> None:
             refuse_parameter_as_column(item, where)
 
 
+def contains_parameter(value: Any) -> bool:
+    """Whether ``value`` is a ``Parameter`` or nests one in lists, tuples, sets or mappings (keys and values)."""
+    if isinstance(value, Parameter):
+        return True
+    if isinstance(value, Mapping):
+        return any(contains_parameter(key) or contains_parameter(item) for key, item in value.items())
+    if isinstance(value, list | tuple | set | frozenset):
+        return any(contains_parameter(item) for item in value)
+    return False
+
+
 def refuse_parameter_column_in_formula(formula: str | None, where: str) -> None:
     """Raise when a flowfile formula names a column through a parameter (``[${name}]``).
 
@@ -208,6 +224,11 @@ def set_flow_parameter(flow: FlowGraph | FlowFrame, name: str | Parameter, value
         declared = [p.name for p in graph.flow_settings.parameters]
         raise NativeNodeError(
             f"Flow parameter {name!r} is not declared (declared: {declared}); add it with fl.add_flow_parameter"
+        )
+    if isinstance(value, Parameter):
+        raise NativeNodeError(
+            f"Flow parameter {name!r}: a parameter's value cannot be another parameter ({value.ref}); "
+            f"set a plain value, e.g. fl.set_flow_parameter(flow, {name!r}, {value.name}.default)"
         )
     raw = _as_parameter_string(value)
     if raw != "":

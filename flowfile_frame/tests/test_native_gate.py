@@ -5,29 +5,20 @@ exit's downstream is deliberately skipped (``NodeResult.skipped``), the gate its
 the run stays green with every node accounted for.
 """
 
-import os
-import tempfile
 from pathlib import Path
 
 import polars as pl
 import pytest
-import yaml
 from polars.testing import assert_frame_equal
 
 import flowfile_frame as ff
-from flowfile_core.flowfile.manage.io_flowfile import open_flow
+from flowfile_core.schemas import input_schema
+
+from .native_helpers import handle_into, results_by_id, round_trip
 
 DATA = {"a": [1, 2, 3], "g": ["x", "x", "y"]}
 SALES = {"region": ["EU", "US", "EU"], "amount": [10, 20, 30]}
 TEN_X = "output_df = input_df.with_columns((pl.col('a') * 10).alias('a10'))"
-
-
-def results_by_id(run_info) -> dict:
-    return {result.node_id: result for result in run_info.node_step_result}
-
-
-def _handle_into(target: ff.FlowFrame, source_id: int) -> str:
-    return target.flow_graph.get_node(target.node_id)._input_output_handles[source_id]
 
 
 def _env_gate(env: str, **gate_kwargs) -> tuple[ff.FlowFrame, ff.Gate]:
@@ -252,6 +243,75 @@ def test_describe_below_a_gate_runs_the_flow():
     assert gate.flow_graph.latest_run_info is not None
 
 
+# writers below a gate wait for the run
+
+
+def _write_output_node(frame: ff.FlowFrame, path: Path) -> ff.FlowFrame:
+    settings = input_schema.OutputSettings(
+        file_type="csv", name=path.name, directory=str(path), table_settings=input_schema.OutputCsvTable()
+    )
+    settings.set_absolute_filepath()
+    return ff.Node("output", frame, settings={"output_settings": settings}).output
+
+
+WRITERS = {
+    "write_csv": (lambda frame, path: frame.write_csv(path), pl.read_csv),
+    "write_parquet": (lambda frame, path: frame.write_parquet(path), pl.read_parquet),
+    "node_output": (_write_output_node, pl.read_csv),
+}
+
+
+@pytest.mark.parametrize("env", ["prod", "dev"])
+@pytest.mark.parametrize("writer", sorted(WRITERS))
+def test_writer_below_a_gate_writes_the_live_side_when_the_flow_runs(writer, env, tmp_path):
+    write, read = WRITERS[writer]
+    _, gate = _env_gate(env)
+    then_path, else_path = tmp_path / "then.out", tmp_path / "else.out"
+
+    then_written = write(gate.then, then_path)
+    else_written = write(gate.otherwise.filter(ff.col("a") > 1), else_path)
+
+    for written in (then_written, else_written):
+        assert written._deferred is True
+        assert written.flow_graph.get_node(written.node_id).deferred_until_run is True
+    assert not then_path.exists() and not else_path.exists()
+
+    live_written, live_path, dead_path = (
+        (then_written, then_path, else_path) if env == "prod" else (else_written, else_path, then_path)
+    )
+    live_written.collect()
+    expected = pl.DataFrame(DATA) if env == "prod" else pl.DataFrame(DATA).filter(pl.col("a") > 1)
+    assert_frame_equal(read(live_path), expected)
+    assert not dead_path.exists()
+
+
+@pytest.mark.parametrize("env", ["prod", "dev"])
+def test_to_flow_output_below_a_gate_runs_on_the_live_side_only(env):
+    _, gate = _env_gate(env)
+    graph = gate.flow_graph
+    gate.then.to_flow_output("then_rows")
+    gate.otherwise.to_flow_output("else_rows")
+    sinks = {n.setting_input.output_name: n for n in graph.nodes if n.node_type == "flow_output"}
+    assert all(sink.deferred_until_run for sink in sinks.values())
+
+    results = results_by_id(graph.run_graph())
+    live, dead = ("then_rows", "else_rows") if env == "prod" else ("else_rows", "then_rows")
+    assert results[sinks[live].node_id].skipped is False
+    assert results[sinks[dead].node_id].skipped is True
+    assert sinks[live].deferred_until_run is False
+
+
+def test_node_output_below_a_gate_with_deferred_false_writes_at_build(tmp_path):
+    _, gate = _env_gate("dev")
+    path = tmp_path / "eager.csv"
+    settings = input_schema.OutputSettings(
+        file_type="csv", name=path.name, directory=str(path), table_settings=input_schema.OutputCsvTable()
+    )
+    settings.set_absolute_filepath()
+    ff.Node("output", gate.then, settings={"output_settings": settings}, deferred=False)
+    assert_frame_equal(pl.read_csv(path), pl.DataFrame(DATA))
+
+
 # exits into other nodes
 
 
@@ -262,8 +322,8 @@ def test_otherwise_into_join_and_concat_keeps_output_1():
     joined = gate.otherwise.join(other, on="a")
     combined = ff.concat([source.filter(ff.col("a") > 2), gate.otherwise])
 
-    assert _handle_into(joined, gate.node_id) == "output-1"
-    assert _handle_into(combined, gate.node_id) == "output-1"
+    assert handle_into(joined, gate.node_id) == "output-1"
+    assert handle_into(combined, gate.node_id) == "output-1"
     run_info = joined.flow_graph.run_graph()
     assert results_by_id(run_info)[joined.node_id].skipped is False
     assert sorted(joined.flow_graph.get_node(joined.node_id).get_resulting_data().collect()["hundred"]) == [
@@ -294,19 +354,7 @@ def test_round_trip_keeps_the_control_edge():
     out = gate.then.select("a")
     expected = out.collect()
 
-    with tempfile.TemporaryDirectory() as first_dir, tempfile.TemporaryDirectory() as second_dir:
-        first = os.path.join(first_dir, "gate_roundtrip.yaml")
-        second = os.path.join(second_dir, "gate_roundtrip.yaml")
-        out.save_graph(first)
-        reopened = open_flow(Path(first))
-        reopened.save_flow(second)
-        with open(first, encoding="utf-8") as f:
-            first_doc = yaml.safe_load(f)
-        with open(second, encoding="utf-8") as f:
-            second_doc = yaml.safe_load(f)
-
-    for key in ("nodes", "flowfile_settings", "groups", "comments"):
-        assert first_doc[key] == second_doc[key], key
+    reopened, first_doc = round_trip(out, "gate_roundtrip.yaml")
     reopened_gate = reopened.get_node(gate.node_id)
     assert reopened_gate.node_inputs.right_input.node_id == log.node_id
     assert reopened_gate.node_inputs.main_inputs[0].node_id == source.node_id

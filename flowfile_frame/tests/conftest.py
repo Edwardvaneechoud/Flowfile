@@ -18,6 +18,7 @@ os.environ.setdefault(
     str(Path(tempfile.gettempdir()) / 'flowfile_test_secure_storage'),
 )
 
+import pytest
 from pydantic import SecretStr
 
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
@@ -26,6 +27,8 @@ from flowfile_frame.cloud_storage.secret_manager import (
     del_cloud_storage_connection,
     get_all_available_cloud_storage_connections,
 )
+
+pytest.register_assert_rewrite(f"{__package__}.native_helpers")
 
 
 def create_cloud_connection():

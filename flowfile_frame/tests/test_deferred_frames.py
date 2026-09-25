@@ -20,8 +20,10 @@ from flowfile_core.flowfile.flow_graph import add_connection
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_frame.flow_frame import FlowFrame
-from flowfile_frame.native import NativeNodeError, seed_deferred_node
+from flowfile_frame.native import NativeNodeError, _nodes_a_read_executes, ancestors, seed_deferred_node
 from flowfile_frame.utils import generate_node_id
+
+from .native_helpers import handle_into
 
 DATA = {"a": [1, 2, 3], "g": ["x", "x", "y"]}
 TEN_X = "output_df = input_df.with_columns((pl.col('a') * 10).alias('a10'))"
@@ -73,10 +75,6 @@ def _assert_not_executed(frame: FlowFrame, node_id: int, seed) -> None:
     node = frame.flow_graph.get_node(node_id)
     assert node.deferred_until_run is True
     assert node.results.resulting_data is seed
-
-
-def _handle_into(target: FlowFrame, source_id: int) -> str:
-    return target.flow_graph.get_node(target.node_id)._input_output_handles[source_id]
 
 
 # building on a deferred frame (I1)
@@ -154,7 +152,7 @@ def test_split_fail_branch_keeps_its_handle_across_a_merge():
     joined = fail.join(other, on="a")
 
     assert fail.node_id != split_id  # remapped onto the merged graph
-    assert _handle_into(joined, fail.node_id) == "output-1"
+    assert handle_into(joined, fail.node_id) == "output-1"
     _assert_not_executed(joined, joined.flow_graph.get_node(fail.node_id).node_inputs.main_inputs[0].node_id, seed)
     assert joined.collect().to_dicts() == [{"a": 1, "g": "x", "a10": 10, "label": "one"}]
 
@@ -167,7 +165,7 @@ def test_split_fail_branch_concat_across_graphs_keeps_output_1():
     combined = ff.concat([other, fail])
 
     assert combined._deferred is True
-    assert _handle_into(combined, fail.node_id) == "output-1"
+    assert handle_into(combined, fail.node_id) == "output-1"
     _assert_not_executed(combined, combined.flow_graph.get_node(fail.node_id).node_inputs.main_inputs[0].node_id, seed)
     assert sorted(combined.collect()["a"].to_list()) == [1, 7, 8]
 
@@ -185,14 +183,14 @@ def _split():
 def test_join_reads_the_fail_branch():
     _, _, failed, other = _split()
     joined = failed.join(other, on="a")
-    assert _handle_into(joined, failed.node_id) == "output-1"
+    assert handle_into(joined, failed.node_id) == "output-1"
     assert joined.collect().to_dicts() == [{"a": 1, "g": "x", "hundred": 100}]
 
 
 def test_polars_code_join_reads_the_fail_branch():
     _, _, failed, other = _split()
     joined = failed.join(other, on="a", suffix="_other")
-    assert _handle_into(joined, failed.node_id) == "output-1"
+    assert handle_into(joined, failed.node_id) == "output-1"
     assert joined.collect().to_dicts() == [{"a": 1, "g": "x", "hundred": 100}]
 
 
@@ -201,14 +199,14 @@ def test_fuzzy_join_reads_the_fail_branch():
     _, failed = left.filter_split(ff.col("id") > 1)
     right = ff.from_dict({"id": [1, 2], "street": ["123 Main Street", "456 Elm Street"]})
     joined = failed.fuzzy_join(right, [ff.FuzzyMapping("street", threshold_score=40)])
-    assert _handle_into(joined, failed.node_id) == "output-1"
+    assert handle_into(joined, failed.node_id) == "output-1"
     assert joined.collect()["street"].to_list() == ["123 Main St"]
 
 
 def test_concat_reads_the_fail_branch():
     df, _, failed, _ = _split()
     combined = ff.concat([df, failed])
-    assert _handle_into(combined, failed.node_id) == "output-1"
+    assert handle_into(combined, failed.node_id) == "output-1"
     assert sorted(combined.collect()["a"].to_list()) == [1, 1, 2, 3]
 
 
@@ -480,6 +478,24 @@ def test_settings_change_after_build_raises_native_error(change):
         frame.select("a")
 
 
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda f, other: f.join(other, on="a"),
+        lambda f, other: ff.concat([f, other]),
+        lambda f, other: f.filter_split(ff.col("a") > 1),
+        lambda f, other: ff.Node("union", f, other),
+    ],
+    ids=["join", "concat", "filter_split", "native-node"],
+)
+def test_placeholder_reset_away_raises_native_error_on_every_build_path(build):
+    _, frame, node, _ = _deferred_frame()
+    other = ff.from_dict(DATA, flow_graph=frame.flow_graph).with_columns(ff.lit(0).alias("a10"))
+    frame.flow_graph.reset()
+    with pytest.raises(NativeNodeError, match=f"node {node.node_id} lost its deferred placeholder"):
+        build(frame, other)
+
+
 def test_real_run_replaces_a_stale_multi_output_seed():
     source = ff.from_dict(DATA)
     passed, _ = source.filter_split(ff.col("a") > 1)
@@ -500,3 +516,18 @@ def test_real_run_replaces_a_stale_multi_output_seed():
 
     assert fail.collect().to_dicts() == [{"a": 1, "g": "x"}]
     assert [c.name for c in split.schema_for_handle("output-1")] == ["a", "g"]
+
+
+def test_a_read_executes_only_the_result_less_part_of_the_lineage():
+    source = ff.from_dict(DATA)
+    middle = source.select("a")
+    leaf = middle.filter(ff.col("a") > 1)
+    graph = leaf.flow_graph
+    leaf_node = graph.get_node(leaf.node_id)
+    lineage = {source.node_id, middle.node_id, leaf.node_id}
+
+    assert set(ancestors(leaf_node)) == lineage
+    assert set(ancestors(leaf_node, follow=lambda n: n.node_id != middle.node_id)) == {leaf.node_id}
+    assert [n.node_id for n in _nodes_a_read_executes(leaf_node)] == [leaf.node_id]
+    graph.reset()
+    assert {n.node_id for n in _nodes_a_read_executes(leaf_node)} == lineage

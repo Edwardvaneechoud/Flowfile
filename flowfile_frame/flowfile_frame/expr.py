@@ -8,7 +8,7 @@ import polars as pl
 from polars.expr.string import ExprStringNameSpace
 
 from flowfile_core.schemas import transform_schema
-from flowfile_frame.adding_expr import add_expr_methods
+from flowfile_frame.adding_expr import add_expr_methods, refuse_parameter_argument
 from flowfile_frame.config import logger
 from flowfile_frame.expr_name import ExprNameNameSpace
 from flowfile_frame.list_name_space import ExprListNameSpace
@@ -1096,6 +1096,7 @@ class Expr:
         return result
 
     def is_in(self, values):
+        refuse_parameter_argument("is_in", (values,), {}, hint="compare with == instead: (fl.col(x) == parameter)")
         res_expr = self.expr.is_in(values) if self.expr is not None else None
         # is_in is not an aggregation, resets agg_func
         result = self._create_next_expr(
@@ -1130,6 +1131,9 @@ class Expr:
         return new_instance
 
     def fill_null(self, value):
+        refuse_parameter_argument(
+            "fill_null", (value,), {}, hint="use fl.when(expr.is_null()).then(parameter).otherwise(expr)"
+        )
         res_expr = self.expr.fill_null(value) if self.expr is not None else None
         val_ff = _get_ff_repr(value)
         ff = f"coalesce({self._ff_repr}, {val_ff})" if self._ff_repr is not None and val_ff is not None else None

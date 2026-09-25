@@ -21,7 +21,7 @@ from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.user_defined.registry import KernelRequiredError, missing_custom_node_error, registry
 from flowfile_core.schemas import input_schema
-from flowfile_frame.native import NativeNode, NativeNodeError, predicted_schema_without_running
+from flowfile_frame.native import NativeNode, NativeNodeError, _kernel_id, predicted_schema_without_running
 from shared.node_designer.custom_node import CustomNodeBase, node_key_for
 
 if TYPE_CHECKING:
@@ -162,8 +162,8 @@ class CustomNode(NativeNode):
     ``settings`` is nested as ``{section: {component: value}}``, one-to-one with what the node
     stores; an instance contributes its configured values first. Input frames are wired to
     ``input-0`` to ``input-2`` in order and must match the node's ``number_of_inputs``.
-    ``kernel`` binds an ``environment="kernel"`` node to a kernel (required there, refused on
-    a local node); the id is not validated until the flow runs.
+    ``kernel`` binds an ``environment="kernel"`` node to a kernel, by id or an object with an
+    ``.id`` (required there, refused on a local node); the id is not validated until the flow runs.
 
     A local node on a local graph runs its ``process()`` when it is built, like canvas
     prediction does (a lazy plan for a well-behaved node). A kernel node, a node whose
@@ -181,20 +181,18 @@ class CustomNode(NativeNode):
         node: type[CustomNodeBase] | CustomNodeBase | str,
         *inputs: FlowFrame,
         settings: dict[str, dict[str, Any]] | None = None,
-        kernel: str | None = None,
+        kernel: str | Any | None = None,
         description: str | None = None,
         flow_graph: FlowGraph | None = None,
     ) -> None:
         cls, base = _resolve(node)
         instance = cls()
-        if kernel is not None:
-            if not isinstance(kernel, str):
-                raise NativeNodeError(f"kernel= takes a kernel id, got {type(kernel).__name__}")
-            if not instance.uses_kernel:
-                raise NativeNodeError(
-                    f"Custom node {instance.item!r} runs locally (environment='local'); "
-                    "kernel= only applies to environment='kernel' nodes"
-                )
+        kernel = _kernel_id(kernel)
+        if kernel is not None and not instance.uses_kernel:
+            raise NativeNodeError(
+                f"Custom node {instance.item!r} runs locally (environment='local'); "
+                "kernel= only applies to environment='kernel' nodes"
+            )
         self.node_class = cls
         self.settings = _canonical_settings(cls, base, settings)
         self.kernel = kernel
@@ -292,7 +290,7 @@ def _factory_signature(parameters: dict[str, tuple[str, str]], defaults: dict[st
     params = [inspect.Parameter("inputs", inspect.Parameter.VAR_POSITIONAL, annotation="FlowFrame")]
     params += [inspect.Parameter(name, keyword, default=defaults[name]) for name in parameters]
     params += [
-        inspect.Parameter("kernel", keyword, default=None, annotation="str | None"),
+        inspect.Parameter("kernel", keyword, default=None, annotation="str | Any | None"),
         inspect.Parameter("description", keyword, default=None, annotation="str | None"),
         inspect.Parameter("settings", keyword, default=None, annotation="dict[str, dict[str, Any]] | None"),
         inspect.Parameter("flow_graph", keyword, default=None, annotation="FlowGraph | None"),
@@ -330,7 +328,7 @@ class CustomNodeFactory:
     def __call__(
         self,
         *inputs: FlowFrame,
-        kernel: str | None = None,
+        kernel: str | Any | None = None,
         description: str | None = None,
         settings: dict[str, dict[str, Any]] | None = None,
         flow_graph: FlowGraph | None = None,
@@ -348,7 +346,7 @@ class CustomNodeFactory:
     def node(
         self,
         *inputs: FlowFrame,
-        kernel: str | None = None,
+        kernel: str | Any | None = None,
         description: str | None = None,
         settings: dict[str, dict[str, Any]] | None = None,
         flow_graph: FlowGraph | None = None,

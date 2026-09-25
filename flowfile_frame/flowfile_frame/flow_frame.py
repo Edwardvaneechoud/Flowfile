@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.flowfile.flow_node.flow_node import DeferredNodeError, FlowNode
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.formula_dependencies import entries_are_independent
 from flowfile_core.flowfile.param_types import ParamValue
 from flowfile_core.flowfile.parameter_resolver import resolve_expression_parameters
@@ -32,15 +32,13 @@ from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.join import _create_join_mappings, _normalize_columns_to_list
 from flowfile_frame.lazy_methods import add_lazyframe_methods
 from flowfile_frame.native import (
-    DEFERRED_NODE_TYPES,
     NativeNodeError,
     add_connection_checked,
     ancestors,
-    is_side_effect_node_type,
-    lost_placeholder_error,
     materialise,
     merge_frames,
     seed_from_predicted_schema,
+    seeded_at_build,
 )
 from flowfile_frame.parameters import refuse_parameter_as_column, refuse_parameter_column_in_formula
 from flowfile_frame.selectors import Selector
@@ -480,9 +478,9 @@ class FlowFrame:
         """Helper method to create a new FlowFrame that's a child of this one.
 
         ``deferred`` overrides the inherited flag for nodes with more inputs than this frame.
-        On a deferred frame a side-effect node (writer, output, model) or a deferred node type
-        is seeded from its own predicted schema instead of executed: building must never write
-        or train on the zero-row placeholder.
+        A node that :func:`~flowfile_frame.native.seeded_at_build` (a side-effect node on a
+        deferred frame or below a gate) is seeded from its own predicted schema instead of
+        executed, and its frame is deferred: only the run writes, on the live side only.
         """
         deferred = self._deferred if deferred is None else deferred
         self._add_connection(self.node_id, new_node_id, output_handle=getattr(self, "output_handle", "output-0"))
@@ -495,11 +493,7 @@ class FlowFrame:
             if node is not None:
                 node.results.resulting_data = FlowDataEngine(precomputed_result)
         node = self.flow_graph.get_node(new_node_id)
-        if (
-            deferred
-            and node is not None
-            and (node.node_type in DEFERRED_NODE_TYPES or is_side_effect_node_type(node.node_type))
-        ):
+        if node is not None and seeded_at_build(node.node_type, [self], inputs_deferred=deferred):
             seed_from_predicted_schema(node)
             return FlowFrame(
                 data=node.results.resulting_data.data_frame,
@@ -518,8 +512,6 @@ class FlowFrame:
             )
         except AttributeError:
             raise ValueError("Could not execute the function") from None
-        except DeferredNodeError as exc:
-            raise lost_placeholder_error(node) from exc
 
     @staticmethod
     def _generate_sort_polars_code(
@@ -3619,7 +3611,8 @@ class FlowFrame:
                     return self._with_flowfile_formula(formula_entries[0][1], formula_entries[0][0], description)
                 # A Formula node evaluates sequentially; only independent expressions mean the
                 # same thing there as they do in a single parallel Polars with_columns call.
-                if entries_are_independent(formula_entries):
+                resolved_entries = [(name, resolve_expression_parameters(f, params)) for name, f in formula_entries]
+                if entries_are_independent(resolved_entries):
                     return self._with_flowfile_formulas(
                         [(name, formula, "Auto") for name, formula in formula_entries], description
                     )

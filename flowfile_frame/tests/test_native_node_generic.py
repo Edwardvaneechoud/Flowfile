@@ -18,10 +18,6 @@ CUSTOMERS = {"customer_id": [10, 20], "name": ["Ann", "Bob"]}
 TEN_X = "output_df = input_df.with_columns((pl.col('amount') * 10).alias('amount10'))"
 
 
-def _node_of(frame: ff.FlowFrame):
-    return frame.flow_graph.get_node(frame.node_id)
-
-
 # node types through ff.Node
 
 

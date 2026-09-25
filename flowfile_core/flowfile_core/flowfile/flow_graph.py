@@ -156,6 +156,7 @@ from flowfile_core.flowfile.util.skip_rules import (
     dead_gate_handles,
     effective_input_status,
     gate_has_else_output,
+    parameter_gate_is_open,
     uses_any_rule,
 )
 from flowfile_core.flowfile.utils import create_unique_id, snake_case_to_camel_case
@@ -7349,8 +7350,6 @@ class FlowGraph:
         a silently-picked branch.
         """
         closed: dict[str | int, frozenset[str]] = {}
-        parameters_by_name = {p.name: p for p in self.flow_settings.parameters}
-        typed_params = {p.name: p.typed_default() for p in self.flow_settings.parameters}
         for node in self.nodes:
             if node.node_type != "gate" or not node.is_correct:
                 continue
@@ -7358,15 +7357,8 @@ class FlowGraph:
             if gate_input is None or gate_input.condition_source != "parameter":
                 continue
             try:
-                effective = gate_input
-                if "${" in gate_input.value:
-                    # ${refs} in the comparison value resolve before coercion,
-                    # matching the exported code (where they become live
-                    # parameter-to-parameter comparisons).
-                    effective = gate_input.model_copy(
-                        update={"value": resolve_parameters(gate_input.value, typed_params)}
-                    )
-                dead = dead_gate_handles(effective.evaluate(parameters_by_name), gate_has_else_output(node))
+                is_open = parameter_gate_is_open(gate_input, self.flow_settings.parameters)
+                dead = dead_gate_handles(is_open, gate_has_else_output(node))
                 if dead:
                     closed[node.node_id] = dead
             except ValueError:

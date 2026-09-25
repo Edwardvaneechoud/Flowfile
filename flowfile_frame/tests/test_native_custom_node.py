@@ -1,21 +1,19 @@
 """``ff.CustomNode`` and the ``ff.custom_node(...)`` factory: place user-defined nodes from Python."""
 
 import inspect
-import os
-import tempfile
 import time
-from pathlib import Path
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
-import yaml
 from polars.testing import assert_frame_equal
 
 import flowfile_frame as ff
 from flowfile_core.configs import node_store
-from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.user_defined.registry import KernelRequiredError
 from shared.node_designer import CustomNodeBase, NodeSettings, Section, TextInput, ToggleSwitch
+
+from .native_helpers import round_trip
 
 DATA = {"name": [" ann ", "bob ", " cy"], "amount": [1, 2, 3]}
 
@@ -246,6 +244,15 @@ def test_kernel_on_a_local_node_is_refused():
         ff.CustomNode(NativeCleaner, _frame(), kernel="ml-kernel")
 
 
+def test_kernel_takes_an_id_or_an_object_with_an_id_like_python_script():
+    by_object = ff.CustomNode(NativeKernelScorer, _frame(), kernel=SimpleNamespace(id="ml-kernel"))
+    assert by_object.kernel == "ml-kernel" == by_object.node.setting_input.kernel_id
+    with pytest.raises(ff.NativeNodeError, match=r"kernel= takes a kernel id or an object with an \.id, got int"):
+        ff.CustomNode(NativeKernelScorer, _frame(), kernel=42)
+    with pytest.raises(ff.NativeNodeError, match="runs locally"):
+        ff.CustomNode(NativeCleaner, _frame(), kernel=SimpleNamespace(id="ml-kernel"))
+
+
 def test_kernel_node_without_a_kernel_raises_and_leaves_no_node():
     source = _frame()
     with pytest.raises(ff.NativeNodeError, match="select a kernel first") as info:
@@ -360,19 +367,7 @@ def test_round_trip_keeps_the_custom_node_and_its_settings():
     out = node.output.select("name")
     expected = out.collect()
 
-    with tempfile.TemporaryDirectory() as first_dir, tempfile.TemporaryDirectory() as second_dir:
-        first = os.path.join(first_dir, "custom_roundtrip.yaml")
-        second = os.path.join(second_dir, "custom_roundtrip.yaml")
-        out.save_graph(first)
-        reopened = open_flow(Path(first))
-        reopened.save_flow(second)
-        with open(first, encoding="utf-8") as f:
-            first_doc = yaml.safe_load(f)
-        with open(second, encoding="utf-8") as f:
-            second_doc = yaml.safe_load(f)
-
-    for key in ("nodes", "flowfile_settings", "groups", "comments"):
-        assert first_doc[key] == second_doc[key], key
+    reopened, _ = round_trip(out, "custom_roundtrip.yaml")
     reopened_node = reopened.get_node(node.node_id)
     assert reopened_node.node_type == "native_test_cleaner"
     assert reopened_node.setting_input.is_user_defined is True

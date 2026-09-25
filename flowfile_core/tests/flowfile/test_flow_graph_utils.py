@@ -806,6 +806,24 @@ def test_combine_carries_deferred_seed_without_executing():
     assert node.get_resulting_data().collect().to_dicts() == [{"a": 1}, {"a": 2}]
 
 
+def test_combine_carries_a_built_result_without_the_deferred_flag():
+    graph1 = create_graph(flow_id=1)
+    add_manual_input(graph1, [{"a": 1}, {"a": 2}], node_id=1)
+    _add_select_on(graph1, node_id=2, depending_on_id=1)
+    built = graph1.get_node(2).get_resulting_data()
+    graph2 = create_graph(flow_id=2)
+    add_manual_input(graph2, [{"a": 9}], node_id=1)
+
+    combined, mapping = combine_flow_graphs_with_mapping(graph1, graph2)
+
+    node = combined.get_node(mapping[(1, 2)])
+    assert node.results.resulting_data is built
+    assert node.deferred_until_run is False
+    assert combined.get_node(mapping[(2, 1)]).results.resulting_data is None
+    handle_run_info(combined.run_graph())
+    assert node.get_resulting_data().collect().to_dicts() == [{"a": 1}, {"a": 2}]
+
+
 def test_combine_never_runs_a_deferred_zero_input_node(custom_node_store):
     import time
 

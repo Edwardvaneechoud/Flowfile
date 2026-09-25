@@ -4,17 +4,14 @@ No test here needs Docker: a script without a kernel fails the run before any ke
 looked up, and building never touches the kernel manager.
 """
 
-import os
-import tempfile
-from pathlib import Path
 from types import SimpleNamespace
 
 import polars as pl
 import pytest
-import yaml
 
 import flowfile_frame as ff
-from flowfile_core.flowfile.manage.io_flowfile import open_flow
+
+from .native_helpers import results_by_id, round_trip
 
 ORDERS = {"order_id": [1, 2, 3], "amount": [5.0, 7.5, 2.5]}
 CUSTOMERS = {"customer_id": [10, 20], "name": ["Ann", "Bob"]}
@@ -132,7 +129,7 @@ def test_without_a_kernel_the_run_fails_at_the_node():
         script.output.collect()
 
     run_info = script.flow_graph.run_graph()
-    result = {r.node_id: r for r in run_info.node_step_result}[script.node_id]
+    result = results_by_id(run_info)[script.node_id]
     assert result.success is False
     assert "kernel" in result.error
 
@@ -147,19 +144,7 @@ def test_round_trip_keeps_cells_code_kernel_and_outputs():
     )
     out = script["metrics"].select("amount")
 
-    with tempfile.TemporaryDirectory() as first_dir, tempfile.TemporaryDirectory() as second_dir:
-        first = os.path.join(first_dir, "script_roundtrip.yaml")
-        second = os.path.join(second_dir, "script_roundtrip.yaml")
-        out.save_graph(first)
-        reopened = open_flow(Path(first))
-        reopened.save_flow(second)
-        with open(first, encoding="utf-8") as f:
-            first_doc = yaml.safe_load(f)
-        with open(second, encoding="utf-8") as f:
-            second_doc = yaml.safe_load(f)
-
-    for key in ("nodes", "flowfile_settings", "groups", "comments"):
-        assert first_doc[key] == second_doc[key], key
+    reopened, _ = round_trip(out, "script_roundtrip.yaml")
     reopened_script = reopened.get_node(script.node_id)
     assert reopened_script.node_type == "python_script"
     assert reopened_script.setting_input.python_script_input == _script_input(script)

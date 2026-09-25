@@ -380,6 +380,56 @@ def test_zero_output_subflow_returns_run_summary(tmp_path):
     assert summary["success"].to_list() == [True]
 
 
+def test_run_summary_schema_prediction_matches_a_real_run(tmp_path):
+    graph = make_graph(440, "no_output_params_subflow")
+    graph.flow_settings.parameters = [
+        FlowParameter(name="region", default_value="EU"),
+        FlowParameter(name="limit", default_value="10", type="integer"),
+        FlowParameter(name="unused", default_value="x"),
+    ]
+    add_promise(graph, 1, "flow_input")
+    graph.add_flow_input(
+        input_schema.NodeFlowInput(flow_id=graph.flow_id, node_id=1, input_name="data", raw_data_format=customer_rows(2))
+    )
+    path = tmp_path / "no_output_params_subflow.yaml"
+    graph.save_flow(str(path))
+    registration_id = register_flow_file(path, "no_output_params_subflow")
+
+    parent = make_graph(441)
+    add_promise(parent, 1, "manual_input")
+    parent.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=parent.flow_id,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist([{"region": "EU"}, {"region": "US"}]),
+        )
+    )
+    settings = input_schema.NodeRunFlow(
+        flow_id=parent.flow_id,
+        node_id=9,
+        user_id=1,
+        flow_reference=input_schema.SubflowReference(registration_id=registration_id),
+        input_slots=["data"],
+        output_slots=[],
+        parameter_specs=subflow.get_subflow_interface(path).parameters,
+        parameter_bindings=[
+            input_schema.RunFlowParameterBinding(parameter_name="region", source="column", column_name="region"),
+            input_schema.RunFlowParameterBinding(parameter_name="limit", source="constant", constant_value="3"),
+        ],
+        iteration_mode="iterate",
+    )
+    add_promise(parent, 9, "run_flow")
+    parent.add_run_flow(settings)
+    connect(parent, 1, 9, "input-0")
+    run_and_assert_ok(parent)
+
+    summary = parent.get_node(9).get_resulting_data().collect()
+    predicted = subflow.predict_run_summary_schema(settings)
+    assert summary.schema == pl.Schema({c.column_name: c.get_polars_type().pl_datatype for c in predicted})
+    assert summary.columns == ["run_index", "success", "param_limit", "param_region"]
+    assert summary["param_region"].to_list() == ["EU", "US"]
+
+
 def test_two_port_routing_and_order_independent_connections(two_port_subflow, tmp_path):
     graph = make_graph(411)
     add_promise(graph, 1, "manual_input")

@@ -49,7 +49,7 @@ What `collect()` on a deferred frame does:
 !!! warning "Kernel nodes need Docker at run time"
     When the graph holds a kernel node (`PythonScript`, a kernel `CustomNode`), running it contacts Docker to reach the kernel container. Building those nodes needs neither Docker nor a running kernel.
 
-A frame that is not deferred keeps its plain behaviour: `collect()` evaluates its lazy plan in-process.
+A frame that is neither deferred nor below a [gate](#gate) keeps its plain behaviour: `collect()` evaluates its lazy plan in-process.
 
 ## `Gate`
 
@@ -98,7 +98,7 @@ The string and the enum member are interchangeable:
     gate = fl.Gate(orders, parameter="mode", operator=fl.GateOperator.EQUALS, value="full")
     ```
 
-`value` is stored in the form the canvas stores: booleans as `"true"` / `"false"`, lists comma-joined. A list with any operator other than `in` / `not_in` raises.
+`value` is stored in the form the canvas stores: booleans as `"true"` / `"false"`, lists comma-joined, a `fl.Parameter` as its `${name}` reference. A list with any operator other than `in` / `not_in` raises.
 
 | Accessor | Returns |
 |---|---|
@@ -113,6 +113,8 @@ The string and the enum member are interchangeable:
 `.is_open` on a parameter gate evaluates the graph's current parameter values. On a formula gate it evaluates the probed frame lazily plus a one-row collect; when that frame is deferred it raises, because the placeholder has no rows.
 
 **Routing.** `.then` and `.otherwise` are pass-through frames while you build. `collect()` on any frame below a gate runs the flow and returns only the live side, and so do `describe()`, `profile()` and `fetch()`: a frame on the dead side collects to a zero-row frame with its columns. In the run, the dead exit's downstream is deliberately skipped (`NodeResult.skipped` is `True`, the run stays green). Each such call runs the whole graph, writers included.
+
+A writer below a gate (a `write_*` method's Output node, `to_flow_output`, `fl.Node("output", ...)` and the other writer, output and model nodes listed under [Deferred frames](#deferred-frames)) is placed without writing and writes when the flow runs, on the live side only; the Polars-code fallbacks of `write_*` (extra writer options) and `sink_*` still write when they are built.
 
 To bring the two sides back together, use a `union` node, which runs when at least one input survived: `fl.concat([...], how="diagonal_relaxed")` places one. Every other node below a dead exit is skipped too, including the Polars-code node the default `fl.concat` places.
 
@@ -153,10 +155,12 @@ Building a node uses the parameter's current value, so a frame collected while y
 
 **Not supported.** Parameters are values, never column names. A `Parameter`, or a string holding `${name}`, in a column-name position raises `NativeNodeError`:
 
-- `fl.col(...)`, `alias`, `rename`, `select`, `drop`, `sort`, `group_by`, `unique(subset=)`, `pivot`, `unpivot`, `with_row_index(name=)`, `text_to_rows` and the keyword constraints of `filter` / `filter_split`
+- `fl.col(...)`, `alias`, `.name.prefix`, `.name.suffix`, `rename`, `select`, `drop`, `sort`, `group_by`, `unique(subset=)`, `pivot`, `unpivot`, `with_row_index(name=)`, `text_to_rows` and the keyword constraints of `filter` / `filter_split`
 - join keys (`on=`, `left_on=`, `right_on=`)
 - `FlowInput(schema=)` and `FlowInput(sample=)` keys, `to_flow_output` names and `RunFlow` input keywords
 - a `[${name}]` column reference in a formula: `filter(flowfile_formula=...)`, `with_columns(flowfile_formulas=...)` and a `Gate` formula
+
+A `Parameter` passed as an argument to an expression method, such as `clip(p)`, `fill_null(p)` or `is_in([p])`, also raises `NativeNodeError`, and the message names what works instead: `fl.lit(p)` for methods that take an expression, such as `clip`. A parameter's value cannot be another parameter: `fl.set_flow_parameter(flow, name, other_parameter)` raises.
 
 !!! note "Pass a frame after a merge"
     Joining frames from two graphs, or a native node over them, merges them into a new graph object. An older `FlowGraph` handle no longer holds the nodes. Pass a frame to the parameter helpers, or re-read `frame.flow_graph`.
@@ -270,7 +274,7 @@ fl.RunFlow(
 
 - `flow`: a `FlowRef`, a registration id, or an unregistered `FlowGraph` / `FlowFrame`. An unregistered flow needs `name=`; it is then registered with [`register_flow`](#register_flow) at build time.
 - `**input_frames`: one keyword per child Flow Input name. An unknown name raises and lists the child's inputs. An input left out falls back to the child's sample data.
-- `params`: keyed by child parameter name or `fl.Parameter`; a name the child does not declare raises, and an omitted parameter keeps the child's default. A constant is stored as a string (booleans lowercase) and checked against the parameter's type at build. A plain column (`fl.col("region")`) binds the parameter to that column of `param_frame`, which is then required and must have the column. `param_frame` without any column binding raises.
+- `params`: keyed by child parameter name or `fl.Parameter`; a name the child does not declare raises, and an omitted parameter keeps the child's default. A constant is stored as a string (booleans lowercase) and checked against the parameter's type at build. A `fl.Parameter` of the calling flow, or its `"${name}"` string, forwards that parameter: the child receives the value of each run. A plain column (`fl.col("region")`) binds the parameter to that column of `param_frame`, which is then required and must have the column. `param_frame` without any column binding raises.
 - `iterate=True` runs the child once per row of `param_frame` and concatenates the outputs; `False` uses the first row. With `iterate` and `append_metadata`, each output gets a `run_index` column and a `param_<name>` column per bound parameter.
 
 Outputs are [deferred](#deferred-frames) and named after the child's Flow Outputs. Read one with `run["large_orders"]` or `run.get_output("large_orders")`, by name or by `fl.FlowOutput`, or with `run.output` when there is exactly one. A child without Flow Outputs has one output, `"main"`: a summary row per run (`run_index`, `success`, and a `param_<name>` column per bound parameter). `run.flow` is the `FlowRef` that runs.
@@ -311,7 +315,7 @@ fl.CustomNode(
     node: type[CustomNodeBase] | CustomNodeBase | str,
     *inputs: FlowFrame,
     settings: dict[str, dict[str, Any]] | None = None,
-    kernel: str | None = None,
+    kernel: str | Any | None = None,
     description: str | None = None,
     flow_graph: FlowGraph | None = None,
 )
@@ -319,7 +323,7 @@ fl.CustomNode(
 
 `node` is a class, an instance (its settings values are the base; an instance that overrides any other field raises, since only settings are saved), or the type name of an installed node. An unknown section or component raises, and so does a class whose node name collides with a built-in node or a different installed node. The number of input frames must match the node's `number_of_inputs`. A class defined in your script is registered for the session: a flow saved with it opens on the canvas only in the same process, and elsewhere shows the node as not installed until it is installed there. `.node_class`, `.settings` (the stored envelope) and `.kernel` hold what was placed.
 
-Kernel rules: an `environment="kernel"` node needs `kernel=` (a kernel id, not validated at build), and `kernel=` on an `environment="local"` node raises. Outputs are deferred for a kernel node, for a node whose schema cannot be predicted without data (`requires_data_for_prediction` without a `predict_output_schema` hook), and for a local node on a graph that does not execute locally. Otherwise the output is built eagerly: the local node's `process()` runs at build to produce its lazy plan, as canvas schema prediction does.
+Kernel rules: an `environment="kernel"` node needs `kernel=` (a kernel id or an object with an `.id`, as for `PythonScript`; not validated at build), and `kernel=` on an `environment="local"` node raises. Outputs are deferred for a kernel node, for a node whose schema cannot be predicted without data (`requires_data_for_prediction` without a `predict_output_schema` hook), and for a local node on a graph that does not execute locally. Otherwise the output is built eagerly: the local node's `process()` runs at build to produce its lazy plan, as canvas schema prediction does.
 
 The same settings two ways, built but not run:
 
@@ -392,6 +396,7 @@ Every build or materialisation failure raises `fl.NativeNodeError`, a subclass o
 - **Local custom nodes run `process()` at build** to build their lazy plan, as canvas schema prediction does.
 - **Kernel ids are not validated at build.** `collect()` on a deferred frame re-runs every output and writer node in the graph, and contacts Docker when the graph holds a kernel node.
 - **A bare `${param}` token in Polars code fails at build.** Polars code is checked as Python when the node is added, before parameters are substituted. A reference inside a string literal, `pl.lit("${min_amount}")`, builds; a bare `${min_amount}` token outside one is a syntax error, so `fl.Node("polars_code", ...)` raises `NativeNodeError`.
+- **Reader paths do not resolve `${name}` at build.** `fl.read_csv("${dir}/x.csv")` and the other readers open the path as written when they are called, so a reference in it fails with `FileNotFoundError`. Pass the resolved path from Python.
 - **Registration writes at build time.** `register_flow` and `RunFlow(graph, name=...)` write a YAML file and a catalog row when called.
 - **`train_model(publish_to_catalog=True)` needs a registered flow.** On a graph built in Python, call `fl.register_flow(flow, name=...)` first.
 - **Reopened flow names.** A registered flow keeps its registration name when reopened only if its file is in the Python-editor flows folder; elsewhere the designer names it after the file.

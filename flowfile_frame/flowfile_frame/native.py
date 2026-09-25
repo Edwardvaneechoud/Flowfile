@@ -65,6 +65,34 @@ def is_side_effect_node_type(node_type: str) -> bool:
     return template is not None and template.node_group == "output"
 
 
+def seeded_at_build(node_type: str, frames: Sequence[FlowFrame], *, inputs_deferred: bool | None = None) -> bool:
+    """Whether a node of ``node_type`` over ``frames`` is seeded instead of executed when it is built.
+
+    Deferred node types always are. A side-effect node is when an input frame is deferred (it
+    would write or train on placeholder rows) or below a gate (only a run decides which exit
+    is live, so building would also write the dead side); the run then executes it on the live
+    side only. ``inputs_deferred`` replaces the frames' own ``_deferred`` for a caller that
+    tracks it across more inputs than it passes. The gate walk only happens for side-effect types.
+    """
+    if node_type in DEFERRED_NODE_TYPES:
+        return True
+    if not is_side_effect_node_type(node_type):
+        return False
+    if inputs_deferred is None:
+        inputs_deferred = any(f._deferred for f in frames)
+    return inputs_deferred or any(f._below_a_gate() for f in frames)
+
+
+def _kernel_id(kernel: str | Any | None) -> str | None:
+    """A ``kernel=`` argument as the id to store: an id as given, or the ``.id`` of a kernel object; never looked up."""
+    if kernel is None or isinstance(kernel, str):
+        return kernel
+    kernel_id = getattr(kernel, "id", None)
+    if isinstance(kernel_id, str):
+        return kernel_id
+    raise NativeNodeError(f"kernel= takes a kernel id or an object with an .id, got {type(kernel).__name__}")
+
+
 def seed_deferred_node(node: FlowNode, schemas: dict[str, list[FlowfileColumn]]) -> None:
     """Give ``node`` typed zero-row outputs so building downstream never executes it.
 
@@ -114,43 +142,68 @@ def _undeclared_parameters_error(node: FlowNode, names: set[str]) -> NativeNodeE
     )
 
 
-def materialise(node: FlowNode, handle: str | None = None) -> FlowDataEngine:
-    """Build-time read of ``node``'s output, with its flow ``${name}`` references resolved.
-
-    Every build-time read goes through here so a node sees its parameters the way the run loop
-    does (``node_parameters_resolved``): expression fields get typed literals, other strings plain
-    text, and the stored settings keep the reference. A reference to an undeclared parameter
-    raises instead of reaching Polars as text, also on a graph that declares no parameters (where
-    the run loop would leave it untouched).
-
-    Build-time data reflects the parameter values at the moment the node is built; ``run_graph()``
-    (and ``collect()`` on deferred or gated frames) re-resolves with the values of that run.
-    ``handle`` reads one output handle through ``get_output``; ``None`` reads the default output.
-    """
+def _resolve_parameters_for_read(stack: contextlib.ExitStack, node: FlowNode) -> None:
+    """Enter ``node_parameters_resolved(node)`` on ``stack``; an undeclared reference raises."""
     params_getter = getattr(node, "_params_getter", None)
     params = params_getter() if params_getter is not None else {}
     if not params:
         unresolved = find_unresolved_in_model(node.setting_input)
         if unresolved:
             raise _undeclared_parameters_error(node, unresolved)
-    with contextlib.ExitStack() as stack:
-        try:
-            stack.enter_context(node_parameters_resolved(node))
-        except ValueError as exc:
-            undeclared = find_unresolved_in_model(node.setting_input) - set(params)
-            raise _undeclared_parameters_error(node, undeclared) from exc
-        return node.get_output(handle) if handle is not None else node.get_resulting_data()
+    try:
+        stack.enter_context(node_parameters_resolved(node))
+    except ValueError as exc:
+        undeclared = find_unresolved_in_model(node.setting_input) - set(params)
+        raise _undeclared_parameters_error(node, undeclared) from exc
 
 
-def ancestors(node: FlowNode) -> dict[int, FlowNode]:
-    """``node`` plus every node it transitively reads from (``all_inputs``), keyed by id in visit order."""
+def ancestors(node: FlowNode, follow: Callable[[FlowNode], bool] | None = None) -> dict[int, FlowNode]:
+    """``node`` plus every node it transitively reads from (``all_inputs``), keyed by id in visit order.
+
+    ``follow`` limits the walk to the inputs it accepts; the walk does not pass a refused input.
+    """
     lineage, stack = {}, [node]
     while stack:
         current = stack.pop()
         if current.node_id not in lineage:
             lineage[current.node_id] = current
-            stack.extend(current.all_inputs)
+            stack.extend(n for n in current.all_inputs if follow is None or follow(n))
     return lineage
+
+
+def _nodes_a_read_executes(node: FlowNode) -> list[FlowNode]:
+    """``node`` plus every ancestor without a result, walked up to the nodes that hold one.
+
+    Reading ``node`` executes exactly these: an upstream node reads its own inputs directly, so
+    one that lost its result (a cross-graph merge rebuilds every node, ``FlowGraph.reset()``)
+    re-executes inside this read.
+    """
+    return list(
+        ancestors(node, follow=lambda n: n.results.resulting_data is None and n.results.errors is None).values()
+    )
+
+
+def materialise(node: FlowNode, handle: str | None = None) -> FlowDataEngine:
+    """Build-time read of ``node``'s output, with its flow ``${name}`` references resolved.
+
+    Every build-time read goes through here so a node sees its parameters the way the run loop
+    does (``node_parameters_resolved``): expression fields get typed literals, other strings plain
+    text, and the stored settings keep the reference. The same holds for every ancestor the read
+    re-executes. A reference to an undeclared parameter raises instead of reaching Polars as text,
+    also on a graph that declares no parameters (where the run loop would leave it untouched). A
+    deferred node whose placeholder was reset away raises :class:`NativeNodeError`.
+
+    Build-time data reflects the parameter values at the moment the node is built; ``run_graph()``
+    (and ``collect()`` on deferred or gated frames) re-resolves with the values of that run.
+    ``handle`` reads one output handle through ``get_output``; ``None`` reads the default output.
+    """
+    with contextlib.ExitStack() as stack:
+        for current in _nodes_a_read_executes(node):
+            _resolve_parameters_for_read(stack, current)
+        try:
+            return node.get_output(handle) if handle is not None else node.get_resulting_data()
+        except DeferredNodeError as exc:
+            raise lost_placeholder_error(node) from exc
 
 
 def lost_placeholder_error(node: FlowNode) -> NativeNodeError:
@@ -359,11 +412,10 @@ class NativeNode:
 
     @staticmethod
     def _decide_deferred(node_type: str, frames: Sequence[FlowFrame], deferred: bool | None) -> bool:
-        """Deferred types, and side-effect nodes below a deferred frame, only run with the flow."""
-        side_effect_below_deferred = is_side_effect_node_type(node_type) and any(f._deferred for f in frames)
+        """:func:`seeded_at_build` unless ``deferred`` is given; a side-effect node never runs on placeholders."""
         if deferred is None:
-            return node_type in DEFERRED_NODE_TYPES or side_effect_below_deferred
-        if not deferred and side_effect_below_deferred:
+            return seeded_at_build(node_type, frames)
+        if not deferred and is_side_effect_node_type(node_type) and any(f._deferred for f in frames):
             raise NativeNodeError(
                 f"{node_type} writes or trains when it is built, and its input only holds placeholder rows "
                 "until the flow runs; leave deferred unset or collect the input first"
@@ -524,8 +576,8 @@ class Node(NativeNode):
     position, ``is_setup``, ``user_id`` and ``depending_on_id(s)``. Input frames are wired in
     order: every frame on ``input-0`` for multi-input nodes (``union``, ``polars_code``,
     ``sql_query``), else frame i on ``input-i``. Outputs are deferred for subflow, script and
-    external-source nodes, and for writers below a deferred frame; ``deferred`` overrides
-    that. The dedicated classes (``fl.Gate`` and the like) are the normal route for the
+    external-source nodes, and for writers below a deferred frame or a gate; ``deferred``
+    overrides that. The dedicated classes (``fl.Gate`` and the like) are the normal route for the
     nodes they cover; custom nodes go through ``fl.CustomNode``.
     """
 

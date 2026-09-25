@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from flowfile_frame.parameters import refuse_parameter_as_column
+
 if TYPE_CHECKING:
     from flowfile_frame.expr import Expr
 
@@ -144,6 +146,7 @@ class ExprNameNameSpace:
         Expr
             A new expression with prefixed name
         """
+        refuse_parameter_as_column(prefix, "name.prefix")
         result_expr = self.expr.prefix(prefix) if self.expr is not None else None
         return self._create_next_expr("prefix", prefix, result_expr=result_expr)
 
@@ -161,6 +164,7 @@ class ExprNameNameSpace:
         Expr
             A new expression with suffixed name
         """
+        refuse_parameter_as_column(suffix, "name.suffix")
         result_expr = self.expr.suffix(suffix) if self.expr is not None else None
         return self._create_next_expr("suffix", suffix, result_expr=result_expr)
 

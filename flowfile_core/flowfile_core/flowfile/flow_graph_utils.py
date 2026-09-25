@@ -16,8 +16,8 @@ def combine_flow_graphs_with_mapping(
 
     Every node is rebuilt from its settings (custom nodes included) and every edge keeps its
     source and target handles. Flow parameters are unioned by name (first graph wins), visual
-    groups are carried under fresh group ids, and deferred nodes keep their seeded outputs so
-    the merged graph never executes them before a flow run.
+    groups are carried under fresh group ids, and every node keeps its outputs (a deferred seed,
+    or a built or run result) so building on the merged graph never re-executes a node.
 
     Returns:
         The combined graph and a mapping ``(flow_id, original_node_id) -> new_node_id``.
@@ -35,7 +35,7 @@ def combine_flow_graphs_with_mapping(
     _add_nodes_to_combined_graph(flow_graphs, combined_graph, node_id_mapping, target_flow_id, group_id_mapping)
     _add_groups_to_combined_graph(flow_graphs, combined_graph, group_id_mapping)
     _add_connections_to_combined_graph(flow_graphs, combined_graph, node_id_mapping)
-    _carry_deferred_seeds(flow_graphs, combined_graph, node_id_mapping)
+    _carry_node_outputs(flow_graphs, combined_graph, node_id_mapping)
     return combined_graph, node_id_mapping
 
 
@@ -369,17 +369,19 @@ def _incoming_edges(target: FlowNode) -> list[tuple[FlowNode, str, str]]:
     ]
 
 
-def _carry_deferred_seeds(
+def _carry_node_outputs(
     flow_graphs: tuple[FlowGraph, ...], combined_graph: FlowGraph, node_id_mapping: dict[tuple[int, int], int]
 ) -> None:
-    """Copy each deferred node's seeded outputs onto its rebuilt node, once its edges exist.
+    """Copy each node's outputs (a deferred seed, or a built or run result) onto its rebuilt node.
 
-    A rebuilt node starts without a result, so the next build step on the merged graph would
-    otherwise execute it (a subflow run, a kernel script, a write of zero rows).
+    Runs once the edges exist. A rebuilt node starts without a result, so the next build step on
+    the merged graph would otherwise execute it: a deferred node (a subflow run, a kernel script,
+    a write of zero rows), or one that already ran in a flow run, which no longer carries the
+    deferred flag. The run state is not carried, so the next run still executes every node.
     """
     for fg in flow_graphs:
         for source_node in fg.nodes:
-            if not source_node.deferred_until_run:
+            if not source_node.deferred_until_run and source_node.results.resulting_data is None:
                 continue
             node = combined_graph.get_node(node_id_mapping[(fg.flow_id, source_node.node_id)])
             with node._execution_lock_held():
@@ -388,4 +390,4 @@ def _carry_deferred_seeds(
                 node._named_schemas = dict(source_node._named_schemas)
                 node.node_schema.result_schema = source_node.node_schema.result_schema
                 node.node_schema.predicted_schema = source_node.node_schema.predicted_schema
-                node.deferred_until_run = True
+                node.deferred_until_run = source_node.deferred_until_run

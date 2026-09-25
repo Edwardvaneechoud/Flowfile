@@ -352,6 +352,23 @@ def _empty_outputs(settings: input_schema.NodeRunFlow) -> "NamedOutputs | FlowDa
     return NamedOutputs(engines)
 
 
+def predict_run_summary_schema(settings: input_schema.NodeRunFlow) -> list[FlowfileColumn]:
+    """Columns of :func:`_run_summary`, the one-row-per-run frame a flow without outputs returns.
+
+    ``run_index`` and ``success``, then one ``param_<name>`` column per bound parameter in the
+    order :func:`_build_run_params` fills a run (constants, then column bindings), typed from
+    ``settings.parameter_specs``. Predicted from the settings alone, without resolving the flow.
+    """
+    types = {spec.name: spec.type for spec in settings.parameter_specs}
+    bound = [b for b in settings.parameter_bindings if b.source == "constant"]
+    bound += [b for b in settings.parameter_bindings if b.source == "column"]
+    columns = [FlowfileColumn.from_input(RUN_INDEX_COLUMN, "Int64"), FlowfileColumn.from_input("success", "Boolean")]
+    for binding in bound:
+        dtype = _PARAM_TYPE_TO_POLARS.get(types.get(binding.parameter_name, "string"), "String")
+        columns.append(FlowfileColumn.from_input(f"{PARAM_COLUMN_PREFIX}{binding.parameter_name}", dtype))
+    return columns
+
+
 def _run_summary(settings: input_schema.NodeRunFlow, runs: list[dict[str, ParamValue]]) -> FlowDataEngine:
     rows = []
     for i, run_params in enumerate(runs, start=1):

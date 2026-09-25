@@ -37,6 +37,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.input_handles import input_handle
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
 from flowfile_core.flowfile.param_types import coerce_param_value
+from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
 from flowfile_core.schemas import input_schema
 from flowfile_frame.catalog_reference import CatalogReference, SchemaReference
 from flowfile_frame.config import logger
@@ -339,8 +340,6 @@ def register_flow(
         namespace_name = service.resolve_namespace_full_name(namespace_id)
         path = _registration_path(service, namespace_id, namespace_name, name, overwrite)
     graph.apply_layout()
-    # A graph with another path would be renamed to the file stem on save.
-    graph.flow_settings.path = str(path)
     registration_id = register_python_editor_flow(
         graph, name=name, namespace_id=namespace_id, flow_path=str(path), user_id=get_local_user_id()
     )
@@ -486,8 +485,9 @@ def _parameter_bindings(
     """One binding per child parameter, in the child's order, as the designer writes them.
 
     An expression binds the parameter to a column of ``param_frame``; any other value is a
-    constant, checked against the parameter's type now rather than when the flow runs. An
-    unset parameter keeps the child's default.
+    constant, checked against the parameter's type now rather than when the flow runs. A
+    ``Parameter`` or ``"${name}"`` value forwards a parameter of this flow, substituted by the
+    run. An unset parameter keeps the child's default.
     """
     by_name = {spec.name: spec for spec in specs}
     unknown = sorted(set(params) - set(by_name))
@@ -513,7 +513,9 @@ def _parameter_bindings(
             continue
         constant = _as_parameter_string(params[spec.name])
         try:
-            coerce_param_value(spec.type, constant, spec.enum_values)
+            # A ${name} reference forwards a parent parameter; the run substitutes and checks it.
+            if not find_unresolved_in_model(constant):
+                coerce_param_value(spec.type, constant, spec.enum_values)
         except ValueError as exc:
             raise NativeNodeError(f"Parameter {spec.name!r} of flow {flow_name!r}: {exc}") from exc
         bindings.append(
@@ -525,21 +527,6 @@ def _parameter_bindings(
             "e.g. params={'region': fl.col('region')}"
         )
     return bindings
-
-
-def _run_summary_schema(settings: input_schema.NodeRunFlow) -> list[FlowfileColumn]:
-    """Columns of the one-row-per-run summary a flow without outputs returns: constants, then column params."""
-    types = {spec.name: spec.type for spec in settings.parameter_specs}
-    bound = [b for b in settings.parameter_bindings if b.source == "constant"]
-    bound += [b for b in settings.parameter_bindings if b.source == "column"]
-    columns = [
-        FlowfileColumn.from_input(subflow.RUN_INDEX_COLUMN, "Int64"),
-        FlowfileColumn.from_input("success", "Boolean"),
-    ]
-    for binding in bound:
-        dtype = subflow._PARAM_TYPE_TO_POLARS.get(types.get(binding.parameter_name, "string"), "String")
-        columns.append(FlowfileColumn.from_input(f"{subflow.PARAM_COLUMN_PREFIX}{binding.parameter_name}", dtype))
-    return columns
 
 
 class RunFlow(NativeNode):
@@ -631,7 +618,7 @@ class RunFlow(NativeNode):
         """
         settings: input_schema.NodeRunFlow = node.setting_input
         if not settings.output_slots:
-            return {output_handle(0): _run_summary_schema(settings)}
+            return {output_handle(0): subflow.predict_run_summary_schema(settings)}
         predicted = subflow.predict_run_flow_named_schemas(settings)
         if not predicted:
             logger.warning(

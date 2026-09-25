@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
 from flowfile_core.flowfile.param_types import FlowParameter
-from flowfile_core.flowfile.parameter_resolver import resolve_parameters
+from flowfile_core.flowfile.util.skip_rules import parameter_gate_is_open
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_frame.enums import GateOperator, GateOperatorLiteral, _literal
 from flowfile_frame.native import NativeNode, NativeNodeError
@@ -33,12 +33,9 @@ def _gate_value(value: Any, operator: str) -> str:
 
 
 def _parameter_gate_is_open(gate_input: transform_schema.GateInput, parameters: list[FlowParameter]) -> bool:
-    """Evaluate a parameter-mode condition the way the run does, ``${name}`` in the value resolved first."""
-    typed = {p.name: p.typed_default() for p in parameters}
-    if "${" in gate_input.value:
-        gate_input = gate_input.model_copy(update={"value": resolve_parameters(gate_input.value, typed)})
+    """Core's run-time evaluation (``parameter_gate_is_open``), its ``ValueError`` as ``NativeNodeError``."""
     try:
-        return gate_input.evaluate({p.name: p for p in parameters})
+        return parameter_gate_is_open(gate_input, parameters)
     except ValueError as exc:
         raise NativeNodeError(f"Gate condition on parameter {gate_input.parameter!r}: {exc}") from exc
 

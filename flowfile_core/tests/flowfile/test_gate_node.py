@@ -44,6 +44,7 @@ from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
+from flowfile_core.flowfile.util.skip_rules import parameter_gate_is_open
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.transform_schema import BasicFilter, FilterInput, FilterOperator
 
@@ -491,6 +492,22 @@ class TestParameterOperators:
     )
     def test_operator_decides_the_downstream(self, flow_id, param, gate_kwargs, expect_open):
         assert self._run_single_gate(flow_id, param, **gate_kwargs) is expect_open
+
+    @pytest.mark.parametrize("flow_id, wanted, expect_open", [(95, "prod", True), (96, "dev", False)])
+    def test_value_reference_resolves_like_the_shared_helper(self, flow_id, wanted, expect_open):
+        """A ``${ref}`` value compares against the referenced parameter; the run and the helper agree."""
+        parameters = [FlowParameter(name="env", default_value="prod"), FlowParameter(name="wanted", default_value=wanted)]
+        gate_input = transform_schema.GateInput(parameter="env", operator="equals", value="${wanted}")
+        assert parameter_gate_is_open(gate_input, parameters) is expect_open
+
+        graph = create_graph(flow_id=flow_id)
+        graph.flow_settings.parameters.extend(parameters)
+        add_manual_input(graph, SOURCE_ROWS, node_id=1)
+        add_gate(graph, node_id=2, depending_on_id=1, parameter="env", operator="equals", value="${wanted}")
+        add_rename_select(graph, node_id=3, depending_on_id=2, old="a", new="a_kept")
+        run_info = graph.run_graph()
+        assert run_info.success is True
+        assert (results_by_id(run_info)[3].skipped is False) is expect_open
 
 
 # B. Union semantics under gates
