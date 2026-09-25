@@ -15,7 +15,7 @@ Every class returns an object with the same accessors:
 | Accessor | Returns |
 |---|---|
 | `.output` | The only output frame (on a `Gate`, the `.then` exit). Raises `NativeNodeError` naming the outputs when the node has more than one. |
-| `node["name"]` | The output frame with that name. |
+| `node["name"]`, `node.get_output(name)` | The output frame with that name; `name` may also be a `fl.FlowOutput`. An unknown name raises `NativeNodeError` listing the outputs. |
 | `.outputs` | The output names, in handle order (`output-0` first). |
 | `.node_id`, `.node`, `.flow_graph` | The node id, the placed core `FlowNode`, and the graph it lives on. |
 
@@ -186,12 +186,16 @@ fl.FlowInput(
     description: str | None = None,
 ) -> FlowFrame
 
-FlowFrame.to_flow_output(name: str, *, description: str | None = None) -> FlowFrame
+fl.FlowOutput(name: str, *, description: str | None = None)
+
+FlowFrame.to_flow_output(name: str | FlowOutput, *, description: str | None = None) -> FlowFrame
 ```
 
 `FlowInput` places a Flow Input node and returns its frame. Give at most one of `schema` and `sample`. `schema` (a dict, `pl.Schema` or list of `(name, dtype)` pairs) declares the columns as a zero-row typed frame; write nested dtypes in full, for example `fl.List(fl.Int64)`. `sample` (a dict of columns or a DataFrame) stores rows that a standalone run of the child reads. With neither, the input is empty. A duplicate input name raises.
 
 `to_flow_output` places a Flow Output node below the frame and returns the **same frame**: the Flow Output node has no outgoing handle, so nothing chains from it.
+
+The name can also be declared once, `large_orders = fl.FlowOutput("large_orders")`, and passed both to `to_flow_output` and to the caller's `run.get_output(large_orders)` (see the [`RunFlow`](#runflow) example). Its `description` labels the Flow Output node when `to_flow_output` gives none. A `FlowOutput` is equal to another with the same name and can key a dict; an empty name raises.
 
 **Port order is creation order.** A caller sees the child's inputs and outputs in the order the `FlowInput` and `to_flow_output` calls were made.
 
@@ -269,7 +273,7 @@ fl.RunFlow(
 - `params`: keyed by child parameter name or `fl.Parameter`; a name the child does not declare raises, and an omitted parameter keeps the child's default. A constant is stored as a string (booleans lowercase) and checked against the parameter's type at build. A plain column (`fl.col("region")`) binds the parameter to that column of `param_frame`, which is then required and must have the column. `param_frame` without any column binding raises.
 - `iterate=True` runs the child once per row of `param_frame` and concatenates the outputs; `False` uses the first row. With `iterate` and `append_metadata`, each output gets a `run_index` column and a `param_<name>` column per bound parameter.
 
-Outputs are [deferred](#deferred-frames) and named after the child's Flow Outputs: `run["large_orders"]`, or `run.output` when there is exactly one. A child without Flow Outputs has one output, `"main"`: a summary row per run (`run_index`, `success`, and a `param_<name>` column per bound parameter). `run.flow` is the `FlowRef` that runs.
+Outputs are [deferred](#deferred-frames) and named after the child's Flow Outputs. Read one with `run["large_orders"]` or `run.get_output("large_orders")`, by name or by `fl.FlowOutput`, or with `run.output` when there is exactly one. A child without Flow Outputs has one output, `"main"`: a summary row per run (`run_index`, `success`, and a `param_<name>` column per bound parameter). `run.flow` is the `FlowRef` that runs.
 
 ```python
 --8<-- "docs/examples/native_nodes.py:subflow"

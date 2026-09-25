@@ -67,6 +67,13 @@ def test_parameter_gate_node_settings_and_exits():
     assert_frame_equal(gate.otherwise.collect(), pl.DataFrame(DATA).clear())
 
 
+def test_get_output_is_the_spelled_out_index():
+    _, gate = _env_gate("prod")
+    assert gate.get_output("then") is gate.then and gate.get_output("else") is gate.otherwise
+    with pytest.raises(ff.NativeNodeError, match=r"no output 'main': \['then', 'else'\]"):
+        gate.get_output("main")
+
+
 def test_values_are_stored_in_their_canvas_form():
     source = ff.from_dict(DATA)
     ff.add_flow_parameter(source, ff.Parameter("flag", default=True, type="boolean"))

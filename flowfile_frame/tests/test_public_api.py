@@ -18,6 +18,7 @@ NATIVE_NODE_API = [
     "ParamTypeLiteral",
     "NodeType",
     "FlowInput",
+    "FlowOutput",
     "FlowRef",
     "flow_ref",
     "register_flow",

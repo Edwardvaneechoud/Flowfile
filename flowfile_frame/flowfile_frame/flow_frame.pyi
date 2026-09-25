@@ -29,6 +29,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_frame import group_frame
 from flowfile_frame.expr import Expr
+from flowfile_frame.run_flow import FlowOutput
 from flowfile_core.schemas import transform_schema
 
 # Conditional imports
@@ -448,7 +449,7 @@ class FlowFrame:
     def text_to_rows(self, column: str | Column, output_column: str = None, delimiter: str = None, split_by_column: str = None, description: str = None) -> 'FlowFrame': ...
 
     # Mark this frame as the flow output ``name`` (a ``flow_output`` node) and return it unchanged.
-    def to_flow_output(self, name: str, description: str | None = None) -> 'FlowFrame': ...
+    def to_flow_output(self, name: str | FlowOutput, description: str | None = None) -> 'FlowFrame': ...
 
     # Get the underlying ETL graph.
     def to_graph(self, description: Optional[str] = None) -> Any: ...

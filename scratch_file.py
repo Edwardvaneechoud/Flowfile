@@ -12,7 +12,7 @@ full = g.then.group_by("region").agg(fl.col("amount").sum().alias("revenue")).he
 quick = g.otherwise.head(1)
 
 print(g.is_open)                 # True
-fl.set_flow_parameter(sales, "mode", "full")
+fl.set_flow_parameter(sales, "mode", "quick")
 print(g.is_open)       # False: the run will skip the `full` branch, green not red
 
 

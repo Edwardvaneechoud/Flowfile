@@ -120,7 +120,7 @@ from flowfile_frame.expr import col, column, count, cum_count, len, lit, max, me
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.python_script import PythonScript
-from flowfile_frame.run_flow import FlowInput, FlowRef, RunFlow, flow_ref, register_flow
+from flowfile_frame.run_flow import FlowInput, FlowOutput, FlowRef, RunFlow, flow_ref, register_flow
 from flowfile_frame.selectors import (
     all_,
     boolean,
@@ -211,6 +211,7 @@ __all__ = [
     "Node",
     "NativeNodeError",
     "FlowInput",
+    "FlowOutput",
     "RunFlow",
     "FlowRef",
     "flow_ref",

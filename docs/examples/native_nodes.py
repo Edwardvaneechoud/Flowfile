@@ -33,14 +33,15 @@ assert skipped[gate.node_id] is False
 assert flow.get_node(combined.node_id).get_resulting_data().collect()["tier"].to_list() == ["quick"] * 3
 
 # --8<-- [start:subflow]
+large_orders = ff.FlowOutput("large_orders")
 child = ff.create_flow_graph()
 incoming = ff.FlowInput("orders", schema={"id": ff.Int64, "amount": ff.Float64}, flow_graph=child)
-incoming.filter(ff.col("amount") > 100).to_flow_output("large_orders")
+incoming.filter(ff.col("amount") > 100).to_flow_output(large_orders)
 large_orders_flow = ff.register_flow(child, name="Docs large orders")
 
 parent_orders = ff.from_dict({"id": [1, 2, 3], "amount": [120.0, 40.0, 900.0]})
 run_child = ff.RunFlow(large_orders_flow, orders=parent_orders)
-large = run_child["large_orders"].collect()
+large = run_child.get_output(large_orders).collect()
 # --8<-- [end:subflow]
 
 assert run_child.outputs == ["large_orders"]

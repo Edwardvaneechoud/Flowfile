@@ -14,6 +14,7 @@ from polars_expr_transformer import simple_function_to_expr
 
 if TYPE_CHECKING:
     from flowfile_frame.catalog_reference import SchemaReference
+    from flowfile_frame.run_flow import FlowOutput
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph
@@ -2685,12 +2686,13 @@ class FlowFrame:
             self.flow_graph.apply_layout()
         self.flow_graph.save_flow(file_path)
 
-    def to_flow_output(self, name: str, *, description: str | None = None) -> FlowFrame:
+    def to_flow_output(self, name: str | FlowOutput, *, description: str | None = None) -> FlowFrame:
         """Mark this frame as the flow output ``name`` (a ``flow_output`` node) and return it unchanged.
 
-        A parent flow's ``RunFlow`` exposes it as ``run[name]``; outputs are ordered by the
-        order they were declared in. The ``flow_output`` node has no output handle on the
-        canvas, so the returned frame is this one, not the sink.
+        ``name`` is a string or a declared ``fl.FlowOutput``, whose ``description`` is used when
+        none is given here. A parent flow's ``RunFlow`` exposes it as ``run[name]``; outputs are
+        ordered by the order they were declared in. The ``flow_output`` node has no output handle
+        on the canvas, so the returned frame is this one, not the sink.
         """
         from flowfile_frame.run_flow import _to_flow_output
 

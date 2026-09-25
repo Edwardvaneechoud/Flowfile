@@ -111,6 +111,34 @@ def test_to_flow_output_returns_the_same_frame_and_places_a_sink():
         raw.to_flow_output("orders_clean")
 
 
+def _sink_settings(frame: ff.FlowFrame):
+    (sink,) = [n for n in frame.flow_graph.nodes if n.node_type == "flow_output"]
+    return sink.setting_input
+
+
+def test_to_flow_output_takes_a_declared_flow_output():
+    declared = ff.FlowOutput("orders_clean", description="clean orders")
+    as_string = ff.FlowInput("orders", schema=ORDER_SCHEMA).to_flow_output("orders_clean", description="clean orders")
+    raw = ff.FlowInput("orders", schema=ORDER_SCHEMA)
+    assert raw.to_flow_output(declared) is raw
+    for frame in (as_string, raw):
+        settings = _sink_settings(frame)
+        assert (settings.output_name, settings.description) == ("orders_clean", "clean orders")
+    overridden = ff.FlowInput("orders", schema=ORDER_SCHEMA).to_flow_output(declared, description="mine")
+    assert _sink_settings(overridden).description == "mine"
+
+
+def test_flow_output_is_equal_and_hashable_by_name():
+    declared = ff.FlowOutput("orders_clean", description="clean orders")
+    assert repr(declared) == "FlowOutput('orders_clean')"
+    assert (declared.name, declared.description) == ("orders_clean", "clean orders")
+    assert declared == ff.FlowOutput("orders_clean") and declared != ff.FlowOutput("other")
+    assert declared != "orders_clean"
+    assert {declared: 1}[ff.FlowOutput("orders_clean")] == 1
+    with pytest.raises(ff.NativeNodeError, match="non-empty name"):
+        ff.FlowOutput(" ")
+
+
 # register_flow / flow_ref
 
 
@@ -291,6 +319,22 @@ def test_run_resolves_the_bound_parameter_value_not_the_default(schema):
         run = ff.RunFlow(ref, orders=ff.from_dict(ORDERS), params={key: 25})
         assert [b.constant_value for b in _run_node(run).setting_input.parameter_bindings] == ["25"]
         assert_frame_equal(run.output.collect(), expected)
+
+
+def test_a_declared_output_names_the_child_sink_and_reads_the_run_output(schema):
+    orders_clean = ff.FlowOutput("orders_clean")
+    child = ff.create_flow_graph()
+    raw = ff.FlowInput("orders", schema=ORDER_SCHEMA, flow_graph=child)
+    raw.filter(ff.col("amount") >= 10).to_flow_output(orders_clean)
+    ref = schema.register_flow(child, name=_unique("declared"))
+
+    run = ff.RunFlow(ref, orders=ff.from_dict(ORDERS))
+    frames = [run[orders_clean], run.get_output(orders_clean), run["orders_clean"]]
+    assert {(frame.node_id, frame.output_handle) for frame in frames} == {(run.node_id, "output-0")}
+    expected = pl.DataFrame(ORDERS).filter(pl.col("amount") >= 10)
+    assert_frame_equal(run.get_output(orders_clean).collect(), expected)
+    with pytest.raises(ff.NativeNodeError, match=r"no output 'nope': \['orders_clean'\]"):
+        run.get_output(ff.FlowOutput("nope"))
 
 
 def test_column_binding_iterates_and_appends_run_metadata(schema):

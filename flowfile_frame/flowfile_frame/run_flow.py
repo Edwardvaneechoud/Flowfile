@@ -396,11 +396,43 @@ def FlowInput(
     return Node("flow_input", settings=settings, description=description, flow_graph=flow_graph).output
 
 
-def _to_flow_output(frame: FlowFrame, name: str, description: str | None = None) -> FlowFrame:
+class FlowOutput:
+    """A flow output name, declared once and used by ``to_flow_output`` and ``RunFlow``.
+
+    ``frame.to_flow_output(output)`` places the ``flow_output`` node named ``output.name``, with
+    ``description`` when the call gives none; ``run[output]`` and ``run.get_output(output)`` read
+    that output of a ``RunFlow``. A plain string works in both places. Equal and hashable by name.
+    """
+
+    name: str
+    description: str | None
+
+    def __init__(self, name: str, *, description: str | None = None) -> None:
+        if not isinstance(name, str) or not name.strip():
+            raise NativeNodeError("FlowOutput needs a non-empty name")
+        self.name = name
+        self.description = description
+
+    def __repr__(self) -> str:
+        return f"FlowOutput({self.name!r})"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, FlowOutput):
+            return NotImplemented
+        return self.name == other.name
+
+    def __hash__(self) -> int:
+        return hash(self.name)
+
+
+def _to_flow_output(frame: FlowFrame, name: str | FlowOutput, description: str | None = None) -> FlowFrame:
     """Place a ``flow_output`` node named ``name`` below ``frame``; ``frame`` itself is returned.
 
     The sink has no output handle on the canvas, so nothing may chain from it.
     """
+    if isinstance(name, FlowOutput):
+        description = name.description if description is None else description
+        name = name.name
     refuse_parameter_as_column(name, "to_flow_output")
     Node("flow_output", frame, settings={"output_name": name}, description=description)
     return frame
@@ -519,7 +551,8 @@ class RunFlow(NativeNode):
     ``fl.col(name)`` to read the value from ``param_frame`` (the first row, or one child run
     per row with ``iterate=True``, which appends ``param_*`` and ``run_index`` columns unless
     ``append_metadata=False``). Outputs are named after the child's outputs, in creation
-    order; a child without outputs has one, a summary row per run. Outputs are deferred: the
+    order, and read with ``run[name]`` or ``run.get_output(name)`` (a name or a ``FlowOutput``);
+    a child without outputs has one, a summary row per run. Outputs are deferred: the
     child only runs when the parent flow does, or on ``collect()``, which runs it.
     """
 

@@ -37,6 +37,7 @@ from flowfile_frame.utils import data as node_id_data
 
 if TYPE_CHECKING:
     from flowfile_frame.flow_frame import FlowFrame
+    from flowfile_frame.run_flow import FlowOutput
 
 
 class NativeNodeError(ValueError):
@@ -297,10 +298,18 @@ class NativeNode:
             )
         return self._frames[output_handle(0)]
 
-    def __getitem__(self, name: str) -> FlowFrame:
+    def __getitem__(self, name: str | FlowOutput) -> FlowFrame:
+        from flowfile_frame.run_flow import FlowOutput
+
+        if isinstance(name, FlowOutput):
+            name = name.name
         if name not in self.output_names:
             raise NativeNodeError(f"{self.node_type} node {self.node_id} has no output {name!r}: {self.output_names}")
         return self._frames[output_handle(self.output_names.index(name))]
+
+    def get_output(self, name: str | FlowOutput) -> FlowFrame:
+        """The output frame named ``name`` (a name or a ``FlowOutput``); the spelled-out ``node[name]``."""
+        return self[name]
 
     def _build(
         self,
