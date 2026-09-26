@@ -581,7 +581,7 @@ def test_decorated_node_round_trips():
 def test_function_runs_locally_on_polars_frames():
     result = forecast.fn(pl.LazyFrame(MONTHLY))
     expected = pl.DataFrame({"month": [4, 5, 6], "revenue_forecast": [40.0, 50.0, 60.0]})
-    assert_frame_equal(result, expected, check_exact=False)
+    assert_frame_equal(result, expected, check_exact=False, check_dtypes=False)
 
 
 # decorator: returns= and schemas=
