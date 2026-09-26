@@ -3,8 +3,10 @@ from functools import wraps
 
 import polars as pl
 
+from flowfile_frame.adding_expr import refuse_parameter_argument
 from flowfile_frame.callable_utils import process_callable_args
 from flowfile_frame.config import logger
+from flowfile_frame.native import NativeNodeError
 
 PASSTHROUGH_METHODS = {
     "collect",
@@ -25,6 +27,14 @@ PASSTHROUGH_METHODS = {
     "chunk_lengths",
     "get_meta",
 }
+
+# Passthroughs that read data: on a deferred frame they run the flow first, like collect.
+MATERIALISING_PASSTHROUGH_METHODS = {"collect_async", "profile", "describe", "fetch"}
+
+
+def _has_build_time_effect(method_name: str) -> bool:
+    """Whether the method's Polars-code node acts when it is built: sinks write, ``inspect`` prints."""
+    return method_name.startswith("sink_") or method_name == "inspect"
 
 
 def create_lazyframe_method_wrapper(method_name: str, original_method: Callable) -> Callable:
@@ -103,9 +113,27 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
         # Import here to avoid circular imports
         from flowfile_frame.flow_frame import generate_node_id
 
+        refuse_parameter_argument(
+            method_name, args, kwargs, hint="pass a plain value, or an expression such as fl.lit(parameter)"
+        )
+        if _has_build_time_effect(method_name) and (self._deferred or self._below_a_gate()):
+            reason = (
+                "this frame only holds placeholder rows until the flow runs"
+                if self._deferred
+                else "this frame is below a gate, so building would act on both of its exits"
+            )
+            raise NativeNodeError(
+                f"{method_name} runs when it is built, but {reason}. Use a write_* method (a native Output node "
+                "that waits for the run) or collect the frame first."
+            )
         new_node_id = generate_node_id()
 
         if not all([True if not hasattr(arg, "convertable_to_code") else arg.convertable_to_code for arg in args]):
+            if self._deferred:
+                raise NativeNodeError(
+                    f"{method_name} with an expression that has no code form cannot run on a deferred frame: it "
+                    "would evaluate the placeholder rows now and detach from the flow. Collect the frame first."
+                )
             logger.debug("Warning, could not create a good node")
             return self.__class__(getattr(self.data, method_name)(arg.expr for arg in args), flow_graph=self.flow_graph)
 
@@ -165,6 +193,8 @@ def add_lazyframe_methods(cls):
             def create_passthrough_method(method_name, method_attr):
                 @wraps(method_attr)
                 def passthrough_method(self, *args, **kwargs):
+                    if method_name in MATERIALISING_PASSTHROUGH_METHODS:
+                        return getattr(self._materialised_lazyframe(), method_name)(*args, **kwargs)
                     return getattr(self.data, method_name)(*args, **kwargs)
 
                 return passthrough_method

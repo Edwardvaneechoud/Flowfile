@@ -140,6 +140,7 @@ class NodeExecutor:
 
         self._prepare_for_execution(state)
         self.node.reset()
+        self._release_deferred_seed()
         self.node._last_exception_class = None  # a previous run's class must never describe this one
 
         # Snapshot before the scan so files arriving mid-run are not silently marked as seen.
@@ -419,6 +420,13 @@ class NodeExecutor:
         self.node.results.errors = None
         self.node.results.resulting_data = None
         self.node.results.example_data = None
+
+    def _release_deferred_seed(self) -> None:
+        """Let this run execute a seeded node; called after ``reset()``, which re-arms a node placed deferred."""
+        if self.node.deferred_until_run:
+            self.node.deferred_until_run = False
+            # the seed's per-handle schemas would outlive the run: multi-output refills skip them
+            self.node._named_schemas = {}
 
     def _clear_cache(self, state: NodeExecutionState) -> None:
         """Clear cached results."""

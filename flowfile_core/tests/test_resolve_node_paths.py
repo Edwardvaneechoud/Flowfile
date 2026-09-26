@@ -444,8 +444,8 @@ class TestWriteInputsToParquet:
         assert len(result["clients"]) == 1
         assert len(result["main"]) == 2
 
-    def test_named_inputs_main_no_duplicate(self, tmp_path: Path):
-        """When one input is named 'main', no extra 'main' alias is added."""
+    def test_named_input_main_refused(self, tmp_path: Path):
+        """An input named 'main' is refused: that key is the positional list of every input."""
         mgr = _make_manager(str(tmp_path))
         input_dir = str(tmp_path / "inputs")
         os.makedirs(input_dir, exist_ok=True)
@@ -455,10 +455,8 @@ class TestWriteInputsToParquet:
             "flowfile_core.kernel.execution.ExternalDfFetcher",
             side_effect=lambda **kw: _mock_fetcher(),
         ):
-            result = write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2, input_names=["main"])
-
-        assert list(result.keys()) == ["main"]
-        assert len(result["main"]) == 1
+            with pytest.raises(ValueError, match="'main' is reserved"):
+                write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2, input_names=["main"])
 
     def test_unnamed_fetcher_error_raises(self, tmp_path: Path):
         """An error in ExternalDfFetcher raises RuntimeError (unnamed path)."""
@@ -552,6 +550,31 @@ class TestWriteInputsToParquet:
         ):
             with pytest.raises(OSError, match="disk full"):
                 write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2)
+
+    def test_local_flag_writes_in_process_with_offload_on(self, tmp_path: Path):
+        """local=True writes the parquet files in-process even when worker offload is on."""
+
+        class _PathManager:
+            def to_kernel_path(self, path: str) -> str:
+                return path
+
+        def _no_worker(**kwargs):
+            raise AssertionError("worker must not be used for a local graph")
+
+        input_dir = str(tmp_path / "inputs")
+        ft1 = FlowDataEngine(pl.LazyFrame({"a": [1, 2]}))
+        ft2 = FlowDataEngine(pl.LazyFrame({"b": ["x"]}))
+        with (
+            patch("flowfile_core.kernel.execution.OFFLOAD_TO_WORKER", MutableBool(True)),
+            patch("flowfile_core.kernel.execution.ExternalDfFetcher", side_effect=_no_worker),
+        ):
+            result = write_inputs_to_parquet(
+                (ft1, ft2), _PathManager(), input_dir, 1, 2, input_names=["orders", "clients"], local=True
+            )
+
+        assert pl.read_parquet(result["orders"][0]).to_dict(as_series=False) == {"a": [1, 2]}
+        assert pl.read_parquet(result["clients"][0]).to_dict(as_series=False) == {"b": ["x"]}
+        assert result["main"] == result["orders"] + result["clients"]
 
 
 class TestWriteParquetLocally:

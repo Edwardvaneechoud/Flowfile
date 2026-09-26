@@ -7,7 +7,7 @@ import json
 import os
 import re
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
@@ -91,7 +91,12 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
     MLTrainFetcher,
     fetch_kafka_offsets,
 )
-from flowfile_core.flowfile.flow_node.flow_node import FlowNode, data_needed_block_reason, kernel_block_reason
+from flowfile_core.flowfile.flow_node.flow_node import (
+    FlowNode,
+    data_needed_block_reason,
+    kernel_block_reason,
+    kernel_not_run_reason,
+)
 from flowfile_core.flowfile.flow_node.input_handles import input_handle, input_handle_index
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
@@ -106,8 +111,9 @@ from flowfile_core.flowfile.graph_tree.graph_tree import (
     group_nodes_by_depth,
 )
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
-from flowfile_core.flowfile.param_types import ParamValue
+from flowfile_core.flowfile.param_types import ParamValue, typed_parameter_values
 from flowfile_core.flowfile.parameter_resolver import (
+    apply_parameters_in_place,
     find_unresolved_in_model,
     node_parameters_resolved,
     resolve_expression_parameters,
@@ -151,9 +157,10 @@ from flowfile_core.flowfile.util.skip_rules import (
     dead_gate_handles,
     effective_input_status,
     gate_has_else_output,
+    parameter_gate_is_open,
     uses_any_rule,
 )
-from flowfile_core.flowfile.utils import snake_case_to_camel_case
+from flowfile_core.flowfile.utils import create_unique_id, snake_case_to_camel_case
 from flowfile_core.kafka.connection_manager import (
     build_consumer_config,
     get_kafka_connection,
@@ -2086,7 +2093,7 @@ class FlowGraph:
 
     def __init__(
         self,
-        flow_settings: schemas.FlowSettings | schemas.FlowGraphConfig,
+        flow_settings: schemas.FlowSettings | schemas.FlowGraphConfig | None = None,
         name: str = None,
         input_cols: list[str] = None,
         output_cols: list[str] = None,
@@ -2097,7 +2104,9 @@ class FlowGraph:
         """Initializes a new FlowGraph instance.
 
         Args:
-            flow_settings: The configuration settings for the flow.
+            flow_settings: The configuration settings for the flow. When omitted, a standalone
+                in-process graph is created: a fresh flow id, no file path, history off and
+                local execution.
             name: The name of the flow.
             input_cols: A list of input column names.
             output_cols: A list of output column names.
@@ -2105,7 +2114,13 @@ class FlowGraph:
             input_flow: An optional existing data object to start the flow with.
             cache_results: A global flag to enable or disable result caching.
         """
-        if isinstance(flow_settings, schemas.FlowGraphConfig):
+        if flow_settings is None:
+            flow_id = create_unique_id()
+            name = name or f"Flow_{flow_id}"
+            flow_settings = schemas.FlowSettings(
+                flow_id=flow_id, name=name, path="", track_history=False, execution_location="local"
+            )
+        elif isinstance(flow_settings, schemas.FlowGraphConfig):
             flow_settings = schemas.FlowSettings.from_flow_settings_input(flow_settings)
 
         self._flow_settings = flow_settings
@@ -2129,6 +2144,8 @@ class FlowGraph:
         # previous run's partial concat. In-memory only: a fresh graph instance
         # rotates parent_uuid, so caches are cold anyway.
         self._any_input_liveness: dict[str | int, frozenset] = {}
+        # Gate id -> dead output handles of the last run_graph (parameter and formula gates).
+        self._last_closed_gate_handles: dict[str | int, frozenset[str]] = {}
         # Visual node groups: organizational only, never read by the executor.
         # Membership lives on each node's setting_input.group_id; this is the box registry.
         self._groups: dict[int, schemas.GroupInformation] = {}
@@ -3056,9 +3073,11 @@ class FlowGraph:
                 node_id=user_defined_node_settings.node_id,
                 output_names=output_names,
             )
-        elif not kernel_id and bool(getattr(custom_node, "requires_data_for_prediction", False)):
-            # Hookless data-dependent node: never predict by executing; block until run.
-            schema_callback = self._make_blocked_prediction_callback(node_id=user_defined_node_settings.node_id)
+        elif kernel_id or bool(getattr(custom_node, "requires_data_for_prediction", False)):
+            # Hookless kernel or data-dependent node: never predict by executing; block until run.
+            schema_callback = self._make_blocked_prediction_callback(
+                node_id=user_defined_node_settings.node_id, on_kernel=bool(kernel_id)
+            )
         else:
             # Traceability: a stale registry class (or a genuinely hook-less node)
             # lands here and schema prediction degrades to the execution tier.
@@ -3146,11 +3165,11 @@ class FlowGraph:
             return pl_schema_to_flowfile_columns(value)
         return None
 
-    def _make_blocked_prediction_callback(self, *, node_id: int) -> Callable:
-        """Hookless ``requires_data_for_prediction=True``: prediction must never
-        execute ``process()``. Wired through ``add_node_step`` so a 0-input
+    def _make_blocked_prediction_callback(self, *, node_id: int, on_kernel: bool = False) -> Callable:
+        """Hookless ``requires_data_for_prediction=True`` or kernel node: prediction must
+        never execute ``process()``. Wired through ``add_node_step`` so a 0-input
         node's eager prefetch hits this cheap callback instead of the real
-        function."""
+        function. ``on_kernel`` selects the kernel wording of the warning."""
 
         def schema_callback() -> list[FlowfileColumn]:
             node = self.get_node(node_id)
@@ -3159,7 +3178,7 @@ class FlowGraph:
             if node.node_stats.has_completed_last_run and node.node_schema.result_schema:
                 node._schema_prediction_blocked = None
                 return node.node_schema.result_schema
-            reason = data_needed_block_reason(node)
+            reason = kernel_not_run_reason(node) if on_kernel else data_needed_block_reason(node)
             node._schema_prediction_blocked = reason
             node.results.warnings = reason
             return []
@@ -3178,10 +3197,24 @@ class FlowGraph:
         warning instead (never an implicit kernel run). Returning ``[]`` makes
         the prediction ladder fall back to the execution-based path. The node is
         resolved lazily so the callback can be passed into ``add_node_step``
-        before the node exists.
+        before the node exists. The hook runs on an instance built from the
+        node's settings with the flow's ``${name}`` references resolved, as
+        ``process()`` sees them; the stored settings are left untouched.
         """
         resolved_output_names = output_names or ["main"]
         requires_data = bool(getattr(custom_node, "requires_data_for_prediction", False))
+
+        def _hook_instance(node: FlowNode) -> CustomNodeBase:
+            settings = node.setting_input.settings or {}
+            params = node._params_getter() if node._params_getter else {}
+            if not params or not find_unresolved_in_model(settings):
+                return custom_node
+            resolved = deepcopy(settings)
+            try:
+                apply_parameters_in_place(resolved, params)
+            except ValueError:
+                pass  # an undeclared reference stays as text, as in execution-tier prediction
+            return type(custom_node).from_settings(resolved)
 
         def _hook_input_frame(input_node: FlowNode, src_handle: str) -> pl.LazyFrame:
             # Real lazy data when the upstream has run (worker results are
@@ -3220,7 +3253,7 @@ class FlowGraph:
                         input_frames.append(pl.LazyFrame())
                         continue
                     input_frames.append(_hook_input_frame(input_node, src_handle))
-                predicted = custom_node.predict_output_schema(*input_frames)
+                predicted = _hook_instance(node).predict_output_schema(*input_frames)
             except Exception as e:
                 logger.warning(f"predict_output_schema failed for node {node_id}: {e}")
                 return []
@@ -3267,18 +3300,20 @@ class FlowGraph:
         killable subprocess) whenever the flow doesn't run in local mode and
         the node came from the registry; otherwise runs in-process (the
         --run-flow / offload-disabled fallback, and inline test classes that
-        have no source file on disk).
+        have no source file on disk). Both read the settings when the node
+        executes, so ``${name}`` references arrive resolved.
         """
         resolved_output_names = output_names or custom_node.output_names or ["main"]
 
         def _run_in_core(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
+            instance = type(custom_node).from_settings(user_defined_node_settings.settings or {})
             user_id = user_defined_node_settings.user_id
             if user_id is not None:
-                custom_node.set_execution_context(user_id)
+                instance.set_execution_context(user_id)
 
-            output = custom_node.process(*(fde.data_frame.lazy() for fde in flow_data_engine))
+            output = instance.process(*(fde.data_frame.lazy() for fde in flow_data_engine))
 
-            accessed_secrets = custom_node.get_accessed_secrets()
+            accessed_secrets = instance.get_accessed_secrets()
             if accessed_secrets:
                 logger.info(f"Node '{user_defined_node_settings.node_id}' accessed secrets: {accessed_secrets}")
             if isinstance(output, dict):
@@ -3380,7 +3415,13 @@ class FlowGraph:
         node = self.get_node(node_id)
         input_names = self._resolve_input_names(node, len(flow_data_engine))
         input_paths = write_inputs_to_parquet(
-            flow_data_engine, manager, input_dir, flow_id, node_id, input_names=input_names
+            flow_data_engine,
+            manager,
+            input_dir,
+            flow_id,
+            node_id,
+            input_names=input_names,
+            local=self.execution_location == "local",
         )
 
         request = build_execute_request(
@@ -3451,20 +3492,24 @@ class FlowGraph:
         """Create the execution function for a kernel-executed custom node.
 
         Registry-backed nodes get an AST-generated script (JSON-baked settings,
-        no return-rewriting), generated eagerly so KernelCodegenError surfaces
-        before the flow runs. Inline test classes with no source file fall back
-        to the deprecated ``generate_kernel_code`` so existing behavior survives.
+        no return-rewriting), generated here so KernelCodegenError surfaces
+        early and again at execution with resolved ``${name}`` settings.
+        Inline test classes with no source file fall back to the deprecated
+        ``generate_kernel_code`` so existing behavior survives.
         """
-        if registry_entry is not None and registry_entry.source_text and registry_entry.class_name:
-            code = generate_kernel_script(
-                node_source=registry_entry.source_text,
-                class_name=registry_entry.class_name,
-                settings_values=custom_node._extract_settings_values(),
-                output_names=output_names,
-                number_of_inputs=custom_node.number_of_inputs,
-            )
-        else:
-            code = custom_node.generate_kernel_code()
+
+        def kernel_code(instance: CustomNodeBase) -> str:
+            if registry_entry is not None and registry_entry.source_text and registry_entry.class_name:
+                return generate_kernel_script(
+                    node_source=registry_entry.source_text,
+                    class_name=registry_entry.class_name,
+                    settings_values=instance._extract_settings_values(),
+                    output_names=output_names,
+                    number_of_inputs=instance.number_of_inputs,
+                )
+            return instance.generate_kernel_code()
+
+        kernel_code(custom_node)
 
         declared_publishes: list[str] | None = None
         if registry_entry is not None and registry_entry.manifest is not None:
@@ -3474,10 +3519,11 @@ class FlowGraph:
         node_type = custom_node.item
 
         def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
+            instance = type(custom_node).from_settings(user_defined_node_settings.settings or {})
             return self._execute_on_kernel(
                 node_id=user_defined_node_settings.node_id,
                 kernel_id=kernel_id,
-                code=code,
+                code=kernel_code(instance),
                 output_names=output_names,
                 flow_data_engine=flow_data_engine,
                 declared_publishes=declared_publishes,
@@ -5062,7 +5108,7 @@ class FlowGraph:
         _graph = self
 
         def _get_params() -> dict[str, ParamValue]:
-            return {p.name: p.typed_default() for p in (_graph.flow_settings.parameters or [])}
+            return typed_parameter_values(_graph.flow_settings.parameters)
 
         node._params_getter = _get_params
         return node
@@ -5204,7 +5250,8 @@ class FlowGraph:
 
         Inputs are keyed: handle input-0 carries optional parameter data; handles
         input-1..input-N feed the subflow's flow_input nodes (input_slots order).
-        Outputs mirror the subflow's flow_output nodes (output_slots order).
+        Outputs mirror the subflow's flow_output nodes (output_slots order); a
+        subflow without outputs yields one run-summary row per run.
         """
         from flowfile_core.flowfile import subflow
 
@@ -5216,6 +5263,8 @@ class FlowGraph:
             return subflow.execute_run_flow_node(_graph, settings, param_input, tuple(inputs[1:]))
 
         def schema_callback():
+            if not settings.output_slots:
+                return subflow.predict_run_summary_schema(settings)
             node = _graph.get_node(settings.node_id)
             named = subflow.predict_run_flow_named_schemas(settings)
             if node is not None and named:
@@ -6688,6 +6737,11 @@ class FlowGraph:
 
         return list(self._node_db.values())
 
+    @property
+    def last_closed_gate_handles(self) -> Mapping[str | int, frozenset[str]]:
+        """Gate id -> the output handles the last ``run_graph`` routed dead (parameter and formula gates)."""
+        return self._last_closed_gate_handles
+
     def check_flow_laziness(self) -> tuple[bool, list[str]]:
         """Check whether the flow supports lazy execution for virtual tables.
 
@@ -7314,8 +7368,8 @@ class FlowGraph:
         formula = resolve_expression_parameters(gate_input.formula, params or {})
         return not _gate_formula_matches(source_result, formula)
 
-    def _evaluate_gate_conditions(self) -> dict[str | int, frozenset[str]]:
-        """Evaluate parameter-mode gates before the run; returns per-gate dead handles.
+    def _evaluate_gate_conditions(self, nodes: list[FlowNode] | None = None) -> dict[str | int, frozenset[str]]:
+        """Evaluate parameter-mode gates (of ``nodes``, default all) before the run; returns per-gate dead handles.
 
         Formula gates are decided when they execute (stage loop). A gate with
         an else output always routes exactly one handle dead on a successful
@@ -7326,24 +7380,15 @@ class FlowGraph:
         a silently-picked branch.
         """
         closed: dict[str | int, frozenset[str]] = {}
-        parameters_by_name = {p.name: p for p in self.flow_settings.parameters}
-        typed_params = {p.name: p.typed_default() for p in self.flow_settings.parameters}
-        for node in self.nodes:
+        for node in self.nodes if nodes is None else nodes:
             if node.node_type != "gate" or not node.is_correct:
                 continue
             gate_input = getattr(node.setting_input, "gate_input", None)
             if gate_input is None or gate_input.condition_source != "parameter":
                 continue
             try:
-                effective = gate_input
-                if "${" in gate_input.value:
-                    # ${refs} in the comparison value resolve before coercion,
-                    # matching the exported code (where they become live
-                    # parameter-to-parameter comparisons).
-                    effective = gate_input.model_copy(
-                        update={"value": resolve_parameters(gate_input.value, typed_params)}
-                    )
-                dead = dead_gate_handles(effective.evaluate(parameters_by_name), gate_has_else_output(node))
+                is_open = parameter_gate_is_open(gate_input, self.flow_settings.parameters)
+                dead = dead_gate_handles(is_open, gate_has_else_output(node))
                 if dead:
                     closed[node.node_id] = dead
             except ValueError:
@@ -7362,6 +7407,7 @@ class FlowGraph:
         failed_node_ids: set[str | int],
         skip_node_ids: set[str | int],
         deliberate_skip_ids: set[str | int] | None = None,
+        run_node_ids: set[str | int] | None = None,
     ) -> None:
         """Invoke _on_flow_complete callbacks registered by source nodes.
 
@@ -7374,6 +7420,9 @@ class FlowGraph:
         otherwise it would re-read the same messages on every run. Skips caused
         by a failure or misconfiguration keep blocking the callback.
 
+        ``run_node_ids`` (a run restricted to those nodes) calls back only a node whose whole
+        downstream is among them; any other keeps its callback for a run that reaches it all.
+
         Note: the caller must guard against cancellation — this method is
         only invoked when ``is_canceled`` is False.
         """
@@ -7385,6 +7434,10 @@ class FlowGraph:
             if callback is None:
                 continue
             downstream = list(n.get_all_dependent_nodes())
+            if run_node_ids is not None and any(
+                node_id not in run_node_ids for node_id in [n.node_id, *(dep.node_id for dep in downstream)]
+            ):
+                continue
             downstream_incomplete = n.node_id in incomplete_node_ids or any(
                 dep.node_id in incomplete_node_ids for dep in downstream
             )
@@ -7453,8 +7506,8 @@ class FlowGraph:
                 f"Node {node.node_id} deliberately skipped (gated off); marked as skipped, not failed"
             )
 
-    def _refresh_catalog_reader_freshness(self) -> None:
-        """Invalidate catalog_reader nodes whose Delta sources changed since their last run.
+    def _refresh_catalog_reader_freshness(self, nodes: list[FlowNode] | None = None) -> None:
+        """Invalidate catalog_reader nodes (of ``nodes``, default all) whose Delta sources changed since their last run.
 
         The node hash is source-blind (settings + upstream hashes only), so in
         Development mode an unchanged-settings reader is skipped and downstream
@@ -7470,7 +7523,7 @@ class FlowGraph:
         """
         version_cache: dict[str, int] = {}
         opts_by_namespace: dict[int | None, dict | None] = {}
-        for node in self.nodes:
+        for node in self.nodes if nodes is None else nodes:
             settings = node.setting_input
             cloud_change_read = (
                 node.node_type == "cloud_storage_reader"
@@ -7534,8 +7587,8 @@ class FlowGraph:
             head = _probe_version_entry(path, storage_options, version_cache)
         return _delta_reader_fingerprint(path, head, cdc_state)
 
-    def _refresh_read_source_freshness(self) -> None:
-        """Invalidate read nodes whose source files changed since their last run.
+    def _refresh_read_source_freshness(self, nodes: list[FlowNode] | None = None) -> None:
+        """Invalidate read nodes (of ``nodes``, default all) whose source files changed since their last run.
 
         Same rationale as the catalog pass above: the node hash is source-blind, so a changed
         or added file would let Development mode and cache_results serve stale results — and
@@ -7546,7 +7599,7 @@ class FlowGraph:
         invalidate_cache() immediately — any hash access in between re-memoizes the hash and
         the downstream reset cascade never fires.
         """
-        for node in self.nodes:
+        for node in self.nodes if nodes is None else nodes:
             if node.node_type != "read":
                 continue
             info = node._execution_state.source_file_info
@@ -7560,12 +7613,19 @@ class FlowGraph:
             node.reset()
             self.flow_logger.info(f"Node {node.node_id}: source files changed; invalidating cached result")
 
-    def run_graph(self) -> RunInformation | None:
+    def run_graph(self, *, node_ids: Collection[int | str] | None = None) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
         Independent nodes within the same execution stage are run in parallel
         using threads. Stages are processed sequentially so that all dependencies
         are satisfied before a stage begins.
+
+        Args:
+            node_ids: Restrict the run to these nodes; pass a closed set (each node together with
+                every node it reads from), since a node whose input lies outside it is unreachable.
+                Only they are probed, routed, planned, executed and reported, and a source's
+                post-execution callback fires only when its whole downstream is among them.
+                ``None`` runs the whole graph.
 
         Returns:
             A RunInformation object summarizing the execution results.
@@ -7582,24 +7642,30 @@ class FlowGraph:
 
             publish("flow_run_started", graph=self)
 
-            self._refresh_catalog_reader_freshness()
-            self._refresh_read_source_freshness()
+            selected = None if node_ids is None else set(node_ids)
+            run_nodes = self.nodes if selected is None else [n for n in self.nodes if n.node_id in selected]
+            self._refresh_catalog_reader_freshness(run_nodes)
+            self._refresh_read_source_freshness(run_nodes)
 
-            params: dict[str, ParamValue] = {p.name: p.typed_default() for p in self.flow_settings.parameters}
+            params: dict[str, ParamValue] = typed_parameter_values(self.flow_settings.parameters)
             # Parameter-mode gates are routed before anything runs; the plan
             # classifies each dead handle's downstream as deliberately skipped
             # (green, not failed). Formula gates are decided when they execute.
-            closed_gate_handles = self._evaluate_gate_conditions()
+            closed_gate_handles = self._evaluate_gate_conditions(run_nodes)
+            # Same dict the stage loop folds formula-gate decisions into, so it ends as the run's final routing.
+            self._last_closed_gate_handles = closed_gate_handles
 
+            flow_starts = self._flow_starts + self.get_implicit_starter_nodes()
             execution_plan = compute_execution_plan(
-                nodes=self.nodes,
-                flow_starts=self._flow_starts + self.get_implicit_starter_nodes(),
+                nodes=run_nodes,
+                flow_starts=flow_starts if selected is None else [n for n in flow_starts if n.node_id in selected],
                 closed_gate_handles=closed_gate_handles,
             )
 
             plan_skip_ids: set[str | int] = {n.node_id for n in execution_plan.skip_nodes}
             deliberate_skip_ids: set[str | int] = {n.node_id for n in execution_plan.deliberate_skip_nodes}
-            self._prepare_rerun_artifacts(plan_skip_ids | deliberate_skip_ids)
+            not_selected_ids = set() if selected is None else {n.node_id for n in self.nodes} - selected
+            self._prepare_rerun_artifacts(plan_skip_ids | deliberate_skip_ids | not_selected_ids)
 
             self.latest_run_info = self.create_initial_run_information(execution_plan.node_count, "full_run")
             skip_node_message(self.flow_logger, execution_plan.skip_nodes)
@@ -7612,7 +7678,7 @@ class FlowGraph:
                 execution_plan, performance_mode, params, plan_skip_ids, deliberate_skip_ids, closed_gate_handles
             )
             if not self.flow_settings.is_canceled:
-                self._run_post_execution_callbacks(failed_node_ids, plan_skip_ids, deliberate_skip_ids)
+                self._run_post_execution_callbacks(failed_node_ids, plan_skip_ids, deliberate_skip_ids, selected)
 
             self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info("Flow completed!")
@@ -7770,12 +7836,15 @@ class FlowGraph:
     def _handle_flow_renaming(self, new_name: str, new_path: Path):
         """Adopt the target file's stem as the flow name, but only when a save relocates the flow.
 
-        A same-path save must never rename — the name can have been set from the
-        catalog (``POST /editor/rename_flow/``) and the file stem is not authoritative.
+        A graph without a path (``FlowGraph()``, a Python-built flow) has never been saved, so
+        its first save relocates it and adopts the stem. A same-path save must never rename —
+        the name can have been set from the catalog (``POST /editor/rename_flow/``) and the
+        file stem is not authoritative.
         """
         if not self.flow_settings:
             return
-        if self.flow_settings.path and Path(self.flow_settings.path).absolute() != new_path.absolute():
+        current_path = self.flow_settings.path
+        if not current_path or Path(current_path).absolute() != new_path.absolute():
             self.__name__ = new_name
             self.flow_settings.save_location = str(new_path.absolute())
             self.flow_settings.name = new_name

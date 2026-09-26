@@ -1956,5 +1956,116 @@ class TestMissingWorkerArtifact:
         assert decision.reason == InvalidationReason.CACHE_MISSING
 
 
+class TestDeferredUntilRun:
+    """A node seeded with a placeholder output only executes inside a real flow run."""
+
+    @staticmethod
+    def _seeded_select(flow_id: int):
+        from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+
+        graph = create_graph_with_select(flow_id=flow_id, execution_location="local")
+        node = graph.get_node(2)
+        seed = FlowDataEngine.create_from_schema([FlowfileColumn.from_input("name", "String")])
+        node.results.resulting_data = seed
+        node._named_schemas = {"output-1": [FlowfileColumn.from_input("stale", "Int64")]}
+        node.deferred_until_run = True
+        return graph, node, seed
+
+    def test_unseeded_deferred_node_raises_instead_of_executing(self):
+        from flowfile_core.flowfile.flow_node.flow_node import DeferredNodeError
+
+        graph = create_graph_with_select(flow_id=40, execution_location="local")
+        node = graph.get_node(2)
+        node.results.resulting_data = None
+        node.results.errors = None
+        node.deferred_until_run = True
+
+        with pytest.raises(DeferredNodeError, match="node 2 is deferred until the flow runs"):
+            node.get_resulting_data()
+        assert node.results.resulting_data is None, "no empty engine may be memoized for a deferred node"
+        assert node.results.errors is None
+        with pytest.raises(DeferredNodeError):
+            node._predicted_data_getter()
+
+    def test_seeded_node_serves_the_seed(self):
+        graph, node, seed = self._seeded_select(flow_id=41)
+        assert node.get_resulting_data() is seed
+        assert node.deferred_until_run is True
+        assert node.get_resulting_data().data_frame.collect().height == 0
+
+    def test_run_graph_clears_the_flag_and_the_seeded_handle_schemas(self):
+        graph, node, _ = self._seeded_select(flow_id=42)
+        assert graph.run_graph().success
+
+        assert node.deferred_until_run is False
+        assert "output-1" not in node._named_schemas
+        assert node.get_resulting_data().data_frame.collect()["name"].to_list() == ["Alice"]
+
+    def test_reset_re_arms_a_node_placed_deferred(self):
+        graph, node, _ = self._seeded_select(flow_id=45)
+        node.placed_deferred = True
+        assert graph.run_graph().success
+        assert node.deferred_until_run is False
+
+        node.reset(deep=True)
+
+        assert node.deferred_until_run is True
+        assert node.results.resulting_data is None
+        assert graph.run_graph().success
+        assert node.deferred_until_run is False
+        assert node.get_resulting_data().data_frame.collect()["name"].to_list() == ["Alice"]
+
+    def test_reset_inside_its_own_run_does_not_re_arm_the_node(self):
+        graph, node, _ = self._seeded_select(flow_id=46)
+        node.placed_deferred = True
+        node._cache_epoch += 1  # a stale hash: the executor's own reset() drops the seed and re-arms the flag
+        assert node.needs_reset()
+
+        assert graph.run_graph().success
+
+        assert node.deferred_until_run is False
+        assert node.get_resulting_data().data_frame.collect()["name"].to_list() == ["Alice"]
+
+    def test_reset_leaves_a_node_not_placed_deferred_alone(self):
+        graph = create_graph_with_select(flow_id=47, execution_location="local")
+        node = graph.get_node(2)
+        assert graph.run_graph().success
+
+        node.reset(deep=True)
+
+        assert node.placed_deferred is False and node.deferred_until_run is False
+
+    def test_prepare_keeps_handle_schemas_of_non_deferred_nodes(self):
+        from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+
+        graph = create_graph_with_select(flow_id=43, execution_location="local")
+        node = graph.get_node(2)
+        handle_schemas = {"output-1": [FlowfileColumn.from_input("kept", "Int64")]}
+        node._named_schemas = handle_schemas
+
+        NodeExecutor(node)._prepare_for_execution(node._execution_state)
+
+        assert node._named_schemas is handle_schemas
+        assert [c.column_name for c in node.schema_for_handle("output-1")] == ["kept"]
+
+    def test_function_derived_schema_callback_refuses_a_deferred_node(self):
+        from flowfile_core.flowfile.flow_node.flow_node import DeferredNodeError
+
+        graph = create_graph_with_select(flow_id=44, execution_location="local")
+        node = graph.get_node(2)
+        calls = []
+
+        def fn():
+            calls.append(1)
+            return FlowDataEngine()
+
+        callback = node.create_schema_callback_from_function(fn)
+        node.deferred_until_run = True
+
+        with pytest.raises(DeferredNodeError):
+            callback()
+        assert calls == []
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

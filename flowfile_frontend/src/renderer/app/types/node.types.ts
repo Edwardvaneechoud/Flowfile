@@ -1078,6 +1078,8 @@ export interface RunFlowReference {
   registration_id: number;
   flow_uuid: string | null;
   flow_path: string | null;
+  namespace?: string | null;
+  name?: string | null;
 }
 
 export type RunFlowBindingSource = "default" | "constant" | "column";

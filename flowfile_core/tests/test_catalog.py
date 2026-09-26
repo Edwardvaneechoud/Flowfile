@@ -484,6 +484,39 @@ class TestFlowRegistration:
         warnings = [r for r in caplog.records if "references missing file" in r.getMessage()]
         assert len(warnings) == 1, f"expected 1 warning, got {len(warnings)}: {warnings}"
 
+    def test_repository_flow_lookup_by_uuid_and_name(self):
+        cat = client.post("/catalog/namespaces", json={"name": "LookupCat"}).json()
+        ns_a = client.post("/catalog/namespaces", json={"name": "A", "parent_id": cat["id"]}).json()["id"]
+        ns_b = client.post("/catalog/namespaces", json={"name": "B", "parent_id": cat["id"]}).json()["id"]
+        first = client.post(
+            "/catalog/flows", json={"name": "shared", "flow_path": "/tmp/shared_a.yaml", "namespace_id": ns_a}
+        ).json()
+        second = client.post(
+            "/catalog/flows", json={"name": "shared", "flow_path": "/tmp/shared_b.yaml", "namespace_id": ns_b}
+        ).json()
+
+        with get_db_context() as db:
+            repo = SQLAlchemyCatalogRepository(db)
+            flow_uuid = repo.get_flow(second["id"]).flow_uuid
+            assert repo.get_flow_by_uuid(flow_uuid).id == second["id"]
+            assert repo.get_flow_by_uuid("00000000-0000-0000-0000-000000000000") is None
+            assert [r.id for r in repo.list_flows_by_name("shared")] == [first["id"], second["id"]]
+            assert [r.id for r in repo.list_flows_by_name("shared", namespace_id=ns_b)] == [second["id"]]
+            assert repo.list_flows_by_name("absent") == []
+
+    def test_ambiguous_flow_error_lists_candidates(self):
+        from flowfile_core.catalog import AmbiguousFlowError, CatalogError
+
+        candidates = [
+            {"id": 1, "name": "shared", "namespace_id": 3, "namespace_name": "Demo.a"},
+            {"id": 2, "name": "shared", "namespace_id": 4, "namespace_name": None},
+        ]
+        err = AmbiguousFlowError("shared", candidates)
+        assert isinstance(err, CatalogError)
+        assert err.name == "shared"
+        assert err.candidates == candidates
+        assert str(err) == "Flow name 'shared' is ambiguous; candidates: Demo.a.shared (id=1), <root>.shared (id=2)"
+
 
 class TestCatalogTableMaterialization:
     def test_register_table_uses_worker_metadata(self, monkeypatch):

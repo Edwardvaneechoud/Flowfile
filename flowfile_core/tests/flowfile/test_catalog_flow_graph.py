@@ -947,6 +947,26 @@ class TestSyncCatalogReadLinks:
 
         os.unlink(tmp.name)
 
+    def test_register_python_editor_flow_keeps_the_registration_name(self, monkeypatch, tmp_path):
+        """A path-less graph keeps the registration name through the save and reopens under it."""
+        from flowfile_core.flowfile.catalog_helpers import register_python_editor_flow
+        from flowfile_core.flowfile.flow_graph import FlowGraph
+        from flowfile_core.flowfile.manage.io_flowfile import open_flow
+        from shared.storage_config import storage
+
+        monkeypatch.setattr(storage, "_base_dir", tmp_path)
+        ns_id = _create_namespace()
+        graph = FlowGraph()
+
+        reg_id = register_python_editor_flow(graph, name="Clean orders", namespace_id=ns_id, user_id=1)
+
+        flow_path = Path(graph.flow_settings.path)
+        assert flow_path.parent == storage.python_editor_flows_directory
+        assert graph.__name__ == graph.flow_settings.name == "Clean orders"
+        assert graph.flow_settings.source_registration_id == reg_id
+        reopened = open_flow(flow_path)
+        assert reopened.__name__ == reopened.flow_settings.name == "Clean orders"
+
 
 # Round-trip: write → read
 

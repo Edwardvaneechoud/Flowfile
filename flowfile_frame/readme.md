@@ -96,4 +96,4 @@ This package ships type information via `.pyi` stub files plus a `py.typed` mark
 make stubs
 ```
 
-CI runs `make check_stubs` to fail the build if stubs are out of sync. The three generators live in `flowfile_frame/`: `expr_stub_generator.py`, `flow_frame_stub_generator.py`, and `submodule_stub_generator.py`. The package-level `__init__.pyi` is hand-maintained — keep it in sync with `__init__.py` when adding/removing exports. 
+CI runs `make check_stubs` to fail the build if stubs are out of sync. The three generators live in `flowfile_frame/`: `expr_stub_generator.py`, `flow_frame_stub_generator.py`, and `submodule_stub_generator.py`. The package-level `__init__.pyi` is generated too, by `submodule_stub_generator.py` from `__init__.py` — never edit it by hand. 

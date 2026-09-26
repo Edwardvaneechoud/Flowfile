@@ -8,12 +8,26 @@ import polars as pl
 
 from flowfile_frame.callable_utils import process_callable_args
 from flowfile_frame.config import logger
+from flowfile_frame.native import NativeNodeError
+from flowfile_frame.parameters import contains_parameter
 
 if TYPE_CHECKING:
     from flowfile_frame.expr import Expr
 
 ExprT = TypeVar("ExprT", bound="Expr")
 PASSTHROUGH_METHODS = {"map_elements", "map_batches"}
+
+
+def refuse_parameter_argument(
+    method_name: str, args: tuple, kwargs: dict, hint: str = "pass it as an expression with fl.lit(parameter)"
+) -> None:
+    """Raise when a ``fl.Parameter`` sits, at any nesting, in the arguments of an ``Expr`` method.
+
+    The method hands its arguments to Polars as they are, and a ``Parameter`` is no Polars value:
+    Polars refuses it, or its repr lands in the node's code as an undefined name.
+    """
+    if contains_parameter(args) or contains_parameter(kwargs):
+        raise NativeNodeError(f"{method_name}() takes no fl.Parameter as an argument; {hint}")
 
 
 def create_expr_method_wrapper(method_name: str, original_method: Callable) -> Callable:
@@ -37,6 +51,7 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
     def wrapper(self: Expr, *args, **kwargs):
         if self.expr is None:
             raise ValueError(f"Cannot call '{method_name}' on Expr with no underlying polars expression.")
+        refuse_parameter_argument(method_name, args, kwargs)
 
         processed = process_callable_args(args, kwargs)
 

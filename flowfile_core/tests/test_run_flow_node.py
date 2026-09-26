@@ -36,18 +36,40 @@ def add_promise(graph: FlowGraph, node_id: int, node_type: str) -> None:
     graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type=node_type))
 
 
-def register_flow_file(path: Path, name: str) -> int:
+def register_flow_file(path: Path, name: str, namespace_id: int | None = None) -> int:
     with get_db_context() as db:
         reg = db_models.FlowRegistration(
             flow_uuid=str(uuid.uuid4()),
             name=name,
             flow_path=str(path),
             owner_id=1,
+            namespace_id=namespace_id,
         )
         db.add(reg)
         db.commit()
         db.refresh(reg)
         return reg.id
+
+
+def registration_uuid(registration_id: int) -> str:
+    with get_db_context() as db:
+        return db.get(db_models.FlowRegistration, registration_id).flow_uuid
+
+
+def make_schema() -> tuple[str, int]:
+    """A fresh catalog with one schema: its ``"catalog.schema"`` name and the schema's namespace id."""
+    with get_db_context() as db:
+        catalog = db_models.CatalogNamespace(name=f"RunFlowCat_{uuid.uuid4().hex[:8]}", level=0, owner_id=1)
+        db.add(catalog)
+        db.flush()
+        schema = db_models.CatalogNamespace(name="flows", parent_id=catalog.id, level=1, owner_id=1)
+        db.add(schema)
+        db.commit()
+        return f"{catalog.name}.{schema.name}", schema.id
+
+
+def limit_binding(value: str) -> list[input_schema.RunFlowParameterBinding]:
+    return [input_schema.RunFlowParameterBinding(parameter_name="limit", source="constant", constant_value=value)]
 
 
 def run_and_assert_ok(graph: FlowGraph):
@@ -90,7 +112,9 @@ def head_subflow(tmp_path):
     graph.flow_settings.parameters = [FlowParameter(name="limit", default_value="10", type="integer")]
     add_promise(graph, 1, "flow_input")
     graph.add_flow_input(
-        input_schema.NodeFlowInput(flow_id=graph.flow_id, node_id=1, input_name="customers", raw_data_format=customer_rows(4))
+        input_schema.NodeFlowInput(
+            flow_id=graph.flow_id, node_id=1, input_name="customers", raw_data_format=customer_rows(4)
+        )
     )
     add_promise(graph, 2, "polars_code")
     graph.add_polars_code(
@@ -355,7 +379,9 @@ def test_zero_output_subflow_returns_run_summary(tmp_path):
     graph = make_graph(409, "no_output_subflow")
     add_promise(graph, 1, "flow_input")
     graph.add_flow_input(
-        input_schema.NodeFlowInput(flow_id=graph.flow_id, node_id=1, input_name="data", raw_data_format=customer_rows(2))
+        input_schema.NodeFlowInput(
+            flow_id=graph.flow_id, node_id=1, input_name="data", raw_data_format=customer_rows(2)
+        )
     )
     path = tmp_path / "no_output_subflow.yaml"
     graph.save_flow(str(path))
@@ -378,6 +404,60 @@ def test_zero_output_subflow_returns_run_summary(tmp_path):
     assert summary.height == 1
     assert "run_index" in summary.columns
     assert summary["success"].to_list() == [True]
+
+
+def test_run_summary_schema_prediction_matches_a_real_run(tmp_path):
+    graph = make_graph(440, "no_output_params_subflow")
+    graph.flow_settings.parameters = [
+        FlowParameter(name="region", default_value="EU"),
+        FlowParameter(name="limit", default_value="10", type="integer"),
+        FlowParameter(name="unused", default_value="x"),
+    ]
+    add_promise(graph, 1, "flow_input")
+    graph.add_flow_input(
+        input_schema.NodeFlowInput(
+            flow_id=graph.flow_id, node_id=1, input_name="data", raw_data_format=customer_rows(2)
+        )
+    )
+    path = tmp_path / "no_output_params_subflow.yaml"
+    graph.save_flow(str(path))
+    registration_id = register_flow_file(path, "no_output_params_subflow")
+
+    parent = make_graph(441)
+    add_promise(parent, 1, "manual_input")
+    parent.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=parent.flow_id,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist([{"region": "EU"}, {"region": "US"}]),
+        )
+    )
+    settings = input_schema.NodeRunFlow(
+        flow_id=parent.flow_id,
+        node_id=9,
+        user_id=1,
+        flow_reference=input_schema.SubflowReference(registration_id=registration_id),
+        input_slots=["data"],
+        output_slots=[],
+        parameter_specs=subflow.get_subflow_interface(path).parameters,
+        parameter_bindings=[
+            input_schema.RunFlowParameterBinding(parameter_name="region", source="column", column_name="region"),
+            input_schema.RunFlowParameterBinding(parameter_name="limit", source="constant", constant_value="3"),
+        ],
+        iteration_mode="iterate",
+    )
+    add_promise(parent, 9, "run_flow")
+    parent.add_run_flow(settings)
+    connect(parent, 1, 9, "input-0")
+    predicted = subflow.predict_run_summary_schema(settings)
+    canvas = parent.get_node(9).get_predicted_schema(force=True)
+    assert [(c.column_name, c.data_type) for c in canvas] == [(c.column_name, c.data_type) for c in predicted]
+    run_and_assert_ok(parent)
+
+    summary = parent.get_node(9).get_resulting_data().collect()
+    assert summary.schema == pl.Schema({c.column_name: c.get_polars_type().pl_datatype for c in predicted})
+    assert summary.columns == ["run_index", "success", "param_limit", "param_region"]
+    assert summary["param_region"].to_list() == ["EU", "US"]
 
 
 def test_two_port_routing_and_order_independent_connections(two_port_subflow, tmp_path):
@@ -515,6 +595,100 @@ def test_dangling_registration_fails_clearly(tmp_path):
     assert "no longer exists" in errors
 
 
+def test_reference_whose_id_holds_another_flow_is_refused(head_subflow):
+    """A registration id is install-local: a row with another uuid is a different flow, not the referenced one."""
+    stale_uuid = str(uuid.uuid4())
+    reference = input_schema.SubflowReference(registration_id=head_subflow["registration_id"], flow_uuid=stale_uuid)
+    graph = make_graph(430)
+    node = build_parent_with_data(graph, head_subflow["registration_id"], flow_reference=reference)
+    stored = node.setting_input.flow_reference
+    assert (stored.registration_id, stored.flow_uuid) == (head_subflow["registration_id"], stale_uuid)
+
+    errors = run_and_expect_failure(graph)
+    assert "is a different flow" in errors and "re-select the flow" in errors
+    assert stale_uuid in errors
+    assert registration_uuid(head_subflow["registration_id"]) in errors
+
+
+def test_flow_uuid_wins_over_an_id_that_holds_another_flow(head_subflow, two_port_subflow):
+    reference = input_schema.SubflowReference(
+        registration_id=two_port_subflow["registration_id"],
+        flow_uuid=registration_uuid(head_subflow["registration_id"]),
+    )
+    graph = make_graph(431)
+    node = build_parent_with_data(
+        graph, head_subflow["registration_id"], flow_reference=reference, parameter_bindings=limit_binding("3")
+    )
+    assert node.setting_input.flow_reference.registration_id == head_subflow["registration_id"]
+    run_and_assert_ok(graph)
+    assert node.get_output("output-0").collect().height == 3
+
+
+@pytest.mark.parametrize("stale_id", ["missing", "holds_another_flow"])
+def test_reference_resolves_by_namespace_and_name_when_its_uuid_is_gone(head_subflow, two_port_subflow, stale_id):
+    namespace, namespace_id = make_schema()
+    name = f"head_{uuid.uuid4().hex[:8]}"
+    registration_id = register_flow_file(head_subflow["path"], name, namespace_id)
+    stale = 99999999 if stale_id == "missing" else two_port_subflow["registration_id"]
+
+    def reference() -> input_schema.SubflowReference:
+        return input_schema.SubflowReference(
+            registration_id=stale, flow_uuid=str(uuid.uuid4()), namespace=namespace, name=name
+        )
+
+    assert subflow.resolve_subflow_path(reference(), user_id=1).registration_id == registration_id
+
+    graph = make_graph(432)
+    node = build_parent_with_data(
+        graph, registration_id, flow_reference=reference(), parameter_bindings=limit_binding("3")
+    )
+    stored = node.setting_input.flow_reference
+    assert (stored.registration_id, stored.flow_uuid) == (registration_id, registration_uuid(registration_id))
+    assert (stored.namespace, stored.name) == (namespace, name)
+    run_and_assert_ok(graph)
+    assert node.get_output("output-0").collect().height == 3
+
+
+def test_namespace_and_name_matching_two_flows_is_ambiguous(head_subflow):
+    namespace, namespace_id = make_schema()
+    name = f"twice_{uuid.uuid4().hex[:8]}"
+    first = register_flow_file(head_subflow["path"], name, namespace_id)
+    second = register_flow_file(head_subflow["path"], name, namespace_id)
+    reference = input_schema.SubflowReference(
+        registration_id=99999999, flow_uuid=str(uuid.uuid4()), namespace=namespace, name=name
+    )
+    with pytest.raises(subflow.SubflowResolutionError, match="ambiguous") as info:
+        subflow.resolve_subflow_path(reference, user_id=1)
+    assert f"id={first}" in str(info.value) and f"id={second}" in str(info.value)
+    assert "re-select the flow" in str(info.value)
+
+
+def test_a_saved_three_field_reference_still_opens_and_runs(head_subflow, tmp_path):
+    import yaml
+
+    namespace, namespace_id = make_schema()
+    registration_id = register_flow_file(head_subflow["path"], "head_in_schema", namespace_id)
+    graph = make_graph(433)
+    build_parent_with_data(graph, registration_id, parameter_bindings=limit_binding("3"))
+    parent_path = tmp_path / "three_field_parent.yaml"
+    graph.save_flow(str(parent_path))
+
+    data = yaml.safe_load(parent_path.read_text())
+    run_flow_node = next(n for n in data["nodes"] if n["type"] == "run_flow")
+    run_flow_node["setting_input"]["flow_reference"] = {
+        "registration_id": registration_id,
+        "flow_uuid": registration_uuid(registration_id),
+        "flow_path": str(head_subflow["path"]),
+    }
+    parent_path.write_text(yaml.dump(data, sort_keys=False))
+
+    reloaded = open_flow(parent_path)
+    stored = reloaded.get_node(9).setting_input.flow_reference
+    assert (stored.namespace, stored.name) == (namespace, "head_in_schema")
+    run_and_assert_ok(reloaded)
+    assert reloaded.get_node(9).get_output("output-0").collect().height == 3
+
+
 def test_stale_slots_prompt_resync(head_subflow):
     graph = make_graph(416)
     build_parent_with_data(graph, head_subflow["registration_id"], input_slots=["renamed_port"])
@@ -560,6 +734,25 @@ def test_interface_cache_invalidates_on_mtime_change(head_subflow):
     assert subflow.get_subflow_interface(path) is first
     os.utime(path, (path.stat().st_atime + 5, path.stat().st_mtime + 5))
     assert subflow.get_subflow_interface(path) is not first
+
+
+def test_interface_cache_sees_a_rewrite_that_keeps_the_mtime(tmp_path):
+    import os
+
+    path = tmp_path / "rewritten_subflow.yaml"
+
+    def save_with_input(input_name: str) -> None:
+        graph = make_graph(434, "rewritten_subflow")
+        add_promise(graph, 1, "flow_input")
+        graph.add_flow_input(input_schema.NodeFlowInput(flow_id=graph.flow_id, node_id=1, input_name=input_name))
+        graph.save_flow(str(path))
+
+    save_with_input("a")
+    assert [p.name for p in subflow.get_subflow_interface(path).inputs] == ["a"]
+    mtime_ns = path.stat().st_mtime_ns
+    save_with_input("a_longer_name")
+    os.utime(path, ns=(path.stat().st_atime_ns, mtime_ns))
+    assert [p.name for p in subflow.get_subflow_interface(path).inputs] == ["a_longer_name"]
 
 
 def test_connect_validation_rejects_out_of_range_and_occupied(head_subflow):

@@ -367,6 +367,10 @@ def register_python_editor_flow(
         stem = _safe_filename_stem(f"{flow.flow_id}_{display_name}")
         flow_path = str(storage.python_editor_flows_directory / f"{stem}.yaml")
 
+    # The flow now lives at flow_path; a same-path save keeps the registration name (no stem adoption).
+    flow.flow_settings.name = display_name
+    flow.__name__ = display_name
+    flow.flow_settings.path = flow_path
     flow.save_flow(flow_path)
 
     with get_db_context() as db:

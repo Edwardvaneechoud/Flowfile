@@ -1,5 +1,6 @@
 from flowfile_core.schemas import transform_schema
 from flowfile_frame.expr import Column
+from flowfile_frame.parameters import refuse_parameter_as_column
 
 
 def _normalize_columns_to_list(columns):
@@ -11,6 +12,7 @@ def _normalize_columns_to_list(columns):
     Returns:
         List of column names/expressions
     """
+    refuse_parameter_as_column(columns, "join keys (on=/left_on=/right_on=)")
     if columns is None:
         return []
     elif isinstance(columns, str):

@@ -4,6 +4,8 @@ The Flowfile catalog organizes tables in a two-level hierarchy: **catalogs** con
 
 `CatalogReference` and `SchemaReference` are validated, name-based handles. Construct one once at the top of your script — it resolves the name to the underlying ID and either confirms the catalog/schema exists or creates it. Pass the handle around instead of looking up integer IDs by hand.
 
+A schema handle also reaches the flows registered under it: `get_flow`, `list_flows` and `register_flow` return [`FlowRef`](native-nodes.md#flowref-and-flow_ref) handles that [`RunFlow`](native-nodes.md#runflow) calls as subflows.
+
 This example runs in CI on every commit:
 
 ```python
@@ -46,6 +48,14 @@ Return a [`SchemaReference`](#schemareference) for a child schema of this catalo
 catalog = ff.CatalogReference("sales")
 raw = catalog.schema("raw")                          # must exist
 staging = catalog.schema("staging", auto_create=True) # creates if missing
+```
+
+#### `get_schema(name, *, auto_create=False, description=None) -> SchemaReference`
+
+Alias of [`schema(...)`](#schemaname-auto_createfalse-descriptionnone-schemareference), named like the kernel's `flowfile_ctx.get_catalog(...).get_schema(...)`.
+
+```python
+sales = ff.get_catalog("Demo").get_schema("sales")
 ```
 
 #### `list_schemas() -> list[SchemaReference]`
@@ -136,7 +146,41 @@ The `scd2_*` keywords configure a `write_mode="scd2"` write (see [Slowly Changin
 
 `track_changes=True` turns [change tracking](../../visual-editor/catalog/change-tracking.md) on for the table so later reads can pull only what each write changed. It is enable-only — `False` never turns tracking off — and is rejected with `write_mode` `"overwrite"`, `"virtual"` or `"scd2"`.
 
+#### `get_flow(name) -> FlowRef`
+
+Return the flow registered under this schema with that name; same as [`ff.flow_ref(self, name)`](native-nodes.md#flowref-and-flow_ref). Raises `NativeNodeError` when there is none or when more than one registration has the name (listing the candidates), with the catalog's `FlowNotFoundError` or `AmbiguousFlowError` as its `__cause__`.
+
+```python
+clean = sales.get_flow("Clean orders")
+run = ff.RunFlow(clean, orders=orders)
+```
+
+#### `list_flows() -> list[FlowRef]`
+
+Return every flow registered under this schema that the current user may use.
+
+#### `register_flow(flow_or_frame, *, name, overwrite=False) -> FlowRef`
+
+Convenience for [`ff.register_flow(flow_or_frame, name=name, schema=self, overwrite=overwrite)`](native-nodes.md#register_flow): saves the flow as a YAML file, registers it under this schema when called, and returns its `FlowRef`. Re-running the same script reuses the registration.
+
+```python
+child = ff.create_flow_graph()
+# ... build the child with ff.FlowInput / to_flow_output ...
+clean = sales.register_flow(child, name="Clean orders")
+```
+
 ## Module-level helpers
+
+### `get_catalog(name) -> CatalogReference`
+
+Same lookup as `CatalogReference(name)`: raises `NamespaceNotFoundError` when the catalog does not exist. Together with `get_schema` and `get_flow` it gives one chain from a catalog name to a flow:
+
+```python
+clean = ff.get_catalog("Demo").get_schema("sales").get_flow("Clean orders")
+```
+
+!!! info "Same shape as `flowfile_ctx`"
+    Inside a kernel, `flowfile_ctx.get_catalog(name).get_schema(name)` navigates the catalog the same way, so code reads alike on both sides. The flow methods (`get_flow`, `list_flows`, `register_flow`) exist only in the Python API.
 
 ### `list_catalogs() -> list[CatalogReference]`
 
@@ -206,4 +250,4 @@ print([t.name for t in catalog.list_tables()])
 ```
 
 ---
-[← Previous: Visual UI Integration](visual-ui.md)
+[← Previous: Visual UI Integration](visual-ui.md) | [Next: Native Node Classes →](native-nodes.md)

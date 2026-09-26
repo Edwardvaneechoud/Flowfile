@@ -733,6 +733,10 @@ The default directory is `~/.flowfile/user_defined_nodes/`, but you can register
 
 Mounted directories are **read-only sources** — the designer edits and saves them, but a fresh save from the designer always writes to the default directory, never into a mount. Nodes from mounts appear in the palette and the Custom Nodes page like any other.
 
+## Using a node from Python
+
+To place a node, or install a class from a script or notebook, see [Custom nodes in the Python API](../python-api/reference/native-nodes.md#custom_node-and-customnode).
+
 ## The visual round-trip
 
 A node file written in the SDK's "designer subset" reopens in the visual editor: Browse the node, click **Edit**, and its metadata, sections, components, and `process` code load back into the Form and Code tabs. The first time you save a hand-written node from the designer, its formatting is canonicalized (the designer shows a diff preview before writing). Files that use constructs outside the subset (builder objects, dynamic construction, non-literal component kwargs) still load — they open in code-only mode, with the Test tab fully functional. See [Code-only mode](node-designer.md#code-only-mode).

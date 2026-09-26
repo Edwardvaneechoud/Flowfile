@@ -17,6 +17,7 @@ from flowfile_core.flowfile.code_generator.custom_node_handlers import CustomNod
 from flowfile_core.flowfile.code_generator.expression_helpers import ExpressionHelpersMixin
 from flowfile_core.flowfile.code_generator.join_handlers import JoinHandlersMixin
 from flowfile_core.flowfile.code_generator.param_codegen import (
+    _SENTINEL_RE,
     apply_param_sentinels,
     codegen_parameters,
     param_arg,
@@ -141,6 +142,27 @@ def _polars_code_header(settings: input_schema.NodePolarsCode) -> str:
     """Comment naming a Polars-code node by its description, so the exported function is recognisable."""
     description = (settings.description or "").strip().splitlines()
     return f"# Custom Polars code: {description[0]}" if description else "# Custom Polars code"
+
+
+def _sql_query_literal_lines(sql_code: str) -> list[str]:
+    """A SQL Query node's query as one single-line string literal per SQL line, for implicit concatenation.
+
+    Single-line literals keep every escape exact through the export's indentation and let the
+    parameter post-pass turn a ``${name}`` line into an f-string; a triple-quoted block would do neither.
+    A last line that is only a parameter joins the line before it, since the post-pass turns a literal
+    that is exactly one reference into a bare name, which cannot be concatenated with a string.
+    """
+    lines = sql_code.strip().split("\n")
+    if len(lines) > 1 and _SENTINEL_RE.fullmatch(lines[-1]):
+        lines[-2:] = [f"{lines[-2]}\n{lines[-1]}"]
+    return [json.dumps(line + "\n", ensure_ascii=False) for line in lines[:-1]] + [
+        json.dumps(lines[-1], ensure_ascii=False)
+    ]
+
+
+def _sql_query_input_vars(input_vars: dict[str, str]) -> list[str]:
+    """The SQL Query node's inputs in canvas order: ``input_1``, ``input_2``, ... in the query."""
+    return [var for key, var in input_vars.items() if key.startswith("main")]
 
 
 def _eval_in_validation_namespace(code: str):
@@ -1313,6 +1335,15 @@ class FlowGraphCodeConverter(
         self._add_code(f"{var_name} = _polars_code_{settings.node_id}({args})")
         self._add_code("")
 
+    def _handle_sql_query(self, settings: input_schema.NodeSqlQuery, var_name: str, input_vars: dict[str, str]) -> None:
+        """A SQL Query node as ``pl.SQLContext``, its inputs registered as ``input_1``, ``input_2``, ..."""
+        tables = ", ".join(f"input_{i}={var}" for i, var in enumerate(_sql_query_input_vars(input_vars), start=1))
+        self._add_code(f"{var_name} = pl.SQLContext({tables}).execute(")
+        for literal in _sql_query_literal_lines(settings.sql_query_input.sql_code):
+            self._add_code(f"    {literal}")
+        self._add_code(")")
+        self._add_code("")
+
     # Handlers for unsupported node types - these add nodes to the unsupported list
 
     def _handle_explore_data(
@@ -2380,6 +2411,16 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
 
         self._add_code("")
         self._add_code(f"{var_name} = _polars_code_{settings.node_id}({args})")
+        self._add_code("")
+
+    def _handle_sql_query(self, settings: input_schema.NodeSqlQuery, var_name: str, input_vars: dict[str, str]) -> None:
+        """A SQL Query node as ``ff.sql``: positional frames are ``input_1``, ``input_2``, ... in the stored query."""
+        literals = _sql_query_literal_lines(settings.sql_query_input.sql_code)
+        literals[-1] += ","
+        self._add_code(f"{var_name} = ff.sql(")
+        for line in [*literals, *(f"{var}," for var in _sql_query_input_vars(input_vars))]:
+            self._add_code(f"    {line}")
+        self._add_code(")")
         self._add_code("")
 
     def _handle_fuzzy_match(

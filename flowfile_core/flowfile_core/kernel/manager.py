@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Iterable
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
@@ -403,6 +404,23 @@ def _rebase_to_posix(local_path: str, host_prefix: str, container_prefix: str) -
     return None
 
 
+def ordered_input_files(names: Iterable[str]) -> list[str]:
+    """Order kernel input file names (``{name}_{index}.parquet``) by their integer index.
+
+    The index is the wiring position, so it (not the lexicographic name, where
+    ``df_10_1`` sorts before ``df_9_0``) restores the order ``read_inputs()["main"]``
+    must have. Names without a numeric index follow, sorted by name.
+    """
+
+    def _key(file_name: str) -> tuple[int, int, str]:
+        _, sep, index = file_name.removesuffix(".parquet").rpartition("_")
+        if sep and index.isdecimal():
+            return 0, int(index), file_name
+        return 1, 0, file_name
+
+    return sorted(names, key=_key)
+
+
 class KernelManager:
     def __init__(self, shared_volume_path: str | None = None):
         _probe_docker()
@@ -648,7 +666,7 @@ class KernelManager:
         # Discover parquet files in the input directory and group by input name.
         # Files are named {name}_{index}.parquet (e.g. orders_0.parquet, clients_1.parquet).
         if os.path.isdir(input_dir):
-            parquet_files = sorted(f for f in os.listdir(input_dir) if f.endswith(".parquet"))
+            parquet_files = ordered_input_files(f for f in os.listdir(input_dir) if f.endswith(".parquet"))
             if parquet_files:
                 input_paths: dict[str, list[str]] = {}
                 all_paths: list[str] = []
@@ -660,9 +678,7 @@ class KernelManager:
                     parts = stem.rsplit("_", 1)
                     name = parts[0] if len(parts) == 2 and parts[1].isdigit() else "main"
                     input_paths.setdefault(name, []).append(kernel_path)
-                # Always include "main" as backward-compatible alias for all inputs
-                if "main" not in input_paths:
-                    input_paths["main"] = all_paths
+                input_paths["main"] = all_paths
                 request.input_paths = input_paths
 
         request.output_dir = self.to_kernel_path(output_dir)

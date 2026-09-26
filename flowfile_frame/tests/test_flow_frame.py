@@ -651,6 +651,21 @@ def test_sample_rejects_ambiguous_or_invalid_sizes():
         df.sample(fraction=1.5)
 
 
+def test_solve_graph():
+    edges = from_dict({"from": ["a", "b", "x"], "to": ["b", "c", "y"]})
+    grouped = edges.solve_graph("from", "to", output_column_name="group")
+
+    result = grouped.collect().sort("from")
+    assert result.columns == ["from", "to", "group"]
+    groups = result["group"].to_list()
+    assert groups[0] == groups[1] != groups[2]
+
+    node = grouped.flow_graph.get_node(grouped.node_id)
+    assert node.node_type == "graph_solver"
+    solver = node.setting_input.graph_solver_input
+    assert (solver.col_from, solver.col_to, solver.output_column_name) == ("from", "to", "group")
+
+
 def test_complex_workflow():
     """Test a more complex workflow combining multiple operations."""
     data = {

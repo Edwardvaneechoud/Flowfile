@@ -14,12 +14,14 @@ from polars_expr_transformer import simple_function_to_expr
 
 if TYPE_CHECKING:
     from flowfile_frame.catalog_reference import SchemaReference
+    from flowfile_frame.run_flow import FlowOutput
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_mapping
+from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.formula_dependencies import entries_are_independent
+from flowfile_core.flowfile.param_types import ParamValue, typed_parameter_values
+from flowfile_core.flowfile.parameter_resolver import resolve_expression_parameters
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.schemas import GroupColor
 from flowfile_frame.callable_utils import process_callable_args
@@ -29,6 +31,16 @@ from flowfile_frame.expr import Column, Expr, col, lit
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.join import _create_join_mappings, _normalize_columns_to_list
 from flowfile_frame.lazy_methods import add_lazyframe_methods
+from flowfile_frame.native import (
+    NativeNodeError,
+    add_connection_checked,
+    ancestors,
+    materialise,
+    merge_frames,
+    seed_from_predicted_schema,
+    seeded_at_build,
+)
+from flowfile_frame.parameters import refuse_parameter_as_column, refuse_parameter_column_in_formula
 from flowfile_frame.selectors import Selector
 from flowfile_frame.utils import (
     _check_if_convertible_to_code,
@@ -38,7 +50,6 @@ from flowfile_frame.utils import (
     generate_node_id,
     stringify_values,
 )
-from flowfile_frame.utils import data as node_id_data
 
 
 def can_be_expr(param: inspect.Parameter) -> bool:
@@ -55,26 +66,28 @@ def _contains_lambda_pattern(text: str) -> bool:
     return "<lambda> at" in text
 
 
-def _formula_parses(formula: str) -> bool:
+def _formula_parses(formula: str, params: dict[str, ParamValue] | None = None) -> bool:
     """Whether core's formula parser accepts ``formula``.
 
     Lowering onto a native Formula/Filter node is only safe when the generated
     formula parses: a Filter node silently keeps no rows on a parse error, so an
-    unparseable formula stays on the Polars-code path instead.
+    unparseable formula stays on the Polars-code path instead. ``params`` (the
+    flow's current parameter values) are substituted for this check only: the
+    node keeps the ``${name}`` reference, which the run resolves.
     """
     try:
-        simple_function_to_expr(formula)
+        simple_function_to_expr(resolve_expression_parameters(formula, params or {}))
     except Exception:
         return False
     return True
 
 
-def _filter_exprs_to_formula(exprs: list[Expr]) -> str | None:
+def _filter_exprs_to_formula(exprs: list[Expr], params: dict[str, ParamValue] | None = None) -> str | None:
     """AND-join the formula forms of filter predicates; None when any predicate lacks one."""
     if not exprs or any(e._ff_repr is None or e._function_sources for e in exprs):
         return None
     formula = " and ".join(e._ff_repr for e in exprs)
-    return formula if _formula_parses(formula) else None
+    return formula if _formula_parses(formula, params) else None
 
 
 _POLARS_CODE_LABELS = {
@@ -152,13 +165,17 @@ def _try_translate_flowfile_formulas(
         except Exception:
             logger.debug(
                 "eval failed for generated code %r (formula %r); falling back",
-                generated, formula, exc_info=True,
+                generated,
+                formula,
+                exc_info=True,
             )
             return None
         if not isinstance(expr, Expr):
             logger.debug(
                 "Generated code %r produced non-Expr %r (formula %r); falling back",
-                generated, type(expr), formula,
+                generated,
+                type(expr),
+                formula,
             )
             return None
         expressions.append(expr.alias(output_name))
@@ -323,7 +340,7 @@ class FlowFrame:
             )
             flow_graph.add_manual_input(input_node)
         return FlowFrame(
-            data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
+            data=materialise(flow_graph.get_node(node_id)).data_frame,
             flow_graph=flow_graph,
             node_id=node_id,
             parent_node_id=parent_node_id,
@@ -343,6 +360,7 @@ class FlowFrame:
         node_id: int | None = None,
         parent_node_id: int | None = None,
         output_handle: str = "output-0",
+        deferred: bool = False,
         **kwargs,  # Accept and ignore any other kwargs for API compatibility
     ) -> FlowFrame:
         """
@@ -357,6 +375,11 @@ class FlowFrame:
         downstream operations should read from. Defaults to ``"output-0"``; set
         to ``"output-1"`` for the second output of a multi-output node (e.g.
         the ``fail`` branch of ``filter_split``).
+
+        ``deferred`` (wrapping only) marks a frame whose node, or an ancestor, only runs
+        with the flow: ``data`` is a typed zero-row placeholder, operations on it build
+        nodes without executing the deferred ones, and :meth:`collect` runs the graph.
+        Frames created from data are never deferred.
         """
         if flow_graph is not None and node_id is not None:
             instance = super().__new__(cls)
@@ -365,6 +388,7 @@ class FlowFrame:
             instance.node_id = node_id
             instance.parent_node_id = parent_node_id
             instance.output_handle = output_handle
+            instance._deferred = deferred
             return instance
         elif flow_graph is not None and not isinstance(data, pl.LazyFrame):
             # create_from_any_type creates a new source node which always emits
@@ -422,7 +446,7 @@ class FlowFrame:
         else:
             source_graph.add_dependency_on_polars_lazy_frame(data, source_node_id)
 
-        final_data = source_graph.get_node(source_node_id).get_resulting_data().data_frame
+        final_data = materialise(source_graph.get_node(source_node_id)).data_frame
         return cls(data=final_data, flow_graph=source_graph, node_id=source_node_id, parent_node_id=parent_node_id)
 
     def __init__(self, *args, **kwargs):
@@ -452,10 +476,17 @@ class FlowFrame:
             input_type=input_type,
             output_handle=output_handle,
         )
-        add_connection(self.flow_graph, connection)
+        add_connection_checked(self.flow_graph, connection)
 
-    def _create_child_frame(self, new_node_id, *, precomputed_result=None):
-        """Helper method to create a new FlowFrame that's a child of this one"""
+    def _create_child_frame(self, new_node_id, *, precomputed_result=None, deferred: bool | None = None):
+        """Helper method to create a new FlowFrame that's a child of this one.
+
+        ``deferred`` overrides the inherited flag for nodes with more inputs than this frame.
+        A node that :func:`~flowfile_frame.native.seeded_at_build` (a side-effect node on a
+        deferred frame or below a gate) is seeded from its own predicted schema instead of
+        executed, and its frame is deferred: only the run writes, on the live side only.
+        """
+        deferred = self._deferred if deferred is None else deferred
         self._add_connection(self.node_id, new_node_id, output_handle=getattr(self, "output_handle", "output-0"))
         # If a precomputed result was provided (e.g. serialization fallback),
         # inject it into the node AFTER the connection is added (which resets the node).
@@ -465,12 +496,23 @@ class FlowFrame:
             node = self.flow_graph.get_node(new_node_id)
             if node is not None:
                 node.results.resulting_data = FlowDataEngine(precomputed_result)
-        try:
+        node = self.flow_graph.get_node(new_node_id)
+        if node is not None and seeded_at_build(node.node_type, [self], inputs_deferred=deferred):
+            seed_from_predicted_schema(node)
             return FlowFrame(
-                data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+                data=node.results.resulting_data.data_frame,
                 flow_graph=self.flow_graph,
                 node_id=new_node_id,
                 parent_node_id=self.node_id,
+                deferred=True,
+            )
+        try:
+            return FlowFrame(
+                data=materialise(self.flow_graph.get_node(new_node_id)).data_frame,
+                flow_graph=self.flow_graph,
+                node_id=new_node_id,
+                parent_node_id=self.node_id,
+                deferred=deferred,
             )
         except AttributeError:
             raise ValueError("Could not execute the function") from None
@@ -516,6 +558,7 @@ class FlowFrame:
         """
         Sort the dataframe by the given columns.
         """
+        refuse_parameter_as_column((by, more_by), "sort")
         initial_by_args = list(_parse_inputs_as_iterable((by,)))
         new_node_id = generate_node_id()
 
@@ -660,6 +703,12 @@ class FlowFrame:
         polars_code_for_node: str
         precomputed = None
         if not convertable_to_code or _contains_lambda_pattern(code):
+            if self._deferred:
+                raise NativeNodeError(
+                    "This operation has no code form (e.g. a lambda without retrievable source), so it would be "
+                    "evaluated now and baked into the node; a deferred frame only holds placeholder rows until "
+                    "the flow runs. Define the function in a module or collect the frame first."
+                )
             effective_method_name = (
                 get_method_name_from_code(code) if method_name is None and "input_df." in code else method_name
             )
@@ -850,20 +899,7 @@ class FlowFrame:
 
     def _ensure_same_graph(self, other: FlowFrame) -> None:
         """Ensure both FlowFrames are in the same graph, combining if necessary."""
-        if self.flow_graph.flow_id != other.flow_graph.flow_id:
-            combined_graph, node_mappings = combine_flow_graphs_with_mapping(self.flow_graph, other.flow_graph)
-
-            new_self_node_id = node_mappings.get((self.flow_graph.flow_id, self.node_id), None)
-            new_other_node_id = node_mappings.get((other.flow_graph.flow_id, other.node_id), None)
-
-            if new_other_node_id is None or new_self_node_id is None:
-                raise ValueError("Cannot remap the nodes")
-
-            self.node_id = new_self_node_id
-            other.node_id = new_other_node_id
-            self.flow_graph = combined_graph
-            other.flow_graph = combined_graph
-            node_id_data["c"] = node_id_data["c"] + len(combined_graph.nodes)
+        merge_frames([self, other])
 
     def _parse_join_columns(
         self,
@@ -923,14 +959,15 @@ class FlowFrame:
 
         self._add_polars_code(new_node_id, code, description, depending_on_ids=[self.node_id, other.node_id])
 
-        self._add_connection(self.node_id, new_node_id, "main")
-        other._add_connection(other.node_id, new_node_id, "main")
+        self._add_connection(self.node_id, new_node_id, "main", output_handle=self.output_handle)
+        other._add_connection(other.node_id, new_node_id, "main", output_handle=other.output_handle)
 
         return FlowFrame(
-            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            data=materialise(self.flow_graph.get_node(new_node_id)).data_frame,
             flow_graph=self.flow_graph,
             node_id=new_node_id,
             parent_node_id=self.node_id,
+            deferred=self._deferred or other._deferred,
         )
 
     def _build_polars_join_kwargs(
@@ -1007,13 +1044,14 @@ class FlowFrame:
         else:
             self._add_regular_join_node(new_node_id, join_input_manager.to_join_input(), description, other)
 
-        self._add_connection(self.node_id, new_node_id, "main")
-        other._add_connection(other.node_id, new_node_id, "right")
+        self._add_connection(self.node_id, new_node_id, "main", output_handle=self.output_handle)
+        other._add_connection(other.node_id, new_node_id, "right", output_handle=other.output_handle)
         return FlowFrame(
-            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            data=materialise(self.flow_graph.get_node(new_node_id)).data_frame,
             flow_graph=self.flow_graph,
             node_id=new_node_id,
             parent_node_id=self.node_id,
+            deferred=self._deferred or other._deferred,
         )
 
     def _add_cross_join_node(
@@ -1073,6 +1111,7 @@ class FlowFrame:
 
     def rename(self, mapping: Mapping[str, str], *, strict: bool = True, description: str = None) -> FlowFrame:
         """Rename columns based on a mapping or function."""
+        refuse_parameter_as_column(mapping, "rename")
         return self.select(
             [col(old_name).alias(new_name) for old_name, new_name in mapping.items()],
             description=description,
@@ -1085,6 +1124,7 @@ class FlowFrame:
         """
         Select columns from the frame.
         """
+        refuse_parameter_as_column(columns, "select")
         columns_iterable = list(_parse_inputs_as_iterable(columns))
         new_node_id = generate_node_id()
         if (
@@ -1201,6 +1241,7 @@ class FlowFrame:
         ``strict=True``, take the Polars-code path — the latter raises
         ``ColumnNotFoundError`` when the schema resolves, as Polars does.
         """
+        refuse_parameter_as_column(columns, "drop")
         names: list[str] = []
         can_use_native = True
         for item in _parse_inputs_as_iterable(columns):
@@ -1257,7 +1298,7 @@ class FlowFrame:
         new_node_id = generate_node_id()
         if len(predicates) > 0 or len(constraints) > 0:
             all_input_expr_objects = self._collect_filter_exprs(predicates, constraints)
-            formula = _filter_exprs_to_formula(all_input_expr_objects)
+            formula = _filter_exprs_to_formula(all_input_expr_objects, self._param_values())
             if formula is not None:
                 self._add_native_filter(new_node_id, formula, description)
                 return self._create_child_frame(new_node_id)
@@ -1308,8 +1349,13 @@ class FlowFrame:
 
         return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
+    def _param_values(self) -> dict[str, ParamValue]:
+        """The flow's current parameter values, typed the way a node's ``_params_getter`` serves them."""
+        return typed_parameter_values(self.flow_graph.flow_settings.parameters)
+
     def _collect_filter_exprs(self, predicates: tuple, constraints: dict) -> list[Expr]:
         """Normalise filter arguments (nested iterables, column-name strings, literals, kwargs) to Exprs."""
+        refuse_parameter_as_column(list(constraints), "filter keyword constraints")
         available_columns = self.columns
         processed_predicates = []
         for pred_item in predicates:
@@ -1333,6 +1379,7 @@ class FlowFrame:
     def _add_native_filter(
         self, new_node_id: int, advanced_filter: str, description: str | None, *, split_mode: bool = False
     ) -> None:
+        refuse_parameter_column_in_formula(advanced_filter, "filter formula")
         filter_settings = input_schema.NodeFilter(
             flow_id=self.flow_graph.flow_id,
             node_id=new_node_id,
@@ -1355,7 +1402,7 @@ class FlowFrame:
         emptying the pass output.
         """
         exprs = self._collect_filter_exprs(predicates, constraints)
-        formula = _filter_exprs_to_formula(exprs)
+        formula = _filter_exprs_to_formula(exprs, self._param_values())
         if formula is None:
             raise ValueError(
                 "filter_split predicates must have a flowfile-formula form (comparisons, and/or/not, is_in, "
@@ -1403,8 +1450,8 @@ class FlowFrame:
         )
 
         filter_node = self.flow_graph.get_node(new_node_id)
-        pass_engine = filter_node.get_output("output-0")
-        fail_engine = filter_node.get_output("output-1")
+        pass_engine = materialise(filter_node, "output-0")
+        fail_engine = materialise(filter_node, "output-1")
 
         pass_frame = FlowFrame(
             data=pass_engine.data_frame if pass_engine is not None else None,
@@ -1412,6 +1459,7 @@ class FlowFrame:
             node_id=new_node_id,
             parent_node_id=self.node_id,
             output_handle="output-0",
+            deferred=self._deferred,
         )
         fail_frame = FlowFrame(
             data=fail_engine.data_frame if fail_engine is not None else None,
@@ -1419,6 +1467,7 @@ class FlowFrame:
             node_id=new_node_id,
             parent_node_id=self.node_id,
             output_handle="output-1",
+            deferred=self._deferred,
         )
         return pass_frame, fail_frame
 
@@ -1463,7 +1512,7 @@ class FlowFrame:
         node = self.flow_graph.get_node(new_node_id)
         frames: list[FlowFrame] = []
         for i in range(len(settings.splits)):
-            engine = node.get_output(f"output-{i}") if node is not None else None
+            engine = materialise(node, f"output-{i}") if node is not None else None
             frames.append(
                 FlowFrame(
                     data=engine.data_frame if engine is not None else None,
@@ -1471,6 +1520,7 @@ class FlowFrame:
                     node_id=new_node_id,
                     parent_node_id=self.node_id,
                     output_handle=f"output-{i}",
+                    deferred=self._deferred,
                 )
             )
         return tuple(frames)
@@ -1586,9 +1636,9 @@ class FlowFrame:
         description:
             Optional node description for the visual designer.
         """
-        from flowfile_core.flowfile.flow_graph import add_connection
         from flowfile_core.schemas import input_schema as _is
 
+        self._ensure_same_graph(dependency)
         new_node_id = generate_node_id()
         wait_settings = input_schema.NodeWaitFor(
             flow_id=self.flow_graph.flow_id,
@@ -1600,9 +1650,11 @@ class FlowFrame:
             description=description or "Wait for dependency",
         )
         self.flow_graph.add_wait_for(wait_settings)
-        right_conn = _is.NodeConnection.create_from_simple_input(dependency.node_id, new_node_id, input_type="right")
-        add_connection(self.flow_graph, right_conn)
-        return self._create_child_frame(new_node_id)
+        right_conn = _is.NodeConnection.create_from_simple_input(
+            dependency.node_id, new_node_id, input_type="right", output_handle=dependency.output_handle
+        )
+        add_connection_checked(self.flow_graph, right_conn)
+        return self._create_child_frame(new_node_id, deferred=self._deferred or dependency._deferred)
 
     def apply_model(
         self,
@@ -1689,7 +1741,9 @@ class FlowFrame:
             description=description or default_desc,
         )
         self.flow_graph.add_apply_model(apply_settings)
-        return self._create_child_frame(new_node_id)
+        return self._create_child_frame(
+            new_node_id, deferred=self._deferred or (upstream is not None and upstream._deferred)
+        )
 
     def evaluate_model(
         self,
@@ -1761,7 +1815,9 @@ class FlowFrame:
             description=description or f"Evaluate {predicted_column} vs {actual_column}",
         )
         self.flow_graph.add_evaluate_model(evaluate_settings)
-        return self._create_child_frame(new_node_id)
+        return self._create_child_frame(
+            new_node_id, deferred=self._deferred or (upstream is not None and upstream._deferred)
+        )
 
     def sink_csv(self, file: str, *args, separator: str = ",", encoding: str = "utf-8", description: str = None):
         """
@@ -1777,6 +1833,24 @@ class FlowFrame:
             Self for method chaining
         """
         return self.write_csv(file, *args, separator=separator, encoding=encoding, description=description)
+
+    def _refuse_polars_code_writer_if_deferred(self, method_name: str) -> None:
+        """Refuse the Polars-code writer fallback on a deferred frame or below a gate.
+
+        That node writes when it is built, which on a deferred frame means writing the zero-row
+        placeholder and below a gate means writing both exits; only the native Output node waits
+        for the flow run.
+        """
+        if self._deferred or self._below_a_gate():
+            reason = (
+                "this frame only holds placeholder rows until the flow runs"
+                if self._deferred
+                else "this frame is below a gate, so it would write both of the gate's exits"
+            )
+            raise NativeNodeError(
+                f"{method_name} with extra writer options builds a Polars-code node that writes immediately, "
+                f"but {reason}. Drop the extra options to use a native Output node, or collect the frame first."
+            )
 
     def write_parquet(
         self,
@@ -1852,6 +1926,7 @@ class FlowFrame:
             )
             self.flow_graph.add_output(node_output)
         else:
+            self._refuse_polars_code_writer_if_deferred("write_parquet")
             if not is_path_input:
                 raise TypeError(
                     f"Input 'path' must be a string or Path-like object when using advanced "
@@ -1928,6 +2003,7 @@ class FlowFrame:
             )
             self.flow_graph.add_output(node_output)
         else:
+            self._refuse_polars_code_writer_if_deferred(f"write_{file_type}")
             if not is_path_input:
                 raise TypeError(
                     f"Input 'path' must be a string or Path-like object when using advanced "
@@ -2019,9 +2095,7 @@ class FlowFrame:
             Self for method chaining (new FlowFrame pointing to the output node).
         """
         table_settings = (
-            input_schema.OutputNdjsonTable(compression=compression)
-            if compression
-            else input_schema.OutputNdjsonTable()
+            input_schema.OutputNdjsonTable(compression=compression) if compression else input_schema.OutputNdjsonTable()
         )
         return self._write_simple_file(
             path,
@@ -2128,6 +2202,7 @@ class FlowFrame:
             )
             self.flow_graph.add_output(node_output)
         else:
+            self._refuse_polars_code_writer_if_deferred("write_csv")
             if not is_path_input:
                 raise TypeError(
                     f"Input 'file' must be a string or Path-like object when using advanced "
@@ -2221,6 +2296,7 @@ class FlowFrame:
             )
             self.flow_graph.add_output(node_output)
         else:
+            self._refuse_polars_code_writer_if_deferred("write_excel")
             if not is_path_input:
                 raise TypeError(
                     f"Input 'path' must be a string or Path-like object when using advanced "
@@ -2536,6 +2612,7 @@ class FlowFrame:
         Returns:
             GroupByFrame object for aggregations
         """
+        refuse_parameter_as_column((by, named_by), "group_by")
         new_node_id = generate_node_id()
         by_cols = []
         for col_expr in by:
@@ -2608,11 +2685,82 @@ class FlowFrame:
             self.flow_graph.apply_layout()
         self.flow_graph.save_flow(file_path)
 
+    def to_flow_output(self, name: str | FlowOutput, *, description: str | None = None) -> FlowFrame:
+        """Mark this frame as the flow output ``name`` (a ``flow_output`` node) and return it unchanged.
+
+        ``name`` is a string or a declared ``fl.FlowOutput``, whose ``description`` is used when
+        none is given here. A parent flow's ``RunFlow`` exposes it as ``run[name]``; outputs are
+        ordered by the order they were declared in. The ``flow_output`` node has no output handle
+        on the canvas, so the returned frame is this one, not the sink.
+        """
+        from flowfile_frame.run_flow import _to_flow_output
+
+        return _to_flow_output(self, name, description)
+
+    def sql(self, query: str, *, table_name: str = "self", description: str | None = None) -> FlowFrame:
+        """Run ``query`` against this frame as a SQL Query node; the frame is the table ``table_name``.
+
+        Mirrors ``polars.LazyFrame.sql``. The node stores the query behind a
+        ``WITH <table_name> AS (SELECT * FROM input_1)`` header, because the node itself names
+        its input ``input_1``. Use ``fl.sql`` to query several frames at once.
+        """
+        from flowfile_frame.sql_query import _sql_frame
+
+        return _sql_frame(query, [], {table_name: self}, description)
+
     def collect(self, *args, **kwargs) -> pl.DataFrame:
-        """Collect lazy data into memory."""
+        """Collect lazy data into memory.
+
+        On a deferred frame this runs the frame's lineage first (see :meth:`_materialised_lazyframe`), and
+        so does a frame below a gate, because only a run decides which gate exit is live.
+        """
+        if self._deferred or self._below_a_gate():
+            return self._materialised_lazyframe().collect(*args, **kwargs)
         if hasattr(self.data, "collect"):
             return self.data.collect(*args, **kwargs)
         return self.data
+
+    def _below_a_gate(self) -> bool:
+        """Whether this node or any ancestor is a gate (a gate exit's frame points at the gate node)."""
+        return any(n.node_type == "gate" for n in ancestors(self.flow_graph.get_node(self.node_id)).values())
+
+    def _materialised_lazyframe(self) -> pl.LazyFrame:
+        """The LazyFrame to materialise: ``self.data``, or a deferred frame's real output.
+
+        A deferred frame runs ``flow_graph.run_graph()`` on this node and its ancestors only, so
+        writers, subflows and sources on other branches do not run and a failure there does not
+        fail it. An ancestor without a run result was skipped by the planner (not configured, or
+        below a failed node) and fails it too; a deliberately skipped node keeps a result. When a
+        gate routed this frame away (the node was deliberately skipped, or this is a gate's dead
+        exit) the zero-row typed frame is returned. A frame below a gate takes the same path,
+        because its build-time plan passes through both exits.
+        """
+        if not (self._deferred or self._below_a_gate()):
+            return self.data
+        node = self.flow_graph.get_node(self.node_id)
+        lineage = ancestors(node)
+        run_info = self.flow_graph.run_graph(node_ids=lineage.keys())
+        results = {result.node_id: result for result in run_info.node_step_result}
+        problems = [
+            f"  node {node_id}: {results[node_id].error}"
+            for node_id in lineage
+            if node_id in results and results[node_id].success is False
+        ]
+        problems += [
+            f"  node {node_id}: {n.results.errors or ('not configured' if not n.is_correct else 'did not run')}"
+            for node_id, n in lineage.items()
+            if node_id not in results
+        ]
+        if problems:
+            errors = "\n".join(problems)
+            raise NativeNodeError(f"Running the flow failed for node {self.node_id}:\n{errors}")
+        own_result = results.get(self.node_id)
+        closed_handles = self.flow_graph.last_closed_gate_handles.get(self.node_id, ())
+        if (own_result is not None and own_result.skipped) or self.output_handle in closed_handles:
+            # self.data holds real rows when the frame was built after an earlier run; the routing wins.
+            return self.data.clear()
+        frame = node.get_output(self.output_handle).data_frame
+        return frame.lazy() if isinstance(frame, pl.DataFrame) else frame
 
     def _with_flowfile_formula(
         self,
@@ -3009,6 +3157,7 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with pivoted data
         """
+        refuse_parameter_as_column((on, index, values), "pivot")
         new_node_id = generate_node_id()
 
         on_value = on[0] if isinstance(on, list) and len(on) == 1 else on
@@ -3113,6 +3262,7 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with unpivoted data
         """
+        refuse_parameter_as_column((on, index, variable_name, value_name), "unpivot")
         new_node_id = generate_node_id()
 
         if index is None:
@@ -3224,22 +3374,7 @@ class FlowFrame:
 
         # Ensure all frames are in the same graph (combine all at once, not pairwise)
         all_frames = [self] + others
-        unique_graphs = []
-        seen_flow_ids = set()
-        for f in all_frames:
-            if f.flow_graph.flow_id not in seen_flow_ids:
-                seen_flow_ids.add(f.flow_graph.flow_id)
-                unique_graphs.append(f.flow_graph)
-
-        if len(unique_graphs) > 1:
-            combined_graph, node_mappings = combine_flow_graphs_with_mapping(*unique_graphs)
-            for f in all_frames:
-                new_id = node_mappings.get((f.flow_graph.flow_id, f.node_id))
-                if new_id is None:
-                    raise ValueError(f"Cannot remap node {f.node_id} from flow {f.flow_graph.flow_id}")
-                f.node_id = new_id
-                f.flow_graph = combined_graph
-            node_id_data["c"] = node_id_data["c"] + len(combined_graph.nodes)
+        merge_frames(all_frames)
 
         new_node_id = generate_node_id()
 
@@ -3250,10 +3385,17 @@ class FlowFrame:
         # to phantom input_df_N slots that will not be bound at execute-time.
         unique_node_ids: list[int] = []
         position_by_node_id: dict[int, int] = {}
+        handle_by_node_id: dict[int, str] = {}
         for f in all_frames:
             if f.node_id not in position_by_node_id:
                 position_by_node_id[f.node_id] = len(unique_node_ids)
                 unique_node_ids.append(f.node_id)
+                handle_by_node_id[f.node_id] = f.output_handle
+            elif handle_by_node_id[f.node_id] != f.output_handle:
+                raise NativeNodeError(
+                    f"concat cannot read both {handle_by_node_id[f.node_id]} and {f.output_handle} of node "
+                    f"{f.node_id}: one node reads a single output handle per source."
+                )
         has_duplicate_sources = len(unique_node_ids) < len(all_frames)
 
         # NodeUnion can't express "include this input twice"; fall back to the
@@ -3283,7 +3425,7 @@ class FlowFrame:
                 if f.node_id in seen_sources:
                     continue
                 seen_sources.add(f.node_id)
-                f._add_connection(f.node_id, new_node_id, "main")
+                f._add_connection(f.node_id, new_node_id, "main", output_handle=f.output_handle)
         else:
             # Match execute_polars_code's binding convention: a single unique
             # source binds as `input_df` (singular); two or more bind as
@@ -3311,12 +3453,13 @@ class FlowFrame:
                 if f.node_id in seen_sources:
                     continue
                 seen_sources.add(f.node_id)
-                f._add_connection(f.node_id, new_node_id, "main")
+                f._add_connection(f.node_id, new_node_id, "main", output_handle=f.output_handle)
         return FlowFrame(
-            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            data=materialise(self.flow_graph.get_node(new_node_id)).data_frame,
             flow_graph=self.flow_graph,
             node_id=new_node_id,
             parent_node_id=self.node_id,
+            deferred=any(f._deferred for f in all_frames),
         )
 
     def _detect_cum_count_record_id(
@@ -3473,11 +3616,12 @@ class FlowFrame:
                 pass
 
             # Try flowfile formula conversion (all-or-nothing)
+            params = self._param_values()
             if all(
                 isinstance(e, Expr)
                 and e._ff_repr is not None
                 and e.column_name is not None
-                and _formula_parses(e._ff_repr)
+                and _formula_parses(e._ff_repr, params)
                 for e in actual_exprs_to_process
             ):
                 formula_entries = [(e.column_name, e._ff_repr) for e in actual_exprs_to_process]
@@ -3485,7 +3629,8 @@ class FlowFrame:
                     return self._with_flowfile_formula(formula_entries[0][1], formula_entries[0][0], description)
                 # A Formula node evaluates sequentially; only independent expressions mean the
                 # same thing there as they do in a single parallel Polars with_columns call.
-                if entries_are_independent(formula_entries):
+                resolved_entries = [(name, resolve_expression_parameters(f, params)) for name, f in formula_entries]
+                if entries_are_independent(resolved_entries):
                     return self._with_flowfile_formulas(
                         [(name, formula, "Auto") for name, formula in formula_entries], description
                     )
@@ -3529,6 +3674,9 @@ class FlowFrame:
             return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
         elif flowfile_formulas is not None and output_column_names is not None:
+            refuse_parameter_as_column(output_column_names, "with_columns(output_column_names=)")
+            for formula in flowfile_formulas:
+                refuse_parameter_column_in_formula(formula, "with_columns(flowfile_formulas=)")
             if len(output_column_names) != len(flowfile_formulas):
                 raise ValueError("Length of both the formulas and the output columns names must be identical")
             if output_column_datatypes is not None and len(output_column_datatypes) != len(flowfile_formulas):
@@ -3540,9 +3688,7 @@ class FlowFrame:
             # the upstream translator can't handle a given formula.
             # Only independent formulas may take the translated route: it re-enters
             # with_columns, whose expression path assumes parallel semantics.
-            independent = entries_are_independent(
-                list(zip(output_column_names, flowfile_formulas, strict=False))
-            )
+            independent = entries_are_independent(list(zip(output_column_names, flowfile_formulas, strict=False)))
             if output_column_datatypes is None and independent:
                 translated = _try_translate_flowfile_formulas(flowfile_formulas, output_column_names)
                 if translated is not None:
@@ -3612,6 +3758,7 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with the row index column added
         """
+        refuse_parameter_as_column(name, "with_row_index(name=)")
         new_node_id = generate_node_id()
 
         if name == "record_id" or (offset == 1 and name != "index"):
@@ -3714,13 +3861,14 @@ class FlowFrame:
             depending_on_ids=[self.node_id, other.node_id],
         )
         self.flow_graph.add_fuzzy_match(node_fuzzy_match)
-        self._add_connection(self.node_id, new_node_id, "main")
-        other._add_connection(other.node_id, new_node_id, "right")
+        self._add_connection(self.node_id, new_node_id, "main", output_handle=self.output_handle)
+        other._add_connection(other.node_id, new_node_id, "right", output_handle=other.output_handle)
         return FlowFrame(
-            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            data=materialise(self.flow_graph.get_node(new_node_id)).data_frame,
             flow_graph=self.flow_graph,
             node_id=new_node_id,
             parent_node_id=self.node_id,
+            deferred=self._deferred or other._deferred,
         )
 
     def text_to_rows(
@@ -3755,6 +3903,7 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with text split into multiple rows
         """
+        refuse_parameter_as_column((column, output_column, split_by_column), "text_to_rows")
         new_node_id = generate_node_id()
 
         if isinstance(column, Column):
@@ -3822,6 +3971,7 @@ class FlowFrame:
         FlowFrame
             DataFrame with unique rows.
         """
+        refuse_parameter_as_column(subset, "unique(subset=)")
         new_node_id = generate_node_id()
         processed_subset = None
         can_use_native = True

@@ -2092,6 +2092,141 @@ def test_custom_polars_no_inputs(export_func):
     assert_frame_equal(expected_df, result_df, check_row_order=False)
 
 
+def _sql_query_flow(sql_code: str, *columns: tuple[str, list]) -> FlowGraph:
+    """One manual input per ``(name, values)`` column (node ids 1..n) feeding SQL Query node 10, in order."""
+    flow = create_basic_flow()
+    for node_id, (name, values) in enumerate(columns, start=1):
+        flow.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=1,
+                node_id=node_id,
+                raw_data_format=input_schema.RawData(
+                    columns=[input_schema.MinimalFieldInfo(name=name, data_type="Integer")], data=[values]
+                ),
+            )
+        )
+    input_ids = list(range(1, len(columns) + 1))
+    flow.add_sql_query(
+        input_schema.NodeSqlQuery(
+            flow_id=1,
+            node_id=10,
+            depending_on_ids=input_ids,
+            sql_query_input=transform_schema.SqlQueryInput(sql_code=sql_code),
+        )
+    )
+    for node_id in input_ids:
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(node_id, 10))
+    return flow
+
+
+def _assert_sql_query_parity(flow: FlowGraph, code: str) -> None:
+    verify_if_execute(code)
+    result_df = normalize_result(get_result_from_generated_code(code))
+    expected_df = normalize_result(flow.get_node(10).get_resulting_data().data_frame)
+    assert_frame_equal(expected_df, result_df, check_row_order=False)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_sql_query_single_input(export_func):
+    flow = _sql_query_flow("SELECT a * 2 AS doubled FROM input_1 WHERE a > 1", ("a", [1, 2, 3]))
+    code = export_func(flow)
+
+    if export_func is export_flow_to_polars:
+        verify_code_contains(
+            code, "df = pl.SQLContext(input_1=source).execute(", '"SELECT a * 2 AS doubled FROM input_1 WHERE a > 1"'
+        )
+    else:
+        verify_code_contains(code, "df = ff.sql(", '"SELECT a * 2 AS doubled FROM input_1 WHERE a > 1",', "source,")
+    _assert_sql_query_parity(flow, code)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_sql_query_multiple_inputs_keep_their_order(export_func):
+    sql_code = (
+        "WITH left_side AS (SELECT * FROM input_1),\n"
+        "     right_side AS (SELECT * FROM input_2)\n"
+        "SELECT l.a, r.b FROM left_side l JOIN right_side r ON l.a = r.b"
+    )
+    flow = _sql_query_flow(sql_code, ("a", [1, 2, 3]), ("b", [2, 3, 4]))
+    code = export_func(flow)
+
+    if export_func is export_flow_to_polars:
+        verify_code_contains(code, "pl.SQLContext(input_1=source_1, input_2=source_2).execute(")
+    else:
+        verify_code_ordering(code, "ff.sql(", "source_1,", "source_2,")
+    verify_code_ordering(code, '"WITH left_side AS (SELECT * FROM input_1),\\n"', '"     right_side AS', '"SELECT l.a')
+    _assert_sql_query_parity(flow, code)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_sql_query_literals_with_quotes_backslashes_and_braces(export_func):
+    sql_code = (
+        "SELECT a,\n"
+        "  'say \"hi\"' AS dq,\n"
+        "  'back\\slash' AS bs,\n"
+        "  '\"\"\"' AS triple,\n"
+        "  'it''s {a}' AS sq\n"
+        "FROM input_1"
+    )
+    flow = _sql_query_flow(sql_code, ("a", [1, 2]))
+    code = export_func(flow)
+
+    ast.parse(code)
+    _assert_sql_query_parity(flow, code)
+    result = normalize_result(get_result_from_generated_code(code))
+    assert result.row(0) == (1, 'say "hi"', "back\\slash", '"""', "it's {a}")
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_sql_query_flow_parameter_becomes_a_pipeline_argument(export_func):
+    flow = _sql_query_flow("SELECT a FROM input_1\nWHERE a >= ${min_a}\nORDER BY a", ("a", [1, 2, 3, 4]))
+    flow.flow_settings.parameters = [FlowParameter(name="min_a", default_value="3", type="integer")]
+    code = export_func(flow)
+
+    verify_code_contains(code, 'f"WHERE a >= {min_a}\\n"')
+    assert "${min_a}" not in code and "__FF_PARAM_" not in code
+    exec_globals = {}
+    exec(code, exec_globals)
+    at_default = normalize_result(exec_globals["run_etl_pipeline"]())
+    at_two = normalize_result(exec_globals["run_etl_pipeline"](min_a=2))
+    assert at_default["a"].to_list() == [3, 4]
+    assert at_two["a"].to_list() == [2, 3, 4]
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+@pytest.mark.parametrize(
+    "sql_code, default",
+    [("SELECT a FROM input_1\n${where_clause}", "WHERE a > 2"), ("${where_clause}", "SELECT a FROM input_1 WHERE a > 2")],
+    ids=["last_line", "whole"],
+)
+def test_sql_query_line_that_is_only_a_parameter_still_compiles(export_func, sql_code, default):
+    flow = _sql_query_flow(sql_code, ("a", [1, 2, 3, 4]))
+    flow.flow_settings.parameters = [FlowParameter(name="where_clause", default_value=default, type="string")]
+    code = export_func(flow)
+
+    ast.parse(code)
+    assert "${where_clause}" not in code
+    assert sorted(normalize_result(get_result_from_generated_code(code))["a"].to_list()) == [3, 4]
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_sql_query_without_inputs(export_func):
+    flow = _sql_query_flow("SELECT 1 AS x")
+    code = export_func(flow)
+
+    _assert_sql_query_parity(flow, code)
+    assert normalize_result(get_result_from_generated_code(code)).to_dicts() == [{"x": 1}]
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_sql_query_multi_line_literal_keeps_its_whitespace(export_func):
+    flow = _sql_query_flow("SELECT a, 'x\n   \ny' AS s,\n  'p\n    q' AS t\nFROM input_1", ("a", [1]))
+    code = export_func(flow)
+
+    _assert_sql_query_parity(flow, code)
+    assert normalize_result(get_result_from_generated_code(code)).row(0) == (1, "x\n   \ny", "p\n    q")
+
+
 @pytest.mark.parametrize("export_func", [
     export_flow_to_polars,
     export_flow_to_flowframe,

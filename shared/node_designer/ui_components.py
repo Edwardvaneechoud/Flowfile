@@ -9,6 +9,25 @@ from shared.node_designer.types import TypeSpec
 InputType = Literal["text", "number", "secret", "array", "date", "boolean"]
 
 
+def _number_from_text(value: Any) -> Any:
+    """A numeric string (such as a substituted flow parameter) as ``int``/``float``; anything else unchanged."""
+    if not isinstance(value, str):
+        return value
+    for parse in (int, float):
+        try:
+            return parse(value.strip())
+        except ValueError:
+            continue
+    return value
+
+
+def _bool_from_text(value: Any) -> Any:
+    """``"true"``/``"false"`` (any case) as a ``bool``; any other value unchanged."""
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+        return value.strip().lower() == "true"
+    return value
+
+
 class ActionOption(NamedTuple):
     """
     A named tuple representing an action option with a value and display label.
@@ -217,6 +236,11 @@ class NumericInput(FlowfileInComponent):
         if self.value is None and self.default is not None:
             self.value = self.default
 
+    def set_value(self, value: Any):
+        """Sets the value; a numeric string (such as a substituted flow parameter) becomes a number."""
+        self.value = _number_from_text(value)
+        return self
+
 
 class SliderInput(FlowfileInComponent):
     """A slider input for selecting a numeric value within a range."""
@@ -235,6 +259,11 @@ class SliderInput(FlowfileInComponent):
         elif self.value is None:
             self.value = self.min_value
 
+    def set_value(self, value: Any):
+        """Sets the value; a numeric string (such as a substituted flow parameter) becomes a number."""
+        self.value = _number_from_text(value)
+        return self
+
 
 class ToggleSwitch(FlowfileInComponent):
     """A boolean toggle switch, typically used for enabling or disabling a feature."""
@@ -248,6 +277,11 @@ class ToggleSwitch(FlowfileInComponent):
         super().__init__(**data)
         if self.value is None:
             self.value = self.default
+
+    def set_value(self, value: Any):
+        """Sets the value; ``"true"``/``"false"`` (such as a substituted flow parameter) become booleans."""
+        self.value = _bool_from_text(value)
+        return self
 
     def __bool__(self):
         """Allows the component instance to be evaluated as a boolean."""
