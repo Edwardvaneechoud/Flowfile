@@ -171,6 +171,7 @@ from flowfile_frame.selectors import (  # noqa: F401
     time,
 )
 from flowfile_frame.series import Series  # noqa: F401 E402
+from flowfile_frame.sql_query import sql  # noqa: F401 E402
 from flowfile_frame.utils import create_flow_graph  # noqa: F401 E402
 
 LazyFrame = FlowFrame  # Alias for compatibility with generated code

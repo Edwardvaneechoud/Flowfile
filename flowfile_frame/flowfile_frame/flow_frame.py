@@ -2690,6 +2690,17 @@ class FlowFrame:
 
         return _to_flow_output(self, name, description)
 
+    def sql(self, query: str, *, table_name: str = "self", description: str | None = None) -> FlowFrame:
+        """Run ``query`` against this frame as a SQL Query node; the frame is the table ``table_name``.
+
+        Mirrors ``polars.LazyFrame.sql``. The node stores the query behind a
+        ``WITH <table_name> AS (SELECT * FROM input_1)`` header, because the node itself names
+        its input ``input_1``. Use ``fl.sql`` to query several frames at once.
+        """
+        from flowfile_frame.sql_query import _sql_frame
+
+        return _sql_frame(query, [], {table_name: self}, description)
+
     def collect(self, *args, **kwargs) -> pl.DataFrame:
         """Collect lazy data into memory.
 

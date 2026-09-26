@@ -511,7 +511,7 @@ fl.Node(
 - `settings` is the node's settings model or a dict of its fields; the models live in `flowfile_core.schemas.input_schema`. An unknown top-level key raises. The node sets `flow_id`, `node_id`, the position, `is_setup`, `user_id` and `depending_on_id(s)` itself and refuses them in `settings`.
 - Multi-input nodes (`union`, `polars_code`, `sql_query`, `python_script`) take every frame on one input, in order; `sql_query` reads them as `input_1`, `input_2`, .... Other nodes take frame *i* on input *i*, at most three.
 - `deferred` overrides whether the output is deferred.
-- `"promise"`, `"polars_lazy_frame"` and custom node types are refused; use `fl.FlowFrame(lazy_frame)` or [`fl.CustomNode`](#customnode) for those. `run_flow` is refused too, because its inputs are keyed by slot; use [`fl.RunFlow`](#runflow). `flow_input` and `flow_output` work, but the dedicated helpers above are the normal route.
+- `"promise"`, `"polars_lazy_frame"` and custom node types are refused; use `fl.FlowFrame(lazy_frame)` or [`fl.CustomNode`](#customnode) for those. `run_flow` is refused too, because its inputs are keyed by slot; use [`fl.RunFlow`](#runflow). `flow_input` and `flow_output` work, but the dedicated helpers above are the normal route, as is [`fl.sql`](flowframe-operations.md#sql-queries) for `sql_query`, which also names its tables.
 
 ```python
 --8<-- "docs/examples/native_nodes.py:sql"

@@ -73,7 +73,7 @@ def _class_info(key: str, cls: type[CustomNodeBase]) -> CustomNodeInfo:
 def _defining_module(cls: type[CustomNodeBase]) -> tuple[str, ast.Module]:
     """Source and AST of the file or notebook cell defining ``cls`` (a notebook cell via its methods' filename)."""
     filenames = []
-    with contextlib.suppress(TypeError):
+    with contextlib.suppress(TypeError, OSError):
         filenames.append(inspect.getsourcefile(cls))
     filenames += [value.__code__.co_filename for value in vars(cls).values() if inspect.isfunction(value)]
     for filename in dict.fromkeys(name for name in filenames if name):

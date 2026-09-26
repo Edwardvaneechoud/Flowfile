@@ -35,6 +35,7 @@ NATIVE_NODE_API = [
     "PythonScript",
     "PythonScriptFunction",
     "python_script",
+    "sql",
     "create_flow_graph",
     "FlowGraph",
 ]

@@ -113,6 +113,27 @@ df = df.unique(subset=["product_id"])
 
 `prefix` or `suffix` sends the results to new columns and leaves the sources alone; with neither, each result overwrites the column it came from. `output_data_type` casts every result. All the expressions run in one `with_columns`, so a formula may reference a column that is itself being overwritten and still read its original value. Selecting nothing — an empty `columns` list, or a `data_type` no column matches — is a no-op rather than an error.
 
+## SQL queries
+
+`frame.sql(query)` and `ff.sql(query, ...)` place a [SQL Query node](../../visual-editor/nodes/transform.md#sql-query) and return its output frame. The query uses the Polars SQL dialect and must be a single `SELECT` or `WITH` statement.
+
+```python
+--8<-- "docs/examples/sql_query.py:example"
+```
+
+```python
+FlowFrame.sql(query: str, *, table_name: str = "self", description: str | None = None) -> FlowFrame
+
+ff.sql(query: str, /, *frames: FlowFrame, description: str | None = None, **tables: FlowFrame) -> FlowFrame
+```
+
+- `frame.sql` mirrors `polars.LazyFrame.sql`: the frame is the table `self`, or `table_name`.
+- In `ff.sql`, positional frames are the tables `input_1`, `input_2`, … and each keyword frame is the table of that name, numbered after the positional ones. `description` is the node label, so it is the one name that cannot be a table. Frames on different graphs are merged onto one. Without frames the query reads no tables and the node starts a new graph: `ff.sql("SELECT 1 AS x")`.
+- The node itself names its inputs `input_1`, `input_2`, …, so a named table is stored as a header in front of the query, merged into the query's own `WITH` when it has one: `WITH orders AS (SELECT * FROM input_1), regions AS (SELECT * FROM input_2)`. The designer shows that header as part of the query. Table names are case-sensitive, as in Polars. The query is trimmed before it is stored, and dedented unless a quoted string in it spans lines.
+- Without `description`, the node is labelled with the first line of the query.
+- A flow parameter goes in as `${name}`, or `min_amount.ref` in an f-string, and is substituted as text, so a string value needs its SQL quotes: `WHERE region = '${region}'`. See [Flow parameters](native-nodes.md#flow-parameters).
+- An empty query, a table name that is not a plain identifier, a name that is another input's `input_<n>`, a statement other than `SELECT`/`WITH`, and a query that does not resolve against its inputs all raise `NativeNodeError` when the node is built, and the node is removed again.
+
 ## String operations
 
 ```python

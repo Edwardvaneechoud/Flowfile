@@ -144,6 +144,7 @@ from flowfile_frame.selectors import (
     temporal,
     time,
 )
+from flowfile_frame.sql_query import sql
 from flowfile_frame.utils import create_flow_graph
 
 LazyFrame = FlowFrame
@@ -226,6 +227,7 @@ __all__ = [
     "PythonScript",
     "PythonScriptFunction",
     "python_script",
+    "sql",
     "Parameter",
     "add_flow_parameter",
     "set_flow_parameter",

@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import types
 import warnings
 from uuid import uuid4
 
@@ -259,6 +260,15 @@ def test_install_refuses_a_class_defined_in_a_function(nodes_dir):
 
     with pytest.raises(ff.NativeNodeError, match="defined inside a function or class"):
         ff.custom_nodes.install(InstallNested)
+
+
+def test_install_of_a_class_from_a_console_raises_a_clear_error(nodes_dir, monkeypatch):
+    monkeypatch.setitem(sys.modules, "__main__", types.ModuleType("__main__"))  # a console's __main__ has no file
+    namespace = {"__name__": "__main__"}
+    source = "from shared.node_designer import CustomNodeBase\n\nclass ConsoleNode(CustomNodeBase):\n    node_name: str = 'Install Test Console'\n\n    def process(self, *inputs):\n        return inputs[0]\n"
+    exec(compile(source, "<input>", "exec"), namespace)
+    with pytest.raises(ff.NativeNodeError, match="Cannot read the source of custom node class ConsoleNode"):
+        ff.custom_nodes.install(namespace["ConsoleNode"])
 
 
 def test_install_path_copies_the_file_under_its_node_key(nodes_dir, tmp_path):
