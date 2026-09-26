@@ -2755,6 +2755,76 @@ class FlowFrame:
         self.flow_graph.add_graph_solver(graph_solver_settings)
         return self._create_child_frame(new_node_id)
 
+    def explode_hierarchy(
+        self,
+        parent: str,
+        child: str,
+        quantity: str | None = None,
+        *,
+        output_detail: Literal["totals", "levels", "paths"] = "totals",
+        top_level_only: bool = False,
+        include_self: bool = False,
+        max_depth: int | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """Explode a parent -> child hierarchy (bill of materials, chart of accounts) into all its levels.
+
+        Each row of the input is one edge from ``parent`` to ``child``. The result is a new
+        table, not the input with extra columns: quantities multiply along each path and add
+        up across paths, so it answers "how many screws does one bike need in total".
+
+        Parameters
+        ----------
+        parent:
+            Column holding the parent item (the assembly, the parent account).
+        child:
+            Column holding the child item (the component, the sub-account).
+        quantity:
+            Optional numeric column with the quantity of ``child`` per one ``parent``.
+            Without it every edge counts 1.
+        output_detail:
+            - ``"totals"`` — one row per (ancestor, descendant) with the total quantity;
+              ``level`` is the shallowest level the descendant appears at.
+            - ``"levels"`` — one row per (ancestor, descendant, level).
+            - ``"paths"`` — one row per path, depth-first (indented bill-of-materials order),
+              with ``parent``, ``quantity_per`` and the full ``path``.
+        top_level_only:
+            Only explode items that never appear as a child.
+        include_self:
+            Add a level-0 row from each exploded item to itself with quantity 1 (only the top-level
+            items when ``top_level_only`` is set).
+        max_depth:
+            Deepest level to explode (``>= 0``); ``None`` explodes every level.
+        description:
+            Optional node description shown in the visual designer.
+
+        Returns
+        -------
+        FlowFrame
+            Columns ``ancestor``, ``descendant``, ``level``, ``quantity`` and ``is_leaf``;
+            ``"paths"`` adds ``parent``, ``quantity_per`` and ``path``. A cycle or a null
+            quantity raises a ``ComputeError`` when the result is collected.
+        """
+        hierarchy_input = transform_schema.ExplodeHierarchyInput(
+            parent_column=parent,
+            child_column=child,
+            quantity_column=quantity,
+            output_detail=output_detail,
+            top_level_only=top_level_only,
+            include_self=include_self,
+            max_depth=max_depth,
+        )
+        new_node_id = generate_node_id()
+        settings = input_schema.NodeExplodeHierarchy(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            depending_on_id=self.node_id,
+            explode_hierarchy_input=hierarchy_input,
+            description=description,
+        )
+        self.flow_graph.add_explode_hierarchy(settings)
+        return self._create_child_frame(new_node_id)
+
     def dynamic_rename(
         self,
         mode: Literal["prefix", "suffix", "formula", "first_row"] = "prefix",

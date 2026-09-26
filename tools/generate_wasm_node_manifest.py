@@ -41,7 +41,7 @@ MANIFEST_PATH = REPO_ROOT / "flowfile_core" / "flowfile_core" / "flowfile" / "sh
 FILE_TYPES = ["csv", "excel", "parquet"]
 
 EXPECTED_SUPPORTED = 24
-EXPECTED_LOCKED = 16
+EXPECTED_LOCKED = 17
 
 _NODE_FIELD_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*:\s*")
 _STRING_RE = re.compile(r"'((?:[^'\\]|\\.)*)'|\"((?:[^\"\\]|\\.)*)\"")

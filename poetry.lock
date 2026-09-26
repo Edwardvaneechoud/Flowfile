@@ -3821,21 +3821,21 @@ similarity = ["polars-ds (>=0.6.0)"]
 
 [[package]]
 name = "polars-grouper"
-version = "0.5.0"
+version = "0.6.0"
 description = "High-performance graph analysis and pattern mining extension for Polars"
 optional = false
 python-versions = ">=3.10"
 files = [
-    {file = "polars_grouper-0.5.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:dbc53f8d0bb65949238d5fdfb7a9724c6bd1d3bc6067eca1edbbaac31ebcb26a"},
-    {file = "polars_grouper-0.5.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:8f0b801020ef7ab07c40e575f5caaac10bbad0593ed154798a4b74e56ce56a83"},
-    {file = "polars_grouper-0.5.0-cp310-abi3-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:53b7802ffe423403618a1d59def3d45292a94457e19db64dd812c5cd0d22e5f1"},
-    {file = "polars_grouper-0.5.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c2a29339d3be4bdecc9cbb8ca817896e137766f95c58ea46d74c0c6d27f7b8f4"},
-    {file = "polars_grouper-0.5.0-cp310-abi3-win_amd64.whl", hash = "sha256:27f9f1fc13844a26f82643c97239bf4b7e65aecb65373e31455f51de04096862"},
-    {file = "polars_grouper-0.5.0.tar.gz", hash = "sha256:eea40a1a2b7668b54a1f0584cd9322fb8dc412cc484bd8d3dd705c4701628bab"},
+    {file = "polars_grouper-0.6.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:f7db74f46df1a2c1e534abdecd0319f1226e1afdf486967a3fa2ecb240311dbd"},
+    {file = "polars_grouper-0.6.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:6860b9ddae4e594961dd4ddd4100511a47473fb22352c87d601ae342931f6bfd"},
+    {file = "polars_grouper-0.6.0-cp310-abi3-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:47b8d01ebba4b77a2453e7a147dfe374ad6094bf11e759f4a56bf853df00deb9"},
+    {file = "polars_grouper-0.6.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a27419509237899275326c12019ccdbb67baca12b4fe93bff562c1fedf6135c3"},
+    {file = "polars_grouper-0.6.0-cp310-abi3-win_amd64.whl", hash = "sha256:5435d8a8d6b276b2830b65227056c2ec068a47e90e6d41dd74b69d9e44e80deb"},
+    {file = "polars_grouper-0.6.0.tar.gz", hash = "sha256:a855d32380c67d55f91300dc60abcf9cd5699248558b781c967f923485480c47"},
 ]
 
 [package.dependencies]
-polars = ">=1.3.0,<2.0.0"
+polars = ">=1.39.0,<2.0.0"
 
 [package.extras]
 dev = ["black (>=23.0.0)", "isort (>=5.0.0)", "mypy (>=1.0.0)", "pytest (>=7.0.0)", "ruff (>=0.1.0)"]
@@ -6446,4 +6446,4 @@ yxdb = ["yxdb"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.14"
-content-hash = "bd6686307399068d2ecf48d345bc9c0e2539faed5e0d93c407091c16b564c644"
+content-hash = "1a9d6a2a39fd4067093d002898e55c43e2bda794daf02fb1ce13b5ef8f6bc394"

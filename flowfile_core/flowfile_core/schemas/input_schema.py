@@ -2110,6 +2110,22 @@ class NodeGraphSolver(NodeSingleInput):
         return f"{g.col_from} -> {g.col_to} as '{g.output_column_name}'"
 
 
+class NodeExplodeHierarchy(NodeSingleInput):
+    """Settings for a node that explodes a parent -> child hierarchy (bill of materials, chart of accounts).
+
+    Replaces the input with one row per ancestor and descendant anywhere below it, multiplying
+    quantities along each path.
+    """
+
+    explode_hierarchy_input: transform_schema.ExplodeHierarchyInput
+
+    def get_default_description(self) -> str:
+        """Describes the edge columns, the output detail and whether a quantity is rolled up."""
+        h = self.explode_hierarchy_input
+        qty = ", qty" if h.quantity_column else ""
+        return f"{h.parent_column} -> {h.child_column} ({h.output_detail}{qty})"
+
+
 class NodeUnique(NodeSingleInput):
     """Settings for a node that returns the unique rows from the data."""
 

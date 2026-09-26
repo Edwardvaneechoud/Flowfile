@@ -329,6 +329,23 @@ class TestWsErrorHandling:
         error_msgs = [m for m in json_msgs if m.get("type") == "error"]
         assert len(error_msgs) >= 1, f"Expected error message, got: {json_msgs}"
 
+    def test_task_failure_frame_is_marked_as_task_error(self):
+        """A plan that fails while collecting reports status "Error" so core fails the node."""
+        lf = pl.LazyFrame({"a": ["abc"]}).with_columns(pl.col("a").cast(pl.Int64))
+        metadata = {
+            "task_id": "ws-test-task-failure",
+            "operation": "store",
+            "flow_id": 1,
+            "node_id": -1,
+        }
+
+        json_msgs, _ = _ws_submit(metadata, lf.serialize())
+
+        error_msgs = [m for m in json_msgs if m.get("type") == "error"]
+        assert len(error_msgs) == 1, f"Expected one error message, got: {json_msgs}"
+        assert error_msgs[0]["status"] == "Error"
+        assert "InvalidOperationError" in error_msgs[0]["error_message"]
+
     def test_status_dict_updated_for_rest_compatibility(self):
         """After WebSocket completes, status_dict should also be updated."""
         task_id = "ws-test-status-compat"

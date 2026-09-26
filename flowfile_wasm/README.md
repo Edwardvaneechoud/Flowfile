@@ -317,7 +317,7 @@ npm run test:run   # Run the test suite
 
 ## The full platform
 
-Flowfile is the same canvas with a Python backend behind it: 46 node types, connectors for five databases, S3 / ADLS / GCS, Kafka, Google Analytics and REST APIs, a Delta-backed data catalog with a SQL editor, a scheduler, sandboxed Python kernels, an AI assistant, and Python code export. It runs as a desktop app, a `pip install`, or a Docker stack for a team.
+Flowfile is the same canvas with a Python backend behind it: 49 node types, connectors for five databases, S3 / ADLS / GCS, Kafka, Google Analytics and REST APIs, a Delta-backed data catalog with a SQL editor, a scheduler, sandboxed Python kernels, an AI assistant, and Python code export. It runs as a desktop app, a `pip install`, or a Docker stack for a team.
 
 - [Flowfile on GitHub](https://github.com/edwardvaneechoud/Flowfile)
 - [Documentation](https://edwardvaneechoud.github.io/Flowfile/)

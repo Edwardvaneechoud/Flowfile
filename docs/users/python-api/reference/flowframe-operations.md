@@ -113,6 +113,16 @@ df = df.unique(subset=["product_id"])
 
 `prefix` or `suffix` sends the results to new columns and leaves the sources alone; with neither, each result overwrites the column it came from. `output_data_type` casts every result. All the expressions run in one `with_columns`, so a formula may reference a column that is itself being overwritten and still read its original value. Selecting nothing — an empty `columns` list, or a `data_type` no column matches — is a no-op rather than an error.
 
+## Exploding a hierarchy
+
+`explode_hierarchy()` is the Python form of the [Explode hierarchy node](../../visual-editor/nodes/combine.md#explode-hierarchy) and has no Polars counterpart. Each input row is one parent → child edge, such as an assembly and a component or a parent account and an account. The result links every item to everything below it, with quantities multiplied along each route and added up across routes. `output_detail` picks the shape: `"totals"` (the default) gives one row per ancestor and descendant, `"levels"` splits that per level, and `"paths"` gives one row per route, depth-first.
+
+```python
+--8<-- "docs/examples/explode_hierarchy.py:example"
+```
+
+The result is a new table with the columns `ancestor`, `descendant`, `level`, `quantity` and `is_leaf`, plus `parent`, `quantity_per` and `path` for `"paths"`; the input's other columns are not carried through. `top_level_only=True` explodes only the items that never appear as a child, `include_self=True` adds a level-0 row from each exploded item to itself (only the top-level ones with `top_level_only=True`), and `max_depth` stops after that many levels. A cycle or a null quantity raises a `ComputeError` when the result is collected, not when the method is called.
+
 ## String operations
 
 ```python

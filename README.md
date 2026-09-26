@@ -55,7 +55,7 @@ Build pipelines on a visual canvas with a live preview at every node, or write t
 
 ### Canvas and code
 
-**A visual canvas** with 46 node types — joins, fuzzy matching, filters, pivots, aggregations, text-to-rows, window functions, conditional branching. Beyond the nodes, the formula editor brings 95 transformation functions, and a Polars code node gives you full Polars for anything the palette doesn't cover — all running in-process, no external engine.
+**A visual canvas** with 49 node types — joins, fuzzy matching, bill-of-materials explosion, filters, pivots, aggregations, text-to-rows, window functions, conditional branching. Beyond the nodes, the formula editor brings 95 transformation functions, and a Polars code node gives you full Polars for anything the palette doesn't cover — all running in-process, no external engine.
 
 It connects to local files (CSV, Parquet, Excel, JSON and friends), five databases (PostgreSQL, MySQL, SQL Server, SQLite, DuckDB), cloud storage (S3, ADLS, GCS — Delta included, Iceberg read-only), Kafka (consumer only), Google Analytics, and REST APIs. That's the whole list — no Snowflake, BigQuery or Oracle driver yet, and no CDC; if your data lives there, land it somewhere Flowfile can reach first.
 
@@ -84,7 +84,7 @@ It connects to local files (CSV, Parquet, Excel, JSON and friends), five databas
 <details>
 <summary>What the export needs, exactly</summary>
 
-Fuzzy matching, graph solving, and formulas that don't translate to a native Polars expression pull in the helper packages Flowfile itself is built on (`pl-fuzzy-frame-match`, `polars-grouper`, `polars-expr-transformer`). They're normal pip installs and don't drag Flowfile along.
+Fuzzy matching, graph solving, hierarchy explosion, and formulas that don't translate to a native Polars expression pull in the helper packages Flowfile itself is built on (`pl-fuzzy-frame-match`, `polars-grouper`, `polars-expr-transformer`). They're normal pip installs and don't drag Flowfile along.
 
 Database and REST nodes export as `flowfile` calls, so their stored connections and secrets resolve at run time. The platform nodes (catalog, cloud storage, Kafka, ML) export against the FlowFrame API rather than raw Polars. And a few nodes (Google Analytics, SQL query, API response) have no code generation yet.
 

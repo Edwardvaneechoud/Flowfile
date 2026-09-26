@@ -25,7 +25,7 @@ describe('node catalog consistency', () => {
 
   it('supported and locked partition the palette (no overlap, expected sizes)', () => {
     expect(available).toHaveLength(24)
-    expect(locked).toHaveLength(16)
+    expect(locked).toHaveLength(17)
     expect(available.filter(t => locked.includes(t))).toEqual([])
     expect(new Set(lockedNodeTypes())).toEqual(new Set(locked))
   })

@@ -28,6 +28,13 @@ from flowfile_core.flowfile.code_generator.param_codegen import (
 from flowfile_core.flowfile.code_generator.transform_handlers import TransformHandlersMixin
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
+from flowfile_core.flowfile.flow_data_engine.hierarchy import (
+    HIERARCHY_OUTPUT_ALIAS,
+    KEPT_NODE_ID_TYPES,
+    WIDENED_NODE_ID_TYPES,
+    hierarchy_function_name,
+    hierarchy_node_id_cast,
+)
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.param_types import coerce_param_value
@@ -66,6 +73,22 @@ def _flowfile_expr_literal(value):
     if isinstance(value, (int, float)):
         return repr(value)
     return json.dumps(str(value))'''
+
+
+def _render_dtype_tuple(dtypes) -> str:
+    return ", ".join(sorted(f"pl.{d.__name__}" for d in dtypes))
+
+
+# Exported-code twin of hierarchy.hierarchy_node_id_cast, for id dtypes unknown at export time.
+_HIERARCHY_ID_HELPER = f'''\
+def _flowfile_hierarchy_id(frame, name):
+    """Cast a parent/child id column the way Flowfile does before polars_grouper sees it."""
+    dtype = frame.collect_schema().get(name)
+    if dtype is None or dtype.base_type() in ({_render_dtype_tuple(KEPT_NODE_ID_TYPES)}):
+        return pl.col(name)
+    if dtype.base_type() in ({_render_dtype_tuple(WIDENED_NODE_ID_TYPES)}):
+        return pl.col(name).cast(pl.Int64)
+    return pl.col(name).cast(pl.String)'''
 
 
 class UnsupportedNodeError(Exception):
@@ -196,6 +219,7 @@ NODE_TYPE_VAR_LABEL: dict[str, str] = {
     "text_to_rows": "exploded",
     "polars_code": "transformed",
     "graph_solver": "solved",
+    "explode_hierarchy": "hierarchy",
     "window_functions": "windowed",
     "train_model": "trained",
     "apply_model": "scored",
@@ -1161,6 +1185,58 @@ class FlowGraphCodeConverter(
         )
         self._add_code("")
         self.imports.add("from polars_grouper import graph_solver")
+
+    def _handle_explode_hierarchy(
+        self, settings: input_schema.NodeExplodeHierarchy, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Emit the polars_grouper call with the same id and quantity casts the engine applies."""
+        input_df = input_vars.get("main", "df")
+        h = settings.explode_hierarchy_input
+        function_name = hierarchy_function_name(h.output_detail)
+        input_types = self._input_column_types(settings.node_id) or {}
+        args = [
+            self._hierarchy_node_id_arg(h.parent_column, input_types, input_df),
+            self._hierarchy_node_id_arg(h.child_column, input_types, input_df),
+        ]
+        if h.quantity_column:
+            args.append(f"pl.col({self._py_str(h.quantity_column)}).cast(pl.Float64)")
+        if h.top_level_only:
+            args.append("top_level_only=True")
+        if h.include_self:
+            args.append("include_self=True")
+        if h.max_depth is not None:
+            args.append(f"max_depth={h.max_depth}")
+        call = f"{function_name}({', '.join(args)})"
+        alias = self._py_str(HIERARCHY_OUTPUT_ALIAS)
+        self._add_code(f"{var_name} = {input_df}.select({call}.alias({alias})).unnest({alias})")
+        self._add_code("")
+        self.imports.add(f"from polars_grouper import {function_name}")
+
+    def _hierarchy_node_id_arg(self, column: str, input_types: dict[str, str], input_df: str) -> str:
+        """``pl.col(column)``, cast exactly as ``hierarchy_node_id_cast`` casts it in the engine.
+
+        When the dtype is not known at export time (an unpredictable input schema, or a
+        ``${param}`` column name), the exported code decides the cast at run time instead.
+        """
+        expr = f"pl.col({self._py_str(column)})"
+        if column not in input_types:
+            if _HIERARCHY_ID_HELPER not in self._module_helpers:
+                self._module_helpers.append(_HIERARCHY_ID_HELPER)
+            return f"_flowfile_hierarchy_id({input_df}, {self._py_str(column)})"
+        cast = hierarchy_node_id_cast(cast_str_to_polars_type(input_types[column]))
+        return expr if cast is None else f"{expr}.cast({_render_polars_dtype(cast)})"
+
+    def _input_column_types(self, node_id: int) -> dict[str, str] | None:
+        """Column name -> dtype string on the single main input of ``node_id``, or None when unavailable."""
+        try:
+            node = self.flow_graph.get_node(node_id)
+            inputs = node.node_inputs.main_inputs or []
+            if len(inputs) != 1:
+                return None
+            schema = inputs[0].get_predicted_schema()
+        except Exception:
+            return None
+        return {c.column_name: c.data_type for c in schema} if schema else None
 
     def _input_column_names(self, node_id: int) -> list[str] | None:
         """Column names on the single main input of ``node_id``, or None when unavailable."""
@@ -2205,6 +2281,26 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             f'{var_name} = {input_df}.solve_graph("{gs.col_from}", "{gs.col_to}", '
             f'output_column_name="{gs.output_column_name}")'
         )
+        self._add_code("")
+
+    def _handle_explode_hierarchy(
+        self, settings: input_schema.NodeExplodeHierarchy, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Emit the native ``FlowFrame.explode_hierarchy`` call, passing only non-default settings."""
+        input_df = input_vars.get("main", "df")
+        h = settings.explode_hierarchy_input
+        args = [self._py_str(h.parent_column), self._py_str(h.child_column)]
+        if h.quantity_column:
+            args.append(f"quantity={self._py_str(h.quantity_column)}")
+        if h.output_detail != "totals":
+            args.append(f"output_detail={self._py_str(h.output_detail)}")
+        if h.top_level_only:
+            args.append("top_level_only=True")
+        if h.include_self:
+            args.append("include_self=True")
+        if h.max_depth is not None:
+            args.append(f"max_depth={h.max_depth}")
+        self._add_code(f"{var_name} = {input_df}.explode_hierarchy({', '.join(args)})")
         self._add_code("")
 
     def _execute_join_with_post_processing(
