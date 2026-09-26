@@ -47,6 +47,7 @@ from polars.datatypes import (  # noqa: F401
 
 from flowfile_core.flowfile.flow_graph import FlowGraph  # noqa: F401
 from flowfile_core.schemas.input_schema import OutputFieldConfig, OutputFieldInfo  # noqa: F401
+from flowfile_frame import console_source  # noqa: F401 (installs the hook that keeps console source)
 from flowfile_frame.catalog import (  # noqa: F401
     read_catalog_sql,
     read_catalog_table,

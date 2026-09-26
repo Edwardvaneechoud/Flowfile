@@ -362,7 +362,9 @@ The function's parameters are the node's inputs, each a `pl.LazyFrame` in the ke
 - `forecast.cells` holds the generated notebook cells, built once when the function is decorated.
 - `kernel` is stored as given, as for [`PythonScript`](#pythonscript); `description` defaults to the function name. `flow_graph` is used only by a function without parameters, which has no input frame to take a graph from.
 
-The function is a module-level `def` whose source Python can find: in a file or a notebook cell, not typed at an interactive prompt. Lambdas, nested functions, methods, generators, `async` functions and functions wrapped by another decorator raise, and so do `*args`, `**kwargs`, keyword-only and positional-only parameters, and parameters with a default. These checks, and the rules below, run when the function is decorated and raise `NativeNodeError` there.
+The function's source is read from the file or notebook cell that defines it, or from PyCharm's Python console. That console runs a selection through Python's `code` module, as `code.interact()` does, and does not keep its text. flowfile reads it from the selection being run, so a selection that imports flowfile and defines the function works, and it records every selection run after the import. A function whose definition ran before flowfile was imported cannot be recovered; run its definition again. The plain `python` prompt before Python 3.13 keeps no source, and neither does code run with `exec()`; decorating a function defined there raises `NativeNodeError`.
+
+The function is a module-level `def`. Lambdas, nested functions, methods, generators, `async` functions and functions wrapped by another decorator raise, and so do `*args`, `**kwargs`, keyword-only and positional-only parameters, and parameters with a default. These checks, and the rules below, run when the function is decorated and raise `NativeNodeError` there.
 
 The node stores only the cells. A saved flow opens in the designer as an ordinary Python Script notebook; edits made there do not change the function.
 
@@ -506,7 +508,7 @@ Every build or materialisation failure raises `fl.NativeNodeError`, a subclass o
 - **Reopened flow names.** A registered flow keeps its registration name when reopened only if its file is in the Python-editor flows folder; elsewhere the designer names it after the file.
 - **`FlowFrame(data, flow)` treats the second positional argument as `schema`.** Pass `flow_graph=` by keyword.
 - **`custom_node(...)` keywords are checked at call time** from the node's settings schema; IDEs do not complete them.
-- **`@fl.python_script` needs the function's source.** A function typed at an interactive prompt has none; define it in a file or a notebook cell.
+- **`@fl.python_script` needs the function's source.** Files, notebook cells and PyCharm's Python console provide it; in the console, a definition run before flowfile was imported has to be run again. The plain `python` prompt before Python 3.13 keeps none.
 - **Notebook variables are shared across a flow's scripts.** The body runs at the top level of the kernel's namespace for the flow, so a name it assigns (even one that shadows a builtin, such as `max`) is visible to the flow's other Python Script nodes.
 - **An upstream node referenced as `main` takes over a script's inputs.** The kernel's `read_inputs()["main"]` then holds only that node's frame, so a `@fl.python_script` function's parameters no longer line up with its inputs. Give the node another reference.
 - **Code export does not emit these classes.** Exporting a flow to Python renders a gate as `if` blocks and a custom node as its inlined `process()`; a Python Script node does not become a `@fl.python_script` function.

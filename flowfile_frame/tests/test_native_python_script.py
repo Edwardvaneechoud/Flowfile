@@ -4,11 +4,18 @@ Only the ``kernel``-marked end-to-end test needs Docker: a script without a kern
 run before any kernel is looked up, and building never touches the kernel manager.
 """
 
+import ast
 import asyncio
+import code
 import dataclasses
 import functools
+import inspect
+import json
+import subprocess
 import sys
+import types
 from types import SimpleNamespace
+from typing import Any
 from uuid import uuid4
 
 import numpy as np
@@ -17,6 +24,7 @@ import pytest
 from polars.testing import assert_frame_equal
 
 import flowfile_frame as ff
+from flowfile_frame.console_source import console_function_source
 
 from .native_helpers import results_by_id, round_trip
 from .utils import is_docker_available
@@ -734,6 +742,115 @@ def test_calling_a_multi_output_function_points_at_node_and_leaves_no_node():
         split_pair(orders, customers)
     assert [n.node_id for n in orders.flow_graph.nodes] == [orders.node_id]
     assert [n.node_id for n in customers.flow_graph.nodes] == [customers.node_id]
+
+
+# decorator: source from a console (PyCharm runs a selection through the `code` module, which keeps no source)
+
+
+class _PyCharmConsole(code.InteractiveConsole):
+    """``code.InteractiveConsole`` as PyCharm's ``pydevconsole._AsyncioInteractiveConsole`` runs it; errors propagate."""
+
+    def __init__(self, namespace: dict) -> None:
+        super().__init__(namespace)
+        self.compile.compiler.flags |= ast.PyCF_ALLOW_TOP_LEVEL_AWAIT
+
+    def runcode(self, code_object) -> None:
+        types.FunctionType(code_object, self.locals)()
+
+
+def _console(*fragments: str, console=_PyCharmConsole, filename: str = "<input>") -> dict[str, Any]:
+    """Run each fragment as PyCharm's "execute selection" does: ``runsource(text, "<input>", "exec")``."""
+    namespace: dict[str, Any] = {}
+    interpreter = console(namespace)
+    for fragment in fragments:
+        assert interpreter.runsource(fragment, filename, "exec") is False  # complete input, not waiting for more
+    return namespace
+
+
+@pytest.mark.parametrize("console, filename", [(_PyCharmConsole, "<input>"), (code.InteractiveConsole, "<console>")])
+def test_function_decorated_in_a_console_gets_the_cells_of_the_same_code_in_a_file(console, filename):
+    selection = "import flowfile_frame as ff\nimport polars as pl\n\n" + inspect.getsource(forecast.fn)
+    namespace = _console(selection, console=console, filename=filename)
+
+    with pytest.raises(OSError):
+        inspect.getsource(namespace["forecast"].fn)
+    assert console_function_source(namespace["forecast"].fn) == inspect.getsource(forecast.fn)
+    assert namespace["forecast"].cells == FORECAST_CELLS
+
+
+def test_selection_that_imports_flowfile_itself_works_on_its_first_run():
+    """PyCharm's usual case: the whole script is one selection, compiled before flowfile (and its hook) was imported."""
+    selection = (
+        "import flowfile_frame as ff\nimport polars as pl\n\n"
+        + inspect.getsource(forecast.fn)
+        + '\nout = ff.from_dict({"amount": [1.0]}).with_columns('
+        'ff.col("amount").map_elements(lambda x: x * 2, return_dtype=pl.Float64).alias("doubled"))\n'
+    )
+    script = "\n".join(
+        [
+            "import ast, code, json, sys, types",
+            inspect.getsource(_PyCharmConsole),
+            "assert 'flowfile_frame' not in sys.modules",
+            "namespace = {}",
+            "_PyCharmConsole(namespace).runsource(sys.stdin.read(), '<input>', 'exec')",
+            "polars_code = namespace['out'].get_node_settings().setting_input.polars_code_input.polars_code",
+            "print(json.dumps({'cells': namespace['forecast'].cells, 'polars_code': polars_code}))",
+        ]
+    )
+    run = subprocess.run([sys.executable, "-c", script], input=selection, capture_output=True, text=True, timeout=300)
+
+    assert run.returncode == 0, run.stderr[-3000:]
+    result = json.loads(run.stdout.splitlines()[-1])
+    assert result["cells"] == FORECAST_CELLS
+    assert "serialized_value" not in result["polars_code"] and "return x * 2" in result["polars_code"]
+
+
+def test_function_defined_in_one_fragment_and_decorated_in_a_later_one_is_found():
+    namespace = _console(
+        "def first_rows(orders):\n    head = orders.head(2)\n    return head\n",
+        "import flowfile_frame as ff\nfirst_rows = ff.python_script()(first_rows)\n",
+    )
+    assert namespace["first_rows"].cells == first_rows.cells
+
+
+def test_same_named_functions_starting_on_different_lines_each_get_their_own_body():
+    namespace = _console(
+        "def pick(orders):\n    return orders.head(1)\n",
+        "older = pick\n\n\ndef pick(orders):\n    return orders.head(2)\n",
+    )
+    older, newer = ff.python_script()(namespace["older"]), ff.python_script()(namespace["pick"])
+    assert "_result = orders.head(1)" in older.cells[-1]
+    assert "_result = orders.head(2)" in newer.cells[-1]
+
+
+def test_a_redefinition_on_the_same_line_does_not_answer_for_the_function_it_replaced():
+    namespace = _console(
+        "def pick(orders):\n    return orders.head(1)\n",
+        "older = pick\n",
+        "def pick(orders):\n    return orders.head(2)\n",
+    )
+    assert "_result = orders.head(1)" in ff.python_script()(namespace["older"]).cells[-1]
+
+
+def test_function_exec_d_from_a_string_is_still_refused():
+    namespace: dict[str, Any] = {}
+    exec("def made(orders):\n    return orders\n", namespace)
+    with pytest.raises(ff.NativeNodeError, match="python_script needs the source of `made`"):
+        ff.python_script()(namespace["made"])
+
+
+def test_map_elements_lambda_from_a_console_becomes_code_not_a_serialized_frame():
+    namespace = _console(
+        "double = lambda x: x * 2\n",
+        "triple = lambda x: x * 3\n",
+        "import flowfile_frame as ff\nimport polars as pl\n"
+        'out = ff.from_dict({"amount": [1.0, 2.5]}).with_columns('
+        'ff.col("amount").map_elements(double, return_dtype=pl.Float64).alias("doubled"))\n',
+    )
+    polars_code = namespace["out"].get_node_settings().setting_input.polars_code_input.polars_code
+    assert "serialized_value" not in polars_code
+    assert "return x * 2" in polars_code
+    assert namespace["out"].collect()["doubled"].to_list() == [2.0, 5.0]
 
 
 # decorator: kernel end-to-end (Docker)

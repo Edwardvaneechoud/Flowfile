@@ -13,7 +13,19 @@ import textwrap
 from dataclasses import dataclass, field
 from typing import Any
 
+from flowfile_frame.console_source import console_function_source
+
 # Low-level extraction helpers
+
+
+def _read_source(func) -> str | None:
+    """``inspect.getsource(func)``, else the text a console recorded (``console_source``); ``None`` if neither."""
+    try:
+        return inspect.getsource(func)
+    except OSError:
+        return console_function_source(func)
+    except TypeError:
+        return None
 
 
 def _get_function_source(func) -> tuple[str | None, bool]:
@@ -23,17 +35,13 @@ def _get_function_source(func) -> tuple[str | None, bool]:
     Returns:
         tuple: (source_code, is_module_level)
     """
-    try:
-        source = inspect.getsource(func)
-
-        if func.__name__ == "<lambda>":
-            return None, False
-
-        is_module_level = func.__code__.co_flags & 0x10 == 0
-        source = textwrap.dedent(source)
-        return source, is_module_level
-    except (OSError, TypeError):
+    source = _read_source(func)
+    if source is None or func.__name__ == "<lambda>":
         return None, False
+
+    is_module_level = func.__code__.co_flags & 0x10 == 0
+    source = textwrap.dedent(source)
+    return source, is_module_level
 
 
 def _is_safely_representable(value: Any) -> bool:
@@ -60,9 +68,8 @@ def _extract_lambda_source(func) -> tuple[str | None, str | None]:
     Returns:
         (function_definition_source, function_name) or (None, None) on failure.
     """
-    try:
-        source = inspect.getsource(func)
-    except (OSError, TypeError):
+    source = _read_source(func)
+    if source is None:
         return None, None
 
     source = textwrap.dedent(source).strip()

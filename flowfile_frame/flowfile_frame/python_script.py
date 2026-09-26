@@ -278,8 +278,9 @@ def _function_source(fn: Callable[..., Any], name: str) -> tuple[list[str], ast.
         raise NativeNodeError(f"Could not read the source of `{name}` ({exc}); is the file saved?") from exc
     if source is None:
         raise NativeNodeError(
-            f"python_script needs the source of `{name}`; define it in a file or a notebook cell, "
-            "not at an interactive prompt"
+            f"python_script needs the source of `{name}`, and this interpreter did not keep it; define it in a "
+            "file or a notebook cell. In PyCharm's Python console, a definition run before flowfile was imported "
+            f"cannot be recovered: run the definition of `{name}` again"
         )
     func, tokens = _parse(name, source)
     lines = source.split("\n")  # ast and tokenize count rows on "\n" only
