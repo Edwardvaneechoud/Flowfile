@@ -5,6 +5,7 @@ them, and their registry entries, afterwards.
 """
 
 import asyncio
+import importlib.util
 import json
 import os
 import subprocess
@@ -19,7 +20,8 @@ import pytest
 import flowfile_frame as ff
 from flowfile_core.configs import node_store
 from flowfile_core.flowfile.user_defined.registry import registry
-from flowfile_frame.custom_node import _INSTALLED_CLASSES
+from flowfile_frame.custom_node import _INSTALLED_CLASSES, CustomNodeFactory
+from flowfile_frame.custom_nodes import CustomNodeInfo, CustomNodeLookupError
 from shared.node_designer import CustomNodeBase, NodeSettings, NumericInput, Section
 
 from .utils import is_docker_available
@@ -52,6 +54,55 @@ class InstallTestNeverBuilt(nd.CustomNodeBase):
 
     def process(self, *inputs):
         raise RuntimeError("process() ran while building")
+"""
+
+
+FUTURE_SOURCE = """from __future__ import annotations
+
+from typing import Optional
+
+import polars as pl
+
+from shared.node_designer import CustomNodeBase, NodeSettings, Section, TextInput
+
+
+class FutureSettings(NodeSettings):
+    main: Section = Section(title="Main", suffix=TextInput(label="Suffix", default="!"))
+
+
+class InstallFutureNode(CustomNodeBase):
+    node_name: str = "Install Test Future"
+    node_category: str = "Testing"
+    note: Optional[str] = None
+    settings_schema: FutureSettings = FutureSettings()
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0].with_columns(pl.col("name") + self.settings_schema.main.suffix.value)
+"""
+
+STRING_ANNOTATED_SOURCE = """import typing
+
+from shared.node_designer import CustomNodeBase
+
+
+class InstallStringAnnotated(CustomNodeBase):
+    node_name: str = "Install Test String Annotated"
+    note: "typing.Optional[str]" = None
+
+    def process(self, *inputs):
+        return inputs[0]
+"""
+
+RERUN_SOURCE = """import polars as pl
+
+from shared.node_designer import CustomNodeBase
+
+
+class InstallRerun(CustomNodeBase):
+    node_name: str = "Install Test Rerun"
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0]
 """
 
 
@@ -123,6 +174,17 @@ def _add_file(directory, name: str, source: str):
     return path
 
 
+def _module(tmp_path, monkeypatch, name: str, source: str) -> types.ModuleType:
+    """``source`` imported from a real file as module ``name``, as a script or notebook defines its classes."""
+    path = tmp_path / f"{name}.py"
+    path.write_text(source, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
 # discovery
 
 
@@ -130,7 +192,7 @@ def test_installed_file_is_listed_and_placed_by_key_name_and_attribute(nodes_dir
     path = _add_file(nodes_dir, "install_test_upper.py", UPPER_SOURCE)
 
     infos = {info.key: info for info in ff.custom_nodes.list()}
-    assert infos["install_test_upper"] == ff.CustomNodeInfo(
+    assert infos["install_test_upper"] == CustomNodeInfo(
         key="install_test_upper",
         name="Install Test Upper",
         category="Testing",
@@ -146,7 +208,7 @@ def test_installed_file_is_listed_and_placed_by_key_name_and_attribute(nodes_dir
     assert "install_test_upper" in dir(ff.custom_nodes) and "install" in dir(ff.custom_nodes)
 
     factory = ff.custom_nodes.install_test_upper
-    assert isinstance(factory, ff.CustomNodeFactory)
+    assert isinstance(factory, CustomNodeFactory)
     assert factory.node_type == ff.custom_nodes.get("Install Test Upper").node_type == "install_test_upper"
     assert ff.custom_nodes["install_test_upper"].node_class is factory.node_class
     out = factory(ff.from_dict(DATA), column="name")
@@ -174,19 +236,23 @@ def test_broken_files_are_listed_with_their_error_and_raise_when_placed(nodes_di
     assert "install_test_broken" not in dir(ff.custom_nodes)
     with pytest.raises(ff.NativeNodeError, match="'install_test_broken' failed to load: Syntax error at line 1"):
         ff.custom_nodes.get("install_test_broken")
-    with pytest.raises(ff.NativeNodeError, match="failed to load: Syntax error"):
+    with pytest.raises(CustomNodeLookupError, match="failed to load: Syntax error") as raised:
         _ = ff.custom_nodes.install_test_broken
+    assert isinstance(raised.value, ff.NativeNodeError) and isinstance(raised.value, AttributeError)
+    assert hasattr(ff.custom_nodes, "install_test_broken") is False
 
     assert infos["install_test_bad_import"].error is None  # the scan does not execute the file
     with pytest.raises(ff.NativeNodeError, match="No module named 'no_such_module_for_install_tests'"):
         ff.custom_nodes["install_test_bad_import"]
     infos = {info.key: info for info in ff.custom_nodes.list()}
     assert "no_such_module_for_install_tests" in infos["install_test_bad_import"].error
+    assert hasattr(ff.custom_nodes, "install_test_bad_import") is False
 
 
 def test_unknown_names_raise():
     assert getattr(ff.custom_nodes, "no_such_custom_node", None) is None
-    with pytest.raises(AttributeError, match="'no_such_custom_node' is not installed"):
+    assert hasattr(ff.custom_nodes, "filter") is False
+    with pytest.raises(CustomNodeLookupError, match="'no_such_custom_node' is not installed"):
         _ = ff.custom_nodes.no_such_custom_node
     with pytest.raises(ff.NativeNodeError, match="'no_such_custom_node' is not installed"):
         ff.custom_nodes["No Such Custom Node"]
@@ -245,6 +311,77 @@ def test_install_refuses_an_existing_file_unless_overwrite(nodes_dir):
     assert not path.read_text(encoding="utf-8").endswith("# edited\n")
 
 
+def test_install_carries_imports_read_only_in_annotations(nodes_dir, tmp_path, monkeypatch):
+    module = _module(tmp_path, monkeypatch, "install_future_module", FUTURE_SOURCE)
+
+    path = ff.custom_nodes.install(module.InstallFutureNode)
+
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("from __future__ import annotations\n")
+    assert "from typing import Optional\n" in text and "class FutureSettings(NodeSettings):" in text
+    entry = registry.get("install_test_future")
+    assert entry.node_class is not None and entry.load_error is None
+    out = ff.custom_nodes.install_test_future(ff.from_dict(DATA), suffix="?")
+    assert out.collect()["name"].to_list() == ["ann?", "bob?", "cy?"]
+
+
+def test_install_keeps_no_file_that_does_not_load(nodes_dir, tmp_path, monkeypatch):
+    module = _module(tmp_path, monkeypatch, "install_string_annotated_module", STRING_ANNOTATED_SOURCE)
+    cls = module.InstallStringAnnotated
+    target = nodes_dir / "install_test_string_annotated.py"
+    ff.CustomNode(cls, ff.from_dict(DATA))  # registered for the session first
+
+    with pytest.raises(
+        ff.NativeNodeError,
+        match=r"Cannot install custom node class InstallStringAnnotated: "
+        r"install_test_string_annotated.py does not load: .*typing",
+    ):
+        ff.custom_nodes.install(cls)
+
+    assert not target.exists()
+    assert registry.get("install_test_string_annotated") is None
+    assert ff.custom_nodes.install_test_string_annotated(ff.from_dict(DATA)).collect().height == 3
+
+    working = UPPER_SOURCE.replace("Install Test Upper", "Install Test String Annotated")
+    working_file = tmp_path / "working.py"
+    working_file.write_text(working, encoding="utf-8")
+    ff.custom_nodes.install(working_file)
+    with pytest.raises(ff.NativeNodeError, match="does not load"):
+        ff.custom_nodes.install(cls, overwrite=True)
+    assert target.read_text(encoding="utf-8") == working
+    out = ff.custom_nodes.install_test_string_annotated(ff.from_dict(DATA))
+    assert out.collect()["name"].to_list() == ["ANN", "BOB", "CY"]
+
+
+def test_install_reports_a_file_it_cannot_write(nodes_dir):
+    blocker = nodes_dir / "install_test_doubler.py"
+    blocker.mkdir()
+    try:
+        with pytest.raises(ff.NativeNodeError, match=r"Cannot write custom node file .*install_test_doubler.py"):
+            ff.custom_nodes.install(InstallDoubler, overwrite=True)
+    finally:
+        blocker.rmdir()
+    assert registry.get("install_test_doubler") is None
+
+
+def test_a_class_redefined_after_install_names_the_reinstall(nodes_dir, tmp_path, monkeypatch):
+    first = _module(tmp_path, monkeypatch, "install_rerun_module", RERUN_SOURCE).InstallRerun
+    ff.custom_nodes.install(first)
+    ff.CustomNode(first, ff.from_dict(DATA))
+
+    rerun = _module(tmp_path, monkeypatch, "install_rerun_module", RERUN_SOURCE).InstallRerun  # the cell ran again
+    assert rerun is not first
+    with pytest.raises(
+        ff.NativeNodeError,
+        match=r"fl\.CustomNode\('install_test_rerun', \.\.\.\).*"
+        r"fl\.custom_nodes\.install\(InstallRerun, overwrite=True\)",
+    ):
+        ff.CustomNode(rerun, ff.from_dict(DATA))
+
+    ff.custom_nodes.install(rerun, overwrite=True)
+    assert ff.CustomNode(rerun, ff.from_dict(DATA)).node_class is rerun
+
+
 def test_install_refuses_a_class_reading_module_level_names(nodes_dir):
     with pytest.raises(ff.NativeNodeError, match=r"reads \['_bonus'\] from its module.*install\('path/to/node.py'\)"):
         ff.custom_nodes.install(InstallUsesHelper)
@@ -293,6 +430,18 @@ def test_install_path_refusals(nodes_dir, tmp_path):
     with pytest.raises(ff.NativeNodeError, match="install takes a CustomNodeBase subclass or the path"):
         ff.custom_nodes.install(InstallDoubler())
 
+    bad_import = tmp_path / "bad_import.py"
+    bad_import.write_text(
+        UPPER_SOURCE.replace("import polars as pl\n", "import polars as pl\nimport no_such_module_for_install_tests\n"),
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        ff.NativeNodeError, match="install_test_upper.py does not load: .*no_such_module_for_install_tests"
+    ):
+        ff.custom_nodes.install(bad_import)
+    assert not (nodes_dir / "install_test_upper.py").exists()
+    assert registry.get("install_test_upper") is None
+
     built_in = tmp_path / "filter_node.py"
     built_in.write_text(UPPER_SOURCE.replace('"Install Test Upper"', '"Filter"'), encoding="utf-8")
     with pytest.raises(ff.NativeNodeError, match="node key 'filter' of a built-in node"):
@@ -301,9 +450,15 @@ def test_install_path_refusals(nodes_dir, tmp_path):
     _add_file(nodes_dir, "some_other_name.py", UPPER_SOURCE)
     copy = tmp_path / "upper_copy.py"
     copy.write_text(UPPER_SOURCE, encoding="utf-8")
-    with pytest.raises(ff.NativeNodeError, match="'install_test_upper' is already installed from .*some_other_name.py"):
+    with pytest.raises(
+        ff.NativeNodeError,
+        match=r"'install_test_upper' is already installed from .*some_other_name.py; place that node by its key, "
+        r"fl.custom_nodes\['install_test_upper'\], or delete that file and install again",
+    ):
         ff.custom_nodes.install(copy)
     assert not (nodes_dir / "install_test_upper.py").exists()
+    (nodes_dir / "some_other_name.py").unlink()
+    assert ff.custom_nodes.install(copy) == nodes_dir / "install_test_upper.py"
     assert [p.name for p in nodes_dir.glob("*.py") if p.stem in ("filter", "broken")] == []
 
 

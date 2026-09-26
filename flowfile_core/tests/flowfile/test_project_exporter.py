@@ -404,7 +404,7 @@ def test_notebook_zero_inputs():
 
     module = get_file(manifest, "notebooks/node_01_python_script.py")
     assert "def run() -> dict[str, pl.LazyFrame]:" in module
-    assert "inputs={}" in module
+    assert 'inputs={"main": []}' in module
     pipeline = get_file(manifest, "pipeline.py")
     assert "node_01_python_script.run()" in pipeline
 

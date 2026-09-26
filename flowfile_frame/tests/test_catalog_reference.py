@@ -27,10 +27,13 @@ from flowfile_frame import (
     CatalogReference,
     FlowInput,
     FlowRef,
+    NativeNodeError,
+    RunFlow,
     SchemaReference,
     default_schema,
     get_catalog,
     list_catalogs,
+    register_flow,
 )
 from flowfile_frame.catalog_reference import _resolve_namespace_id
 
@@ -278,8 +281,9 @@ class TestCatalogNavigation:
         assert get_catalog("FlowCat").get_schema("sales").get_flow("Clean orders") == first
         assert schema.list_flows() == [second, first]
         assert CatalogReference("FlowCat").schema("sales", auto_create=True).list_flows() == [second, first]
-        with pytest.raises(FlowNotFoundError):
+        with pytest.raises(NativeNodeError, match="No flow named 'Missing flow' in 'FlowCat.sales'") as info:
             schema.get_flow("Missing flow")
+        assert isinstance(info.value.__cause__, FlowNotFoundError)
 
     def test_flow_ref_keeps_its_schema_handle(self):
         schema = CatalogReference("HandleCat", auto_create=True).schema("raw", auto_create=True)
@@ -298,7 +302,24 @@ class TestCatalogNavigation:
             copy = FlowRegistration(name="Twice", flow_path=f"{ref.flow_path}.copy", namespace_id=schema.id, owner_id=1)
             db.add(copy)
             db.commit()
-        with pytest.raises(AmbiguousFlowError) as info:
+        with pytest.raises(NativeNodeError, match="pick one with registration_id= or uuid=") as info:
             schema.get_flow("Twice")
-        assert len(info.value.candidates) == 2
-        assert {c["namespace_name"] for c in info.value.candidates} == {"DupCat.raw"}
+        assert f"DupCat.raw.Twice (id={ref.registration_id})" in str(info.value)
+        assert isinstance(info.value.__cause__, AmbiguousFlowError)
+        assert len(info.value.__cause__.candidates) == 2
+        assert {c["namespace_name"] for c in info.value.__cause__.candidates} == {"DupCat.raw"}
+
+    def test_the_default_schema_needs_a_general_catalog(self):
+        with pytest.raises(NativeNodeError, match="no 'General' catalog to hold the default schema; pass schema="):
+            register_flow(_child_flow(), name="Orphan")
+        with pytest.raises(NativeNodeError, match="pass schema="):
+            RunFlow(_child_flow(), name="Orphan")
+
+    def test_a_deleted_schema_handle_is_a_native_error(self):
+        schema = CatalogReference("GoneCat", auto_create=True).schema("raw", auto_create=True)
+        with get_db_context() as db:
+            db.query(CatalogNamespace).filter_by(id=schema.id).delete()
+            db.commit()
+        with pytest.raises(NativeNodeError, match="SchemaReference 'raw' .* no longer exists") as info:
+            schema.list_flows()
+        assert isinstance(info.value.__cause__, NamespaceNotFoundError)

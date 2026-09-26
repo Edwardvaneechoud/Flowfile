@@ -9,6 +9,7 @@ import asyncio
 import code
 import dataclasses
 import functools
+import importlib
 import inspect
 import json
 import subprocess
@@ -24,7 +25,8 @@ import pytest
 from polars.testing import assert_frame_equal
 
 import flowfile_frame as ff
-from flowfile_frame.console_source import console_function_source
+from flowfile_frame._console_source import console_function_source, install_hook
+from flowfile_frame.python_script import PythonScriptFunction
 
 from .native_helpers import results_by_id, round_trip
 from .utils import is_docker_available
@@ -35,6 +37,17 @@ CUSTOMERS = {"customer_id": [10, 20], "name": ["Ann", "Bob"]}
 
 def _script_input(script: ff.PythonScript):
     return script.node.setting_input.python_script_input
+
+
+def _run_cells(cells: list[str], *frames: pl.LazyFrame) -> dict[str, Any]:
+    """Run the cells as one script, as the kernel does, with a stand-in ``flowfile_ctx``; returns what was published."""
+    published: dict[str, Any] = {}
+    ctx = SimpleNamespace(
+        read_inputs=lambda: {"main": list(frames)},
+        publish_output=lambda df, name="main": published.__setitem__(name, df),
+    )
+    exec(compile("\n\n".join(cells), "<cells>", "exec"), {"flowfile_ctx": ctx})
+    return published
 
 
 # building
@@ -175,6 +188,7 @@ def test_round_trip_keeps_cells_code_kernel_and_outputs():
 MONTHLY = {"month": [1, 2, 3], "revenue": [10.0, 20.0, 30.0]}
 GROWTH = 1.05
 LOOKUP = None
+fl = None
 
 # fmt: off
 # The brief's example verbatim (no blank line after the import), a one-line def and a docstring sharing its line.
@@ -233,6 +247,12 @@ def projected(monthly):
 
 @ff.python_script()
 def first_rows(orders):
+    head = orders.head(2)
+    return head
+
+
+@ff.python_script
+def bare_first_rows(orders):
     head = orders.head(2)
     return head
 
@@ -332,6 +352,40 @@ def returns_a_tuple(left, right):
     return left, right
 
 
+def returns_a_dict_in_a_variable(left, right):
+    parts = {"a": left, "b": right}
+    return parts
+
+
+def returns_a_ternary(left, right):
+    return left if right is None else {"a": left, "b": right}
+
+
+def uses_flowfile_frame(orders):
+    return orders.filter(ff.col("amount") > 3)
+
+
+def uses_fl(orders):
+    return orders.filter(fl.col("amount") > 3)
+
+
+def uses_file(orders):
+    print(__file__)
+    return orders
+
+
+def comments_the_outputs_marker(orders):
+    # flowfile: outputs
+    return orders
+
+
+def comments_the_inputs_marker_in_a_block(orders):
+    for _ in range(1):
+        # flowfile: inputs
+        orders = orders.head(1)
+    return orders
+
+
 def marker_in_loop(orders):
     for _ in range(1):
         # %%
@@ -420,15 +474,71 @@ def test_used_module_and_constant_become_the_prelude_imports_first():
 def test_no_markers_and_no_free_names_give_the_inputs_cell_and_one_body_cell():
     assert first_rows.cells == [
         '# flowfile: inputs\norders = flowfile_ctx.read_inputs()["main"][0]',
-        'head = orders.head(2)\n# flowfile: outputs\n_result = head\nflowfile_ctx.publish_output(_result, "main")',
+        "head = orders.head(2)\n"
+        "# flowfile: outputs\n"
+        "_result = head\n"
+        "if isinstance(_result, dict):\n"
+        '    raise TypeError("first_rows returns a dict; name its outputs with outputs=[...], one per key")\n'
+        'flowfile_ctx.publish_output(_result, "main")',
     ]
 
 
 def test_one_line_function_is_unwrapped():
     assert identity.cells == [
         '# flowfile: inputs\norders = flowfile_ctx.read_inputs()["main"][0]',
-        '# flowfile: outputs\n_result = orders\nflowfile_ctx.publish_output(_result, "main")',
+        "# flowfile: outputs\n"
+        "_result = orders\n"
+        "if isinstance(_result, dict):\n"
+        '    raise TypeError("identity returns a dict; name its outputs with outputs=[...], one per key")\n'
+        'flowfile_ctx.publish_output(_result, "main")',
     ]
+
+
+def test_bare_decorator_uses_the_defaults_of_the_called_one():
+    assert isinstance(bare_first_rows, PythonScriptFunction)
+    assert bare_first_rows.cells == ff.python_script()(bare_first_rows.fn).cells
+    assert bare_first_rows.cells == [cell.replace("first_rows", "bare_first_rows") for cell in first_rows.cells]
+    script = bare_first_rows.node(ff.from_dict(ORDERS))
+    assert _script_input(script).kernel_id is None
+    assert script.node.setting_input.output_names == ["main"]
+    assert script.node.setting_input.description == "bare_first_rows"
+    assert bare_first_rows(ff.from_dict(ORDERS))._deferred is True
+    with pytest.raises(ff.NativeNodeError, match="a lambda has no body"):
+        ff.python_script(lambda orders: orders)
+
+
+def test_a_function_passed_with_options_is_decorated_with_them():
+    labelled = ff.python_script(first_rows.fn, kernel="lite", description="first two")
+    assert labelled.cells == first_rows.cells
+    script = labelled.node(ff.from_dict(ORDERS))
+    assert _script_input(script).kernel_id == "lite"
+    assert script.node.setting_input.description == "first two"
+
+
+def test_a_returned_variable_or_ternary_is_checked_not_to_be_a_dict_before_the_publish():
+    for fn in (returns_a_dict_in_a_variable, returns_a_ternary):
+        checked_publish = (
+            "if isinstance(_result, dict):\n"
+            f'    raise TypeError("{fn.__name__} returns a dict; name its outputs with outputs=[...], one per key")\n'
+            'flowfile_ctx.publish_output(_result, "main")'
+        )
+        assert ff.python_script(fn).cells[-1].endswith(checked_publish)
+
+
+def test_a_returned_call_or_a_named_output_publishes_without_the_dict_check():
+    assert "isinstance(_result, dict)" not in forecast.cells[-1]
+    assert "isinstance(_result, dict)" not in projected.cells[-1]
+    assert "isinstance(_result, dict)" not in ff.python_script(outputs=["scored"])(first_rows.fn).cells[-1]
+
+
+def test_the_dict_check_fails_the_run_with_the_fix_and_lets_a_frame_through():
+    left, right = pl.LazyFrame(ORDERS), pl.LazyFrame(CUSTOMERS)
+    with pytest.raises(TypeError, match=r"returns_a_dict_in_a_variable returns a dict; name its outputs with outputs="):
+        _run_cells(ff.python_script(returns_a_dict_in_a_variable).cells, left, right)
+    published = _run_cells(ff.python_script(returns_a_ternary).cells, left, None)
+    assert list(published) == ["main"]
+    assert_frame_equal(published["main"].collect(), left.collect())
+    assert _run_cells(first_rows.cells, left)["main"].collect().height == 2
 
 
 def test_two_inputs_and_a_dict_return_publish_each_output_with_a_key_check():
@@ -478,6 +588,8 @@ def test_titled_marker_keeps_its_title_and_consecutive_markers_leave_no_empty_ce
         "summary = df.head(1)\n"
         "# flowfile: outputs\n"
         "_result = summary\n"
+        "if isinstance(_result, dict):\n"
+        '    raise TypeError("titled_cells returns a dict; name its outputs with outputs=[...], one per key")\n'
         'flowfile_ctx.publish_output(_result, "main")',
     ]
 
@@ -486,7 +598,12 @@ def test_note_ends_at_the_first_code_line_and_keeps_its_title():
     assert note_then_code.cells == [
         '# flowfile: inputs\norders = flowfile_ctx.read_inputs()["main"][0]',
         "# Background\n# Only the first three orders.",
-        'kept = orders.head(3)\n# flowfile: outputs\n_result = kept\nflowfile_ctx.publish_output(_result, "main")',
+        "kept = orders.head(3)\n"
+        "# flowfile: outputs\n"
+        "_result = kept\n"
+        "if isinstance(_result, dict):\n"
+        '    raise TypeError("note_then_code returns a dict; name its outputs with outputs=[...], one per key")\n'
+        'flowfile_ctx.publish_output(_result, "main")',
     ]
 
 
@@ -549,11 +666,11 @@ def test_calling_the_function_returns_the_deferred_output_frame():
 
 
 def test_function_wrapper_keeps_name_doc_and_the_original_function():
-    assert isinstance(forecast, ff.PythonScriptFunction)
+    assert isinstance(forecast, PythonScriptFunction)
     assert forecast.__name__ == "forecast"
     assert forecast.__doc__ == "Revenue trend: a least-squares line through monthly revenue, extended three months."
     assert forecast.__wrapped__ is forecast.fn
-    assert not isinstance(forecast.fn, ff.PythonScriptFunction)
+    assert not isinstance(forecast.fn, PythonScriptFunction)
 
 
 def test_kernel_object_and_description_are_passed_to_the_node():
@@ -695,11 +812,42 @@ def test_nested_function_is_refused():
         (wrapped, {}, "`wrapped` is wrapped by another decorator"),
         (with_default, {}, "parameter `limit` has a default"),
         (rebinds_outer, {}, "does not run as top-level notebook cells: no binding for nonlocal 'seen'"),
+        (
+            uses_flowfile_frame,
+            {},
+            r"`ff` \(flowfile_frame\) is used inside `uses_flowfile_frame`, but the kernel has no flowfile package; "
+            r"use polars inside the body, such as pl\.col instead of ff\.col",
+        ),
+        (uses_file, {}, "`__file__` is used inside `uses_file`, but the kernel runs its cells without a file"),
+        (
+            comments_the_outputs_marker,
+            {},
+            "`comments_the_outputs_marker` has the comment `# flowfile: outputs` on line",
+        ),
+        (
+            comments_the_inputs_marker_in_a_block,
+            {},
+            "`comments_the_inputs_marker_in_a_block` has the comment `# flowfile: inputs` on line",
+        ),
     ],
 )
 def test_invalid_function_is_refused_at_decoration(fn, kwargs, match):
     with pytest.raises(ff.NativeNodeError, match=match):
         ff.python_script(**kwargs)(fn)
+
+
+@pytest.mark.parametrize("module", ["flowfile", "flowfile_frame", "flowfile_core.schemas.input_schema"])
+def test_a_flowfile_module_is_refused_because_the_kernel_has_none(monkeypatch, module):
+    monkeypatch.setattr(sys.modules[__name__], "fl", importlib.import_module(module))
+    match = rf"`fl` \({module}\) is used inside `uses_fl`.*pl\.col instead of fl\.col"
+    with pytest.raises(ff.NativeNodeError, match=match):
+        ff.python_script(uses_fl)
+
+
+def test_a_marker_comment_error_names_its_line():
+    line = comments_the_outputs_marker.__code__.co_firstlineno + 1
+    with pytest.raises(ff.NativeNodeError, match=f"on line {line}; python_script writes that line itself"):
+        ff.python_script(comments_the_outputs_marker)
 
 
 def test_marker_error_names_the_line_of_the_marker():
@@ -760,6 +908,7 @@ class _PyCharmConsole(code.InteractiveConsole):
 
 def _console(*fragments: str, console=_PyCharmConsole, filename: str = "<input>") -> dict[str, Any]:
     """Run each fragment as PyCharm's "execute selection" does: ``runsource(text, "<input>", "exec")``."""
+    install_hook()  # pytest is not a console, so importing flowfile_frame left it out
     namespace: dict[str, Any] = {}
     interpreter = console(namespace)
     for fragment in fragments:

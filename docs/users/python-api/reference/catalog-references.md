@@ -148,7 +148,7 @@ The `scd2_*` keywords configure a `write_mode="scd2"` write (see [Slowly Changin
 
 #### `get_flow(name) -> FlowRef`
 
-Return the flow registered under this schema with that name; same as [`ff.flow_ref(self, name)`](native-nodes.md#flowref-and-flow_ref). Raises `FlowNotFoundError` when there is none, and `AmbiguousFlowError` (listing the candidates) when more than one registration has the name.
+Return the flow registered under this schema with that name; same as [`ff.flow_ref(self, name)`](native-nodes.md#flowref-and-flow_ref). Raises `NativeNodeError` when there is none or when more than one registration has the name (listing the candidates), with the catalog's `FlowNotFoundError` or `AmbiguousFlowError` as its `__cause__`.
 
 ```python
 clean = sales.get_flow("Clean orders")

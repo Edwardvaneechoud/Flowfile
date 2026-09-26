@@ -1,7 +1,12 @@
+import enum
+import importlib
+import importlib.util
+
 import pytest
 
 import flowfile
 import flowfile_frame
+from flowfile_frame.custom_nodes import CustomNodes
 from flowfile_frame.flow_frame import FlowFrame
 
 NATIVE_NODE_API = [
@@ -13,9 +18,6 @@ NATIVE_NODE_API = [
     "set_flow_parameter",
     "GateOperator",
     "ParamType",
-    "NodeTypes",
-    "GateOperatorLiteral",
-    "ParamTypeLiteral",
     "NodeType",
     "FlowInput",
     "FlowOutput",
@@ -27,17 +29,23 @@ NATIVE_NODE_API = [
     "list_catalogs",
     "default_schema",
     "CustomNode",
-    "CustomNodeFactory",
     "custom_node",
     "custom_nodes",
-    "CustomNodes",
-    "CustomNodeInfo",
     "PythonScript",
-    "PythonScriptFunction",
     "python_script",
     "sql",
     "create_flow_graph",
     "FlowGraph",
+]
+
+SUBMODULE_ONLY = [
+    ("GateOperatorLiteral", "flowfile_frame.enums"),
+    ("ParamTypeLiteral", "flowfile_frame.enums"),
+    ("NodeTypeLiteral", "flowfile_frame.enums"),
+    ("CustomNodeFactory", "flowfile_frame.custom_node"),
+    ("CustomNodes", "flowfile_frame.custom_nodes"),
+    ("CustomNodeInfo", "flowfile_frame.custom_nodes"),
+    ("PythonScriptFunction", "flowfile_frame.python_script"),
 ]
 
 
@@ -50,13 +58,40 @@ def test_flowfile_all_lists_the_native_node_api():
     assert set(NATIVE_NODE_API) <= set(flowfile.__all__)
 
 
+@pytest.mark.parametrize("name, module", SUBMODULE_ONLY)
+def test_type_only_names_stay_in_their_submodule(name, module):
+    assert hasattr(importlib.import_module(module), name)
+    assert not hasattr(flowfile, name)
+    assert not hasattr(flowfile_frame, name)
+    assert name not in flowfile.__all__
+
+
+def test_node_type_is_the_enum():
+    assert issubclass(flowfile.NodeType, enum.Enum)
+    assert flowfile.NodeType("sql_query") is flowfile.NodeType.SQL_QUERY
+    assert not hasattr(flowfile, "NodeTypes")
+    assert not hasattr(flowfile_frame, "NodeTypes")
+
+
+def test_register_flow_with_catalog_is_importable_from_flowfile_frame_only():
+    assert callable(flowfile_frame.register_flow_with_catalog)
+    assert not hasattr(flowfile, "register_flow_with_catalog")
+    assert "register_flow_with_catalog" not in flowfile.__all__
+
+
+def test_console_source_is_a_private_module():
+    assert importlib.util.find_spec("flowfile_frame.console_source") is None
+    assert importlib.util.find_spec("flowfile_frame._console_source") is not None
+    assert not hasattr(flowfile_frame, "console_source")
+
+
 def test_custom_node_is_the_factory_function_not_the_submodule():
     assert callable(flowfile_frame.custom_node)
     assert flowfile_frame.custom_node.__module__ == "flowfile_frame.custom_node"
 
 
 def test_custom_nodes_is_the_registry_view_not_the_submodule():
-    assert isinstance(flowfile_frame.custom_nodes, flowfile_frame.CustomNodes)
+    assert isinstance(flowfile_frame.custom_nodes, CustomNodes)
     assert flowfile.custom_nodes is flowfile_frame.custom_nodes
 
 

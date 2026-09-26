@@ -184,6 +184,7 @@ class FlowNode:
     _prediction_requires_data: bool  # stamped at placement: prediction needs a collect
     _executes_on_kernel: bool  # stamped at placement: function runs on a kernel container
     deferred_until_run: bool  # seeded placeholder output; only a real run may execute the node
+    placed_deferred: bool  # placed with a seed; reset() re-arms deferred_until_run
 
     def __init__(
         self,
@@ -276,6 +277,7 @@ class FlowNode:
         self._prediction_requires_data = False
         self._executes_on_kernel = False
         self.deferred_until_run = False
+        self.placed_deferred = False
 
     @property
     def state_needs_reset(self) -> bool:
@@ -1726,8 +1728,7 @@ class FlowNode:
                         escalated = self._escalated_read_frame(next_rung) if next_rung is not None else None
                         if escalated is not None:
                             node_logger.warning(
-                                "CSV type inference failed; retrying read with "
-                                f"infer_schema_length={next_rung}."
+                                "CSV type inference failed; retrying read with " f"infer_schema_length={next_rung}."
                             )
                             store_frame = escalated.data_frame
                             current_infer = next_rung
@@ -1884,9 +1885,11 @@ class FlowNode:
     def reset(self, deep: bool = False):
         """Resets the node's execution state and schema information.
 
-        This also triggers a reset on all downstream nodes. A start node's eager schema
-        prefetch is skipped while ``deferred_until_run`` is set: without a declared schema
-        callback that prefetch runs the node function.
+        This also triggers a reset on all downstream nodes. A node placed deferred
+        (``placed_deferred``) gets ``deferred_until_run`` back with its dropped result, so only a
+        real run executes it again. A start node's eager schema prefetch is skipped while
+        ``deferred_until_run`` is set: without a declared schema callback that prefetch runs the
+        node function.
 
         Args:
             deep: If True, forces a reset even if the hash hasn't changed.
@@ -1902,6 +1905,8 @@ class FlowNode:
             self._hash = None
             self.node_information.is_setup = None
             self.results.errors = None
+            if self.placed_deferred:
+                self.deferred_until_run = True
 
             # Reset execution state but preserve source file info for change detection
             self._execution_state.has_run_with_current_setup = False

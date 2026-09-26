@@ -3,6 +3,7 @@ from functools import wraps
 
 import polars as pl
 
+from flowfile_frame.adding_expr import refuse_parameter_argument
 from flowfile_frame.callable_utils import process_callable_args
 from flowfile_frame.config import logger
 from flowfile_frame.native import NativeNodeError
@@ -112,11 +113,18 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
         # Import here to avoid circular imports
         from flowfile_frame.flow_frame import generate_node_id
 
-        if self._deferred and _has_build_time_effect(method_name):
+        refuse_parameter_argument(
+            method_name, args, kwargs, hint="pass a plain value, or an expression such as fl.lit(parameter)"
+        )
+        if _has_build_time_effect(method_name) and (self._deferred or self._below_a_gate()):
+            reason = (
+                "this frame only holds placeholder rows until the flow runs"
+                if self._deferred
+                else "this frame is below a gate, so building would act on both of its exits"
+            )
             raise NativeNodeError(
-                f"{method_name} runs when it is built, but this frame only holds placeholder rows until the "
-                "flow runs. Use a write_* method (a native Output node that waits for the run) or collect "
-                "the frame first."
+                f"{method_name} runs when it is built, but {reason}. Use a write_* method (a native Output node "
+                "that waits for the run) or collect the frame first."
             )
         new_node_id = generate_node_id()
 

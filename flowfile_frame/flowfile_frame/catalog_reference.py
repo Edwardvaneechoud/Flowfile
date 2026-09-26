@@ -297,8 +297,8 @@ class SchemaReference:
     def get_flow(self, name: str) -> FlowRef:
         """Return the flow registered under ``name`` in this schema.
 
-        Raises :class:`flowfile_core.catalog.FlowNotFoundError` when there is none and
-        :class:`flowfile_core.catalog.AmbiguousFlowError` when the name is registered twice.
+        Raises ``NativeNodeError`` when there is none or the name is registered twice, chained from
+        :class:`flowfile_core.catalog.FlowNotFoundError` or :class:`flowfile_core.catalog.AmbiguousFlowError`.
         Equivalent to ``flowfile_frame.flow_ref(self, name)``.
         """
         from flowfile_frame.run_flow import flow_ref

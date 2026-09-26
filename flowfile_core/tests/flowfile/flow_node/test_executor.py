@@ -2001,6 +2001,40 @@ class TestDeferredUntilRun:
         assert "output-1" not in node._named_schemas
         assert node.get_resulting_data().data_frame.collect()["name"].to_list() == ["Alice"]
 
+    def test_reset_re_arms_a_node_placed_deferred(self):
+        graph, node, _ = self._seeded_select(flow_id=45)
+        node.placed_deferred = True
+        assert graph.run_graph().success
+        assert node.deferred_until_run is False
+
+        node.reset(deep=True)
+
+        assert node.deferred_until_run is True
+        assert node.results.resulting_data is None
+        assert graph.run_graph().success
+        assert node.deferred_until_run is False
+        assert node.get_resulting_data().data_frame.collect()["name"].to_list() == ["Alice"]
+
+    def test_reset_inside_its_own_run_does_not_re_arm_the_node(self):
+        graph, node, _ = self._seeded_select(flow_id=46)
+        node.placed_deferred = True
+        node._cache_epoch += 1  # a stale hash: the executor's own reset() drops the seed and re-arms the flag
+        assert node.needs_reset()
+
+        assert graph.run_graph().success
+
+        assert node.deferred_until_run is False
+        assert node.get_resulting_data().data_frame.collect()["name"].to_list() == ["Alice"]
+
+    def test_reset_leaves_a_node_not_placed_deferred_alone(self):
+        graph = create_graph_with_select(flow_id=47, execution_location="local")
+        node = graph.get_node(2)
+        assert graph.run_graph().success
+
+        node.reset(deep=True)
+
+        assert node.placed_deferred is False and node.deferred_until_run is False
+
     def test_prepare_keeps_handle_schemas_of_non_deferred_nodes(self):
         from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 

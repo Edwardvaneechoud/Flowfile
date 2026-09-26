@@ -114,10 +114,10 @@ class Parameter:
         """An expression holding the parameter's value.
 
         Its formula form is the bare ``${name}``, which core renders as a typed literal, so a
-        predicate over it still lowers onto a native Filter/Formula node. In Polars code it is the
-        substituted text ``pl.lit("${name}")``, cast to the parameter's dtype (a boolean compares
-        with ``"true"``: Polars cannot cast a string to a boolean). The live expression is a typed
-        null; only schema checks read it.
+        predicate over it still lowers onto a native Filter/Formula node. In Polars code it is
+        ``pl.lit("${name}")``, a string literal core re-renders around the escaped value, cast to the
+        parameter's dtype (a boolean compares with ``"true"``: Polars cannot cast a string to a
+        boolean). The live expression is a typed null; only schema checks read it.
         """
         from flowfile_frame.expr import Expr
 

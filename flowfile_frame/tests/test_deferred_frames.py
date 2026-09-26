@@ -5,6 +5,7 @@ These tests seed a node by hand with ``native.seed_deferred_node`` and wrap it w
 ``FlowFrame(..., deferred=True)``, the same frames the native node classes produce.
 """
 
+import os
 from uuid import uuid4
 
 import polars as pl
@@ -75,6 +76,12 @@ def _assert_not_executed(frame: FlowFrame, node_id: int, seed) -> None:
     node = frame.flow_graph.get_node(node_id)
     assert node.deferred_until_run is True
     assert node.results.resulting_data is seed
+
+
+def _assert_holds_a_placeholder(node) -> None:
+    """Seeded (again) and never executed: executing it would have produced rows."""
+    assert node.deferred_until_run is True
+    assert node.results.resulting_data.data_frame.collect().height == 0
 
 
 # building on a deferred frame (I1)
@@ -424,12 +431,28 @@ def test_node_below_a_closed_gate_exit_collects_empty(env):
     assert dead_rows.height == 0 and dead_rows.columns == ["a"]
 
 
-def test_failure_on_an_unrelated_branch_does_not_fail_collect():
+def test_collect_does_not_run_an_unrelated_branch():
     source, frame, _, _ = _deferred_frame()
-    _add_polars_code_node(source.flow_graph, source.node_id, "output_df = name_that_does_not_exist")
+    broken_id = _add_polars_code_node(source.flow_graph, source.node_id, "output_df = name_that_does_not_exist")
 
     assert_frame_equal(frame.select("a").collect(), EXPECTED.select("a"))
-    assert frame.flow_graph.latest_run_info.success is False
+    run_info = frame.flow_graph.latest_run_info
+    assert run_info.success is True
+    assert broken_id not in {result.node_id for result in run_info.node_step_result}
+
+
+def test_collect_leaves_writers_outside_the_lineage_alone(tmp_path):
+    source, frame, _, _ = _deferred_frame()
+    eager_path, sibling_path = tmp_path / "eager.csv", tmp_path / "sibling.csv"
+    source.write_csv(eager_path)
+    os.utime(eager_path, ns=(1_000_000_000, 1_000_000_000))
+    written_at_build = (eager_path.stat().st_size, eager_path.stat().st_mtime_ns)
+    frame.write_csv(sibling_path)
+
+    assert_frame_equal(frame.select("a").collect(), EXPECTED.select("a"))
+
+    assert (eager_path.stat().st_size, eager_path.stat().st_mtime_ns) == written_at_build
+    assert not sibling_path.exists()
 
 
 def test_failed_ancestor_raises_native_error():
@@ -471,11 +494,16 @@ def test_unconfigured_ancestor_raises_native_error():
 
 
 @pytest.mark.parametrize("change", [lambda f: f.set_group("late group"), lambda f: f.cache()])
-def test_settings_change_after_build_raises_native_error(change):
-    _, frame, node, _ = _deferred_frame()
+def test_settings_change_after_build_seeds_the_node_again(change):
+    _, frame, node, seed = _deferred_frame()
     change(frame)
-    with pytest.raises(NativeNodeError, match=f"node {node.node_id} lost its deferred placeholder"):
-        frame.select("a")
+
+    selected = frame.select("a")
+
+    assert node.results.resulting_data is not seed  # the change reset it away
+    _assert_holds_a_placeholder(node)
+    assert selected.columns == ["a"]
+    assert selected.collect()["a"].to_list() == [1, 2, 3]
 
 
 @pytest.mark.parametrize(
@@ -488,12 +516,37 @@ def test_settings_change_after_build_raises_native_error(change):
     ],
     ids=["join", "concat", "filter_split", "native-node"],
 )
-def test_placeholder_reset_away_raises_native_error_on_every_build_path(build):
+def test_graph_reset_seeds_the_placeholder_again_on_every_build_path(build):
     _, frame, node, _ = _deferred_frame()
-    other = ff.from_dict(DATA, flow_graph=frame.flow_graph).with_columns(ff.lit(0).alias("a10"))
+    other = ff.from_dict({**DATA, "a10": [0, 0, 0]}, flow_graph=frame.flow_graph)
     frame.flow_graph.reset()
-    with pytest.raises(NativeNodeError, match=f"node {node.node_id} lost its deferred placeholder"):
-        build(frame, other)
+    build(frame, other)
+    _assert_holds_a_placeholder(node)
+
+
+@pytest.mark.parametrize(
+    "reset",
+    [lambda f: f.flow_graph.reset(), lambda f: f.cache().select("a")],
+    ids=["graph-reset", "upstream-cache"],
+)
+def test_deferral_survives_a_real_run_and_a_reset(reset, tmp_path):
+    _, frame, node, _ = _deferred_frame()
+    path = tmp_path / "out.csv"
+    written = frame.write_csv(path)
+    writer = written.flow_graph.get_node(written.node_id)
+    assert_frame_equal(written.collect(), EXPECTED)
+    assert node.deferred_until_run is False and writer.deferred_until_run is False
+    path.unlink()
+
+    reset(frame)
+    below = written.select("a")
+
+    assert not path.exists()
+    _assert_holds_a_placeholder(node)
+    _assert_holds_a_placeholder(writer)
+    assert below.columns == ["a"]
+    assert below.collect()["a"].to_list() == [1, 2, 3]
+    assert_frame_equal(pl.read_csv(path), EXPECTED)
 
 
 def test_real_run_replaces_a_stale_multi_output_seed():

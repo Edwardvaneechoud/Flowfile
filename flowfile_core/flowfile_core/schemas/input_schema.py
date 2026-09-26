@@ -1745,13 +1745,18 @@ class NodeFlowOutput(NodeSingleInput):
 class SubflowReference(BaseModel):
     """Reference to a catalog-registered flow.
 
-    ``registration_id`` is the primary reference; ``flow_uuid`` is stamped
-    server-side and used to repair a dangling id; ``flow_path`` is display-only.
+    ``flow_uuid`` is the flow's identity and resolves first. ``registration_id`` is
+    install-local, so it resolves only a reference without a uuid. ``namespace`` (the
+    full ``"catalog.schema"`` name) and ``name`` find the flow on an install where
+    neither resolves. Placing the node re-stamps every field from the registration
+    found; ``flow_path`` is display-only.
     """
 
     registration_id: int
     flow_uuid: str | None = None
     flow_path: str | None = None
+    namespace: str | None = None
+    name: str | None = None
 
 
 class RunFlowParameterBinding(BaseModel):

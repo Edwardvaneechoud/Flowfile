@@ -444,8 +444,8 @@ class TestWriteInputsToParquet:
         assert len(result["clients"]) == 1
         assert len(result["main"]) == 2
 
-    def test_named_inputs_main_no_duplicate(self, tmp_path: Path):
-        """When one input is named 'main', no extra 'main' alias is added."""
+    def test_named_input_main_refused(self, tmp_path: Path):
+        """An input named 'main' is refused: that key is the positional list of every input."""
         mgr = _make_manager(str(tmp_path))
         input_dir = str(tmp_path / "inputs")
         os.makedirs(input_dir, exist_ok=True)
@@ -455,10 +455,8 @@ class TestWriteInputsToParquet:
             "flowfile_core.kernel.execution.ExternalDfFetcher",
             side_effect=lambda **kw: _mock_fetcher(),
         ):
-            result = write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2, input_names=["main"])
-
-        assert list(result.keys()) == ["main"]
-        assert len(result["main"]) == 1
+            with pytest.raises(ValueError, match="'main' is reserved"):
+                write_inputs_to_parquet((ft1,), mgr, input_dir, 1, 2, input_names=["main"])
 
     def test_unnamed_fetcher_error_raises(self, tmp_path: Path):
         """An error in ExternalDfFetcher raises RuntimeError (unnamed path)."""

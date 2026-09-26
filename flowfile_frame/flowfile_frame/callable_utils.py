@@ -13,13 +13,13 @@ import textwrap
 from dataclasses import dataclass, field
 from typing import Any
 
-from flowfile_frame.console_source import console_function_source
+from flowfile_frame._console_source import console_function_source
 
 # Low-level extraction helpers
 
 
 def _read_source(func) -> str | None:
-    """``inspect.getsource(func)``, else the text a console recorded (``console_source``); ``None`` if neither."""
+    """``inspect.getsource(func)``, else the text a console recorded (``_console_source``); ``None`` if neither."""
     try:
         return inspect.getsource(func)
     except OSError:

@@ -10,7 +10,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import Flowfi
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas import input_schema
-from flowfile_frame.enums import NodeType, NodeTypes
+from flowfile_frame.enums import NodeType, NodeTypeLiteral
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.run_flow import FlowOutput
 
@@ -36,7 +36,7 @@ class NativeNode:
     def get_output(self, name: str | FlowOutput) -> FlowFrame: ...
 
 class Node(NativeNode):
-    def __init__(self, node_type: NodeType | NodeTypes, *inputs: FlowFrame, settings: dict[str, Any] | BaseModel | None=None, deferred: bool | None=None, description: str | None=None, flow_graph: FlowGraph | None=None) -> None: ...
+    def __init__(self, node_type: NodeTypeLiteral | NodeType, *inputs: FlowFrame, settings: dict[str, Any] | BaseModel | None=None, deferred: bool | None=None, description: str | None=None, flow_graph: FlowGraph | None=None) -> None: ...
 
 
 def is_side_effect_node_type(node_type: str) -> bool: ...

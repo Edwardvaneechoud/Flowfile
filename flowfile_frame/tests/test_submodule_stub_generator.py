@@ -1,11 +1,19 @@
 import ast
 import importlib.util
+import inspect
 from pathlib import Path
 
-_GENERATOR_PATH = Path(__file__).resolve().parents[1] / "submodule_stub_generator.py"
-_spec = importlib.util.spec_from_file_location("submodule_stub_generator", _GENERATOR_PATH)
-generator = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(generator)
+from flowfile_frame.flow_frame import FlowFrame
+
+
+def _load_generator(file_name: str):
+    spec = importlib.util.spec_from_file_location(file_name.removesuffix(".py"), Path(__file__).parents[1] / file_name)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+generator = _load_generator("submodule_stub_generator.py")
 
 _SOURCE = """
 class Outputs:
@@ -93,3 +101,41 @@ def test_init_stub_skips_a_submodule_shadowed_by_an_export(tmp_path):
     assert "from . import factory as factory" not in stub
     assert "from pkg.factory import factory as factory" in stub
     assert "from . import other as other" in stub
+
+
+def test_private_modules_get_no_stub_and_no_reexport(tmp_path):
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from pkg import _hook  # noqa: F401\nfrom pkg._version import get_version\nfrom pkg.other import Thing\n"
+    )
+    (package / "_hook.py").write_text("def install() -> None:\n    pass\n")
+    (package / "_version.py").write_text("def get_version() -> str:\n    return '1'\n")
+    (package / "other.py").write_text("class Thing:\n    pass\n")
+
+    sources = {module for _, module in generator.discover_sources(package)}
+    stub = generator.generate_stub(package / "__init__.py", "pkg").read_text()
+
+    assert sources == {"pkg", "pkg.other"}
+    assert "_hook" not in stub
+    assert "from pkg._version import get_version as get_version" in stub
+    assert '__all__ = ["Thing", "get_version", "other"]' in stub
+
+
+def test_flow_frame_stub_keeps_keyword_only_parameters(tmp_path):
+    flow_frame_generator = _load_generator("flow_frame_stub_generator.py")
+    stub = Path(flow_frame_generator.generate_improved_type_stub(FlowFrame, str(tmp_path / "flow_frame.pyi")))
+    stub_class = next(n for n in ast.parse(stub.read_text()).body if isinstance(n, ast.ClassDef))
+    stub_args = {n.name: n.args for n in stub_class.body if isinstance(n, ast.FunctionDef)}
+
+    assert [a.arg for a in stub_args["sql"].args] == ["self", "query"]
+    assert [a.arg for a in stub_args["sql"].kwonlyargs] == ["table_name", "description"]
+    assert [a.arg for a in stub_args["to_flow_output"].kwonlyargs] == ["description"]
+    for name, method in vars(FlowFrame).items():
+        if name not in stub_args or not inspect.isfunction(method):
+            continue
+        params = inspect.signature(method).parameters.values()
+        keyword_only = {p.name for p in params if p.kind is inspect.Parameter.KEYWORD_ONLY}
+        positional = {p.name for p in params if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD}
+        assert keyword_only <= {a.arg for a in stub_args[name].kwonlyargs}, name
+        assert not positional & {a.arg for a in stub_args[name].kwonlyargs}, name

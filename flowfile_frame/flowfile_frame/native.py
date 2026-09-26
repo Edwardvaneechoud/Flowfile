@@ -31,7 +31,7 @@ from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model, 
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import GraphicWalkerInput
 from flowfile_core.schemas.schemas import NodeTemplate, get_settings_class_for_node_type
-from flowfile_frame.enums import NodeType, NodeTypes, _literal
+from flowfile_frame.enums import NodeType, NodeTypeLiteral, _literal
 from flowfile_frame.utils import create_flow_graph, generate_node_id, set_node_id
 from flowfile_frame.utils import data as node_id_data
 
@@ -103,7 +103,8 @@ def seed_deferred_node(node: FlowNode, schemas: dict[str, list[FlowfileColumn]])
     seed instead of running the node function; ``_named_outputs`` keeps ``get_output`` from
     silently serving output-0 for another handle. Run flags and ``cache_results`` stay
     untouched, so ``run_graph()`` ignores the seed and executes the node for real, which
-    also clears ``deferred_until_run``.
+    also clears ``deferred_until_run``. ``placed_deferred`` stays set, so a later reset of
+    the node re-arms ``deferred_until_run`` and the next build read seeds it again.
     """
     default_schema = schemas.get(DEFAULT_OUTPUT_HANDLE) or []
     with node._execution_lock_held():
@@ -117,6 +118,7 @@ def seed_deferred_node(node: FlowNode, schemas: dict[str, list[FlowfileColumn]])
         node.node_schema.result_schema = default_schema
         node.node_schema.predicted_schema = default_schema
         node.deferred_until_run = True
+        node.placed_deferred = True
 
 
 def predicted_schema_without_running(node: FlowNode) -> list[FlowfileColumn]:
@@ -136,6 +138,51 @@ def predicted_schema_without_running(node: FlowNode) -> list[FlowfileColumn]:
 def seed_from_predicted_schema(node: FlowNode) -> None:
     """Seed ``node`` on output-0 with its own predicted schema, never executing it."""
     seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: predicted_schema_without_running(node)})
+
+
+def _placeholder_schema(node: FlowNode) -> list[FlowfileColumn]:
+    """``node``'s output-0 schema, predicted without executing it.
+
+    A deferred, side-effect or custom node type asks its schema callback only (a custom start
+    node without a hook gets none: its fallback callback runs the node); any other type
+    predicts lazily over its inputs' placeholders, the way the canvas does.
+    """
+    if isinstance(node.setting_input, input_schema.UserDefinedNode):
+        if node.is_start and node.user_provided_schema_callback is None:
+            return []
+        return predicted_schema_without_running(node)
+    if node.node_type in DEFERRED_NODE_TYPES or is_side_effect_node_type(node.node_type):
+        return predicted_schema_without_running(node)
+    node.deferred_until_run = False
+    try:
+        return node.get_predicted_schema() or []
+    finally:
+        node.deferred_until_run = True
+
+
+def _reseed_lost_placeholders(nodes: Sequence[FlowNode]) -> None:
+    """Seed again, upstream first, every deferred node of ``nodes`` whose result a reset dropped.
+
+    Each keeps its last known per-handle schemas (its seed, or a multi-output run's outputs);
+    output-0 is predicted when none is known. Reading below it then serves placeholders.
+    """
+    in_read = {n.node_id for n in nodes}
+    visited: set[int] = set()
+
+    def reseed(node: FlowNode) -> None:
+        visited.add(node.node_id)
+        for upstream in node.all_inputs:
+            if upstream.node_id in in_read and upstream.node_id not in visited:
+                reseed(upstream)
+        if node.deferred_until_run and node.results.resulting_data is None:
+            schemas = dict(node._named_schemas)
+            if DEFAULT_OUTPUT_HANDLE not in schemas:
+                schemas[DEFAULT_OUTPUT_HANDLE] = _placeholder_schema(node)
+            seed_deferred_node(node, schemas)
+
+    for node in nodes:
+        if node.node_id not in visited:
+            reseed(node)
 
 
 def _undeclared_parameters_error(node: FlowNode, names: set[str]) -> NativeNodeError:
@@ -190,16 +237,19 @@ def materialise(node: FlowNode, handle: str | None = None) -> FlowDataEngine:
     """Build-time read of ``node``'s output, with its flow ``${name}`` references resolved.
 
     Every build-time read goes through here so a node sees its parameters the way the run loop
-    does (``node_parameters_resolved``): expression fields get typed literals, other strings plain
-    text, and the stored settings keep the reference. The same holds for every ancestor the read
+    does (``node_parameters_resolved``): expression fields get typed literals, a string literal in
+    Polars code is re-rendered as an escaped literal of its substituted text, other strings get
+    plain text, and the stored settings keep the reference. The same holds for every ancestor the read
     re-executes. A reference to an undeclared parameter raises instead of reaching Polars as text,
     also on a graph that declares no parameters (where the run loop would leave it untouched). A
-    deferred node whose placeholder was reset away raises :class:`NativeNodeError`.
+    deferred node in that lineage whose placeholder or run result was reset away is seeded again
+    first, so the read never executes it.
 
     Build-time data reflects the parameter values at the moment the node is built; ``run_graph()``
     (and ``collect()`` on deferred or gated frames) re-resolves with the values of that run.
     ``handle`` reads one output handle through ``get_output``; ``None`` reads the default output.
     """
+    _reseed_lost_placeholders(_nodes_a_read_executes(node))
     with contextlib.ExitStack() as stack:
         for current in _nodes_a_read_executes(node):
             _resolve_parameters_for_read(stack, current)
@@ -210,10 +260,11 @@ def materialise(node: FlowNode, handle: str | None = None) -> FlowDataEngine:
 
 
 def lost_placeholder_error(node: FlowNode) -> NativeNodeError:
-    """The error for a deferred node (``node`` or an ancestor) whose seed was reset away.
+    """The error for a deferred node (``node`` or an ancestor) read without its placeholder.
 
     A seeded node whose settings change after it was built (``set_group``, ``cache()``) is
-    reset when the next edge is wired, which drops its placeholder output.
+    reset when the next edge is wired, which drops its placeholder output; a read outside
+    :func:`materialise` does not seed it again.
     """
     lost_id = next(
         (
@@ -415,12 +466,12 @@ class NativeNode:
 
     @staticmethod
     def _decide_deferred(node_type: str, frames: Sequence[FlowFrame], deferred: bool | None) -> bool:
-        """:func:`seeded_at_build` unless ``deferred`` is given; a side-effect node never runs on placeholders."""
+        """:func:`seeded_at_build` unless ``deferred`` is given; no node is forced to run on placeholder rows."""
         if deferred is None:
             return seeded_at_build(node_type, frames)
-        if not deferred and is_side_effect_node_type(node_type) and any(f._deferred for f in frames):
+        if not deferred and any(f._deferred for f in frames):
             raise NativeNodeError(
-                f"{node_type} writes or trains when it is built, and its input only holds placeholder rows "
+                f"deferred=False builds {node_type} by running it, and its input only holds placeholder rows "
                 "until the flow runs; leave deferred unset or collect the input first"
             )
         return deferred
@@ -527,19 +578,12 @@ class NativeNode:
     def _seed_schema(self, node: FlowNode, frames: Sequence[FlowFrame]) -> list[FlowfileColumn]:
         """Schema of every seeded output handle.
 
-        A source node takes the columns its settings declare. A deferred node type or a
-        side-effect node predicts from its schema callback only; any other node (deferred on
-        request) predicts like the canvas does, lazily over its inputs' placeholders.
+        A source node takes the columns its settings declare; any other predicts with
+        :func:`_placeholder_schema`, never running a deferred or side-effect node type.
         """
         if not frames:
             return _declared_fields(node.setting_input)
-        if self.node_type in DEFERRED_NODE_TYPES or is_side_effect_node_type(self.node_type):
-            return predicted_schema_without_running(node)
-        node.deferred_until_run = False
-        try:
-            return node.get_predicted_schema() or []
-        finally:
-            node.deferred_until_run = True
+        return _placeholder_schema(node)
 
 
 def _settings_class(node_type: Any) -> type[BaseModel]:
@@ -554,7 +598,7 @@ def _settings_class(node_type: Any) -> type[BaseModel]:
     if settings_cls is input_schema.UserDefinedNode:
         raise NativeNodeError(f"{node_type!r} is a custom node; place it with fl.CustomNode(...)")
     if settings_cls is None:
-        raise NativeNodeError(f"Unknown node type {node_type!r}; fl.NodeTypes lists the built-in types")
+        raise NativeNodeError(f"Unknown node type {node_type!r}; fl.NodeType lists the built-in types")
     return settings_cls
 
 
@@ -586,7 +630,7 @@ class Node(NativeNode):
 
     def __init__(
         self,
-        node_type: NodeType | NodeTypes,
+        node_type: NodeTypeLiteral | NodeType,
         *inputs: FlowFrame,
         settings: dict[str, Any] | BaseModel | None = None,
         deferred: bool | None = None,

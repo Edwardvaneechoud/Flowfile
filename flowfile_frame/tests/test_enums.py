@@ -7,28 +7,28 @@ from flowfile_core.flowfile.param_types import ParamType as CoreParamType
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS
 from flowfile_core.schemas.transform_schema import GateOperator as CoreGateOperator
-from flowfile_frame.enums import _literal
+from flowfile_frame.enums import GateOperatorLiteral, NodeType, NodeTypeLiteral, ParamTypeLiteral, _literal
 
 BUILT_IN_TYPES = [t for t in NODE_TYPE_TO_SETTINGS_CLASS if t not in ("promise", "user_defined")]
 
 
 def test_gate_operator_enum_matches_core_literal():
     assert [m.value for m in ff.GateOperator] == list(typing.get_args(CoreGateOperator))
-    assert ff.GateOperatorLiteral is CoreGateOperator
+    assert GateOperatorLiteral is CoreGateOperator
 
 
 def test_param_type_enum_matches_core_literal():
     assert [m.value for m in ff.ParamType] == list(typing.get_args(CoreParamType))
-    assert ff.ParamTypeLiteral is CoreParamType
+    assert ParamTypeLiteral is CoreParamType
 
 
 def test_node_type_literal_matches_settings_classes():
-    assert list(typing.get_args(ff.NodeType)) == BUILT_IN_TYPES
+    assert list(typing.get_args(NodeTypeLiteral)) == BUILT_IN_TYPES
 
 
-def test_node_types_enum_matches_node_type_literal():
-    assert [m.value for m in ff.NodeTypes] == BUILT_IN_TYPES
-    assert all(m.name == m.value.upper() for m in ff.NodeTypes)
+def test_node_type_enum_matches_node_type_literal():
+    assert [m.value for m in NodeType] == BUILT_IN_TYPES
+    assert all(m.name == m.value.upper() for m in NodeType)
 
 
 def test_every_node_type_has_an_add_method():
@@ -37,7 +37,7 @@ def test_every_node_type_has_an_add_method():
 
 def test_literal_normalises_enum_members_only():
     assert _literal(ff.GateOperator.NOT_IN) == "not_in"
-    assert type(_literal(ff.NodeTypes.SQL_QUERY)) is str
+    assert type(_literal(NodeType.SQL_QUERY)) is str
     assert _literal("equals") == "equals"
     assert _literal(3) == 3
 

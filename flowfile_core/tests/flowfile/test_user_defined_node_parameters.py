@@ -5,6 +5,8 @@ The in-core path builds its instance from the settings as they are when the node
 then turns the substituted text into a number or a boolean.
 """
 
+from copy import deepcopy
+
 import polars as pl
 import pytest
 
@@ -50,15 +52,39 @@ class ParamProbeNode(CustomNodeBase):
 SETTINGS = {"main": {"column": "${col}", "factor": "${factor}", "upper": "${upper}"}}
 
 
+class ParamHookNode(CustomNodeBase):
+    node_name: str = "Param Hook Node"
+    node_category: str = "Testing"
+    settings_schema: NodeSettings = NodeSettings(
+        main=Section(title="Main", output=TextInput(label="Output column", default="result")),
+    )
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0].with_columns(pl.col("amount").alias(self.settings_schema.main.output.value))
+
+    def predict_output_schema(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0].with_columns(pl.lit(0).alias(self.settings_schema.main.output.value))
+
+
+HOOK_SETTINGS = {"main": {"output": "${out}"}}
+
+
 @pytest.fixture(autouse=True)
 def registered_probe():
     SEEN.clear()
     node_store.add_to_custom_node_store(ParamProbeNode)
+    node_store.add_to_custom_node_store(ParamHookNode)
     yield
     node_store.remove_from_custom_node_store(ParamProbeNode().item)
+    node_store.remove_from_custom_node_store(ParamHookNode().item)
 
 
-def _graph(flow_id: int, parameters: list[FlowParameter]) -> FlowGraph:
+def _graph(
+    flow_id: int,
+    parameters: list[FlowParameter],
+    node_class: type[CustomNodeBase] = ParamProbeNode,
+    settings: dict = SETTINGS,
+) -> FlowGraph:
     handler = FlowfileHandler()
     handler.register_flow(
         schemas.FlowSettings(
@@ -77,14 +103,14 @@ def _graph(flow_id: int, parameters: list[FlowParameter]) -> FlowGraph:
             ),
         )
     )
-    node_type = ParamProbeNode().item
+    node_type = node_class().item
     graph.add_node_promise(
         input_schema.NodePromise(flow_id=flow_id, node_id=2, node_type=node_type, is_user_defined=True)
     )
     graph.add_user_defined_node(
-        custom_node=ParamProbeNode.from_settings(SETTINGS),
+        custom_node=node_class.from_settings(settings),
         user_defined_node_settings=input_schema.UserDefinedNode(
-            flow_id=flow_id, node_id=2, settings=SETTINGS, is_user_defined=True, depending_on_ids=[1]
+            flow_id=flow_id, node_id=2, settings=deepcopy(settings), is_user_defined=True, depending_on_ids=[1]
         ),
     )
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
@@ -134,6 +160,15 @@ def test_typed_parameters_and_a_changed_value_are_read_when_the_node_runs():
     assert SEEN[-1] == ("name", 4.0, False)
     assert out["scaled"].to_list() == [8.0, 20.0]
     assert out["name"].to_list() == ["ann", "bob"]
+
+
+def test_the_schema_hook_predicts_with_parameters_resolved():
+    graph = _graph(8103, [FlowParameter(name="out", default_value="total")], ParamHookNode, HOOK_SETTINGS)
+    node = graph.get_node(2)
+
+    assert [column.column_name for column in node.get_predicted_schema()] == ["name", "amount", "total"]
+    assert node.setting_input.settings == HOOK_SETTINGS
+    assert _run(graph).columns == ["name", "amount", "total"]
 
 
 @pytest.mark.parametrize(

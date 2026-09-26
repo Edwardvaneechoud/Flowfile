@@ -2,7 +2,7 @@
 
 Every string-choice parameter is typed with a ``Literal`` (IDE completion) and also accepts
 the matching ``(str, Enum)`` member; ``_literal`` normalises either form before a settings
-model is built. ``NodeType`` and ``NodeTypes`` are written out by hand because the stub
+model is built. ``NodeTypeLiteral`` and ``NodeType`` are written out by hand because the stub
 generator copies source text; tests pin every set against core so they cannot drift.
 """
 
@@ -38,7 +38,7 @@ class ParamType(str, Enum):
     ENUM = "enum"
 
 
-class NodeTypes(str, Enum):
+class NodeType(str, Enum):
     """Every built-in node type the canvas can place."""
 
     MANUAL_INPUT = "manual_input"
@@ -92,7 +92,7 @@ class NodeTypes(str, Enum):
     RUN_FLOW = "run_flow"
 
 
-NodeType: TypeAlias = Literal[
+NodeTypeLiteral: TypeAlias = Literal[
     "manual_input",
     "filter",
     "formula",

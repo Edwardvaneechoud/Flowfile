@@ -112,6 +112,11 @@ def _sql_frame(
 
     if not isinstance(query, str) or not query.strip():
         raise NativeNodeError("SQL query is empty")
+    if description is not None and not isinstance(description, str):
+        raise NativeNodeError(
+            f"SQL description must be a string, got {type(description).__name__}; it labels the node, "
+            "so pass a frame positionally or under another table name"
+        )
     frames = [*positional, *named.values()]
     for frame in frames:
         if not isinstance(frame, FlowFrame):

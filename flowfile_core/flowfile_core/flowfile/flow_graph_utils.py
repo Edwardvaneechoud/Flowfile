@@ -372,7 +372,7 @@ def _incoming_edges(target: FlowNode) -> list[tuple[FlowNode, str, str]]:
 def _carry_node_outputs(
     flow_graphs: tuple[FlowGraph, ...], combined_graph: FlowGraph, node_id_mapping: dict[tuple[int, int], int]
 ) -> None:
-    """Copy each node's outputs (a deferred seed, or a built or run result) onto its rebuilt node.
+    """Copy each node's outputs (a deferred seed, or a built or run result) and deferred markers onto its rebuilt node.
 
     Runs once the edges exist. A rebuilt node starts without a result, so the next build step on
     the merged graph would otherwise execute it: a deferred node (a subflow run, a kernel script,
@@ -391,3 +391,4 @@ def _carry_node_outputs(
                 node.node_schema.result_schema = source_node.node_schema.result_schema
                 node.node_schema.predicted_schema = source_node.node_schema.predicted_schema
                 node.deferred_until_run = source_node.deferred_until_run
+                node.placed_deferred = source_node.placed_deferred

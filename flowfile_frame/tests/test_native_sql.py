@@ -225,6 +225,17 @@ def test_a_polars_frame_is_refused():
         ff.sql("select * from input_1", pl.LazyFrame(ORDERS))
 
 
+def test_a_frame_passed_as_description_raises_and_leaves_no_node():
+    orders = ff.from_dict(ORDERS)
+    node_count = len(orders.flow_graph.nodes)
+    with pytest.raises(ff.NativeNodeError, match="description must be a string, got FlowFrame") as raised:
+        ff.sql("select * from orders", orders=orders, description=orders)
+    assert len(str(raised.value)) < 200
+    with pytest.raises(ff.NativeNodeError, match="description must be a string, got int"):
+        orders.sql("select * from self", description=1)
+    assert len(orders.flow_graph.nodes) == node_count
+
+
 @pytest.mark.parametrize("name", ["my table", "1orders", "orders;drop", ""])
 def test_a_table_name_that_is_no_identifier_raises(name):
     orders = ff.from_dict(ORDERS)

@@ -18,15 +18,21 @@ from flowfile_core.flowfile.node_designer.parsing import NodeSourceError, scan_n
 from flowfile_core.flowfile.node_designer.state import NodeManifest
 from flowfile_core.flowfile.user_defined.kernel_codegen import _verbatim
 from flowfile_core.flowfile.user_defined.registry import (
+    CustomNodeExecError,
     LoadedNode,
     compute_node_key,
     missing_custom_node_error,
     registry,
 )
+from flowfile_core.schemas.schemas import NodeTemplate
 from flowfile_frame.custom_node import _INSTALLED_CLASSES, CustomNodeFactory
 from flowfile_frame.native import NativeNodeError
 from flowfile_frame.python_script import _global_names
 from shared.node_designer.custom_node import CustomNodeBase, NodeSettings, node_key_for
+
+
+class CustomNodeLookupError(NativeNodeError, AttributeError):
+    """An ``fl.custom_nodes.<name>`` lookup of a node that is unknown or does not load; ``hasattr`` sees ``False``."""
 
 
 class CustomNodeInfo(NamedTuple):
@@ -105,6 +111,26 @@ def _bound_names(stmt: ast.Import | ast.ImportFrom) -> set[str]:
     return names
 
 
+def _read_names(tree: ast.AST) -> set[str]:
+    """Names ``tree`` reads (every ``ast.Name``, so also each attribute chain's root) minus those it binds.
+
+    Annotations count, so a name read only in one survives ``from __future__ import annotations``.
+    """
+    read, bound = set(), set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            (read if isinstance(node.ctx, ast.Load) else bound).add(node.id)
+        elif isinstance(node, ast.arg):
+            bound.add(node.arg)
+        elif isinstance(node, ast.alias):
+            bound.add(node.asname or node.name.split(".")[0])
+        elif isinstance(getattr(node, "name", None), str):
+            bound.add(node.name)
+        elif isinstance(getattr(node, "rest", None), str):
+            bound.add(node.rest)
+    return read - bound
+
+
 def _class_file_source(cls: type[CustomNodeBase]) -> str:
     """A node file for ``cls``: the class, the ``NodeSettings`` classes it uses and the imports they need.
 
@@ -139,7 +165,7 @@ def _class_file_source(cls: type[CustomNodeBase]) -> str:
             continue
         carried[name] = classes[name]
         code = compile(prefix + _verbatim(classes[name], lines), f"<{cls.__name__} source>", "exec")
-        for used in _global_names(code):
+        for used in sorted(_read_names(classes[name]).union(_global_names(code))):
             if used in carried or hasattr(builtins, used) or (used.startswith("__") and used.endswith("__")):
                 continue
             value = namespace.get(used)
@@ -158,6 +184,32 @@ def _class_file_source(cls: type[CustomNodeBase]) -> str:
     header = futures + [_verbatim(stmt, lines) for stmt in kept]
     body = [_verbatim(stmt, lines) for stmt in sorted(carried.values(), key=lambda stmt: stmt.lineno)]
     return "\n".join(header) + "\n\n\n" + "\n\n\n".join(body) + "\n"
+
+
+def _load_error(path: Path) -> str | None:
+    """Why the node file at ``path`` does not load the way the designer places it (scan, then exec), else ``None``."""
+    entry = registry.load_file(path)
+    if entry.is_broken:
+        return entry.error
+    try:
+        registry.ensure_class(entry)
+    except CustomNodeExecError as exc:
+        return str(exc)
+    return None
+
+
+def _restore(path: Path, previous: bytes | None, template: NodeTemplate | None, listed: bool) -> None:
+    """Put back what ``path`` held before a failed install: the previous file, else no file and the key's template."""
+    if previous is not None:
+        path.write_bytes(previous)
+        registry.load_file(path)
+        return
+    registry.remove_file(path)
+    path.unlink(missing_ok=True)
+    if listed:
+        node_store.register_custom_node(template)
+    elif template is not None:
+        node_store.node_dict[template.item] = template
 
 
 class CustomNodes:
@@ -181,7 +233,9 @@ class CustomNodes:
     def install(self, node: type[CustomNodeBase] | str | os.PathLike[str], *, overwrite: bool = False) -> Path:
         """Write a node class or ``.py`` file to the user-defined nodes directory as ``<key>.py`` and register it.
 
-        A running designer shows it after Settings → Extensions → Custom Nodes → Rescan.
+        The written file must load the way the designer loads it (scanned, then executed); one that
+        does not is removed again, and a file it replaced is put back. A running designer shows it
+        after Settings → Extensions → Custom Nodes → Rescan.
         """
         node_class = None
         if isinstance(node, type) and issubclass(node, CustomNodeBase):
@@ -210,14 +264,26 @@ class CustomNodes:
         target = registry.directory / f"{key}.py"
         holder = registry.get(key)
         if holder is not None and not holder.is_broken and holder.file_path.resolve() != target.resolve():
-            raise NativeNodeError(f"Custom node {key!r} is already installed from {holder.file_path}")
+            if holder.file_path.exists():
+                raise NativeNodeError(
+                    f"Custom node {key!r} is already installed from {holder.file_path}; place that node by its "
+                    f"key, fl.custom_nodes[{key!r}], or delete that file and install again"
+                )
+            registry.remove_file(holder.file_path)
         if target.exists() and not overwrite:
             raise NativeNodeError(f"{target} already exists; pass overwrite=True to replace it")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(source, encoding="utf-8")
-        entry = registry.load_file(target)
-        if entry.is_broken:
-            raise NativeNodeError(f"Wrote {target}, but it does not load: {entry.error}")
+        template = node_store.node_dict.get(key)
+        listed = any(existing.item == key for existing in node_store.nodes_list)
+        try:
+            previous = target.read_bytes() if target.is_file() else None
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(source, encoding="utf-8")
+        except OSError as exc:
+            raise NativeNodeError(f"Cannot write custom node file {target}: {exc}") from exc
+        error = _load_error(target)
+        if error is not None:
+            _restore(target, previous, template, listed)
+            raise NativeNodeError(f"Cannot install custom node {label}: {target.name} does not load: {error}")
         node_store.CUSTOM_NODE_STORE.pop(key, None)
         if node_class is None:
             _INSTALLED_CLASSES.pop(key, None)
@@ -226,9 +292,12 @@ class CustomNodes:
         return target
 
     def __getattr__(self, name: str) -> CustomNodeFactory:
-        if name.startswith("_") or (name not in self and registry.get(node_key_for(name)) is None):
-            raise AttributeError(missing_custom_node_error(node_key_for(name)))
-        return self.get(name)
+        if name.startswith("_"):
+            raise CustomNodeLookupError(missing_custom_node_error(node_key_for(name)))
+        try:
+            return self.get(name)
+        except NativeNodeError as exc:
+            raise CustomNodeLookupError(str(exc)) from exc
 
     def __getitem__(self, name: str) -> CustomNodeFactory:
         return self.get(name)

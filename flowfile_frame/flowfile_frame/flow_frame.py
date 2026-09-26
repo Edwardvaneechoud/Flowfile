@@ -20,7 +20,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.formula_dependencies import entries_are_independent
-from flowfile_core.flowfile.param_types import ParamValue
+from flowfile_core.flowfile.param_types import ParamValue, typed_parameter_values
 from flowfile_core.flowfile.parameter_resolver import resolve_expression_parameters
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.schemas import GroupColor
@@ -165,13 +165,17 @@ def _try_translate_flowfile_formulas(
         except Exception:
             logger.debug(
                 "eval failed for generated code %r (formula %r); falling back",
-                generated, formula, exc_info=True,
+                generated,
+                formula,
+                exc_info=True,
             )
             return None
         if not isinstance(expr, Expr):
             logger.debug(
                 "Generated code %r produced non-Expr %r (formula %r); falling back",
-                generated, type(expr), formula,
+                generated,
+                type(expr),
+                formula,
             )
             return None
         expressions.append(expr.alias(output_name))
@@ -1347,7 +1351,7 @@ class FlowFrame:
 
     def _param_values(self) -> dict[str, ParamValue]:
         """The flow's current parameter values, typed the way a node's ``_params_getter`` serves them."""
-        return {p.name: p.typed_default() for p in self.flow_graph.flow_settings.parameters or []}
+        return typed_parameter_values(self.flow_graph.flow_settings.parameters)
 
     def _collect_filter_exprs(self, predicates: tuple, constraints: dict) -> list[Expr]:
         """Normalise filter arguments (nested iterables, column-name strings, literals, kwargs) to Exprs."""
@@ -1831,16 +1835,21 @@ class FlowFrame:
         return self.write_csv(file, *args, separator=separator, encoding=encoding, description=description)
 
     def _refuse_polars_code_writer_if_deferred(self, method_name: str) -> None:
-        """Refuse the Polars-code writer fallback on a deferred frame.
+        """Refuse the Polars-code writer fallback on a deferred frame or below a gate.
 
         That node writes when it is built, which on a deferred frame means writing the zero-row
-        placeholder; only the native Output node waits for the flow run.
+        placeholder and below a gate means writing both exits; only the native Output node waits
+        for the flow run.
         """
-        if self._deferred:
+        if self._deferred or self._below_a_gate():
+            reason = (
+                "this frame only holds placeholder rows until the flow runs"
+                if self._deferred
+                else "this frame is below a gate, so it would write both of the gate's exits"
+            )
             raise NativeNodeError(
                 f"{method_name} with extra writer options builds a Polars-code node that writes immediately, "
-                "but this frame only holds placeholder rows until the flow runs. Drop the extra options to use "
-                "a native Output node, or collect the frame first."
+                f"but {reason}. Drop the extra options to use a native Output node, or collect the frame first."
             )
 
     def write_parquet(
@@ -2086,9 +2095,7 @@ class FlowFrame:
             Self for method chaining (new FlowFrame pointing to the output node).
         """
         table_settings = (
-            input_schema.OutputNdjsonTable(compression=compression)
-            if compression
-            else input_schema.OutputNdjsonTable()
+            input_schema.OutputNdjsonTable(compression=compression) if compression else input_schema.OutputNdjsonTable()
         )
         return self._write_simple_file(
             path,
@@ -2704,8 +2711,8 @@ class FlowFrame:
     def collect(self, *args, **kwargs) -> pl.DataFrame:
         """Collect lazy data into memory.
 
-        On a deferred frame this runs the whole flow first (see :meth:`_materialised_lazyframe`), and so
-        does a frame below a gate, because only a run decides which gate exit is live.
+        On a deferred frame this runs the frame's lineage first (see :meth:`_materialised_lazyframe`), and
+        so does a frame below a gate, because only a run decides which gate exit is live.
         """
         if self._deferred or self._below_a_gate():
             return self._materialised_lazyframe().collect(*args, **kwargs)
@@ -2720,20 +2727,20 @@ class FlowFrame:
     def _materialised_lazyframe(self) -> pl.LazyFrame:
         """The LazyFrame to materialise: ``self.data``, or a deferred frame's real output.
 
-        A deferred frame runs ``flow_graph.run_graph()`` (every output and writer node of the
-        graph runs with it) and is judged on this node and its ancestors only, so a failure on
-        an unrelated branch does not fail it. An ancestor without a run result was skipped by the
-        planner (not configured, or below a failed node) and fails it too; a deliberately skipped
-        node keeps a result. When a gate routed this frame away (the node was deliberately
-        skipped, or this is a gate's dead exit) the zero-row typed frame is returned. A frame
-        below a gate takes the same path, because its build-time plan passes through both exits.
+        A deferred frame runs ``flow_graph.run_graph()`` on this node and its ancestors only, so
+        writers, subflows and sources on other branches do not run and a failure there does not
+        fail it. An ancestor without a run result was skipped by the planner (not configured, or
+        below a failed node) and fails it too; a deliberately skipped node keeps a result. When a
+        gate routed this frame away (the node was deliberately skipped, or this is a gate's dead
+        exit) the zero-row typed frame is returned. A frame below a gate takes the same path,
+        because its build-time plan passes through both exits.
         """
         if not (self._deferred or self._below_a_gate()):
             return self.data
-        run_info = self.flow_graph.run_graph()
-        results = {result.node_id: result for result in run_info.node_step_result}
         node = self.flow_graph.get_node(self.node_id)
         lineage = ancestors(node)
+        run_info = self.flow_graph.run_graph(node_ids=lineage.keys())
+        results = {result.node_id: result for result in run_info.node_step_result}
         problems = [
             f"  node {node_id}: {results[node_id].error}"
             for node_id in lineage
@@ -2748,7 +2755,7 @@ class FlowFrame:
             errors = "\n".join(problems)
             raise NativeNodeError(f"Running the flow failed for node {self.node_id}:\n{errors}")
         own_result = results.get(self.node_id)
-        closed_handles = self.flow_graph._last_closed_gate_handles.get(self.node_id, ())
+        closed_handles = self.flow_graph.last_closed_gate_handles.get(self.node_id, ())
         if (own_result is not None and own_result.skipped) or self.output_handle in closed_handles:
             # self.data holds real rows when the frame was built after an earlier run; the routing wins.
             return self.data.clear()
@@ -3681,9 +3688,7 @@ class FlowFrame:
             # the upstream translator can't handle a given formula.
             # Only independent formulas may take the translated route: it re-enters
             # with_columns, whose expression path assumes parallel semantics.
-            independent = entries_are_independent(
-                list(zip(output_column_names, flowfile_formulas, strict=False))
-            )
+            independent = entries_are_independent(list(zip(output_column_names, flowfile_formulas, strict=False)))
             if output_column_datatypes is None and independent:
                 translated = _try_translate_flowfile_formulas(flowfile_formulas, output_column_names)
                 if translated is not None:

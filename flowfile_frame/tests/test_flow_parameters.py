@@ -242,6 +242,24 @@ def test_polars_code_references_sit_inside_a_string_literal():
         ff.Node("polars_code", raw, settings={"polars_code_input": {"polars_code": bare}})
 
 
+def test_string_parameter_with_quotes_stays_a_string_in_polars_code():
+    child, raw = _orders()
+    label = ff.add_flow_parameter(child, ff.Parameter("label", default='O\'Brien said "hi"'))
+    labelled = raw.with_columns(ff.lit(label).str.slice(0).alias("label"))
+    node = core_node(labelled)
+    assert node.node_type == "polars_code"
+    assert 'pl.lit("${label}")' in node.setting_input.polars_code_input.polars_code
+    assert labelled.collect()["label"].to_list() == ['O\'Brien said "hi"'] * 4
+
+    injected = 'x") + pl.lit("y\nC:\\new "quoted"'
+    ff.set_flow_parameter(child, label, injected)
+    assert child.run_graph().success
+    result = node.get_resulting_data().data_frame
+    result = result.collect() if isinstance(result, pl.LazyFrame) else result
+    assert result["label"].to_list() == [injected] * 4
+    assert 'pl.lit("${label}")' in node.setting_input.polars_code_input.polars_code
+
+
 def test_save_and_open_keeps_the_reference():
     child, raw = _orders()
     ff.add_flow_parameter(child, _min_amount())

@@ -5,6 +5,7 @@ exit's downstream is deliberately skipped (``NodeResult.skipped``), the gate its
 the run stays green with every node accounted for.
 """
 
+import os
 from pathlib import Path
 
 import polars as pl
@@ -167,6 +168,27 @@ def test_formula_gate_without_control_probes_its_data(formula, is_open):
     assert gate.is_open is is_open
 
 
+@pytest.mark.parametrize("condition, is_open", [(ff.col("a") > 2, True), (ff.col("a") > 5, False)])
+def test_formula_gate_takes_an_expression(condition, is_open):
+    gate = ff.Gate(ff.from_dict(DATA), condition)
+    settings = gate.node.setting_input.gate_input
+    assert (settings.condition_source, settings.formula) == ("formula", condition._ff_repr)
+    assert gate.is_open is is_open
+    assert gate.then.collect().height == (3 if is_open else 0)
+
+
+@pytest.mark.parametrize(
+    "condition, match",
+    [(ff.col("a").rolling_mean(2) > 1, "no flowfile formula form"), (5, "got int")],
+    ids=["expression-without-formula", "not-a-condition"],
+)
+def test_formula_gate_refuses_a_condition_without_formula_text(condition, match):
+    source = ff.from_dict(DATA)
+    with pytest.raises(ff.NativeNodeError, match=match):
+        ff.Gate(source, condition)
+    assert [n.node_id for n in source.flow_graph.nodes] == [source.node_id]
+
+
 def test_is_open_follows_parameter_changes():
     source, gate = _env_gate("prod")
     assert gate.is_open is True
@@ -299,6 +321,44 @@ def test_to_flow_output_below_a_gate_runs_on_the_live_side_only(env):
     assert results[sinks[live].node_id].skipped is False
     assert results[sinks[dead].node_id].skipped is True
     assert sinks[live].deferred_until_run is False
+
+
+def test_collect_below_a_gate_leaves_an_eager_writer_alone(tmp_path):
+    source, gate = _env_gate("prod")
+    eager_path, live_path = tmp_path / "eager.csv", tmp_path / "live.csv"
+    source.write_csv(eager_path)
+    os.utime(eager_path, ns=(1_000_000_000, 1_000_000_000))
+    written_at_build = (eager_path.stat().st_size, eager_path.stat().st_mtime_ns)
+    live_written = gate.then.write_csv(live_path)
+
+    assert_frame_equal(gate.then.collect(), pl.DataFrame(DATA))
+    assert not live_path.exists()  # its writer is not in the collected lineage
+    assert_frame_equal(live_written.collect(), pl.DataFrame(DATA))
+
+    assert_frame_equal(pl.read_csv(live_path), pl.DataFrame(DATA))
+    assert (eager_path.stat().st_size, eager_path.stat().st_mtime_ns) == written_at_build
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        lambda frame, path: frame.write_csv(path / "x.csv", quote_style="always"),
+        lambda frame, path: frame.write_parquet(path / "x.parquet", statistics=True),
+        lambda frame, path: frame.sink_parquet(str(path / "x.parquet")),
+        lambda frame, path: frame.inspect(),
+    ],
+    ids=["write_csv-fallback", "write_parquet-fallback", "sink_parquet", "inspect"],
+)
+def test_build_time_writers_below_a_gate_refuse(write, tmp_path):
+    _, gate = _env_gate("dev")
+    graph = gate.flow_graph
+    node_count = len(graph.nodes)
+
+    with pytest.raises(ff.NativeNodeError, match="below a gate"):
+        write(gate.otherwise, tmp_path)
+
+    assert len(graph.nodes) == node_count
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_node_output_below_a_gate_with_deferred_false_writes_at_build(tmp_path):

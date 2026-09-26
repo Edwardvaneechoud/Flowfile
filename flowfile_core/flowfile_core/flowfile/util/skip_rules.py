@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+from flowfile_core.flowfile.param_types import typed_parameter_values
 from flowfile_core.flowfile.parameter_resolver import resolve_parameters
 
 if TYPE_CHECKING:
@@ -71,7 +72,7 @@ def parameter_gate_is_open(gate_input: "GateInput", parameters: "list[FlowParame
     Raises ``ValueError`` for an unknown parameter or a value that cannot be coerced.
     """
     if "${" in gate_input.value:
-        typed = {p.name: p.typed_default() for p in parameters}
+        typed = typed_parameter_values(parameters)
         gate_input = gate_input.model_copy(update={"value": resolve_parameters(gate_input.value, typed)})
     return gate_input.evaluate({p.name: p for p in parameters})
 

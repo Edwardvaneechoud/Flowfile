@@ -225,6 +225,22 @@ def test_head_limit_unique_select_and_count_stay_native():
     assert core_node(frame.select(ff.len().alias("number_of_records"))).node_type == "record_count"
 
 
+@pytest.mark.parametrize(
+    "call",
+    [lambda f, p: f.tail(p), lambda f, p: f.shift(n=p), lambda f, p: f.fill_null([p])],
+    ids=["positional", "keyword", "nested"],
+)
+def test_injected_lazyframe_method_refuses_a_parameter_argument(call):
+    frame = _frame()
+    limit = ff.add_flow_parameter(frame, ff.Parameter("limit", default=2, type="integer"))
+    node_count = len(frame.flow_graph.nodes)
+
+    with pytest.raises(ff.NativeNodeError, match=r"takes no fl.Parameter as an argument; pass a plain value"):
+        call(frame, limit)
+
+    assert len(frame.flow_graph.nodes) == node_count
+
+
 def test_polars_code_nodes_get_descriptive_labels():
     frame = _frame()
     shifted = frame.with_columns([col("a").shift(1).alias("prev"), col("a").shift(-1).alias("next")])

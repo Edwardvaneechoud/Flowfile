@@ -6,11 +6,13 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
+from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
-from flowfile_core.flowfile.param_types import FlowParameter
+from flowfile_core.flowfile.param_types import FlowParameter, typed_parameter_values
 from flowfile_core.flowfile.util.skip_rules import parameter_gate_is_open
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_frame.enums import GateOperator, GateOperatorLiteral, _literal
+from flowfile_frame.expr import Expr
 from flowfile_frame.native import NativeNode, NativeNodeError
 from flowfile_frame.parameters import (
     Parameter,
@@ -32,6 +34,26 @@ def _gate_value(value: Any, operator: str) -> str:
     return _as_parameter_string(value)
 
 
+def _formula_text(formula: str | Expr | None, flow_graph: FlowGraph) -> str | None:
+    """A formula condition as text: a string as given, an expression through its formula form (as ``filter``)."""
+    if formula is None or isinstance(formula, str):
+        return formula
+    if not isinstance(formula, Expr):
+        raise NativeNodeError(
+            f"Gate formula takes a flowfile formula string or an expression such as fl.col('a') > 1, "
+            f"got {type(formula).__name__}"
+        )
+    from flowfile_frame.flow_frame import _filter_exprs_to_formula
+
+    text = _filter_exprs_to_formula([formula], typed_parameter_values(flow_graph.flow_settings.parameters))
+    if text is None:
+        raise NativeNodeError(
+            "This Gate condition has no flowfile formula form; build it from comparisons, and/or/not, is_in and "
+            'is_null on columns, or pass the formula as a string such as "[a] > 1"'
+        )
+    return text
+
+
 def _parameter_gate_is_open(gate_input: transform_schema.GateInput, parameters: list[FlowParameter]) -> bool:
     """Core's run-time evaluation (``parameter_gate_is_open``), its ``ValueError`` as ``NativeNodeError``."""
     try:
@@ -43,8 +65,9 @@ def _parameter_gate_is_open(gate_input: transform_schema.GateInput, parameters: 
 class Gate(NativeNode):
     """A gate node: its data input flows through, and its downstream only runs when the condition holds.
 
-    Give exactly one condition: a ``formula`` (a flowfile formula that opens the gate when at
-    least one row of ``control``, else of ``frame``, matches) or a flow ``parameter`` compared
+    Give exactly one condition: a ``formula`` (a flowfile formula, or an expression with a formula
+    form such as ``fl.col("a") > 1``, that opens the gate when at least one row of ``control``,
+    else of ``frame``, matches) or a flow ``parameter`` compared
     with ``operator`` and ``value`` (declare it first with ``fl.add_flow_parameter``). With
     ``else_output`` (the default) the gate routes: ``.then`` is live when the condition holds,
     ``.otherwise`` when it does not. Both exits are pass-through frames while building;
@@ -54,7 +77,7 @@ class Gate(NativeNode):
     def __init__(
         self,
         frame: FlowFrame,
-        formula: str | None = None,
+        formula: str | Expr | None = None,
         *,
         parameter: str | Parameter | None = None,
         operator: GateOperatorLiteral | GateOperator = "equals",
@@ -65,6 +88,7 @@ class Gate(NativeNode):
     ) -> None:
         if (formula is None) == (parameter is None):
             raise NativeNodeError("Gate takes exactly one condition: a formula, or parameter=... with operator/value")
+        formula = _formula_text(formula, frame.flow_graph)
         if formula is not None and not formula.strip():
             raise NativeNodeError("Gate formula is empty")
         refuse_parameter_column_in_formula(formula, "Gate formula")
@@ -137,7 +161,7 @@ class Gate(NativeNode):
                 f"Gate {self.node_id} probes a frame that only holds placeholder rows until the flow runs; "
                 "run the graph (collect a gate exit) to see where it routed"
             )
-        typed = {p.name: p.typed_default() for p in parameters}
+        typed = typed_parameter_values(parameters)
         try:
             return not self.flow_graph._formula_gate_is_closed(self.node, typed or None)
         except Exception as exc:

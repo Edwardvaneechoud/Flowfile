@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import os
 import re
 import sys
 from pathlib import Path
@@ -94,7 +93,7 @@ def _render_class(cls: ast.ClassDef, indent: str = "") -> list[str]:
 
     # Methods, properties, nested classes.
     for stmt in cls.body:
-        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef):
             if not _is_public(stmt.name):
                 continue
             if _is_property(stmt.decorator_list):
@@ -150,14 +149,14 @@ def _collect_imports(tree: ast.Module) -> tuple[list[str], set[str]]:
                 in_scope.add(alias.asname or alias.name.split(".")[0])
 
     for node in tree.body:
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
+        if isinstance(node, ast.Import | ast.ImportFrom):
             _add(node)
         elif isinstance(node, ast.If):
             # `if TYPE_CHECKING:` block — flatten the imports it guards.
             cond = _unparse(node.test).strip()
             if cond == "TYPE_CHECKING" or cond.endswith(".TYPE_CHECKING"):
                 for child in node.body:
-                    if isinstance(child, (ast.Import, ast.ImportFrom)):
+                    if isinstance(child, ast.Import | ast.ImportFrom):
                         _add(child)
     return out, in_scope
 
@@ -201,20 +200,14 @@ def _filter_unused_imports(imports: list[str], used: set[str]) -> list[str]:
             out.append(line)
             continue
         if isinstance(node, ast.ImportFrom):
-            kept = [
-                a for a in node.names
-                if (a.asname or a.name) in used or a.name == "*"
-            ]
+            kept = [a for a in node.names if (a.asname or a.name) in used or a.name == "*"]
             if not kept:
                 continue
             new_node = ast.ImportFrom(module=node.module, names=kept, level=node.level)
             ast.copy_location(new_node, node)
             out.append(_unparse(new_node))
         elif isinstance(node, ast.Import):
-            kept = [
-                a for a in node.names
-                if (a.asname or a.name.split(".")[0]) in used
-            ]
+            kept = [a for a in node.names if (a.asname or a.name.split(".")[0]) in used]
             if not kept:
                 continue
             new_node = ast.Import(names=kept)
@@ -241,9 +234,7 @@ def _topo_sort_classes(class_nodes: list[ast.ClassDef]) -> list[ast.ClassDef]:
         progress = False
         leftover: list[ast.ClassDef] = []
         for cls in remaining:
-            local_bases = {
-                b.id for b in cls.bases if isinstance(b, ast.Name) and b.id in by_name
-            }
+            local_bases = {b.id for b in cls.bases if isinstance(b, ast.Name) and b.id in by_name}
             if local_bases.issubset(placed):
                 ordered.append(cls)
                 placed.add(cls.name)
@@ -281,11 +272,7 @@ def _render_module_assigns(tree: ast.Module) -> list[str]:
                 out.append(f"{name}: TypeAlias = {_unparse(stmt.value)}")
             else:
                 out.append(f"{name}: {annotation_src}")
-        elif (
-            isinstance(stmt, ast.Assign)
-            and len(stmt.targets) == 1
-            and isinstance(stmt.targets[0], ast.Name)
-        ):
+        elif isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
             target = stmt.targets[0].id
             if not _is_public(target):
                 continue
@@ -324,6 +311,30 @@ def _sibling_submodule_reexports(init_path: Path) -> list[str]:
         elif child.is_dir() and (child / "__init__.py").exists():
             siblings.append(name)
     return [f"from . import {n} as {n}" for n in siblings]
+
+
+def _drop_private_names(imports: list[str]) -> list[str]:
+    """Drop the ``_``-prefixed names an ``__init__`` imports for a side effect; they are no public re-export."""
+    out: list[str] = []
+    for line in imports:
+        try:
+            node = ast.parse(line).body[0]
+        except (SyntaxError, IndexError):
+            out.append(line)
+            continue
+        if not isinstance(node, ast.Import | ast.ImportFrom):
+            out.append(line)
+            continue
+        kept = [a for a in node.names if a.name == "*" or not (a.asname or a.name).split(".")[0].startswith("_")]
+        if not kept:
+            continue
+        if isinstance(node, ast.ImportFrom):
+            new_node = ast.ImportFrom(module=node.module, names=kept, level=node.level)
+        else:
+            new_node = ast.Import(names=kept)
+        ast.copy_location(new_node, node)
+        out.append(_unparse(new_node))
+    return out
 
 
 def _rewrite_init_imports_as_reexports(imports: list[str]) -> list[str]:
@@ -379,7 +390,7 @@ def generate_stub(src_path: Path, module_name: str) -> Path:
 
     imports, in_scope = _collect_imports(tree)
     if is_init:
-        imports = _rewrite_init_imports_as_reexports(imports)
+        imports = _rewrite_init_imports_as_reexports(_drop_private_names(imports))
         # When a package has a ``.pyi`` stub, type checkers and IDEs (notably
         # PyCharm) treat that file as the authoritative namespace and stop
         # auto-discovering sibling submodules. ``import flowfile_frame`` then
@@ -408,10 +419,7 @@ def generate_stub(src_path: Path, module_name: str) -> Path:
 
     classes = [n for n in tree.body if isinstance(n, ast.ClassDef) and _is_public(n.name)]
     classes = _topo_sort_classes(classes)
-    functions = [
-        n for n in tree.body
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_public(n.name)
-    ]
+    functions = [n for n in tree.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and _is_public(n.name)]
     assigns = _render_module_assigns(tree)
 
     # Render the body first so we can prune imports the body doesn't reference.
@@ -429,9 +437,9 @@ def generate_stub(src_path: Path, module_name: str) -> Path:
     else:
         kept_imports = _filter_unused_imports(imports, used)
 
-    needs_any = bool(body_lines) and "Any" in used and "Any" not in {
-        n for line in kept_imports for n in _imported_names(line)
-    }
+    needs_any = (
+        bool(body_lines) and "Any" in used and "Any" not in {n for line in kept_imports for n in _imported_names(line)}
+    )
 
     header = [
         f"# Auto-generated stub for {module_name} — do not edit.",
@@ -464,9 +472,7 @@ def generate_stub(src_path: Path, module_name: str) -> Path:
     # Belt-and-suspenders.
     if is_init:
         exported_names = sorted(
-            {
-                n for line in kept_imports for n in _imported_names(line)
-            }
+            {n for line in kept_imports for n in _imported_names(line)}
             | {a.split(":", 1)[0].split(" =", 1)[0].strip() for a in assigns}
         )
         if exported_names:

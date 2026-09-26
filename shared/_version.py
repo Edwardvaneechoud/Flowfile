@@ -1,6 +1,6 @@
 """Flowfile version, kept in sync with pyproject by tools/bump_version.py (CI-guarded)."""
 
-__version__ = "0.20.0"
+__version__ = "0.21.0"
 
 
 def get_version() -> str:

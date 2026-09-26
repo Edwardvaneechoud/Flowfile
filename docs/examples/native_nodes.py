@@ -1,4 +1,4 @@
-"""Native node classes: a gate diamond, a subflow call, scripts, a custom node and a SQL node."""
+"""Native node classes: a gate diamond, a subflow call, scripts, a custom node and a node placed by type."""
 
 # --8<-- [start:imports]
 import polars as pl
@@ -203,20 +203,13 @@ assert people.flow_graph.get_node(by_parameter.node_id).get_resulting_data().col
     "bob",
 ]
 
-# --8<-- [start:sql]
-sales = ff.from_dict({"id": [1, 2, 3], "amount": [120.0, 40.0, 900.0]})
-customers = ff.from_dict({"id": [1, 3], "name": ["Ann", "Cy"]})
-joined = ff.Node(
-    "sql_query",
-    sales,
-    customers,
-    settings={
-        "sql_query_input": {
-            "sql_code": "select c.name, s.amount from input_1 s join input_2 c on s.id = c.id order by s.id"
-        }
-    },
-).output
-result = joined.collect()
-# --8<-- [end:sql]
+# --8<-- [start:node]
+orders = ff.from_dict({"id": [1, 2, 3], "amount": [120.0, 40.0, 900.0]})
+response = ff.Node("api_response", orders, settings={"orientation": "records", "max_rows": 100})
+body = response.output.collect()
+# --8<-- [end:node]
 
-assert result.to_dicts() == [{"name": "Ann", "amount": 120.0}, {"name": "Cy", "amount": 900.0}]
+placed = response.flow_graph.get_node(response.node_id)
+assert placed.node_type == "api_response"
+assert (placed.setting_input.orientation, placed.setting_input.max_rows) == ("records", 100)
+assert body.to_dicts() == orders.collect().to_dicts()

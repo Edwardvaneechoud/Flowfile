@@ -8,9 +8,13 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
 from flowfile_frame.custom_node import CustomNodeFactory
+from flowfile_frame.native import NativeNodeError
 from shared.node_designer.custom_node import CustomNodeBase
 
 custom_nodes: CustomNodes
+
+class CustomNodeLookupError(NativeNodeError, AttributeError):
+    ...
 
 class CustomNodeInfo(NamedTuple):
     key: str

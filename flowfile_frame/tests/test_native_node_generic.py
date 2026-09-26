@@ -12,6 +12,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.node_designer import CustomNodeBase, NodeSettings, Section, TextInput
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import GraphicWalkerInput
+from flowfile_frame.enums import NodeType
 
 ORDERS = {"order_id": [1, 2, 3], "customer_id": [10, 20, 10], "amount": [5.0, 7.5, 2.5]}
 CUSTOMERS = {"customer_id": [10, 20], "name": ["Ann", "Bob"]}
@@ -29,7 +30,7 @@ def test_sql_query_over_two_inputs_on_different_graphs():
         "order by o.order_id"
     )
 
-    node = ff.Node(ff.NodeTypes.SQL_QUERY, orders, customers, settings={"sql_query_input": {"sql_code": sql}})
+    node = ff.Node(NodeType.SQL_QUERY, orders, customers, settings={"sql_query_input": {"sql_code": sql}})
 
     assert orders.flow_graph is customers.flow_graph is node.flow_graph
     core = node.node
@@ -102,11 +103,25 @@ def test_deferred_override_seeds_instead_of_running():
     assert node.node.deferred_until_run is False
 
 
-def test_deferred_false_for_a_writer_below_a_deferred_frame_raises():
+@pytest.mark.parametrize(
+    "node_type, settings",
+    [
+        ("api_response", {}),
+        ("record_count", {}),
+        ("polars_code", {"polars_code_input": {"polars_code": TEN_X}}),
+    ],
+)
+def test_deferred_false_on_a_deferred_input_raises(node_type, settings):
     orders = ff.from_dict(ORDERS)
     deferred = ff.Node("polars_code", orders, settings={"polars_code_input": {"polars_code": TEN_X}}, deferred=True)
-    with pytest.raises(ff.NativeNodeError, match="leave deferred unset"):
-        ff.Node("api_response", deferred.output, deferred=False)
+    graph = deferred.flow_graph
+    node_count = len(graph.nodes)
+
+    with pytest.raises(ff.NativeNodeError, match="placeholder rows until the flow runs; leave deferred unset"):
+        ff.Node(node_type, deferred.output, settings=settings, deferred=False)
+
+    assert len(graph.nodes) == node_count
+    assert deferred.node.deferred_until_run is True
 
 
 @pytest.mark.parametrize(

@@ -24,9 +24,14 @@ _SAFE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def _assert_safe_name(name: str) -> None:
-    """Raise if *name* is not a safe filesystem identifier."""
+    """Raise if *name* is not a safe filesystem identifier or is the reserved ``"main"`` alias."""
     if not _SAFE_NAME_RE.match(name):
         raise ValueError(f"Unsafe input/output name rejected: {name!r}")
+    if name == "main":
+        raise ValueError(
+            "Input name 'main' is reserved: read_inputs()['main'] holds every input in wiring order. "
+            "Set a different node_reference on the upstream node."
+        )
 
 
 def clear_stale_parquets(dir_path: str) -> None:
@@ -78,8 +83,9 @@ def write_inputs_to_parquet(
 
     When *input_names* is provided, each table gets its own named key in the
     returned dict (e.g. ``{"orders": [...], "customers": [...]}``).  A
-    ``"main"`` key is always included pointing to **all** input files so that
-    ``flowfile_ctx.read_input("main")`` continues to work.
+    ``"main"`` key is always included pointing to **all** input files in wiring
+    order, so ``flowfile_ctx.read_inputs()["main"][i]`` is input *i*; no input
+    may itself be named ``"main"``.
 
     When *input_names* is ``None``, falls back to the original behaviour
     where every input is grouped under ``"main"``.
@@ -133,10 +139,7 @@ def write_inputs_to_parquet(
         result.setdefault(name, []).append(kernel_path)
         all_paths.append(kernel_path)
 
-    # Always include "main" as a backward-compatible alias for all inputs
-    if "main" not in result:
-        result["main"] = all_paths
-
+    result["main"] = all_paths
     return result
 
 

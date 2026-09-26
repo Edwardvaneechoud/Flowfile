@@ -5,6 +5,7 @@ row in the shared test DB), so every test uses its own catalog and flow names. T
 run_flow outputs are deferred: building never runs the child, ``collect()`` does.
 """
 
+import inspect
 import tempfile
 from pathlib import Path
 from uuid import uuid4
@@ -15,9 +16,12 @@ from polars.testing import assert_frame_equal
 
 import flowfile_frame as ff
 from flowfile_core.catalog import AmbiguousFlowError, FlowExistsError, FlowNotFoundError, NamespaceNotFoundError
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.models import FlowRegistration
 from flowfile_core.flowfile import subflow
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
+from flowfile_frame import run_flow
 from flowfile_frame.run_flow import FlowRef
 from shared.storage_config import storage
 
@@ -92,6 +96,20 @@ def test_flow_input_errors():
         ff.FlowInput("x", schema=ORDER_SCHEMA, sample={"id": [1]})
     with pytest.raises(ff.NativeNodeError, match="Invalid flow input name"):
         ff.FlowInput("1bad", schema=ORDER_SCHEMA)
+
+
+@pytest.mark.parametrize("name", ["params", "name", "inputs", "schema", "flow_graph"])
+def test_flow_input_refuses_a_run_flow_keyword_as_its_name(name):
+    graph = ff.create_flow_graph()
+    with pytest.raises(ff.NativeNodeError, match=f"is a RunFlow keyword.*e.g. '{name}_input'"):
+        ff.FlowInput(name, schema=ORDER_SCHEMA, flow_graph=graph)
+    assert len(graph.nodes) == 0
+
+
+def test_the_reserved_input_names_are_the_run_flow_keywords():
+    signature = inspect.signature(ff.RunFlow.__init__)
+    named = {p.name for p in signature.parameters.values() if p.kind is not inspect.Parameter.VAR_KEYWORD}
+    assert run_flow._RUN_FLOW_KEYWORDS == named
 
 
 def test_to_flow_output_returns_the_same_frame_and_places_a_sink():
@@ -185,8 +203,9 @@ def test_register_flow_refuses_a_flow_saved_elsewhere_unless_overwrite(schema):
     from flowfile_frame.catalog import register_flow_with_catalog
 
     registration_id = register_flow_with_catalog(designer, name=name, schema=schema, flow_path=str(elsewhere))
-    with pytest.raises(FlowExistsError):
+    with pytest.raises(ff.NativeNodeError, match="pass overwrite=True") as info:
         schema.register_flow(_clean_orders_child(), name=name)
+    assert isinstance(info.value.__cause__, FlowExistsError)
     replaced = schema.register_flow(_clean_orders_child(), name=name, overwrite=True)
     assert replaced.registration_id == registration_id
     assert Path(replaced.flow_path) == elsewhere
@@ -205,6 +224,8 @@ def test_flow_ref_by_name_uuid_id_and_namespace_forms(schema):
         "registration_id": ref.registration_id,
         "flow_uuid": ref.flow_uuid,
         "flow_path": ref.flow_path,
+        "namespace": full_name,
+        "name": ref.name,
     }
     with pytest.raises(AttributeError, match="immutable"):
         ref.name = "other"
@@ -212,16 +233,26 @@ def test_flow_ref_by_name_uuid_id_and_namespace_forms(schema):
 
 def test_flow_ref_errors(schema):
     ref = _registered_child(schema)
-    with pytest.raises(FlowNotFoundError):
-        ff.flow_ref(schema, _unique("missing"))
-    with pytest.raises(FlowNotFoundError):
+    full_name = f"{schema.catalog.name}.{schema.name}"
+    missing = _unique("missing")
+    with pytest.raises(ff.NativeNodeError, match=f"No flow named '{missing}' in '{full_name}'") as info:
+        ff.flow_ref(schema, missing)
+    assert isinstance(info.value.__cause__, FlowNotFoundError)
+    with pytest.raises(ff.NativeNodeError, match=f"No flow named '{missing}' in any schema") as info:
+        ff.flow_ref(name=missing)
+    assert isinstance(info.value.__cause__, FlowNotFoundError)
+    with pytest.raises(ff.NativeNodeError, match="No flow is registered with uuid") as info:
         ff.flow_ref(uuid=str(uuid4()))
-    with pytest.raises(FlowNotFoundError):
+    assert isinstance(info.value.__cause__, FlowNotFoundError)
+    with pytest.raises(ff.NativeNodeError, match=f"No flow registration has id {10**9}") as info:
         ff.flow_ref(registration_id=10**9)
-    with pytest.raises(NamespaceNotFoundError):
+    assert isinstance(info.value.__cause__, FlowNotFoundError)
+    with pytest.raises(ff.NativeNodeError, match=f"no catalog or schema '{schema.catalog.name}.nope'") as info:
         ff.flow_ref(f"{schema.catalog.name}.nope", ref.name)
-    with pytest.raises(FlowNotFoundError, match=f"'{schema.catalog.name}.{ref.name}'"):
-        ff.flow_ref(schema.catalog.name, ref.name)  # a bare catalog name is the catalog, not its schemas
+    assert isinstance(info.value.__cause__, NamespaceNotFoundError)
+    catalog_only = f"directly in catalog '{schema.catalog.name}'.*pass '{schema.catalog.name}.<schema>'"
+    with pytest.raises(ff.NativeNodeError, match=catalog_only):
+        ff.flow_ref(schema.catalog.name, ref.name)
     with pytest.raises(ff.NativeNodeError, match="not 'other'"):
         ff.flow_ref(uuid=ref.flow_uuid, name="other")
     other_schema = schema.catalog.schema("other", auto_create=True)
@@ -235,10 +266,14 @@ def test_same_name_in_two_schemas_is_ambiguous_without_a_namespace(schema):
     name = _unique("twice")
     first = schema.register_flow(_clean_orders_child(), name=name)
     second = schema.catalog.schema("other", auto_create=True).register_flow(_clean_orders_child(), name=name)
-    with pytest.raises(AmbiguousFlowError) as info:
+    with pytest.raises(ff.NativeNodeError, match="pass its schema first") as info:
         ff.flow_ref(name=name)
-    assert {c["id"] for c in info.value.candidates} == {first.registration_id, second.registration_id}
-    namespaces = {c["namespace_name"] for c in info.value.candidates}
+    for ref in (first, second):
+        assert f"{ref.namespace_full_name}.{name} (id={ref.registration_id})" in str(info.value)
+    cause = info.value.__cause__
+    assert isinstance(cause, AmbiguousFlowError)
+    assert {c["id"] for c in cause.candidates} == {first.registration_id, second.registration_id}
+    namespaces = {c["namespace_name"] for c in cause.candidates}
     assert namespaces == {first.namespace_full_name, second.namespace_full_name}
     assert ff.flow_ref(second.schema, name) == second
 
@@ -260,6 +295,7 @@ def test_run_flow_settings_mirror_the_child_interface(schema):
     settings = core_node(run).setting_input
     assert settings.flow_reference.registration_id == ref.registration_id
     assert settings.flow_reference.flow_uuid == ref.flow_uuid
+    assert (settings.flow_reference.namespace, settings.flow_reference.name) == (ref.namespace_full_name, ref.name)
     assert settings.input_slots == ["orders"]
     assert settings.output_slots == ["kept", "positive"]
     assert [p.name for p in settings.parameter_specs] == ["min_amount"]
@@ -410,8 +446,25 @@ def test_column_binding_iterates_and_appends_run_metadata(schema):
     assert result["param_min_amount"].to_list() == [0, 0, 0, 50, 50, 100]
     assert result["id"].to_list() == [1, 3, 4, 3, 4, 4]
 
-    plain = ff.RunFlow(ref, orders=ff.from_dict(ORDERS), iterate=True, append_metadata=False)
+    plain = ff.RunFlow(
+        ref,
+        orders=ff.from_dict(ORDERS),
+        params={"min_amount": ff.col("threshold")},
+        param_frame=ff.from_dict({"threshold": [0, 50, 100]}),
+        iterate=True,
+        append_metadata=False,
+    )
     assert plain["kept"].collect().columns == ["id", "amount"]
+
+
+def test_iterate_needs_a_column_binding(schema):
+    ref = _registered_child(schema)
+    parent = ff.create_flow_graph()
+    orders = ff.from_dict(ORDERS, flow_graph=parent)
+    for params in ({}, {"min_amount": 5}):
+        with pytest.raises(ff.NativeNodeError, match="iterate=True .* needs a parameter bound to one of its columns"):
+            ff.RunFlow(ref, orders=orders, params=params, iterate=True)
+    assert [n.node_type for n in parent.nodes] == ["manual_input"]
 
 
 def test_slot_order_is_the_order_ports_were_created_in(schema):
@@ -456,8 +509,14 @@ def test_run_flow_argument_errors(schema):
         ff.RunFlow(ref, params={"min_amount": ff.col("t") + 1}, param_frame=ff.from_dict({"t": [1]}))
     with pytest.raises(ff.NativeNodeError, match="needs name="):
         ff.RunFlow(ff.create_flow_graph())
-    with pytest.raises(ff.NativeNodeError, match="name= only applies"):
-        ff.RunFlow(ref, name="x")
+    only_for_graphs = "only apply when flow is a FlowGraph or a FlowFrame to register"
+    for kwargs, given in (
+        ({"name": "x"}, "name="),
+        ({"schema": schema}, "schema="),
+        ({"overwrite": True}, "overwrite="),
+    ):
+        with pytest.raises(ff.NativeNodeError, match=f"{only_for_graphs}; drop {given} for a FlowRef"):
+            ff.RunFlow(ref, **kwargs)
 
 
 def test_run_flow_takes_an_id_or_registers_a_graph(schema):
@@ -470,6 +529,75 @@ def test_run_flow_takes_an_id_or_registers_a_graph(schema):
     inline = ff.RunFlow(_clean_orders_child().flow_graph, name=name, orders=ff.from_dict(ORDERS))
     assert inline.flow.name == name
     assert ff.RunFlow(_clean_orders_child(), name=name).flow == inline.flow
+
+
+def test_run_flow_registers_a_graph_in_a_schema_and_can_overwrite(schema):
+    name = _unique("designer")
+    in_schema = ff.RunFlow(_clean_orders_child(), name=_unique("in_schema"), schema=schema)
+    assert in_schema.flow.schema == schema
+
+    elsewhere = Path(tempfile.mkdtemp()) / "designer_flow.yaml"
+    designer = _clean_orders_child().flow_graph
+    designer.save_flow(str(elsewhere))
+    from flowfile_frame.catalog import register_flow_with_catalog
+
+    registration_id = register_flow_with_catalog(designer, name=name, schema=schema, flow_path=str(elsewhere))
+    with pytest.raises(ff.NativeNodeError, match="pass overwrite=True") as info:
+        ff.RunFlow(_clean_orders_child(), name=name, schema=schema)
+    assert isinstance(info.value.__cause__, FlowExistsError)
+    replaced = ff.RunFlow(_clean_orders_child(), name=name, schema=schema, overwrite=True, orders=ff.from_dict(ORDERS))
+    assert replaced.flow.registration_id == registration_id
+    assert Path(replaced.flow.flow_path) == elsewhere
+    assert replaced["positive"].collect()["id"].to_list() == [1, 3, 4]
+
+
+def _keyword_named_child(schema: ff.SchemaReference) -> FlowRef:
+    """A child whose inputs are called ``params`` and ``orders``, as a flow built in the designer can be."""
+    child = ff.create_flow_graph()
+    raw_data = {"columns": [{"name": "v", "data_type": "Int64"}], "data": [[]]}
+    port = ff.Node("flow_input", settings={"input_name": "params", "raw_data_format": raw_data}, flow_graph=child)
+    port.output.to_flow_output("from_params")
+    ff.FlowInput("orders", schema=ORDER_SCHEMA, flow_graph=child).to_flow_output("from_orders")
+    return schema.register_flow(child, name=_unique("keyword_ports"))
+
+
+def test_inputs_mapping_feeds_an_input_named_like_a_keyword(schema):
+    ref = _keyword_named_child(schema)
+    values, orders = ff.from_dict({"v": [7, 8]}), ff.from_dict(ORDERS)
+    run = ff.RunFlow(ref, inputs={"params": values}, orders=orders)
+    keyed = core_node(run).node_inputs.keyed_inputs
+    assert {handle: node.node_id for handle, node in keyed.items()} == {
+        "input-1": values.node_id,
+        "input-2": orders.node_id,
+    }
+    assert run["from_params"].collect()["v"].to_list() == [7, 8]
+    assert_frame_equal(run["from_orders"].collect(), pl.DataFrame(ORDERS))
+
+    both = ff.RunFlow(ref, inputs={"params": values, "orders": orders})
+    assert core_node(both).node_inputs.keyed_inputs.keys() == keyed.keys()
+
+
+def test_inputs_mapping_errors(schema):
+    ref = _keyword_named_child(schema)
+    orders = ff.from_dict(ORDERS)
+    with pytest.raises(ff.NativeNodeError, match=r"\['orders'\] are given both in inputs= and as keywords"):
+        ff.RunFlow(ref, inputs={"orders": orders}, orders=orders)
+    with pytest.raises(ff.NativeNodeError, match="inputs= maps child input names to FlowFrames, got list"):
+        ff.RunFlow(ref, inputs=[orders])
+    with pytest.raises(ff.NativeNodeError, match=r"no input\(s\) \['nope'\]"):
+        ff.RunFlow(ref, inputs={"nope": orders})
+    with pytest.raises(ff.NativeNodeError, match="must be FlowFrames"):
+        ff.RunFlow(ref, inputs={"params": pl.DataFrame({"v": [1]})})
+
+
+def test_run_flow_nodes_do_not_share_parameter_specs(schema):
+    ref = _registered_child(schema)
+    first, second = (ff.RunFlow(ref, orders=ff.from_dict(ORDERS)) for _ in range(2))
+    cached = subflow.get_subflow_interface(Path(ref.flow_path)).parameters[0]
+    specs = [core_node(run).setting_input.parameter_specs[0] for run in (first, second)]
+    assert len({id(spec) for spec in (*specs, cached)}) == 3
+    specs[0].default_value = "99"
+    assert specs[1].default_value == cached.default_value == "0"
 
 
 def test_child_without_outputs_exposes_a_run_summary(schema):
@@ -486,6 +614,22 @@ def test_child_without_outputs_exposes_a_run_summary(schema):
         run.output.collect(), pl.DataFrame({"run_index": [1], "success": [True], "param_region": ["us"]})
     )
     assert run.output.select("param_region").collect()["param_region"].to_list() == ["us"]
+
+    reopened, _ = round_trip(run.output, "no_outputs_parent.yaml")
+    canvas = reopened.get_node(run.node_id).get_predicted_schema()
+    assert pl.Schema({c.column_name: c.get_polars_type().pl_datatype for c in canvas}) == summary
+
+
+def test_run_flow_follows_a_child_registered_again_under_the_same_name(schema):
+    ref = _registered_child(schema)
+    run = ff.RunFlow(ref, orders=ff.from_dict(ORDERS), params={"min_amount": 50})
+    with get_db_context() as db:
+        db.query(FlowRegistration).filter_by(id=ref.registration_id).delete()
+        db.commit()
+    again = schema.register_flow(_clean_orders_child(), name=ref.name)
+    assert again.flow_uuid != ref.flow_uuid
+
+    assert_frame_equal(run["kept"].collect(), pl.DataFrame(ORDERS).filter(pl.col("amount") > 50))
 
 
 def test_round_trip_keeps_a_keyed_edge_from_output_1(schema):

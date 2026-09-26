@@ -528,10 +528,22 @@ def test_output_node_below_a_closed_gate_is_seeded_at_build_and_skipped_by_the_r
     assert sink_calls == ["otherwise"]
 
 
-def test_output_node_on_a_plain_frame_still_builds_eagerly(sink_calls):
+def test_output_node_on_a_plain_frame_writes_only_when_the_flow_runs(sink_calls):
     node = ff.CustomNode(NativeSink, _frame(), settings={"main": {"label": "plain"}})
-    assert node.deferred is False
+    assert node.deferred is True and node.output._deferred is True
+    assert node.node.deferred_until_run is True
+    assert sink_calls == []
+
+    run = node.flow_graph.run_graph()
+
+    assert run.success is True
     assert sink_calls == ["plain"]
+
+
+def test_output_node_builds_eagerly_with_deferred_false(sink_calls):
+    node = ff.CustomNode(NativeSink, _frame(), settings={"main": {"label": "eager"}}, deferred=False)
+    assert node.deferred is False
+    assert sink_calls == ["eager"]
 
 
 def test_output_node_below_a_deferred_frame_is_seeded(sink_calls):

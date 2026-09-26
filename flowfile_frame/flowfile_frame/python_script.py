@@ -41,6 +41,10 @@ OUTPUTS_MARKER = "# flowfile: outputs"
 
 # Names the kernel defines in every script's namespace (kernel_runtime/main.py).
 _KERNEL_NAMES: frozenset[str] = frozenset({"flowfile_ctx", "display", "explore"})
+# Packages the kernel image does not have.
+_FLOWFILE_PACKAGES: frozenset[str] = frozenset(
+    {"flowfile", "flowfile_core", "flowfile_frame", "flowfile_worker", "flowfile_scheduler"}
+)
 _CELL_MARKER = re.compile(r"#\s*%%(?:\s+(?P<rest>.*))?$")
 _MARKDOWN_TAG = re.compile(r"\[(?:markdown|md)\]")
 _NEW_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
@@ -329,10 +333,22 @@ def _returns_dict(value: ast.expr) -> bool:
 
 
 def _publish_lines(name: str, value: ast.expr, outputs: Sequence[str] | None) -> list[str]:
-    """What follows ``_result = <value>``: one publish, or a checked loop over a dict's outputs."""
+    """What follows ``_result = <value>``: one publish, or a checked loop over a dict's outputs.
+
+    Without ``outputs=``, a returned value that is not a call (a name, a ternary) may hold a dict,
+    which the single publish cannot take, so a check before it fails the run with the fix. A call,
+    such as ``pl.DataFrame(...)`` or ``df.head()``, is taken to build a frame.
+    """
     if not _returns_dict(value) and (outputs is None or len(outputs) == 1):
         output = outputs[0] if outputs is not None else "main"
-        return [f'flowfile_ctx.publish_output(_result, "{output}")']
+        publish = [f'flowfile_ctx.publish_output(_result, "{output}")']
+        if outputs is not None or isinstance(value, ast.Call):
+            return publish
+        return [
+            "if isinstance(_result, dict):",
+            f'    raise TypeError("{name} returns a dict; name its outputs with outputs=[...], one per key")',
+            *publish,
+        ]
     if outputs is None:
         raise NativeNodeError(f"`{name}` returns a dict; name its outputs with outputs=[...], one per key")
     if isinstance(value, ast.Dict) and all(isinstance(k, ast.Constant) for k in value.keys):
@@ -399,6 +415,11 @@ def _prelude(fn: Callable[..., Any], func: ast.FunctionDef, name: str) -> list[s
     namespace = fn.__globals__
     imports, constants = [], []
     for used in candidates:
+        if used == "__file__":
+            raise NativeNodeError(
+                f"`__file__` is used inside `{name}`, but the kernel runs its cells without a file, so it is "
+                "not defined there; define the path as a constant above the function instead"
+            )
         # Dunders come from class bodies (__name__, __annotations__); the kernel sets its own.
         if used in _KERNEL_NAMES or (used.startswith("__") and used.endswith("__")):
             continue
@@ -415,6 +436,11 @@ def _prelude(fn: Callable[..., Any], func: ast.FunctionDef, name: str) -> list[s
             continue  # IPython binds its own wrapper of open()
         if isinstance(value, types.ModuleType):
             module = value.__name__
+            if module.partition(".")[0] in _FLOWFILE_PACKAGES:
+                raise NativeNodeError(
+                    f"`{used}` ({module}) is used inside `{name}`, but the kernel has no flowfile package; "
+                    f"use polars inside the body, such as pl.col instead of {used}.col"
+                )
             imports.append(f"import {module}" if module == used else f"import {module} as {used}")
             continue
         literal = _literal(value)
@@ -444,17 +470,17 @@ def _notebook_cells(fn: Callable[..., Any], outputs: Sequence[str] | None = None
     ``<param> = flowfile_ctx.read_inputs()["main"][i]`` per parameter), the docstring as a note,
     then the body split at its Jupytext percent markers (``# %%`` code, ``# %% [markdown]`` note)
     and dedented. The top-level ``return <value>`` becomes ``# flowfile: outputs``,
-    ``_result = <value>`` and the publish: to ``outputs[0]`` (default ``"main"``) for a frame, or a
-    key-checked loop for a dict. Notes are cells of ``#`` comments, as the editor makes of
-    imported markdown cells; core runs the cells joined as one script, so cell boundaries only
-    matter in the designer.
+    ``_result = <value>`` and the publish: to ``outputs[0]`` (default ``"main"``) for a frame, after
+    a dict check when the value may hold one (see :func:`_publish_lines`), or a key-checked loop for
+    a dict. Notes are cells of ``#`` comments, as the editor makes of imported markdown cells; core
+    runs the cells joined as one script, so cell boundaries only matter in the designer.
 
     The kernel defines ``flowfile_ctx`` but imports nothing (``kernel_runtime/main.py``), hence
     ``import polars as pl`` in the prelude when the body uses ``pl``. ``read_inputs()["main"]``
     holds every input file in wiring order (``kernel_runtime/flowfile_client.py::read_inputs``,
     ``flowfile_core/kernel/execution.py::write_inputs_to_parquet``), and ``PythonScript`` wires
-    frame *i* to the one multi-input handle in call order, so position *i* is parameter *i*. An
-    upstream node whose reference is ``main`` takes over that key, which then holds only its file.
+    frame *i* to the one multi-input handle in call order, so position *i* is parameter *i*. The
+    run refuses an upstream node whose reference is ``main``, so nothing can take over that key.
     ``publish_output`` takes a DataFrame or a LazyFrame (``flowfile_client.py::publish_output``).
     """
     name = _check_function(fn)
@@ -487,13 +513,21 @@ def _notebook_cells(fn: Callable[..., Any], outputs: Sequence[str] | None = None
 
     markers: dict[int, str] = {}
     for row, token in own_comments.items():
+        if row <= header_row:
+            continue
+        line = fn.__code__.co_firstlineno + row - 1
+        if token.string.rstrip() in (INPUTS_MARKER, OUTPUTS_MARKER):
+            raise NativeNodeError(
+                f"`{name}` has the comment `{token.string.rstrip()}` on line {line}; python_script writes that "
+                "line itself to mark the generated inputs and outputs, so reword the comment"
+            )
         match = _CELL_MARKER.match(token.string)
-        if match is None or row <= header_row:
+        if match is None:
             continue
         if token.start[1] > indent or any(start < row <= end for start, end in spans):
             raise NativeNodeError(
                 f"cell markers must sit between top-level statements of `{name}`; "
-                f"the one on line {fn.__code__.co_firstlineno + row - 1} is inside a block"
+                f"the one on line {line} is inside a block"
             )
         markers[row] = match.group("rest") or ""
 
@@ -622,15 +656,18 @@ class PythonScriptFunction:
 
 
 def python_script(
+    fn: Callable[..., Any] | None = None,
+    /,
     *,
     kernel: str | Any | None = None,
     outputs: list[str] | None = None,
     returns: Mapping[str, PolarsDataType] | Mapping[str, Mapping[str, PolarsDataType]] | None = None,
     description: str | None = None,
     flow_graph: FlowGraph | None = None,
-) -> Callable[[Callable[..., Any]], PythonScriptFunction]:
+) -> PythonScriptFunction | Callable[[Callable[..., Any]], PythonScriptFunction]:
     """Decorate a module-level function to place it as a Python Script (notebook) node.
 
+    Use it bare, ``@fl.python_script``, or with options, ``@fl.python_script(kernel="lite")``.
     The body becomes the notebook: split at Jupytext ``# %%`` markers, ``# %% [markdown]`` notes
     and the docstring as the first note (see :func:`_notebook_cells`). Its parameters are the input
     frames and its single, final ``return`` is what the node publishes: a frame to the one output,
@@ -642,9 +679,9 @@ def python_script(
     without inputs. Everything is checked here, when the function is decorated.
     """
 
-    def decorate(fn: Callable[..., Any]) -> PythonScriptFunction:
+    def decorate(func: Callable[..., Any]) -> PythonScriptFunction:
         return PythonScriptFunction(
-            fn, kernel=kernel, outputs=outputs, returns=returns, description=description, flow_graph=flow_graph
+            func, kernel=kernel, outputs=outputs, returns=returns, description=description, flow_graph=flow_graph
         )
 
-    return decorate
+    return decorate if fn is None else decorate(fn)

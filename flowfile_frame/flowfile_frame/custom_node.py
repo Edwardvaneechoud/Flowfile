@@ -34,8 +34,13 @@ if TYPE_CHECKING:
 
     from flowfile_frame.flow_frame import FlowFrame
 
-_FACTORY_KEYWORDS: frozenset[str] = frozenset(
-    {"kernel", "deferred", "schemas", "description", "settings", "flow_graph"}
+_FACTORY_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("kernel", "str | Any | None"),
+    ("deferred", "bool | None"),
+    ("schemas", "Mapping[str, Mapping[str, PolarsDataType]] | None"),
+    ("description", "str | None"),
+    ("settings", "dict[str, dict[str, Any]] | None"),
+    ("flow_graph", "FlowGraph | None"),
 )
 
 _INSTANCE_EXEMPT_FIELDS: frozenset[str] = frozenset({"settings_schema", "accessed_secrets"})
@@ -67,7 +72,9 @@ def _register_class(cls: type[CustomNodeBase]) -> type[CustomNodeBase]:
         if entry.node_class is not cls and _INSTALLED_CLASSES.get(key) is not cls:
             raise NativeNodeError(
                 f"Custom node class {cls.__name__} has the node key {key!r} of the installed node in "
-                f"{entry.file_name}; rename its node_name, or place the installed node with fl.CustomNode({key!r}, ...)"
+                f"{entry.file_name}; place the installed node by key with fl.CustomNode({key!r}, ...), or replace "
+                f"it with this class via fl.custom_nodes.install({cls.__name__}, overwrite=True) (also needed after "
+                "re-running the cell that defines an installed class), or rename its node_name"
             )
         return cls
     node_store.add_to_custom_node_store(cls)
@@ -190,10 +197,11 @@ class CustomNode(NativeNode):
     to a kernel, by id or an object with an ``.id`` (required there, refused on a local node).
 
     A local node runs its ``process()`` when it is built. Kernel nodes, nodes whose schema needs
-    data, installed nodes the worker would run, and output nodes below a gate or a deferred
-    frame are deferred instead; ``deferred`` overrides that, as on ``fl.Node``. ``schemas``
-    (``{output: {column: dtype}}``) shapes a hookless deferred node's placeholder. A class that
-    is not installed opens on the canvas in this process only; see ``fl.custom_nodes.install``.
+    data, installed nodes the worker would run, and output nodes (``node_type="output"``: a build
+    would write once more than the run) are deferred instead; ``deferred`` overrides that, as on
+    ``fl.Node``. ``schemas`` (``{output: {column: dtype}}``) shapes a hookless deferred node's
+    placeholder. A class that is not installed opens on the canvas in this process only; see
+    ``fl.custom_nodes.install``.
     """
 
     node_class: type[CustomNodeBase]
@@ -232,7 +240,11 @@ class CustomNode(NativeNode):
         self.kernel = kernel
         self._on_kernel = kernel is not None or instance.kernel_id is not None
         self._deferred_given = deferred is not None
-        if deferred is None and (self._on_kernel or (instance.requires_data_for_prediction and not has_hook)):
+        if deferred is None and (
+            self._on_kernel
+            or instance.node_type == "output"
+            or (instance.requires_data_for_prediction and not has_hook)
+        ):
             deferred = True
 
         def make_settings(base_fields: dict[str, Any]) -> input_schema.UserDefinedNode:
@@ -372,7 +384,7 @@ def _flat_parameters(instance: CustomNodeBase) -> tuple[dict[str, tuple[str, str
     parameters: dict[str, tuple[str, str]] = {}
     defaults: dict[str, Any] = {}
     for component_name, section_names in located.items():
-        unique = len(section_names) == 1 and component_name not in _FACTORY_KEYWORDS
+        unique = len(section_names) == 1 and component_name not in dict(_FACTORY_OPTIONS)
         for section_name in section_names:
             name = component_name if unique else f"{section_name}__{component_name}"
             parameters[name] = (section_name, component_name)
@@ -385,16 +397,7 @@ def _factory_signature(parameters: dict[str, tuple[str, str]], defaults: dict[st
     keyword = inspect.Parameter.KEYWORD_ONLY
     params = [inspect.Parameter("inputs", inspect.Parameter.VAR_POSITIONAL, annotation="FlowFrame")]
     params += [inspect.Parameter(name, keyword, default=defaults[name]) for name in parameters]
-    params += [
-        inspect.Parameter("kernel", keyword, default=None, annotation="str | Any | None"),
-        inspect.Parameter("deferred", keyword, default=None, annotation="bool | None"),
-        inspect.Parameter(
-            "schemas", keyword, default=None, annotation="Mapping[str, Mapping[str, PolarsDataType]] | None"
-        ),
-        inspect.Parameter("description", keyword, default=None, annotation="str | None"),
-        inspect.Parameter("settings", keyword, default=None, annotation="dict[str, dict[str, Any]] | None"),
-        inspect.Parameter("flow_graph", keyword, default=None, annotation="FlowGraph | None"),
-    ]
+    params += [inspect.Parameter(name, keyword, default=None, annotation=hint) for name, hint in _FACTORY_OPTIONS]
     return inspect.Signature(params, return_annotation="FlowFrame")
 
 
@@ -404,8 +407,8 @@ class CustomNodeFactory:
     ``factory(*inputs, trim=True)`` returns the output frame of a single-output node;
     ``factory.node(*inputs, ...)`` returns the :class:`CustomNode` (``.output``, ``[name]``,
     ``.outputs``) and is the way to reach a multi-output node's frames. Keywords are the
-    component names; a name used by several sections, or one that clashes with a keyword
-    below, is written ``section__component``.
+    component names; a name used by several sections, or one that clashes with an option
+    such as ``kernel`` or ``settings``, is written ``section__component``.
     ``settings`` takes the nested ``{section: {component: value}}`` form and combines with
     the keywords, but one component may not be given both ways. The signature
     (``inspect.signature(factory)``, ``help``) lists every component with its current value.
@@ -464,7 +467,10 @@ class CustomNodeFactory:
         flow_graph: FlowGraph | None = None,
         **components: Any,
     ) -> CustomNode:
-        """Place the node and return it, for its ``.output``, ``[name]`` and ``.outputs``."""
+        """Place the node and return it, for its ``.output``, ``[name]`` and ``.outputs``.
+
+        ``components`` are the flat settings components; the named options are ``CustomNode``'s.
+        """
         return CustomNode(
             self._node,
             *inputs,
