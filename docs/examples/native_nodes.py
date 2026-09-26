@@ -1,4 +1,4 @@
-"""Native node classes: a gate diamond, a subflow call, a script, a custom node and a SQL node."""
+"""Native node classes: a gate diamond, a subflow call, scripts, a custom node and a SQL node."""
 
 # --8<-- [start:imports]
 import polars as pl
@@ -47,6 +47,91 @@ large = run_child.get_output(large_orders).collect()
 assert run_child.outputs == ["large_orders"]
 assert large.sort("id")["id"].to_list() == [1, 3]
 assert ff.register_flow(child, name="Docs large orders").registration_id == large_orders_flow.registration_id
+
+
+# --8<-- [start:script-decorator]
+@ff.python_script(kernel="docs-kernel", returns={"month": ff.Int64, "revenue_forecast": ff.Float64})
+def forecast(monthly: pl.LazyFrame) -> pl.DataFrame:
+    """Revenue trend: a least-squares line through monthly revenue, extended three months."""
+    import numpy as np
+
+    df = monthly.collect()
+
+    # %% [markdown]
+    # ## Fit
+    # One slope for the whole period; good enough for a demo, not for a quarter close.
+
+    # %%
+    slope, intercept = np.polyfit(df["month"], df["revenue"], deg=1)
+    ahead = np.arange(df["month"].max() + 1, df["month"].max() + 4)
+
+    # %% Forecast
+    return pl.DataFrame({"month": ahead, "revenue_forecast": slope * ahead + intercept})
+
+
+history = {"month": [1, 2, 3, 4, 5, 6], "revenue": [100.0, 110.0, 120.0, 130.0, 140.0, 150.0]}
+monthly = ff.from_dict(history)
+sales_forecast = forecast(monthly)  # places the node; a deferred frame
+in_thousands = sales_forecast.with_columns((ff.col("revenue_forecast") / 1000).alias("revenue_k"))
+local_check = forecast.fn(pl.LazyFrame(history))  # the plain function, run here without a kernel
+# --8<-- [end:script-decorator]
+
+assert forecast.cells == [
+    "import polars as pl",
+    '# flowfile: inputs\nmonthly = flowfile_ctx.read_inputs()["main"][0]',
+    "# Revenue trend: a least-squares line through monthly revenue, extended three months.",
+    "import numpy as np\n\ndf = monthly.collect()",
+    "# ## Fit\n# One slope for the whole period; good enough for a demo, not for a quarter close.",
+    'slope, intercept = np.polyfit(df["month"], df["revenue"], deg=1)\n'
+    'ahead = np.arange(df["month"].max() + 1, df["month"].max() + 4)',
+    "# Forecast\n# flowfile: outputs\n"
+    '_result = pl.DataFrame({"month": ahead, "revenue_forecast": slope * ahead + intercept})\n'
+    'flowfile_ctx.publish_output(_result, "main")',
+]
+assert sales_forecast.columns == ["month", "revenue_forecast"]
+assert in_thousands.columns == ["month", "revenue_forecast", "revenue_k"]
+forecast_node = sales_forecast.flow_graph.get_node(sales_forecast.node_id)
+assert forecast_node.node_type == "python_script"
+assert forecast_node.setting_input.python_script_input.kernel_id == "docs-kernel"
+assert [cell.code for cell in forecast_node.setting_input.python_script_input.cells] == forecast.cells
+assert local_check["month"].to_list() == [7, 8, 9]
+assert [round(value, 6) for value in local_check["revenue_forecast"]] == [160.0, 170.0, 180.0]
+
+
+# --8<-- [start:script-outputs]
+@ff.python_script(kernel="docs-kernel", outputs=["matched", "unmatched"])
+def match_customers(orders: pl.LazyFrame, customers: pl.LazyFrame) -> dict[str, pl.LazyFrame]:
+    known = customers.select("id")
+    return {
+        "matched": orders.join(known, on="id", how="semi"),
+        "unmatched": orders.join(known, on="id", how="anti"),
+    }
+
+
+order_lines = ff.from_dict({"id": [1, 2, 3], "amount": [120.0, 40.0, 900.0]})
+known_customers = ff.from_dict({"id": [1, 3], "name": ["Ann", "Cy"]})
+matching = match_customers.node(order_lines, known_customers)  # the PythonScript node
+matched = matching["matched"]
+# --8<-- [end:script-outputs]
+
+assert matching.outputs == ["matched", "unmatched"]
+assert matched.columns == ["id", "amount"]
+assert match_customers.cells[0] == (
+    "# flowfile: inputs\n"
+    'orders = flowfile_ctx.read_inputs()["main"][0]\n'
+    'customers = flowfile_ctx.read_inputs()["main"][1]'
+)
+assert match_customers.cells[-1].endswith(
+    'for _name in ["matched", "unmatched"]:\n    flowfile_ctx.publish_output(_result[_name], _name)'
+)
+local_split = match_customers.fn(pl.LazyFrame({"id": [1, 2]}), pl.LazyFrame({"id": [2]}))
+assert local_split["matched"].collect()["id"].to_list() == [2]
+try:
+    match_customers(order_lines, known_customers)
+except ff.NativeNodeError as exc:
+    assert "match_customers.node(...)" in str(exc)
+else:
+    raise AssertionError("a function with two outputs must be placed with .node(...)")
 
 # --8<-- [start:script]
 readings = ff.from_dict({"id": [1, 2, 3], "amount": [120.0, 40.0, 900.0]})

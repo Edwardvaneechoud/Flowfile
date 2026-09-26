@@ -141,7 +141,7 @@ from flowfile_frame.kafka import read_kafka  # noqa: F401
 from flowfile_frame.lazy import fold  # noqa: F401
 from flowfile_frame.native import NativeNodeError, Node  # noqa: F401
 from flowfile_frame.parameters import Parameter, add_flow_parameter, set_flow_parameter  # noqa: F401
-from flowfile_frame.python_script import PythonScript  # noqa: F401
+from flowfile_frame.python_script import PythonScript, PythonScriptFunction, python_script  # noqa: F401
 from flowfile_frame.rest_api import read_api  # noqa: F401
 from flowfile_frame.run_flow import FlowInput, FlowOutput, FlowRef, RunFlow, flow_ref, register_flow  # noqa: F401
 

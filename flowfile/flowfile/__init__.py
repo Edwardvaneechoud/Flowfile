@@ -119,7 +119,7 @@ from flowfile_frame.custom_node import CustomNode, CustomNodeFactory, custom_nod
 from flowfile_frame.expr import col, column, count, cum_count, len, lit, max, mean, min, sum, when
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.group_frame import GroupByFrame
-from flowfile_frame.python_script import PythonScript
+from flowfile_frame.python_script import PythonScript, PythonScriptFunction, python_script
 from flowfile_frame.run_flow import FlowInput, FlowOutput, FlowRef, RunFlow, flow_ref, register_flow
 from flowfile_frame.selectors import (
     all_,
@@ -220,6 +220,8 @@ __all__ = [
     "CustomNodeFactory",
     "custom_node",
     "PythonScript",
+    "PythonScriptFunction",
+    "python_script",
     "Parameter",
     "add_flow_parameter",
     "set_flow_parameter",

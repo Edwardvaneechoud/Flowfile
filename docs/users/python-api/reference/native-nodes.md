@@ -1,6 +1,6 @@
 # Native Node Classes
 
-This page covers the canvas node types that have no fluent `FlowFrame` method, and the Python classes that place them: `Gate`, `FlowInput` / `to_flow_output`, `RunFlow`, `custom_node` / `CustomNode`, `PythonScript` and the generic `Node`, plus the helpers they use (flow parameters, flow references, flow registration). Each call adds one node to the same `FlowGraph` the fluent methods build, so the flow opens in the designer like any other.
+This page covers the canvas node types that have no fluent `FlowFrame` method, and the Python classes that place them: `Gate`, `FlowInput` / `to_flow_output`, `RunFlow`, `custom_node` / `CustomNode`, `python_script` / `PythonScript` and the generic `Node`, plus the helpers they use (flow parameters, flow references, flow registration). Each call adds one node to the same `FlowGraph` the fluent methods build, so the flow opens in the designer like any other.
 
 Prose fragments use `import flowfile as fl`. The tested examples, which run in CI on every commit, use `ff`; both names refer to the same module. The examples share these imports:
 
@@ -19,6 +19,8 @@ Every class returns an object with the same accessors:
 | `.outputs` | The output names, in handle order (`output-0` first). |
 | `.node_id`, `.node`, `.flow_graph` | The node id, the placed core `FlowNode`, and the graph it lives on. |
 
+The `custom_node(...)` factory and a `@fl.python_script` function are callables instead: calling one returns the output frame, and its `.node(...)` method returns the node object with these accessors.
+
 Every class takes `description: str | None = None`, the label shown on the canvas. Classes that can be built without input frames take `flow_graph: FlowGraph | None = None`, the graph to place the node on; when it is omitted a new graph is created, as the readers do. Input frames that live on different graphs are merged onto one graph first, as `join` does.
 
 ## Deferred frames
@@ -33,7 +35,7 @@ Most nodes produce their output lazily in-process, so building a chain predicts 
 | Deferred output | Why |
 |---|---|
 | `fl.RunFlow` | The child flow runs with the parent. |
-| `fl.PythonScript` | The code runs in a kernel container. |
+| `fl.PythonScript`, a `@fl.python_script` function | The code runs in a kernel container. |
 | `fl.CustomNode` with `kernel=`, a custom node whose schema needs data, or any custom node on a graph that does not execute locally | The node runs in a kernel or the worker, or its columns are only known after it ran. |
 | `fl.Node("google_analytics_reader" / "external_source", ...)` | The node reads an external system. |
 | `fl.Node(..., deferred=True)` | Requested. |
@@ -47,7 +49,7 @@ What `collect()` on a deferred frame does:
 4. Otherwise returns the node's real output.
 
 !!! warning "Kernel nodes need Docker at run time"
-    When the graph holds a kernel node (`PythonScript`, a kernel `CustomNode`), running it contacts Docker to reach the kernel container. Building those nodes needs neither Docker nor a running kernel.
+    When the graph holds a kernel node (`PythonScript` or a `@fl.python_script` function, a kernel `CustomNode`), running it contacts Docker to reach the kernel container. Building those nodes needs neither Docker nor a running kernel.
 
 A frame that is neither deferred nor below a [gate](#gate) keeps its plain behaviour: `collect()` evaluates its lazy plan in-process.
 
@@ -331,9 +333,109 @@ The same settings two ways, built but not run:
 --8<-- "docs/examples/native_nodes.py:custom-node"
 ```
 
-## `PythonScript`
+## `python_script` and `PythonScript`
 
-Places a [Python Script](../../visual-editor/kernels.md) node, whose code runs in a kernel container.
+Places a [Python Script](../../visual-editor/kernels.md#python-script-node) node, whose code runs in a kernel container. The `@fl.python_script` decorator turns a function into the node's notebook; `fl.PythonScript` takes the cells as strings.
+
+### `python_script(...)` decorator
+
+```python
+fl.python_script(
+    *,
+    kernel: str | Any | None = None,
+    outputs: list[str] | None = None,
+    returns: Mapping[str, PolarsDataType] | Mapping[str, Mapping[str, PolarsDataType]] | None = None,
+    description: str | None = None,
+    flow_graph: FlowGraph | None = None,
+) -> Callable[[Callable], PythonScriptFunction]
+```
+
+The function's parameters are the node's inputs, each a `pl.LazyFrame` in the kernel; its body is the notebook, and its final `return` is what the node publishes:
+
+```python
+--8<-- "docs/examples/native_nodes.py:script-decorator"
+```
+
+- Calling the function, `forecast(monthly)`, places the node and returns its output frame, [deferred](#deferred-frames) like every Python Script output. Pass one `FlowFrame` per parameter, in order; a wrong count raises and lists the parameter names.
+- `forecast.node(monthly)` places the node and returns the `PythonScript` object with the [common accessors](#common-surface). A function with several outputs is placed this way.
+- `forecast.fn` is the undecorated function. The cell markers are comments, so it runs locally on Polars frames, without a kernel.
+- `forecast.cells` holds the generated notebook cells, built once when the function is decorated.
+- `kernel` is stored as given, as for [`PythonScript`](#pythonscript); `description` defaults to the function name. `flow_graph` is used only by a function without parameters, which has no input frame to take a graph from.
+
+The function is a module-level `def` whose source Python can find: in a file or a notebook cell, not typed at an interactive prompt. Lambdas, nested functions, methods, generators, `async` functions and functions wrapped by another decorator raise, and so do `*args`, `**kwargs`, keyword-only and positional-only parameters, and parameters with a default. These checks, and the rules below, run when the function is decorated and raise `NativeNodeError` there.
+
+The node stores only the cells. A saved flow opens in the designer as an ordinary Python Script notebook; edits made there do not change the function.
+
+### Cells and notes
+
+The body is split at [Jupytext percent-format](https://jupytext.readthedocs.io/en/latest/formats-scripts.html) markers, the cell syntax PyCharm, VS Code and Spyder run cell by cell:
+
+| In the body | In the notebook |
+|---|---|
+| The docstring | The first note. |
+| Code before the first marker | The first code cell. |
+| `# %%` | Starts a code cell. Text after the marker is the cell's title, kept as its first line: `# %% Forecast` starts the cell with `# Forecast`. |
+| `# %% [markdown]` (or `[md]`) | Starts a note: the `#` comment lines right below it. The first line that is not a comment, a blank line included, ends the note and starts a code cell. |
+
+A note is a cell of commented text, the form the editor gives the markdown cells of an imported notebook. The kernel runs the cells as one script, so cell boundaries only matter in the designer. Each cell is dedented by the body's indentation, so nested blocks keep their relative indentation; empty cells are dropped. Markers sit between top-level statements of the body: a marker inside an `if`, `for`, `with` or `try` block raises. A `# %%` inside a string is not a marker.
+
+`forecast.cells` from the example above, one block per cell (the `# ----` lines mark the boundaries here and are not part of the cells):
+
+```python
+# ---- 0: prelude, the names the body reads from its module
+import polars as pl
+# ---- 1: inputs, one line per parameter
+# flowfile: inputs
+monthly = flowfile_ctx.read_inputs()["main"][0]
+# ---- 2: the docstring
+# Revenue trend: a least-squares line through monthly revenue, extended three months.
+# ---- 3: the code before the first marker
+import numpy as np
+
+df = monthly.collect()
+# ---- 4: the note
+# ## Fit
+# One slope for the whole period; good enough for a demo, not for a quarter close.
+# ---- 5: a code cell
+slope, intercept = np.polyfit(df["month"], df["revenue"], deg=1)
+ahead = np.arange(df["month"].max() + 1, df["month"].max() + 4)
+# ---- 6: the titled last cell, its return rewritten into the publish
+# Forecast
+# flowfile: outputs
+_result = pl.DataFrame({"month": ahead, "revenue_forecast": slope * ahead + intercept})
+flowfile_ctx.publish_output(_result, "main")
+```
+
+The prelude, the inputs cell (a function without parameters has none) and the docstring note are present only when they have content. `read_inputs()["main"]` lists the inputs in wiring order, so parameter *i* reads input *i*.
+
+**One `return`, at the end.** The body returns exactly once, as its last top-level statement, never inside an `if`, loop, `with` or `try`. A single frame (`pl.DataFrame` or `pl.LazyFrame`) is published to the one output, `"main"` unless `outputs=["name"]` names it. A dict of frames is published one output per key: `outputs=` lists the keys, a dict literal whose keys differ from it raises, and the last cell checks that `_result` is a dict with exactly those keys when the flow runs. A dict held in a variable is not visible at decoration: it is published per key only when `outputs=` names two or more outputs, and as one frame otherwise. A tuple or list of frames raises. Two inputs and two outputs, placed with `.node(...)`:
+
+```python
+--8<-- "docs/examples/native_nodes.py:script-outputs"
+```
+
+### Names from outside the function
+
+The body runs in the kernel without the rest of its module, and the kernel imports nothing on its own. A name the body reads from its module goes into the prelude cell:
+
+- A **module** becomes an import line under the name the body uses: `pl` gives `import polars as pl`, which is why the forecast notebook starts with it.
+- A **plain constant** (a number, string, bytes, `None`, or a list, tuple, dict or set of those, whose `repr` reads back as the same value) becomes an assignment, such as `WINDOW = 3`.
+- **Anything else** raises: a function or class, a name imported with `from numpy import polyfit`, a `FlowFrame`, or a name not defined yet where the function is decorated (a helper further down the file). The message names it: `` `polyfit` is used inside `forecast` but lives outside it; move it into the function or pass it as an input ``.
+
+Imports come first, in order of first use, then constants. Imports written inside the body stay in the body, as `import numpy as np` does above. Builtins are left alone, and so are `flowfile_ctx`, `display` and `explore`, which the kernel defines; a parameter with one of those three names raises.
+
+### Declaring the output columns
+
+While you build, the output is a placeholder. Without `returns=`, it has the first input's columns (none without inputs), so a step that names a returned column, such as `revenue_forecast` above, fails at build. `returns=` declares the columns:
+
+- `{column: dtype}` for a function with one output, as in the forecast example.
+- `{output: {column: dtype}}` for several. An output left out keeps the first input's columns, as `matched` does above.
+
+The values are Polars dtypes (`fl.Int64`, `pl.Float64`); anything else raises, and so does an output that `outputs=` does not list. The declaration only shapes the placeholder: a run publishes whatever the function returns, and the declaration is not saved with the flow.
+
+### `PythonScript`
+
+The low-level form, one-to-one with what the node stores: the cells as strings. Use it for code that is not a function, such as a notebook copied from the designer.
 
 ```python
 fl.PythonScript(
@@ -342,6 +444,7 @@ fl.PythonScript(
     cells: list[str] | None = None,
     kernel: str | Any | None = None,
     outputs: list[str] | None = None,
+    schemas: Mapping[str, Mapping[str, PolarsDataType]] | None = None,
     description: str | None = None,
     flow_graph: FlowGraph | None = None,
 )
@@ -350,9 +453,10 @@ fl.PythonScript(
 - Give exactly one of `code` or `cells`. The node stores both forms: the cells, and `code` as the non-empty cells joined by blank lines (what the kernel executes).
 - `kernel` is a kernel id, or an object with an `.id`, stored as given. It is **not** checked at build: a missing or unknown kernel fails when the flow runs.
 - `outputs` names the output handles (default `["main"]`); publish to them with `flowfile_ctx.publish_output(df, "name")`.
+- `schemas` declares output columns as `{output: {column: dtype}}`, the nested form of `returns=`, with the same checks.
 - Inputs are wired in order. Inside the kernel, `flowfile_ctx.read_input()` reads all of them; each is also readable by name, which is the upstream node's reference if set, else `df_<node_id>`.
 
-Outputs are [deferred](#deferred-frames), with the first input's schema (no columns without inputs). `.code`, `.cells` and `.kernel` hold what was stored. See the [`flowfile_ctx` API](../../visual-editor/kernel-api.md) for the code side.
+Outputs are [deferred](#deferred-frames); an output not declared in `schemas` has the first input's schema (no columns without inputs). `.code`, `.cells` and `.kernel` hold what was stored. See the [`flowfile_ctx` API](../../visual-editor/kernel-api.md) for the code side.
 
 ```python
 --8<-- "docs/examples/native_nodes.py:script"
@@ -385,7 +489,7 @@ fl.Node(
 
 ## Errors
 
-Every build or materialisation failure raises `fl.NativeNodeError`, a subclass of `ValueError`: bad arguments, wrong input counts, refused connections, a failed ancestor during `collect()`. Catalog lookups raise the `flowfile_core.catalog` errors (`NamespaceNotFoundError`, `FlowNotFoundError`, `AmbiguousFlowError`, `FlowExistsError`, `NotAuthorizedError`). A node that fails to build is removed from the graph again.
+Every build or materialisation failure raises `fl.NativeNodeError`, a subclass of `ValueError`: bad arguments, wrong input counts, refused connections, a failed ancestor during `collect()`, and the checks `@fl.python_script` runs when it decorates a function. Catalog lookups raise the `flowfile_core.catalog` errors (`NamespaceNotFoundError`, `FlowNotFoundError`, `AmbiguousFlowError`, `FlowExistsError`, `NotAuthorizedError`). A node that fails to build is removed from the graph again.
 
 ## Known limits
 
@@ -402,7 +506,10 @@ Every build or materialisation failure raises `fl.NativeNodeError`, a subclass o
 - **Reopened flow names.** A registered flow keeps its registration name when reopened only if its file is in the Python-editor flows folder; elsewhere the designer names it after the file.
 - **`FlowFrame(data, flow)` treats the second positional argument as `schema`.** Pass `flow_graph=` by keyword.
 - **`custom_node(...)` keywords are checked at call time** from the node's settings schema; IDEs do not complete them.
-- **Code export does not emit these classes.** Exporting a flow to Python renders a gate as `if` blocks and a custom node as its inlined `process()`.
+- **`@fl.python_script` needs the function's source.** A function typed at an interactive prompt has none; define it in a file or a notebook cell.
+- **Notebook variables are shared across a flow's scripts.** The body runs at the top level of the kernel's namespace for the flow, so a name it assigns (even one that shadows a builtin, such as `max`) is visible to the flow's other Python Script nodes.
+- **An upstream node referenced as `main` takes over a script's inputs.** The kernel's `read_inputs()["main"]` then holds only that node's frame, so a `@fl.python_script` function's parameters no longer line up with its inputs. Give the node another reference.
+- **Code export does not emit these classes.** Exporting a flow to Python renders a gate as `if` blocks and a custom node as its inlined `process()`; a Python Script node does not become a `@fl.python_script` function.
 - **No typed class per built-in node.** Node types without a dedicated class above are placed with `fl.Node` and a settings dict or model.
 
 ---

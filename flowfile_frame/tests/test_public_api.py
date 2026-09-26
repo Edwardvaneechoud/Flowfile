@@ -30,6 +30,8 @@ NATIVE_NODE_API = [
     "CustomNodeFactory",
     "custom_node",
     "PythonScript",
+    "PythonScriptFunction",
+    "python_script",
     "create_flow_graph",
     "FlowGraph",
 ]
@@ -47,6 +49,12 @@ def test_flowfile_all_lists_the_native_node_api():
 def test_custom_node_is_the_factory_function_not_the_submodule():
     assert callable(flowfile_frame.custom_node)
     assert flowfile_frame.custom_node.__module__ == "flowfile_frame.custom_node"
+
+
+def test_python_script_is_the_decorator_not_the_submodule():
+    assert callable(flowfile_frame.python_script)
+    assert flowfile_frame.python_script.__module__ == "flowfile_frame.python_script"
+    assert flowfile.python_script is flowfile_frame.python_script
 
 
 def test_flow_frame_has_to_flow_output():
