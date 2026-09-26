@@ -1,7 +1,6 @@
 """``ff.CustomNode`` and the ``ff.custom_node(...)`` factory: place user-defined nodes from Python."""
 
 import inspect
-import time
 from types import SimpleNamespace
 
 import polars as pl
@@ -11,9 +10,17 @@ from polars.testing import assert_frame_equal
 import flowfile_frame as ff
 from flowfile_core.configs import node_store
 from flowfile_core.flowfile.user_defined.registry import KernelRequiredError
-from shared.node_designer import CustomNodeBase, NodeSettings, Section, TextInput, ToggleSwitch
+from shared.node_designer import (
+    CustomNodeBase,
+    NodeSettings,
+    NumericInput,
+    SecretSelector,
+    Section,
+    TextInput,
+    ToggleSwitch,
+)
 
-from .native_helpers import round_trip
+from .native_helpers import results_by_id, round_trip
 
 DATA = {"name": [" ann ", "bob ", " cy"], "amount": [1, 2, 3]}
 
@@ -291,7 +298,8 @@ def test_zero_input_hookless_local_node_runs_eagerly():
     assert_frame_equal(node.output.collect(), pl.DataFrame({"generated": [1, 2]}))
 
 
-def test_local_node_on_a_remote_graph_is_deferred_and_never_runs():
+def test_session_class_on_a_remote_graph_builds_eagerly_as_core_runs_it_in_process():
+    """A class with no node file is never offloaded to the worker, so it builds like on a local graph."""
     calls: list[str] = []
 
     class NativeCountingGenerator(CustomNodeBase):
@@ -305,10 +313,9 @@ def test_local_node_on_a_remote_graph_is_deferred_and_never_runs():
     flow = ff.create_flow_graph()
     flow.flow_settings.execution_location = "remote"
     node = ff.CustomNode(NativeCountingGenerator, flow_graph=flow)
-    time.sleep(0.2)  # let any background schema prefetch surface
-    assert node.output._deferred is True
-    assert node.node.deferred_until_run is True
-    assert calls == []
+    assert node.output._deferred is False
+    assert calls  # process() ran while building
+    assert node.output.collect()["generated"].to_list() == [1]
 
 
 def test_kernel_node_is_deferred_and_seeded_from_its_hook():
@@ -413,7 +420,17 @@ def test_factory_accepts_a_name_and_an_instance():
 
 def test_factory_signature_lists_the_components_with_defaults():
     parameters = inspect.signature(ff.custom_node(NativeCleaner)).parameters
-    assert list(parameters) == ["inputs", "trim", "column", "kernel", "description", "settings", "flow_graph"]
+    assert list(parameters) == [
+        "inputs",
+        "trim",
+        "column",
+        "kernel",
+        "deferred",
+        "schemas",
+        "description",
+        "settings",
+        "flow_graph",
+    ]
     assert parameters["inputs"].kind is inspect.Parameter.VAR_POSITIONAL
     assert parameters["trim"].kind is inspect.Parameter.KEYWORD_ONLY
     assert (parameters["trim"].default, parameters["column"].default) == (False, "name")
@@ -458,3 +475,229 @@ def test_factory_call_on_a_multi_output_node_points_at_node():
     node = factory.node(source, threshold="3")
     assert isinstance(node, ff.CustomNode)
     assert node["kept"].collect()["amount"].to_list() == [3]
+
+
+# side-effect nodes, deferred=, schemas=
+
+
+SINK_CALLS: list[str] = []
+
+
+class NativeSink(CustomNodeBase):
+    """A custom output node whose palette group comes from its category, not from ``node_type``."""
+
+    node_name: str = "Native Test Sink"
+    node_category: str = "Testing"
+    node_type: str = "output"
+    settings_schema: NodeSettings = NodeSettings(main=Section(title="Main", label=TextInput(label="Label")))
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        SINK_CALLS.append(self.settings_schema.main.label.value)
+        return inputs[0]
+
+
+@pytest.fixture
+def sink_calls():
+    SINK_CALLS.clear()
+    yield SINK_CALLS
+    SINK_CALLS.clear()
+
+
+def test_output_node_counts_as_a_side_effect_node_whatever_its_group():
+    ff.CustomNode(NativeSink, _frame(), settings={"main": {"label": "plain"}})
+    template = node_store.node_dict["native_test_sink"]
+    assert template.node_group == "testing" and template.node_type == "output"
+    assert ff.native.is_side_effect_node_type("native_test_sink") is True
+
+
+def test_output_node_below_a_closed_gate_is_seeded_at_build_and_skipped_by_the_run(sink_calls):
+    source = _frame()
+    ff.add_flow_parameter(source, ff.Parameter("mode", default="quick"))
+    gate = ff.Gate(source, parameter="mode", operator="equals", value="full")
+    closed = ff.CustomNode(NativeSink, gate.then, settings={"main": {"label": "then"}})
+    live = ff.CustomNode(NativeSink, gate.otherwise, settings={"main": {"label": "otherwise"}})
+    assert closed.deferred is True and live.deferred is True
+    assert sink_calls == []
+
+    run = closed.flow_graph.run_graph()
+
+    results = results_by_id(run)
+    assert run.success is True
+    assert results[closed.node_id].skipped is True
+    assert results[live.node_id].skipped is False
+    assert sink_calls == ["otherwise"]
+
+
+def test_output_node_on_a_plain_frame_still_builds_eagerly(sink_calls):
+    node = ff.CustomNode(NativeSink, _frame(), settings={"main": {"label": "plain"}})
+    assert node.deferred is False
+    assert sink_calls == ["plain"]
+
+
+def test_output_node_below_a_deferred_frame_is_seeded(sink_calls):
+    script = ff.PythonScript(_frame(), code="x = 1", kernel="ml-kernel")
+    node = ff.CustomNode(NativeSink, script.output, settings={"main": {"label": "below script"}})
+    assert node.deferred is True and node.output._deferred is True
+    assert sink_calls == []
+    with pytest.raises(ff.NativeNodeError, match="placeholder rows"):
+        ff.CustomNode(NativeSink, script.output, deferred=False)
+
+
+def test_deferred_true_builds_nothing_and_collect_runs_the_graph():
+    calls: list[str] = []
+
+    class NativeCountingCleaner(NativeCleaner):
+        node_name: str = "Native Test Counting Cleaner"
+
+        def process(self, *inputs):
+            calls.append("ran")
+            return super().process(*inputs)
+
+    node = ff.CustomNode(NativeCountingCleaner, _frame(), settings={"options": {"trim": True}}, deferred=True)
+    assert node.deferred is True and node.output._deferred is True
+    assert node.node.deferred_until_run is True
+    assert calls == []
+
+    assert node.output.collect()["name"].to_list() == ["ann", "bob", "cy"]
+    assert calls == ["ran"]
+
+
+def test_factory_passes_deferred_and_schemas_through():
+    held = ff.custom_node(NativeCleaner)(_frame(), trim=True, deferred=True)
+    assert held._deferred is True
+    assert held.collect()["name"].to_list() == ["ann", "bob", "cy"]
+
+
+class NativeHooklessKernel(CustomNodeBase):
+    node_name: str = "Native Test Hookless Kernel"
+    node_category: str = "Testing"
+    environment: str = "kernel"
+    number_of_outputs: int = 2
+    output_names: list[str] = ["main", "stats"]
+
+    def process(self, *inputs: pl.LazyFrame) -> dict[str, pl.LazyFrame]:
+        raise AssertionError("a kernel node never runs at build time")
+
+
+def test_schemas_give_a_hookless_kernel_node_its_placeholder_columns():
+    bare = ff.CustomNode(NativeHooklessKernel, _frame(), kernel="ml-kernel")
+    assert bare["main"].columns == []
+
+    node = ff.CustomNode(
+        NativeHooklessKernel,
+        _frame(),
+        kernel="ml-kernel",
+        schemas={"main": {"name": ff.String, "score": ff.Float64}},
+    )
+    assert node["main"].data.collect_schema() == pl.Schema({"name": pl.String(), "score": pl.Float64()})
+    assert node["stats"].columns == []
+    scores = node["main"].select("score")
+    assert scores._deferred is True
+    assert scores.columns == ["score"]
+
+    via_factory = ff.custom_node(NativeHooklessKernel).node(
+        _frame(), kernel="ml-kernel", schemas={"stats": {"metric": ff.String}}
+    )
+    assert via_factory["stats"].columns == ["metric"]
+
+
+def test_schemas_are_checked():
+    with pytest.raises(ff.NativeNodeError, match=r"schemas= declares \['other'\]"):
+        ff.CustomNode(NativeHooklessKernel, _frame(), kernel="k", schemas={"other": {"x": ff.Int64}})
+    with pytest.raises(ff.NativeNodeError, match="predict_output_schema"):
+        ff.CustomNode(NativeKernelScorer, _frame(), kernel="k", schemas={"main": {"x": ff.Int64}})
+
+
+# flow parameters
+
+
+PARAM_SEEN: list[tuple] = []
+
+
+class NativeParamScaler(CustomNodeBase):
+    node_name: str = "Native Test Param Scaler"
+    node_category: str = "Testing"
+    settings_schema: NodeSettings = NodeSettings(
+        main=Section(
+            title="Main",
+            column=TextInput(label="Column", default="name"),
+            factor=NumericInput(label="Factor", default=1),
+            upper=ToggleSwitch(label="Upper"),
+        ),
+    )
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        main = self.settings_schema.main
+        PARAM_SEEN.append((main.column.value, main.factor.value, main.upper.value))
+        text = pl.col(main.column.value)
+        if main.upper.value is True:
+            text = text.str.to_uppercase()
+        return inputs[0].with_columns(text, (pl.col("amount") * main.factor.value).alias("scaled"))
+
+
+def test_parameter_values_are_stored_as_references_and_reach_process_resolved_and_typed():
+    PARAM_SEEN.clear()
+    source = ff.from_dict(DATA)
+    factor = ff.add_flow_parameter(source, ff.Parameter("factor", default=3))
+    ff.add_flow_parameter(source, ff.Parameter("upper", default=True, type="boolean"))
+    ff.add_flow_parameter(source, ff.Parameter("col", default="name"))
+
+    node = ff.CustomNode(
+        NativeParamScaler, source, settings={"main": {"factor": factor, "upper": "${upper}", "column": "${col}"}}
+    )
+
+    stored = node.node.setting_input.settings
+    assert stored == {"main": {"column": "${col}", "factor": "${factor}", "upper": "${upper}"}}
+    assert node.settings == stored
+    assert PARAM_SEEN[-1] == ("name", 3, True)
+    assert node.output.collect()["scaled"].to_list() == [3, 6, 9]
+
+    flow = node.flow_graph
+    ff.set_flow_parameter(flow, "factor", 5)
+    ff.set_flow_parameter(flow, "upper", False)
+    run = flow.run_graph()
+    assert run.success is True
+    assert PARAM_SEEN[-1] == ("name", 5, False)
+    out = flow.get_node(node.node_id).get_resulting_data().collect()
+    assert out["scaled"].to_list() == [5, 10, 15]
+    assert out["name"].to_list() == DATA["name"]
+    assert flow.get_node(node.node_id).setting_input.settings == stored
+
+
+def test_factory_takes_a_parameter_as_a_keyword_value():
+    source = ff.from_dict(DATA)
+    factor = ff.add_flow_parameter(source, ff.Parameter("factor", default=2, type="integer"))
+    out = ff.custom_node(NativeParamScaler)(source, factor=factor)
+    assert out.flow_graph.get_node(out.node_id).setting_input.settings["main"]["factor"] == "${factor}"
+    assert out.collect()["scaled"].to_list() == [2, 4, 6]
+
+
+@pytest.mark.parametrize("value", [ff.Parameter("nope", default=1), "${nope}"])
+def test_undeclared_parameter_is_refused_and_leaves_no_node(value):
+    source = ff.from_dict(DATA)
+    with pytest.raises(ff.NativeNodeError, match=r"references flow parameter\(s\) \['nope'\], which are not declared"):
+        ff.CustomNode(NativeParamScaler, source, settings={"main": {"factor": value}})
+    assert [n.node_id for n in source.flow_graph.nodes] == [source.node_id]
+
+
+# secrets
+
+
+class NativeSecretReader(CustomNodeBase):
+    node_name: str = "Native Test Secret Reader"
+    node_category: str = "Testing"
+    settings_schema: NodeSettings = NodeSettings(auth=Section(title="Auth", token=SecretSelector(label="Token")))
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        token = self.settings_schema.auth.token.secret_value.get_secret_value()
+        return inputs[0].with_columns(pl.lit(len(token)).alias("token_length"))
+
+
+def test_missing_secret_at_build_names_deferred():
+    missing = "native_test_secret_that_does_not_exist"
+    with pytest.raises(ff.NativeNodeError, match=f"Secret '{missing}' not found.*pass deferred=True"):
+        ff.CustomNode(NativeSecretReader, _frame(), settings={"auth": {"token": missing}})
+
+    node = ff.CustomNode(NativeSecretReader, _frame(), settings={"auth": {"token": missing}}, deferred=True)
+    assert node.deferred is True
+    assert node.node.setting_input.settings == {"auth": {"token": missing}}

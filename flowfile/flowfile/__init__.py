@@ -116,6 +116,7 @@ from flowfile_frame import (
 )
 from flowfile_frame.catalog_reference import get_catalog
 from flowfile_frame.custom_node import CustomNode, CustomNodeFactory, custom_node
+from flowfile_frame.custom_nodes import CustomNodeInfo, CustomNodes, custom_nodes
 from flowfile_frame.expr import col, column, count, cum_count, len, lit, max, mean, min, sum, when
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.group_frame import GroupByFrame
@@ -219,6 +220,9 @@ __all__ = [
     "CustomNode",
     "CustomNodeFactory",
     "custom_node",
+    "custom_nodes",
+    "CustomNodes",
+    "CustomNodeInfo",
     "PythonScript",
     "PythonScriptFunction",
     "python_script",

@@ -41,7 +41,9 @@ def _unparse(node: ast.AST) -> str:
         return "Any"
 
 
-_PUBLIC_DUNDERS = frozenset({"__init__", "__call__", "__getitem__", "__iter__", "__len__"})
+_PUBLIC_DUNDERS = frozenset(
+    {"__init__", "__call__", "__getitem__", "__getattr__", "__contains__", "__dir__", "__iter__", "__len__"}
+)
 
 
 def _is_public(name: str) -> bool:

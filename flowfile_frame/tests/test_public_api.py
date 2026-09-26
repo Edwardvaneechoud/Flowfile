@@ -29,6 +29,9 @@ NATIVE_NODE_API = [
     "CustomNode",
     "CustomNodeFactory",
     "custom_node",
+    "custom_nodes",
+    "CustomNodes",
+    "CustomNodeInfo",
     "PythonScript",
     "PythonScriptFunction",
     "python_script",
@@ -49,6 +52,11 @@ def test_flowfile_all_lists_the_native_node_api():
 def test_custom_node_is_the_factory_function_not_the_submodule():
     assert callable(flowfile_frame.custom_node)
     assert flowfile_frame.custom_node.__module__ == "flowfile_frame.custom_node"
+
+
+def test_custom_nodes_is_the_registry_view_not_the_submodule():
+    assert isinstance(flowfile_frame.custom_nodes, flowfile_frame.CustomNodes)
+    assert flowfile.custom_nodes is flowfile_frame.custom_nodes
 
 
 def test_python_script_is_the_decorator_not_the_submodule():

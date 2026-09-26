@@ -278,6 +278,7 @@ Everything the designer builds is also writable as a plain Python file — usefu
 ## Related Documentation
 
 - [Custom Nodes in Code](creating-custom-nodes.md) — the Python SDK reference (For Developers).
+- [Custom nodes in the Python API](../python-api/reference/native-nodes.md#custom_node-and-customnode) — placing and installing nodes from Python.
 - [Custom Node Tutorial](custom-node-tutorial.md) — a guided end-to-end build (local execution).
 - [K-Means on a Kernel](kmeans-kernel-node.md) — build the same node visually and as code, running scikit-learn in a kernel.
 - [Kernel Execution](kernels.md) — creating and running Docker kernels.

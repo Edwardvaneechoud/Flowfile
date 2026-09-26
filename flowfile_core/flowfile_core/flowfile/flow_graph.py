@@ -3285,18 +3285,20 @@ class FlowGraph:
         killable subprocess) whenever the flow doesn't run in local mode and
         the node came from the registry; otherwise runs in-process (the
         --run-flow / offload-disabled fallback, and inline test classes that
-        have no source file on disk).
+        have no source file on disk). Both read the settings when the node
+        executes, so ``${name}`` references arrive resolved.
         """
         resolved_output_names = output_names or custom_node.output_names or ["main"]
 
         def _run_in_core(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
+            instance = type(custom_node).from_settings(user_defined_node_settings.settings or {})
             user_id = user_defined_node_settings.user_id
             if user_id is not None:
-                custom_node.set_execution_context(user_id)
+                instance.set_execution_context(user_id)
 
-            output = custom_node.process(*(fde.data_frame.lazy() for fde in flow_data_engine))
+            output = instance.process(*(fde.data_frame.lazy() for fde in flow_data_engine))
 
-            accessed_secrets = custom_node.get_accessed_secrets()
+            accessed_secrets = instance.get_accessed_secrets()
             if accessed_secrets:
                 logger.info(f"Node '{user_defined_node_settings.node_id}' accessed secrets: {accessed_secrets}")
             if isinstance(output, dict):
@@ -3475,20 +3477,24 @@ class FlowGraph:
         """Create the execution function for a kernel-executed custom node.
 
         Registry-backed nodes get an AST-generated script (JSON-baked settings,
-        no return-rewriting), generated eagerly so KernelCodegenError surfaces
-        before the flow runs. Inline test classes with no source file fall back
-        to the deprecated ``generate_kernel_code`` so existing behavior survives.
+        no return-rewriting), generated here so KernelCodegenError surfaces
+        early and again at execution with resolved ``${name}`` settings.
+        Inline test classes with no source file fall back to the deprecated
+        ``generate_kernel_code`` so existing behavior survives.
         """
-        if registry_entry is not None and registry_entry.source_text and registry_entry.class_name:
-            code = generate_kernel_script(
-                node_source=registry_entry.source_text,
-                class_name=registry_entry.class_name,
-                settings_values=custom_node._extract_settings_values(),
-                output_names=output_names,
-                number_of_inputs=custom_node.number_of_inputs,
-            )
-        else:
-            code = custom_node.generate_kernel_code()
+
+        def kernel_code(instance: CustomNodeBase) -> str:
+            if registry_entry is not None and registry_entry.source_text and registry_entry.class_name:
+                return generate_kernel_script(
+                    node_source=registry_entry.source_text,
+                    class_name=registry_entry.class_name,
+                    settings_values=instance._extract_settings_values(),
+                    output_names=output_names,
+                    number_of_inputs=instance.number_of_inputs,
+                )
+            return instance.generate_kernel_code()
+
+        kernel_code(custom_node)
 
         declared_publishes: list[str] | None = None
         if registry_entry is not None and registry_entry.manifest is not None:
@@ -3498,10 +3504,11 @@ class FlowGraph:
         node_type = custom_node.item
 
         def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
+            instance = type(custom_node).from_settings(user_defined_node_settings.settings or {})
             return self._execute_on_kernel(
                 node_id=user_defined_node_settings.node_id,
                 kernel_id=kernel_id,
-                code=code,
+                code=kernel_code(instance),
                 output_names=output_names,
                 flow_data_engine=flow_data_engine,
                 declared_publishes=declared_publishes,

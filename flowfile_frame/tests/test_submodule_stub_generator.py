@@ -21,6 +21,15 @@ class Outputs:
     def __len__(self) -> int:
         return len(self._names)
 
+    def __getattr__(self, name: str) -> int:
+        return 0
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._names
+
+    def __dir__(self) -> list[str]:
+        return list(self._names)
+
     def __call__(self, *inputs: int, trim: bool = False) -> int:
         return 0
 
@@ -39,6 +48,9 @@ def test_render_class_keeps_allow_listed_dunders():
     assert "def __getitem__(self, name: str) -> int: ..." in rendered
     assert "def __iter__(self) -> Any: ..." in rendered
     assert "def __len__(self) -> int: ..." in rendered
+    assert "def __getattr__(self, name: str) -> int: ..." in rendered
+    assert "def __contains__(self, name: object) -> bool: ..." in rendered
+    assert "def __dir__(self) -> list[str]: ..." in rendered
     assert "def __call__(self, *inputs: int, trim: bool=False) -> int: ..." in rendered
     assert "__repr__" not in rendered
     assert "_helper" not in rendered

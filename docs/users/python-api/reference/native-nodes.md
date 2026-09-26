@@ -1,6 +1,6 @@
 # Native Node Classes
 
-This page covers the canvas node types that have no fluent `FlowFrame` method, and the Python classes that place them: `Gate`, `FlowInput` / `to_flow_output`, `RunFlow`, `custom_node` / `CustomNode`, `python_script` / `PythonScript` and the generic `Node`, plus the helpers they use (flow parameters, flow references, flow registration). Each call adds one node to the same `FlowGraph` the fluent methods build, so the flow opens in the designer like any other.
+This page covers the canvas node types that have no fluent `FlowFrame` method, and the Python classes that place them: `Gate`, `FlowInput` / `to_flow_output`, `RunFlow`, `custom_node` / `CustomNode`, `python_script` / `PythonScript` and the generic `Node`, plus the helpers they use (flow parameters, flow references, flow registration, the `custom_nodes` registry). Each call adds one node to the same `FlowGraph` the fluent methods build, so the flow opens in the designer like any other.
 
 Prose fragments use `import flowfile as fl`. The tested examples, which run in CI on every commit, use `ff`; both names refer to the same module. The examples share these imports:
 
@@ -29,16 +29,16 @@ Most nodes produce their output lazily in-process, so building a chain predicts 
 
 - A deferred frame holds a typed, zero-row placeholder with the node's predicted columns. **Building never runs the node**; its output exists once the flow runs.
 - Operations on a deferred frame build nodes as usual and return deferred frames. Their schemas are predicted from the placeholder.
-- A writer, `output`, `api_response`, `flow_output`, `explore_data` or model node (`train_model`, `apply_model`, `evaluate_model`) below a deferred frame is placed, but it does not write, publish or train until the flow runs.
+- A writer, `output`, `api_response`, `flow_output`, `explore_data` or model node (`train_model`, `apply_model`, `evaluate_model`) below a deferred frame is placed, but it does not write, publish or train until the flow runs. So is a custom node whose class declares `node_type="output"`.
 - `collect()` on a deferred frame runs the **whole graph** with `flow_graph.run_graph()`, then returns this node's output; every call runs it again. `describe()`, `profile()`, `fetch()` and `collect_async()` do the same.
 
 | Deferred output | Why |
 |---|---|
 | `fl.RunFlow` | The child flow runs with the parent. |
 | `fl.PythonScript`, a `@fl.python_script` function | The code runs in a kernel container. |
-| `fl.CustomNode` with `kernel=`, a custom node whose schema needs data, or any custom node on a graph that does not execute locally | The node runs in a kernel or the worker, or its columns are only known after it ran. |
+| `fl.CustomNode` with `kernel=`, a custom node whose schema needs data, or an installed custom node on a graph that does not execute locally | The node runs in a kernel or the worker, or its columns are only known after it ran. |
 | `fl.Node("google_analytics_reader" / "external_source", ...)` | The node reads an external system. |
-| `fl.Node(..., deferred=True)` | Requested. |
+| `fl.Node(..., deferred=True)`, `fl.CustomNode(..., deferred=True)` | Requested. |
 | Any frame built from a deferred frame | Inherited. |
 
 What `collect()` on a deferred frame does:
@@ -287,7 +287,7 @@ Outputs are [deferred](#deferred-frames) and named after the child's Flow Output
 
 ## `custom_node` and `CustomNode`
 
-Places a [custom node](../../visual-editor/node-designer.md) authored with `node_designer`.
+Places a [custom node](../../visual-editor/node-designer.md) authored with `node_designer`. Writing the node class itself is covered in [Custom Nodes in Code](../../visual-editor/creating-custom-nodes.md).
 
 ### `custom_node(...)` factory
 
@@ -303,9 +303,9 @@ cleaned = trim(orders, upper=True)                      # FlowFrame
 kept = fl.custom_node("deduper").node(a, b)["kept"]     # CustomNode, for several outputs
 ```
 
-- `factory(*inputs, kernel=None, description=None, settings=None, flow_graph=None, **components) -> FlowFrame` returns the single output frame. A node with several outputs raises and points at `.node(...)`.
+- `factory(*inputs, kernel=None, deferred=None, schemas=None, description=None, settings=None, flow_graph=None, **components) -> FlowFrame` returns the single output frame. A node with several outputs raises and points at `.node(...)`.
 - `factory.node(*inputs, ...) -> CustomNode` takes the same arguments and returns the node object.
-- An unknown keyword raises and lists the valid names. A component name that appears in two sections, or that clashes with `kernel`, `description`, `settings` or `flow_graph`, is only reachable as `section__component`. Naming a component both in `settings=` and as a keyword raises.
+- An unknown keyword raises and lists the valid names. A component name that appears in two sections, or that clashes with `kernel`, `deferred`, `schemas`, `description`, `settings` or `flow_graph`, is only reachable as `section__component`. Naming a component both in `settings=` and as a keyword raises.
 - `help(factory)` and `inspect.signature(factory)` list the components with their defaults.
 
 ### `CustomNode`
@@ -318,20 +318,48 @@ fl.CustomNode(
     *inputs: FlowFrame,
     settings: dict[str, dict[str, Any]] | None = None,
     kernel: str | Any | None = None,
+    deferred: bool | None = None,
+    schemas: Mapping[str, Mapping[str, PolarsDataType]] | None = None,
     description: str | None = None,
     flow_graph: FlowGraph | None = None,
 )
 ```
 
-`node` is a class, an instance (its settings values are the base; an instance that overrides any other field raises, since only settings are saved), or the type name of an installed node. An unknown section or component raises, and so does a class whose node name collides with a built-in node or a different installed node. The number of input frames must match the node's `number_of_inputs`. A class defined in your script is registered for the session: a flow saved with it opens on the canvas only in the same process, and elsewhere shows the node as not installed until it is installed there. `.node_class`, `.settings` (the stored envelope) and `.kernel` hold what was placed.
+`node` is a class, an instance (its settings values are the base; an instance that overrides any other field raises, since only settings are saved), or the type name of an installed node. An unknown section or component raises, and so does a class whose node name collides with a built-in node or a different installed node. The number of input frames must match the node's `number_of_inputs`. `.node_class`, `.settings` (the stored envelope) and `.kernel` hold what was placed.
 
-Kernel rules: an `environment="kernel"` node needs `kernel=` (a kernel id or an object with an `.id`, as for `PythonScript`; not validated at build), and `kernel=` on an `environment="local"` node raises. Outputs are deferred for a kernel node, for a node whose schema cannot be predicted without data (`requires_data_for_prediction` without a `predict_output_schema` hook), and for a local node on a graph that does not execute locally. Otherwise the output is built eagerly: the local node's `process()` runs at build to produce its lazy plan, as canvas schema prediction does.
+A class defined in your script is registered for the session: a flow saved with it opens elsewhere as "not installed" until you [install it](#custom_nodes). `fl.register_flow` and `open_graph_in_editor` warn about such classes.
+
+Kernel rules: an `environment="kernel"` node needs `kernel=` (a kernel id or an object with an `.id`, as for `PythonScript`; not validated at build), and `kernel=` on an `environment="local"` node raises.
+
+- **Build.** A local node's `process()` runs at build to produce its lazy plan. The output is [deferred](#deferred-frames) for a kernel node, a node whose schema needs data, an installed node on a graph that does not execute locally, and a `node_type="output"` node below a gate or a deferred frame. `deferred=` overrides this, as on [`fl.Node`](#node).
+- **`schemas=`** gives a deferred node without a `predict_output_schema` hook its placeholder columns, `{output: {column: dtype}}`, as on `PythonScript`.
+- **Parameters.** A setting may be a [`fl.Parameter`](#flow-parameters) or a `"${name}"` string; it is stored as `${name}`, must be declared on the graph, and reaches `process()` resolved (numbers and booleans typed by the component).
+- **Secrets.** Building reads a `SecretSelector` secret, so it must exist where you build; otherwise pass `deferred=True`.
 
 The same settings two ways, built but not run:
 
 ```python
 --8<-- "docs/examples/native_nodes.py:custom-node"
 ```
+
+A parameter as a setting, a deferred placement, and the same node by key:
+
+```python
+--8<-- "docs/examples/native_nodes.py:custom-node-options"
+```
+
+### `custom_nodes`
+
+`fl.custom_nodes` holds the custom nodes this process can place, by node key:
+
+```python
+fl.custom_nodes.list()                      # CustomNodeInfo per node file (with any load error) and session class
+fl.custom_nodes.get("Trim Text")            # the factory, by key or display name
+fl.custom_nodes.trim_text(orders)           # attribute form
+fl.custom_nodes.install(TrimNode)           # or a path to a .py file; overwrite=False by default
+```
+
+`install` writes `<key>.py` to the custom-nodes directory and registers it. A class is written with the `NodeSettings` classes and imports it uses; a class that reads other module-level names is refused, so install its file instead. A running designer shows a new node after **Settings → Extensions → Custom Nodes → Rescan**.
 
 ## `python_script` and `PythonScript`
 
@@ -499,7 +527,7 @@ Every build or materialisation failure raises `fl.NativeNodeError`, a subclass o
 - **Changing a deferred frame's node after building on it raises.** `set_group()` or `cache()` on a deferred frame, followed by another operation on it, raises `NativeNodeError`. Apply the change before building further, or collect first.
 - **Build-time effects are refused on deferred frames.** `sink_*`, `inspect`, the Polars-code fallbacks of `write_parquet` / `write_csv` / `write_excel`, and expressions without a code form raise `NativeNodeError`. Use a `write_*` method with a native writer node, or collect first.
 - **Three inputs at most** on nodes with fixed inputs, custom nodes included; the canvas has the same limit.
-- **Local custom nodes run `process()` at build** to build their lazy plan, as canvas schema prediction does.
+- **Local custom nodes run `process()` at build** to build their lazy plan, as canvas schema prediction does. Pass `deferred=True` to place one without running it.
 - **Kernel ids are not validated at build.** `collect()` on a deferred frame re-runs every output and writer node in the graph, and contacts Docker when the graph holds a kernel node.
 - **A bare `${param}` token in Polars code fails at build.** Polars code is checked as Python when the node is added, before parameters are substituted. A reference inside a string literal, `pl.lit("${min_amount}")`, builds; a bare `${min_amount}` token outside one is a syntax error, so `fl.Node("polars_code", ...)` raises `NativeNodeError`.
 - **Reader paths do not resolve `${name}` at build.** `fl.read_csv("${dir}/x.csv")` and the other readers open the path as written when they are called, so a reference in it fails with `FileNotFoundError`. Pass the resolved path from Python.

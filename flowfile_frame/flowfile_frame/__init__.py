@@ -72,6 +72,7 @@ from flowfile_frame.cloud_storage.secret_manager import (  # noqa: F401
     get_all_available_cloud_storage_connections,
 )
 from flowfile_frame.custom_node import CustomNode, CustomNodeFactory, custom_node  # noqa: F401
+from flowfile_frame.custom_nodes import CustomNodeInfo, CustomNodes, custom_nodes  # noqa: F401
 
 # Database I/O
 from flowfile_frame.database import (  # noqa: F401

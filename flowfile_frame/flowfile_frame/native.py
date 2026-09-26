@@ -56,13 +56,16 @@ def is_side_effect_node_type(node_type: str) -> bool:
 
     Such a node must not run at build time below a deferred frame: it would write an
     empty file or train on zero rows. ``random_split`` shares the ``ml`` group but is a
-    plain lazy transform, so the group alone is not the test. Unknown types are not
-    side-effect nodes.
+    plain lazy transform, so the group alone is not the test. A custom node counts when
+    its class declares ``node_type="output"``, whatever palette group its category gives
+    it. Unknown types are not side-effect nodes.
     """
     if node_type in SIDE_EFFECT_NODE_TYPES:
         return True
     template = node_store.node_dict.get(node_type)
-    return template is not None and template.node_group == "output"
+    if template is None:
+        return False
+    return template.node_group == "output" or (template.custom_node and template.node_type == "output")
 
 
 def seeded_at_build(node_type: str, frames: Sequence[FlowFrame], *, inputs_deferred: bool | None = None) -> bool:

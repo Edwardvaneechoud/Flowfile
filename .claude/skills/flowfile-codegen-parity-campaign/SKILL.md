@@ -134,9 +134,9 @@ Branches:
 > flow-builders. Add new sample flows *there*, next to `create_sample_dataframe_node`
 > (`test_code_generator.py:318`), not as loose files.
 >
-> A third file exists: `test_code_generator_custom_nodes.py` (baseline: `5 passed`, <1s). It covers
-> custom-node emission on the **Polars exporter only**; run it too whenever you touch
-> `code_generator.py`'s custom-node path.
+> A third file exists: `test_code_generator_custom_nodes.py` (baseline: `21 passed`, <1s). It covers
+> custom-node emission on the Polars exporter and the FlowFrame exporter; run it too whenever you
+> touch `code_generator.py`'s custom-node path.
 
 ---
 
@@ -440,7 +440,7 @@ commit `f6963c77`, branch `feature/claude-skills`). Re-verify volatile facts bef
 |------|-------------------|
 | Baseline `49 passed, 0 xfailed, 0 xpassed` (2026-09-12; was 46/2/1) | `FLOWFILE_DB_PATH=/tmp/v.db poetry run pytest flowfile_core/tests/flowfile/test_code_generator_edge_cases.py -q -rX \| tail -1` |
 | Corpus `692 passed` (2026-09-12; was 653) | `FLOWFILE_DB_PATH=/tmp/v2.db poetry run pytest flowfile_core/tests/flowfile/test_code_generator.py -q \| tail -1` |
-| Custom-nodes file `20 passed` (2026-09-12; was 5) | `FLOWFILE_DB_PATH=/tmp/v5.db poetry run pytest flowfile_core/tests/flowfile/test_code_generator_custom_nodes.py -q \| tail -1` |
+| Custom-nodes file `21 passed` (2026-09-26; was 20) | `FLOWFILE_DB_PATH=/tmp/v5.db poetry run pytest flowfile_core/tests/flowfile/test_code_generator_custom_nodes.py -q \| tail -1` |
 | Per-class gate baselines (2026-09-12): GroupBy `1 passed`, Deprecated `2 passed`, RecordId `1 passed`, Unique `2 passed` | class-scoped pytest exactly as written in each Phase 3 gate |
 | Corpus dual-exporter parametrization (88 sites) | `grep -c 'parametrize("export_func"' flowfile_core/tests/flowfile/test_code_generator.py` |
 | Engine concat delimiter is hard-coded `,` (`string_concat`) | `sed -n '113,120p' flowfile_core/flowfile_core/schemas/transform_schema.py` |

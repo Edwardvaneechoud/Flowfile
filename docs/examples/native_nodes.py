@@ -180,6 +180,29 @@ same_node = ff.CustomNode(DocsTrimNode, people, settings={"options": {"upper": T
 assert trimmed.columns == ["name"]
 assert trimmed.flow_graph.get_node(trimmed.node_id).setting_input.settings == same_node.node.setting_input.settings
 
+# --8<-- [start:custom-node-options]
+casing = ff.add_flow_parameter(people, ff.Parameter("upper_case", default=True, type="boolean"))
+by_parameter = trim(people, upper=casing)  # stored as ${upper_case}, read when the node runs
+held_back = trim(people, upper=True, deferred=True)  # placed, but process() waits for collect()
+by_key = ff.custom_nodes.docs_trim_text  # the same factory, found by node key
+known = [info.key for info in ff.custom_nodes.list()]
+# --8<-- [end:custom-node-options]
+
+assert by_parameter.flow_graph.get_node(by_parameter.node_id).setting_input.settings == {
+    "options": {"column": "name", "upper": "${upper_case}"}
+}
+assert by_parameter.collect()["name"].to_list() == ["ANN", "BOB"]
+assert held_back._deferred is True
+assert held_back.collect()["name"].to_list() == ["ANN", "BOB"]
+assert by_key.node_class is DocsTrimNode
+assert "docs_trim_text" in known and "docs_trim_text" in ff.custom_nodes
+ff.set_flow_parameter(people, casing, False)
+assert people.flow_graph.run_graph().success
+assert people.flow_graph.get_node(by_parameter.node_id).get_resulting_data().collect()["name"].to_list() == [
+    "ann",
+    "bob",
+]
+
 # --8<-- [start:sql]
 sales = ff.from_dict({"id": [1, 2, 3], "amount": [120.0, 40.0, 900.0]})
 customers = ff.from_dict({"id": [1, 3], "name": ["Ann", "Cy"]})
