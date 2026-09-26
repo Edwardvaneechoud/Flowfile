@@ -1,0 +1,2618 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/nodes/output.html">
+      
+      
+        <link rel="prev" href="ml.html">
+      
+      
+        <link rel="next" href="../../formulas/index.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Output Operations - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#output-operations" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Output Operations
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../what-is-flowfile.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Get Started
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Visual Editor
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../connect/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Connect Your Data
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../catalog/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Catalog & Automation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../python-api/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../ai/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../deployment/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy & Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../for-developers/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    
+  
+  
+  
+    <a href="../../../what-is-flowfile.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Visual Editor
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../building-flows.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Actions
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Data Actions
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="input.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Input Sources
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="transform.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transformations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="combine.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Combine Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="aggregate.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ml.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Machine Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Output Operations
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="output.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Output Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#write-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Write data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#format-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Format options
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#database-writer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write to Database
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cloud-storage-writer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write to cloud provider
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Write to cloud provider">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delta-lake-write-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delta Lake write modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#catalog-writer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write to Catalog
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Write to Catalog">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#physical-tables-and-write-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Physical tables and write modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scd2-keeping-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCD2: keeping history
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#virtual-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Virtual tables
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#explore-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explore data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flow-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flow Output
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-response" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API response
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../formulas/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Formula Language
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kernels.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sandboxed Python (Kernels)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kernel-api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The flowfile_ctx API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../node-designer.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Node Designer
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../tutorials/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Worked Examples
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../settings.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../connect/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Data
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../catalog/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog & Automation
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../python-api/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../ai/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../deployment/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy & Operate
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../for-developers/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#write-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Write data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#format-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Format options
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#database-writer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write to Database
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cloud-storage-writer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write to cloud provider
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Write to cloud provider">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delta-lake-write-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delta Lake write modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#catalog-writer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Write to Catalog
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Write to Catalog">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#physical-tables-and-write-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Physical tables and write modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scd2-keeping-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SCD2: keeping history
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#virtual-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Virtual tables
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#explore-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explore data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flow-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flow Output
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-response" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API response
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="output-operations">Output Operations</h1>
+<p>Output actions are where a flow's work lands: a file, a database table, cloud storage, a catalog table, an API response — or a chart you look at on screen. Most take an input and produce no output, so they sit at the end of a branch.</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>What it does</th>
+<th style="text-align: center;">Lite</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#write-data">Write data</a></td>
+<td>Save to a local CSV, Excel, Parquet, Arrow, NDJSON or Avro file</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#database-writer">Write to Database</a></td>
+<td>Append to, replace, or create a database table</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#cloud-storage-writer">Write to cloud provider</a></td>
+<td>Write to S3, Azure Data Lake or Google Cloud Storage</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#catalog-writer">Write to Catalog</a></td>
+<td>Register the result as a catalog table others can query</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#explore-data">Explore data</a></td>
+<td>Build charts interactively on the node's input</td>
+<td style="text-align: center;">●</td>
+</tr>
+<tr>
+<td><a href="#flow-output">Flow Output</a></td>
+<td>Named exit point when this flow runs inside another</td>
+<td style="text-align: center;"></td>
+</tr>
+<tr>
+<td><a href="#api-response">API response</a></td>
+<td>Return this dataset as the body of an HTTP endpoint</td>
+<td style="text-align: center;"></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition info">
+<p class="admonition-title">In Flowfile Lite</p>
+<p>In the browser-only <a href="../../deployment/lite.html">Flowfile Lite</a> build, <strong>Write data</strong> downloads a file to your browser (CSV, Parquet or Excel — not the full desktop format set), and <strong>Write to Catalog</strong> and <strong>Explore data</strong> work as usual. Database and cloud writers need a backend, so they are not available.</p>
+</div>
+<h2 id="write-data"><img alt="Write data" height="44" src="../../../assets/images/nodes/output.svg" width="44" /> Write data</h2>
+<p>Saves the incoming table to a local file.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>File Path</strong></td>
+<td>Directory and filename for the output.</td>
+</tr>
+<tr>
+<td><strong>File Format</strong></td>
+<td>CSV, Excel, Parquet, IPC, NDJSON or Avro.</td>
+</tr>
+<tr>
+<td><strong>Write Mode</strong></td>
+<td><code>overwrite</code> replaces the file; <code>new file</code> fails if one already exists. CSV also offers <code>append</code>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="format-options">Format options</h3>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Extension</th>
+<th>Compression</th>
+<th>Write modes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CSV</td>
+<td><code>.csv</code></td>
+<td>— (set <strong>Delimiter</strong> and <strong>Encoding</strong> instead)</td>
+<td>overwrite, new file, append</td>
+</tr>
+<tr>
+<td>Excel</td>
+<td><code>.xlsx</code></td>
+<td>— (set <strong>Sheet Name</strong>, default <code>Sheet1</code>)</td>
+<td>overwrite, new file</td>
+</tr>
+<tr>
+<td>Parquet</td>
+<td><code>.parquet</code></td>
+<td><code>zstd</code> (default), <code>snappy</code>, <code>gzip</code>, <code>lz4</code>, <code>brotli</code>, <code>uncompressed</code></td>
+<td>overwrite, new file</td>
+</tr>
+<tr>
+<td>Arrow IPC / Feather</td>
+<td><code>.arrow</code></td>
+<td><code>uncompressed</code> (default), <code>lz4</code>, <code>zstd</code></td>
+<td>overwrite, new file</td>
+</tr>
+<tr>
+<td>NDJSON</td>
+<td><code>.ndjson</code></td>
+<td><code>uncompressed</code> (default), <code>gzip</code>, <code>zstd</code></td>
+<td>overwrite, new file</td>
+</tr>
+<tr>
+<td>Avro</td>
+<td><code>.avro</code></td>
+<td><code>uncompressed</code> (default), <code>snappy</code>, <code>deflate</code></td>
+<td>overwrite, new file</td>
+</tr>
+</tbody>
+</table>
+<p>CSV defaults to a <code>,</code> delimiter and <code>UTF-8</code> encoding.</p>
+<h2 id="database-writer"><img alt="Write to Database" height="44" src="../../../assets/images/nodes/database_writer.svg" width="44" /> Write to Database</h2>
+<div class="ff-split">
+<div>
+<p>Writes the incoming table to a database table.</p>
+<p><a href="../tutorials/database-connectivity.html">Connect to PostgreSQL</a> is a step-by-step walkthrough.</p>
+</div>
+<p><img alt="Database Writer settings" src="../../../assets/images/guides/nodes/database-writer-settings.png" /></p>
+</div>
+<p><strong>Connection modes</strong></p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Reference</strong></td>
+<td>Use a saved connection from the <a href="../connections.html">Connection Manager</a>. Recommended.</td>
+</tr>
+<tr>
+<td><strong>Inline</strong></td>
+<td>Enter credentials directly in the node settings.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Schema</strong></td>
+<td>Target schema, e.g. <code>public</code>.</td>
+</tr>
+<tr>
+<td><strong>Table</strong></td>
+<td>Target table name.</td>
+</tr>
+<tr>
+<td><strong>Write Mode</strong></td>
+<td><strong>Append</strong> adds rows to the existing table, <strong>Replace</strong> drops and recreates it with the new data, <strong>Fail</strong> errors if the table already exists.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="cloud-storage-writer"><img alt="Write to cloud provider" height="44" src="../../../assets/images/nodes/cloud_storage_writer.svg" width="44" /> Write to cloud provider</h2>
+<div class="ff-split">
+<div>
+<p>Writes directly to cloud object storage: AWS S3 (including S3-compatible services like MinIO), Azure Data Lake Storage, and Google Cloud Storage.</p>
+<p>Authenticate with a <a href="../tutorials/cloud-connections.html">saved cloud connection</a>, or with <strong>No connection</strong> to use the credentials of the machine running Flowfile. <strong>No connection</strong> ignores saved endpoints and is unavailable on a multi-user server; see <a href="../tutorials/cloud-connections.html#no-connection">Running a node without a connection</a>.</p>
+</div>
+<p><img alt="Screenshot of the Cloud Storage Writer configuration" src="../../../assets/images/ui/screenshot_cloud_writer_output.png" /></p>
+</div>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>File Path</strong></td>
+<td>Full URI including scheme, bucket or container, and file name, e.g. <code>s3://bucket/folder/output.parquet</code>. A Delta table is a folder, so its path names the table, e.g. <code>s3://bucket/warehouse/orders</code>. <strong>Browse</strong> picks a folder and names the file. The drawer warns while the path is empty or has no scheme, and such a node fails before writing anything: <em>Cloud storage writer has no target path…</em> or <em>Cloud storage path '…' is not a URI…</em>.</td>
+</tr>
+<tr>
+<td><strong>File Format</strong></td>
+<td>CSV, Parquet, JSON or Delta Lake.</td>
+</tr>
+<tr>
+<td><strong>Write Mode</strong></td>
+<td>CSV, Parquet and JSON always overwrite. Delta Lake offers the modes in the next table.</td>
+</tr>
+</tbody>
+</table>
+<p>CSV adds <strong>Delimiter</strong> (default <code>,</code>) and <strong>Encoding</strong> (UTF-8 or UTF-8 Lossy). Parquet adds <strong>Compression</strong>: Snappy (default), Gzip, Brotli, LZ4 or Zstd.</p>
+<div class="admonition note">
+<p class="admonition-title">Parquet defaults differ between the two writers</p>
+<p>This node defaults Parquet to <strong>Snappy</strong>, while local <a href="#write-data">Write data</a> defaults to <strong>Zstd</strong>. Set the codec explicitly if the two paths need to match.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Overwrite replaces the target</p>
+<p>In <code>overwrite</code> mode any existing file or data at the path is replaced. Verify the path before running.</p>
+</div>
+<h3 id="delta-lake-write-modes">Delta Lake write modes</h3>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Overwrite</strong></td>
+<td>Replace all existing data in the table.</td>
+</tr>
+<tr>
+<td><strong>Error if exists</strong></td>
+<td>Fail if the table already exists.</td>
+</tr>
+<tr>
+<td><strong>Append</strong></td>
+<td>Add rows to the existing table. Without <strong>Track changes</strong>, the incoming columns must match the table's.</td>
+</tr>
+<tr>
+<td><strong>Upsert</strong></td>
+<td>Insert new rows, update existing ones matching the key columns.</td>
+</tr>
+<tr>
+<td><strong>Update</strong></td>
+<td>Update only existing rows matching the key columns; no inserts.</td>
+</tr>
+<tr>
+<td><strong>Delete</strong></td>
+<td>Remove target rows matching the key columns in the source.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Key columns</strong> are required for Upsert, Update and Delete — they are the columns rows are matched on. Upsert and Update first add any source column the table does not have yet.</p>
+<p><strong>Partition by</strong> is optional and offered for Overwrite, Error if exists and Append. It sets the partition columns when the write creates the table; later writes must match that partitioning.</p>
+<p><strong>Track changes</strong> turns <a href="../catalog/change-tracking.html">change tracking</a> on for the table, so a <a href="input.html#cloud-storage-reader">Read from cloud provider</a> node can read only the rows each later write inserted, updated or deleted. As on the <a href="#catalog-writer">catalog writer</a>, it is enable-only: on an existing untracked table it is switched on just before this write, so this write is the first one tracked, and clearing it never turns tracking back off. Unavailable with Overwrite.</p>
+<p>When the path points at an existing Delta table, the Delta options show its current version and partition columns; otherwise they note that the write creates a new table.</p>
+<div class="admonition note">
+<p class="admonition-title">Delta on Google Cloud Storage</p>
+<p>Upsert, Update, Delete and Track changes are not available for <code>gs://</code> paths: the drawer disables them, and a run that asks for them fails before writing. They work on S3 and Azure Data Lake Storage.</p>
+</div>
+<h2 id="catalog-writer"><img alt="Write to Catalog" height="44" src="../../../assets/images/nodes/catalog_writer.svg" width="44" /> Write to Catalog</h2>
+<div class="ff-split">
+<div>
+<p>Registers the result as a table in the <a href="../catalog/index.html">Catalog</a>, where colleagues can query, chart and schedule against it without rebuilding the flow.</p>
+<p>Two modes sit behind tabs: <strong>physical</strong>, materialized as a Delta table on disk, and <strong>virtual</strong>, which stores no data and resolves on demand.</p>
+</div>
+</div>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Table Name</strong></td>
+<td>Name for the catalog table.</td>
+</tr>
+<tr>
+<td><strong>Catalog / Schema</strong></td>
+<td>Target namespace in the catalog hierarchy.</td>
+</tr>
+<tr>
+<td><strong>Description</strong></td>
+<td>Optional description.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="physical-tables-and-write-modes">Physical tables and write modes</h3>
+<p>A physical write materializes a Delta table with full schema metadata, row count and lineage.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Overwrite</strong></td>
+<td>Replace all existing data in the table.</td>
+</tr>
+<tr>
+<td><strong>Error if exists</strong></td>
+<td>Fail if the table already exists.</td>
+</tr>
+<tr>
+<td><strong>Append</strong></td>
+<td>Add rows to the existing table.</td>
+</tr>
+<tr>
+<td><strong>Upsert</strong></td>
+<td>Insert new rows, update existing ones matching the key columns.</td>
+</tr>
+<tr>
+<td><strong>Update</strong></td>
+<td>Update only existing rows matching the key columns; no inserts.</td>
+</tr>
+<tr>
+<td><strong>Delete</strong></td>
+<td>Remove target rows matching the key columns in the source.</td>
+</tr>
+<tr>
+<td><strong>SCD2</strong></td>
+<td>Track history rather than overwriting it. See below.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Key Columns</strong> are required for Upsert, Update, Delete and SCD2 — they are the columns rows are matched on.</p>
+<p><strong>Track changes</strong> turns <a href="../catalog/change-tracking.html">change tracking</a> on for the table, so a downstream flow can read only the rows each write inserted, updated or deleted. It is enable-only: ticking it records the row changes of this and every later write, and clearing it again never turns tracking back off. Unavailable for the Overwrite, SCD2 and virtual modes.</p>
+<h3 id="scd2-keeping-history">SCD2: keeping history</h3>
+<p>The SCD2 write mode tracks row history instead of overwriting it. Each write adds four generated columns (<code>sk</code>, <code>valid_from</code>, <code>valid_to</code>, <code>is_current</code>), end-dates the rows whose tracked columns changed, and inserts the new versions alongside the unchanged ones.</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Business key columns</strong></td>
+<td>The business key — the same underlying field as <strong>Key Columns</strong>, which the UI relabels for SCD2. Required.</td>
+</tr>
+<tr>
+<td><strong>Compare Columns</strong></td>
+<td>Columns checked for changes. Empty (the default) compares every column that is neither a key column nor one of the four generated columns.</td>
+</tr>
+<tr>
+<td><strong>Full Snapshot</strong></td>
+<td>Off by default. When on, business keys present in an earlier write but absent from the current input are end-dated as no longer current; when off, absent keys stay current.</td>
+</tr>
+<tr>
+<td><strong>Output</strong></td>
+<td>What passes downstream. Every choice emits the input's columns plus the four generated ones: <em>All records that are inputted</em> (default) returns the input rows with each one's current surrogate key, <em>All changed records</em> returns only the versions this run inserted or end-dated, and <em>All active records</em> returns the table's whole current slice.</td>
+</tr>
+</tbody>
+</table>
+<p>Unlike every other write mode, an SCD2 writer's output is not its input: it carries the four generated columns, so a downstream node can use the surrogate key of the version just written. The node only grows an output handle on the canvas while SCD2 is selected; in every other mode it stays an endpoint.</p>
+<p>A table that is already SCD2-tracked accepts only further <code>scd2</code> writes or a plain <code>overwrite</code>. An <code>overwrite</code> rebuilds the table and clears SCD2 tracking, while <strong>append</strong>, <strong>upsert</strong>, <strong>update</strong> and <strong>delete</strong> against an SCD2-tracked table fail at run time, since they would corrupt the version history. Writing <code>scd2</code> onto an existing table that is not already tracked also fails — pick a new table name, or delete the existing table first.</p>
+<p><a href="../catalog/slowly-changing-dimensions.html">Slowly Changing Dimensions</a> covers the generated columns, change detection and reading history.</p>
+<h3 id="virtual-tables">Virtual tables</h3>
+<p>The <strong>Virtual Table</strong> tab creates a <a href="../catalog/virtual-tables.html">virtual flow table</a> — a catalog entry that stores no data on disk and resolves on demand by executing the producer flow. Selecting the tab checks whether the pipeline supports optimized resolution:</p>
+<ul>
+<li><strong>Green checkmark</strong> — every upstream node is lazy, so the virtual table stores a serialized execution plan and resolves instantly with predicate and projection pushdown.</li>
+<li><strong>Yellow warning</strong> — some upstream nodes are eager or conditional, so resolution re-executes the full producer flow on each read. The blocking nodes are listed.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Flow registration required</p>
+<p>Virtual tables require the flow to be registered in the catalog. If it is not, the virtual write fails — open the flow from the catalog, or register it first.</p>
+</div>
+<h2 id="explore-data"><img alt="Explore data" height="44" src="../../../assets/images/nodes/explore_data.svg" width="44" /> Explore data</h2>
+<p>Opens an interactive drag-and-drop chart builder (powered by <a href="https://github.com/Kanaries/graphic-walker">Graphic Walker</a>) on the node's input. Drag columns onto the x and y axes, colour and size shelves to build bar, line, scatter and other charts — nothing to configure up front and no code. Chart configurations are saved with the node, so they survive reopening the flow.</p>
+<p>It takes one input and produces no output: a terminal preview for eyeballing a dataset, not a step that transforms or writes anything. The builder shows an empty state until the upstream has run. There are no settings — the chart you compose <em>is</em> the configuration.</p>
+<div class="admonition note">
+<p class="admonition-title">Visual editor only</p>
+<p>Headless runs — the <code>flowfile run flow</code> CLI, the scheduler, and other non-UI paths — skip Explore data nodes automatically, since there is nowhere to draw the chart. It has no effect on the data flowing through the rest of the pipeline.</p>
+</div>
+<p>To keep a chart as a shareable, reusable artifact rather than an ad-hoc preview, use the catalog's <a href="../catalog/visualizations.html">visualizations</a>.</p>
+<h2 id="flow-output"><img alt="Flow Output" height="44" src="../../../assets/images/nodes/flow_output.svg" width="44" /> Flow Output</h2>
+<p>A named exit point for a <a href="../subflows.html">subflow</a>. Each Flow Output exposes one dataset to the parent flow that calls it, appearing as an output handle on the parent's <a href="combine.html#run-flow">Run Flow</a> node. A flow can carry several, each with its own name.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Output name</strong></td>
+<td>The port name the parent reads from. Default <code>output</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="api-response"><img alt="API response" height="44" src="../../../assets/images/nodes/api_response.svg" width="44" /> API response</h2>
+<p>Marks its input as the body of an HTTP endpoint. When a flow is published as an API, the data arriving here is serialized and returned to the caller; a published flow must contain exactly one. During interactive runs it passes data through unchanged, so previews keep working.</p>
+<p><strong>Settings</strong></p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Orientation</strong></td>
+<td><code>records</code> (a list of row objects, default) or <code>columns</code> (column-oriented).</td>
+</tr>
+<tr>
+<td><strong>Max rows</strong></td>
+<td>Optional cap on the number of rows returned.</td>
+</tr>
+</tbody>
+</table>
+<p><a href="../catalog/flow-api.html">Serve Flows as APIs</a> covers publishing, keys and parameters.</p>
+<hr />
+<p><a href="ml.html">← Machine Learning</a> | <a href="index.html">Back to all actions</a></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="ml.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Machine Learning">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Machine Learning
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../../formulas/index.html" class="md-footer__link md-footer__link--next" aria-label="Next: Formula Language">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Formula Language
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Flowfile is MIT-licensed. Alteryx is a trademark of Alteryx, Inc.; KNIME is a trademark of KNIME AG. Flowfile is not affiliated with or endorsed by either.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.prune", "navigation.tracking", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../../javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>

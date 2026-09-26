@@ -1,0 +1,2083 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/catalog/change-tracking.html">
+      
+      
+        <link rel="prev" href="slowly-changing-dimensions.html">
+      
+      
+        <link rel="next" href="sql-editor.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Change Tracking - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#change-tracking" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Change Tracking
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../what-is-flowfile.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Get Started
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Visual Editor
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../connect/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Connect Your Data
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Catalog & Automation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../python-api/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../ai/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../deployment/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy & Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../for-developers/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    
+  
+  
+  
+    <a href="../../../what-is-flowfile.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../connect/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Data
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog & Automation
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Catalog & Automation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="virtual-tables.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Virtual Tables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="slowly-changing-dimensions.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slowly Changing Dimensions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Change Tracking
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="change-tracking.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Change Tracking
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#catalog-tables-and-cloud-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Catalog tables and cloud paths
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#turning-it-on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Turning it on
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading changes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cursors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cursors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cloud-delta-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delta tables at a cloud path
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Delta tables at a cloud path">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#moving-the-window-on-a-cloud-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Moving the window on a cloud path
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-each-write-mode-produces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What each write mode produces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vacuum-and-history-retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vacuum and history retention
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#from-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From Python
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="sql-editor.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SQL Editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="notebooks.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="visualizations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualizations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="schedules.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schedules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="alerts.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Alerts & Notifications
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="flow-api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Flows as APIs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../subflows.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../projects.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Projects & Git
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../python-api/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../ai/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../deployment/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy & Operate
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../for-developers/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#catalog-tables-and-cloud-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Catalog tables and cloud paths
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#turning-it-on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Turning it on
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-changes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading changes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cursors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cursors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cloud-delta-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delta tables at a cloud path
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Delta tables at a cloud path">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#moving-the-window-on-a-cloud-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Moving the window on a cloud path
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-each-write-mode-produces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What each write mode produces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vacuum-and-history-retention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vacuum and history retention
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#from-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From Python
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="change-tracking">Change Tracking</h1>
+<p>Change tracking lets a flow read only what changed in a Delta table instead of re-reading the whole table every run. It works on catalog tables and on Delta tables at a cloud storage path: turn it on for the table, point a reader at it in one of the <strong>Changes</strong> modes, and each run returns the inserts, updates and deletes committed in that window. This page covers how to turn it on, what the reader returns, the per-consumer cursor that catalog tables keep, how cloud paths differ, and the cases where tracking is refused or unsafe.</p>
+<p>Underneath it is Delta Lake's change data feed: a table property that makes every write record its row-level changes alongside the data. Flowfile turns the property on, knows the version it was turned on at, and — for catalog tables — keeps a cursor per consumer.</p>
+<h2 id="catalog-tables-and-cloud-paths">Catalog tables and cloud paths</h2>
+<p>The change feed, the columns it adds and the enable-only rule are the same for both. What differs is what Flowfile can keep about a table the catalog does not manage:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Catalog table</th>
+<th>Delta table at a cloud path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Reader</td>
+<td><a href="../nodes/input.html#catalog-reader">Read from Catalog</a></td>
+<td><a href="../nodes/input.html#cloud-reading-changes">Read from cloud provider</a>, Delta Lake format</td>
+</tr>
+<tr>
+<td>Writer</td>
+<td><a href="../nodes/output.html#catalog-writer">Write to Catalog</a></td>
+<td><a href="../nodes/output.html#cloud-storage-writer">Write to cloud provider</a>, Delta Lake format</td>
+</tr>
+<tr>
+<td>Read modes</td>
+<td>Since last run, since version, since time</td>
+<td>Since version, since time</td>
+</tr>
+<tr>
+<td>Cursor</td>
+<td>One per consumer, advanced after each full run</td>
+<td>None — a <a href="#moving-the-window-on-a-cloud-path">flow parameter moves the window</a></td>
+</tr>
+<tr>
+<td>Tracking floor</td>
+<td>Recorded when tracking is turned on</td>
+<td>Read from the table's Delta log on every run</td>
+</tr>
+<tr>
+<td>Storage</td>
+<td>Wherever the catalog keeps its tables</td>
+<td>S3 or Azure Data Lake Storage; not Google Cloud Storage</td>
+</tr>
+</tbody>
+</table>
+<h2 id="turning-it-on">Turning it on</h2>
+<p>Tracking is <strong>off by default</strong>, <strong>per table</strong>, and <strong>enable-only</strong> — nothing in the UI turns it back off, because the changes a table stops recording cannot be recovered later. Every way of turning it on does the same thing:</p>
+<ul>
+<li>The writer's <strong>Track changes</strong> checkbox, on <a href="../nodes/output.html#catalog-writer">Write to Catalog</a> or <a href="../nodes/output.html#cloud-storage-writer">Write to cloud provider</a>. On a new table the property is set at creation; on an existing untracked table the writer enables it just before writing, so that write is the first tracked commit.</li>
+<li>The <strong>Enable change tracking</strong> button in either reader's settings, shown when a change mode is picked on a table that is not tracked yet.</li>
+<li>For a catalog table, the <strong>Change tracking</strong> card on the table's detail page in the catalog browser.</li>
+</ul>
+<p>In Python, pass <code>track_changes=True</code> to <a href="../../python-api/reference/writing-data.html#catalog-writing"><code>write_catalog_table</code></a> or <code>SchemaReference.write_table</code> for a catalog table, and to <a href="../../python-api/reference/writing-data.html#delta-lake-writing"><code>FlowFrame.write_delta</code></a> or <code>write_to_cloud_storage</code> for a cloud path.</p>
+<div class="admonition warning">
+<p class="admonition-title">Only commits made after enabling are tracked</p>
+<p>The version tracking was turned on at is the floor for every change read. History written before it cannot be replayed — the change feed for those versions is either missing or inconsistent, so a window that starts earlier is moved up to the floor. A catalog table records the floor when tracking is enabled; for a cloud path Flowfile reads it from the Delta log: the commit that turned tracking on or, for a table created tracked, its oldest version still in the log. Turn tracking on when you create the table, not when you first need a change feed.</p>
+</div>
+<p>Tracking is refused on virtual tables, legacy parquet tables and <a href="slowly-changing-dimensions.html">SCD2</a>-tracked tables, and on <code>gs://</code> paths. An SCD2 table already keeps row history in its <code>valid_from</code> / <code>valid_to</code> / <code>is_current</code> columns — read those instead.</p>
+<h2 id="reading-changes">Reading changes</h2>
+<p>Both readers show a <strong>Read</strong> selector:</p>
+<p><img alt="Catalog Reader set to &quot;Changes since last run&quot;, showing the cursor status line and Reset cursor button" src="../../../assets/images/guides/catalog/change-tracking-reader.png" /></p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>What the run returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Full table</strong> (default)</td>
+<td>The table as it is now. No change feed.</td>
+</tr>
+<tr>
+<td><strong>Changes since last run</strong></td>
+<td>Catalog tables only. Everything committed after the version this consumer last processed. Advances a cursor.</td>
+</tr>
+<tr>
+<td><strong>Changes since version</strong></td>
+<td>Everything committed after the version you pick. No cursor — the same window every run.</td>
+</tr>
+<tr>
+<td><strong>Changes since time</strong></td>
+<td>Everything committed at or after a timestamp (never below the tracking floor). No cursor.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Changes since version</strong> and <strong>Changes since time</strong> also accept a flow parameter (<code>${name}</code>, offered in the drawer when the flow defines one of the matching type), so a scheduled, CLI or API run can pass the starting point at run time.</p>
+<p>Every change mode adds three columns to the table's own:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_change_type</code></td>
+<td><code>insert</code>, <code>update_postimage</code>, <code>delete</code> — plus <code>update_preimage</code> when preimages are included</td>
+</tr>
+<tr>
+<td><code>_commit_version</code></td>
+<td>The Delta commit version the row change belongs to</td>
+</tr>
+<tr>
+<td><code>_commit_timestamp</code></td>
+<td>When that commit landed</td>
+</tr>
+</tbody>
+</table>
+<p>By default the reader drops <code>update_preimage</code> rows, so an updated row appears once, with its new values. Tick <strong>Include row values from before each update</strong> (<code>include_change_preimage</code> in Python) to get the before-image rows as well; pair them with <code>_commit_version</code> to see what a row looked like before and after the same commit.</p>
+<p>A run whose window contains nothing returns an empty frame with the full schema, not an error — a scheduled flow that fires during a quiet hour simply processes zero rows.</p>
+<h2 id="cursors">Cursors</h2>
+<p>Only <strong>Changes since last run</strong> keeps a cursor, so cursors exist for catalog tables only. A cursor stores one number: the last Delta commit version that was fully processed. The next run reads from the version after it, up to the table's head at the moment the read starts.</p>
+<p><strong>Which runs advance it.</strong> A cursor moves only after a full flow run in which the reader and everything downstream of it completed — running the flow from the designer, from a schedule, or headlessly. Previewing a node, running a single node, or cancelling a run never advances it. A failure anywhere downstream leaves the cursor where it was, so the next run replays the same window.</p>
+<p><strong>Delivery is at-least-once.</strong> Because the cursor advances after the run rather than during it, a run that succeeds but whose commit fails, or one that is killed between writing and committing, will re-deliver its window. Make the downstream write idempotent — upsert on a key rather than append.</p>
+<p><strong>Cursor identity.</strong> By default a cursor belongs to the node in the flow it lives in: two flows reading the same table each get their own position, and each sees every change. Give the reader a <strong>Cursor name</strong> to share one position across flows or notebooks instead — named cursors are global to the table, so whichever run reads first consumes the window for all of them. Names may contain letters, digits and <code>_ . : -</code>.</p>
+<div class="admonition note">
+<p class="admonition-title">A named cursor is required outside a saved flow</p>
+<p>The default cursor key is built from the flow's identity, so a reader in an unsaved flow has nothing to key on. Save the flow first, or give the cursor a name. In <code>flowfile_frame</code>, <code>changes_since="last_run"</code> needs <code>changes_consumer=</code> unless the graph is registered in the catalog.</p>
+</div>
+<p><strong>Where a cursor starts.</strong> The first run with no cursor yet is governed by <strong>Start from</strong>: <em>Now</em> (the default) initializes the cursor at the current version and reads nothing, so processing starts with the next change; <em>Beginning</em> replays everything recorded since tracking was enabled.</p>
+<p><strong>Reset and delete.</strong> The reader's settings and the table detail page both list the table's cursors with how far behind they are, and offer <strong>Reset</strong> (move to the current version, skipping unread changes) and <strong>Delete</strong> (forget the position entirely — the next run re-initializes per <strong>Start from</strong>). Resetting to the beginning replays all tracked history.</p>
+<h2 id="cloud-delta-tables">Delta tables at a cloud path</h2>
+<p>A <a href="../nodes/input.html#cloud-reading-changes">Read from cloud provider</a> node in the Delta Lake format reads the change feed straight from the table's path, with no catalog entry. Three things work differently from a catalog table:</p>
+<ul>
+<li><strong>No cursor.</strong> A bare path has nowhere to store one, so there is no <strong>Changes since last run</strong>; each run reads the window its <strong>Changes since version</strong> or <strong>Changes since time</strong> setting describes.</li>
+<li><strong>The floor comes from the Delta log.</strong> With no catalog entry to record it in, the reader looks up the commit that turned tracking on each time it runs.</li>
+<li><strong>Tracking can be turned on without writing.</strong> The reader's <strong>Enable change tracking</strong> button adds the table property as its own commit, so the next write is the first one tracked. A <a href="../nodes/output.html#cloud-storage-writer">Write to cloud provider</a> node with <strong>Track changes</strong> ticked does the same as part of its write.</li>
+</ul>
+<h3 id="moving-the-window-on-a-cloud-path">Moving the window on a cloud path</h3>
+<p>To process each change once without a cursor, remember the highest <code>_commit_version</code> a run returned and pass it as the starting version of the next run. Define an integer <a href="../subflows.html#add-parameters-optional">flow parameter</a>, pick it under <strong>Since version</strong> in the reader, and set it per run — a headless run takes it as <code>--param</code>, a <a href="flow-api.html#parameters">published API</a> as a query parameter:</p>
+<div class="highlight"><pre><span></span><code>flowfile<span class="w"> </span>run<span class="w"> </span>flow<span class="w"> </span>orders_sync.yaml<span class="w"> </span>--param<span class="w"> </span><span class="nv">since_version</span><span class="o">=</span><span class="m">41</span>
+</code></pre></div>
+<p>That run reads every commit after version 41. Running it again with the same value reads the same window again, so keep the downstream write idempotent, as with a cursor.</p>
+<h2 id="what-each-write-mode-produces">What each write mode produces</h2>
+<p>Any write to a tracked table records changes, but what shows up in the feed depends on how the data was written:</p>
+<ul>
+<li><strong>Upsert, update, delete</strong> record exactly the rows they touched, with <code>update_preimage</code>/<code>update_postimage</code> pairs for modified rows. This is the combination change tracking is built for, and both writers offer it.</li>
+<li><strong>Append</strong> records its new rows as inserts.</li>
+<li><strong>Overwrite</strong> is not offered with <strong>Track changes</strong> on either writer (<code>track_changes</code> with <code>write_mode="overwrite"</code> is a validation error, as are the catalog's <code>"virtual"</code> and <code>"scd2"</code>). A tracked table that some other flow overwrites still produces a feed — but as a full set of deletes followed by a full set of inserts, which is rarely what a downstream consumer wants.</li>
+</ul>
+<h2 id="vacuum-and-history-retention">Vacuum and history retention</h2>
+<p>A change feed can only be read while the underlying Delta history is still on disk. <a href="index.html#delta-table-history">Vacuum</a> reclaims files older than the retention window, which can put the versions a cursor still needs out of reach.</p>
+<p>Flowfile guards against that for catalog tables: a vacuum that would drop history a cursor still points into is refused with a warning listing the cursors at risk, and the dialog offers <strong>Vacuum anyway</strong> if you accept the loss. If a read later lands on a version that no longer exists, the reader fails with an error telling you to reset the cursor. A cloud path has no cursors to protect and no vacuum action in Flowfile, so a vacuum run on it by another tool is not checked.</p>
+<p>Overwrite commits are the fragile case: their change feed is reconstructed from the files the overwrite replaced, so a vacuum breaks it. Merge-based writes (upsert, update, delete) materialize their changes explicitly and survive.</p>
+<h2 id="from-python">From Python</h2>
+<p><code>read_catalog_table</code> and <code>SchemaReference.read_table</code> take <code>changes_since</code> — an <code>int</code> for a version, <code>"last_run"</code> for a cursor, or an ISO-8601 string / <code>datetime</code> for a timestamp — plus <code>changes_consumer</code>, <code>changes_start</code> and <code>include_change_preimage</code>. See <a href="../../python-api/reference/catalog-references.html">Catalog References</a> for the full signatures.</p>
+<p>The tested example below writes a table twice with tracking on, then reads its change feed through a named cursor:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ff</span>
+
+<span class="n">schema</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">default_schema</span><span class="p">()</span>
+
+<span class="c1"># track_changes turns the table's change feed on; every write after it records its row changes.</span>
+<span class="n">day1</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">from_dict</span><span class="p">({</span><span class="s2">"order_id"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span> <span class="s2">"status"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"new"</span><span class="p">,</span> <span class="s2">"new"</span><span class="p">]})</span>
+<span class="n">ff</span><span class="o">.</span><span class="n">write_catalog_table</span><span class="p">(</span>
+    <span class="n">day1</span><span class="p">,</span> <span class="s2">"docs_orders_changes"</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="n">schema</span><span class="p">,</span>
+    <span class="n">write_mode</span><span class="o">=</span><span class="s2">"upsert"</span><span class="p">,</span> <span class="n">merge_keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"order_id"</span><span class="p">],</span> <span class="n">track_changes</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">day2</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">from_dict</span><span class="p">({</span><span class="s2">"order_id"</span><span class="p">:</span> <span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span> <span class="s2">"status"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"shipped"</span><span class="p">,</span> <span class="s2">"new"</span><span class="p">]})</span>
+<span class="n">ff</span><span class="o">.</span><span class="n">write_catalog_table</span><span class="p">(</span>
+    <span class="n">day2</span><span class="p">,</span> <span class="s2">"docs_orders_changes"</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="n">schema</span><span class="p">,</span>
+    <span class="n">write_mode</span><span class="o">=</span><span class="s2">"upsert"</span><span class="p">,</span> <span class="n">merge_keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"order_id"</span><span class="p">],</span> <span class="n">track_changes</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># A named cursor is stored per table, so a scheduled flow resumes where it left off.</span>
+<span class="c1"># "beginning" replays everything tracked; "now" (the default) starts at the current version.</span>
+<span class="n">changes</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">read_catalog_table</span><span class="p">(</span>
+    <span class="s2">"docs_orders_changes"</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="n">schema</span><span class="p">,</span>
+    <span class="n">changes_since</span><span class="o">=</span><span class="s2">"last_run"</span><span class="p">,</span> <span class="n">changes_consumer</span><span class="o">=</span><span class="s2">"docs-order-feed"</span><span class="p">,</span> <span class="n">changes_start</span><span class="o">=</span><span class="s2">"beginning"</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>For a cloud path, <code>ff.scan_delta</code> and <code>ff.read_from_cloud_storage</code> (with <code>file_format="delta"</code>) take the same <code>changes_since</code> and <code>include_change_preimage</code>, without <code>"last_run"</code>: a cloud path keeps no cursor, so <code>"last_run"</code> raises a <code>ValueError</code>. See <a href="../../python-api/reference/reading-data.html#delta-lake-reading">Reading Data</a>. The tested example upserts into a Delta table on S3 twice, then reads everything committed after version 0:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># The first write creates the table (version 0) with its change feed on.</span>
+<span class="n">day1</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">from_dict</span><span class="p">({</span><span class="s2">"order_id"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span> <span class="s2">"status"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"new"</span><span class="p">,</span> <span class="s2">"new"</span><span class="p">]})</span>
+<span class="n">day1</span><span class="o">.</span><span class="n">write_delta</span><span class="p">(</span>
+    <span class="n">table_path</span><span class="p">,</span> <span class="n">connection_name</span><span class="o">=</span><span class="s2">"analytics-s3"</span><span class="p">,</span>
+    <span class="n">write_mode</span><span class="o">=</span><span class="s2">"upsert"</span><span class="p">,</span> <span class="n">merge_keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"order_id"</span><span class="p">],</span> <span class="n">track_changes</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">day2</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">from_dict</span><span class="p">({</span><span class="s2">"order_id"</span><span class="p">:</span> <span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span> <span class="s2">"status"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"shipped"</span><span class="p">,</span> <span class="s2">"new"</span><span class="p">]})</span>
+<span class="n">day2</span><span class="o">.</span><span class="n">write_delta</span><span class="p">(</span>
+    <span class="n">table_path</span><span class="p">,</span> <span class="n">connection_name</span><span class="o">=</span><span class="s2">"analytics-s3"</span><span class="p">,</span>
+    <span class="n">write_mode</span><span class="o">=</span><span class="s2">"upsert"</span><span class="p">,</span> <span class="n">merge_keys</span><span class="o">=</span><span class="p">[</span><span class="s2">"order_id"</span><span class="p">],</span> <span class="n">track_changes</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">changes</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">scan_delta</span><span class="p">(</span><span class="n">table_path</span><span class="p">,</span> <span class="n">connection_name</span><span class="o">=</span><span class="s2">"analytics-s3"</span><span class="p">,</span> <span class="n">changes_since</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">changes</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">"order_id"</span><span class="p">,</span> <span class="s2">"status"</span><span class="p">,</span> <span class="s2">"_change_type"</span><span class="p">)</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="s2">"order_id"</span><span class="p">))</span>
+</code></pre></div>
+<p>The feed holds order 2 as <code>update_postimage</code> and order 3 as <code>insert</code>, both at <code>_commit_version</code> 1. Order 1 is absent: the second write did not touch it.</p>
+<h2 id="related-documentation">Related documentation</h2>
+<ul>
+<li><a href="../nodes/input.html#catalog-reader">Read from Catalog</a> — the Read selector for a catalog table</li>
+<li><a href="../nodes/input.html#cloud-reading-changes">Read from cloud provider</a> — the Read selector for a cloud Delta path</li>
+<li><a href="../nodes/output.html#catalog-writer">Write to Catalog</a> and <a href="../nodes/output.html#cloud-storage-writer">Write to cloud provider</a> — the Track changes flag</li>
+<li><a href="slowly-changing-dimensions.html">Slowly Changing Dimensions</a> — row-level history in ordinary columns, the alternative to a change feed</li>
+<li><a href="index.html#delta-table-history">Catalog</a> — Delta version history and vacuum</li>
+<li><a href="schedules.html">Schedules</a> — running an incremental flow on a timer</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="slowly-changing-dimensions.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Slowly Changing Dimensions">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Slowly Changing Dimensions
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="sql-editor.html" class="md-footer__link md-footer__link--next" aria-label="Next: SQL Editor">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                SQL Editor
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Flowfile is MIT-licensed. Alteryx is a trademark of Alteryx, Inc.; KNIME is a trademark of KNIME AG. Flowfile is not affiliated with or endorsed by either.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.prune", "navigation.tracking", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../../javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,3085 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/users/python-api/reference/native-nodes.html">
+      
+      
+        <link rel="prev" href="visual-ui.html">
+      
+      
+        <link rel="next" href="../tutorials/index.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Native Node Classes - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#native-node-classes" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../../index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Native Node Classes
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../what-is-flowfile.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Get Started
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../visual-editor/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Visual Editor
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../connect/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Connect Your Data
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../visual-editor/catalog/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Catalog & Automation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../ai/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../deployment/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy & Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../for-developers/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../../index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="../../../assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    
+  
+  
+  
+    <a href="../../../what-is-flowfile.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../visual-editor/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../connect/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Data
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../visual-editor/catalog/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog & Automation
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../concepts/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Concepts
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6_4" id="__nav_6_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reading-data.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="writing-data.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing Data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="catalog-references.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog References
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="data-types.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Types
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="flowframe-operations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DataFrame Operations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="aggregations.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aggregations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="joins.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Joins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="cloud-connections.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cloud Storage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="visual-ui.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual UI Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native Node Classes
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="native-nodes.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native Node Classes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#common-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deferred-frames" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deferred frames
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flow-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flow parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Flow parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#referencing-parameters-in-expressions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Referencing parameters in expressions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#catalog-navigation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Catalog navigation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flowinput-and-to_flow_output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FlowInput and to_flow_output
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#register_flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        register_flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flowref-and-flow_ref" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FlowRef and flow_ref
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RunFlow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom_node-and-customnode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        custom_node and CustomNode
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="custom_node and CustomNode">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom_node-factory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        custom_node(...) factory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#customnode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CustomNode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom_nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        custom_nodes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python_script-and-pythonscript" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        python_script and PythonScript
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="python_script and PythonScript">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#python_script-decorator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        python_script(...) decorator
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cells-and-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cells and notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#names-from-outside-the-function" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Names from outside the function
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#declaring-the-output-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Declaring the output columns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pythonscript" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PythonScript
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../tutorials/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../ai/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../deployment/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy & Operate
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../../../for-developers/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#common-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deferred-frames" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deferred frames
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flow-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flow parameters
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Flow parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#referencing-parameters-in-expressions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Referencing parameters in expressions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#catalog-navigation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Catalog navigation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flowinput-and-to_flow_output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FlowInput and to_flow_output
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#register_flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        register_flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flowref-and-flow_ref" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FlowRef and flow_ref
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RunFlow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom_node-and-customnode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        custom_node and CustomNode
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="custom_node and CustomNode">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom_node-factory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        custom_node(...) factory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#customnode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CustomNode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom_nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        custom_nodes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python_script-and-pythonscript" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        python_script and PythonScript
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="python_script and PythonScript">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#python_script-decorator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        python_script(...) decorator
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cells-and-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cells and notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#names-from-outside-the-function" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Names from outside the function
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#declaring-the-output-columns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Declaring the output columns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pythonscript" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PythonScript
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="native-node-classes">Native Node Classes</h1>
+<p>This page covers the canvas node types that have no fluent <code>FlowFrame</code> method, and the Python classes that place them: <code>Gate</code>, <code>FlowInput</code> / <code>to_flow_output</code>, <code>RunFlow</code>, <code>custom_node</code> / <code>CustomNode</code>, <code>python_script</code> / <code>PythonScript</code> and the generic <code>Node</code>, plus the helpers they use (flow parameters, flow references, flow registration, the <code>custom_nodes</code> registry). Each call adds one node to the same <code>FlowGraph</code> the fluent methods build, so the flow opens in the designer like any other.</p>
+<p>The examples use <code>import flowfile as ff</code>. The tested ones run in CI on every commit and share these imports:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ff</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flowfile</span><span class="w"> </span><span class="kn">import</span> <span class="n">node_designer</span> <span class="k">as</span> <span class="n">nd</span>
+</code></pre></div>
+<h2 id="common-surface">Common surface</h2>
+<p>Every class returns an object with the same accessors:</p>
+<table>
+<thead>
+<tr>
+<th>Accessor</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.output</code></td>
+<td>The only output frame (on a <code>Gate</code>, the <code>.then</code> exit). Raises <code>NativeNodeError</code> naming the outputs when the node has more than one.</td>
+</tr>
+<tr>
+<td><code>node["name"]</code>, <code>node.get_output(name)</code></td>
+<td>The output frame with that name; <code>name</code> may also be a <code>ff.FlowOutput</code>. An unknown name raises <code>NativeNodeError</code> listing the outputs.</td>
+</tr>
+<tr>
+<td><code>.outputs</code></td>
+<td>The output names, in handle order (<code>output-0</code> first).</td>
+</tr>
+<tr>
+<td><code>.node_id</code>, <code>.node</code>, <code>.flow_graph</code></td>
+<td>The node id, the placed core <code>FlowNode</code>, and the graph it lives on.</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>custom_node(...)</code> factory and a <code>@ff.python_script</code> function are callables instead: calling one returns the output frame, and its <code>.node(...)</code> method returns the node object with these accessors.</p>
+<p>Every class takes <code>description: str | None = None</code>, the label shown on the canvas. Classes that can be built without input frames take <code>flow_graph: FlowGraph | None = None</code>, the graph to place the node on; when it is omitted a new graph is created, as the readers do. Input frames that live on different graphs are merged onto one graph first, as <code>join</code> does.</p>
+<h2 id="deferred-frames">Deferred frames</h2>
+<p>Most nodes produce their output lazily in-process, so building a chain predicts each step's schema without reading data. Some nodes cannot: a subflow call, code that runs in a kernel container, a source that reads an external system. Their output frames are <strong>deferred</strong>.</p>
+<ul>
+<li>A deferred frame holds a typed, zero-row placeholder with the node's predicted columns. <strong>Building never runs the node</strong>; its output exists once the flow runs.</li>
+<li>Operations on a deferred frame build nodes as usual and return deferred frames. Their schemas are predicted from the placeholder.</li>
+<li>A writer, <code>output</code>, <code>api_response</code>, <code>flow_output</code>, <code>explore_data</code> or model node (<code>train_model</code>, <code>apply_model</code>, <code>evaluate_model</code>) below a deferred frame is placed, but it does not write, publish or train until the flow runs.</li>
+<li><code>collect()</code> on a deferred frame runs <strong>this frame's lineage</strong> with <code>flow_graph.run_graph(node_ids=...)</code>, then returns the node's output; every call runs it again. <code>describe()</code>, <code>profile()</code>, <code>fetch()</code> and <code>collect_async()</code> do the same.</li>
+<li>A deferred node stays deferred across runs: once a change upstream or <code>flow_graph.reset()</code> drops its result, building below it serves the placeholder again instead of running the node.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Deferred output</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ff.RunFlow</code></td>
+<td>The child flow runs with the parent.</td>
+</tr>
+<tr>
+<td><code>ff.PythonScript</code>, a <code>@ff.python_script</code> function</td>
+<td>The code runs in a kernel container.</td>
+</tr>
+<tr>
+<td><code>ff.CustomNode</code> with <code>kernel=</code>, a custom node whose class declares <code>node_type="output"</code>, a custom node whose schema needs data, or an installed custom node on a graph that does not execute locally</td>
+<td>The node runs in a kernel or the worker, is an output node, or its columns are only known after it ran.</td>
+</tr>
+<tr>
+<td><code>ff.Node("google_analytics_reader" / "external_source", ...)</code></td>
+<td>The node reads an external system.</td>
+</tr>
+<tr>
+<td><code>ff.Node(..., deferred=True)</code>, <code>ff.CustomNode(..., deferred=True)</code></td>
+<td>Requested.</td>
+</tr>
+<tr>
+<td>Any frame built from a deferred frame</td>
+<td>Inherited.</td>
+</tr>
+</tbody>
+</table>
+<p>What <code>collect()</code> on a deferred frame does:</p>
+<ol>
+<li>Runs this node and its ancestors only; writers, output nodes and subflows on other branches do not run.</li>
+<li>Judges the result on those nodes: a failed or unconfigured ancestor raises <code>NativeNodeError</code> with the node errors.</li>
+<li>Returns the zero-row frame with the predicted columns when a gate routed this frame away (the node was deliberately skipped, or the frame is a gate's dead exit).</li>
+<li>Otherwise returns the node's real output.</li>
+</ol>
+<div class="admonition warning">
+<p class="admonition-title">Kernel nodes need Docker at run time</p>
+<p>When the graph holds a kernel node (<code>PythonScript</code> or a <code>@ff.python_script</code> function, a kernel <code>CustomNode</code>), running it contacts Docker to reach the kernel container. Building those nodes needs neither Docker nor a running kernel.</p>
+</div>
+<p>A frame that is neither deferred nor below a <a href="#gate">gate</a> keeps its plain behaviour: <code>collect()</code> evaluates its lazy plan in-process.</p>
+<h2 id="gate"><code>Gate</code></h2>
+<p>A pass-through node whose downstream only runs when its condition holds. See <a href="../../visual-editor/nodes/combine.html#gate">Gate</a> for the canvas node.</p>
+<div class="highlight"><pre><span></span><code><span class="n">ff</span><span class="o">.</span><span class="n">Gate</span><span class="p">(</span>
+    <span class="n">frame</span><span class="p">:</span> <span class="n">FlowFrame</span><span class="p">,</span>
+    <span class="n">formula</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Expr</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">parameter</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Parameter</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">operator</span><span class="p">:</span> <span class="n">GateOperatorLiteral</span> <span class="o">|</span> <span class="n">GateOperator</span> <span class="o">=</span> <span class="s2">"equals"</span><span class="p">,</span>
+    <span class="n">value</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">control</span><span class="p">:</span> <span class="n">FlowFrame</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">else_output</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Give exactly one condition:</p>
+<ul>
+<li><strong>Formula</strong> (positional): a <a href="../../formulas/index.html">flowfile formula</a>, or an expression with a formula form, such as <code>ff.col("amount") &gt; 500</code>, which is converted as <code>filter</code> converts it; an expression without one raises. The gate is open when at least one row of <code>control</code>, else of <code>frame</code>, matches. <code>control</code> is wired to the gate's control input, the bottom pip on the canvas.</li>
+<li><strong>Parameter</strong>: a flow parameter, by name or as an <a href="#flow-parameters"><code>ff.Parameter</code></a>, compared with <code>operator</code> and <code>value</code>. The parameter must be declared first with <a href="#flow-parameters"><code>add_flow_parameter</code></a>; an undeclared name raises at build.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th><code>operator</code></th>
+<th><code>ff.GateOperator</code></th>
+<th>Open when the parameter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"equals"</code></td>
+<td><code>EQUALS</code></td>
+<td>equals <code>value</code></td>
+</tr>
+<tr>
+<td><code>"not_equals"</code></td>
+<td><code>NOT_EQUALS</code></td>
+<td>differs from <code>value</code></td>
+</tr>
+<tr>
+<td><code>"in"</code></td>
+<td><code>IN</code></td>
+<td>is one of <code>value</code> (a list)</td>
+</tr>
+<tr>
+<td><code>"not_in"</code></td>
+<td><code>NOT_IN</code></td>
+<td>is none of <code>value</code> (a list)</td>
+</tr>
+<tr>
+<td><code>"is_true"</code></td>
+<td><code>IS_TRUE</code></td>
+<td>reads as boolean true (<code>true</code>, <code>1</code>, <code>yes</code>, <code>on</code>)</td>
+</tr>
+<tr>
+<td><code>"is_false"</code></td>
+<td><code>IS_FALSE</code></td>
+<td>does not read as true</td>
+</tr>
+<tr>
+<td><code>"is_set"</code></td>
+<td><code>IS_SET</code></td>
+<td>is not empty</td>
+</tr>
+</tbody>
+</table>
+<p>The string and the enum member are interchangeable:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Literal</label><label for="__tabbed_1_2">Enum</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><span class="n">gate</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">Gate</span><span class="p">(</span><span class="n">orders</span><span class="p">,</span> <span class="n">parameter</span><span class="o">=</span><span class="s2">"mode"</span><span class="p">,</span> <span class="n">operator</span><span class="o">=</span><span class="s2">"equals"</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="s2">"full"</span><span class="p">)</span>
+</code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="highlight"><pre><span></span><code><span class="n">gate</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">Gate</span><span class="p">(</span><span class="n">orders</span><span class="p">,</span> <span class="n">parameter</span><span class="o">=</span><span class="s2">"mode"</span><span class="p">,</span> <span class="n">operator</span><span class="o">=</span><span class="n">ff</span><span class="o">.</span><span class="n">GateOperator</span><span class="o">.</span><span class="n">EQUALS</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="s2">"full"</span><span class="p">)</span>
+</code></pre></div>
+</div>
+</div>
+</div>
+<p><code>value</code> is stored in the form the canvas stores: booleans as <code>"true"</code> / <code>"false"</code>, lists comma-joined, a <code>ff.Parameter</code> as its <code>${name}</code> reference. A list with any operator other than <code>in</code> / <code>not_in</code> raises.</p>
+<table>
+<thead>
+<tr>
+<th>Accessor</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.then</code></td>
+<td>The exit that is live when the condition holds (<code>output-0</code>).</td>
+</tr>
+<tr>
+<td><code>.otherwise</code>, <code>.else_</code></td>
+<td>The exit that is live when it does not (<code>output-1</code>).</td>
+</tr>
+<tr>
+<td><code>.output</code></td>
+<td>Same as <code>.then</code>.</td>
+</tr>
+<tr>
+<td><code>.outputs</code></td>
+<td><code>["then", "else"]</code>, or <code>["main"]</code> with <code>else_output=False</code>.</td>
+</tr>
+<tr>
+<td><code>.is_open</code></td>
+<td>Whether the condition holds now.</td>
+</tr>
+</tbody>
+</table>
+<p><code>else_output=False</code> builds a single-exit gate; <code>.otherwise</code> then raises. Both exits of one gate cannot feed the same node; that raises <code>NativeNodeError</code>.</p>
+<p><code>.is_open</code> on a parameter gate evaluates the graph's current parameter values. On a formula gate it evaluates the probed frame lazily plus a one-row collect; when that frame is deferred it raises, because the placeholder has no rows.</p>
+<p><strong>Routing.</strong> <code>.then</code> and <code>.otherwise</code> are pass-through frames while you build. <code>collect()</code> on any frame below a gate runs the flow and returns only the live side, and so do <code>describe()</code>, <code>profile()</code> and <code>fetch()</code>: a frame on the dead side collects to a zero-row frame with its columns. In the run, the dead exit's downstream is deliberately skipped (<code>NodeResult.skipped</code> is <code>True</code>, the run stays green). Each such call runs the frame's lineage, not the rest of the graph.</p>
+<p>A writer below a gate (a <code>write_*</code> method's Output node, <code>to_flow_output</code>, <code>ff.Node("output", ...)</code> and the other writer, output and model nodes listed under <a href="#deferred-frames">Deferred frames</a>) is placed without writing and writes when the flow runs, on the live side only; so does <code>sink_csv</code>, <code>sink_ipc</code> or <code>sink_ndjson</code>, each an alias of its <code>write_*</code> method. The other <code>sink_*</code> methods and the Polars-code fallbacks of <code>write_*</code> (extra writer options) write when they are built, so they raise <code>NativeNodeError</code> below a gate.</p>
+<p>To bring the two sides back together, use a <code>union</code> node, which runs when at least one input survived: <code>ff.concat([...], how="diagonal_relaxed")</code> places one. Every other node below a dead exit is skipped too, including the Polars-code node the default <code>ff.concat</code> places.</p>
+<p>This diamond routes on a parameter, checks which side the run skipped, and collects only the live side:</p>
+<div class="highlight"><pre><span></span><code><span class="n">orders</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">from_dict</span><span class="p">({</span><span class="s2">"id"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span> <span class="s2">"amount"</span><span class="p">:</span> <span class="p">[</span><span class="mf">120.0</span><span class="p">,</span> <span class="mf">40.0</span><span class="p">,</span> <span class="mf">900.0</span><span class="p">]})</span>
+<span class="n">flow</span> <span class="o">=</span> <span class="n">orders</span><span class="o">.</span><span class="n">flow_graph</span>
+<span class="n">ff</span><span class="o">.</span><span class="n">add_flow_parameter</span><span class="p">(</span><span class="n">flow</span><span class="p">,</span> <span class="n">ff</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="s2">"mode"</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">"full"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="s2">"enum"</span><span class="p">,</span> <span class="n">enum_values</span><span class="o">=</span><span class="p">[</span><span class="s2">"full"</span><span class="p">,</span> <span class="s2">"quick"</span><span class="p">]))</span>
+
+<span class="n">gate</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">Gate</span><span class="p">(</span><span class="n">orders</span><span class="p">,</span> <span class="n">parameter</span><span class="o">=</span><span class="s2">"mode"</span><span class="p">,</span> <span class="n">operator</span><span class="o">=</span><span class="s2">"equals"</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="s2">"full"</span><span class="p">)</span>
+<span class="n">full</span> <span class="o">=</span> <span class="n">gate</span><span class="o">.</span><span class="n">then</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="s2">"full"</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">"tier"</span><span class="p">))</span>
+<span class="n">quick</span> <span class="o">=</span> <span class="n">gate</span><span class="o">.</span><span class="n">otherwise</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="s2">"quick"</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">"tier"</span><span class="p">))</span>
+<span class="n">combined</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">concat</span><span class="p">([</span><span class="n">full</span><span class="p">,</span> <span class="n">quick</span><span class="p">],</span> <span class="n">how</span><span class="o">=</span><span class="s2">"diagonal_relaxed"</span><span class="p">)</span>
+
+<span class="n">ff</span><span class="o">.</span><span class="n">set_flow_parameter</span><span class="p">(</span><span class="n">flow</span><span class="p">,</span> <span class="s2">"mode"</span><span class="p">,</span> <span class="s2">"quick"</span><span class="p">)</span>
+<span class="n">run</span> <span class="o">=</span> <span class="n">flow</span><span class="o">.</span><span class="n">run_graph</span><span class="p">()</span>
+<span class="n">skipped</span> <span class="o">=</span> <span class="p">{</span><span class="n">result</span><span class="o">.</span><span class="n">node_id</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">skipped</span> <span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">run</span><span class="o">.</span><span class="n">node_step_result</span><span class="p">}</span>
+<span class="n">routed</span> <span class="o">=</span> <span class="n">combined</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+</code></pre></div>
+<h2 id="flow-parameters">Flow parameters</h2>
+<p>Parameters are the <code>${name}</code> values that gates and node settings read. They are what <strong>Flow settings</strong> lists in the designer and what <code>flowfile run flow --param</code> overrides on a <a href="../../deployment/cli.html">headless run</a>.</p>
+<div class="highlight"><pre><span></span><code><span class="n">ff</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">default</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+    <span class="nb">type</span><span class="p">:</span> <span class="n">ParamTypeLiteral</span> <span class="o">|</span> <span class="n">ParamType</span> <span class="o">=</span> <span class="s2">"string"</span><span class="p">,</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+    <span class="n">enum_values</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">ff</span><span class="o">.</span><span class="n">add_flow_parameter</span><span class="p">(</span><span class="n">flow</span><span class="p">:</span> <span class="n">FlowGraph</span> <span class="o">|</span> <span class="n">FlowFrame</span><span class="p">,</span> <span class="n">parameter</span><span class="p">:</span> <span class="n">Parameter</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Parameter</span>
+
+<span class="n">ff</span><span class="o">.</span><span class="n">set_flow_parameter</span><span class="p">(</span><span class="n">flow</span><span class="p">:</span> <span class="n">FlowGraph</span> <span class="o">|</span> <span class="n">FlowFrame</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Parameter</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+<p>A <code>Parameter</code> is the declaration: <code>type</code> is one of <code>"string"</code>, <code>"integer"</code>, <code>"float"</code>, <code>"boolean"</code>, <code>"enum"</code> (or the <code>ff.ParamType</code> member of the same name), and <code>"enum"</code> needs <code>enum_values</code>. The default is stored as a string (booleans lowercase) and checked against the type when the <code>Parameter</code> is created. It exposes <code>name</code>, <code>type</code>, <code>default</code> (typed), <code>dtype</code> (the Polars dtype: <code>String</code>, <code>Int64</code>, <code>Float64</code> or <code>Boolean</code>) and <code>ref</code> (<code>"${name}"</code>), is equal to another <code>Parameter</code> with the same name, and can key a dict.</p>
+<p><code>add_flow_parameter</code> gives the graph its own copy of the declaration and returns the <code>Parameter</code>, so <code>set_flow_parameter</code> changes that graph only. Declaring a name twice on one graph raises, and so does setting a name that was never declared.</p>
+<h3 id="referencing-parameters-in-expressions">Referencing parameters in expressions</h3>
+<p>A <code>Parameter</code> is a value. Use it directly in an expression, <code>ff.col("amount") &gt;= min_amount</code>, or wrap it with <code>ff.lit(min_amount)</code>; it is typed from its declaration, so it needs no cast. Such a predicate still becomes a native Filter or Formula node that stores the bare <code>${min_amount}</code>, as the canvas does. Plain strings keep working: a bare <code>${name}</code> inside a formula or filter expression, <code>flowfile_formula="[amount] &gt;= ${min_amount}"</code>, is rendered as a typed literal, and inside Polars code a reference sits in a string literal, <code>pl.lit("${min_amount}")</code>.</p>
+<p>Building a node uses the parameter's current value, so a frame collected while you build reflects the default at that moment. A run (<code>run_graph()</code>, <code>collect()</code> on a deferred frame or one below a gate, a <code>RunFlow</code> call) substitutes the values of that run. A reference to a parameter the graph does not declare raises <code>NativeNodeError</code> when the node is built, also on a graph that declares no parameters.</p>
+<p><strong>Not supported.</strong> Parameters are values, never column names. A <code>Parameter</code>, or a string holding <code>${name}</code>, in a column-name position raises <code>NativeNodeError</code>:</p>
+<ul>
+<li><code>ff.col(...)</code>, <code>alias</code>, <code>.name.prefix</code>, <code>.name.suffix</code>, <code>rename</code>, <code>select</code>, <code>drop</code>, <code>sort</code>, <code>group_by</code>, <code>unique(subset=)</code>, <code>pivot</code>, <code>unpivot</code>, <code>with_row_index(name=)</code>, <code>text_to_rows</code> and the keyword constraints of <code>filter</code> / <code>filter_split</code></li>
+<li>join keys (<code>on=</code>, <code>left_on=</code>, <code>right_on=</code>)</li>
+<li><code>FlowInput(schema=)</code> and <code>FlowInput(sample=)</code> keys, <code>to_flow_output</code> names and <code>RunFlow</code> input names (keywords or <code>inputs=</code> keys)</li>
+<li>a <code>[${name}]</code> column reference in a formula: <code>filter(flowfile_formula=...)</code>, <code>with_columns(flowfile_formulas=...)</code> and a <code>Gate</code> formula</li>
+</ul>
+<p>A <code>Parameter</code> passed as an argument to an expression method, such as <code>clip(p)</code>, <code>fill_null(p)</code> or <code>is_in([p])</code>, also raises <code>NativeNodeError</code>, and the message names what works instead: <code>ff.lit(p)</code> for methods that take an expression, such as <code>clip</code>. A parameter's value cannot be another parameter: <code>ff.set_flow_parameter(flow, name, other_parameter)</code> raises.</p>
+<div class="admonition note">
+<p class="admonition-title">Pass a frame after a merge</p>
+<p>Joining frames from two graphs, or a native node over them, merges them into a new graph object. An older <code>FlowGraph</code> handle no longer holds the nodes. Pass a frame to the parameter helpers, or re-read <code>frame.flow_graph</code>.</p>
+</div>
+<h2 id="catalog-navigation">Catalog navigation</h2>
+<p>Registered flows are reached through the same catalog handles as tables. Each call looks the name up immediately and raises when it is missing:</p>
+<div class="highlight"><pre><span></span><code><span class="n">clean</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">get_catalog</span><span class="p">(</span><span class="s2">"Demo"</span><span class="p">)</span><span class="o">.</span><span class="n">get_schema</span><span class="p">(</span><span class="s2">"sales"</span><span class="p">)</span><span class="o">.</span><span class="n">get_flow</span><span class="p">(</span><span class="s2">"Clean orders"</span><span class="p">)</span>   <span class="c1"># FlowRef</span>
+<span class="n">flows</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">get_catalog</span><span class="p">(</span><span class="s2">"Demo"</span><span class="p">)</span><span class="o">.</span><span class="n">get_schema</span><span class="p">(</span><span class="s2">"sales"</span><span class="p">)</span><span class="o">.</span><span class="n">list_flows</span><span class="p">()</span>               <span class="c1"># list[FlowRef]</span>
+</code></pre></div>
+<p>The <code>get_catalog(...).get_schema(...)</code> chain reads the same as <code>flowfile_ctx.get_catalog(...).get_schema(...)</code> inside a kernel. See <a href="catalog-references.html">Catalog References</a> for <code>get_catalog</code>, <code>get_flow</code>, <code>list_flows</code> and <code>register_flow</code> on a schema.</p>
+<h2 id="flowinput-and-to_flow_output"><code>FlowInput</code> and <code>to_flow_output</code></h2>
+<p>A child flow receives data through Flow Input nodes and returns it through Flow Output nodes. See <a href="../../visual-editor/subflows.html">Subflows</a> for how a parent calls it.</p>
+<div class="highlight"><pre><span></span><code><span class="n">ff</span><span class="o">.</span><span class="n">FlowInput</span><span class="p">(</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">schema</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">PolarsDataType</span><span class="p">]</span> <span class="o">|</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">PolarsDataType</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">sample</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">Any</span><span class="p">]]</span> <span class="o">|</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">flow_graph</span><span class="p">:</span> <span class="n">FlowGraph</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FlowFrame</span>
+
+<span class="n">ff</span><span class="o">.</span><span class="n">FlowOutput</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+
+<span class="n">FlowFrame</span><span class="o">.</span><span class="n">to_flow_output</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">FlowOutput</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FlowFrame</span>
+</code></pre></div>
+<p><code>FlowInput</code> places a Flow Input node and returns its frame. Give at most one of <code>schema</code> and <code>sample</code>. <code>schema</code> (a dict, <code>pl.Schema</code> or list of <code>(name, dtype)</code> pairs) declares the columns as a zero-row typed frame; write nested dtypes in full, for example <code>ff.List(ff.Int64)</code>. <code>sample</code> (a dict of columns or a DataFrame) stores rows that a standalone run of the child reads. With neither, the input is empty. A duplicate input name raises, and so does one of <code>RunFlow</code>'s own parameter names (<code>name</code>, <code>schema</code>, <code>inputs</code>, <code>params</code>, ...).</p>
+<p><code>to_flow_output</code> places a Flow Output node below the frame and returns the <strong>same frame</strong>: the Flow Output node has no outgoing handle, so nothing chains from it.</p>
+<p>The name can also be declared once, <code>large_orders = ff.FlowOutput("large_orders")</code>, and passed both to <code>to_flow_output</code> and to the caller's <code>run.get_output(large_orders)</code> (see the <a href="#runflow"><code>RunFlow</code></a> example). Its <code>description</code> labels the Flow Output node when <code>to_flow_output</code> gives none. A <code>FlowOutput</code> is equal to another with the same name and can key a dict; an empty name raises.</p>
+<p><strong>Port order is creation order.</strong> A caller sees the child's inputs and outputs in the order the <code>FlowInput</code> and <code>to_flow_output</code> calls were made.</p>
+<h2 id="register_flow"><code>register_flow</code></h2>
+<div class="highlight"><pre><span></span><code><span class="n">ff</span><span class="o">.</span><span class="n">register_flow</span><span class="p">(</span>
+    <span class="n">flow_or_frame</span><span class="p">:</span> <span class="n">FlowGraph</span> <span class="o">|</span> <span class="n">FlowFrame</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">schema</span><span class="p">:</span> <span class="n">SchemaReference</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">overwrite</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FlowRef</span>
+</code></pre></div>
+<p>Saves the flow as a YAML file and registers it in the catalog <strong>when it is called</strong>, then returns a <a href="#flowref-and-flow_ref"><code>FlowRef</code></a>. <code>schema</code> defaults to the <code>General &gt; Python Editor</code> schema. The graph is laid out first so it opens cleanly on the canvas; the file lands in the Python-editor flows folder (<code>~/.flowfile/flows/python_editor_flows/</code> by default), and the graph's <code>flow_settings.path</code> points at it afterwards.</p>
+<p>Re-running a script is idempotent: an existing registration with the same name in the same schema whose file is in that folder is rewritten in place and keeps its id and uuid. A same-name registration whose file is elsewhere (a flow saved from the designer) raises <code>NativeNodeError</code>; <code>overwrite=True</code> writes over that file instead.</p>
+<h2 id="flowref-and-flow_ref"><code>FlowRef</code> and <code>flow_ref</code></h2>
+<p><code>FlowRef</code> is an immutable, hashable and picklable handle to one registered flow. Get one from <code>flow_ref</code>, <code>register_flow</code> or a schema's <code>get_flow</code>; the constructor only holds values and checks nothing.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>registration_id</code></td>
+<td>Catalog registration id.</td>
+</tr>
+<tr>
+<td><code>flow_uuid</code></td>
+<td>Stable uuid of the flow.</td>
+</tr>
+<tr>
+<td><code>flow_path</code></td>
+<td>Absolute path of the flow file.</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>Registration name.</td>
+</tr>
+<tr>
+<td><code>schema</code></td>
+<td>The <code>SchemaReference</code> it is registered under (<code>None</code> outside a schema), so <code>ref.schema.read_table(...)</code> works from the same handle.</td>
+</tr>
+<tr>
+<td><code>namespace_full_name</code></td>
+<td><code>"catalog.schema"</code>, or <code>None</code> outside a schema.</td>
+</tr>
+<tr>
+<td><code>to_subflow_reference()</code></td>
+<td>The reference a Run Flow node stores.</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="n">ff</span><span class="o">.</span><span class="n">flow_ref</span><span class="p">(</span>
+    <span class="n">namespace</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">SchemaReference</span> <span class="o">|</span> <span class="n">CatalogReference</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">uuid</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">registration_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FlowRef</span>
+</code></pre></div>
+<p><code>flow_ref</code> resolves a flow by name, by <code>uuid</code>, or by <code>registration_id</code>, looking it up immediately. <code>namespace</code> narrows a name lookup: a <code>"catalog.schema"</code> string (a bare catalog name selects the catalog itself), a schema or catalog handle, or <code>None</code> for every namespace. A <code>uuid</code> or <code>registration_id</code> is exact and is cross-checked against <code>name</code> and <code>namespace</code> when those are given too. The registration must point at an existing flow file by absolute path.</p>
+<div class="highlight"><pre><span></span><code><span class="n">ff</span><span class="o">.</span><span class="n">flow_ref</span><span class="p">(</span><span class="s2">"Demo.sales"</span><span class="p">,</span> <span class="s2">"Clean orders"</span><span class="p">)</span>
+<span class="n">ff</span><span class="o">.</span><span class="n">flow_ref</span><span class="p">(</span><span class="n">uuid</span><span class="o">=</span><span class="s2">"4c1f..."</span><span class="p">)</span>
+<span class="n">ff</span><span class="o">.</span><span class="n">flow_ref</span><span class="p">(</span><span class="n">registration_id</span><span class="o">=</span><span class="mi">12</span><span class="p">)</span>
+</code></pre></div>
+<p>Flow names are unique neither across schemas nor within one. A name that matches more than one registration raises instead of picking one, listing the candidates. A flow shared with nobody you belong to is left out of name matches, and an exact <code>uuid</code> / id for one raises. Every failed lookup raises <code>NativeNodeError</code> with the fix, chained from the <code>flowfile_core.catalog</code> error it stands for (<code>AmbiguousFlowError</code>, <code>FlowNotFoundError</code>, <code>NotAuthorizedError</code>, <code>NamespaceNotFoundError</code>).</p>
+<h2 id="runflow"><code>RunFlow</code></h2>
+<p>Calls a registered flow as a subflow, like the <a href="../../visual-editor/nodes/combine.html#run-flow">Run Flow</a> node on the canvas.</p>
+<div class="highlight"><pre><span></span><code><span class="n">ff</span><span class="o">.</span><span class="n">RunFlow</span><span class="p">(</span>
+    <span class="n">flow</span><span class="p">:</span> <span class="n">FlowRef</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">FlowGraph</span> <span class="o">|</span> <span class="n">FlowFrame</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">schema</span><span class="p">:</span> <span class="n">SchemaReference</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">overwrite</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">FlowFrame</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">params</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="n">Parameter</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">param_frame</span><span class="p">:</span> <span class="n">FlowFrame</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">iterate</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">append_metadata</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">flow_graph</span><span class="p">:</span> <span class="n">FlowGraph</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">**</span><span class="n">input_frames</span><span class="p">:</span> <span class="n">FlowFrame</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<ul>
+<li><code>flow</code>: a <code>FlowRef</code>, a registration id, or an unregistered <code>FlowGraph</code> / <code>FlowFrame</code>. An unregistered flow needs <code>name=</code>; it is then registered with <a href="#register_flow"><code>register_flow</code></a> at build time, under <code>schema=</code> and with <code>overwrite=</code> as <code>register_flow</code> takes them. Passing <code>name</code>, <code>schema</code> or <code>overwrite=True</code> with a <code>FlowRef</code> or an id raises.</li>
+<li><code>inputs</code>, <code>**input_frames</code>: <code>inputs</code> maps the child's Flow Input names to frames; a keyword per input, <code>orders=frame</code>, is the short form. An input given both ways raises, and so does a name the child does not have, listing the child's inputs. An input left out falls back to the child's sample data.</li>
+<li><code>params</code>: keyed by child parameter name or <code>ff.Parameter</code>; a name the child does not declare raises, and an omitted parameter keeps the child's default. A constant is stored as a string (booleans lowercase) and checked against the parameter's type at build. A <code>ff.Parameter</code> of the calling flow, or its <code>"${name}"</code> string, forwards that parameter: the child receives the value of each run. A plain column (<code>ff.col("region")</code>) binds the parameter to that column of <code>param_frame</code>, which is then required and must have the column. <code>param_frame</code> without any column binding raises.</li>
+<li><code>iterate=True</code> runs the child once per row of <code>param_frame</code> and concatenates the outputs; it needs a parameter bound to a column, and a <code>param_frame</code> of more than 1000 rows fails the run. <code>False</code> uses the first row. With <code>iterate</code> and <code>append_metadata</code>, each output gets a <code>run_index</code> column and a <code>param_&lt;name&gt;</code> column per bound parameter.</li>
+</ul>
+<p>Outputs are <a href="#deferred-frames">deferred</a> and named after the child's Flow Outputs. Read one with <code>run["large_orders"]</code> or <code>run.get_output("large_orders")</code>, by name or by <code>ff.FlowOutput</code>, or with <code>run.output</code> when there is exactly one. A child without Flow Outputs has one output, <code>"main"</code>: a summary row per run (<code>run_index</code>, <code>success</code>, and a <code>param_&lt;name&gt;</code> column per bound parameter). <code>run.flow</code> is the <code>FlowRef</code> that runs.</p>
+<p>The node stores the flow's uuid, registration id, <code>catalog.schema</code> and name. A run finds the flow by uuid, then by registration id when the reference has no uuid, then by schema and name, so a flow saved on another install still resolves; an id that holds a different flow there is refused. Subflows nest at most 5 deep; a deeper call fails the run.</p>
+<div class="highlight"><pre><span></span><code><span class="n">large_orders</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">FlowOutput</span><span class="p">(</span><span class="s2">"large_orders"</span><span class="p">)</span>
+<span class="n">child</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">create_flow_graph</span><span class="p">()</span>
+<span class="n">incoming</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">FlowInput</span><span class="p">(</span><span class="s2">"orders"</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="p">{</span><span class="s2">"id"</span><span class="p">:</span> <span class="n">ff</span><span class="o">.</span><span class="n">Int64</span><span class="p">,</span> <span class="s2">"amount"</span><span class="p">:</span> <span class="n">ff</span><span class="o">.</span><span class="n">Float64</span><span class="p">},</span> <span class="n">flow_graph</span><span class="o">=</span><span class="n">child</span><span class="p">)</span>
+<span class="n">incoming</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"amount"</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">100</span><span class="p">)</span><span class="o">.</span><span class="n">to_flow_output</span><span class="p">(</span><span class="n">large_orders</span><span class="p">)</span>
+<span class="n">large_orders_flow</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">register_flow</span><span class="p">(</span><span class="n">child</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"Docs large orders"</span><span class="p">)</span>
+
+<span class="n">parent_orders</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">from_dict</span><span class="p">({</span><span class="s2">"id"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span> <span class="s2">"amount"</span><span class="p">:</span> <span class="p">[</span><span class="mf">120.0</span><span class="p">,</span> <span class="mf">40.0</span><span class="p">,</span> <span class="mf">900.0</span><span class="p">]})</span>
+<span class="n">run_child</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">RunFlow</span><span class="p">(</span><span class="n">large_orders_flow</span><span class="p">,</span> <span class="n">orders</span><span class="o">=</span><span class="n">parent_orders</span><span class="p">)</span>
+<span class="n">large</span> <span class="o">=</span> <span class="n">run_child</span><span class="o">.</span><span class="n">get_output</span><span class="p">(</span><span class="n">large_orders</span><span class="p">)</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+</code></pre></div>
+<h2 id="custom_node-and-customnode"><code>custom_node</code> and <code>CustomNode</code></h2>
+<p>Places a <a href="../../visual-editor/node-designer.html">custom node</a> authored with <code>node_designer</code>. Writing the node class itself is covered in <a href="../../visual-editor/creating-custom-nodes.html">Custom Nodes in Code</a>.</p>
+<h3 id="custom_node-factory"><code>custom_node(...)</code> factory</h3>
+<div class="highlight"><pre><span></span><code><span class="n">ff</span><span class="o">.</span><span class="n">custom_node</span><span class="p">(</span><span class="n">node</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">CustomNodeBase</span><span class="p">]</span> <span class="o">|</span> <span class="n">CustomNodeBase</span> <span class="o">|</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">CustomNodeFactory</span>
+</code></pre></div>
+<p>Resolves the node class once and returns a callable whose keyword arguments are the node's settings components, flat:</p>
+<div class="highlight"><pre><span></span><code><span class="n">trim</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">custom_node</span><span class="p">(</span><span class="n">TrimNode</span><span class="p">)</span>
+<span class="n">cleaned</span> <span class="o">=</span> <span class="n">trim</span><span class="p">(</span><span class="n">orders</span><span class="p">,</span> <span class="n">upper</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>                      <span class="c1"># FlowFrame</span>
+<span class="n">kept</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">custom_node</span><span class="p">(</span><span class="s2">"deduper"</span><span class="p">)</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)[</span><span class="s2">"kept"</span><span class="p">]</span>     <span class="c1"># CustomNode, for several outputs</span>
+</code></pre></div>
+<ul>
+<li><code>factory(*inputs, kernel=None, deferred=None, schemas=None, description=None, settings=None, flow_graph=None, **components) -&gt; FlowFrame</code> returns the single output frame. A node with several outputs raises and points at <code>.node(...)</code>.</li>
+<li><code>factory.node(*inputs, ...) -&gt; CustomNode</code> takes the same arguments and returns the node object.</li>
+<li>An unknown keyword raises and lists the valid names. A component name that appears in two sections, or that clashes with <code>kernel</code>, <code>deferred</code>, <code>schemas</code>, <code>description</code>, <code>settings</code> or <code>flow_graph</code>, is only reachable as <code>section__component</code>. Naming a component both in <code>settings=</code> and as a keyword raises.</li>
+<li><code>help(factory)</code> and <code>inspect.signature(factory)</code> list the components with their defaults.</li>
+</ul>
+<h3 id="customnode"><code>CustomNode</code></h3>
+<p>The canonical form, one-to-one with what the node stores: settings nested per section.</p>
+<div class="highlight"><pre><span></span><code><span class="n">ff</span><span class="o">.</span><span class="n">CustomNode</span><span class="p">(</span>
+    <span class="n">node</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">CustomNodeBase</span><span class="p">]</span> <span class="o">|</span> <span class="n">CustomNodeBase</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="o">*</span><span class="n">inputs</span><span class="p">:</span> <span class="n">FlowFrame</span><span class="p">,</span>
+    <span class="n">settings</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">kernel</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Any</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">deferred</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">schemas</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">PolarsDataType</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">flow_graph</span><span class="p">:</span> <span class="n">FlowGraph</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><code>node</code> is a class, an instance (its settings values are the base; an instance that overrides any other field raises, since only settings are saved), or the type name of an installed node. An unknown section or component raises, and so does a class whose node name collides with a built-in node or a different installed node. The number of input frames must match the node's <code>number_of_inputs</code>. <code>.node_class</code>, <code>.settings</code> (the stored envelope) and <code>.kernel</code> hold what was placed.</p>
+<p>A class defined in your script is registered for the session: a flow saved with it opens elsewhere as "not installed" until you <a href="#custom_nodes">install it</a>. <code>ff.register_flow</code> and <code>open_graph_in_editor</code> warn about such classes.</p>
+<p>Kernel rules: an <code>environment="kernel"</code> node needs <code>kernel=</code> (a kernel id or an object with an <code>.id</code>, as for <code>PythonScript</code>; not validated at build), and <code>kernel=</code> on an <code>environment="local"</code> node raises.</p>
+<ul>
+<li><strong>Build.</strong> A local node's <code>process()</code> runs at build to produce its lazy plan. The output is <a href="#deferred-frames">deferred</a> for a kernel node, a <code>node_type="output"</code> node, a node whose schema needs data, and an installed node on a graph that does not execute locally. <code>deferred=</code> overrides this, as on <a href="#node"><code>ff.Node</code></a>.</li>
+<li><strong><code>schemas=</code></strong> gives a deferred node without a <code>predict_output_schema</code> hook its placeholder columns, <code>{output: {column: dtype}}</code>, as on <code>PythonScript</code>.</li>
+<li><strong>Parameters.</strong> A setting may be a <a href="#flow-parameters"><code>ff.Parameter</code></a> or a <code>"${name}"</code> string; it is stored as <code>${name}</code>, must be declared on the graph, and reaches <code>process()</code> resolved (numbers and booleans typed by the component).</li>
+<li><strong>Secrets.</strong> Building reads a <code>SecretSelector</code> secret, so it must exist where you build; otherwise pass <code>deferred=True</code>.</li>
+</ul>
+<p>The same settings two ways, built but not run:</p>
+<div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">DocsTrimSettings</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">NodeSettings</span><span class="p">):</span>
+    <span class="n">options</span><span class="p">:</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span> <span class="o">=</span> <span class="n">nd</span><span class="o">.</span><span class="n">Section</span><span class="p">(</span>
+        <span class="n">title</span><span class="o">=</span><span class="s2">"Options"</span><span class="p">,</span>
+        <span class="n">column</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">TextInput</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">"Column"</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">"name"</span><span class="p">),</span>
+        <span class="n">upper</span><span class="o">=</span><span class="n">nd</span><span class="o">.</span><span class="n">ToggleSwitch</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">"Upper case"</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">DocsTrimNode</span><span class="p">(</span><span class="n">nd</span><span class="o">.</span><span class="n">CustomNodeBase</span><span class="p">):</span>
+    <span class="n">node_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"Docs Trim Text"</span>
+    <span class="n">settings_schema</span><span class="p">:</span> <span class="n">DocsTrimSettings</span> <span class="o">=</span> <span class="n">DocsTrimSettings</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">:</span>
+        <span class="n">options</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">settings_schema</span><span class="o">.</span><span class="n">options</span>
+        <span class="n">cleaned</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="n">options</span><span class="o">.</span><span class="n">column</span><span class="o">.</span><span class="n">value</span><span class="p">)</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">strip_chars</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">options</span><span class="o">.</span><span class="n">upper</span><span class="o">.</span><span class="n">value</span><span class="p">:</span>
+            <span class="n">cleaned</span> <span class="o">=</span> <span class="n">cleaned</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">to_uppercase</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">inputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span><span class="n">cleaned</span><span class="p">)</span>
+
+
+<span class="n">people</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">from_dict</span><span class="p">({</span><span class="s2">"name"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"  ann "</span><span class="p">,</span> <span class="s2">"bob  "</span><span class="p">]})</span>
+<span class="n">trim</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">custom_node</span><span class="p">(</span><span class="n">DocsTrimNode</span><span class="p">)</span>
+<span class="n">trimmed</span> <span class="o">=</span> <span class="n">trim</span><span class="p">(</span><span class="n">people</span><span class="p">,</span> <span class="n">upper</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">same_node</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">CustomNode</span><span class="p">(</span><span class="n">DocsTrimNode</span><span class="p">,</span> <span class="n">people</span><span class="p">,</span> <span class="n">settings</span><span class="o">=</span><span class="p">{</span><span class="s2">"options"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"upper"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}})</span>
+</code></pre></div>
+<p>A parameter as a setting, a deferred placement, and the same node by key:</p>
+<div class="highlight"><pre><span></span><code><span class="n">casing</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">add_flow_parameter</span><span class="p">(</span><span class="n">people</span><span class="p">,</span> <span class="n">ff</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="s2">"upper_case"</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="s2">"boolean"</span><span class="p">))</span>
+<span class="n">by_parameter</span> <span class="o">=</span> <span class="n">trim</span><span class="p">(</span><span class="n">people</span><span class="p">,</span> <span class="n">upper</span><span class="o">=</span><span class="n">casing</span><span class="p">)</span>  <span class="c1"># stored as ${upper_case}, read when the node runs</span>
+<span class="n">held_back</span> <span class="o">=</span> <span class="n">trim</span><span class="p">(</span><span class="n">people</span><span class="p">,</span> <span class="n">upper</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">deferred</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># placed, but process() waits for collect()</span>
+<span class="n">by_key</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">custom_nodes</span><span class="o">.</span><span class="n">docs_trim_text</span>  <span class="c1"># the same factory, found by node key</span>
+<span class="n">known</span> <span class="o">=</span> <span class="p">[</span><span class="n">info</span><span class="o">.</span><span class="n">key</span> <span class="k">for</span> <span class="n">info</span> <span class="ow">in</span> <span class="n">ff</span><span class="o">.</span><span class="n">custom_nodes</span><span class="o">.</span><span class="n">list</span><span class="p">()]</span>
+</code></pre></div>
+<h3 id="custom_nodes"><code>custom_nodes</code></h3>
+<p><code>ff.custom_nodes</code> holds the custom nodes this process can place, by node key:</p>
+<div class="highlight"><pre><span></span><code><span class="n">ff</span><span class="o">.</span><span class="n">custom_nodes</span><span class="o">.</span><span class="n">list</span><span class="p">()</span>                      <span class="c1"># CustomNodeInfo per node file (with any load error) and session class</span>
+<span class="n">ff</span><span class="o">.</span><span class="n">custom_nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"Trim Text"</span><span class="p">)</span>            <span class="c1"># the factory, by key or display name</span>
+<span class="n">ff</span><span class="o">.</span><span class="n">custom_nodes</span><span class="o">.</span><span class="n">trim_text</span><span class="p">(</span><span class="n">orders</span><span class="p">)</span>           <span class="c1"># attribute form</span>
+<span class="n">ff</span><span class="o">.</span><span class="n">custom_nodes</span><span class="o">.</span><span class="n">install</span><span class="p">(</span><span class="n">TrimNode</span><span class="p">)</span>           <span class="c1"># or a path to a .py file; overwrite=False by default</span>
+</code></pre></div>
+<p><code>install</code> writes <code>&lt;key&gt;.py</code> to the custom-nodes directory and registers it. A class is written with the <code>NodeSettings</code> classes and imports it uses; a class that reads other module-level names is refused, so install its file instead. The written file must load the way the designer loads it; one that does not is removed again, a file it replaced is put back, and <code>install</code> raises. A running designer shows a new node after <strong>Settings → Extensions → Custom Nodes → Rescan</strong>.</p>
+<p>An unknown key raises <code>NativeNodeError</code>; in the attribute form the error is also an <code>AttributeError</code>, so <code>hasattr(ff.custom_nodes, name)</code> is <code>False</code>.</p>
+<h2 id="python_script-and-pythonscript"><code>python_script</code> and <code>PythonScript</code></h2>
+<p>Places a <a href="../../visual-editor/kernels.html#python-script-node">Python Script</a> node, whose code runs in a kernel container. The <code>@ff.python_script</code> decorator turns a function into the node's notebook; <code>ff.PythonScript</code> takes the cells as strings.</p>
+<h3 id="python_script-decorator"><code>python_script(...)</code> decorator</h3>
+<div class="highlight"><pre><span></span><code><span class="n">ff</span><span class="o">.</span><span class="n">python_script</span><span class="p">(</span>
+    <span class="n">fn</span><span class="p">:</span> <span class="n">Callable</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">/</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">kernel</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Any</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">outputs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">returns</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">PolarsDataType</span><span class="p">]</span> <span class="o">|</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">PolarsDataType</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">flow_graph</span><span class="p">:</span> <span class="n">FlowGraph</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PythonScriptFunction</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Callable</span><span class="p">],</span> <span class="n">PythonScriptFunction</span><span class="p">]</span>
+</code></pre></div>
+<p>The decorator works bare, <code>@ff.python_script</code>, or with the options above. The function's parameters are the node's inputs, each a <code>pl.LazyFrame</code> in the kernel; its body is the notebook, and its final <code>return</code> is what the node publishes:</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@ff</span><span class="o">.</span><span class="n">python_script</span><span class="p">(</span><span class="n">kernel</span><span class="o">=</span><span class="s2">"docs-kernel"</span><span class="p">,</span> <span class="n">returns</span><span class="o">=</span><span class="p">{</span><span class="s2">"month"</span><span class="p">:</span> <span class="n">ff</span><span class="o">.</span><span class="n">Int64</span><span class="p">,</span> <span class="s2">"revenue_forecast"</span><span class="p">:</span> <span class="n">ff</span><span class="o">.</span><span class="n">Float64</span><span class="p">})</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">forecast</span><span class="p">(</span><span class="n">monthly</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Revenue trend: a least-squares line through monthly revenue, extended three months."""</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+    <span class="n">df</span> <span class="o">=</span> <span class="n">monthly</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+
+    <span class="c1"># %% [markdown]</span>
+    <span class="c1"># ## Fit</span>
+    <span class="c1"># One slope for the whole period; good enough for a demo, not for a quarter close.</span>
+
+    <span class="c1"># %%</span>
+    <span class="n">slope</span><span class="p">,</span> <span class="n">intercept</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">polyfit</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">"month"</span><span class="p">],</span> <span class="n">df</span><span class="p">[</span><span class="s2">"revenue"</span><span class="p">],</span> <span class="n">deg</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">ahead</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">"month"</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">df</span><span class="p">[</span><span class="s2">"month"</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">+</span> <span class="mi">4</span><span class="p">)</span>
+
+    <span class="c1"># %% Forecast</span>
+    <span class="k">return</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s2">"month"</span><span class="p">:</span> <span class="n">ahead</span><span class="p">,</span> <span class="s2">"revenue_forecast"</span><span class="p">:</span> <span class="n">slope</span> <span class="o">*</span> <span class="n">ahead</span> <span class="o">+</span> <span class="n">intercept</span><span class="p">})</span>
+
+
+<span class="n">history</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"month"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">6</span><span class="p">],</span> <span class="s2">"revenue"</span><span class="p">:</span> <span class="p">[</span><span class="mf">100.0</span><span class="p">,</span> <span class="mf">110.0</span><span class="p">,</span> <span class="mf">120.0</span><span class="p">,</span> <span class="mf">130.0</span><span class="p">,</span> <span class="mf">140.0</span><span class="p">,</span> <span class="mf">150.0</span><span class="p">]}</span>
+<span class="n">monthly</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">from_dict</span><span class="p">(</span><span class="n">history</span><span class="p">)</span>
+<span class="n">sales_forecast</span> <span class="o">=</span> <span class="n">forecast</span><span class="p">(</span><span class="n">monthly</span><span class="p">)</span>  <span class="c1"># places the node; a deferred frame</span>
+<span class="n">in_thousands</span> <span class="o">=</span> <span class="n">sales_forecast</span><span class="o">.</span><span class="n">with_columns</span><span class="p">((</span><span class="n">ff</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"revenue_forecast"</span><span class="p">)</span> <span class="o">/</span> <span class="mi">1000</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">"revenue_k"</span><span class="p">))</span>
+<span class="n">local_check</span> <span class="o">=</span> <span class="n">forecast</span><span class="o">.</span><span class="n">fn</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">(</span><span class="n">history</span><span class="p">))</span>  <span class="c1"># the plain function, run here without a kernel</span>
+</code></pre></div>
+<ul>
+<li>Calling the function, <code>forecast(monthly)</code>, places the node and returns its output frame, <a href="#deferred-frames">deferred</a> like every Python Script output. Pass one <code>FlowFrame</code> per parameter, in order; a wrong count raises and lists the parameter names.</li>
+<li><code>forecast.node(monthly)</code> places the node and returns the <code>PythonScript</code> object with the <a href="#common-surface">common accessors</a>. A function with several outputs is placed this way.</li>
+<li><code>forecast.fn</code> is the undecorated function. The cell markers are comments, so it runs locally on Polars frames, without a kernel.</li>
+<li><code>forecast.cells</code> holds the generated notebook cells, built once when the function is decorated.</li>
+<li><code>kernel</code> is stored as given, as for <a href="#pythonscript"><code>PythonScript</code></a>; <code>description</code> defaults to the function name. <code>flow_graph</code> is used only by a function without parameters, which has no input frame to take a graph from.</li>
+</ul>
+<p>The function's source is read from the file or notebook cell that defines it, or from PyCharm's Python console. That console runs a selection through Python's <code>code</code> module, as <code>code.interact()</code> does, and does not keep its text. flowfile reads it from the selection being run, so a selection that imports flowfile and defines the function works, and in an interactive session or PyCharm's console it records every selection run after the import (any other console needs <code>FLOWFILE_CONSOLE_SOURCE=1</code> set before flowfile is imported). A function whose definition ran before flowfile was imported cannot be recovered; run its definition again. The plain <code>python</code> prompt before Python 3.13 keeps no source, and neither does code run with <code>exec()</code>; decorating a function defined there raises <code>NativeNodeError</code>.</p>
+<p>The function is a module-level <code>def</code>. Lambdas, nested functions, methods, generators, <code>async</code> functions and functions wrapped by another decorator raise, and so do <code>*args</code>, <code>**kwargs</code>, keyword-only and positional-only parameters, and parameters with a default. These checks, and the rules below, run when the function is decorated and raise <code>NativeNodeError</code> there.</p>
+<p>The node stores only the cells. A saved flow opens in the designer as an ordinary Python Script notebook; edits made there do not change the function.</p>
+<h3 id="cells-and-notes">Cells and notes</h3>
+<p>The body is split at <a href="https://jupytext.readthedocs.io/en/latest/formats-scripts.html">Jupytext percent-format</a> markers, the cell syntax PyCharm, VS Code and Spyder run cell by cell:</p>
+<table>
+<thead>
+<tr>
+<th>In the body</th>
+<th>In the notebook</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The docstring</td>
+<td>The first note.</td>
+</tr>
+<tr>
+<td>Code before the first marker</td>
+<td>The first code cell.</td>
+</tr>
+<tr>
+<td><code># %%</code></td>
+<td>Starts a code cell. Text after the marker is the cell's title, kept as its first line: <code># %% Forecast</code> starts the cell with <code># Forecast</code>.</td>
+</tr>
+<tr>
+<td><code># %% [markdown]</code> (or <code>[md]</code>)</td>
+<td>Starts a note: the <code>#</code> comment lines right below it. The first line that is not a comment, a blank line included, ends the note and starts a code cell.</td>
+</tr>
+</tbody>
+</table>
+<p>A note is a cell of commented text, the form the editor gives the markdown cells of an imported notebook. The kernel runs the cells as one script, so cell boundaries only matter in the designer. Each cell is dedented by the body's indentation, so nested blocks keep their relative indentation; empty cells are dropped. Markers sit between top-level statements of the body: a marker inside an <code>if</code>, <code>for</code>, <code>with</code> or <code>try</code> block raises. A <code># %%</code> inside a string is not a marker.</p>
+<p><code>forecast.cells</code> from the example above, one block per cell (the <code># ----</code> lines mark the boundaries here and are not part of the cells):</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># ---- 0: prelude, the names the body reads from its module</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
+<span class="c1"># ---- 1: inputs, one line per parameter</span>
+<span class="c1"># flowfile: inputs</span>
+<span class="n">monthly</span> <span class="o">=</span> <span class="n">flowfile_ctx</span><span class="o">.</span><span class="n">read_inputs</span><span class="p">()[</span><span class="s2">"main"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
+<span class="c1"># ---- 2: the docstring</span>
+<span class="c1"># Revenue trend: a least-squares line through monthly revenue, extended three months.</span>
+<span class="c1"># ---- 3: the code before the first marker</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="n">df</span> <span class="o">=</span> <span class="n">monthly</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+<span class="c1"># ---- 4: the note</span>
+<span class="c1"># ## Fit</span>
+<span class="c1"># One slope for the whole period; good enough for a demo, not for a quarter close.</span>
+<span class="c1"># ---- 5: a code cell</span>
+<span class="n">slope</span><span class="p">,</span> <span class="n">intercept</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">polyfit</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">"month"</span><span class="p">],</span> <span class="n">df</span><span class="p">[</span><span class="s2">"revenue"</span><span class="p">],</span> <span class="n">deg</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">ahead</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s2">"month"</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">df</span><span class="p">[</span><span class="s2">"month"</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">+</span> <span class="mi">4</span><span class="p">)</span>
+<span class="c1"># ---- 6: the titled last cell, its return rewritten into the publish</span>
+<span class="c1"># Forecast</span>
+<span class="c1"># flowfile: outputs</span>
+<span class="n">_result</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s2">"month"</span><span class="p">:</span> <span class="n">ahead</span><span class="p">,</span> <span class="s2">"revenue_forecast"</span><span class="p">:</span> <span class="n">slope</span> <span class="o">*</span> <span class="n">ahead</span> <span class="o">+</span> <span class="n">intercept</span><span class="p">})</span>
+<span class="n">flowfile_ctx</span><span class="o">.</span><span class="n">publish_output</span><span class="p">(</span><span class="n">_result</span><span class="p">,</span> <span class="s2">"main"</span><span class="p">)</span>
+</code></pre></div>
+<p>The prelude, the inputs cell (a function without parameters has none) and the docstring note are present only when they have content. <code>read_inputs()["main"]</code> lists the inputs in wiring order, so parameter <em>i</em> reads input <em>i</em>.</p>
+<p><strong>One <code>return</code>, at the end.</strong> The body returns exactly once, as its last top-level statement, never inside an <code>if</code>, loop, <code>with</code> or <code>try</code>. A single frame (<code>pl.DataFrame</code> or <code>pl.LazyFrame</code>) is published to the one output, <code>"main"</code> unless <code>outputs=["name"]</code> names it. A dict of frames is published one output per key: <code>outputs=</code> lists the keys, a dict literal whose keys differ from it raises, and the last cell checks that <code>_result</code> is a dict with exactly those keys when the flow runs. A dict held in a variable is not visible at decoration: it is published per key only when <code>outputs=</code> names two or more outputs, and as one frame otherwise. Without <code>outputs=</code>, a returned value that is not a call, such as a variable, is checked when the flow runs, and a dict fails the run, naming <code>outputs=</code> as the fix. A tuple or list of frames raises. Two inputs and two outputs, placed with <code>.node(...)</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="nd">@ff</span><span class="o">.</span><span class="n">python_script</span><span class="p">(</span><span class="n">kernel</span><span class="o">=</span><span class="s2">"docs-kernel"</span><span class="p">,</span> <span class="n">outputs</span><span class="o">=</span><span class="p">[</span><span class="s2">"matched"</span><span class="p">,</span> <span class="s2">"unmatched"</span><span class="p">])</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">match_customers</span><span class="p">(</span><span class="n">orders</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">,</span> <span class="n">customers</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">]:</span>
+    <span class="n">known</span> <span class="o">=</span> <span class="n">customers</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">"id"</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">"matched"</span><span class="p">:</span> <span class="n">orders</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">known</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="s2">"id"</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">"semi"</span><span class="p">),</span>
+        <span class="s2">"unmatched"</span><span class="p">:</span> <span class="n">orders</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">known</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="s2">"id"</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">"anti"</span><span class="p">),</span>
+    <span class="p">}</span>
+
+
+<span class="n">order_lines</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">from_dict</span><span class="p">({</span><span class="s2">"id"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span> <span class="s2">"amount"</span><span class="p">:</span> <span class="p">[</span><span class="mf">120.0</span><span class="p">,</span> <span class="mf">40.0</span><span class="p">,</span> <span class="mf">900.0</span><span class="p">]})</span>
+<span class="n">known_customers</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">from_dict</span><span class="p">({</span><span class="s2">"id"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span> <span class="s2">"name"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"Ann"</span><span class="p">,</span> <span class="s2">"Cy"</span><span class="p">]})</span>
+<span class="n">matching</span> <span class="o">=</span> <span class="n">match_customers</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="n">order_lines</span><span class="p">,</span> <span class="n">known_customers</span><span class="p">)</span>  <span class="c1"># the PythonScript node</span>
+<span class="n">matched</span> <span class="o">=</span> <span class="n">matching</span><span class="p">[</span><span class="s2">"matched"</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="names-from-outside-the-function">Names from outside the function</h3>
+<p>The body runs in the kernel without the rest of its module, and the kernel imports nothing on its own. A name the body reads from its module goes into the prelude cell:</p>
+<ul>
+<li>A <strong>module</strong> becomes an import line under the name the body uses: <code>pl</code> gives <code>import polars as pl</code>, which is why the forecast notebook starts with it.</li>
+<li>A <strong>plain constant</strong> (a number, string, bytes, <code>None</code>, or a list, tuple, dict or set of those, whose <code>repr</code> reads back as the same value) becomes an assignment, such as <code>WINDOW = 3</code>.</li>
+<li><strong>Anything else</strong> raises: a function or class, a name imported with <code>from numpy import polyfit</code>, a <code>FlowFrame</code>, a flowfile module such as <code>ff</code> (the kernel has no flowfile package), <code>__file__</code> (the kernel runs the cells without a file), or a name not defined yet where the function is decorated (a helper further down the file). The message names it: <code>`polyfit` is used inside `forecast` but lives outside it; move it into the function or pass it as an input</code>.</li>
+</ul>
+<p>Imports come first, in order of first use, then constants. Imports written inside the body stay in the body, as <code>import numpy as np</code> does above. Builtins are left alone, and so are <code>flowfile_ctx</code>, <code>display</code> and <code>explore</code>, which the kernel defines; a parameter with one of those three names raises.</p>
+<h3 id="declaring-the-output-columns">Declaring the output columns</h3>
+<p>While you build, the output is a placeholder. Without <code>returns=</code>, it has the first input's columns (none without inputs), so a step that names a returned column, such as <code>revenue_forecast</code> above, fails at build. <code>returns=</code> declares the columns:</p>
+<ul>
+<li><code>{column: dtype}</code> for a function with one output, as in the forecast example.</li>
+<li><code>{output: {column: dtype}}</code> for several. An output left out keeps the first input's columns, as <code>matched</code> does above.</li>
+</ul>
+<p>The values are Polars dtypes (<code>ff.Int64</code>, <code>pl.Float64</code>); anything else raises, and so does an output that <code>outputs=</code> does not list. The declaration only shapes the placeholder: a run publishes whatever the function returns, and the declaration is not saved with the flow.</p>
+<h3 id="pythonscript"><code>PythonScript</code></h3>
+<p>The low-level form, one-to-one with what the node stores: the cells as strings. Use it for code that is not a function, such as a notebook copied from the designer.</p>
+<div class="highlight"><pre><span></span><code><span class="n">ff</span><span class="o">.</span><span class="n">PythonScript</span><span class="p">(</span>
+    <span class="o">*</span><span class="n">inputs</span><span class="p">:</span> <span class="n">FlowFrame</span><span class="p">,</span>
+    <span class="n">code</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">kernel</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Any</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">outputs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">schemas</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">PolarsDataType</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">flow_graph</span><span class="p">:</span> <span class="n">FlowGraph</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<ul>
+<li>Give exactly one of <code>code</code> or <code>cells</code>. The node stores both forms: the cells, and <code>code</code> as the non-empty cells joined by blank lines (what the kernel executes).</li>
+<li><code>kernel</code> is a kernel id, or an object with an <code>.id</code>, stored as given. It is <strong>not</strong> checked at build: a missing or unknown kernel fails when the flow runs.</li>
+<li><code>outputs</code> names the output handles (default <code>["main"]</code>); publish to them with <code>flowfile_ctx.publish_output(df, "name")</code>.</li>
+<li><code>schemas</code> declares output columns as <code>{output: {column: dtype}}</code>, the nested form of <code>returns=</code>, with the same checks.</li>
+<li>Inputs are wired in order. Inside the kernel, <code>flowfile_ctx.read_input()</code> reads all of them; each is also readable by name, which is the upstream node's reference if set, else <code>df_&lt;node_id&gt;</code>.</li>
+</ul>
+<p>Outputs are <a href="#deferred-frames">deferred</a>; an output not declared in <code>schemas</code> has the first input's schema (no columns without inputs). <code>.code</code>, <code>.cells</code> and <code>.kernel</code> hold what was stored. See the <a href="../../visual-editor/kernel-api.html"><code>flowfile_ctx</code> API</a> for the code side.</p>
+<div class="highlight"><pre><span></span><code><span class="n">readings</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">from_dict</span><span class="p">({</span><span class="s2">"id"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span> <span class="s2">"amount"</span><span class="p">:</span> <span class="p">[</span><span class="mf">120.0</span><span class="p">,</span> <span class="mf">40.0</span><span class="p">,</span> <span class="mf">900.0</span><span class="p">]})</span>
+<span class="n">script</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">PythonScript</span><span class="p">(</span>
+    <span class="n">readings</span><span class="p">,</span>
+    <span class="n">cells</span><span class="o">=</span><span class="p">[</span>
+        <span class="s2">"import polars as pl"</span><span class="p">,</span>
+        <span class="s2">"df = flowfile_ctx.read_input()</span><span class="se">\n</span><span class="s2">flowfile_ctx.publish_output(df.with_columns(pl.col('amount').round(0)))"</span><span class="p">,</span>
+    <span class="p">],</span>
+    <span class="n">kernel</span><span class="o">=</span><span class="s2">"docs-kernel"</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">rounded</span> <span class="o">=</span> <span class="n">script</span><span class="o">.</span><span class="n">output</span>
+</code></pre></div>
+<h2 id="node"><code>Node</code></h2>
+<p>Places any built-in node type from its type name and settings.</p>
+<div class="highlight"><pre><span></span><code><span class="n">ff</span><span class="o">.</span><span class="n">Node</span><span class="p">(</span>
+    <span class="n">node_type</span><span class="p">:</span> <span class="n">NodeTypeLiteral</span> <span class="o">|</span> <span class="n">NodeType</span><span class="p">,</span>
+    <span class="o">*</span><span class="n">inputs</span><span class="p">:</span> <span class="n">FlowFrame</span><span class="p">,</span>
+    <span class="n">settings</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="n">BaseModel</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">deferred</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">flow_graph</span><span class="p">:</span> <span class="n">FlowGraph</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<ul>
+<li><code>node_type</code> is a type name (<code>"api_response"</code>) or its <code>ff.NodeType</code> member (<code>ff.NodeType.API_RESPONSE</code>).</li>
+<li><code>settings</code> is the node's settings model or a dict of its fields; the models live in <code>flowfile_core.schemas.input_schema</code>. An unknown top-level key raises. The node sets <code>flow_id</code>, <code>node_id</code>, the position, <code>is_setup</code>, <code>user_id</code> and <code>depending_on_id(s)</code> itself and refuses them in <code>settings</code>.</li>
+<li>Multi-input nodes (<code>union</code>, <code>polars_code</code>, <code>sql_query</code>, <code>python_script</code>) take every frame on one input, in order; <code>sql_query</code> reads them as <code>input_1</code>, <code>input_2</code>, .... Other nodes take frame <em>i</em> on input <em>i</em>, at most three.</li>
+<li><code>deferred</code> overrides whether the output is deferred; <code>deferred=False</code> with a deferred input frame raises, since building would run the node on placeholder rows.</li>
+<li><code>"promise"</code>, <code>"polars_lazy_frame"</code> and custom node types are refused; use <code>ff.FlowFrame(lazy_frame)</code> or <a href="#customnode"><code>ff.CustomNode</code></a> for those. <code>run_flow</code> is refused too, because its inputs are keyed by slot; use <a href="#runflow"><code>ff.RunFlow</code></a>. <code>flow_input</code> and <code>flow_output</code> work, but the dedicated helpers above are the normal route, as is <a href="flowframe-operations.html#sql-queries"><code>ff.sql</code></a> for <code>sql_query</code>, which also names its tables.</li>
+</ul>
+<p>An API Response node, which has no fluent method, with its settings as a dict:</p>
+<div class="highlight"><pre><span></span><code><span class="n">orders</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">from_dict</span><span class="p">({</span><span class="s2">"id"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span> <span class="s2">"amount"</span><span class="p">:</span> <span class="p">[</span><span class="mf">120.0</span><span class="p">,</span> <span class="mf">40.0</span><span class="p">,</span> <span class="mf">900.0</span><span class="p">]})</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">ff</span><span class="o">.</span><span class="n">Node</span><span class="p">(</span><span class="s2">"api_response"</span><span class="p">,</span> <span class="n">orders</span><span class="p">,</span> <span class="n">settings</span><span class="o">=</span><span class="p">{</span><span class="s2">"orientation"</span><span class="p">:</span> <span class="s2">"records"</span><span class="p">,</span> <span class="s2">"max_rows"</span><span class="p">:</span> <span class="mi">100</span><span class="p">})</span>
+<span class="n">body</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">output</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+</code></pre></div>
+<h2 id="errors">Errors</h2>
+<p>Every build or materialisation failure raises <code>ff.NativeNodeError</code>, a subclass of <code>ValueError</code>: bad arguments, wrong input counts, refused connections, a failed ancestor during <code>collect()</code>, and the checks <code>@ff.python_script</code> runs when it decorates a function. <code>flow_ref</code>, <code>register_flow</code> and <code>RunFlow</code> raise it for catalog failures too, chained from the <code>flowfile_core.catalog</code> error (<code>NamespaceNotFoundError</code>, <code>FlowNotFoundError</code>, <code>AmbiguousFlowError</code>, <code>FlowExistsError</code>, <code>NotAuthorizedError</code>); the <code>get_catalog(...).get_schema(...)</code> handles raise <code>NamespaceNotFoundError</code> itself. A node that fails to build is removed from the graph again.</p>
+<h2 id="known-limits">Known limits</h2>
+<ul>
+<li><strong><code>pivot</code> below a deferred frame raises at build.</strong> Its columns come from the pivot column's values, which the zero-row placeholder does not have: <code>ValueError: Failed to fetch unique values</code>. When a <code>flowfile_worker</code> process answers that probe instead, the pivot builds with only its index columns. Collect the input first.</li>
+<li><strong>Build-time effects are refused on deferred frames and below a gate.</strong> <code>inspect</code>, the <code>sink_*</code> methods that are not <code>write_*</code> aliases and the Polars-code fallbacks of <code>write_parquet</code> / <code>write_csv</code> / <code>write_excel</code> raise <code>NativeNodeError</code> on both; expressions without a code form raise on deferred frames. Use a <code>write_*</code> method with a native writer node, or collect first.</li>
+<li><strong>Three inputs at most</strong> on nodes with fixed inputs, custom nodes included; the canvas has the same limit.</li>
+<li><strong>Local custom nodes run <code>process()</code> at build</strong> to build their lazy plan, as canvas schema prediction does. Pass <code>deferred=True</code> to place one without running it.</li>
+<li><strong>Kernel ids are not validated at build.</strong> <code>collect()</code> on a deferred frame re-runs its lineage, and contacts Docker when that lineage holds a kernel node.</li>
+<li><strong>A bare <code>${param}</code> token in Polars code fails at build.</strong> Polars code is checked as Python when the node is added, before parameters are substituted. A reference inside a string literal, <code>pl.lit("${min_amount}")</code>, builds; a bare <code>${min_amount}</code> token outside one is a syntax error, so <code>ff.Node("polars_code", ...)</code> raises <code>NativeNodeError</code>.</li>
+<li><strong>Reader paths do not resolve <code>${name}</code> at build.</strong> <code>ff.read_csv("${dir}/x.csv")</code> and the other readers open the path as written when they are called, so a reference in it fails with <code>FileNotFoundError</code>. Pass the resolved path from Python.</li>
+<li><strong>Registration writes at build time.</strong> <code>register_flow</code> and <code>RunFlow(graph, name=...)</code> write a YAML file and a catalog row when called.</li>
+<li><strong><code>train_model(publish_to_catalog=True)</code> needs a registered flow.</strong> On a graph built in Python, call <code>ff.register_flow(flow, name=...)</code> first.</li>
+<li><strong>Reopened flow names.</strong> A registered flow keeps its registration name when reopened only if its file is in the Python-editor flows folder; elsewhere the designer names it after the file.</li>
+<li><strong><code>FlowFrame(data, flow)</code> treats the second positional argument as <code>schema</code>.</strong> Pass <code>flow_graph=</code> by keyword.</li>
+<li><strong><code>custom_node(...)</code> keywords are checked at call time</strong> from the node's settings schema; IDEs do not complete them.</li>
+<li><strong><code>@ff.python_script</code> needs the function's source.</strong> Files, notebook cells and PyCharm's Python console provide it; in the console, a definition run before flowfile was imported has to be run again. The plain <code>python</code> prompt before Python 3.13 keeps none.</li>
+<li><strong>Notebook variables are shared across a flow's scripts.</strong> The body runs at the top level of the kernel's namespace for the flow, so a name it assigns (even one that shadows a builtin, such as <code>max</code>) is visible to the flow's other Python Script nodes.</li>
+<li><strong>An upstream node referenced as <code>main</code> fails a script's run.</strong> <code>read_inputs()["main"]</code> holds every input in wiring order, so running the script refuses an input of that name. Give the node another reference.</li>
+<li><strong>Code export emits <code>ff.sql</code>, not these classes.</strong> The FlowFrame export writes a SQL Query node as <code>ff.sql(...)</code>, a gate as <code>if</code> blocks and a custom node as its inlined <code>process()</code>; a Python Script node does not become a <code>@ff.python_script</code> function.</li>
+<li><strong>No typed class per built-in node.</strong> Node types without a dedicated class above are placed with <code>ff.Node</code> and a settings dict or model.</li>
+</ul>
+<hr />
+<p><a href="catalog-references.html">← Previous: Catalog References</a></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="visual-ui.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Visual UI Integration">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Visual UI Integration
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../tutorials/index.html" class="md-footer__link md-footer__link--next" aria-label="Next: Python API Tutorials">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Python API Tutorials
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Flowfile is MIT-licensed. Alteryx is a trademark of Alteryx, Inc.; KNIME is a trademark of KNIME AG. Flowfile is not affiliated with or endorsed by either.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.indexes", "navigation.prune", "navigation.tracking", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../../javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>
