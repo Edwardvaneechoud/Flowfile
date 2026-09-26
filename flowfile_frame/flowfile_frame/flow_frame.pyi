@@ -232,6 +232,9 @@ class FlowFrame:
     # Explode the dataframe to long format by exploding the given columns.
     def explode(self, columns: str | Column | Iterable[str | Column], *more_columns, description: str = None) -> 'FlowFrame': ...
 
+    # Explode a parent -> child hierarchy (bill of materials, chart of accounts) into all its levels.
+    def explode_hierarchy(self, parent: str, child: str, quantity: str | None = None, output_detail: Literal['totals', 'levels', 'paths'] = 'totals', top_level_only: bool = False, include_self: bool = False, max_depth: int | None = None, description: str | None = None) -> 'FlowFrame': ...
+
     # Collect a small number of rows for debugging purposes.
     def fetch(self, n_rows: int = 500, **kwargs) -> DataFrame: ...
 

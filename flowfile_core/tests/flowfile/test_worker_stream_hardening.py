@@ -25,8 +25,10 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import (
     WorkerStreamInterrupted,
     WorkerStreamStalled,
+    WorkerTaskError,
     _receive_raw_result,
 )
+from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
 
 
 def _closed_ok() -> ConnectionClosedOK:
@@ -278,3 +280,76 @@ def test_cancel_mid_stream_classified_as_interrupted_not_worker_death(monkeypatc
     assert fetcher.error_code == -2, "user cancel must classify as interrupted (-2), not worker death (-1)"
     with pytest.raises(Exception, match="Canceled"):
         fetcher.get_result()
+
+
+def test_task_error_frame_raises_worker_task_error():
+    """An error frame marked status "Error" is the task's own failure, not a dead child."""
+    frame = '{"type": "error", "error_message": "ComputeError: cycle a -> b -> a", "status": "Error"}'
+    with pytest.raises(WorkerTaskError, match="a -> b -> a"):
+        _receive_raw_result(_FakeWs(script=[frame]), "task-failed")
+
+
+def test_unmarked_error_frame_keeps_degrade_semantics():
+    """Frames without the status (child died, older worker) must not become task errors."""
+    frame = '{"type": "error", "error_message": "Process ended unexpectedly"}'
+    with pytest.raises(Exception, match="Process ended unexpectedly") as exc_info:
+        _receive_raw_result(_FakeWs(script=[frame]), "task-died")
+    assert not isinstance(exc_info.value, WorkerTaskError)
+
+
+def test_receive_thread_marks_task_error_as_a_real_failure(monkeypatch):
+    """Non-blocking mode: a task error is error_code 1 like the REST path, never -1 (degrade)."""
+    monkeypatch.setattr(subprocess_ops, "streaming_start", lambda **kwargs: _FakeWs())
+
+    def _failed_receive(ws, task_id, should_abort=None):
+        raise WorkerTaskError("ComputeError: cycle a -> b -> a")
+
+    monkeypatch.setattr(subprocess_ops, "streaming_receive", _failed_receive)
+
+    fetcher = subprocess_ops.ExternalDfFetcher(
+        flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-async-task-error", wait_on_completion=False
+    )
+    with pytest.raises(Exception, match="a -> b -> a"):
+        fetcher.get_result()
+    assert fetcher.error_code == 1
+
+
+def test_blocking_task_error_is_recorded_without_rest_resubmit(monkeypatch):
+    """Blocking mode: a task that ran and failed must not be re-submitted over REST."""
+    monkeypatch.setattr(subprocess_ops, "streaming_start", lambda **kwargs: _FakeWs())
+
+    def _failed_receive(ws, task_id, should_abort=None):
+        raise WorkerTaskError("ComputeError: cycle a -> b -> a")
+
+    monkeypatch.setattr(subprocess_ops, "streaming_receive", _failed_receive)
+    monkeypatch.setattr(
+        subprocess_ops,
+        "trigger_df_operation",
+        lambda **kwargs: pytest.fail("REST fallback must not run after the worker reported a task error"),
+    )
+
+    with pytest.raises(RemoteExecutionError, match="a -> b -> a"):
+        subprocess_ops.ExternalDfFetcher(
+            flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-block-task-error", wait_on_completion=True
+        )
+
+
+def test_blocking_sampler_task_error_raises_without_rest_resubmit(monkeypatch):
+    """The sampler behind narrow nodes must raise too, or the node is marked successful."""
+    monkeypatch.setattr(subprocess_ops, "streaming_start", lambda **kwargs: _FakeWs())
+
+    def _failed_receive(ws, task_id, should_abort=None):
+        raise WorkerTaskError("InvalidOperationError: conversion from `str` to `i64` failed")
+
+    monkeypatch.setattr(subprocess_ops, "streaming_receive", _failed_receive)
+    monkeypatch.setattr(
+        subprocess_ops,
+        "trigger_sample_operation",
+        lambda **kwargs: pytest.fail("REST fallback must not run after the worker reported a task error"),
+    )
+
+    with pytest.raises(RemoteExecutionError, match="conversion from") as exc_info:
+        subprocess_ops.ExternalSampler(
+            lf=pl.LazyFrame({"a": [1]}), node_id=1, flow_id=1, file_ref="t-sample-task-error", wait_on_completion=True
+        )
+    assert exc_info.value.original_class == "InvalidOperationError"

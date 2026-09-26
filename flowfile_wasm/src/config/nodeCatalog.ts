@@ -90,6 +90,7 @@ export function createNodeCategories(): NodeCategory[] {
         { type: 'union', name: 'Union', icon: 'union.svg', inputs: 1, outputs: 1, keywords: ['concat', 'append', 'stack', 'combine'] },
         { type: 'fuzzy_match', name: 'Fuzzy Match', icon: '', inputs: 2, outputs: 1, available: false, keywords: ['fuzzy', 'similarity', 'levenshtein', 'approximate', 'fuzzy join'], docsAnchor: 'fuzzy-match' },
         { type: 'graph_solver', name: 'Graph Solver', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['graph', 'network', 'cluster', 'connected components'], docsAnchor: 'graph-solver' },
+        { type: 'explode_hierarchy', name: 'Explode Hierarchy', icon: '', inputs: 1, outputs: 1, available: false, keywords: ['hierarchy', 'bom', 'bill of materials', 'rollup', 'tree', 'explode'], docsAnchor: 'explode-hierarchy' },
         { type: 'gate', name: 'Gate', icon: '', inputs: 2, outputs: 1, available: false, keywords: ['gate', 'condition', 'branch', 'skip', 'if'], docsAnchor: 'gate' }
       ]
     },

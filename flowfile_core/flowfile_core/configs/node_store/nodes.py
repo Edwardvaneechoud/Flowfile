@@ -425,6 +425,30 @@ def get_all_standard_nodes() -> tuple[list[NodeTemplate], dict[str, NodeTemplate
             tags=[NodeTag.GRAPH, NodeTag.NETWORK, NodeTag.CLUSTER, NodeTag.CONNECTED_COMPONENTS],
         ),
         NodeTemplate(
+            name="Explode hierarchy",
+            item="explode_hierarchy",
+            input=1,
+            output=1,
+            transform_type="other",
+            node_type="process",
+            image="explode_hierarchy.svg",
+            node_group="combine",
+            drawer_title="Explode Hierarchy",
+            drawer_intro=(
+                "Explode a bill of materials or chart of accounts to every level; "
+                "quantities multiply along each path"
+            ),
+            laziness="lazy",
+            tags=[
+                NodeTag.HIERARCHY,
+                NodeTag.BOM,
+                NodeTag.BILL_OF_MATERIALS,
+                NodeTag.ROLLUP,
+                NodeTag.TREE,
+                NodeTag.EXPLODE,
+            ],
+        ),
+        NodeTemplate(
             name="Count records",
             item="record_count",
             input=1,

@@ -1257,6 +1257,28 @@ class GraphSolverInput(BaseModel):
     output_column_name: str | None = "graph_group"
 
 
+HierarchyOutputDetail = Literal["totals", "levels", "paths"]
+MAX_HIERARCHY_DEPTH = 2**32 - 1
+
+
+class ExplodeHierarchyInput(BaseModel):
+    """Settings for exploding a parent -> child edge list into its transitive closure.
+
+    The output replaces the input table: one row per (ancestor, descendant) for ``totals``,
+    per (ancestor, descendant, level) for ``levels`` and per path for ``paths``. Quantities
+    multiply along a path and add up across paths; without a quantity column every edge counts 1.
+    ``max_depth`` is capped at ``MAX_HIERARCHY_DEPTH`` because polars-grouper reads it as a u32.
+    """
+
+    parent_column: str
+    child_column: str
+    quantity_column: str | None = None
+    output_detail: HierarchyOutputDetail = "totals"
+    top_level_only: bool = False
+    include_self: bool = False
+    max_depth: int | None = Field(default=None, ge=0, le=MAX_HIERARCHY_DEPTH)
+
+
 RenameMode = Literal["prefix", "suffix", "formula", "first_row"]
 ColumnSelectionMode = Literal["all", "list", "data_type"]
 ReadableDataTypeGroup = Literal["Numeric", "String", "Date", "Other", "Boolean", "Binary", "Complex"]

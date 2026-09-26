@@ -7,7 +7,7 @@ Build data pipelines by dragging nodes onto a canvas and connecting them — no 
 
 ## Three concepts
 
-- **Nodes** — one data action each, grouped into the six palette categories: [Input Sources](nodes/input.md), [Transformations](nodes/transform.md), [Combine Operations](nodes/combine.md), [Aggregations](nodes/aggregate.md), [Machine Learning](nodes/ml.md) and [Output Operations](nodes/output.md). [Data Actions](nodes/index.md) lists all 48 in one table.
+- **Nodes** — one data action each, grouped into the six palette categories: [Input Sources](nodes/input.md), [Transformations](nodes/transform.md), [Combine Operations](nodes/combine.md), [Aggregations](nodes/aggregate.md), [Machine Learning](nodes/ml.md) and [Output Operations](nodes/output.md). [Data Actions](nodes/index.md) lists all 49 in one table.
 - **Connections** — drag between node handles to define how data flows, left to right.
 - **Execution modes** — **Development** materializes every node so you can preview all intermediate data; **Performance** executes only what outputs need, with query optimization across nodes.
 

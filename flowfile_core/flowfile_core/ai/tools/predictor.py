@@ -384,6 +384,13 @@ def collect_column_refs(node_type: str, settings: BaseModel) -> list[str]:
                 if isinstance(col, str):
                     refs.append(col)
 
+    elif node_type == "explode_hierarchy":
+        hierarchy = getattr(settings, "explode_hierarchy_input", None)
+        if hierarchy is not None:
+            for col in (hierarchy.parent_column, hierarchy.child_column, hierarchy.quantity_column):
+                if col:
+                    refs.append(col)
+
     # Dedupe order-preserving so the refusal message is stable.
     seen: set[str] = set()
     out: list[str] = []

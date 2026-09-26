@@ -54,6 +54,11 @@
       "wasm_type": "evaluate_model",
       "docs_anchor": "evaluate-model"
     },
+    "explode_hierarchy": {
+      "tier": "locked",
+      "wasm_type": "explode_hierarchy",
+      "docs_anchor": "explode-hierarchy"
+    },
     "explore_data": {
       "tier": "supported",
       "wasm_type": "explore_data"
@@ -252,7 +257,7 @@
   },
   "counts": {
     "supported": 24,
-    "locked": 16,
+    "locked": 17,
     "absent": 10
   }
 }

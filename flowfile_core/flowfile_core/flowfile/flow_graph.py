@@ -3900,6 +3900,34 @@ class FlowGraph:
         )
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_explode_hierarchy(self, settings: input_schema.NodeExplodeHierarchy) -> "FlowGraph":
+        """Adds a node that explodes a parent -> child hierarchy into its transitive closure.
+
+        The output is a new table (ancestor, descendant, level, quantity, ...) rather than the
+        input with extra columns. No schema callback is registered: prediction runs the lazy
+        plugin expression against a schema-only frame, which resolves the output columns and
+        their dtypes without reading data.
+
+        Args:
+            settings: The explode-hierarchy node configuration.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
+            return fl.explode_hierarchy(settings.explode_hierarchy_input)
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            node_type="explode_hierarchy",
+            setting_input=settings,
+            input_node_ids=[settings.depending_on_id],
+        )
+        return self
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_formula(self, function_settings: input_schema.NodeFormula):
         """Adds a node that applies an ordered list of formulas to create or modify columns.
 

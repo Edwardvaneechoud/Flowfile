@@ -9,6 +9,7 @@ Most of these bring separate datasets together — by matching values, stacking 
 | [Union data](#union-data) | Stack datasets on top of each other | ● |
 | [Cross join](#cross-join) | Every combination of rows from two datasets | ● |
 | [Graph solver](#graph-solver) | Group records that are connected to each other — one input | |
+| [Explode hierarchy](#explode-hierarchy) | Expand a bill of materials or chart of accounts to every level — one input | |
 | [Gate](#gate) | Run a branch only when a condition holds | |
 | [Wait For](#wait-for) | Hold a branch until another branch finishes | |
 | [Run Flow](#run-flow) | Execute another flow as a single step | |
@@ -89,6 +90,127 @@ Unlike the rest of this category, Graph solver takes a **single input**: one tab
 | **Output Column** | Where the assigned group identifier is written. |
 
 This is the action behind entity resolution: after a [Fuzzy match](#fuzzy-match) produces pairs of records that look like the same thing, Graph solver collapses those pairs into one group per real-world entity.
+
+## ![Explode hierarchy](../../../assets/images/nodes/explode_hierarchy.svg){ width="44" height="44" } Explode hierarchy
+
+Takes a **single input**: a parent → child table in which each row says one item contains another. A bill of materials (assembly → component, with a quantity), a chart of accounts (parent account → account), a work breakdown structure and an org chart all have this shape. The node links every item to everything below it, at any depth, and multiplies quantities along the way. In SQL this is a `WITH RECURSIVE` query, or `CONNECT BY` in Oracle.
+
+The result is a new table with fixed columns. The input's other columns are not carried through; [Join](#join) them back on `ancestor` or `descendant` when you need them.
+
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: the Explode hierarchy drawer on a bill-of-materials flow with Paths selected, and the exploded rows in the data preview -->
+
+**Settings**
+
+| Setting | Description |
+|---|---|
+| **Parent column** | The item that contains the child: the assembly, the parent account. |
+| **Child column** | The item it contains: the component, the sub-account. Must be a different column from the parent. |
+| **Quantity column** | Optional. How many of the child one parent holds. Leave it empty and every edge counts 1. |
+| **Output** | **Totals** (the default), **Levels** or **Paths**. See the table below. |
+| **Top-level items only** | Off by default, which explodes every item that has children, so subassemblies get rows of their own. On, only items that never appear as a child are exploded: the finished products, the top accounts. |
+| **Include each item itself** | Off by default. Adds a level-0 row from each item to itself with quantity 1: for every item in the table, or only the top-level ones when **Top-level items only** is on. |
+| **Max depth** | Optional. Stop after this many levels; `1` keeps direct children only. Empty explodes every level. |
+
+| Output | One row per | Columns |
+|---|---|---|
+| **Totals** | ancestor and descendant | `ancestor`, `descendant`, `level`, `quantity`, `is_leaf` |
+| **Levels** | ancestor, descendant and level | The same as Totals. |
+| **Paths** | route from ancestor to descendant, depth-first | `ancestor`, `descendant`, `level`, `parent`, `quantity_per`, `quantity`, `is_leaf`, `path` |
+
+| Column | Meaning |
+|---|---|
+| `ancestor` | The item being exploded. |
+| `descendant` | An item below it. |
+| `level` | How many steps down, `1` being a direct child. Totals gives the shallowest level the descendant occurs at, Levels the level the row counts, and Paths the length of the route. |
+| `quantity` | Totals: how many of the descendant one ancestor holds, over every route. Levels: the same, over the routes of this length only. Paths: the quantities along this one route, multiplied. |
+| `is_leaf` | The descendant has no children of its own anywhere in the input. |
+| `parent` | Paths only: the descendant's direct parent on this route. |
+| `quantity_per` | Paths only: the quantity on the last step of the route. |
+| `path` | Paths only: every item on the route as a list, from the ancestor to the descendant. |
+
+`level` is a whole number and both quantities are decimals. The item columns (`ancestor`, `descendant`, `parent` and the entries of `path`) keep the ids' type when the parent and child columns are both text or both the same 32- or 64-bit integer type, so integer account numbers stay integers; 8- and 16-bit integers are widened to Int64 first. Any other combination comes out as text.
+
+### Example: how many screws go into a bike
+
+Five lines of a bill of materials:
+
+| assembly | component | qty |
+|---|---|--:|
+| bike | frame | 1 |
+| bike | wheel | 2 |
+| bike | screw | 10 |
+| frame | screw | 6 |
+| wheel | screw | 2 |
+
+With **Parent column** `assembly`, **Child column** `component`, **Quantity column** `qty` and **Top-level items only** on:
+
+=== "Totals"
+
+    | ancestor | descendant | level | quantity | is_leaf |
+    |---|---|--:|--:|---|
+    | bike | frame | 1 | 1 | false |
+    | bike | wheel | 1 | 2 | false |
+    | bike | screw | 1 | 20 | true |
+
+    The bike needs 20 screws: 10 fitted to it directly, 6 in its frame and 2 in each of its 2 wheels. `level` is 1 because the shallowest screw sits directly on the bike.
+
+=== "Levels"
+
+    | ancestor | descendant | level | quantity | is_leaf |
+    |---|---|--:|--:|---|
+    | bike | frame | 1 | 1 | false |
+    | bike | wheel | 1 | 2 | false |
+    | bike | screw | 1 | 10 | true |
+    | bike | screw | 2 | 10 | true |
+
+    The same 20 screws, split into the 10 fitted at final assembly and the 10 fitted inside subassemblies.
+
+=== "Paths"
+
+    | ancestor | descendant | level | parent | quantity_per | quantity | path |
+    |---|---|--:|---|--:|--:|---|
+    | bike | frame | 1 | bike | 1 | 1 | [bike, frame] |
+    | bike | screw | 2 | frame | 6 | 6 | [bike, frame, screw] |
+    | bike | wheel | 1 | bike | 2 | 2 | [bike, wheel] |
+    | bike | screw | 2 | wheel | 2 | 4 | [bike, wheel, screw] |
+    | bike | screw | 1 | bike | 10 | 10 | [bike, screw] |
+
+    One row per route, depth-first, which is the order of an indented bill of materials (`is_leaf` not shown). The three screw routes add up to the 20 in Totals.
+
+With **Top-level items only** off, the frame and the wheel are exploded as well, which adds `frame → screw` (6) and `wheel → screw` (2) to each output.
+
+### How it counts
+
+- **Quantities multiply along a route and add up across routes.** A component reached through several subassemblies, like the screws above, is summed in Totals and Levels and listed once per route in Paths.
+- **Duplicate edges.** Two input rows with the same parent and child are added together in Totals and Levels, and stay separate routes in Paths.
+- **`is_leaf` describes the whole input**, not the exploded result: a subassembly that **Max depth** cut off is still `false`.
+- **Level-0 rows** from **Include each item itself** have an empty `parent` and `quantity_per` in Paths.
+- **Rows with an empty parent or child are skipped.**
+
+### Common recipes
+
+The exploded table is usually one or two nodes away from the answer. Examples are from the full bike factory BOM, which adds an e-bike with a battery and a motor, and wheels with rims and spokes.
+
+- **Purchase requirements.** Totals with **Top-level items only** → [Filter data](transform.md#filter-data) `[is_leaf] = true` → [Join](#join) the production plan on `ancestor` = product → [Formula](transform.md#formula) `needed` = `[quantity] * [units]` → [Group by](aggregate.md#group-by) `descendant` with **Sum** of `needed`. A left join to the stock table and the formula `[needed] - coalesce([on_hand], 0)` then give what to buy.
+- **Cost roll-up.** Totals with the defaults → Filter `[is_leaf] = true` → Join the purchase prices on `descendant` → Formula `cost` = `[quantity] * [price]` → Group by `ancestor` with **Sum** of `cost`. Every subassembly gets a cost too, because every item with children is exploded.
+- **Where-used.** Totals → Filter `[descendant] = "spoke"`: every assembly that contains spokes and how many. For the bike factory that is the wheel (32), the bike (64) and the e-bike (64).
+- **Low-level codes for MRP.** Levels with **Top-level items only** and **Include each item itself** → Group by `descendant` with **Max** of `level`. Screws are fitted at level 1 and inside subassemblies at level 2, so their code is 2, which one total per pair cannot show.
+- **Indented bill of materials.** Paths with **Top-level items only** → Filter `[ancestor] = "bike"`. The rows are already in print order; indent each by its `level`.
+- **General-ledger roll-up.** A chart of accounts with no quantity column and **Include each item itself** on → Join the journal on `descendant` = account → Group by `ancestor` with **Sum** of the amount. Each account's balance covers its own postings and every account below it.
+
+### Errors
+
+| Error message contains | Cause |
+|---|---|
+| `the hierarchy contains a cycle, so its quantities are unbounded: a -> b -> c -> a` | An item contains itself, directly or through others. The message names the loop; a row whose parent and child are the same item reports as `b -> b`. |
+| `` `quantity` is null for the edge b -> c `` | The quantity is empty on that row. Fill it in or filter the row out first. |
+
+Neither can be detected from the settings or the schema, only by computing the rows. In Development mode the node fails with the message. In Performance mode, or when the flow runs without a worker, the node's rows are only computed by what reads them, so the message appears on the first downstream node that reads the rows, such as a writer, or when you open its data preview. Quantities are converted to decimals first, so a text quantity column works as long as every value is a number; any other value fails the conversion.
+
+!!! note "Output size"
+    Totals has at most one row per ancestor and descendant, and Levels one per ancestor, descendant and level. Paths has one row per route, and every place a shared subassembly is used repeats its whole subtree, so a deep hierarchy with widely shared parts can produce many more rows than it has lines. **Top-level items only** and **Max depth** keep it down.
+
+From Python, the same node is [`explode_hierarchy()`](../../python-api/reference/flowframe-operations.md#exploding-a-hierarchy).
 
 ## ![Gate](../../../assets/images/nodes/gate.svg){ width="44" height="44" } Gate
 

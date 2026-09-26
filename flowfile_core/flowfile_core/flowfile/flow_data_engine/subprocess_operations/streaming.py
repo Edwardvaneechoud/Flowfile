@@ -49,6 +49,15 @@ class WorkerStreamStalled(WorkerStreamInterrupted):
     """The worker went silent past the inactivity timeout (presumed wedged)."""
 
 
+class WorkerTaskError(Exception):
+    """The worker ran the task and it failed (e.g. a collect-time polars error).
+
+    Unlike a dead child or a transport failure this is a real node error, so it
+    must surface as one instead of degrading gracefully, matching the REST
+    path's "Error" status.
+    """
+
+
 def _get_ws_url() -> str:
     """Convert HTTP worker URL to WebSocket URL."""
     return WORKER_URL.replace("http://", "ws://").replace("https://", "wss://")
@@ -169,7 +178,10 @@ def _receive_raw_result(
             break
 
         if msg_type == "error":
-            raise Exception(data.get("error_message", "Unknown worker error"))
+            message = data.get("error_message", "Unknown worker error")
+            if data.get("status") == "Error":
+                raise WorkerTaskError(message)
+            raise Exception(message)
 
     return raw_result, status
 

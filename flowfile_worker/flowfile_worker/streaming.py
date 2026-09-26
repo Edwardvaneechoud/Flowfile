@@ -173,6 +173,11 @@ def _set_error_status(task_id: str, msg: str) -> None:
         status_dict[task_id].error_message = msg
 
 
+def _task_error_frame(msg: str) -> dict:
+    """Error frame for a task that ran and failed; the status tells core not to treat it as a dead child."""
+    return {"type": "error", "error_message": msg, "status": "Error"}
+
+
 # Progress monitoring
 
 
@@ -201,7 +206,7 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
         if current == -1:
             msg = _read_error_message(error_message)
             _set_error_status(task_id, msg)
-            await websocket.send_json({"type": "error", "error_message": msg})
+            await websocket.send_json(_task_error_frame(msg))
             return True
 
         # A child that put() a large result blocks in its feeder thread and never
@@ -214,7 +219,7 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
             p.terminate()
             msg = f"Task exceeded the {_TASK_TIMEOUT:.0f}s time limit and was terminated"
             _set_error_status(task_id, msg)
-            await websocket.send_json({"type": "error", "error_message": msg})
+            await websocket.send_json(_task_error_frame(msg))
             return True
 
         await asyncio.sleep(delay)
@@ -283,7 +288,7 @@ async def _send_final_error(websocket: WebSocket, task_id: str, progress, error_
     if final == -1:
         msg = _read_error_message(error_message)
         _set_error_status(task_id, msg)
-        await websocket.send_json({"type": "error", "error_message": msg})
+        await websocket.send_json(_task_error_frame(msg))
     else:
         with status_dict_lock:
             status_dict[task_id].status = "Unknown Error"
@@ -346,7 +351,7 @@ async def ws_submit(websocket: WebSocket):
         - JSON: {"type": "complete", "result_type": "polars"|"other", "file_ref": "...", "has_result": bool}
         - Binary: raw result bytes (only if has_result=True and result_type="polars")
         - JSON: {"type": "result_data", "data": ...} (only if has_result=True and result_type="other")
-        - JSON: {"type": "error", "error_message": "..."}
+        - JSON: {"type": "error", "error_message": "...", "status": "Error"?}  (status only when the task itself failed)
     """
     if not websocket_authorized(websocket):
         await websocket.close(code=1008)

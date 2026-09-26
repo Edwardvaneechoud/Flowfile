@@ -20,6 +20,7 @@ Everything Flowfile can do to your data is one of the actions on this page — r
 | Look up values from another table (VLOOKUP) | **Join** | [Combine Operations](combine.md#join) |
 | Stack two files that share the same columns | **Union data** | [Combine Operations](combine.md#union-data) |
 | Match names that are spelled slightly differently | **Fuzzy match** | [Combine Operations](combine.md#fuzzy-match) |
+| Total a bill of materials or roll up a chart of accounts | **Explode hierarchy** | [Combine Operations](combine.md#explode-hierarchy) |
 | Run part of the flow only when a condition holds | **Gate** | [Combine Operations](combine.md#gate) |
 | Reuse another flow as a single step | **Run Flow** | [Combine Operations](combine.md#run-flow) |
 | Total or average per customer, month, region | **Group by** | [Aggregations](aggregate.md#group-by) |
@@ -57,7 +58,7 @@ The palette groups actions the same way this reference does, under the same head
 
     ---
 
-    8 actions. Bring datasets together with a join, union or fuzzy match — group connected records, branch the flow with a gate, or call another flow.
+    9 actions. Bring datasets together with a join, union or fuzzy match — group connected records, explode a hierarchy, branch the flow with a gate, or call another flow.
 
 -   :material-sigma: **[Aggregations](aggregate.md)**
 
@@ -81,7 +82,7 @@ The palette groups actions the same way this reference does, under the same head
 
 ## Every action, A to Z
 
-48 actions as of 2026-09. The palette is the live list; this table is generated from the same source (`flowfile_core/flowfile_core/configs/node_store/nodes.py`) and each name matches what the palette shows.
+49 actions as of 2026-09. The palette is the live list; this table is generated from the same source (`flowfile_core/flowfile_core/configs/node_store/nodes.py`) and each name matches what the palette shows.
 
 | Action | What it does | Category | Lite |
 |---|---|---|:--:|
@@ -93,6 +94,7 @@ The palette groups actions the same way this reference does, under the same head
 | [Data cleansing](transform.md#data-cleansing) | Fix nulls, whitespace, unwanted characters and casing in one step | Transformations | |
 | [Drop duplicates](transform.md#drop-duplicates) | Remove duplicate rows based on selected columns | Transformations | ● |
 | [Evaluate Model](ml.md#evaluate-model) | Compare actual vs predicted columns and compute quality metrics | Machine Learning | |
+| [Explode hierarchy](combine.md#explode-hierarchy) | Explode a bill of materials or chart of accounts to every level; quantities multiply along each path | Combine | |
 | [Explore data](output.md#explore-data) | Interactive data exploration and analysis | Output | ● |
 | [Filter data](transform.md#filter-data) | Keep only rows that match your conditions | Transformations | ● |
 | [Flow Input](input.md#flow-input) | Named entry point for data when this flow runs inside another flow | Input | |

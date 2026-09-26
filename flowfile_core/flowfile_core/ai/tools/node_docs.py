@@ -337,6 +337,20 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "Often paired downstream of 'fuzzy_match' or two 'join's that produce "
         "id-pair output."
     ),
+    "explode_hierarchy": (
+        "Explode a parent -> child edge list (bill of materials, chart of accounts, org chart) into "
+        "its transitive closure: one row per ancestor and every descendant below it. The output "
+        "REPLACES the input table; input columns are not carried through. Quantities multiply along "
+        "a path and add up across paths; without ``quantity_column`` every edge counts 1. "
+        "``output_detail``: ``totals`` (ancestor, descendant, level, quantity, is_leaf), ``levels`` "
+        "(one row per level a descendant occurs at) or ``paths`` (one row per path in indented-BOM "
+        "order, adding parent, quantity_per and path). ``top_level_only`` explodes only items that "
+        "are never a child; ``include_self`` adds level-0 rows so a node's own records count in its "
+        "roll-up. A cycle or a null quantity fails the run. Example: "
+        '{"explode_hierarchy_input": {"parent_column": "assembly", "child_column": "component", '
+        '"quantity_column": "qty", "top_level_only": true}}. '
+        "Often followed by a 'join' on descendant and a 'group_by' on ancestor."
+    ),
     "python_script": (
         "Run a Python function in the isolated kernel_runtime sandbox; receives "
         "upstream inputs as polars DataFrames, returns a DataFrame. Use only when "
@@ -905,6 +919,16 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "cluster_id. Pitfall: this only computes *connected components*; "
         "for general-purpose graph traversal you'd need a 'Polars code' "
         "or 'Python Script' node."
+    ),
+    "explode_hierarchy": (
+        "Settings panel: 'Parent column' and 'Child column' for each edge, an optional 'Quantity "
+        "column', an Output choice (Totals / Levels / Paths) and options 'Top-level items only', "
+        "'Include each item itself' and 'Max depth'. Worked example: 'how many screws does each "
+        "finished bike need' → drag 'Explode hierarchy' from Combine Operations, Parent column="
+        "assembly, Child column=component, Quantity column=qty, Totals, Top-level items only on, "
+        "then filter descendant=screw. Pitfall: the result is a new table, not the input with extra "
+        "columns — join other attributes back on ancestor or descendant; a cycle in the data fails "
+        "the run."
     ),
     "python_script": (
         "Settings panel: 'Kernel' (the runtime the script executes in), "
