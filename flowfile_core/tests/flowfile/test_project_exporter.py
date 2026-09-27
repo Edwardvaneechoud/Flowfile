@@ -1025,7 +1025,7 @@ class TestRunFlowProjectExport:
 
         module = _manifest_file(manifest, "subflows/head_subflow.py")
         assert "def run(customers: fl.FlowFrame | None = None, *, limit: int = 10) -> dict[str, fl.FlowFrame]:" in module
-        assert ".head(limit)" in module  # sentinel resolved to the kwarg
+        assert "head({limit})" in module  # sentinel resolved to the kwarg
         assert '"result":' in module and '"row_count":' in module
         assert "customers if customers is not None else" in module  # FlowFrame arg used directly
         ast.parse(module)
@@ -1265,8 +1265,7 @@ class TestRunFlowProjectExport:
 
         pipeline = _manifest_file(export_flow_to_project(flow), "pipeline.py")
         assert "def run_etl_pipeline(*, n: int = 2, label: str = 'x y'):" in pipeline
-        assert ".head(n)" in pipeline
-        assert 'f"v {label}"' in pipeline
+        assert "head({n})" in pipeline and "v {label}" in pipeline
         assert "${" not in pipeline
         ast.parse(pipeline)
 

@@ -416,8 +416,8 @@ ONE_ENTRY_PINS: list[tuple[str, str, list[tuple[str, str, str]], list[str]]] = [
     (
         "ff",
         "native",
-        [("Total", "[Value] * 2", "Integer")],
-        ['        .with_columns((fl.col("Value") * fl.lit(2)).alias("Total").cast(fl.Int64))'],
+        [("Total", "[Value] * 2", "Auto")],
+        ['        .with_columns((fl.col("Value") * fl.lit(2)).alias("Total"))'],
     ),
     (
         "ff",

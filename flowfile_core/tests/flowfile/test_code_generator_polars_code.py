@@ -12,6 +12,7 @@ from flowfile_core.flowfile.code_generator.code_generator import (
 )
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+from tests.flowfile_core_test_utils import exec_script
 
 _EXPORTS = [
     pytest.param(export_flow_to_polars, id="polars"),
@@ -32,10 +33,7 @@ def _keep_single_file_env(monkeypatch):
 
 
 def _run_export(code: str) -> pl.DataFrame:
-    compile(code, "<export>", "exec")
-    namespace: dict = {}
-    exec(code, namespace)
-    return namespace["run_etl_pipeline"]().collect()
+    return exec_script(code)["run_etl_pipeline"]().collect()
 
 
 def _polars_code_flow(polars_code: str) -> FlowGraph:

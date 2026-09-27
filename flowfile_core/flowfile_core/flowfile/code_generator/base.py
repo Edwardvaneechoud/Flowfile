@@ -67,6 +67,7 @@ class ConverterMixinBase:
     if typing.TYPE_CHECKING:
         framework: str
         flowfile_alias: str
+        placeholders: bool
         imports: set[str]
         custom_node_classes: dict[str, str]
         unsupported_nodes: list[tuple[int, str, str]]

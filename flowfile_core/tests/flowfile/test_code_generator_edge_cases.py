@@ -1405,6 +1405,8 @@ class TestJoinSuffixForm:
         flow = self._join_flow(right_select, how)
         code = export_func(flow)
         assert "__DROP__" not in code and ".rename(" not in code
+        if export_func is export_flow_to_flowframe and expected == "coalesce=False":
+            expected = "keep_right_keys=True"
         assert expected in code
         assert_flow_result_matches_generated(flow, output_node_id=3, code=code)
         _assert_same_columns_in_order(flow, 3, code)

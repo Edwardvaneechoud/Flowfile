@@ -21,9 +21,10 @@ from flowfile_core.flowfile.code_generator.connector_handlers import ConnectorHa
 from flowfile_core.flowfile.code_generator.custom_node_handlers import CustomNodeHandlersMixin
 from flowfile_core.flowfile.code_generator.expression_helpers import ExpressionHelpersMixin
 from flowfile_core.flowfile.code_generator.join_handlers import JoinHandlersMixin
-from flowfile_core.flowfile.code_generator.native_handlers import FLOW_VAR, NativeHandlersMixin
+from flowfile_core.flowfile.code_generator.native_handlers import FLOW_VAR, NativeHandlersMixin, user_description
 from flowfile_core.flowfile.code_generator.param_codegen import (
     _SENTINEL_RE,
+    SENTINEL_PREFIX,
     apply_param_sentinels,
     codegen_parameters,
     param_arg,
@@ -32,7 +33,7 @@ from flowfile_core.flowfile.code_generator.param_codegen import (
     restore_sentinels_to_refs,
 )
 from flowfile_core.flowfile.code_generator.transform_handlers import TransformHandlersMixin
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, convert_pl_type_to_string
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -40,6 +41,7 @@ from flowfile_core.flowfile.param_types import coerce_param_value
 from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
 from flowfile_core.flowfile.util.skip_rules import classify_graph, is_error_ish, uses_any_rule
+from flowfile_core.notebook.compare import strip_outer_parens
 from flowfile_core.schemas import input_schema, transform_schema
 from shared.excel_writer import resolve_excel_write_mode
 from shared.path_utils import DirectoryScanUnsupportedError, assert_directory_scan_supported
@@ -386,6 +388,38 @@ NODE_TYPE_VAR_LABEL: dict[str, str] = {
 }
 
 _NATIVE_LABELS = {"gate": "gate", "run_flow": "subflow", "python_script": "scripted", "flow_input": "flow_input"}
+_NATIVE_TYPES = frozenset({"gate", "run_flow", "python_script", "flow_input", "flow_output"})
+
+
+def node_label(node_type: str, node_id: int) -> str:
+    """The deterministic variable name of an unnamed node, matching the frame's ``node_label``."""
+    label = NODE_TYPE_VAR_LABEL.get(node_type) or re.sub(r"\W", "_", node_type)
+    return f"{label}_{node_id}"
+
+
+def _with_description(code: str, description: str) -> str | None:
+    """``description=`` added to the call the last statement assigns (after defs and imports), else None."""
+    try:
+        *head, last = ast.parse(code).body or [None]
+    except SyntaxError:
+        return None
+    if not isinstance(last, ast.Assign) or not isinstance(last.value, ast.Call):
+        return None
+    if not all(isinstance(stmt, ast.FunctionDef | ast.Import | ast.ImportFrom) for stmt in head):
+        return None
+    call = last.value
+    while isinstance(call.func, ast.Attribute) and call.func.attr == "agg" and isinstance(call.func.value, ast.Call):
+        call = call.func.value
+    if any(kw.arg == "description" for kw in call.keywords):
+        return code
+    lines = code.split("\n")
+    line = lines[call.end_lineno - 1]
+    col = len(line.encode("utf-8")[: call.end_col_offset - 1].decode("utf-8", errors="ignore"))
+    before = code[: sum(len(prior) + 1 for prior in lines[: call.end_lineno - 1]) + col]
+    rest, before = code[len(before) :], before.rstrip()
+    separator = "" if before.endswith("(") else " " if before.endswith(",") else ", "
+    return f"{before}{separator}description={json.dumps(description, ensure_ascii=False)}{rest}"
+
 
 # Generated variable names are uniquified against these so they never shadow a
 # Python builtin or keyword (e.g. a split literally named ``sorted`` or ``type``).
@@ -1657,15 +1691,19 @@ class FlowGraphCodeConverter(
             self._fused.append(replace(em, lines=lines, var_name=rename.get(em.var_name, em.var_name)))
         return [line for index, em in enumerate(self._fused) for line in ([""] if index else []) + em.lines]
 
-    def emissions(self) -> list[NodeEmission]:
+    def emissions(self, verbatim_refs: bool = False) -> list[NodeEmission]:
         """The body's statements after ``convert()``: one per fused chain, names final, parameter refs resolved.
 
         Each emission's ``node_ids`` lists every node the statement contains in data-flow order,
         ``code`` is its text as the body spells it, and ``placeholder_reason`` is set for a
         ``fl.canvas_node`` placeholder. Empty for a gated Polars export, which renders if-blocks.
+        With ``verbatim_refs`` a reference inside text stays ``${name}`` rather than an f-string field.
         """
         names = {p.name for p in self._codegen_params}
-        return [replace(em, lines=resolve_param_sentinels(em.code, names)[0].split("\n")) for em in self._fused]
+        return [
+            replace(em, lines=resolve_param_sentinels(em.code, names, verbatim_refs)[0].split("\n"))
+            for em in self._fused
+        ]
 
     def import_lines(self) -> list[str]:
         """The sorted import statements the exported module declares."""
@@ -2168,15 +2206,19 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
     so a gate routes when a frame below it is collected. With ``placeholders=True`` a node the
     converter cannot express becomes ``<var> = fl.canvas_node(<id>, <inputs>)  # <type>: <reason>``
     (its reason on the emission) so downstream statements still bind; otherwise such a node fails
-    the export with ``UnsupportedNodeError``.
+    the export with ``UnsupportedNodeError``. Every node is written as the frame call that adds that
+    same node type back (``write_csv``, ``.polars_code``, ``with_row_index``, ...), with its user
+    description as ``description=``. ``deterministic_names=True`` names an unnamed boundary
+    ``<type_label>_<id>``, what a seeded notebook session binds.
     """
 
     framework = "fl"
     flowfile_alias = "fl"
 
-    def __init__(self, flow_graph: FlowGraph, placeholders: bool = False):
+    def __init__(self, flow_graph: FlowGraph, placeholders: bool = False, deterministic_names: bool = False):
         super().__init__(flow_graph)
         self.placeholders = placeholders
+        self.deterministic_names = deterministic_names
         self._blocked: set[int] = set()
         self._statuses: dict | None = None
         self.imports.add("import flowfile as fl")
@@ -2193,6 +2235,46 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
 
     def _var_label(self, node: FlowNode) -> str:
         return _NATIVE_LABELS.get(node.node_type) or super()._var_label(node)
+
+    def _plan_boundary_names(self, emissions, survivors: set[int], node_by_id: dict) -> dict[str, str]:
+        if not self.deterministic_names:
+            return super()._plan_boundary_names(emissions, survivors, node_by_id)
+        rename: dict[str, str] = {}
+        for em in emissions:
+            node = node_by_id[em.node_id]
+            if em.node_id not in survivors or em.pinned:
+                continue
+            prefix, label = f"df_{em.node_id}", node_label(node.node_type, em.node_id)
+            suffixes = [split.name for split in getattr(self._settings_for(node), "splits", None) or []]
+            if self._is_filter_split(node):
+                rename[f"_filter_{em.node_id}_pred"], suffixes = f"{label}_pred", ["pass", "fail"]
+            for name in [em.var_name, *(f"{prefix}_{suffix}" for suffix in suffixes)]:
+                if name == prefix or name.startswith(f"{prefix}_"):
+                    rename[name] = label + name[len(prefix) :]
+        return rename
+
+    def _description(self, node: FlowNode) -> str:
+        """The user description a frame call carries; the native classes spell their own."""
+        return "" if node.node_type in _NATIVE_TYPES else user_description(node.setting_input)
+
+    def _is_flow_output(self, node: FlowNode) -> bool:
+        """A described node ends its statement, so ``description=`` lands on its own call."""
+        return super()._is_flow_output(node) or bool(self._description(node))
+
+    def _describe(self, node: FlowNode) -> None:
+        """Add ``description=`` to the call the node's span assigns, when it has one to carry."""
+        description = self._description(node)
+        if not description or getattr(node.setting_input, "is_user_defined", False):
+            return
+        if not self._node_spans or self._node_spans[-1][0] is not node:
+            return
+        _, var, start, end = self._node_spans[-1]
+        described = _with_description("\n".join(self.code_lines[start:end]).rstrip(), description)
+        if described is None:
+            self.warnings.append(f"Node {node.node_id}: its description has no frame call to attach to")
+            return
+        self.code_lines[start:end] = [*described.split("\n"), ""]
+        self._node_spans[-1] = (node, var, start, len(self.code_lines))
 
     def _producer_ids(self, node: FlowNode) -> list[int]:
         keyed = node.node_inputs.keyed_inputs or {}
@@ -2236,7 +2318,8 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
     def _generate_node_code(self, node: FlowNode) -> None:
         """With placeholders on, a node whose handler cannot express it rolls back and becomes a placeholder."""
         if not self.placeholders:
-            return super()._generate_node_code(node)
+            super()._generate_node_code(node)
+            return self._describe(node)
         reason = self._static_placeholder_reason(node)
         if reason is None:
             mark = (len(self.code_lines), len(self.unsupported_nodes), len(self._node_spans), len(self.output_nodes))
@@ -2252,7 +2335,7 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
                 elif len(self._node_spans) == mark[2]:
                     reason = "renders no code"
             if reason is None:
-                return
+                return self._describe(node)
             del self.code_lines[mark[0] :], self.unsupported_nodes[mark[1] :], self._node_spans[mark[2] :]
             del self.output_nodes[mark[3] :]
             self.imports, self.node_handle_var_mapping, self._module_helpers = saved
@@ -2288,34 +2371,15 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         functions reference ``hashlib`` from inside a ``map_elements`` lambda, whose
         body never runs during validation — so only the emitted import catches it.
         """
-        ff_code = _try_translate_to_ff_code(formula)
+        if SENTINEL_PREFIX in formula:
+            return None
+        ff_code = _try_translate_to_ff_code(strip_outer_parens(formula))
         if ff_code:
             ff_code = _polars_code_to_flowframe(ff_code, modules=("ff",))
             self._register_expr_stdlib_imports(ff_code)
             if re.search(r"\bpl\.", ff_code):
                 self.imports.add("import polars as pl")
         return ff_code
-
-    def _native_cast_type(self, data_type: str) -> str | None:
-        """Render *data_type* as an ``fl.``-prefixed cast target, or None when it can't be.
-
-        ``str()`` of nested types (e.g. ``List(Int64)``) contains inner type
-        names the generated script has no bindings for, and bare container
-        names ("List") don't even instantiate, so validate the candidate the
-        same way translated formulas are validated and let the caller fall
-        back to the legacy emission when that fails.
-        """
-        try:
-            output_type = convert_pl_type_to_string(cast_str_to_polars_type(data_type))
-        except Exception:
-            return None
-        if not output_type.startswith(f"{self.framework}."):
-            output_type = f"{self.framework}.{output_type}"
-        try:
-            _eval_in_validation_namespace(output_type)
-        except Exception:
-            return None
-        return output_type
 
     def _handle_random_split(
         self, settings: input_schema.NodeRandomSplit, var_name: str, input_vars: dict[str, str]
@@ -2457,8 +2521,16 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         self._add_code("")
 
     def _handle_filter(self, settings: input_schema.NodeFilter, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle filter nodes using FlowFrame's native flowfile_formula parameter."""
+        """Filter nodes; an advanced filter that is one basic comparison renders as the basic one."""
+        from flowfile_core.flowfile.share.filter_translation import translate_advanced_filter
+
         input_df = input_vars.get("main", "df")
+        advanced = settings.filter_input.advanced_filter
+        if not settings.split_mode and settings.filter_input.is_advanced() and SENTINEL_PREFIX not in advanced:
+            basic = translate_advanced_filter(strip_outer_parens(advanced))
+            if basic is not None:
+                filter_input = transform_schema.FilterInput.model_validate(basic)
+                settings = settings.model_copy(update={"filter_input": filter_input})
 
         if settings.split_mode:
             self._handle_filter_split(settings, var_name, input_df)
@@ -2535,20 +2607,11 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         self._add_code("")
 
     def _formula_entry_native_expr(self, entry: transform_schema.FunctionInput) -> str | None:
-        """One entry as a native fl expression, or None when only the keyword form can carry it."""
-        data_type = entry.field.data_type
-        ff_code = self._translate_to_ff_code(entry.function)
-        if not ff_code:
+        """One untyped entry as a native fl expression; a typed one keeps the keyword form that stores its type."""
+        if entry.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
             return None
-        cast_type = None
-        if data_type not in (None, transform_schema.AUTO_DATA_TYPE):
-            cast_type = self._native_cast_type(data_type)
-            if cast_type is None:
-                return None  # cast target not expressible natively; use the legacy emission
-        expr_str = f'({ff_code}).alias("{entry.field.name}")'
-        if cast_type:
-            expr_str += f".cast({cast_type})"
-        return expr_str
+        ff_code = self._translate_to_ff_code(entry.function)
+        return f'({ff_code}).alias("{entry.field.name}")' if ff_code else None
 
     def _formula_entry_call(self, entry: transform_schema.FunctionInput) -> str:
         """The `.with_columns(...)` method-chain call one formula entry emits."""
@@ -2697,37 +2760,84 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
     def _handle_polars_code(
         self, settings: input_schema.NodePolarsCode, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """Handle custom Polars code nodes for FlowFrame.
+        """``<input>.polars_code(fn, *others)`` (``fl.polars_code(fn)`` without input) over the stored code verbatim.
 
-        Renames ``pl.`` module references to ``fl.`` (token-level) and uses fl.FlowFrame in type hints.
+        Code holding a parameter reference is passed as text instead, one literal per line, so the reference
+        resolves in the text the rebuilt node stores rather than inside a function body it cannot see.
         """
-        code = _polars_code_to_flowframe(textwrap.dedent(settings.polars_code_input.polars_code).strip())
-
-        if len(input_vars) == 0:
-            params = ""
-            args = ""
-        elif len(input_vars) == 1:
-            params = "input_df: fl.FlowFrame"
-            input_df = list(input_vars.values())[0]
-            args = input_df
-        else:
-            param_list = []
-            arg_list = []
-            i = 1
-            for key in sorted(input_vars.keys()):
-                if key.startswith("main"):
-                    param_list.append(f"input_df_{i}: fl.FlowFrame")
-                    arg_list.append(input_vars[key])
-                    i += 1
-            params = ", ".join(param_list)
-            args = ", ".join(arg_list)
-
-        self._add_code(_polars_code_header(settings))
-        self._add_code(f"def _polars_code_{settings.node_id}({params}):")
-        self._emit_polars_code_body(code)
-
+        inputs = [input_vars[key] for key in sorted(input_vars) if key.startswith("main")]
+        code = textwrap.dedent(settings.polars_code_input.polars_code).strip()
+        names = [f"input_df_{i}" for i in range(1, len(inputs) + 1)] if len(inputs) > 1 else ["input_df"][: len(inputs)]
+        function = f"_polars_code_{settings.node_id}"
+        if SENTINEL_PREFIX in code:
+            lines = _sql_query_literal_lines(code)
+            lines[-1] += ","
+            args = "".join(f"\n    {line}" for line in [*lines, *(f"{var}," for var in inputs[1:])])
+            target = f"{inputs[0]}.polars_code" if inputs else "fl.polars_code"
+            return self._add_statement(f"{var_name} = {target}({args}\n)")
+        if re.search(r"\bpl\.", code):
+            self.imports.add("import polars as pl")
+        body, returned = _polars_code_function_body(code)
+        if returned not in (None, "output_df") and re.search(rf"^{re.escape(returned)}\s*=[^=]", "\n".join(body), re.M):
+            returned = None
+        self._add_code(f"def {function}({', '.join(f'{name}: fl.FlowFrame' for name in names)}):")
+        for line in [*body, *([f"return {returned}"] if returned else [] if body else ["pass"])]:
+            self._add_code(f"    {line}")
         self._add_code("")
-        self._add_code(f"{var_name} = _polars_code_{settings.node_id}({args})")
+        self._add_code("")
+        call = f"{inputs[0]}.polars_code({', '.join([function, *inputs[1:]])})" if inputs else None
+        self._add_code(f"{var_name} = {call or f'fl.polars_code({function})'}")
+        self._add_code("")
+
+    def _handle_output(self, settings: input_schema.NodeOutput, var_name: str, input_vars: dict[str, str]) -> None:
+        output, source = settings.output_settings, input_vars.get("main", "df")
+        path, table = self._py_path(output.abs_file_path), output.table_settings
+        if output.file_type == "csv":
+            kwargs = [f"separator={self._py_str(table.delimiter)}"]
+            if table.encoding != input_schema.OutputCsvTable().encoding:
+                kwargs.append(f"encoding={self._py_str(table.encoding)}")
+            self._add_code(f"{var_name} = {source}.write_csv({path}, {', '.join(kwargs)})")
+        elif output.file_type == "parquet":
+            compression = getattr(table, "compression", None)
+            extra = "" if compression in (None, "zstd") else f", compression={self._py_str(compression)}"
+            self._add_code(f"{var_name} = {source}.write_parquet({path}{extra})")
+        else:
+            return super()._handle_output(settings, var_name, input_vars)
+        self.last_node_var = var_name
+        self._add_code("")
+
+    def _csv_scan_kwarg_lines(self, file_settings: input_schema.ReceivedTable) -> list[str]:
+        """The stored UTF-8 variant (strict or lossy) and each option that differs from ``scan_csv``'s default."""
+        table = file_settings.table_settings
+        encoding = "utf8-lossy" if "LOSSY" in (table.encoding or "").upper() else "utf8"
+        lines = [
+            f'    encoding="{encoding}",' if line.strip().startswith("encoding=") else line
+            for line in super()._csv_scan_kwarg_lines(file_settings)
+        ]
+        lines += [f"    infer_schema_length={table.infer_schema_length},"] if table.infer_schema_length != 100 else []
+        lines += ["    infer_schema=False,"] if not table.infer_schema else []
+        if table.quote_char != '"':
+            lines.append(f"    quote_char={self._py_str(table.quote_char) if table.quote_char else None},")
+        return lines + (["    truncate_ragged_lines=True,"] if table.truncate_ragged_lines else [])
+
+    def _handle_text_to_rows(self, settings, var_name: str, input_vars: dict[str, str]) -> None:
+        text = settings.text_to_rows_input
+        args = [self._py_str(text.column_to_split)]
+        if text.output_column_name and text.output_column_name != text.column_to_split:
+            args.append(f"output_column={self._py_str(text.output_column_name)}")
+        if text.split_by_fixed_value or not text.split_by_column:
+            args.append(f"delimiter={self._py_str(text.split_fixed_value or ',')}")
+        else:
+            args.append(f"split_by_column={self._py_str(text.split_by_column)}")
+        self._add_code(f"{var_name} = {input_vars.get('main', 'df')}.text_to_rows({', '.join(args)})")
+        self._add_code("")
+
+    def _handle_record_id(self, settings, var_name: str, input_vars: dict[str, str]) -> None:
+        record = settings.record_id_input
+        args = [self._py_str(record.output_column_name), f"offset={record.offset}"]
+        if record.group_by and record.group_by_columns:
+            args.append(f"group_by={[str(column) for column in record.group_by_columns]}")
+        self._add_code(f"{var_name} = {input_vars.get('main', 'df')}.with_row_index({', '.join(args)})")
         self._add_code("")
 
     def _handle_sql_query(self, settings: input_schema.NodeSqlQuery, var_name: str, input_vars: dict[str, str]) -> None:

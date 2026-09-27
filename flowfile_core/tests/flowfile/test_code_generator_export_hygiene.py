@@ -139,7 +139,7 @@ def test_parameterised_export_still_emits_function_arguments(export):
     code = export(flow)
 
     assert "__FF_PARAM_" not in code and "${" not in code
-    assert ".head(limit)" in code
+    assert ".head(limit)" in code if export is export_flow_to_polars else '"output_df = input_df.head({limit})"' in code
     namespace: dict = {}
     exec(code, namespace)
     for kwargs, expected in (({}, [6, 8, 10]), ({"x": 3, "limit": 1}, [12])):
@@ -151,8 +151,8 @@ def test_parameterised_export_still_emits_function_arguments(export):
 def test_formula_translation_is_memoised_across_exports():
     flow = _base_flow()
     _manual_input(flow)
-    _formula(flow, 2, 1, "doubled", "[a] * 2", "Integer")
-    _formula(flow, 3, 2, "shifted", "[a] + 10", "Integer")
+    _formula(flow, 2, 1, "doubled", "[a] * 2", "Auto")
+    _formula(flow, 3, 2, "shifted", "[a] + 10", "Auto")
     cg._try_translate_to_ff_code.cache_clear()
 
     first = export_flow_to_flowframe(flow)
@@ -200,7 +200,7 @@ def test_export_does_not_import_flowfile_or_touch_environ(monkeypatch):
     cg._ff_validation_namespace.cache_clear()
     flow = _base_flow()
     _manual_input(flow)
-    _formula(flow, 2, 1, "doubled", "[a] * 2", "Integer")
+    _formula(flow, 2, 1, "doubled", "[a] * 2", "Auto")
     _formula(flow, 3, 2, "as_text", "[a] + 1", "String")
     environ_before = dict(os.environ)
 

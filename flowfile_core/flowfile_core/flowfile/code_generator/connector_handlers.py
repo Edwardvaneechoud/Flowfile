@@ -332,7 +332,8 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         self._add_code(f"# Read from catalog table: {table_name}")
         self._add_code(f"{var_name} = {self.flowfile_alias}.read_catalog_table(")
         self._add_code(f"    {self._py_str(table_name)},")
-        self._emit_catalog_namespace(None, settings.catalog_namespace_id)
+        stored = (settings.catalog_full_table_name or "").rpartition(".")[0] if self.framework == "fl" else ""
+        self._emit_catalog_namespace(stored or None, settings.catalog_namespace_id)
         if settings.delta_version is not None:
             self._add_code(f"    delta_version={settings.delta_version},")
         if settings.scd2_view is not None:
@@ -373,9 +374,11 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         """Emit the catalog target as a portable ``namespace_full_name="catalog.schema"`` kwarg.
 
         The numeric id is install-local and meaningless to a reader of the script, so it is only
-        emitted when no name is stored and the id no longer resolves in this catalog.
+        emitted when no name is stored and the id no longer resolves in this catalog; a notebook
+        (``placeholders``) keeps the id as stored, so the rebuilt node matches.
         """
-        full_name = full_name or self._resolve_catalog_namespace_full_name(namespace_id)
+        if not full_name and not self.placeholders:
+            full_name = self._resolve_catalog_namespace_full_name(namespace_id)
         if full_name:
             self._add_code(f"    namespace_full_name={self._py_str(full_name)},")
         elif namespace_id is not None:

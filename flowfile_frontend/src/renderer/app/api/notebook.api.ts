@@ -47,7 +47,7 @@ export interface NotebookUpdate {
   default_kernel_id?: string | null;
 }
 
-/** One cell of `GET /notebook/render`; `node-<id>` cells belong to canvas nodes. */
+/** One cell of `GET /notebook/render`; a `cell-<first node id>` cell is one statement spanning `node_ids`. */
 export interface RenderedCell {
   cell_id: string;
   node_ids: number[];

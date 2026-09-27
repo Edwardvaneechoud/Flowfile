@@ -1,3 +1,5 @@
+import hashlib
+import linecache
 import platform
 import subprocess
 from contextlib import contextmanager
@@ -17,6 +19,15 @@ def is_docker_available():
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
+
+
+def exec_script(code: str, namespace: dict | None = None) -> dict:
+    """Exec generated code the way a script file runs it: with its source readable by ``inspect``."""
+    filename = f"<flowfile-export-{hashlib.sha1(code.encode()).hexdigest()[:12]}>"
+    linecache.cache[filename] = (len(code), None, code.splitlines(True), filename)
+    namespace = {} if namespace is None else namespace
+    exec(compile(code, filename, "exec"), namespace)
+    return namespace
 
 
 def ensure_password_is_available():

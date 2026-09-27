@@ -55,7 +55,7 @@ Edge = tuple[int, str, int, str]
 
 
 def _label(node_type: str, node_id: int) -> str:
-    from flowfile_core.notebook.render import node_label
+    from flowfile_core.flowfile.code_generator.code_generator import node_label
 
     return node_label(node_type, node_id)
 

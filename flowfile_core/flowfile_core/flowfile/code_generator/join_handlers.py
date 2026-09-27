@@ -106,14 +106,14 @@ class JoinHandlersMixin(ConverterMixinBase):
             settings, var_name, left_df, right_df, left_on, right_on, after_join_drop_cols, reverse_action
         )
 
-    @staticmethod
-    def _join_suffix(settings: transform_schema.JoinInputManager) -> str | None:
+    def _join_suffix(self, settings: transform_schema.JoinInputManager) -> str | None:
         """The one suffix a left/inner join's right-side renames follow, when that is all the renaming there is.
 
         Holds when every left column is kept under its own name, every right non-key column is kept,
         the right join keys are all dropped or all kept after the other right columns (where the canvas
         puts them), and each right column renamed away from a left name is that name plus one shared
         suffix: exactly what Polars' ``suffix=`` does, with ``coalesce=False`` keeping the right keys.
+        The FlowFrame export skips the key-order condition: ``keep_right_keys=True`` rebuilds any order.
         None keeps the explicit rename form.
         """
         if settings.how not in ("left", "inner"):
@@ -127,7 +127,7 @@ class JoinHandlersMixin(ConverterMixinBase):
         if len(keys_kept) != 1:
             return None
         kept = [column.join_key for column in right if column.keep]
-        if True in keys_kept and kept != sorted(kept):
+        if self.framework == "pl" and True in keys_kept and kept != sorted(kept):
             return None
         suffixes = set()
         for column in right:
@@ -163,7 +163,7 @@ class JoinHandlersMixin(ConverterMixinBase):
         if suffix != "_right":
             kwargs.append(f"suffix={self._py_str(suffix)}")
         if keep_right_keys:
-            kwargs.append("coalesce=False")
+            kwargs.append("coalesce=False" if self.framework == "pl" else "keep_right_keys=True")
         self._add_code(f"{var_name} = {left_df}.join(")
         self._add_code(f"        {right_df},")
         for index, kwarg in enumerate(kwargs):
