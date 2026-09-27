@@ -26,6 +26,11 @@ FEATURE_FLAG_AI: MutableBool = MutableBool(
     os.environ.get("FEATURE_FLAG_AI", "1").strip().lower() in ("true", "1", "yes", "on")
 )
 
+# Gates every `/notebook/*` route (503 when off); mutable so tests and an admin flip take effect live.
+FEATURE_FLAG_CANVAS_NOTEBOOK: MutableBool = MutableBool(
+    os.environ.get("FEATURE_FLAG_CANVAS_NOTEBOOK", "0").strip().lower() in ("true", "1", "yes", "on")
+)
+
 # Gates the notebook code-intelligence (Jedi) bridge to the kernel. Mutable so the admin
 # endpoint can flip it live; when off, the `/lsp/*` surfaces degrade to empty 200 (never 503)
 # so the editor silently falls back to its client-side completion sources.

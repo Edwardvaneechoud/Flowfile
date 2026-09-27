@@ -46,6 +46,7 @@ from flowfile_core.routes.ga_connections import router as ga_connections_router
 from flowfile_core.routes.kafka import router as kafka_router
 from flowfile_core.routes.logs import router as logs_router
 from flowfile_core.routes.node_requests import router as node_requests_router
+from flowfile_core.routes.notebook import router as notebook_router
 from flowfile_core.routes.notifications import router as notifications_router
 from flowfile_core.routes.project import router as project_router
 from flowfile_core.routes.public import router as public_router
@@ -240,6 +241,7 @@ app.include_router(lsp_router, tags=["lsp"])
 app.include_router(file_manager_router, prefix="/file_manager", tags=["file_manager"])
 app.include_router(converters_router, prefix="/converters", tags=["converters"])
 app.include_router(node_requests_router, prefix="/node_requests", tags=["node_requests"])
+app.include_router(notebook_router, prefix="/notebook", tags=["notebook"])
 app.include_router(telemetry_router)
 app.include_router(ai_router, prefix="/ai", tags=["ai"])
 # Feature-flag admin endpoints. Mounted on /system (NOT /ai or /lsp) so admins can flip
