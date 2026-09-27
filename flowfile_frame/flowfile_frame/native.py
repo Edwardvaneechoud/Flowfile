@@ -301,6 +301,29 @@ def add_connection_checked(flow_graph: FlowGraph, connection: input_schema.NodeC
         raise NativeNodeError(str(exc.detail)) from exc
 
 
+def set_node_reference(flow_graph: FlowGraph, node_id: int, value: str | None) -> None:
+    """Set node ``node_id``'s ``node_reference`` as the designer's reference edit does.
+
+    ``None`` or ``""`` clears it back to the default ``df_<node id>``. A value is checked by the
+    settings model's own rule and must not name another node of ``flow_graph`` (uniqueness is
+    per graph; a later merge of two graphs does not re-check it). Only the node's own hash is
+    cleared: ``FlowNode.reset()`` would drop a deferred node's zero-row placeholder.
+    """
+    node = flow_graph.get_node(node_id)
+    if value is None or value == "":
+        value = None
+    else:
+        try:
+            input_schema.NodeBase.validate_node_reference(value)
+        except ValueError as exc:
+            raise NativeNodeError(f"Invalid node_reference {value!r}: {exc}") from exc
+        for other in flow_graph.nodes:
+            if other.node_id != node_id and getattr(other.setting_input, "node_reference", None) == value:
+                raise NativeNodeError(f"node_reference {value!r} is already used by node {other.node_id}")
+    node.setting_input.node_reference = value
+    node._hash = None
+
+
 def merge_frames(frames: Sequence[FlowFrame]) -> FlowGraph:
     """Bring every frame onto one graph and return it.
 
@@ -404,6 +427,20 @@ class NativeNode:
                 f"{self.node_type} node {self.node_id} has outputs {self.output_names}; pick one with node[name]"
             )
         return self._frames[output_handle(0)]
+
+    @property
+    def node_reference(self) -> str | None:
+        """The node's reference: its variable name in exported code and its input name in a kernel script.
+
+        ``None`` means the default ``df_<node id>``. Setting it checks the designer's rule
+        (lowercase letter first, then lowercase letters, digits and underscores) and that no
+        other node in the graph uses it; ``None`` or ``""`` clears it.
+        """
+        return getattr(self.node.setting_input, "node_reference", None)
+
+    @node_reference.setter
+    def node_reference(self, value: str | None) -> None:
+        set_node_reference(self.flow_graph, self.node_id, value)
 
     def __getitem__(self, name: str | FlowOutput) -> FlowFrame:
         from flowfile_frame.run_flow import FlowOutput

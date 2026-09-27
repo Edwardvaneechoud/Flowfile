@@ -183,6 +183,62 @@ def test_round_trip_keeps_cells_code_kernel_and_outputs():
     assert reopened.get_node(out.node_id)._input_output_handles[script.node_id] == "output-1"
 
 
+def test_cells_given_as_id_pairs_keep_their_ids():
+    pairs = [("c-imports", "import polars as pl"), ("c-body", "df = flowfile_ctx.read_input()"), ("c-empty", "")]
+    script = ff.PythonScript(ff.from_dict(ORDERS), cells=pairs, kernel="ml-kernel")
+
+    stored = _script_input(script)
+    assert [(cell.id, cell.code) for cell in stored.cells] == pairs
+    assert script.cell_ids == ["c-imports", "c-body", "c-empty"]
+    assert script.cells == [code for _, code in pairs]
+    assert stored.code == script.code == "import polars as pl\n\ndf = flowfile_ctx.read_input()"
+
+
+def test_strings_and_id_pairs_give_the_same_cells_and_code():
+    codes = ["a = 1", "", "b = 2"]
+    from_strings = ff.PythonScript(ff.from_dict(ORDERS), cells=codes)
+    from_pairs = ff.PythonScript(ff.from_dict(ORDERS), cells=[(f"id{i}", c) for i, c in enumerate(codes)])
+    assert from_strings.cells == from_pairs.cells == codes
+    assert from_strings.code == from_pairs.code
+    assert from_pairs.cell_ids == ["id0", "id1", "id2"]
+    assert from_strings.cell_ids == [cell.id for cell in _script_input(from_strings).cells]
+    code_only = ff.PythonScript(ff.from_dict(ORDERS), code="x = 1")
+    assert code_only.cell_ids == [cell.id for cell in _script_input(code_only).cells]
+
+
+@pytest.mark.parametrize(
+    "cells, match",
+    [
+        (["a = 1", ("id", "b = 2")], "not a mix"),
+        ([("id", "a = 1", "extra")], r"\(id, code\) pairs of strings"),
+        ([("id",)], r"\(id, code\) pairs of strings"),
+        ([("id", 1)], r"\(id, code\) pairs of strings"),
+        ([(1, "a = 1")], r"\(id, code\) pairs of strings"),
+        ([["id", "a = 1"]], "not a mix"),
+        ([("", "a = 1")], "non-empty"),
+        ([("same", "a = 1"), ("other", "b"), ("same", "c = 3")], r"unique; repeated: \['same'\]"),
+        ("a = 1", "list of strings or of"),
+    ],
+)
+def test_invalid_cell_pairs_raise_and_leave_no_node(cells, match):
+    source = ff.from_dict(ORDERS)
+    with pytest.raises(ff.NativeNodeError, match=match):
+        ff.PythonScript(source, cells=cells)
+    assert [n.node_id for n in source.flow_graph.nodes] == [source.node_id]
+
+
+def test_round_trip_keeps_the_given_cell_ids():
+    pairs = [("cell-a", "a = 1"), ("cell-b", "flowfile_ctx.publish_output(flowfile_ctx.read_input())")]
+    script = ff.PythonScript(ff.from_dict(ORDERS), cells=pairs, kernel="ml-kernel")
+
+    reopened, first_doc = round_trip(script.output, "script_cell_ids.yaml")
+    stored = reopened.get_node(script.node_id).setting_input.python_script_input
+    assert [(cell.id, cell.code) for cell in stored.cells] == pairs
+    assert stored.code == script.code
+    saved = next(node for node in first_doc["nodes"] if node["id"] == script.node_id)
+    assert [(c["id"], c["code"]) for c in saved["setting_input"]["python_script_input"]["cells"]] == pairs
+
+
 # decorator: sample functions (module level: the decorator refuses nested functions)
 
 MONTHLY = {"month": [1, 2, 3], "revenue": [10.0, 20.0, 30.0]}

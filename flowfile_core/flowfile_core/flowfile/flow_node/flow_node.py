@@ -126,6 +126,20 @@ def first_upstream_prediction_warning(node: "FlowNode") -> str | None:
     return None
 
 
+def _settings_for_hash(setting_input: Any) -> Any:
+    """Drop the fields a settings class declares in ``hash_excluded_fields`` before hashing.
+
+    Classes without exclusions pass through untouched, so their hashes stay byte-identical.
+    The dict mirrors what ``get_hash`` builds from ``__dict__`` minus the excluded keys, so
+    adding an excluded field to an existing settings class does not move any existing hash.
+    """
+    excluded = getattr(type(setting_input), "hash_excluded_fields", None)
+    if not excluded or not hasattr(setting_input, "__dict__"):
+        return setting_input
+    skip = excluded | {"pos_x", "pos_y", "description"}
+    return {k: v for k, v in setting_input.__dict__.items() if k not in skip}
+
+
 class FlowNode:
     """Represents a single node in a data flow graph.
 
@@ -801,7 +815,7 @@ class FlowNode:
             ]
         else:
             depends_on_hashes = [_node.hash for _node in self.all_inputs]
-        node_data_hash = get_hash(setting_input)
+        node_data_hash = get_hash(_settings_for_hash(setting_input))
         return get_hash(depends_on_hashes + [node_data_hash, self.parent_uuid, self._cache_epoch])
 
     @property
@@ -1929,6 +1943,29 @@ class FlowNode:
                     self.schema_callback.start()
             self.evaluate_nodes()
             _ = self.hash  # Recalculate the hash after reset
+
+    def refresh_predicted_schema(self) -> None:
+        """Drop cached schema predictions here and downstream, leaving results and hashes alone.
+
+        For settings excluded from the hash (``hash_excluded_fields``): the hash-driven
+        ``reset()`` skips such an edit, so without this the stale prediction would survive.
+        Nodes that have run with their current setup keep their real result schema.
+        """
+        stack: list[FlowNode] = [self]
+        seen: set[int] = set()
+        while stack:
+            node = stack.pop()
+            if id(node) in seen or node.node_stats.has_run_with_current_setup:
+                continue
+            seen.add(id(node))
+            node._schema_callback = None
+            node._named_schemas = {}
+            node._schema_prediction_blocked = None
+            node.node_schema.predicted_schema = None
+            node.node_schema.result_schema = None
+            node._execution_state.predicted_schema = None
+            node._execution_state.result_schema = None
+            stack.extend(node.leads_to_nodes)
 
     def invalidate_cache(self):
         """Force cache invalidation by incrementing the cache epoch.

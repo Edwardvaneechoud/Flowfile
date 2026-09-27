@@ -18,10 +18,13 @@ Every class returns an object with the same accessors:
 | `node["name"]`, `node.get_output(name)` | The output frame with that name; `name` may also be a `ff.FlowOutput`. An unknown name raises `NativeNodeError` listing the outputs. |
 | `.outputs` | The output names, in handle order (`output-0` first). |
 | `.node_id`, `.node`, `.flow_graph` | The node id, the placed core `FlowNode`, and the graph it lives on. |
+| `.node_reference` | The node's reference, `None` for the default `df_<node_id>`. Settable; see below. |
 
 The `custom_node(...)` factory and a `@ff.python_script` function are callables instead: calling one returns the output frame, and its `.node(...)` method returns the node object with these accessors.
 
 Every class takes `description: str | None = None`, the label shown on the canvas. Classes that can be built without input frames take `flow_graph: FlowGraph | None = None`, the graph to place the node on; when it is omitted a new graph is created, as the readers do. Input frames that live on different graphs are merged onto one graph first, as `join` does.
+
+`.node_reference`, on a native node and on any `FlowFrame`, is the reference the designer's node settings edit: the variable name in exported code and the input name inside a downstream kernel script. Setting it follows the designer's rule (a lowercase letter, then lowercase letters, digits and underscores) and refuses a reference another node of the same graph already uses; both raise `NativeNodeError`. `None` or `""` clears it back to `df_<node_id>`. The reference is saved with the flow, and every output frame of a multi-output node shares its node's reference.
 
 ## Deferred frames
 
@@ -481,7 +484,7 @@ The low-level form, one-to-one with what the node stores: the cells as strings. 
 ff.PythonScript(
     *inputs: FlowFrame,
     code: str | None = None,
-    cells: list[str] | None = None,
+    cells: list[str] | list[tuple[str, str]] | None = None,
     kernel: str | Any | None = None,
     outputs: list[str] | None = None,
     schemas: Mapping[str, Mapping[str, PolarsDataType]] | None = None,
@@ -491,12 +494,13 @@ ff.PythonScript(
 ```
 
 - Give exactly one of `code` or `cells`. The node stores both forms: the cells, and `code` as the non-empty cells joined by blank lines (what the kernel executes).
+- `cells` is a list of strings, each stored under a fresh cell id, or a list of `(id, code)` tuples whose ids are stored as given. The ids must be non-empty and unique; a list mixing strings and tuples raises.
 - `kernel` is a kernel id, or an object with an `.id`, stored as given. It is **not** checked at build: a missing or unknown kernel fails when the flow runs.
 - `outputs` names the output handles (default `["main"]`); publish to them with `flowfile_ctx.publish_output(df, "name")`.
 - `schemas` declares output columns as `{output: {column: dtype}}`, the nested form of `returns=`, with the same checks.
 - Inputs are wired in order. Inside the kernel, `flowfile_ctx.read_input()` reads all of them; each is also readable by name, which is the upstream node's reference if set, else `df_<node_id>`.
 
-Outputs are [deferred](#deferred-frames); an output not declared in `schemas` has the first input's schema (no columns without inputs). `.code`, `.cells` and `.kernel` hold what was stored. See the [`flowfile_ctx` API](../../visual-editor/kernel-api.md) for the code side.
+Outputs are [deferred](#deferred-frames); an output not declared in `schemas` has the first input's schema (no columns without inputs). `.code`, `.cells` (the cell code), `.cell_ids` and `.kernel` hold what was stored. See the [`flowfile_ctx` API](../../visual-editor/kernel-api.md) for the code side.
 
 ```python
 --8<-- "docs/examples/native_nodes.py:script"

@@ -26,11 +26,8 @@ from flowfile_core.flowfile.code_generator.base import referenced_kernel_globals
 from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 from flowfile_core.flowfile.code_generator.param_codegen import (
     SENTINEL_PREFIX,
-    apply_param_sentinels,
     codegen_parameters,
     parameter_default_repr,
-    resolve_param_sentinels,
-    restore_param_sentinels,
     restore_sentinels_to_refs,
 )
 from flowfile_core.flowfile.flow_graph import FlowGraph
@@ -212,24 +209,6 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
 
     # --- flow parameters as function arguments -------------------------------------------
 
-    def convert(self) -> str:
-        """Convert with ``${name}`` parameter refs turned into function-argument references."""
-        self._codegen_params = codegen_parameters(self.flow_graph.flow_settings.parameters)
-        restorations = apply_param_sentinels(
-            [node.setting_input for node in self.flow_graph.nodes], self._codegen_params
-        )
-        try:
-            code = super().convert()
-        finally:
-            restore_param_sentinels(restorations)
-        code, leaked = resolve_param_sentinels(code, {p.name for p in self._codegen_params})
-        if leaked:
-            self.warnings.append(
-                f"Parameter reference(s) {sorted(leaked)} appear in places that cannot reference a "
-                "function argument (e.g. multi-line strings) and were left as literal ${...} text."
-            )
-        return code
-
     def _function_def_line(self) -> str:
         if not self._codegen_params:
             return super()._function_def_line()
@@ -295,7 +274,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         used_params: set[str] = set()
         edge_refs: list[tuple[dict, int]] = []
         for source_node in node.all_inputs:
-            ref = getattr(source_node.setting_input, "node_reference", None)
+            ref = getattr(self._settings_for(source_node), "node_reference", None)
             name = ref if ref else f"df_{source_node.node_id}"
             upstream_var = self._resolve_upstream_var(node, source_node.node_id, f"df_{source_node.node_id}")
             entry = by_name.get(name)

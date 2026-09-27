@@ -2058,6 +2058,9 @@ class _NodeOwners(NamedTuple):
         return self.by_node_id.get(node_id, self.session_owner)
 
 
+NodeObserver = Callable[[int | str, str, Any, bool], None]
+
+
 class FlowGraph:
     """A class representing a Directed Acyclic Graph (DAG) for data processing pipelines.
 
@@ -2175,6 +2178,7 @@ class FlowGraph:
         # open_flow). Lets restore_from_snapshot re-stamp the owner even when the
         # live graph is empty at undo time (snapshots intentionally omit user_id).
         self._owner_user_id: int | None = None
+        self._node_observers: list[NodeObserver] = []
 
         from flowfile_core.flowfile.history_manager import HistoryManager
         from flowfile_core.schemas.history_schema import HistoryConfig
@@ -2796,6 +2800,41 @@ class FlowGraph:
         return [schemas.FlowfileComment(**comment.model_dump()) for comment in self._comments.values()]
 
     # ==================== End Comment Management Methods ====================
+
+    def add_node_observer(self, observer: NodeObserver) -> None:
+        """Register ``observer(node_id, node_type, settings, is_new)`` for every node add or update.
+
+        It fires once per ``add_<type>`` call (and ``add_node_promise``), after the node is in
+        the graph: ``is_new`` is True when the call created the node (a type change replaces it,
+        so that counts as new) and False when it updated one in place. A canvas drop therefore
+        fires twice (the ``NodePromise``, then the real settings), and undo/redo rebuilds fire
+        too; dedupe by node id when that matters. Observers are per graph instance, and an
+        exception from one is logged and swallowed so it can never corrupt the graph.
+        """
+        self._node_observers.append(observer)
+
+    def remove_node_observer(self, observer: NodeObserver) -> None:
+        """Unregister an observer added with ``add_node_observer``; unknown observers are ignored."""
+        if observer in self._node_observers:
+            self._node_observers.remove(observer)
+
+    @contextmanager
+    def observe_nodes(self, observer: NodeObserver) -> Iterator[None]:
+        """Register ``observer`` (see ``add_node_observer``) for the duration of the block."""
+        self.add_node_observer(observer)
+        try:
+            yield
+        finally:
+            self.remove_node_observer(observer)
+
+    def _notify_node_observers(self, node: FlowNode, is_new: bool) -> None:
+        if not self._node_observers:
+            return
+        for observer in list(self._node_observers):
+            try:
+                observer(node.node_id, node.node_type, node.setting_input, is_new)
+            except Exception:
+                logger.exception(f"Node observer {observer!r} failed for node {node.node_id}")
 
     def add_node_to_starting_list(self, node: FlowNode) -> None:
         """Adds a node to the list of starting nodes for the flow if not already present.
@@ -3845,9 +3884,10 @@ class FlowGraph:
         def schema_callback():
             """Best-effort schema prediction for python_script nodes.
 
-            Returns the input node(s) schema as a reasonable default
-            (most python_script nodes transform and pass through).
-            If nothing is available, returns [] — never raises.
+            Declared ``output_schemas`` win; an output without a declaration (or a node
+            without any) predicts the first input's schema, since most python_script
+            nodes transform and pass through. If nothing is available, returns [] —
+            never raises.
             """
             try:
                 node = self.get_node(node_python_script.node_id)
@@ -3855,14 +3895,29 @@ class FlowGraph:
                     return []
 
                 main_inputs = node.node_inputs.main_inputs
-                if main_inputs:
-                    first_input = main_inputs[0]
-                    input_node_schema = first_input.schema
-                    if input_node_schema:
-                        return input_node_schema
-                return []
+                input_schema_: list[FlowfileColumn] = (main_inputs[0].schema or []) if main_inputs else []
+                declared = node_python_script.output_schemas
+                if not declared:
+                    return input_schema_
+                named = {
+                    output_handle(i): (
+                        [FlowfileColumn.from_input(f.name, f.data_type) for f in declared[name]]
+                        if name in declared
+                        else list(input_schema_)
+                    )
+                    for i, name in enumerate(node_python_script.output_names)
+                }
+                node._named_schemas = named
+                return named.get(DEFAULT_OUTPUT_HANDLE, [])
             except Exception:
                 return []
+
+        previous = self.get_node(node_python_script.node_id)
+        previous_declared = (
+            previous.setting_input.output_schemas
+            if previous is not None and isinstance(previous.setting_input, input_schema.NodePythonScript)
+            else None
+        )
 
         self.add_node_step(
             node_id=node_python_script.node_id,
@@ -3876,6 +3931,8 @@ class FlowGraph:
         node = self.get_node(node_python_script.node_id)
         if node is not None:
             node._executes_on_kernel = bool(node_python_script.python_script_input.kernel_id)
+            if previous is not None and previous_declared != node_python_script.output_schemas:
+                node.refresh_predicted_schema()
         output_names = node_python_script.output_names
         if len(output_names) > 1:
             if node is not None:
@@ -5111,6 +5168,7 @@ class FlowGraph:
             return typed_parameter_values(_graph.flow_settings.parameters)
 
         node._params_getter = _get_params
+        self._notify_node_observers(node, is_new=existing_node is None)
         return node
 
     def add_include_cols(self, include_columns: list[str]):
@@ -5806,6 +5864,7 @@ class FlowGraph:
             return sql_source.get_schema()
 
         node = self.get_node(node_database_reader.node_id)
+        is_new = node is None
         if node:
             # Persist so the lightweight callback survives the reset() that setting_input triggers.
             node.user_provided_schema_callback = schema_callback
@@ -5829,6 +5888,7 @@ class FlowGraph:
             self._node_db[node_database_reader.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_database_reader.node_id)
+        self._notify_node_observers(node, is_new=is_new)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_kafka_source(self, node_kafka_source: input_schema.NodeKafkaSource):
@@ -5970,6 +6030,7 @@ class FlowGraph:
             return result
 
         node = self.get_node(node_kafka_source.node_id)
+        is_new = node is None
         if node:
             node.user_provided_schema_callback = schema_callback
             node.schema_callback = schema_callback
@@ -5992,6 +6053,7 @@ class FlowGraph:
             self._node_db[node_kafka_source.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_kafka_source.node_id)
+        self._notify_node_observers(node, is_new=is_new)
 
     def add_sql_source(self, external_source_input: input_schema.NodeExternalSource):
         """Adds a node that reads data from a SQL source.
@@ -6125,6 +6187,7 @@ class FlowGraph:
             return derive_schema(metrics=ga_settings.metrics, dimensions=ga_settings.dimensions)
 
         node = self.get_node(node_ga_reader.node_id)
+        is_new = node is None
         if node:
             node.schema_callback = schema_callback
             node.user_provided_schema_callback = schema_callback
@@ -6148,6 +6211,7 @@ class FlowGraph:
             self._node_db[node_ga_reader.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_ga_reader.node_id)
+        self._notify_node_observers(node, is_new=is_new)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_rest_api_reader(self, node_rest_api_reader: input_schema.NodeRestApiReader) -> None:
@@ -6206,6 +6270,7 @@ class FlowGraph:
             return []
 
         node = self.get_node(node_rest_api_reader.node_id)
+        is_new = node is None
         if node:
             node.schema_callback = schema_callback
             node.user_provided_schema_callback = schema_callback
@@ -6229,6 +6294,7 @@ class FlowGraph:
             self._node_db[node_rest_api_reader.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_rest_api_reader.node_id)
+        self._notify_node_observers(node, is_new=is_new)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:
@@ -6509,6 +6575,7 @@ class FlowGraph:
                 directory_schema_callback = get_directory_schema_callback(received_file)
 
         node = self.get_node(input_file.node_id)
+        is_new = node is None
         schema_callback = None
         if node:
             start_hash = node.hash
@@ -6574,6 +6641,7 @@ class FlowGraph:
         if schema_callback is not None:
             node.schema_callback = schema_callback
             node.user_provided_schema_callback = schema_callback
+        self._notify_node_observers(node, is_new=is_new)
         return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
@@ -6596,6 +6664,7 @@ class FlowGraph:
             input_data = FlowDataEngine(path_ref=input_file.file_ref)
             ref = "datasource"
         node = self.get_node(input_file.node_id)
+        is_new = node is None
         if node:
             node.node_type = ref
             node.name = ref
@@ -6616,6 +6685,7 @@ class FlowGraph:
             self._node_db[input_file.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(input_file.node_id)
+        self._notify_node_observers(node, is_new=is_new)
         return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
@@ -6657,6 +6727,7 @@ class FlowGraph:
             )
 
         node = self.get_node(node_list_files.node_id)
+        is_new = node is None
         if node:
             node.schema_callback = schema_callback
             node.user_provided_schema_callback = schema_callback
@@ -6680,6 +6751,7 @@ class FlowGraph:
             self._node_db[node_list_files.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_list_files.node_id)
+        self._notify_node_observers(node, is_new=is_new)
 
     def add_manual_input(self, input_file: input_schema.NodeManualInput):
         """Adds a node for manual data entry.
@@ -6711,6 +6783,7 @@ class FlowGraph:
         else:
             input_data = FlowDataEngine()
         node = self.get_node(settings.node_id)
+        is_new = node is None
         if node:
             node.node_type = "flow_input"
             node.name = "flow_input"
@@ -6729,6 +6802,7 @@ class FlowGraph:
             self._node_db[settings.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(settings.node_id)
+        self._notify_node_observers(node, is_new=is_new)
         return self
 
     @property

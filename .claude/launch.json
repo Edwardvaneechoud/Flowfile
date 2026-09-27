@@ -129,6 +129,24 @@
         "FLOWFILE_CORE_PORT=63594 npm run dev:web --prefix flowfile_frontend -- --port 8085"
       ],
       "port": 8085
+    },
+    {
+      "name": "core-nb",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "mkdir -p /private/tmp/claude-501/-Users-edwardvaneechoud-Documents-flowfile-3-Flowfile/08527001-071d-4d7c-82ba-8e2ba0ec0208/scratchpad/e2e/storage /private/tmp/claude-501/-Users-edwardvaneechoud-Documents-flowfile-3-Flowfile/08527001-071d-4d7c-82ba-8e2ba0ec0208/scratchpad/e2e/user && FLOWFILE_DB_PATH=/private/tmp/claude-501/-Users-edwardvaneechoud-Documents-flowfile-3-Flowfile/08527001-071d-4d7c-82ba-8e2ba0ec0208/scratchpad/e2e/ff.db FLOWFILE_STORAGE_DIR=/private/tmp/claude-501/-Users-edwardvaneechoud-Documents-flowfile-3-Flowfile/08527001-071d-4d7c-82ba-8e2ba0ec0208/scratchpad/e2e/storage FLOWFILE_USER_DATA_DIR=/private/tmp/claude-501/-Users-edwardvaneechoud-Documents-flowfile-3-Flowfile/08527001-071d-4d7c-82ba-8e2ba0ec0208/scratchpad/e2e/user FLOWFILE_OFFLOAD_TO_WORKER=0 FLOWFILE_KERNEL_GC=0 FLOWFILE_TELEMETRY=0 poetry run flowfile_core --port 63596"
+      ],
+      "port": 63596
+    },
+    {
+      "name": "web-nb",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "FLOWFILE_CORE_PORT=63596 npm run dev:web --prefix flowfile_frontend -- --port 8086"
+      ],
+      "port": 8086
     }
   ]
 }

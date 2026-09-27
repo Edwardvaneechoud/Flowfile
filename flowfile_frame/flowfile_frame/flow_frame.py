@@ -39,6 +39,7 @@ from flowfile_frame.native import (
     merge_frames,
     seed_from_predicted_schema,
     seeded_at_build,
+    set_node_reference,
 )
 from flowfile_frame.parameters import refuse_parameter_as_column, refuse_parameter_column_in_formula
 from flowfile_frame.selectors import Selector
@@ -4180,6 +4181,21 @@ class FlowFrame:
     def width(self) -> int:
         """Get the number of columns."""
         return self.data.width
+
+    @property
+    def node_reference(self) -> str | None:
+        """The reference of the node behind this frame, ``None`` for the default ``df_<node id>``.
+
+        It names the frame's variable in exported code and its input in a downstream kernel
+        script. Setting it checks the designer's rule (lowercase letter first, then lowercase
+        letters, digits and underscores) and that no other node in the graph uses it; ``None``
+        or ``""`` clears it. Every output frame of a multi-output node shares its node's reference.
+        """
+        return getattr(self.get_node_settings().setting_input, "node_reference", None)
+
+    @node_reference.setter
+    def node_reference(self, value: str | None) -> None:
+        set_node_reference(self.flow_graph, self.node_id, value)
 
     def __contains__(self, key):
         """This special method enables the 'in' operator to work with FlowFrame objects."""
