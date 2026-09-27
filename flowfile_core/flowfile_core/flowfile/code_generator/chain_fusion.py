@@ -15,7 +15,7 @@ but the chain base) is left as its own named statement, so correctness degrades 
 
 import re
 import textwrap
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 _ASSIGNMENT_RE = re.compile(r"[A-Za-z_]\w* = ")
 
@@ -31,6 +31,12 @@ class NodeEmission:
     num_inputs: int  # number of distinct (resolved) input nodes
     is_flow_output: bool
     pinned: bool = False  # user named the node (node_reference) -> keep it a variable
+    placeholder_reason: str | None = None  # set when the node emitted ``fl.canvas_node``; never fused
+    node_ids: list[int] = field(default_factory=list)  # after fusion: every node of the statement, in order
+
+    @property
+    def code(self) -> str:
+        return "\n".join(self.lines)
 
 
 def _assignment_count(lines: list[str]) -> int:
@@ -100,19 +106,16 @@ def _render_chain(chain: list[NodeEmission]) -> list[str] | None:
     return out
 
 
-def render_pipeline(
-    emissions: list[NodeEmission], consumers: dict[int, list[int]]
-) -> tuple[list[str], set[int]]:
-    """Render all node statements, fusing linear single-use chains into pipes.
+def render_pipeline(emissions: list[NodeEmission], consumers: dict[int, list[int]]) -> list[NodeEmission]:
+    """Fuse linear single-use chains of node statements into pipes.
 
     Args:
         emissions: node statements in emission (data-flow) order.
         consumers: producer node id -> list of consumer node ids (emitted nodes only).
 
     Returns:
-        (body_lines, surviving_boundary_node_ids) — the rendered body and the ids
-        of nodes that remain as their own named statement (chain terminals plus
-        every node that was not fused away).
+        One emission per surviving statement (a chain terminal or an unfused node), in order:
+        its ``lines`` are the rendered block and ``node_ids`` every node the block contains.
     """
     by_id = {em.node_id: em for em in emissions}
     simple = {em.node_id: _is_simple(em) for em in emissions}
@@ -121,7 +124,7 @@ def render_pipeline(
     for producer in emissions:
         if not simple[producer.node_id] or producer.num_inputs > 1 or producer.is_flow_output:
             continue
-        if producer.pinned:  # user named it; keep it as its own variable
+        if producer.pinned or producer.placeholder_reason:  # keep it as its own variable
             continue
         consuming = consumers.get(producer.node_id, [])
         if len(consuming) != 1:
@@ -135,8 +138,7 @@ def render_pipeline(
             continue
         absorbed_into[producer.node_id] = consumer.node_id
 
-    rendered: list[str] = []
-    survivors: set[int] = set()
+    fused: list[NodeEmission] = []
     for em in emissions:
         if em.node_id in absorbed_into:
             continue  # emitted as part of its consumer's chain
@@ -148,8 +150,5 @@ def render_pipeline(
         block = _render_chain(chain)
         if block is None:  # defensive: fall back to separate statements
             block = [line for node in chain for line in node.lines]
-        survivors.add(em.node_id)
-        if rendered:
-            rendered.append("")
-        rendered.extend(block)
-    return rendered, survivors
+        fused.append(replace(em, lines=block, node_ids=[node.node_id for node in chain]))
+    return fused

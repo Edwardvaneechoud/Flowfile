@@ -1389,7 +1389,7 @@ def test_formula_node(export_func):
 
 
 def test_flowframe_formula_native_expression():
-    """FlowFrame export prefers native ff expressions over the flowfile_formulas parameter."""
+    """FlowFrame export prefers native fl expressions over the flowfile_formulas parameter."""
     flow = create_basic_flow()
     flow = create_sales_dataframe_node(flow)
     formula_node = input_schema.NodeFormula(
@@ -1405,7 +1405,7 @@ def test_flowframe_formula_native_expression():
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     code = export_flow_to_flowframe(flow)
-    verify_code_contains(code, 'ff.col("price")', 'ff.col("quantity")', 'alias("total")')
+    verify_code_contains(code, 'fl.col("price")', 'fl.col("quantity")', 'alias("total")')
     assert "flowfile_formulas" not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
@@ -1414,7 +1414,7 @@ def test_flowframe_formula_native_expression():
 
 
 def test_flowframe_formula_native_cast():
-    """A formula with an explicit output data type gets a native ff cast appended."""
+    """A formula with an explicit output data type gets a native fl cast appended."""
     flow = create_basic_flow()
     flow = create_sales_dataframe_node(flow)
     formula_node = input_schema.NodeFormula(
@@ -1430,7 +1430,7 @@ def test_flowframe_formula_native_cast():
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     code = export_flow_to_flowframe(flow)
-    verify_code_contains(code, 'ff.col("price")', 'alias("total")', "cast(ff.Int64)")
+    verify_code_contains(code, 'fl.col("price")', 'alias("total")', "cast(fl.Int64)")
     assert "flowfile_formulas" not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
@@ -1502,9 +1502,9 @@ def test_independent_formula_entries_still_chain_one_call_each(export_func):
     else:
         verify_code_contains(
             code,
-            '.with_columns((ff.col("price") * ff.col("quantity")).alias("total"))',
-            '.with_columns((ff.col("region").str.to_uppercase()).alias("region_upper").cast(ff.String))',
-            '.with_columns((ff.lit(1)).alias("marker").cast(ff.Int64))',
+            '.with_columns((fl.col("price") * fl.col("quantity")).alias("total"))',
+            '.with_columns((fl.col("region").str.to_uppercase()).alias("region_upper").cast(fl.String))',
+            '.with_columns((fl.lit(1)).alias("marker").cast(fl.Int64))',
         )
         assert "flowfile_formulas" not in code
 
@@ -1547,7 +1547,7 @@ def test_entries_mixing_native_and_fallback_chain_with_the_fallback_alone(export
     else:
         verify_code_contains(
             code,
-            '.with_columns((ff.col("price") * ff.col("quantity")).alias("total"))',
+            '.with_columns((fl.col("price") * fl.col("quantity")).alias("total"))',
             ".with_columns(flowfile_formulas=[\"string_similarity([region], 'Noorden')\"], "
             "output_column_names=['sim'], output_column_datatypes=['Double'])",
         )
@@ -1578,7 +1578,7 @@ def test_flowframe_formula_fallback_untranslatable():
 
     code = export_flow_to_flowframe(flow)
     verify_code_contains(code, "flowfile_formulas=")
-    assert 'ff.col("region")' not in code
+    assert 'fl.col("region")' not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
@@ -1586,7 +1586,7 @@ def test_flowframe_formula_fallback_untranslatable():
 
 
 def test_flowframe_filter_advanced_native():
-    """FlowFrame export translates advanced filters to native ff predicates."""
+    """FlowFrame export translates advanced filters to native fl predicates."""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)
     filter_node = input_schema.NodeFilter(
@@ -1602,7 +1602,7 @@ def test_flowframe_filter_advanced_native():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     code = export_flow_to_flowframe(flow)
-    verify_code_contains(code, '.filter((ff.col("age")', 'ff.col("salary")')
+    verify_code_contains(code, '.filter((fl.col("age")', 'fl.col("salary")')
     assert "flowfile_formula=" not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
@@ -1628,7 +1628,7 @@ def test_flowframe_filter_advanced_fallback():
 
     code = export_flow_to_flowframe(flow)
     verify_code_contains(code, "flowfile_formula=")
-    assert 'ff.col("name")' not in code
+    assert 'fl.col("name")' not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
@@ -1656,7 +1656,7 @@ def test_flowframe_filter_split_native_and_fallback():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, output_handle="output-1"))
 
     code = export_flow_to_flowframe(flow)
-    verify_code_contains(code, 'filter_split(ff.col("age")', "split_pass", "split_fail", "counted = split_fail.select(")
+    verify_code_contains(code, 'filter_split(fl.col("age")', "split_pass", "split_fail", "counted = split_fail.select(")
     assert "flowfile_formula=" not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
@@ -1688,7 +1688,7 @@ def test_translate_registers_snippet_imports(monkeypatch):
     """Validated snippets referencing datetime/pl must register those imports for the script.
 
     The validation namespace includes pl and datetime, so the transpiler may
-    emit references to them (e.g. today() -> ff.lit(datetime.datetime.today()));
+    emit references to them (e.g. today() -> fl.lit(datetime.datetime.today()));
     without the imports the exported script raises NameError.
     """
     from flowfile_core.flowfile.code_generator import code_generator as cg
@@ -1780,9 +1780,9 @@ def test_native_cast_type_rendering():
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 
     converter = FlowGraphToFlowFrameConverter(create_basic_flow())
-    assert converter._native_cast_type("Integer") == "ff.Int64"
+    assert converter._native_cast_type("Integer") == "fl.Int64"
     datetime_cast = converter._native_cast_type("Datetime")
-    assert datetime_cast is not None and datetime_cast.startswith("ff.Datetime")
+    assert datetime_cast is not None and datetime_cast.startswith("fl.Datetime")
     # Bare container types ("List") don't instantiate and str() of nested types
     # references unbound inner names — both must return None so the formula
     # handler falls back to the legacy flowfile_formulas emission.
@@ -2136,7 +2136,7 @@ def test_sql_query_single_input(export_func):
             code, "df = pl.SQLContext(input_1=source).execute(", '"SELECT a * 2 AS doubled FROM input_1 WHERE a > 1"'
         )
     else:
-        verify_code_contains(code, "df = ff.sql(", '"SELECT a * 2 AS doubled FROM input_1 WHERE a > 1",', "source,")
+        verify_code_contains(code, "df = fl.sql(", '"SELECT a * 2 AS doubled FROM input_1 WHERE a > 1",', "source,")
     _assert_sql_query_parity(flow, code)
 
 
@@ -2153,7 +2153,7 @@ def test_sql_query_multiple_inputs_keep_their_order(export_func):
     if export_func is export_flow_to_polars:
         verify_code_contains(code, "pl.SQLContext(input_1=source_1, input_2=source_2).execute(")
     else:
-        verify_code_ordering(code, "ff.sql(", "source_1,", "source_2,")
+        verify_code_ordering(code, "fl.sql(", "source_1,", "source_2,")
     verify_code_ordering(code, '"WITH left_side AS (SELECT * FROM input_1),\\n"', '"     right_side AS', '"SELECT l.a')
     _assert_sql_query_parity(flow, code)
 
@@ -4114,7 +4114,7 @@ def test_rest_api_reader_flowframe_has_no_data_suffix():
     converter._handle_rest_api_reader(reader, "df_1", {})
 
     code = "\n".join(converter.code_lines)
-    verify_code_contains(code, "ff.read_api(")
+    verify_code_contains(code, "fl.read_api(")
     assert ").data" not in code
     ast.parse(code)
 
@@ -5184,7 +5184,7 @@ def test_fuzzy_match_with_multiple_columns(export_func):
             "fuzzy_match_dfs("
         )
     elif export_func is export_flow_to_flowframe:
-        verify_code_contains(code, ".fuzzy_join(", "ff.FuzzyMapping(")
+        verify_code_contains(code, ".fuzzy_join(", "fl.FuzzyMapping(")
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
@@ -5337,7 +5337,7 @@ def test_fuzzy_match_jaro_winkler(export_func):
         verify_code_contains(code, "fuzzy_type='jaro_winkler'")
         verify_code_contains(code, "threshold_score=0.8")
     elif export_func is export_flow_to_flowframe:
-        verify_code_contains(code, ".fuzzy_join(", "ff.FuzzyMapping(")
+        verify_code_contains(code, ".fuzzy_join(", "fl.FuzzyMapping(")
     verify_if_execute(code)
 
 
@@ -5701,8 +5701,8 @@ def test_catalog_reader_by_table_name():
     converter._handle_catalog_reader(catalog_reader, "df_1", {})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "ff.read_catalog_table(", '"my_table"')
-    assert "import flowfile as ff" in converter.imports
+    verify_code_contains(code_output, "fl.read_catalog_table(", '"my_table"')
+    assert "import flowfile as fl" in converter.imports
 
 
 def test_catalog_reader_with_namespace_and_version():
@@ -5726,7 +5726,7 @@ def test_catalog_reader_with_namespace_and_version():
 
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
-        code_output, "ff.read_catalog_table(", '"versioned_table"', "namespace_id=987654", "delta_version=3"
+        code_output, "fl.read_catalog_table(", '"versioned_table"', "namespace_id=987654", "delta_version=3"
     )
 
 
@@ -5752,7 +5752,7 @@ def test_catalog_reader_scd2_view():
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
         code_output,
-        "ff.read_catalog_table(",
+        "fl.read_catalog_table(",
         '"dim_customer"',
         'scd2_view="active_at"',
         'scd2_as_of="2024-01-01T00:00:00+00:00"',
@@ -5781,7 +5781,7 @@ def test_catalog_reader_changes_since_last_run():
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
         code_output,
-        "ff.read_catalog_table(",
+        "fl.read_catalog_table(",
         'changes_since="last_run"',
         'changes_consumer="nightly"',
         'changes_start="beginning"',
@@ -5879,7 +5879,7 @@ def test_catalog_writer_track_changes_is_emitted():
     converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "ff.write_catalog_table(", "track_changes=True")
+    verify_code_contains(code_output, "fl.write_catalog_table(", "track_changes=True")
 
 
 def test_catalog_reader_missing_table_name_adds_to_unsupported():
@@ -5926,10 +5926,10 @@ def test_catalog_writer_overwrite_mode():
 
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
-        code_output, "ff.write_catalog_table(", "df_1,", '"output_table"',
+        code_output, "fl.write_catalog_table(", "df_1,", '"output_table"',
         'write_mode="overwrite"',
     )
-    assert "import flowfile as ff" in converter.imports
+    assert "import flowfile as fl" in converter.imports
 
 
 def test_catalog_writer_upsert_with_merge_keys():
@@ -5958,7 +5958,7 @@ def test_catalog_writer_upsert_with_merge_keys():
 
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
-        code_output, "ff.write_catalog_table(", '"target_table"', "namespace_id=987654",
+        code_output, "fl.write_catalog_table(", '"target_table"', "namespace_id=987654",
         'write_mode="upsert"', "merge_keys=[", 'description="My upsert table"',
     )
 
@@ -5986,7 +5986,7 @@ def test_catalog_writer_partition_by_is_emitted():
     converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "ff.write_catalog_table(", "partition_by=[")
+    verify_code_contains(code_output, "fl.write_catalog_table(", "partition_by=[")
 
 
 def test_catalog_writer_scd2_emits_all_settings():
@@ -6023,7 +6023,7 @@ def test_catalog_writer_scd2_emits_all_settings():
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
         code_output,
-        "ff.write_catalog_table(",
+        "fl.write_catalog_table(",
         '"dim_customer"',
         'namespace_full_name="catalog.schema"',
         'write_mode="scd2"',
@@ -6122,7 +6122,7 @@ def test_catalog_writer_scd2_output_mode_is_emitted_when_not_default():
 
     code_output = _scd2_writer_code(FlowGraphToFlowFrameConverter, output_mode="changed")
 
-    verify_code_contains(code_output, "ff.write_catalog_table(", 'scd2_output_mode="changed"')
+    verify_code_contains(code_output, "fl.write_catalog_table(", 'scd2_output_mode="changed"')
 
 
 def test_catalog_writer_scd2_binds_the_call_result():
@@ -6131,7 +6131,7 @@ def test_catalog_writer_scd2_binds_the_call_result():
 
     code_output = _scd2_writer_code(FlowGraphToFlowFrameConverter)
 
-    assert "df_2 = ff.write_catalog_table(" in code_output
+    assert "df_2 = fl.write_catalog_table(" in code_output
     # The passthrough assignment is exactly what the bound call replaces.
     assert "df_2 = df_1" not in code_output
 
@@ -6156,8 +6156,8 @@ def test_catalog_writer_non_scd2_keeps_the_passthrough_assignment():
     converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
 
     code_output = "\n".join(converter.code_lines)
-    assert "\nff.write_catalog_table(" in f"\n{code_output}"
-    assert "df_2 = ff.write_catalog_table(" not in code_output
+    assert "\nfl.write_catalog_table(" in f"\n{code_output}"
+    assert "df_2 = fl.write_catalog_table(" not in code_output
     assert "df_2 = df_1" in code_output
 
 
@@ -6491,8 +6491,8 @@ def test_kafka_source_with_connection_name():
     converter._handle_kafka_source(kafka_source, "df_1", {})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "ff.read_kafka(", '"my_kafka"', 'topic_name="events"')
-    assert "import flowfile as ff" in converter.imports
+    verify_code_contains(code_output, "fl.read_kafka(", '"my_kafka"', 'topic_name="events"')
+    assert "import flowfile as fl" in converter.imports
 
 
 def test_kafka_source_with_all_parameters():
@@ -6519,7 +6519,7 @@ def test_kafka_source_with_all_parameters():
     converter._handle_kafka_source(kafka_source, "df_1", {})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "ff.read_kafka(", "max_messages=50000", 'start_offset="earliest"', "poll_timeout_seconds=60.0")
+    verify_code_contains(code_output, "fl.read_kafka(", "max_messages=50000", 'start_offset="earliest"', "poll_timeout_seconds=60.0")
 
 
 def test_kafka_source_default_parameters_omitted():
@@ -6615,8 +6615,8 @@ def test_cloud_storage_reader_handler_unified():
     converter._handle_cloud_storage_reader(settings, "df_1", {})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "ff.read_from_cloud_storage(", "s3://bucket/data.parquet", "my_conn")
-    assert "import flowfile as ff" in converter.imports
+    verify_code_contains(code_output, "fl.read_from_cloud_storage(", "s3://bucket/data.parquet", "my_conn")
+    assert "import flowfile as fl" in converter.imports
     assert "scan_parquet_from_cloud_storage" not in code_output
     assert "scan_csv_from_cloud_storage" not in code_output
 
@@ -6691,9 +6691,9 @@ def test_cloud_storage_writer_handler_unified():
     converter._handle_cloud_storage_writer(settings, "df_2", {"main": "df_1"})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "ff.write_to_cloud_storage(", "s3://bucket/output.parquet", "my_conn")
-    assert "import flowfile as ff" in converter.imports
-    assert "ff.FlowFrame(" not in code_output
+    verify_code_contains(code_output, "fl.write_to_cloud_storage(", "s3://bucket/output.parquet", "my_conn")
+    assert "import flowfile as fl" in converter.imports
+    assert "fl.FlowFrame(" not in code_output
 
 
 def test_cloud_storage_writer_handler_delta_partition_by():
@@ -6722,7 +6722,7 @@ def test_cloud_storage_writer_handler_delta_partition_by():
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
         code_output,
-        "ff.write_to_cloud_storage(",
+        "fl.write_to_cloud_storage(",
         'write_mode="append"',
         "partition_by=['region', 'year']",
     )
@@ -6753,7 +6753,7 @@ def test_cloud_storage_writer_handler_delta_merge_and_track_changes():
 
     verify_code_contains(
         "\n".join(converter.code_lines),
-        "ff.write_to_cloud_storage(",
+        "fl.write_to_cloud_storage(",
         'write_mode="upsert"',
         "merge_keys=['order_id']",
         "track_changes=True",
@@ -6906,7 +6906,7 @@ def test_kafka_source_code_executes():
         flow.add_kafka_source(node_kafka)
 
         code = export_flow_to_flowframe(flow)
-        assert "ff.read_kafka(" in code
+        assert "fl.read_kafka(" in code
         assert "test-codegen-kafka" in code
         assert topic_name in code
 
@@ -7855,7 +7855,7 @@ def test_catalog_sql_reader_flowframe_emits_valid_call():
     ff_conv = FlowGraphToFlowFrameConverter(flow)
     ff_conv._handle_catalog_reader(catalog_reader, "df_1", {})
     ff_code = "\n".join(ff_conv.code_lines)
-    assert "ff.read_catalog_sql(" in ff_code
+    assert "fl.read_catalog_sql(" in ff_code
     assert ".data" not in ff_code
     ast.parse(ff_code)
 

@@ -102,17 +102,13 @@ def test_exact_flows_reconcile_to_no_ops_with_every_cell_edited(milestone):
     assert not stray, json.dumps(stray, indent=1, default=str)
 
 
-def _editable_cell(rendering):
-    """The first code cell of a single filter node with an integer comparison to bump."""
+def _editable_cell(graph, rendering):
+    """The first code cell holding one filter node and an integer comparison to bump, with that filter's id."""
     for cell in rendering.cells:
-        if (
-            cell.status == "code"
-            and len(cell.node_ids) == 1
-            and ".filter(" in cell.code
-            and _COMPARISON.search(cell.code)
-        ):
-            return cell
-    return None
+        filters = [n for n in cell.node_ids if graph.get_node(n).node_type == "filter"]
+        if cell.status == "code" and len(filters) == 1 and ".filter(" in cell.code and _COMPARISON.search(cell.code):
+            return cell, filters[0]
+    return None, None
 
 
 def _bump(code: str) -> str:
@@ -147,13 +143,12 @@ def test_one_cell_edit_touches_only_that_cells_nodes(milestone, client, tmp_path
         graph.save_flow(str(path))
         live = open_flow(path)
         rendering = render(live)
-        cell = _editable_cell(rendering)
+        cell, node_id = _editable_cell(live, rendering)
         if cell is None:
             continue
         flow_file_handler._flows[live.flow_id] = live
         flow_file_handler._register_user_session(OWNER_ID, live.flow_id)
         try:
-            (node_id,) = cell.node_ids
             before = {n.node_id: (n.hash, n.setting_input.model_dump(mode="json")) for n in live.nodes}
             downstream = _downstream(live, node_id)
             body = {

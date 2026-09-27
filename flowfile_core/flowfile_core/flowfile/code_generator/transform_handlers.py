@@ -248,9 +248,7 @@ class TransformHandlersMixin(ConverterMixinBase):
                     # Every input is guarded and no pair is provably
                     # exhaustive (independent gates): all branches can be
                     # closed at run time, and concat needs ≥1 frame.
-                    empty = self._empty_frame_schema_expr(union_node)
-                    if empty is None:
-                        empty = "pl.LazyFrame()" if self.framework == "pl" else "ff.FlowFrame(pl.LazyFrame())"
+                    empty = self._empty_frame_schema_expr(union_node) or "pl.LazyFrame()"
                     self._add_code(f"if not {list_var}:")
                     self._add_code(f"    {list_var}.append({empty})")
                 self._add_code(f"{var_name} = {self.framework}.concat({list_var}, how='{how}')")

@@ -95,6 +95,10 @@ def _body(graph, edit=None, changed=()):
     }
 
 
+def _cell_of(graph, node_id):
+    return next(cell.cell_id for cell in render(graph).cells if node_id in cell.node_ids)
+
+
 def _node_of_type(graph, node_type):
     return next(n for n in graph.nodes if n.node_type == node_type)
 
@@ -112,7 +116,8 @@ def test_push_one_filter_edit_is_one_update_and_one_undo_step(flag, runner, orde
     formula_settings = formula.setting_input.model_dump(exclude={"user_id"})
     fingerprint = code_fingerprint(graph)
     undo_before = client.get("/editor/history_status/", params={"flow_id": graph.flow_id}).json()["undo_count"]
-    body = _body(graph, _raise_threshold, changed=[f"node-{filt.node_id}"])
+    cell_id = _cell_of(graph, filt.node_id)
+    body = _body(graph, _raise_threshold, changed=[cell_id])
 
     plan = client.post("/notebook/plan", json=body)
     assert plan.status_code == 200, plan.text
@@ -126,7 +131,7 @@ def test_push_one_filter_edit_is_one_update_and_one_undo_step(flag, runner, orde
     assert "20" in graph.get_node(filt.node_id).setting_input.filter_input.advanced_filter
     assert pushed["code_fingerprint"] == code_fingerprint(graph) != fingerprint
     assert pushed["max_node_id"] == max(n.node_id for n in graph.nodes)
-    assert pushed["node_ids_by_cell"][f"node-{filt.node_id}"] == [filt.node_id]
+    assert filt.node_id in pushed["node_ids_by_cell"][cell_id]
     assert pushed["history"]["undo_count"] == undo_before + 1
     assert graph.get_node(source.node_id).hash == hashes[source.node_id]
     assert graph.get_node(formula.node_id).setting_input.model_dump(exclude={"user_id"}) == formula_settings

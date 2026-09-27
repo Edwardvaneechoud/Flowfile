@@ -4,7 +4,7 @@ For every corpus flow ``g``: ``R = render(g)`` raises nothing and its placeholde
 the cells run as a clean run in notebook mode (in process), which writes nothing and starts no kernel
 manager; every canvas node is looked up on the relabelled result and graded EXACT (same type, settings
 equal under :mod:`flowfile_core.notebook.compare`), DIFFER (same type, settings differ) or LOSSY (a
-different type, a missing node, or extra nodes in its cell). Rows aggregate worst-case per node type into
+different type, a missing node, or new nodes in its cell). Rows aggregate worst-case per node type into
 the committed ``ledger.json``, which is written when absent and may only improve afterwards (set
 ``FLOWFILE_UPDATE_NOTEBOOK_LEDGER=1`` to record an improvement). A flow whose rows are all EXACT must
 also render back to the same cell text.
@@ -97,13 +97,11 @@ def grade(graph: FlowGraph, result: dict) -> dict[int, str]:
     rebuilt = {node["id"]: node for node in result["flowfile_data"]["nodes"]}
     canvas = {node["id"]: node for node in _payload(graph)["nodes"]}
     cell_of = {node_id: cell_id for cell_id, node_ids in result["cells"].items() for node_id in node_ids}
-    created_per_cell: dict[str, int] = {}
-    for cell_id in cell_of.values():
-        created_per_cell[cell_id] = created_per_cell.get(cell_id, 0) + 1
+    extra = {cell_id for cell_id, node_ids in result["cells"].items() if set(node_ids) - set(canvas)}
     grades = {}
     for node_id, node in canvas.items():
         twin = rebuilt.get(node_id)
-        if twin is None or twin["type"] != node["type"] or created_per_cell.get(f"node-{node_id}", 0) > 1:
+        if twin is None or twin["type"] != node["type"] or cell_of.get(node_id) in extra:
             grades[node_id] = "LOSSY"
         elif not settings_equal(node["setting_input"], twin["setting_input"], node["type"]):
             grades[node_id] = "DIFFER"

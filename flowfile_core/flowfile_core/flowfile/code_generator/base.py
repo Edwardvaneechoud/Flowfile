@@ -66,6 +66,7 @@ class ConverterMixinBase:
 
     if typing.TYPE_CHECKING:
         framework: str
+        flowfile_alias: str
         imports: set[str]
         custom_node_classes: dict[str, str]
         unsupported_nodes: list[tuple[int, str, str]]
@@ -77,3 +78,5 @@ class ConverterMixinBase:
         def _get_agg_function(self, agg: str) -> str: ...
 
         def _settings_for(self, node: typing.Any) -> typing.Any: ...
+
+        def _gate_formula_arg(self, formula: str) -> str: ...

@@ -916,7 +916,7 @@ async function onPush() {
 
 const canvasRunning = ref(false);
 
-/** Run a node cell's node and its ancestors on the canvas, then show that node's preview. */
+/** Run a cell's last node and its ancestors on the canvas, then show that node's preview. */
 async function runOnCanvas(cellId: string) {
   const flowId = props.flowId;
   const nodeId = store.active?.nodeIds?.[cellId]?.at(-1);

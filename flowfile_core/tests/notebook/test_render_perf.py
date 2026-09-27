@@ -39,7 +39,7 @@ def test_render_p95_under_budget():
         start = time.perf_counter()
         rendering = render(graph)
         timings.append((time.perf_counter() - start) * 1000)
-    assert sum(cell.kind == "node" for cell in rendering.cells) == len(graph.nodes)
+    assert sum(len(cell.node_ids) for cell in rendering.cells) == len(graph.nodes)
     ordered = sorted(timings)
     p95 = ordered[int(0.95 * len(ordered)) - 1]
     print(f"render p50={statistics.median(timings):.1f}ms p95={p95:.1f}ms over {len(graph.nodes)} nodes")

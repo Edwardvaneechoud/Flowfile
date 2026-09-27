@@ -80,10 +80,10 @@ class ConnectorHandlersMixin(ConverterMixinBase):
             self.unsupported_nodes.append((settings.node_id, "list_files", "List Files node has no folder selected"))
             return
 
-        self.imports.add("import flowfile as ff")
+        self.imports.add(f"import flowfile as {self.flowfile_alias}")
         suffix = ".data" if self.framework == "pl" else ""
 
-        self._add_code(f"{var_name} = ff.list_files(")
+        self._add_code(f"{var_name} = {self.flowfile_alias}.list_files(")
         self._add_code(f"    {self._py_str(settings.path)},")
         if settings.file_types:
             self._add_code(f"    file_types={settings.file_types!r},")
@@ -105,7 +105,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
     def _handle_database_reader(
         self, settings: input_schema.NodeDatabaseReader, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        self.imports.add("import flowfile as ff")
+        self.imports.add(f"import flowfile as {self.flowfile_alias}")
         db_settings = settings.database_settings
 
         if db_settings.connection_mode != "reference":
@@ -130,7 +130,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
 
         if db_settings.query_mode == "query" and db_settings.query:
             query = db_settings.query.replace('"""', '\\"\\"\\"')
-            self._add_code(f"{var_name} = ff.read_database(")
+            self._add_code(f"{var_name} = {self.flowfile_alias}.read_database(")
             self._add_code(f"    {self._py_str(connection_name)},")
             self._add_code('    query="""')
             for line in query.split("\n"):
@@ -138,7 +138,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
             self._add_code('    """,')
             self._add_code(f"){suffix}")
         else:
-            self._add_code(f"{var_name} = ff.read_database(")
+            self._add_code(f"{var_name} = {self.flowfile_alias}.read_database(")
             self._add_code(f"    {self._py_str(connection_name)},")
             if db_settings.table_name:
                 self._add_code(f"    table_name={self._py_str(db_settings.table_name)},")
@@ -151,7 +151,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
     def _handle_database_writer(
         self, settings: input_schema.NodeDatabaseWriter, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        self.imports.add("import flowfile as ff")
+        self.imports.add(f"import flowfile as {self.flowfile_alias}")
         db_settings = settings.database_write_settings
 
         if db_settings.connection_mode != "reference":
@@ -174,7 +174,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         connection_name = db_settings.database_connection_name
         input_df = input_vars.get("main", "df")
 
-        self._add_code("ff.write_database(")
+        self._add_code(f"{self.flowfile_alias}.write_database(")
         self._add_code(f"    {input_df},")
         self._add_code(f"    {self._py_str(connection_name)},")
         self._add_code(f"    {self._py_str(db_settings.table_name)},")
@@ -215,12 +215,12 @@ class ConnectorHandlersMixin(ConverterMixinBase):
     def _handle_rest_api_reader(
         self, settings: input_schema.NodeRestApiReader, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        self.imports.add("import flowfile as ff")
+        self.imports.add(f"import flowfile as {self.flowfile_alias}")
         s = settings.rest_api_settings
         suffix = ".data" if self.framework == "pl" else ""
 
         self._add_code(f"# Read from REST API: {s.method} {s.url}")
-        self._add_code(f"{var_name} = ff.read_api(")
+        self._add_code(f"{var_name} = {self.flowfile_alias}.read_api(")
         self._add_code(f"    {s.url!r},")
         if s.method != "GET":
             self._add_code(f'    method="{s.method}",')
@@ -310,7 +310,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
     def _handle_catalog_reader(
         self, settings: input_schema.NodeCatalogReader, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        self.imports.add("import flowfile as ff")
+        self.imports.add(f"import flowfile as {self.flowfile_alias}")
 
         if settings.sql_query:
             self._handle_catalog_sql_reader(settings, var_name)
@@ -330,7 +330,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
 
         suffix = ".data" if self.framework == "pl" else ""
         self._add_code(f"# Read from catalog table: {table_name}")
-        self._add_code(f"{var_name} = ff.read_catalog_table(")
+        self._add_code(f"{var_name} = {self.flowfile_alias}.read_catalog_table(")
         self._add_code(f"    {self._py_str(table_name)},")
         self._emit_catalog_namespace(None, settings.catalog_namespace_id)
         if settings.delta_version is not None:
@@ -395,7 +395,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         sql_code = settings.sql_query.replace('"""', '\\"\\"\\"')
         suffix = ".data" if self.framework == "pl" else ""
         self._add_code("# SQL query against catalog tables")
-        self._add_code(f'{var_name} = ff.read_catalog_sql("""')
+        self._add_code(f'{var_name} = {self.flowfile_alias}.read_catalog_sql("""')
         for line in sql_code.split("\n"):
             self._add_code(line)
         self._add_code(f'"""){suffix}')
@@ -404,7 +404,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
     def _handle_catalog_writer(
         self, settings: input_schema.NodeCatalogWriter, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        self.imports.add("import flowfile as ff")
+        self.imports.add(f"import flowfile as {self.flowfile_alias}")
         ws = settings.catalog_write_settings
         input_df = input_vars.get("main", "df")
 
@@ -418,7 +418,8 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         # ride along), so its call result is bound instead of the input being passed through.
         is_scd2 = ws.write_mode == "scd2"
         self._add_code(f"# Write to catalog table: {ws.table_name}")
-        self._add_code(f"{var_name} = ff.write_catalog_table(" if is_scd2 else "ff.write_catalog_table(")
+        call = f"{self.flowfile_alias}.write_catalog_table("
+        self._add_code(f"{var_name} = {call}" if is_scd2 else call)
         self._add_code(f"    {input_df},")
         self._add_code(f"    {self._py_str(ws.table_name)},")
         self._emit_catalog_namespace(ws.namespace_full_name, ws.namespace_id)

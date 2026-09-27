@@ -11,6 +11,7 @@ the core process.
 
 from __future__ import annotations
 
+import copy
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Protocol
@@ -97,7 +98,7 @@ class InProcessCleanRunner:
         from flowfile_frame import notebook
         from flowfile_frame.notebook_cells import clean_run, seed_session
 
-        snapshot = request.snapshot or {}
+        snapshot = copy.deepcopy(request.snapshot or {})  # the subprocess runner gets its own copy too
         try:
             if snapshot.get("flowfile_data"):
                 seed_session(

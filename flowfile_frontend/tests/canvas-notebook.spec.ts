@@ -93,6 +93,20 @@ async function buildFlow(request: APIRequestContext, token: string, flowId: numb
   );
 }
 
+type RenderedCell = { cell_id: string; node_ids: number[]; code: string };
+
+/** The render route's cells; a cell may span several nodes, so tests locate cells by node id. */
+async function renderedCells(request: APIRequestContext, token: string, flowId: number) {
+  const response = await request.get(`${API_URL}/notebook/render?flow_id=${flowId}`, {
+    headers: authHeaders(token),
+  });
+  expect(response.ok()).toBe(true);
+  return (await response.json()).cells as RenderedCell[];
+}
+
+const cellOf = (cells: RenderedCell[], nodeId: number) =>
+  cells.find((c) => c.node_ids.includes(nodeId))!;
+
 const cellTexts = (page: Page) =>
   page.locator(".notebook-dock .nb-cell .cm-content").allInnerTexts();
 
@@ -119,9 +133,13 @@ test.describe("Canvas notebook", () => {
   test("render, run, push, undo and move", async ({ page, request }) => {
     const panel = page.locator(".notebook-dock .notebook-panel");
     await page.getByTestId("canvas-notebook-toggle").click();
-    for (const id of [1, 2, 3]) {
-      await expect(panel.locator(`[data-cell-id="node-${id}"]`)).toHaveCount(1);
+    const cells = await renderedCells(request, token, flowId);
+    for (const cell of cells) {
+      await expect(panel.locator(`[data-cell-id="${cell.cell_id}"]`)).toHaveCount(1);
     }
+    expect(await panel.locator(".nb-cell").count()).toBeGreaterThanOrEqual(cells.length);
+    const filter = cellOf(cells, 2);
+    const polarsCell = cellOf(cells, 3);
     await expect(panel.locator(".nb-banner")).toContainText("Flow session");
     await shot(page, "01-open");
 
@@ -136,10 +154,10 @@ test.describe("Canvas notebook", () => {
     await added.locator(".nb-cell-menu").click();
     await page.locator(".nb-cell-menu-popper:visible [data-action='delete']").click();
 
-    const filterCell = panel.locator('[data-cell-id="node-2"] .cm-content');
+    const filterCell = panel.locator(`[data-cell-id="${filter.cell_id}"] .cm-content`);
     await filterCell.click();
     await page.keyboard.press("ControlOrMeta+A");
-    await page.keyboard.insertText('filtered_2 = source_1.filter(fl.col("salary") > 80000)');
+    await page.keyboard.insertText(filter.code.replace("60000", "80000"));
     const pushed = page.waitForResponse((r) => r.url().includes("/editor/notebook/push/"));
     await panel.getByTestId("nb-push").click();
     expect((await pushed).status()).toBe(200);
@@ -156,7 +174,10 @@ test.describe("Canvas notebook", () => {
 
     await page.locator(".undo-redo-controls .control-btn").first().click();
     await expect.poll(filterValue).toContain("60000");
-    await expect(panel.locator('[data-cell-id="node-2"] .cm-content')).toContainText("60000");
+    const undone = cellOf(await renderedCells(request, token, flowId), 2);
+    await expect(panel.locator(`[data-cell-id="${undone.cell_id}"] .cm-content`)).toContainText(
+      "60000",
+    );
     await shot(page, "04-undone");
 
     await minimizePalette(page);
@@ -174,7 +195,7 @@ test.describe("Canvas notebook", () => {
     expect(await cellTexts(page)).toEqual(before);
     await shot(page, "05-moved");
 
-    await panel.locator('[data-cell-id="node-3"] .nb-cell-menu').click();
+    await panel.locator(`[data-cell-id="${polarsCell.cell_id}"] .nb-cell-menu`).click();
     await page.locator(".nb-cell-menu-popper:visible [data-action='run-on-canvas']").click();
     const preview = page.getByText("double", { exact: true });
     await expect(preview).toBeVisible({ timeout: 30_000 });

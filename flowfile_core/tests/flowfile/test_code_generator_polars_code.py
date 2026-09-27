@@ -138,10 +138,10 @@ def test_polars_code_function_body(code, expected):
 @pytest.mark.parametrize(
     "code, expected",
     [
-        ("pl.col('a')", "ff.col('a')"),
-        ('pl.lit("pl.col")', 'ff.lit("pl.col")'),
+        ("pl.col('a')", "fl.col('a')"),
+        ('pl.lit("pl.col")', 'fl.lit("pl.col")'),
         ("df_pl.select(x.pl.y)", "df_pl.select(x.pl.y)"),
-        ("x: pl.LazyFrame = pl.DataFrame({})", "x: ff.FlowFrame = ff.FlowFrame({})"),
+        ("x: pl.LazyFrame = pl.DataFrame({})", "x: fl.FlowFrame = fl.FlowFrame({})"),
         ("frame.LazyFrame", "frame.LazyFrame"),
         ("a = 1  # pl.col", "a = 1  # pl.col"),
     ],

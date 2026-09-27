@@ -903,6 +903,44 @@ describe("flow notebook", () => {
     expect(nb.dirty).toBe(false);
   });
 
+  it("a cell spanning several nodes carries them all, in order", async () => {
+    const fused = (ids: number[], code: string) => ({
+      ...cell(ids[0], code),
+      cell_id: `cell-${ids[0]}`,
+      node_ids: ids,
+    });
+    mocks.render.mockResolvedValue(
+      rendering("f1", [fused([1, 2], "a = 1\nb = a"), cell(3, "c = b")]),
+    );
+    const store = useNotebookStore();
+    const nb = await store.openFlowNotebook(7, "flow");
+    await store.runCell("cell-1");
+    expect(mocks.executeCell).toHaveBeenLastCalledWith("flow-session:7", {
+      node_id: 2,
+      code: "a = 1\nb = a",
+      flow_id: 7,
+    });
+    mocks.render.mockResolvedValue(
+      rendering("f2", [fused([1, 4, 2], "a = 1\nb = a"), cell(3, "c = b")]),
+    );
+    await store.refreshFlowNotebook(7);
+    expect(nb.dirty).toBe(false);
+    const types = new Map([
+      [1, "manual_input"],
+      [2, "filter"],
+      [3, "select"],
+      [4, "sort"],
+    ]);
+    expect(flowPushBody(nb, types, 4).provenance).toEqual({
+      "cell-1": [
+        ["manual_input", 1],
+        ["sort", 4],
+        ["filter", 2],
+      ],
+      "node-3": [["select", 3]],
+    });
+  });
+
   it("an unchanged fingerprint leaves the cells alone", async () => {
     mocks.render.mockResolvedValue(rendering("f1", [cell(1, "a = 1")]));
     const store = useNotebookStore();

@@ -62,7 +62,7 @@ def test_render_route_returns_the_owner_rendering(flag, open_flow, client_as):
     assert body == render(open_flow).model_dump(mode="json")
     assert body["cells"][0]["cell_id"] == "imports"
     node_cells = [cell for cell in body["cells"] if cell["kind"] == "node"]
-    assert [cell["node_ids"][0] for cell in node_cells] == sorted(n.node_id for n in open_flow.nodes)
+    assert sorted(n for cell in node_cells for n in cell["node_ids"]) == sorted(n.node_id for n in open_flow.nodes)
     assert all(cell["status"] == "code" for cell in node_cells)
     for cell in body["cells"]:
         compile(cell["code"], cell["cell_id"], "exec")

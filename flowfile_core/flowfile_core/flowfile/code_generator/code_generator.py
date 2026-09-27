@@ -1,6 +1,7 @@
 import ast
 import builtins
 import functools
+import heapq
 import io
 import json
 import keyword
@@ -9,6 +10,7 @@ import re
 import textwrap
 import tokenize
 import types
+from dataclasses import replace
 
 import polars as pl
 from polars_expr_transformer import PolarsCodeGenError, to_flowframe_code, to_polars_code
@@ -19,6 +21,7 @@ from flowfile_core.flowfile.code_generator.connector_handlers import ConnectorHa
 from flowfile_core.flowfile.code_generator.custom_node_handlers import CustomNodeHandlersMixin
 from flowfile_core.flowfile.code_generator.expression_helpers import ExpressionHelpersMixin
 from flowfile_core.flowfile.code_generator.join_handlers import JoinHandlersMixin
+from flowfile_core.flowfile.code_generator.native_handlers import FLOW_VAR, NativeHandlersMixin
 from flowfile_core.flowfile.code_generator.param_codegen import (
     _SENTINEL_RE,
     apply_param_sentinels,
@@ -36,7 +39,7 @@ from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.param_types import coerce_param_value
 from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
-from flowfile_core.flowfile.util.skip_rules import uses_any_rule
+from flowfile_core.flowfile.util.skip_rules import classify_graph, is_error_ish, uses_any_rule
 from flowfile_core.schemas import input_schema, transform_schema
 from shared.excel_writer import resolve_excel_write_mode
 from shared.path_utils import DirectoryScanUnsupportedError, assert_directory_scan_supported
@@ -70,6 +73,30 @@ def _flowfile_expr_literal(value):
     if isinstance(value, (int, float)):
         return repr(value)
     return json.dumps(str(value))'''
+
+
+def topological_order(nodes: list[FlowNode]) -> list[FlowNode]:
+    """Kahn's algorithm with a min-heap on node id; nodes left in a cycle follow in id order."""
+    by_id = {node.node_id: node for node in nodes}
+    in_degree = dict.fromkeys(by_id, 0)
+    for node in nodes:
+        for downstream in node.leads_to_nodes:
+            if downstream.node_id in in_degree:
+                in_degree[downstream.node_id] += 1
+    heap = [node_id for node_id, degree in in_degree.items() if degree == 0]
+    heapq.heapify(heap)
+    order: list[FlowNode] = []
+    while heap:
+        node = by_id[heapq.heappop(heap)]
+        order.append(node)
+        for downstream in node.leads_to_nodes:
+            if downstream.node_id in in_degree:
+                in_degree[downstream.node_id] -= 1
+                if in_degree[downstream.node_id] == 0:
+                    heapq.heappush(heap, downstream.node_id)
+    seen = {node.node_id for node in order}
+    order.extend(by_id[node_id] for node_id in sorted(set(by_id) - seen))
+    return order
 
 
 class UnsupportedNodeError(Exception):
@@ -207,8 +234,8 @@ def _polars_code_function_body(code: str) -> tuple[list[str], str | None]:
 _FRAME_CLASS_NAMES = frozenset({"LazyFrame", "DataFrame"})
 
 
-def _polars_code_to_flowframe(code: str) -> str:
-    """Rewrite ``pl.`` attribute access to ``ff.`` and ``pl/ff.LazyFrame``/``DataFrame`` to ``ff.FlowFrame``.
+def _polars_code_to_flowframe(code: str, modules: tuple[str, ...] = ("pl", "ff")) -> str:
+    """Rewrite ``modules`` attribute access to ``fl.`` and ``<module>.LazyFrame``/``DataFrame`` to ``fl.FlowFrame``.
 
     Token-level so string literals, comments and names such as ``df_pl`` are left alone;
     code that does not tokenize falls back to the plain text replacement.
@@ -220,20 +247,21 @@ def _polars_code_to_flowframe(code: str) -> str:
             if tok.type not in (tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.COMMENT)
         ]
     except (tokenize.TokenError, IndentationError, SyntaxError):
-        legacy = code.replace("pl.", "ff.")
-        return legacy.replace("ff.LazyFrame", "ff.FlowFrame").replace("ff.DataFrame", "ff.FlowFrame")
+        for module in modules:
+            code = re.sub(rf"\b{module}\.", "fl.", code)
+        return code.replace("fl.LazyFrame", "fl.FlowFrame").replace("fl.DataFrame", "fl.FlowFrame")
 
     def is_module_ref(index: int) -> bool:
         tok = tokens[index]
         preceded_by_dot = index > 0 and tokens[index - 1].string == "."
         followed_by_dot = index + 1 < len(tokens) and tokens[index + 1].string == "."
-        return tok.type == tokenize.NAME and tok.string in ("pl", "ff") and followed_by_dot and not preceded_by_dot
+        return tok.type == tokenize.NAME and tok.string in modules and followed_by_dot and not preceded_by_dot
 
     edits: dict[int, list[tuple[int, int, str]]] = {}
     for index, tok in enumerate(tokens):
         replacement = None
-        if tok.string == "pl" and is_module_ref(index):
-            replacement = "ff"
+        if is_module_ref(index):
+            replacement = "fl"
         elif tok.type == tokenize.NAME and tok.string in _FRAME_CLASS_NAMES and index >= 2 and is_module_ref(index - 2):
             replacement = "FlowFrame"
         if replacement is not None:
@@ -306,7 +334,9 @@ def _eval_in_validation_namespace(code: str):
     import datetime
 
     return eval(  # noqa: S307
-        code, {"__builtins__": {}}, {"ff": _ff_validation_namespace(), "pl": pl, "datetime": datetime}
+        code,
+        {"__builtins__": {}},
+        {"ff": _ff_validation_namespace(), "fl": _ff_validation_namespace(), "pl": pl, "datetime": datetime},
     )
 
 
@@ -354,6 +384,8 @@ NODE_TYPE_VAR_LABEL: dict[str, str] = {
     "evaluate_model": "evaluation",
     "wait_for": "ready",
 }
+
+_NATIVE_LABELS = {"gate": "gate", "run_flow": "subflow", "python_script": "scripted", "flow_input": "flow_input"}
 
 # Generated variable names are uniquified against these so they never shadow a
 # Python builtin or keyword (e.g. a split literally named ``sorted`` or ``type``).
@@ -416,6 +448,8 @@ class FlowGraphCodeConverter(
     """
 
     framework: str = "pl"
+    flowfile_alias: str = "ff"
+    placeholders: bool = False
     function_name: str = "run_etl_pipeline"
 
     def __init__(self, flow_graph: FlowGraph):
@@ -454,6 +488,8 @@ class FlowGraphCodeConverter(
         # condition: union node id -> {producer id -> extra signed atoms}.
         self._any_input_edge_conds: dict[int, dict[int, frozenset[tuple[int, bool]]]] = {}
         self._module_helpers: list[str] = []
+        self._placeholder_reasons: dict[int, str] = {}
+        self._fused: list[NodeEmission] = []
 
     def convert(self) -> str:
         """Convert the FlowGraph to code, turning ``${name}`` parameter references
@@ -496,7 +532,11 @@ class FlowGraphCodeConverter(
 
         self._compute_gate_conditions(execution_plan)
 
-        for node in (node for stage in execution_plan.stages for node in stage if node.node_id not in skip_ids):
+        if self.placeholders:
+            nodes = topological_order(list(self.flow_graph.nodes))
+        else:
+            nodes = [node for stage in execution_plan.stages for node in stage if node.node_id not in skip_ids]
+        for node in nodes:
             self._generate_node_code(node)
 
         if self.unsupported_nodes:
@@ -1579,6 +1619,7 @@ class FlowGraphCodeConverter(
             return self._render_body_with_gates()
         emissions: list[NodeEmission] = []
         node_by_id: dict[int, FlowNode] = {}
+        routed = {node_id for node_id, _handle in self.node_handle_var_mapping}
         for node, effective_var, start, end in self._node_spans:
             lines = self.code_lines[start:end]
             while lines and lines[-1] == "":
@@ -1589,10 +1630,13 @@ class FlowGraphCodeConverter(
             num_inputs = len(resolved)
             main_producer_id = next(iter(resolved)) if num_inputs == 1 else None
             pinned = bool(getattr(self._settings_for(node), "node_reference", None))
+            # A node read through per-exit accessors (a gate's ``.then``) stays its own statement.
+            boundary = self._is_flow_output(node) or node.node_id in routed
             emissions.append(
                 NodeEmission(
                     node.node_id, effective_var, lines, main_producer_id,
-                    num_inputs, self._is_flow_output(node), pinned,
+                    num_inputs, boundary, pinned,
+                    self._placeholder_reasons.get(node.node_id),
                 )
             )
             node_by_id[node.node_id] = node
@@ -1604,9 +1648,36 @@ class FlowGraphCodeConverter(
                 if pid in consumers:
                     consumers[pid].append(em.node_id)
 
-        body, survivors = render_pipeline(emissions, consumers)
-        rename = self._plan_boundary_names(emissions, survivors, node_by_id)
-        return self._apply_renames(body, rename)
+        fused = render_pipeline(emissions, consumers)
+        rename = self._plan_boundary_names(emissions, {em.node_id for em in fused}, node_by_id)
+        body = self._apply_renames([line for em in fused for line in em.lines], rename)
+        self._fused = []
+        for em in fused:
+            lines, body = body[: len(em.lines)], body[len(em.lines) :]
+            self._fused.append(replace(em, lines=lines, var_name=rename.get(em.var_name, em.var_name)))
+        return [line for index, em in enumerate(self._fused) for line in ([""] if index else []) + em.lines]
+
+    def emissions(self) -> list[NodeEmission]:
+        """The body's statements after ``convert()``: one per fused chain, names final, parameter refs resolved.
+
+        Each emission's ``node_ids`` lists every node the statement contains in data-flow order,
+        ``code`` is its text as the body spells it, and ``placeholder_reason`` is set for a
+        ``fl.canvas_node`` placeholder. Empty for a gated Polars export, which renders if-blocks.
+        """
+        names = {p.name for p in self._codegen_params}
+        return [replace(em, lines=resolve_param_sentinels(em.code, names)[0].split("\n")) for em in self._fused]
+
+    def import_lines(self) -> list[str]:
+        """The sorted import statements the exported module declares."""
+        return sorted(self.imports)
+
+    def helpers(self) -> list[str]:
+        """Module-level helper definitions the body calls (e.g. ``_flowfile_flow_parameter``), in emission order."""
+        return list(self._module_helpers)
+
+    def parameters(self) -> list:
+        """The flow parameters the wrapper declares as ``run_etl_pipeline(*, name=default)`` keyword arguments."""
+        return list(self._codegen_params)
 
     def _render_body_with_gates(self) -> list[str]:
         """Emit the body with real ``if`` blocks around gated segments.
@@ -1781,9 +1852,13 @@ class FlowGraphCodeConverter(
         out = self._rename_tokens(body, rename)
         if out is None:
             out = self._rename_regex(body, rename)
-        self.output_nodes = [(nid, rename.get(var, var)) for nid, var in self.output_nodes]
+
+        def renamed(var: str) -> str:  # token-level, so ``gate_2.then`` follows its gate
+            return (self._rename_tokens([var], rename) or [rename.get(var, var)])[0]
+
+        self.output_nodes = [(nid, renamed(var)) for nid, var in self.output_nodes]
         if self.last_node_var is not None:
-            self.last_node_var = rename.get(self.last_node_var, self.last_node_var)
+            self.last_node_var = renamed(self.last_node_var)
         return out
 
     @staticmethod
@@ -2086,57 +2161,143 @@ class FlowGraphToPolarsConverter(FlowGraphCodeConverter):
         self._add_code(")")
 
 
-class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
-    """Generates FlowFrame code from a FlowGraph. Supports all node types including I/O."""
+class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter):
+    """Generates FlowFrame code (``import flowfile as fl``) from a FlowGraph. Supports all node types including I/O.
 
-    framework = "ff"
+    Gates, subflows, Python Scripts, flow ports and custom nodes emit as the frame's native classes,
+    so a gate routes when a frame below it is collected. With ``placeholders=True`` a node the
+    converter cannot express becomes ``<var> = fl.canvas_node(<id>, <inputs>)  # <type>: <reason>``
+    (its reason on the emission) so downstream statements still bind; otherwise such a node fails
+    the export with ``UnsupportedNodeError``.
+    """
 
-    def __init__(self, flow_graph: FlowGraph):
+    framework = "fl"
+    flowfile_alias = "fl"
+
+    def __init__(self, flow_graph: FlowGraph, placeholders: bool = False):
         super().__init__(flow_graph)
-        self.imports.add("import flowfile as ff")
+        self.placeholders = placeholders
+        self._blocked: set[int] = set()
+        self._statuses: dict | None = None
+        self.imports.add("import flowfile as fl")
 
-    def _gate_probe_expr(self, input_var: str) -> str:
-        """Bridge the FlowFrame down to its pl.LazyFrame for the gate row-probe helper.
+    def _compute_gate_conditions(self, execution_plan) -> None:
+        """Gates emit as ``fl.Gate``; the if-block machinery belongs to the Polars export."""
 
-        Probing the FlowFrame itself would route filter/head through FlowFrame
-        methods, appending spurious nodes to the rebuilt graph.
-        """
-        return f"{input_var}.data"
+    def _render_body(self) -> list[str]:
+        """The body, preceded by the ``flow`` graph that ``fl.FlowInput(flow_graph=flow)`` builds on."""
+        body = super()._render_body()
+        if any(f"flow_graph={FLOW_VAR}" in line for line in body):
+            return [f"{FLOW_VAR} = fl.create_flow_graph()", "", *body]
+        return body
 
-    def _empty_frame_schema_expr(self, node: FlowNode) -> str | None:
-        """Wrap the zero-row stand-in so gated branches hold a FlowFrame, not a bare LazyFrame."""
-        expr = FlowGraphCodeConverter._empty_frame_schema_expr(node)
-        if expr is None:
+    def _var_label(self, node: FlowNode) -> str:
+        return _NATIVE_LABELS.get(node.node_type) or super()._var_label(node)
+
+    def _producer_ids(self, node: FlowNode) -> list[int]:
+        keyed = node.node_inputs.keyed_inputs or {}
+        return self._raw_producer_ids(node) + [source.node_id for source in keyed.values() if source is not None]
+
+    def _static_placeholder_reason(self, node: FlowNode) -> str | None:
+        """Why ``node`` is a placeholder before its handler runs; unconfigured nodes block their downstream."""
+        settings = node.setting_input
+        upstream = [pid for pid in self._producer_ids(node) if pid in self._blocked]
+        try:
+            correct = node.is_correct
+        except Exception:
+            correct = False
+        if self._statuses is None:
+            try:
+                self._statuses = classify_graph(list(self.flow_graph.nodes))
+            except Exception:
+                self._statuses = {}
+        setup = node.node_information.is_setup or getattr(node.function, "__name__", None) != "placeholder"
+        if not setup or isinstance(settings, input_schema.NodePromise):
+            reason = "not configured yet"
+        elif not correct:
+            reason = "inputs not fully connected"
+        elif upstream:
+            reason = f"downstream of node {min(upstream)}, which is not editable as code"
+        elif is_error_ish(self._statuses.get(node.node_id)):
+            reason = "skipped on error by the engine"
+        else:
+            if node.node_type == "polars_lazy_frame":
+                return "a Polars LazyFrame node cannot be rebuilt; replace it on the canvas"
+            if node.node_type == "explore_data":
+                return "explore data is interactive only"
+            rest = getattr(settings, "rest_api_settings", None)
+            keys = list((rest.headers or {}).keys()) + list((rest.query_params or {}).keys()) if rest else []
+            if any(isinstance(k, str) and k.lower() in self._SENSITIVE_KEYS for k in keys):
+                return "headers or query parameters hold a credential"
             return None
-        return f"ff.FlowFrame({expr})"
+        self._blocked.add(node.node_id)
+        return reason
+
+    def _generate_node_code(self, node: FlowNode) -> None:
+        """With placeholders on, a node whose handler cannot express it rolls back and becomes a placeholder."""
+        if not self.placeholders:
+            return super()._generate_node_code(node)
+        reason = self._static_placeholder_reason(node)
+        if reason is None:
+            mark = (len(self.code_lines), len(self.unsupported_nodes), len(self._node_spans), len(self.output_nodes))
+            saved = (set(self.imports), dict(self.node_handle_var_mapping), list(self._module_helpers))
+            try:
+                super()._generate_node_code(node)
+            except Exception as exc:
+                logger.warning("Code export: node %s (%s) failed: %s", node.node_id, node.node_type, exc)
+                reason = f"could not render: {exc}"
+            else:
+                if len(self.unsupported_nodes) > mark[1]:
+                    reason = self.unsupported_nodes[mark[1]][2]
+                elif len(self._node_spans) == mark[2]:
+                    reason = "renders no code"
+            if reason is None:
+                return
+            del self.code_lines[mark[0] :], self.unsupported_nodes[mark[1] :], self._node_spans[mark[2] :]
+            del self.output_nodes[mark[3] :]
+            self.imports, self.node_handle_var_mapping, self._module_helpers = saved
+            self._passthrough.pop(node.node_id, None)
+        var = getattr(node.setting_input, "node_reference", None) or f"df_{node.node_id}"
+        args = [str(node.node_id), *self._get_input_vars(node).values()]
+        self.node_var_mapping[node.node_id] = var
+        outputs = getattr(node.setting_input, "output_names", None) or ["main"]
+        if len(outputs) > 1:
+            self._bind_outputs(node.node_id, var, [f'["output-{index}"]' for index in range(len(outputs))])
+        comment = " ".join(f"{getattr(node.node_template, 'name', None) or node.node_type}: {reason}".split())
+        self._placeholder_reasons[node.node_id] = reason
+        self._node_spans.append((node, var, len(self.code_lines), len(self.code_lines) + 1))
+        self._add_code(f"{var} = fl.canvas_node({', '.join(args)})  # {comment}")
+        if node.node_template.output > 0:
+            self.last_node_var = var
 
     def _custom_node_input_expr(self, input_var: str) -> str:
         """Bridge a FlowFrame input down to the polars LazyFrame ``process()`` expects."""
         return f"{input_var}.data"
 
     def _normalize_custom_output(self, out_expr: str) -> str:
-        """Re-wrap ``process()``'s polars return as a FlowFrame for downstream ff.* ops."""
-        return f"ff.FlowFrame({out_expr})"
+        """Re-wrap ``process()``'s polars return as a FlowFrame for downstream fl.* ops."""
+        return f"fl.FlowFrame({out_expr})"
 
     def _translate_to_ff_code(self, formula: str) -> str | None:
-        """Translate a formula to native ff code, registering the imports the snippet needs.
+        """Translate a formula to native fl code, registering the imports the snippet needs.
 
         The validation namespace includes ``pl`` and ``datetime``, so generated
         snippets may reference them (e.g. ``today()`` translates to
-        ``ff.lit(datetime.datetime.today())``); the emitted script must import
+        ``fl.lit(datetime.datetime.today())``); the emitted script must import
         whatever the snippet uses or it fails with NameError at runtime. Hashing
         functions reference ``hashlib`` from inside a ``map_elements`` lambda, whose
         body never runs during validation — so only the emitted import catches it.
         """
         ff_code = _try_translate_to_ff_code(formula)
         if ff_code:
+            ff_code = _polars_code_to_flowframe(ff_code, modules=("ff",))
             self._register_expr_stdlib_imports(ff_code)
             if re.search(r"\bpl\.", ff_code):
                 self.imports.add("import polars as pl")
         return ff_code
 
     def _native_cast_type(self, data_type: str) -> str | None:
-        """Render *data_type* as an ``ff.``-prefixed cast target, or None when it can't be.
+        """Render *data_type* as an ``fl.``-prefixed cast target, or None when it can't be.
 
         ``str()`` of nested types (e.g. ``List(Int64)``) contains inner type
         names the generated script has no bindings for, and bare container
@@ -2191,10 +2352,10 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
     def _handle_manual_input(
         self, settings: input_schema.NodeManualInput, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        # ff.from_raw_data coerces the columnar dict into RawData via pydantic, so
+        # fl.from_raw_data coerces the columnar dict into RawData via pydantic, so
         # the exported script needs no flowfile_core import (public API only).
         raw_data = settings.raw_data_format
-        self._add_code(f"{var_name} = ff.from_raw_data({raw_data.model_dump()})")
+        self._add_code(f"{var_name} = fl.from_raw_data({raw_data.model_dump()})")
         self._add_code("")
 
     def _scan_callable(self, file_type: str) -> str:
@@ -2205,9 +2366,9 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
 
     def _frame_reader(self, name: str) -> str:
         """``flowfile`` re-exports scan_csv/scan_parquet only; every other reader is imported
-        from flowfile_frame instead of emitting an ``ff.`` attribute that does not exist."""
+        from flowfile_frame instead of emitting an ``fl.`` attribute that does not exist."""
         if name in ("scan_csv", "scan_parquet"):
-            return f"ff.{name}"
+            return f"fl.{name}"
         self.imports.add(f"from flowfile_frame import {name}")
         return name
 
@@ -2243,7 +2404,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         self, settings: input_schema.NodeCloudStorageReader, var_name: str, input_vars: dict[str, str]
     ):
         cs = settings.cloud_storage_settings
-        self._add_code(f"{var_name} = ff.read_from_cloud_storage(")
+        self._add_code(f"{var_name} = fl.read_from_cloud_storage(")
         self._add_code(f'    "{cs.resource_path}",')
         self._add_code(f'    file_format="{cs.file_format}",')
         if cs.connection_name:
@@ -2270,7 +2431,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
     ) -> None:
         input_df = input_vars.get("main", "df")
         cs = settings.cloud_storage_settings
-        self._add_code("ff.write_to_cloud_storage(")
+        self._add_code("fl.write_to_cloud_storage(")
         self._add_code(f"    {input_df},")
         self._add_code(f'    "{cs.resource_path}",')
         self._add_code(f'    file_format="{cs.file_format}",')
@@ -2352,7 +2513,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         self._add_code("")
 
     def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: dict[str, str]) -> None:
-        """Handle formula nodes, preferring native ff expressions over the flowfile_formulas parameter.
+        """Handle formula nodes, preferring native fl expressions over the flowfile_formulas parameter.
 
         Entries always emit one chained `with_columns` call each, in order, never the
         `flowfile_formulas=` list form for a whole node: a later entry may read a column an
@@ -2374,7 +2535,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         self._add_code("")
 
     def _formula_entry_native_expr(self, entry: transform_schema.FunctionInput) -> str | None:
-        """One entry as a native ff expression, or None when only the keyword form can carry it."""
+        """One entry as a native fl expression, or None when only the keyword form can carry it."""
         data_type = entry.field.data_type
         ff_code = self._translate_to_ff_code(entry.function)
         if not ff_code:
@@ -2483,7 +2644,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             return
 
         self._add_code(f"# Read from Kafka topic: {ks.topic_name}")
-        self._add_code(f"{var_name} = ff.read_kafka(")
+        self._add_code(f"{var_name} = fl.read_kafka(")
         self._add_code(f'    "{ks.kafka_connection_name}",')
         self._add_code(f'    topic_name="{ks.topic_name}",')
         if ks.max_messages != 100_000:
@@ -2538,7 +2699,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
     ) -> None:
         """Handle custom Polars code nodes for FlowFrame.
 
-        Renames ``pl.`` module references to ``ff.`` (token-level) and uses ff.FlowFrame in type hints.
+        Renames ``pl.`` module references to ``fl.`` (token-level) and uses fl.FlowFrame in type hints.
         """
         code = _polars_code_to_flowframe(textwrap.dedent(settings.polars_code_input.polars_code).strip())
 
@@ -2546,7 +2707,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             params = ""
             args = ""
         elif len(input_vars) == 1:
-            params = "input_df: ff.FlowFrame"
+            params = "input_df: fl.FlowFrame"
             input_df = list(input_vars.values())[0]
             args = input_df
         else:
@@ -2555,7 +2716,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             i = 1
             for key in sorted(input_vars.keys()):
                 if key.startswith("main"):
-                    param_list.append(f"input_df_{i}: ff.FlowFrame")
+                    param_list.append(f"input_df_{i}: fl.FlowFrame")
                     arg_list.append(input_vars[key])
                     i += 1
             params = ", ".join(param_list)
@@ -2570,10 +2731,10 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
         self._add_code("")
 
     def _handle_sql_query(self, settings: input_schema.NodeSqlQuery, var_name: str, input_vars: dict[str, str]) -> None:
-        """A SQL Query node as ``ff.sql``: positional frames are ``input_1``, ``input_2``, ... in the stored query."""
+        """A SQL Query node as ``fl.sql``: positional frames are ``input_1``, ``input_2``, ... in the stored query."""
         literals = _sql_query_literal_lines(settings.sql_query_input.sql_code)
         literals[-1] += ","
-        self._add_code(f"{var_name} = ff.sql(")
+        self._add_code(f"{var_name} = fl.sql(")
         for line in [*literals, *(f"{var}," for var in _sql_query_input_vars(input_vars))]:
             self._add_code(f"    {line}")
         self._add_code(")")
@@ -2604,7 +2765,7 @@ class FlowGraphToFlowFrameConverter(FlowGraphCodeConverter):
             right_df = fuzzy_right
 
         fuzzy_join_mapping_settings = self._transform_fuzzy_mappings_to_string(
-            fuzzy_match_handler.join_mapping, prefix="ff."
+            fuzzy_match_handler.join_mapping, prefix="fl."
         )
         self._add_code(
             f"{var_name} = {left_df}.fuzzy_join(\n"

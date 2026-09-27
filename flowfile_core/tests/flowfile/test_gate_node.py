@@ -16,7 +16,7 @@ C. Control-input gates: routing on the first value of a second input, decided
 D. Failure modes: an unknown parameter must fail the gate loudly.
 E. Gate-blind callers (single-node fetch, code export) must plan as if every
    gate were open.
-F. Code export parity across the Polars and FlowFrame exports.
+F. Code export parity across the Polars (if-blocks) and FlowFrame (``fl.Gate``) exports.
 G. YAML round-trip of the gate's settings.
 
 Run with an isolated DB:
@@ -1070,35 +1070,25 @@ class TestPolarsExport:
         assert run_generated(code).height == 0
 
 class TestFlowFrameExport:
-    """The FlowFrame export emits the same real if-blocks as the Polars export.
+    """The FlowFrame export places gates as ``fl.Gate`` nodes, like the frame does.
 
-    A ``df.gate(...)`` emission would be wrong here: the generated module
-    returns a FlowFrame whose ``collect()`` deliberately ignores gates, so the
-    condition has to live in the exported Python itself. Gated union inputs
-    append to a list under their guards (same list-append shape as the Polars
-    export) and the formula helper probes the FlowFrame's underlying LazyFrame
-    via ``.data``.
+    The exported module rebuilds the gate node, so ``collect()`` on a frame below it runs the
+    lineage and returns only the live side; a parameter gate declares its parameter with the
+    run's keyword-argument value on the frame's graph.
     """
 
-    def test_diamond_export_emits_real_if_blocks(self):
+    def test_diamond_export_places_native_gates(self):
         graph = build_diamond(env="prod", flow_id=40)
 
         code = FlowGraphToFlowFrameConverter(graph).convert()
 
-        assert "if env == 'prod':" in code
-        assert "if env != 'prod':" in code
         assert "def run_etl_pipeline(*, env" in code
-        assert "import flowfile as ff" in code
-        assert "import polars as pl" in code
-        # Gated union inputs append to a list under their guards.
-        assert "df_6_frames = []" in code
-        assert "df_6_frames.append(df_3)" in code
-        assert "df_6_frames.append(df_5)" in code
-        assert "if df is not None" not in code
-        assert "ff.concat(df_6_frames" in code
-        # The terminal select 7 is ungated, so no branch var pre-inits at all.
-        assert "df_3 = ff.FlowFrame(" not in code
-        assert "df_5 = ff.FlowFrame(" not in code
+        assert "import flowfile as fl" in code
+        assert 'gate_1 = fl.Gate(source, parameter=_flowfile_flow_parameter(source, "env", env), value="prod"' in code
+        assert 'operator="not_equals"' in code
+        assert "gate_1.then.select(" in code and "gate_2.then.select(" in code
+        assert "fl.concat([" in code
+        assert "if env" not in code and "_frames" not in code
 
     @pytest.mark.parametrize("env", ["prod", "dev"])
     def test_generated_code_matches_the_engine_for_both_parameter_values(self, env):
@@ -1126,14 +1116,13 @@ class TestFlowFrameExport:
         assert "a_prod" not in dev_df.columns
 
     @pytest.mark.parametrize("flag, expect_rows", [(True, 3), (False, 0)])
-    def test_formula_gate_export_probes_the_lazyframe(self, flag, expect_rows):
+    def test_formula_gate_export_places_a_gate_with_its_control(self, flag, expect_rows):
         graph = build_formula_gate_graph([{"flag": flag}], flow_id=43)
 
         code = FlowGraphToFlowFrameConverter(graph).convert()
 
-        assert "_flowfile_gate_formula_matches" in code
-        assert ".data, simple_function_to_expr" in code
-        assert "if _gate_2_open:" in code
+        assert 'gate = fl.Gate(source_1, "[flag]", control=source_2, else_output=False)' in code
+        assert "_flowfile_gate_formula_matches" not in code
         result = run_generated(code)
         assert result.columns == ["a_kept"]
         assert result.height == expect_rows
@@ -1218,7 +1207,7 @@ class TestWholeFieldParameterFormulaExport:
 
         code = converter(graph).convert()
 
-        assert "simple_function_to_expr(_flowfile_expr_literal(flag))" in code
+        assert "_flowfile_expr_literal(flag)" in code
         graph.run_graph()
         engine_result = graph.get_node(3).results.resulting_data
         engine_height = engine_result.data_frame.lazy().collect().height if engine_result else 0
@@ -1235,13 +1224,15 @@ class TestWholeFieldParameterFormulaExport:
 
         code = converter(graph).convert()
 
-        assert "simple_function_to_expr(_flowfile_expr_literal(n))" in code
+        assert "_flowfile_expr_literal(n)" in code
         run_info = graph.run_graph()
         assert run_info.success is False
         by_id = results_by_id(run_info)
         assert by_id[2].success is False
         assert "boolean" in by_id[2].error.lower()
-        with pytest.raises(pl.exceptions.ComputeError, match="Boolean"):
+        # Polars raises from its own filter; the FlowFrame export raises from the rebuilt gate node.
+        expected = pl.exceptions.ComputeError if converter is FlowGraphToPolarsConverter else ValueError
+        with pytest.raises(expected, match="Boolean"):
             run_generated(code, n=2)
 
 
@@ -1343,8 +1334,9 @@ class TestAllGatedOffUnionExport:
 
         code = converter(graph).convert()
 
-        assert "df_6_frames = []" in code
-        assert "if not df_6_frames:" in code
+        if converter is FlowGraphToPolarsConverter:
+            assert "df_6_frames = []" in code
+            assert "if not df_6_frames:" in code
 
         run_info = graph.run_graph()
         assert run_info.success is True
@@ -1756,15 +1748,21 @@ class TestDoubleWiredGateExits:
 
 
 class TestElseOutputExport:
-    @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
-    def test_split_gate_emits_if_else_blocks(self, converter):
+    def test_split_gate_emits_if_else_blocks(self):
         graph = build_split_diamond(env="prod", flow_id=58)
 
-        code = converter(graph).convert()
+        code = FlowGraphToPolarsConverter(graph).convert()
 
         assert "if env == 'prod':" in code
         assert "else:" in code
         assert "if not (env == 'prod'):" not in code
+
+    def test_flowframe_split_gate_reads_both_exits(self):
+        code = FlowGraphToFlowFrameConverter(build_split_diamond(env="prod", flow_id=58)).convert()
+
+        assert "else_output=True" in code
+        assert "gate.then.select(" in code and "gate.otherwise.select(" in code
+        assert "if env" not in code
 
     @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
     @pytest.mark.parametrize("env", ["prod", "dev"])
@@ -1795,12 +1793,11 @@ class TestElseOutputExport:
         assert "_frames" not in code
         assert_branch(run_generated(code), live, gated, [1, 2, 3])
 
-    @pytest.mark.parametrize("converter", [FlowGraphToPolarsConverter, FlowGraphToFlowFrameConverter])
     @pytest.mark.parametrize("env", ["prod", "dev"])
-    def test_union_renders_as_if_else_assignment_and_executes(self, converter, env):
+    def test_union_renders_as_if_else_assignment_and_executes(self, env):
         """The complementary-pair union is a plain if/else assignment — no list, no concat."""
         graph = build_split_diamond(env=env, flow_id=61)
-        code = converter(graph).convert()
+        code = FlowGraphToPolarsConverter(graph).convert()
 
         assert "df_6 = df_3" in code
         assert "df_6 = df_5" in code
@@ -2042,8 +2039,11 @@ class TestNestedParameterGates:
 
         code = converter(graph).convert()
 
-        assert "if (env == 'prod') and (mode == 'x'):" in code
-        assert "else:" not in code
+        if converter is FlowGraphToPolarsConverter:
+            assert "if (env == 'prod') and (mode == 'x'):" in code
+            assert "else:" not in code
+        else:
+            assert code.count("fl.Gate(") == 2
 
         graph.run_graph()
         engine_result = graph.get_node(4).results.resulting_data

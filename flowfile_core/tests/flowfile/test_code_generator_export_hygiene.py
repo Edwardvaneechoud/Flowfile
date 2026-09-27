@@ -206,6 +206,6 @@ def test_export_does_not_import_flowfile_or_touch_environ(monkeypatch):
 
     code = export_flow_to_flowframe(flow)
 
-    assert "ff.col(" in code
+    assert "fl.col(" in code
     assert dict(os.environ) == environ_before
     assert "flowfile" not in sys.modules
