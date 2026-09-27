@@ -94,7 +94,9 @@
           @toggle-code="toggleCodeCollapsed(ownerId, cell.id)"
           @toggle-output="toggleOutputCollapsed(ownerId, cell.id)"
           @delete="emit('remove')"
-        />
+        >
+          <slot name="menu-extra" />
+        </CellActionMenu>
       </div>
     </div>
 
@@ -127,6 +129,7 @@
       <codemirror
         v-else
         :model-value="cell.code"
+        :disabled="readOnly"
         placeholder="# Python — Cmd/Ctrl+Enter to run"
         :indent-with-tab="false"
         :tab-size="4"
@@ -196,6 +199,7 @@ const props = defineProps<{
   kernelId?: string | null;
   flowId?: number;
   nodeId?: number;
+  readOnly?: boolean;
 }>();
 
 const emit = defineEmits<{

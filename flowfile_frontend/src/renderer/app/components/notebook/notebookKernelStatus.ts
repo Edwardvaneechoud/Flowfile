@@ -17,7 +17,21 @@ export interface KernelStatusInput {
   dockerAvailable: boolean;
 }
 
+/** A flow's canvas-notebook session answers the kernel routes under this id prefix; no Docker. */
+export const FLOW_SESSION_PREFIX = "flow-session:";
+
 export function resolveNotebookKernelStatus(input: KernelStatusInput): NotebookKernelStatus {
+  if (input.kernelId?.startsWith(FLOW_SESSION_PREFIX)) {
+    const kernel = input.kernels.find((k) => k.id === input.kernelId);
+    if (kernel && ["starting", "creating", "error"].includes(kernel.state)) {
+      return { kind: kernel.state === "error" ? "error" : "starting", kernel };
+    }
+    // The session starts on its first run, so an unseen or stopped one is ready too.
+    return {
+      kind: "ready",
+      kernel: kernel ?? ({ id: input.kernelId, name: "Flow session" } as KernelInfo),
+    };
+  }
   if (!input.dockerAvailable) return { kind: "docker-off" };
   if (!input.kernelId) return { kind: "none" };
   if (!input.kernelsLoaded) return { kind: "loading", kernelId: input.kernelId };

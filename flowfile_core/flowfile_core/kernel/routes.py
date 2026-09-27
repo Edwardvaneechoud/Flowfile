@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from flowfile_core.auth.jwt import get_current_active_user
@@ -40,6 +40,7 @@ from flowfile_core.lsp.models import (
     LspRequest,
     SignatureResponse,
 )
+from flowfile_core.notebook import kernel_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +274,9 @@ async def pull_kernel_image(flavour: ImageFlavour):
 
 
 @router.get("/{kernel_id}", response_model=KernelInfo)
-async def get_kernel(kernel_id: str, current_user=Depends(get_current_active_user)):
+async def get_kernel(kernel_id: str, http: Request, current_user=Depends(get_current_active_user)):
+    if kernel_adapter.is_flow_session(kernel_id):
+        return await asyncio.to_thread(kernel_adapter.info, kernel_id, http, current_user)
     manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
@@ -374,11 +377,15 @@ async def execute_code(kernel_id: str, request: ExecuteRequest, current_user=Dep
 
 
 @router.post("/{kernel_id}/execute_cell", response_model=ExecuteResult)
-async def execute_cell(kernel_id: str, request: ExecuteRequest, current_user=Depends(get_current_active_user)):
+async def execute_cell(
+    kernel_id: str, request: ExecuteRequest, http: Request, current_user=Depends(get_current_active_user)
+):
     """Execute a single notebook cell interactively.
 
     Same as /execute but sets interactive=True to enable auto-display of the last expression.
     """
+    if kernel_adapter.is_flow_session(kernel_id):
+        return await asyncio.to_thread(kernel_adapter.execute, kernel_id, request, http, current_user)
     manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
@@ -449,9 +456,12 @@ async def clear_node_artifacts(
 async def clear_namespace(
     kernel_id: str,
     flow_id: int,
+    http: Request,
     current_user=Depends(get_current_active_user),
 ):
     """Clear the execution namespace for a flow (variables, imports, etc.)."""
+    if kernel_adapter.is_flow_session(kernel_id):
+        return await asyncio.to_thread(kernel_adapter.clear_namespace, kernel_id, http, current_user)
     manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
@@ -492,6 +502,10 @@ async def get_node_artifacts(
 async def _lsp_forward(kernel_id: str, op: str, request: BaseModel, current_user) -> dict:
     if not is_lsp_enabled():
         return {}
+    if kernel_adapter.is_flow_session(kernel_id):
+        if op != "dataframe_schemas":
+            return {}
+        return await asyncio.to_thread(kernel_adapter.dataframe_schemas, kernel_id, current_user)
     try:
         manager = await _get_manager()
     except HTTPException:

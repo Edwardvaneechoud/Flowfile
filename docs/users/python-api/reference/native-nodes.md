@@ -533,6 +533,30 @@ An API Response node, which has no fluent method, with its settings as a dict:
 --8<-- "docs/examples/native_nodes.py:node"
 ```
 
+## `polars_code`
+
+`ff.polars_code(code, *inputs, flow_graph=None, description=None)` places one Polars Code node. With inputs it is `inputs[0].polars_code(code, *inputs[1:])`: the code reads `input_df`, or `input_df_1`, `input_df_2`, ... with several inputs. With no inputs the node is a source whose code builds its own frame (`output_df = pl.LazyFrame(...)`); it lands on `flow_graph`, else on a new graph as the readers do. `code` is a string or a `def` whose body is stored, as `FlowFrame.polars_code` stores it. A node that fails to build raises `NativeNodeError` and is removed.
+
+## Notebook mode
+
+The [canvas notebook](../../visual-editor/notebook.md) runs its cells with `import flowfile as fl`, the same package as `ff`, in **notebook build mode**. While a notebook session runs a cell:
+
+- Every source without `flow_graph=` lands on the session graph, the flow seeded from the canvas; a merge with any other graph is refused.
+- Nodes are built, never run. Writers, subflows, kernel scripts, database, REST and Kafka sources, `pivot`, `polars_code` and virtual or SQL-mode catalog readers get their predicted schema instead of executing, and `collect()` on a [deferred](#deferred-frames) frame raises `NativeNodeError` pointing at **Run on canvas**.
+- Calls that write at build time or run a flow raise `NativeNodeError`: `register_flow`, `RunFlow(<graph>, name=...)`, `custom_nodes.install`, the connection helpers, `open_graph_in_editor` and `run_graph` on the session graph. Constructing a kernel manager raises too, so nothing in a cell reaches Docker.
+- `add_flow_parameter` on the session graph updates an existing parameter instead of failing.
+- A lowercase name a cell binds to a frame or node it created becomes that node's `node_reference` (the rule above; reserved names such as `fl`, `pl` and `main` are skipped).
+
+Scripts outside a notebook session are unaffected.
+
+### `canvas_node`
+
+`fl.canvas_node(node_id, *inputs, output=None)` is how the notebook renders a node it has no code form for. It adopts canvas node `node_id` from the session's seed with its current settings, wires it to `inputs` in handle order, and returns a deferred frame with the node's predicted columns. `output` (an output name, `output-<n>` or an `ff.FlowOutput`) selects one handle; without it a single-output node returns its frame and a multi-output node an object with `.output`, `.then` / `.otherwise`, `node[name]` and `get_output(name)`, as the native classes have. It only works inside a notebook session; elsewhere, and for an id the seed does not hold, it raises `NativeNodeError`.
+
+### Join keys
+
+The canvas join keeps the right join keys after the other right columns; Polars' `coalesce=False` puts them elsewhere. `FlowFrame.join(..., keep_right_keys=True)` keeps them where the canvas does, renaming a right key whose name the left side also has with `suffix`, so the notebook renders such a canvas join as one native join node. An inner or left join places a native join node for it; other join types keep a Polars Code node. It is refused with `how="semi"`, `"anti"` or `"cross"` and with `coalesce=True`.
+
 ## Errors
 
 Every build or materialisation failure raises `ff.NativeNodeError`, a subclass of `ValueError`: bad arguments, wrong input counts, refused connections, a failed ancestor during `collect()`, and the checks `@ff.python_script` runs when it decorates a function. `flow_ref`, `register_flow` and `RunFlow` raise it for catalog failures too, chained from the `flowfile_core.catalog` error (`NamespaceNotFoundError`, `FlowNotFoundError`, `AmbiguousFlowError`, `FlowExistsError`, `NotAuthorizedError`); the `get_catalog(...).get_schema(...)` handles raise `NamespaceNotFoundError` itself. A node that fails to build is removed from the graph again.

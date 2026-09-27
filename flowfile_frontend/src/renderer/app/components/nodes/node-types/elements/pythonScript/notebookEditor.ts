@@ -4,7 +4,12 @@ import { EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { globalCompletion, localCompletionSource, python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { acceptCompletion, autocompletion, type CompletionSource } from "@codemirror/autocomplete";
+import {
+  acceptCompletion,
+  autocompletion,
+  type Completion,
+  type CompletionSource,
+} from "@codemirror/autocomplete";
 import { indentLess, indentMore } from "@codemirror/commands";
 import { bodyTooltips } from "@/utils/codemirrorTooltips";
 import { createDataframeColumnCompletions } from "./dataframeColumnCompletions";
@@ -29,6 +34,7 @@ import { createLspDiagnostics } from "./lspDiagnostics";
 import { createNoKernelHint } from "./lspNoKernelHint";
 import { notInAsBinding } from "./lspPositions";
 import type { UpstreamColumn } from "./useUpstreamColumns";
+import flCompletions from "../../../../notebook/flCompletions.json";
 
 export interface NotebookEditorOptions {
   onRun: () => void;
@@ -139,6 +145,19 @@ function withoutInfo(source: CompletionSource): CompletionSource {
   };
 }
 
+const FL_ENTRIES: Completion[] = flCompletions.fl.map((e) => ({
+  label: e.name,
+  type: e.kind,
+  detail: e.signature,
+  info: e.doc_first_line,
+}));
+
+/** `fl.<name>` from the generated `flowfile.__all__` listing (`make fl_completions`). */
+export const flModuleCompletions: CompletionSource = (context) => {
+  const match = context.matchBefore(/\bfl\.\w*$/);
+  return match ? { from: match.from + 3, options: FL_ENTRIES, validFor: /^\w*$/ } : null;
+};
+
 // The full source list for autocompletion({override}) — exported so it unit-tests headlessly.
 export function buildNotebookCompletionSources(opts: NotebookEditorOptions): CompletionSource[] {
   const getInputNames = opts.getInputNames ?? (() => []);
@@ -156,7 +175,11 @@ export function buildNotebookCompletionSources(opts: NotebookEditorOptions): Com
   // Catalog-ref chain entries ride inside the identifier source: Jedi resolves the same
   // chains from the kernel client's return annotations, and a separate override source
   // would render the overlap as duplicate rows.
-  const curated = [catalogRefChainCompletions, createRefVariableCompletions(getPrior)];
+  const curated = [
+    catalogRefChainCompletions,
+    createRefVariableCompletions(getPrior),
+    flModuleCompletions,
+  ];
 
   return [
     na(createIdentifierCompletionSource(getLspCtx, getPrior, curated)),

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   nbCreate: vi.fn(),
   nbUpdate: vi.fn(),
   nbRemove: vi.fn(),
+  render: vi.fn(),
 }));
 
 vi.mock("../api/kernel.api", () => ({
@@ -22,13 +23,14 @@ vi.mock("../api/notebook.api", () => ({
     create: mocks.nbCreate,
     update: mocks.nbUpdate,
     remove: mocks.nbRemove,
+    renderFlowNotebook: mocks.render,
   },
 }));
 vi.mock("../features/ai/markdown", () => ({
   sanitiseMarkdown: (s: string) => `<md>${s}</md>`,
 }));
 
-import { useNotebookStore, cellNodeId } from "./notebook-store";
+import { useNotebookStore, cellNodeId, flowPushBody } from "./notebook-store";
 import { getCellHistory } from "../components/notebook/useCellHistory";
 import { ownerIdForNotebook } from "../components/notebook/editorViews";
 import { batchProgress, cellRuntime, getOwner } from "../components/notebook/notebookRuntimeState";
@@ -811,5 +813,102 @@ describe("persistence mapping + legacy coercion", () => {
     expect(mocks.nbRemove).toHaveBeenCalledWith(5);
     expect(mocks.clearNamespace).toHaveBeenCalledWith("kx", -5);
     expect(store.openNotebooks.some((n) => n.persistedId === 5)).toBe(false);
+  });
+});
+
+describe("flow notebook", () => {
+  const cell = (id: number, code: string, extra = {}) => ({
+    cell_id: `node-${id}`,
+    node_ids: [id],
+    kind: "node",
+    code,
+    status: "code",
+    reason: null,
+    ...extra,
+  });
+  const rendering = (fingerprint: string, cells: unknown[]) => ({
+    cells,
+    code_fingerprint: fingerprint,
+  });
+
+  it("opens an ephemeral session tab from the rendering, never persisted", async () => {
+    mocks.render.mockResolvedValue(
+      rendering("f1", [
+        cell(1, "a = fl.canvas_node(1)", { status: "placeholder", reason: "Not configured" }),
+        cell(2, "b = a.filter(x)"),
+      ]),
+    );
+    const store = useNotebookStore();
+    const nb = await store.openFlowNotebook(7, "flow");
+    expect(nb.kernelId).toBe("flow-session:7");
+    expect(nb.sessionFlowId).toBe(7);
+    expect(nb.cells.map((c) => [c.id, c.code])).toEqual([
+      ["node-1", "# Not configured\na = fl.canvas_node(1)"],
+      ["node-2", "b = a.filter(x)"],
+    ]);
+    expect(store._snapshot().openNotebooks.some((n) => n.tabId === nb.tabId)).toBe(false);
+    expect((await store.openFlowNotebook(7, "flow")).tabId).toBe(nb.tabId);
+    await store.runCell("node-2");
+    expect(mocks.executeCell).toHaveBeenCalledWith("flow-session:7", {
+      node_id: 2,
+      code: "b = a.filter(x)",
+      flow_id: 7,
+    });
+  });
+
+  it("refresh keeps edited cells, updates the rest, inserts and removes in render order", async () => {
+    mocks.render.mockResolvedValue(
+      rendering("f1", [cell(1, "a = 1"), cell(2, "b = a"), cell(3, "c = b")]),
+    );
+    const store = useNotebookStore();
+    const nb = await store.openFlowNotebook(7, "flow");
+    store.setCellCode("node-2", "b = a * 2");
+    const extra = store.addCell("python")!;
+    mocks.render.mockResolvedValue(
+      rendering("f2", [cell(1, "a = 10"), cell(4, "d = a"), cell(2, "b = a + 1")]),
+    );
+    await store.refreshFlowNotebook(7);
+    expect(nb.cells.map((c) => [c.id, c.code])).toEqual([
+      ["node-1", "a = 10"],
+      ["node-4", "d = a"],
+      ["node-2", "b = a * 2"],
+      [extra.id, ""],
+    ]);
+    expect(nb.dirty).toBe(true);
+
+    const body = flowPushBody(
+      nb,
+      new Map([
+        [1, "manual_input"],
+        [2, "filter"],
+        [4, "select"],
+      ]),
+      9,
+    );
+    expect(body.changed_cell_ids).toEqual(["node-2", extra.id]);
+    expect(body.provenance).toEqual({
+      "node-1": [["manual_input", 1]],
+      "node-4": [["select", 4]],
+      "node-2": [["filter", 2]],
+    });
+    expect(body.code_fingerprint).toBe("f2");
+    expect(body.client_max_node_id).toBe(9);
+
+    store.markFlowPushed(nb, { code_fingerprint: "f2b", max_node_id: 4, node_ids_by_cell: {} });
+    mocks.render.mockResolvedValue(
+      rendering("f3", [cell(1, "a = 10"), cell(4, "d = a"), cell(2, "b = a * 2  # canonical")]),
+    );
+    await store.refreshFlowNotebook(7);
+    expect(nb.cells.map((c) => c.code)).toEqual(["a = 10", "d = a", "b = a * 2  # canonical"]);
+    expect(nb.dirty).toBe(false);
+  });
+
+  it("an unchanged fingerprint leaves the cells alone", async () => {
+    mocks.render.mockResolvedValue(rendering("f1", [cell(1, "a = 1")]));
+    const store = useNotebookStore();
+    const nb = await store.openFlowNotebook(7, "flow");
+    const before = nb.cells;
+    await store.refreshFlowNotebook(7);
+    expect(nb.cells).toBe(before);
   });
 });

@@ -4,8 +4,9 @@
          a tab to rename), "+" opens New / saved notebooks, controls sit on the right. -->
     <div class="nb-header">
       <div class="nb-toolbar">
+        <span v-if="flowId" class="nb-flow-title"><i class="fa-solid fa-book"></i> Notebook</span>
         <el-tabs
-          v-if="store.openNotebooks.length"
+          v-else-if="catalogTabs.length"
           :model-value="store.activeTabId ?? undefined"
           type="card"
           closable
@@ -13,7 +14,7 @@
           @tab-change="onTabChange"
           @tab-remove="onTabRemove"
         >
-          <el-tab-pane v-for="nb in store.openNotebooks" :key="nb.tabId" :name="nb.tabId">
+          <el-tab-pane v-for="nb in catalogTabs" :key="nb.tabId" :name="nb.tabId">
             <template #label>
               <span class="nb-tab-label" @dblclick.stop="startRename(nb.tabId)">
                 <i class="fa-solid fa-book nb-tab-icon"></i>
@@ -38,7 +39,7 @@
         </el-tabs>
 
         <!-- "+" — New, or open a saved notebook -->
-        <el-dropdown trigger="click" placement="bottom-start" :hide-on-click="true">
+        <el-dropdown v-if="!flowId" trigger="click" placement="bottom-start" :hide-on-click="true">
           <button class="nb-tab-add" title="New or open notebook" aria-label="New or open notebook">
             <i class="fa-solid fa-plus"></i>
           </button>
@@ -67,6 +68,7 @@
         <!-- Kernel selector (Python cells); state is polled live. The selected label
              carries a state dot, and a stale/stopped selection turns the field amber. -->
         <el-select
+          v-if="!flowId"
           :model-value="store.active?.kernelId ?? null"
           placeholder="Select kernel"
           size="small"
@@ -161,7 +163,7 @@
               >
                 <i class="fa-solid fa-play nb-menu-icon"></i> Start kernel
               </el-dropdown-item>
-              <el-dropdown-item divided @click="router.push(kernelsRoute)">
+              <el-dropdown-item v-if="!flowId" divided @click="router.push(kernelsRoute)">
                 <i class="fa-solid fa-microchip nb-menu-icon"></i> Manage kernels…
               </el-dropdown-item>
             </el-dropdown-menu>
@@ -169,7 +171,18 @@
         </el-dropdown>
 
         <!-- Save split-button (canvas-style): Save + File menu (Save As / Rename / Delete) -->
-        <div class="nb-split" data-tutorial="save-btn">
+        <el-button
+          v-if="flowId"
+          size="small"
+          data-testid="nb-push"
+          title="Write the edited cells onto the canvas"
+          :loading="pushing"
+          :disabled="readOnly || editorStore.isRunning || batchBusy"
+          @click="onPush"
+        >
+          <i v-if="!pushing" class="fa-solid fa-upload" style="margin-right: 4px"></i> Push
+        </el-button>
+        <div v-else class="nb-split" data-tutorial="save-btn">
           <button
             class="nb-split-btn nb-split-btn--main"
             :disabled="store.active?.saving"
@@ -209,7 +222,7 @@
           size="small"
           class="nb-run-all"
           :loading="batchBusy"
-          :disabled="batchBusy"
+          :disabled="batchBusy || readOnly"
           @click="store.runAll()"
         >
           <i v-if="!batchBusy" class="fa-solid fa-forward" style="margin-right: 4px"></i> Run All
@@ -239,7 +252,9 @@
         >
           Clear selection
         </el-button>
-        <router-link :to="kernelsRoute" class="nb-banner__link">Manage kernels</router-link>
+        <router-link v-if="!flowId" :to="kernelsRoute" class="nb-banner__link">
+          Manage kernels
+        </router-link>
       </span>
     </div>
 
@@ -281,7 +296,8 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           :node-id="cellNodeId(cell.id)"
           :structural-disabled="structuralDisabled"
           :runtime="runtimeFor(cell.id)"
-          :busy="batchBusy"
+          :busy="batchBusy || readOnly"
+          :read-only="readOnly"
           :active="cell.id === store.active.focusedCellId"
           :dragging="drag.draggingId.value === cell.id"
           @run="store.runCell(cell.id)"
@@ -298,7 +314,17 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           @insert-below="onInsertAt(idx + 1)"
           @activate="store.setFocusedCell(cell.id)"
           @cursor="(pos: number) => store.setCellCursor(cell.id, pos)"
-        />
+        >
+          <template v-if="flowId && store.active.nodeIds?.[cell.id]?.length" #menu-extra>
+            <el-dropdown-item
+              data-action="run-on-canvas"
+              :disabled="editorStore.isRunning || canvasRunning"
+              @click="runOnCanvas(cell.id)"
+            >
+              <i class="fa-solid fa-diagram-project nb-menu-icon"></i> Run on canvas
+            </el-dropdown-item>
+          </template>
+        </CatalogNotebookCell>
 
         <!-- Hover-to-insert: a faint "+" appears between cells; click to add a
              Python cell at this position. -->
@@ -362,11 +388,21 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
 import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
-import { useNotebookStore, cellNodeId } from "../../stores/notebook-store";
+import { useNotebookStore, cellNodeId, flowPushBody } from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
 import { KernelApi } from "../../api/kernel.api";
+import { FlowApi } from "../../api/flow.api";
+import { NotebookApi } from "../../api/notebook.api";
+import { useEditorStore } from "../../stores/editor-store";
+import { useNodeStore } from "../../stores/column-store";
+import { useDrawerStore } from "../../stores/drawer-store";
+import { useFlowStore } from "../../stores/flow-store";
+import { useResultsStore } from "../../stores/results-store";
+import { whenMutationsIdle } from "../../services/axios.config";
+import { flushPendingEdits } from "../../services/mutationChannel";
+import { currentNodeId, seedNodeId } from "../../composables/useDragAndDrop";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";
 import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
 import { cellMoveAnnouncement } from "../../components/notebook/cellOperations";
@@ -391,7 +427,13 @@ import type { KernelInfo } from "../../types/kernel.types";
 
 const KERNEL_POLL_MS = 5000;
 
+/** With `flowId` the panel is that flow's canvas notebook: one ephemeral tab on its session. */
+const props = defineProps<{ flowId?: number }>();
+
 const store = useNotebookStore();
+const editorStore = useEditorStore();
+const catalogTabs = computed(() => store.openNotebooks.filter((n) => n.flowId == null));
+const readOnly = computed(() => !!props.flowId && store.flowStatus?.sessions === false);
 const catalogStore = useCatalogStore();
 const router = useRouter();
 const kernelsRoute = { name: "compute", query: { tab: "kernels" } } as const;
@@ -443,6 +485,26 @@ interface KernelBanner {
 // Only the "no kernel" nudge waits for Python cells; a bad selection is always worth saying.
 const banner = computed<KernelBanner | null>(() => {
   const s = kernelStatus.value;
+  if (props.flowId) {
+    if (readOnly.value) {
+      return {
+        tone: "warning",
+        icon: "fa-solid fa-lock",
+        text: "Sessions are disabled on this server",
+      };
+    }
+    if (s.kind === "starting") {
+      return { tone: "info", icon: "fa-solid fa-spinner fa-spin", text: "Flow session · starting" };
+    }
+    if (s.kind === "error") {
+      return {
+        tone: "danger",
+        icon: "fa-solid fa-circle-exclamation",
+        text: "Flow session failed",
+      };
+    }
+    return { tone: "info", icon: "fa-solid fa-diagram-project", text: "Flow session" };
+  }
   const name = "kernel" in s ? `"${s.kernel.name}"` : "";
   switch (s.kind) {
     case "docker-off":
@@ -541,7 +603,7 @@ function cancelRename() {
 }
 // Primer shows only while the notebook has no code yet; it hides as soon as you type.
 const showPrimer = computed(
-  () => !!store.active && store.active.cells.every((c) => !c.code.trim()),
+  () => !props.flowId && !!store.active && store.active.cells.every((c) => !c.code.trim()),
 );
 
 function priorCodes(idx: number): string[] {
@@ -566,7 +628,11 @@ const schemaDetachers = new Map<string, () => void>();
 
 // One attachment per open tab: the schema cache is owner-keyed and the kernel is read live.
 watch(
-  () => store.openNotebooks.map((n) => n.tabId),
+  () =>
+    (props.flowId
+      ? store.openNotebooks.filter((n) => n.flowId === props.flowId)
+      : catalogTabs.value
+    ).map((n) => n.tabId),
   (tabIds) => {
     const live = new Set(tabIds);
     for (const [tabId, detach] of Array.from(schemaDetachers)) {
@@ -608,7 +674,7 @@ const batchLabel = computed(() => {
   return `Running cell ${Math.min(progress.done + 1, progress.total)} of ${progress.total}`;
 });
 
-const structuralDisabled = computed(() => batchBusy.value);
+const structuralDisabled = computed(() => batchBusy.value || readOnly.value);
 
 function runtimeFor(cellId: string) {
   return activeOwnerId.value ? (cellRuntime(activeOwnerId.value, cellId) ?? null) : null;
@@ -712,7 +778,8 @@ function onRedoCellAction() {
 
 async function loadKernels() {
   try {
-    kernels.value = await KernelApi.getAll();
+    const flowKernel = props.flowId ? store.active?.kernelId : null;
+    kernels.value = flowKernel ? [await KernelApi.get(flowKernel)] : await KernelApi.getAll();
     kernelsLoaded.value = true;
   } catch {
     // Keep the last known list: a transient fetch failure must not flag every kernel as gone.
@@ -720,6 +787,10 @@ async function loadKernels() {
 }
 
 onMounted(async () => {
+  if (props.flowId) {
+    await openFlow();
+    return;
+  }
   store.ensureHydrated();
   await store.loadList();
   try {
@@ -737,8 +808,144 @@ onBeforeUnmount(() => {
   if (pollTimer) clearInterval(pollTimer);
   for (const detach of schemaDetachers.values()) detach();
   schemaDetachers.clear();
-  store.closeAllSessions();
+  if (!props.flowId) store.closeAllSessions();
+  if (refreshTimer) clearTimeout(refreshTimer);
 });
+
+// A catalog panel never shows a flow's tab: fall back to a catalog tab when one was active.
+watch(
+  () => [store.hydrated, store.active?.flowId] as const,
+  ([hydrated, activeFlowId]) => {
+    if (props.flowId) {
+      const own = store.openNotebooks.find((n) => n.flowId === props.flowId);
+      if (own && activeFlowId !== props.flowId) store.setActiveTab(own.tabId);
+    } else if (hydrated && activeFlowId != null) {
+      if (catalogTabs.value.length) store.setActiveTab(catalogTabs.value[0].tabId);
+      else store.newTab();
+    }
+  },
+  { immediate: true },
+);
+
+const errorText = (e: any, fallback: string): string => {
+  const detail = e?.response?.data?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) return detail.map((d) => d?.msg ?? String(d)).join("\n");
+  return detail?.message ?? e?.message ?? fallback;
+};
+
+async function openFlow() {
+  const flowId = props.flowId!;
+  try {
+    if (!store.flowStatus) await store.loadFlowStatus();
+    await store.openFlowNotebook(flowId, `Flow ${flowId}`);
+    await loadKernels();
+    pollTimer = setInterval(loadKernels, KERNEL_POLL_MS);
+  } catch (e) {
+    ElMessage.error(errorText(e, "Could not render the notebook"));
+  }
+}
+
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Canvas edits re-render the cells once the edit queue settles; layout moves keep the fingerprint.
+watch(
+  () => editorStore.graphVersion,
+  () => {
+    if (!props.flowId) return;
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(async () => {
+      await whenMutationsIdle();
+      await store.refreshFlowNotebook(props.flowId!).catch(() => undefined);
+    }, 400);
+  },
+);
+
+const pushing = ref(false);
+
+/** Save and close the node settings drawer; false when its save was refused. */
+async function closeSettingsDrawer(): Promise<boolean> {
+  if (!(await editorStore.saveDrawerBeforeLeave())) return false;
+  useNodeStore().nodeId = -1;
+  editorStore.activeDrawerComponent = null;
+  return true;
+}
+
+async function onPush() {
+  const nb = store.active;
+  const flowId = props.flowId;
+  if (!nb || !flowId || pushing.value || editorStore.isRunning) return;
+  pushing.value = true;
+  try {
+    await flushPendingEdits();
+    await whenMutationsIdle();
+    if (!(await closeSettingsDrawer())) return;
+    await whenMutationsIdle();
+    const nodes = (await FlowApi.getFlowData(flowId)).node_inputs;
+    const body = flowPushBody(nb, new Map(nodes.map((n) => [n.id, n.item])), currentNodeId());
+    const plan = await NotebookApi.planPush(body);
+    const review = [
+      ...plan.deletions.map((id) => `Delete node #${id}`),
+      ...(plan.parameter_changes ? ["Replace the flow parameters"] : []),
+      ...plan.warnings,
+    ];
+    if (review.length) {
+      const confirmed = await ElMessageBox.confirm(review.join("\n"), "Push to the canvas?", {
+        confirmButtonText: "Push",
+        cancelButtonText: "Cancel",
+        type: "warning",
+      }).catch(() => false);
+      if (!confirmed) return;
+    }
+    const result = await NotebookApi.pushFlowNotebook(body);
+    store.markFlowPushed(nb, result);
+    seedNodeId(result.max_node_id);
+    useFlowStore().requestReload();
+    ElMessage.success("Pushed to the canvas");
+  } catch (e: any) {
+    if (e?.response?.status === 409) {
+      ElMessage.error("The canvas changed since these cells were rendered; they were refreshed.");
+      await store.refreshFlowNotebook(flowId).catch(() => undefined);
+    } else {
+      ElMessage.error(errorText(e, "The push failed"));
+    }
+  } finally {
+    pushing.value = false;
+  }
+}
+
+const canvasRunning = ref(false);
+
+/** Run a node cell's node and its ancestors on the canvas, then show that node's preview. */
+async function runOnCanvas(cellId: string) {
+  const flowId = props.flowId;
+  const nodeId = store.active?.nodeIds?.[cellId]?.at(-1);
+  if (!flowId || nodeId == null || editorStore.isRunning || canvasRunning.value) return;
+  canvasRunning.value = true;
+  editorStore.isRunning = true;
+  try {
+    const before = (await FlowApi.getRunStatus(flowId)).start_time;
+    await NotebookApi.runLineage(flowId, nodeId);
+    const started = Date.now();
+    let seenRunning = false;
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const info = await FlowApi.getRunStatus(flowId);
+      seenRunning ||= info.is_running;
+      // The first polls can still report the previous (or the "init") run as idle.
+      const newer = info.run_type !== "init" && !!info.start_time && info.start_time !== before;
+      if (info.is_running || !(seenRunning || newer || Date.now() - started > 10_000)) continue;
+      useResultsStore().insertRunResult(info);
+      break;
+    }
+    useDrawerStore().selectNodeForPreview(nodeId);
+  } catch (e) {
+    ElMessage.error(errorText(e, "Run on canvas failed"));
+  } finally {
+    editorStore.isRunning = false;
+    canvasRunning.value = false;
+  }
+}
 
 async function onResetSession() {
   if (resetPending.value) return;
@@ -858,6 +1065,12 @@ async function onDelete() {
 }
 .nb-toolbar-spacer {
   flex: 1;
+}
+.nb-flow-title {
+  margin-bottom: 6px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
 }
 /* "+" beside the tabs: New / Open saved notebook. */
 .nb-tab-add {

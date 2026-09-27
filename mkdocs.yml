@@ -127,6 +127,7 @@ nav:
   - Visual Editor:
     - users/visual-editor/index.md
     - Building Flows: users/visual-editor/building-flows.md
+    - Canvas Notebook: users/visual-editor/notebook.md
     - Data Actions:
       - users/visual-editor/nodes/index.md
       - Input Sources: users/visual-editor/nodes/input.md

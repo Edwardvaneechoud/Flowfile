@@ -1,11 +1,10 @@
-"""The ``/notebook/sessions`` routes with the TestClient: mode and loopback gates, ownership, execute, events
-replay and the live stream, interrupt, reset and schemas, against a real session process."""
+"""The notebook session behind the kernel routes as ``flow-session:<flow_id>``, with the TestClient: mode and
+loopback gates, ownership, execute_cell, clear_namespace, the synthetic kernel and column schemas, against a
+real session process and without Docker."""
 
 from __future__ import annotations
 
 import json
-import threading
-import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +15,7 @@ from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.configs import settings
 from flowfile_core.notebook import registry as session_registry
 from shared.notebook_display import TABLE_MIME
+from tests.notebook.conftest import no_kernel_manager
 from tests.notebook.session_helpers import small_flow
 
 OWNER_ID = 1
@@ -32,12 +32,8 @@ def flag():
 
 
 @pytest.fixture
-def electron(monkeypatch):
+def open_flow(flag, monkeypatch):
     monkeypatch.setenv("FLOWFILE_MODE", "electron")
-
-
-@pytest.fixture
-def open_flow(flag, electron):
     graph = small_flow()
     flow_file_handler._flows[graph.flow_id] = graph
     flow_file_handler._register_user_session(OWNER_ID, graph.flow_id)
@@ -60,116 +56,81 @@ def client_as():
     main.app.dependency_overrides.pop(get_current_user, None)
 
 
-def _events(client: TestClient, session_id: str, after: int = 0) -> list[dict]:
-    response = client.get(f"/notebook/sessions/{session_id}/events", params={"after": after, "follow": False})
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("application/x-ndjson")
-    return [json.loads(line) for line in response.text.splitlines() if line]
+def _kernel(flow) -> str:
+    return f"/kernels/flow-session:{flow.flow_id}"
 
 
-def _until(client: TestClient, session_id: str, predicate, timeout: float = 60.0) -> list[dict]:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        events = _events(client, session_id)
-        if any(predicate(e) for e in events):
-            return events
-        time.sleep(0.1)
-    raise AssertionError(f"no matching event; last: {events[-5:]}")
-
-
-def _open(client: TestClient, flow_id: int) -> str:
-    response = client.post("/notebook/sessions", json={"flow_id": flow_id})
+def _execute(client: TestClient, flow, code: str, node_id: int = 0) -> dict:
+    response = client.post(
+        f"{_kernel(flow)}/execute_cell", json={"node_id": node_id, "code": code, "flow_id": flow.flow_id}
+    )
     assert response.status_code == 200, response.text
-    return response.json()["session_id"]
+    return response.json()
 
 
 def test_electron_mode_refuses_a_non_loopback_client(open_flow, client_as):
-    response = client_as(OWNER_ID, client=("192.168.1.20", 50000)).post(
-        "/notebook/sessions", json={"flow_id": open_flow.flow_id}
-    )
+    client = client_as(OWNER_ID, client=("192.168.1.20", 50000))
+    response = client.post(f"{_kernel(open_flow)}/execute_cell", json={"node_id": 0, "code": "1"})
     assert response.status_code == 403
 
 
 def test_multi_user_mode_refuses_without_the_opt_in(open_flow, client_as, monkeypatch):
     monkeypatch.setenv("FLOWFILE_MODE", "docker")
     monkeypatch.delenv("FLOWFILE_NOTEBOOK_SESSIONS_MULTIUSER", raising=False)
-    response = client_as(OWNER_ID).post("/notebook/sessions", json={"flow_id": open_flow.flow_id})
-    assert response.status_code == 403
-
-
-def test_a_flow_the_caller_has_not_open_is_404(open_flow, client_as):
-    response = client_as(OTHER_ID).post("/notebook/sessions", json={"flow_id": open_flow.flow_id})
-    assert response.status_code == 404
-
-
-def test_session_lifecycle_over_the_routes(open_flow, client_as):
     owner = client_as(OWNER_ID)
-    session_id = _open(owner, open_flow.flow_id)
-    assert _open(owner, open_flow.flow_id) == session_id
-
-    ticket = owner.post(
-        f"/notebook/sessions/{session_id}/execute",
-        json={"cell_id": "c1", "code": "print('hi')\nframe = fl.from_dict({'v': [1, 2]})\nframe"},
-    ).json()["ticket"]
-    events = _until(owner, session_id, lambda e: e["type"] == "done" and e.get("ticket") == ticket)
-    assert [e["seq"] for e in events] == sorted(e["seq"] for e in events)
-    mine = [e for e in events if e.get("ticket") == ticket]
-    assert [e["type"] for e in mine] == ["stream", "display", "done"]
-    assert TABLE_MIME in mine[1]["payload"] and mine[-1]["ok"] is True
-
-    replay = _events(owner, session_id, after=mine[0]["seq"])
-    assert [e["seq"] for e in replay] == [e["seq"] for e in events if e["seq"] > mine[0]["seq"]]
-
-    frames = owner.get(f"/notebook/sessions/{session_id}/schemas").json()["frames"]
-    assert frames["frame"] == [{"name": "v", "data_type": "Int64"}]
-    seeded = {name for name in frames if name != "frame"}
-    assert len(seeded) == 2 and all(frames[name][0]["name"] == "id" for name in seeded)
-    assert owner.post(f"/notebook/sessions/{session_id}/interrupt").status_code == 200
-
-    ticket = owner.post(f"/notebook/sessions/{session_id}/reset").json()["ticket"]
-    _until(owner, session_id, lambda e: e.get("ticket") == ticket and e["type"] == "done")
-    assert set(owner.get(f"/notebook/sessions/{session_id}/schemas").json()["frames"]) == seeded
+    assert owner.post(f"{_kernel(open_flow)}/execute_cell", json={"node_id": 0, "code": "1"}).status_code == 403
+    assert owner.get(_kernel(open_flow)).status_code == 403
 
 
-def test_another_user_gets_404_on_every_session_route(open_flow, client_as):
-    session_id = _open(client_as(OWNER_ID), open_flow.flow_id)
+def test_the_flag_off_is_a_503(open_flow, client_as):
+    settings.FEATURE_FLAG_CANVAS_NOTEBOOK.set(False)
+    assert client_as(OWNER_ID).get(_kernel(open_flow)).status_code == 503
+
+
+def test_another_users_flow_is_404(open_flow, client_as):
     other = client_as(OTHER_ID)
-    base = f"/notebook/sessions/{session_id}"
-    assert other.post(f"{base}/execute", json={"cell_id": "c", "code": "1"}).status_code == 404
-    assert other.post(f"{base}/interrupt").status_code == 404
-    assert other.post(f"{base}/reset").status_code == 404
-    assert other.get(f"{base}/schemas").status_code == 404
-    assert other.get(f"{base}/events").status_code == 404
+    assert other.post(f"{_kernel(open_flow)}/execute_cell", json={"node_id": 0, "code": "1"}).status_code == 404
+    assert other.post(f"{_kernel(open_flow)}/clear_namespace", params={"flow_id": open_flow.flow_id}).status_code == 404
+    assert other.get(_kernel(open_flow)).status_code == 404
 
 
-def test_the_live_stream_follows_until_the_session_closes(open_flow, client_as):
+def test_the_session_behaves_as_a_kernel(open_flow, client_as):
     owner = client_as(OWNER_ID)
-    session_id = _open(owner, open_flow.flow_id)
-    session = session_registry.get_registry().get(session_id, OWNER_ID)
-    _until(owner, session_id, lambda e: e["type"] == "ready")
-    after = _events(owner, session_id)[-1]["seq"]
+    with no_kernel_manager() as calls:
+        result = _execute(owner, open_flow, "print('hi')\nx = fl.from_dict({'a': [1, 2]}); x", node_id=7)
+        assert result["success"] is True and result["error"] is None
+        assert result["stdout"] == "hi\n"
+        [table] = result["display_outputs"]
+        assert table["mime_type"] == TABLE_MIME and table["title"] == ""
+        assert len(json.loads(table["data"])["data"]) == 2
+        assert result["namespace_generation"] and result["revision"] >= 1
 
-    def drive():
-        ticket = session.execute("live", "print('streamed')")
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            if any(e["type"] == "done" and e.get("ticket") == ticket for e in session.events_after(after)):
-                break
-            time.sleep(0.05)
-        session_registry.get_registry().close_session(session_id)
+        kernel = owner.get(_kernel(open_flow)).json()
+        assert kernel["id"] == f"flow-session:{open_flow.flow_id}" and kernel["state"] == "idle"
 
-    threading.Timer(0.3, drive).start()
-    response = owner.get(f"/notebook/sessions/{session_id}/events", params={"after": after})
-    assert response.status_code == 200
-    events = [json.loads(line) for line in response.text.splitlines() if line]
-    assert all(e["seq"] > after for e in events)
-    assert any(e["type"] == "stream" and e["text"] == "streamed\n" for e in events)
+        schemas = owner.post(f"{_kernel(open_flow)}/lsp/dataframe_schemas", json={"flow_id": open_flow.flow_id})
+        frames = {frame["name"]: frame for frame in schemas.json()["dataframes"]}
+        assert schemas.json()["state"] == "ready"
+        assert frames["x"]["columns"] == [{"name": "a", "dtype": "Int64"}]
+
+        failing = _execute(owner, open_flow, "1 / 0")
+        assert failing["success"] is False
+        assert failing["error"] == "ZeroDivisionError: division by zero"
+        assert "Traceback" in failing["stderr"]
+
+        cleared = owner.post(f"{_kernel(open_flow)}/clear_namespace", params={"flow_id": open_flow.flow_id})
+        assert cleared.status_code == 200
+        gone = _execute(owner, open_flow, "x")
+        assert gone["success"] is False and gone["error"].startswith("NameError")
+        assert gone["namespace_generation"] != result["namespace_generation"]
+    assert calls == []
 
 
-def test_closing_the_flow_closes_its_sessions(open_flow, client_as):
+def test_closing_the_flow_closes_its_session(open_flow, client_as):
     owner = client_as(OWNER_ID)
-    session_id = _open(owner, open_flow.flow_id)
-    session = session_registry.get_registry().get(session_id, OWNER_ID)
+    assert owner.get(_kernel(open_flow)).status_code == 200
+    session = session_registry.get_registry().find(OWNER_ID, open_flow.flow_id)
+    assert session is not None
     assert owner.post("/editor/close_flow/", params={"flow_id": open_flow.flow_id}).status_code == 200
     assert session.closed
-    assert session_registry.get_registry().get(session_id, OWNER_ID) is None
+    assert session_registry.get_registry().find(OWNER_ID, open_flow.flow_id) is None

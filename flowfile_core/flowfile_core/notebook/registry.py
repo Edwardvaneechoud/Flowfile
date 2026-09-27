@@ -1,26 +1,23 @@
 """Core's notebook sessions: one Python subprocess per ``(user_id, flow_id)``, driven over a framed pipe.
 
 A :class:`NotebookSession` owns one child process at a time (a *generation*; restarts bump it). Per
-generation core runs one reader thread that drains the child's protocol stream continuously into a
-bounded ring buffer of sequence-numbered events (oldest dropped past ``RING_SIZE``), whether or not a
-client is attached, and one writer thread that owns the child's stdin; neither ever runs on the event loop
-(V3 F3). ``execute`` returns a ticket at once and results arrive as events; ``clean_run`` and ``schemas``
-block the calling (threadpool) thread on a ticket.
+generation core runs one reader thread that drains the child's protocol stream and one writer thread that
+owns the child's stdin; neither ever runs on the event loop (V3 F3). ``run_cell``, ``clean_run`` and
+``schemas`` block the calling (threadpool) thread on a ticket; a cell's ``stream`` and ``display`` messages
+are collected on that ticket until its ``done``.
 
-``interrupt`` asks the child to raise ``KeyboardInterrupt`` in the cell thread; when the cell running at
-that moment has not finished after ``interrupt_grace`` seconds (a blocked ``sleep``, socket or collect,
-V3 F2) the child is killed (terminate, 1 s, kill), started again, re-seeded, and a ``restarted`` event
-says the variables are lost.
+``reset`` on a session busy with a cell kills the child (terminate, 1 s, kill), starts it again and re-seeds
+it: a blocked ``sleep``, socket or collect cannot be stopped from inside (V3 F2), and a queued reset would
+wait behind it.
 
 The :class:`NotebookSessionRegistry` starts sessions lazily, closes them after ``idle_ttl`` seconds without
 use, evicts the least recently used past ``max_sessions``, closes a flow's sessions when the flow closes,
 and at shutdown closes every stdin in parallel before a bounded parallel terminate/kill. It is the
-bridge's ``CleanRunner`` (:func:`install`).
+bridge's ``CleanRunner`` (:func:`install`). ``notebook/kernel_adapter.py`` puts it behind the kernel routes.
 """
 
 from __future__ import annotations
 
-import collections
 import logging
 import os
 import queue
@@ -36,10 +33,8 @@ from shared.storage_config import storage
 
 logger = logging.getLogger("flowfile.notebook.sessions")
 
-RING_SIZE = 5000
 DEFAULT_IDLE_TTL = 15 * 60
 DEFAULT_MAX_SESSIONS = 3
-DEFAULT_INTERRUPT_GRACE = 2.0
 REPLY_TIMEOUT = 600.0
 RESTARTED_MESSAGE = "session restarted, variables lost"
 _STOP = object()
@@ -108,35 +103,29 @@ class _Waiter:
     def __init__(self) -> None:
         self.event = threading.Event()
         self.reply: dict[str, Any] | None = None
+        self.events: list[dict[str, Any]] = []
 
 
 class NotebookSession:
     """One user's Python session for one flow; see the module docstring."""
 
-    def __init__(
-        self,
-        user_id: int,
-        flow_id: int,
-        snapshot: dict[str, Any] | None = None,
-        *,
-        interrupt_grace: float = DEFAULT_INTERRUPT_GRACE,
-    ) -> None:
+    def __init__(self, user_id: int, flow_id: int, snapshot: dict[str, Any] | None = None) -> None:
         self.session_id = uuid.uuid4().hex
         self.user_id = user_id
         self.flow_id = flow_id
         self.snapshot = snapshot
-        self.interrupt_grace = interrupt_grace
         self.state = "starting"
         self.last_used = time.monotonic()
         self.startup_seconds: float | None = None
         self.generation = 0
+        self.epoch = 0
+        self.revision = 0
         self._process: subprocess.Popen | None = None
         self._job: object | None = None
         self._writer: queue.Queue | None = None
         self._log = None
-        self._events: collections.deque[dict[str, Any]] = collections.deque(maxlen=RING_SIZE)
-        self._seq = 0
-        self._cond = threading.Condition()
+        self._ready = threading.Event()
+        self._lock = threading.Lock()
         self._waiters: dict[str, _Waiter] = {}
         self._inflight: list[str] = []
         self._lifecycle = threading.RLock()
@@ -153,14 +142,22 @@ class NotebookSession:
 
     @property
     def busy(self) -> bool:
-        with self._cond:
+        with self._lock:
             return bool(self._inflight)
+
+    @property
+    def namespace_generation(self) -> str:
+        """Changes whenever the namespace is dropped (reset or restart), like a kernel's namespace generation."""
+        return f"{self.session_id}.{self.epoch}"
 
     def touch(self) -> None:
         self.last_used = time.monotonic()
 
     def alive(self) -> bool:
         return not self._closed and self._process is not None and self._process.poll() is None
+
+    def wait_ready(self, timeout: float) -> bool:
+        return self._ready.wait(timeout)
 
     def start(self) -> None:
         """Spawn the child and queue the seed; returns without waiting for ``ready``."""
@@ -169,8 +166,10 @@ class NotebookSession:
 
     def _spawn(self) -> None:
         self.generation += 1
+        self.epoch += 1
         generation = self.generation
         self.state = "starting"
+        self._ready.clear()
         if self._log is None:
             self._log = open(_log_path(self.flow_id), "ab")
         self._spawned_at = time.monotonic()
@@ -222,13 +221,12 @@ class NotebookSession:
                 break
             self._on_message(message, generation)
         try:
-            returncode = process.wait(timeout=5)
+            process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            returncode = None
+            pass
         if generation == self.generation and not self._closed and self.state != "restarting":
             self.state = "dead"
             self._fail_waiters("the notebook session exited")
-            self._emit({"type": "exited", "returncode": returncode})
 
     def _on_message(self, message: dict[str, Any], generation: int) -> None:
         if generation != self.generation:
@@ -238,34 +236,21 @@ class NotebookSession:
         if kind == "ready":
             self.startup_seconds = round(time.monotonic() - self._spawned_at, 3)
             self.state = "busy" if self.busy else "ready"
-            self._emit(
-                {
-                    "type": "ready",
-                    "pid": message.get("pid"),
-                    "startup_seconds": self.startup_seconds,
-                    "imports_seconds": message.get("startup_seconds"),
-                }
-            )
+            self._ready.set()
             return
-        if kind in ("graph", "schemas"):
-            self._resolve(ticket, message)
-            if kind == "graph":
-                self._emit({"type": "graph", "ticket": ticket, "error": message.get("error")})
+        if kind in ("stream", "display"):
+            waiter = self._waiters.get(ticket) if ticket else None
+            if waiter is not None:
+                waiter.events.append(message)
             return
         if kind == "done":
-            with self._cond:
+            with self._lock:
                 if ticket in self._inflight:
                     self._inflight.remove(ticket)
+                    self.revision += 1
                 if self.state == "busy" and not self._inflight:
                     self.state = "ready"
-            self._resolve(ticket, message)
-        self._emit(message)
-
-    def _emit(self, event: dict[str, Any]) -> None:
-        with self._cond:
-            self._seq += 1
-            self._events.append({**event, "seq": self._seq})
-            self._cond.notify_all()
+        self._resolve(ticket, message)
 
     def _resolve(self, ticket: str | None, message: dict[str, Any]) -> None:
         waiter = self._waiters.pop(ticket, None) if ticket else None
@@ -276,67 +261,55 @@ class NotebookSession:
     def _fail_waiters(self, error: str) -> None:
         for ticket in list(self._waiters):
             self._resolve(ticket, {"type": "error", "ticket": ticket, "error": error})
-        with self._cond:
+        with self._lock:
             self._inflight.clear()
 
     def _send(self, message: dict[str, Any]) -> None:
         if self._writer is not None:
             self._writer.put(message)
 
-    def _request(self, message: dict[str, Any], timeout: float) -> dict[str, Any]:
+    def _request(self, message: dict[str, Any], timeout: float, inflight: bool = False) -> _Waiter:
+        """Send ``message`` under a new ticket and wait for its reply (an ``error`` reply on timeout)."""
         ticket = uuid.uuid4().hex
         waiter = _Waiter()
         self._waiters[ticket] = waiter
+        if inflight:
+            with self._lock:
+                self._inflight.append(ticket)
+                if self.state == "ready":
+                    self.state = "busy"
         self._send({**message, "ticket": ticket})
         if not waiter.event.wait(timeout):
             self._waiters.pop(ticket, None)
-            return {"type": "error", "ticket": ticket, "error": f"no reply from the notebook session in {timeout:.0f}s"}
-        return waiter.reply or {}
+            waiter.reply = {
+                "type": "error",
+                "ticket": ticket,
+                "error": f"no reply from the notebook session in {timeout:.0f}s",
+            }
+        return waiter
 
-    def events_after(self, after: int) -> list[dict[str, Any]]:
-        """Buffered events with ``seq > after`` (the oldest are gone past ``RING_SIZE``)."""
-        with self._cond:
-            return [event for event in self._events if event["seq"] > after]
-
-    def wait_events(self, after: int, timeout: float) -> list[dict[str, Any]]:
-        """Like :meth:`events_after`, blocking up to ``timeout`` seconds for one to arrive; ``[]`` on timeout."""
-        with self._cond:
-            if self._seq <= after and not self._closed:
-                self._cond.wait(timeout)
-            return [event for event in self._events if event["seq"] > after]
-
-    def execute(self, cell_id: str, code: str, provenance: Any = None) -> str:
-        """Queue a cell; its stream, display and ``done`` events carry the returned ticket."""
+    def run_cell(
+        self, cell_id: str, code: str, provenance: Any = None, timeout: float = REPLY_TIMEOUT
+    ) -> dict[str, Any]:
+        """Execute a cell and wait for its ``done``: ``{ok, error, traceback, stdout, stderr, displays}``."""
         self.touch()
-        ticket = uuid.uuid4().hex
-        with self._cond:
-            self._inflight.append(ticket)
-            if self.state == "ready":
-                self.state = "busy"
-        self._send({"type": "execute", "ticket": ticket, "cell_id": cell_id, "code": code, "provenance": provenance})
-        return ticket
-
-    def interrupt(self) -> None:
-        """Interrupt the running cell; kill and restart the session when it has not stopped after the grace period."""
-        self.touch()
-        with self._cond:
-            target = self._inflight[0] if self._inflight else None
-        self._send({"type": "interrupt"})
-        if target is None:
-            return
-        generation = self.generation
-        timer = threading.Timer(self.interrupt_grace, self._escalate, args=(target, generation))
-        timer.daemon = True
-        timer.start()
-
-    def _escalate(self, ticket: str, generation: int) -> None:
-        with self._cond:
-            stuck = ticket in self._inflight
-        if stuck and generation == self.generation and not self._closed:
-            self.restart()
+        message = {"type": "execute", "cell_id": cell_id, "code": code, "provenance": provenance}
+        waiter = self._request(message, timeout, inflight=True)
+        reply = waiter.reply or {}
+        streams = {"stdout": "", "stderr": ""}
+        for event in waiter.events:
+            if event["type"] == "stream":
+                streams[event.get("name", "stdout")] += event.get("text", "")
+        return {
+            "ok": reply.get("type") == "done" and bool(reply.get("ok")),
+            "error": reply.get("error"),
+            "traceback": reply.get("traceback"),
+            **streams,
+            "displays": [event["payload"] for event in waiter.events if event["type"] == "display"],
+        }
 
     def restart(self) -> None:
-        """Kill the child, start a new one, re-seed it and emit ``restarted``; queued cells are dropped."""
+        """Kill the child, start a new one and re-seed it; running and queued cells fail with ``RESTARTED_MESSAGE``."""
         with self._lifecycle:
             if self._closed:
                 return
@@ -347,28 +320,24 @@ class NotebookSession:
                 writer.put(_STOP)
             if process is not None:
                 kill_process(process)
-            with self._cond:
-                dropped = list(self._inflight)
             self._fail_waiters(RESTARTED_MESSAGE)
-            for ticket in dropped:
-                self._emit({"type": "done", "ticket": ticket, "ok": False, "error": RESTARTED_MESSAGE})
             self._spawn()
-            self._emit({"type": "restarted", "message": RESTARTED_MESSAGE})
 
-    def reset(self, snapshot: dict[str, Any] | None = None) -> str:
-        """Drop every variable and re-seed (from ``snapshot`` when given, else the last seed)."""
+    def reset(self, snapshot: dict[str, Any] | None = None) -> None:
+        """Drop every variable and re-seed (from ``snapshot`` when given, else the last seed); restarts when busy."""
         self.touch()
         if snapshot is not None:
             self.snapshot = snapshot
-        ticket = uuid.uuid4().hex
-        self._send({"type": "reset", "ticket": ticket, "snapshot": snapshot})
-        return ticket
+        if self.busy:
+            self.restart()
+            return
+        self.epoch += 1
+        self._send({"type": "reset", "ticket": uuid.uuid4().hex, "snapshot": snapshot})
 
     def schemas(self, timeout: float = 30.0) -> dict[str, Any]:
         """``{name: [{"name", "data_type"}]}`` for every frame bound in the session namespace."""
         self.touch()
-        reply = self._request({"type": "schemas"}, timeout)
-        return reply.get("frames") or {}
+        return self._request({"type": "schemas"}, timeout).reply.get("frames") or {}
 
     def clean_run(self, request: Any, timeout: float = REPLY_TIMEOUT) -> dict[str, Any]:
         """Run the clean run of ``request`` (a ``CleanRunRequest``) in the child; the raw ``graph`` reply."""
@@ -376,7 +345,7 @@ class NotebookSession:
         fields = request.model_dump(mode="json") if hasattr(request, "model_dump") else dict(request)
         if fields.get("snapshot"):
             self.snapshot = fields["snapshot"]
-        return self._request({"type": "clean_run", **fields}, timeout)
+        return self._request({"type": "clean_run", **fields}, timeout).reply
 
     def close_input(self) -> None:
         """Close the child's stdin (it exits on EOF) without waiting."""
@@ -384,8 +353,6 @@ class NotebookSession:
         self.state = "closed"
         if self._writer is not None:
             self._writer.put(_STOP)
-        with self._cond:
-            self._cond.notify_all()
 
     def wait_or_kill(self, timeout: float = 2.0) -> None:
         process = self._process
@@ -408,9 +375,6 @@ class NotebookSession:
             self.close_input()
             self.wait_or_kill(timeout)
 
-    def info(self) -> dict[str, Any]:
-        return {"session_id": self.session_id, "flow_id": self.flow_id, "state": self.state}
-
 
 def _close_in_background(sessions: list[NotebookSession]) -> None:
     """Close ``sessions`` off the caller's thread: stdin at once, the bounded wait/kill in a daemon thread."""
@@ -426,7 +390,6 @@ class NotebookSessionRegistry:
         self,
         idle_ttl: float | None = None,
         max_sessions: int | None = None,
-        interrupt_grace: float = DEFAULT_INTERRUPT_GRACE,
         session_factory: Callable[..., NotebookSession] = NotebookSession,
     ) -> None:
         if idle_ttl is None:
@@ -435,7 +398,6 @@ class NotebookSessionRegistry:
             max_sessions = int(_env_number("FLOWFILE_NOTEBOOK_MAX_SESSIONS", DEFAULT_MAX_SESSIONS))
         self.idle_ttl = idle_ttl
         self.max_sessions = max_sessions
-        self.interrupt_grace = interrupt_grace
         self._factory = session_factory
         self._sessions: dict[str, NotebookSession] = {}
         self._lock = threading.Lock()
@@ -461,20 +423,25 @@ class NotebookSessionRegistry:
             while len(self._sessions) >= max(self.max_sessions, 1):
                 oldest = min(self._sessions.values(), key=lambda s: s.last_used)
                 evicted.append(self._sessions.pop(oldest.session_id))
-            session = self._factory(user_id, flow_id, snapshot, interrupt_grace=self.interrupt_grace)
+            session = self._factory(user_id, flow_id, snapshot)
             self._sessions[session.session_id] = session
         _close_in_background(evicted)
         session.start()
         self._ensure_janitor()
         return session
 
-    def get(self, session_id: str, user_id: int) -> NotebookSession | None:
-        """The session when it exists and belongs to ``user_id``; ``None`` otherwise."""
+    def find(self, user_id: int, flow_id: int) -> NotebookSession | None:
+        """The live session of ``(user_id, flow_id)`` without starting one."""
         with self._lock:
-            session = self._sessions.get(session_id)
-        if session is None or session.user_id != user_id or session.closed:
-            return None
-        return session
+            sessions = list(self._sessions.values())
+        return next(
+            (
+                s
+                for s in sessions
+                if s.user_id == user_id and s.flow_id == flow_id and not s.closed and s.state != "dead"
+            ),
+            None,
+        )
 
     def _pop(self, predicate: Callable[[NotebookSession], bool]) -> list[NotebookSession]:
         with self._lock:
@@ -489,10 +456,6 @@ class NotebookSessionRegistry:
         for session in victims:
             session.close()
         return len(victims)
-
-    def close_session(self, session_id: str) -> None:
-        for session in self._pop(lambda s: s.session_id == session_id):
-            session.close()
 
     def sweep_idle(self) -> int:
         """Close sessions unused for longer than ``idle_ttl`` and not running a cell; how many were closed."""

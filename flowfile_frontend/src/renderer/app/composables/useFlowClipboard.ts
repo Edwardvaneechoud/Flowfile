@@ -251,7 +251,7 @@ export const hasTextSelection = (selection?: { toString(): string } | null): boo
  * (every floating panel incl. the node-settings drawer) carries
  * data-canvas-overlay; the rest are Element Plus overlays (poppers/selects
  * teleport to <body>, so closest() must see their wrapper class), the
- * custom canvas context menu and the canvas notebook dock.
+ * custom canvas context menu and the flow notebook pane.
  */
 export const CANVAS_PANEL_SELECTOR =
   "[data-canvas-overlay], [data-canvas-notebook], .el-dialog, .el-drawer, .el-popper, .el-message-box, .el-overlay, .context-menu";

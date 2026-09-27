@@ -53,6 +53,8 @@ Example event:
 | `export_code_used` | Code is exported or a project is saved to a folder. |
 | `alteryx_imported` | An Alteryx workflow is imported. |
 | `alteryx_import_failed` | An Alteryx import fails. |
+| `notebook_opened` | A flow is first opened in the [notebook](visual-editor/notebook.md) in a session. |
+| `notebook_pushed` | Notebook cells are pushed onto the canvas. |
 
 Extra fields per event:
 

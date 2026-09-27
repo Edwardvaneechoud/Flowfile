@@ -1,0 +1,826 @@
+{
+  "fl": [
+    {
+      "name": "Array",
+      "kind": "class",
+      "signature": "(inner, shape=None, *, width=None)",
+      "doc_first_line": "Fixed length list type."
+    },
+    {
+      "name": "Binary",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Binary type."
+    },
+    {
+      "name": "Boolean",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Boolean type."
+    },
+    {
+      "name": "CatalogReference",
+      "kind": "class",
+      "signature": "(name, *, auto_create=False, description=None)",
+      "doc_first_line": "Validated handle to a level-0 catalog namespace."
+    },
+    {
+      "name": "Categorical",
+      "kind": "class",
+      "signature": "(categories=None, *, ordering=None)",
+      "doc_first_line": "A categorical encoding of a set of strings."
+    },
+    {
+      "name": "CustomNode",
+      "kind": "class",
+      "signature": "(node, *inputs, settings=None, kernel=None, deferred=None, schemas=None, description=None, flow_graph=None)",
+      "doc_first_line": "A user-defined (custom) node, placed from its class, an instance of it, or its node type name."
+    },
+    {
+      "name": "DataType",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Base class for all Polars data types."
+    },
+    {
+      "name": "DataTypeClass",
+      "kind": "class",
+      "signature": "",
+      "doc_first_line": "Metaclass for nicely printing DataType classes."
+    },
+    {
+      "name": "Date",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Data type representing a calendar date."
+    },
+    {
+      "name": "Datetime",
+      "kind": "class",
+      "signature": "(time_unit='us', time_zone=None)",
+      "doc_first_line": "Data type representing a calendar date and time of day."
+    },
+    {
+      "name": "Decimal",
+      "kind": "class",
+      "signature": "(precision=None, scale=0)",
+      "doc_first_line": "Decimal 128-bit type with an optional precision and non-negative scale."
+    },
+    {
+      "name": "Duration",
+      "kind": "class",
+      "signature": "(time_unit='us')",
+      "doc_first_line": "Data type representing a time duration."
+    },
+    {
+      "name": "Enum",
+      "kind": "class",
+      "signature": "(categories)",
+      "doc_first_line": "A fixed categorical encoding of a unique set of strings."
+    },
+    {
+      "name": "Field",
+      "kind": "class",
+      "signature": "(name, dtype)",
+      "doc_first_line": "Definition of a single field within a `Struct` DataType."
+    },
+    {
+      "name": "Float32",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "32-bit floating point type."
+    },
+    {
+      "name": "Float64",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "64-bit floating point type."
+    },
+    {
+      "name": "FlowDataEngine",
+      "kind": "class",
+      "signature": "(raw_data=None, path_ref=None, name=None, optimize_memory=True, schema=None, number_of_records=None, calculate_schema_stats=False, streamable=True, number_of_records_callback=None, data_callback=None)",
+      "doc_first_line": "The core data handling engine for Flowfile."
+    },
+    {
+      "name": "FlowFrame",
+      "kind": "class",
+      "signature": "(data=None, schema=None, *, schema_overrides=None, strict=True, orient=None, infer_schema_length=100, nan_to_null=False, flow_graph=None, node_id=None, parent_node_id=None, output_handle='output-0', deferred=False, **kwargs)",
+      "doc_first_line": "Main class that wraps FlowDataEngine and maintains the ETL graph."
+    },
+    {
+      "name": "FlowGraph",
+      "kind": "class",
+      "signature": "(flow_settings=None, name=None, input_cols=None, output_cols=None, path_ref=None, input_flow=None, cache_results=False)",
+      "doc_first_line": "A class representing a Directed Acyclic Graph (DAG) for data processing pipelines."
+    },
+    {
+      "name": "FlowInformation",
+      "kind": "class",
+      "signature": "(*, flow_id, flow_name='', flow_settings, data={}, node_starts, node_connections=[], groups=<factory>, comments=<factory>)",
+      "doc_first_line": "Represents the complete state of a flow, including settings, nodes, and connections."
+    },
+    {
+      "name": "FlowInput",
+      "kind": "function",
+      "signature": "(name, *, schema=None, sample=None, flow_graph=None, description=None)",
+      "doc_first_line": "Place a named ``flow_input`` node, an input a parent flow's ``RunFlow`` feeds, and return its frame."
+    },
+    {
+      "name": "FlowNode",
+      "kind": "class",
+      "signature": "(node_id, function, parent_uuid, setting_input, name, node_type, input_columns=None, output_schema=None, drop_columns=None, renew_schema=True, pos_x=0, pos_y=0, schema_callback=None)",
+      "doc_first_line": "Represents a single node in a data flow graph."
+    },
+    {
+      "name": "FlowOutput",
+      "kind": "class",
+      "signature": "(name, *, description=None)",
+      "doc_first_line": "A flow output name, declared once and used by ``to_flow_output`` and ``RunFlow``."
+    },
+    {
+      "name": "FlowRef",
+      "kind": "class",
+      "signature": "(registration_id, flow_uuid, flow_path, name, schema=None)",
+      "doc_first_line": "Handle to a catalog-registered flow: what ``RunFlow`` runs."
+    },
+    {
+      "name": "FlowSettings",
+      "kind": "class",
+      "signature": "(*, flow_id=<factory>, description=None, save_location=None, name='', path='', source_registration_id=None, execution_mode='Performance', execution_location=<factory>, max_parallel_workers=4, parameters=<factory>, auto_save=False, modified_on=None, show_detailed_progress=True, show_edge_labels=False, is_running=False, is_canceled=False, track_history=True, validate_settings=True)",
+      "doc_first_line": "Extends FlowGraphConfig with additional operational settings for a flow."
+    },
+    {
+      "name": "FlowfileColumn",
+      "kind": "class",
+      "signature": "(polars_type)",
+      "doc_first_line": "FlowfileColumn(polars_type: flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type.PlType)"
+    },
+    {
+      "name": "FullCloudStorageConnection",
+      "kind": "class",
+      "signature": "(*, storage_type, auth_method, connection_name='None', aws_region=None, aws_access_key_id=None, aws_secret_access_key=None, aws_role_arn=None, aws_allow_unsafe_html=None, aws_session_token=None, aws_profile=None, azure_account_name=None, azure_account_key=None, azure_tenant_id=None, azure_client_id=None, azure_client_secret=None, azure_sas_token=None, gcs_service_account_key=None, gcs_project_id=None, endpoint_url=None, verify_ssl=True)",
+      "doc_first_line": "Internal model with decrypted secrets"
+    },
+    {
+      "name": "FuzzyMapping",
+      "kind": "class",
+      "signature": "(left_col, right_col=None, threshold_score=80.0, fuzzy_type='levenshtein', perc_unique=0, output_column_name=None, valid=True)",
+      "doc_first_line": "Represents the configuration for a fuzzy string match between two columns."
+    },
+    {
+      "name": "Gate",
+      "kind": "class",
+      "signature": "(frame, formula=None, *, parameter=None, operator='equals', value=None, control=None, else_output=True, description=None)",
+      "doc_first_line": "A gate node: its data input flows through, and its downstream only runs when the condition holds."
+    },
+    {
+      "name": "GateOperator",
+      "kind": "class",
+      "signature": "(*values)",
+      "doc_first_line": "Operators of a parameter-mode gate condition."
+    },
+    {
+      "name": "GroupByFrame",
+      "kind": "class",
+      "signature": "(node_id, parent_frame, by_cols, maintain_order=False, description=None)",
+      "doc_first_line": "Represents a grouped DataFrame for aggregation operations."
+    },
+    {
+      "name": "Int128",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "128-bit signed integer type."
+    },
+    {
+      "name": "Int16",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "16-bit signed integer type."
+    },
+    {
+      "name": "Int32",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "32-bit signed integer type."
+    },
+    {
+      "name": "Int64",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "64-bit signed integer type."
+    },
+    {
+      "name": "Int8",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "8-bit signed integer type."
+    },
+    {
+      "name": "List",
+      "kind": "class",
+      "signature": "(inner)",
+      "doc_first_line": "Variable length list type."
+    },
+    {
+      "name": "NativeNodeError",
+      "kind": "class",
+      "signature": "",
+      "doc_first_line": "A native node or deferred frame could not be built or materialised."
+    },
+    {
+      "name": "Node",
+      "kind": "class",
+      "signature": "(node_type, *inputs, settings=None, deferred=None, description=None, flow_graph=None)",
+      "doc_first_line": "Any built-in node type, placed from its type and settings."
+    },
+    {
+      "name": "NodeType",
+      "kind": "class",
+      "signature": "(*values)",
+      "doc_first_line": "Every built-in node type the canvas can place."
+    },
+    {
+      "name": "Null",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Data type representing null values."
+    },
+    {
+      "name": "Object",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Data type for wrapping arbitrary Python objects."
+    },
+    {
+      "name": "ParamType",
+      "kind": "class",
+      "signature": "(*values)",
+      "doc_first_line": "Types of a flow parameter."
+    },
+    {
+      "name": "Parameter",
+      "kind": "class",
+      "signature": "(name, *, default='', type='string', description='', enum_values=None)",
+      "doc_first_line": "A flow parameter, declared once and used wherever a value or a parameter name is taken."
+    },
+    {
+      "name": "PythonScript",
+      "kind": "class",
+      "signature": "(*inputs, code=None, cells=None, kernel=None, outputs=None, schemas=None, description=None, flow_graph=None)",
+      "doc_first_line": "A Python Script node: its code runs on a kernel container when the flow runs."
+    },
+    {
+      "name": "RunFlow",
+      "kind": "class",
+      "signature": "(flow, *, name=None, schema=None, overwrite=False, inputs=None, params=None, param_frame=None, iterate=False, append_metadata=True, description=None, flow_graph=None, **input_frames)",
+      "doc_first_line": "A run_flow node: runs a registered flow inside this one, feeding its inputs and parameters."
+    },
+    {
+      "name": "SchemaReference",
+      "kind": "class",
+      "signature": "(catalog, name, *, auto_create=False, description=None)",
+      "doc_first_line": "Validated handle to a level-1 schema namespace."
+    },
+    {
+      "name": "String",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "UTF-8 encoded string type."
+    },
+    {
+      "name": "Struct",
+      "kind": "class",
+      "signature": "(fields)",
+      "doc_first_line": "Struct composite type."
+    },
+    {
+      "name": "Time",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Data type representing the time of day."
+    },
+    {
+      "name": "UInt16",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "16-bit unsigned integer type."
+    },
+    {
+      "name": "UInt32",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "32-bit unsigned integer type."
+    },
+    {
+      "name": "UInt64",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "64-bit unsigned integer type."
+    },
+    {
+      "name": "UInt8",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "8-bit unsigned integer type."
+    },
+    {
+      "name": "Unknown",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Type representing DataType values that could not be determined statically."
+    },
+    {
+      "name": "Utf8",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "UTF-8 encoded string type."
+    },
+    {
+      "name": "add_flow_parameter",
+      "kind": "function",
+      "signature": "(flow, parameter)",
+      "doc_first_line": "Declare ``parameter`` on the flow and return it."
+    },
+    {
+      "name": "all_",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "boolean",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "by_dtype",
+      "kind": "function",
+      "signature": "(dtypes)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "canvas_node",
+      "kind": "function",
+      "signature": "(node_id, *inputs, output=None)",
+      "doc_first_line": "Adopt canvas node ``node_id`` from the seeded session: a placeholder for a node not editable as code."
+    },
+    {
+      "name": "categorical",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "col",
+      "kind": "function",
+      "signature": "(name)",
+      "doc_first_line": "Creates a Column expression."
+    },
+    {
+      "name": "column",
+      "kind": "function",
+      "signature": "(name)",
+      "doc_first_line": "Alias for col(). Creates a Column expression."
+    },
+    {
+      "name": "concat",
+      "kind": "function",
+      "signature": "(frames, how='vertical', rechunk=False, parallel=True, description=None)",
+      "doc_first_line": "Concatenate multiple FlowFrames into one."
+    },
+    {
+      "name": "contains",
+      "kind": "function",
+      "signature": "(pattern)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "count",
+      "kind": "function",
+      "signature": "(*names)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "create_cloud_storage_connection",
+      "kind": "function",
+      "signature": "(connection)",
+      "doc_first_line": "Create a cloud storage connection using the provided connection details."
+    },
+    {
+      "name": "create_cloud_storage_connection_if_not_exists",
+      "kind": "function",
+      "signature": "(connection)",
+      "doc_first_line": "Create a cloud storage connection if it does not already exist."
+    },
+    {
+      "name": "create_database_connection",
+      "kind": "function",
+      "signature": "(connection_name, *, database_type='postgresql', host=None, port=None, database=None, username=None, password=None, ssl_enabled=False, url=None)",
+      "doc_first_line": "Create and store a new database connection."
+    },
+    {
+      "name": "create_database_connection_if_not_exists",
+      "kind": "function",
+      "signature": "(connection_name, *, database_type='postgresql', host=None, port=None, database=None, username=None, password=None, ssl_enabled=False, url=None)",
+      "doc_first_line": "Create a database connection if it doesn't already exist."
+    },
+    {
+      "name": "create_flow_graph",
+      "kind": "function",
+      "signature": "(flow_id=None)",
+      "doc_first_line": "Create a new FlowGraph instance with a unique flow ID."
+    },
+    {
+      "name": "cum_count",
+      "kind": "function",
+      "signature": "(expr, reverse=False)",
+      "doc_first_line": "Return the cumulative count of the non-null values in the column."
+    },
+    {
+      "name": "custom_node",
+      "kind": "function",
+      "signature": "(node)",
+      "doc_first_line": "A factory placing custom node ``node`` (a class, an instance, or its node type name)."
+    },
+    {
+      "name": "custom_nodes",
+      "kind": "constant",
+      "signature": "",
+      "doc_first_line": ""
+    },
+    {
+      "name": "date",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "datetime",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "default_schema",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": "Return the seeded ``General/default`` schema reference."
+    },
+    {
+      "name": "del_cloud_storage_connection",
+      "kind": "function",
+      "signature": "(connection_name)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "del_database_connection",
+      "kind": "function",
+      "signature": "(connection_name)",
+      "doc_first_line": "Delete a database connection by its name."
+    },
+    {
+      "name": "duration",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "ends_with",
+      "kind": "function",
+      "signature": "(pattern)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "float_",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "flow_ref",
+      "kind": "function",
+      "signature": "(namespace=None, name=None, *, uuid=None, registration_id=None)",
+      "doc_first_line": "Find a registered flow by ``uuid``, by ``registration_id``, or by ``name`` within ``namespace``."
+    },
+    {
+      "name": "from_dict",
+      "kind": "function",
+      "signature": "(data, *, flow_graph=None, description=None)",
+      "doc_first_line": "Create a FlowFrame from a dictionary or list of dictionaries."
+    },
+    {
+      "name": "from_raw_data",
+      "kind": "function",
+      "signature": "(raw_data, *, flow_graph=None, description=None)",
+      "doc_first_line": "Create a FlowFrame from a RawData object."
+    },
+    {
+      "name": "get_all_available_cloud_storage_connections",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "get_all_available_database_connections",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": "Get all available database connections for the current user."
+    },
+    {
+      "name": "get_catalog",
+      "kind": "function",
+      "signature": "(name)",
+      "doc_first_line": "Return the existing catalog ``name``, like ``CatalogReference(name)``."
+    },
+    {
+      "name": "get_database_connection_by_name",
+      "kind": "function",
+      "signature": "(connection_name)",
+      "doc_first_line": "Get a database connection by its name."
+    },
+    {
+      "name": "integer",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "len",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "list_",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "list_catalogs",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": "Return every catalog (level-0 namespace) in the backend."
+    },
+    {
+      "name": "list_files",
+      "kind": "function",
+      "signature": "(directory, *, file_types=None, recursive=False, max_depth=5, include_hidden=False, include_files=True, include_directories=False, max_files=None, flow_graph=None, description=None)",
+      "doc_first_line": "List the contents of a directory as a table."
+    },
+    {
+      "name": "lit",
+      "kind": "function",
+      "signature": "(value)",
+      "doc_first_line": "Creates a Literal expression; a ``Parameter`` becomes its ``to_expr()``."
+    },
+    {
+      "name": "matches",
+      "kind": "function",
+      "signature": "(pattern)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "max",
+      "kind": "function",
+      "signature": "(*names)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "mean",
+      "kind": "function",
+      "signature": "(*names)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "min",
+      "kind": "function",
+      "signature": "(*names)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "node_designer",
+      "kind": "module",
+      "signature": "",
+      "doc_first_line": "Re-export shim — the custom-node authoring SDK moved to shared/node_designer."
+    },
+    {
+      "name": "node_interface",
+      "kind": "module",
+      "signature": "",
+      "doc_first_line": ""
+    },
+    {
+      "name": "numeric",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "object_",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "open_graph_in_editor",
+      "kind": "function",
+      "signature": "(flow_graph, storage_location=None, module_name='flowfile', automatically_open_browser=True)",
+      "doc_first_line": "Save the ETL graph, ensure the Flowfile server is running (starting it"
+    },
+    {
+      "name": "polars_code",
+      "kind": "function",
+      "signature": "(code, *inputs, flow_graph=None, description=None)",
+      "doc_first_line": "Place one Polars Code node reading ``inputs`` in order, or none: a source node."
+    },
+    {
+      "name": "python_script",
+      "kind": "function",
+      "signature": "(fn=None, /, *, kernel=None, outputs=None, returns=None, description=None, flow_graph=None)",
+      "doc_first_line": "Decorate a module-level function to place it as a Python Script (notebook) node."
+    },
+    {
+      "name": "read_api",
+      "kind": "function",
+      "signature": "(url, *, method='GET', headers=None, params=None, json_body=None, auth=None, pagination=None, record_path='', timeout_seconds=30.0, max_retries=3, flow_graph=None)",
+      "doc_first_line": "Read JSON data from a REST API into a FlowFrame."
+    },
+    {
+      "name": "read_catalog_sql",
+      "kind": "function",
+      "signature": "(sql_query, *, flow_graph=None)",
+      "doc_first_line": "Execute a SQL query against all catalog Delta tables."
+    },
+    {
+      "name": "read_catalog_table",
+      "kind": "function",
+      "signature": "(table_name, *, schema=None, namespace_id=None, namespace_full_name=None, delta_version=None, scd2_view=None, scd2_as_of=None, changes_since=None, changes_consumer=None, changes_start='now', include_change_preimage=False, flow_graph=None)",
+      "doc_first_line": "Read a table from the Flowfile catalog."
+    },
+    {
+      "name": "read_csv",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, separator=',', convert_to_absolute_path=True, description=None, scan_mode=None, include_file_paths=None, has_header=True, new_columns=None, comment_prefix=None, quote_char='\"', skip_rows=0, skip_lines=0, schema=None, schema_overrides=None, null_values=None, missing_utf8_is_empty_string=False, ignore_errors=False, try_parse_dates=False, infer_schema=True, infer_schema_length=100, n_rows=None, encoding='utf8', low_memory=False, rechunk=False, storage_options=None, skip_rows_after_header=0, row_index_name=None, row_index_offset=0, eol_char='\\n', raise_if_empty=True, truncate_ragged_lines=False, decimal_comma=False, glob=True, cache=True, with_column_names=None, **other_options)",
+      "doc_first_line": "Read a CSV file into a FlowFrame."
+    },
+    {
+      "name": "read_database",
+      "kind": "function",
+      "signature": "(connection_name, *, table_name=None, schema_name=None, query=None, flow_graph=None)",
+      "doc_first_line": "Read data from a database using a stored connection."
+    },
+    {
+      "name": "read_excel",
+      "kind": "function",
+      "signature": "(source, *, sheet_name=None, has_header=True, flow_graph=None, description=None, convert_to_absolute_path=True)",
+      "doc_first_line": "Read an Excel file into a FlowFrame."
+    },
+    {
+      "name": "read_from_cloud_storage",
+      "kind": "function",
+      "signature": "(source, *, file_format='parquet', connection_name=None, scan_mode=None, delimiter=';', has_header=True, encoding='utf8', delta_version=None, changes_since=None, include_change_preimage=False, output_field_config=None)",
+      "doc_first_line": "Read data from cloud storage."
+    },
+    {
+      "name": "read_kafka",
+      "kind": "function",
+      "signature": "(connection_name, *, topic_name, max_messages=100000, start_offset='latest', poll_timeout_seconds=30.0, value_format='json', flow_graph=None)",
+      "doc_first_line": "Read messages from a Kafka topic using a named Flowfile connection."
+    },
+    {
+      "name": "read_parquet",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, description=None, convert_to_absolute_path=True, scan_mode=None, include_file_paths=None, **options)",
+      "doc_first_line": "Read a Parquet file into a FlowFrame."
+    },
+    {
+      "name": "register_flow",
+      "kind": "function",
+      "signature": "(flow_or_frame, *, name, schema=None, overwrite=False)",
+      "doc_first_line": "Save a flow as a YAML file and register it in the catalog under ``name``; return its ``FlowRef``."
+    },
+    {
+      "name": "scan_csv",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, separator=',', convert_to_absolute_path=True, description=None, scan_mode=None, include_file_paths=None, has_header=True, new_columns=None, comment_prefix=None, quote_char='\"', skip_rows=0, skip_lines=0, schema=None, schema_overrides=None, null_values=None, missing_utf8_is_empty_string=False, ignore_errors=False, try_parse_dates=False, infer_schema=True, infer_schema_length=100, n_rows=None, encoding='utf8', low_memory=False, rechunk=False, storage_options=None, skip_rows_after_header=0, row_index_name=None, row_index_offset=0, eol_char='\\n', raise_if_empty=True, truncate_ragged_lines=False, decimal_comma=False, glob=True, cache=True, with_column_names=None, **other_options)",
+      "doc_first_line": "Scan a CSV file into a FlowFrame. This function is an alias for read_csv."
+    },
+    {
+      "name": "scan_csv_from_cloud_storage",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, connection_name=None, scan_mode=None, delimiter=';', has_header=True, encoding='utf8', output_field_config=None)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "scan_delta",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, connection_name=None, version=None, changes_since=None, include_change_preimage=False, output_field_config=None)",
+      "doc_first_line": "Scan a Delta table in cloud storage into a FlowFrame."
+    },
+    {
+      "name": "scan_json_from_cloud_storage",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, connection_name=None, scan_mode=None, output_field_config=None)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "scan_parquet",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, description=None, convert_to_absolute_path=True, scan_mode=None, include_file_paths=None, **options)",
+      "doc_first_line": "Scan a Parquet file into a FlowFrame. This function is an alias for read_parquet."
+    },
+    {
+      "name": "scan_parquet_from_cloud_storage",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, connection_name=None, scan_mode=None, description=None, output_field_config=None)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "set_flow_parameter",
+      "kind": "function",
+      "signature": "(flow, name, value)",
+      "doc_first_line": "Set the value of a declared flow parameter (its stored default), checked against its type."
+    },
+    {
+      "name": "sql",
+      "kind": "function",
+      "signature": "(query, /, *frames, description=None, **tables)",
+      "doc_first_line": "Run ``query`` over the given frames as a SQL Query node and return its output frame."
+    },
+    {
+      "name": "start_web_ui",
+      "kind": "function",
+      "signature": "(host='127.0.0.1', port=63578, open_browser=True)",
+      "doc_first_line": "Start the flowfile_core FastAPI app with the web UI routes and worker functionality."
+    },
+    {
+      "name": "starts_with",
+      "kind": "function",
+      "signature": "(pattern)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "string",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "struct",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "sum",
+      "kind": "function",
+      "signature": "(*names)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "temporal",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "time",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "transform_schema",
+      "kind": "module",
+      "signature": "",
+      "doc_first_line": ""
+    },
+    {
+      "name": "when",
+      "kind": "function",
+      "signature": "(condition)",
+      "doc_first_line": "Start a when-then-otherwise expression."
+    },
+    {
+      "name": "write_catalog_table",
+      "kind": "function",
+      "signature": "(df, table_name, *, schema=None, namespace_id=None, namespace_full_name=None, write_mode='overwrite', merge_keys=None, partition_by=None, scd2_compare_columns=None, scd2_full_snapshot=False, scd2_surrogate_key_column='sk', scd2_valid_from_column='valid_from', scd2_valid_to_column='valid_to', scd2_is_current_column='is_current', scd2_partition_on_current=True, scd2_output_mode='input', track_changes=False, description=None)",
+      "doc_first_line": "Write a LazyFrame to the Flowfile catalog as a Delta table."
+    },
+    {
+      "name": "write_database",
+      "kind": "function",
+      "signature": "(df, connection_name, table_name, *, schema_name=None, if_exists='append')",
+      "doc_first_line": "Write data to a database using a stored connection."
+    },
+    {
+      "name": "write_to_cloud_storage",
+      "kind": "function",
+      "signature": "(df, path, *, file_format='parquet', connection_name=None, delimiter=';', encoding='utf8', compression='snappy', write_mode='overwrite', partition_by=None, merge_keys=None, track_changes=False)",
+      "doc_first_line": "Write data to cloud storage."
+    }
+  ]
+}

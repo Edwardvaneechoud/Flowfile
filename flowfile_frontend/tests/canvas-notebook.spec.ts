@@ -1,17 +1,10 @@
-import { test, expect, Page } from "@playwright/test";
+import { test, expect, Page, APIRequestContext } from "@playwright/test";
 
-import {
-  API_URL,
-  authHeaders,
-  closeFlow,
-  createFlow,
-  getAuthToken,
-  nodeIdsByType,
-} from "./helpers/api";
-import { dragPaletteNode, minimizePalette, openFlow, openNodeSettings } from "./helpers/canvas";
+import { API_URL, authHeaders, closeFlow, createFlow, getAuthToken } from "./helpers/api";
+import { minimizePalette, openFlow } from "./helpers/canvas";
 
 /**
- * The read-only canvas notebook dock: canvas edits re-render its cells, layout moves do not.
+ * The canvas notebook is the catalog NotebookPanel on the flow's session: render, run, push, undo.
  *
  * Needs a core started with FEATURE_FLAG_CANVAS_NOTEBOOK=1 (the spec skips when the status
  * route answers 503) and no Docker. Set SHOTS_DIR to keep a screenshot of each step.
@@ -23,10 +16,87 @@ async function shot(page: Page, name: string) {
   if (SHOTS_DIR) await page.screenshot({ path: `${SHOTS_DIR}/${name}.png` });
 }
 
-const renderCount = async (page: Page) =>
-  Number(await page.locator(".canvas-notebook-dock").getAttribute("data-render-count"));
+/** manual_input -> filter (salary > 60000) -> polars_code, through the editor API. */
+async function buildFlow(request: APIRequestContext, token: string, flowId: number) {
+  const post = async (path: string, params: Record<string, unknown>, data?: unknown) => {
+    const query = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
+    const response = await request.post(`${API_URL}${path}?${query}`, {
+      headers: authHeaders(token),
+      data,
+    });
+    expect(response.ok(), `${path}: ${await response.text()}`).toBe(true);
+  };
+  const add = (id: number, type: string, x: number) =>
+    post("/editor/add_node/", {
+      flow_id: flowId,
+      node_id: id,
+      node_type: type,
+      pos_x: x,
+      pos_y: 200,
+    });
+  const connect = (from: number, to: number) =>
+    post(
+      "/editor/connect_node/",
+      { flow_id: flowId },
+      {
+        input_connection: { node_id: to, connection_class: "input-0" },
+        output_connection: { node_id: from, connection_class: "output-0" },
+      },
+    );
+  await add(1, "manual_input", 100);
+  await add(2, "filter", 400);
+  await add(3, "polars_code", 700);
+  await post(
+    "/update_settings/",
+    { node_type: "manual_input" },
+    {
+      flow_id: flowId,
+      node_id: 1,
+      raw_data_format: {
+        columns: [
+          { name: "id", data_type: "Integer" },
+          { name: "salary", data_type: "Integer" },
+        ],
+        data: [
+          [1, 2, 3, 4],
+          [50000, 75000, 90000, 65000],
+        ],
+      },
+    },
+  );
+  await connect(1, 2);
+  await post(
+    "/update_settings/",
+    { node_type: "filter" },
+    {
+      flow_id: flowId,
+      node_id: 2,
+      depending_on_id: 1,
+      filter_input: {
+        mode: "basic",
+        basic_filter: { field: "salary", operator: ">", value: "60000" },
+      },
+    },
+  );
+  await connect(2, 3);
+  await post(
+    "/update_settings/",
+    { node_type: "polars_code" },
+    {
+      flow_id: flowId,
+      node_id: 3,
+      depending_on_ids: [2],
+      polars_code_input: {
+        polars_code: "output_df = input_df.with_columns((pl.col('salary') * 2).alias('double'))\n",
+      },
+    },
+  );
+}
 
-test.describe("Canvas notebook dock", () => {
+const cellTexts = (page: Page) =>
+  page.locator(".notebook-dock .nb-cell .cm-content").allInnerTexts();
+
+test.describe("Canvas notebook", () => {
   test.use({ viewport: { width: 1600, height: 1000 } });
 
   let token: string;
@@ -38,6 +108,7 @@ test.describe("Canvas notebook dock", () => {
     test.skip(status.status() === 503, "FEATURE_FLAG_CANVAS_NOTEBOOK is off on this core");
     const name = `canvas_notebook_${Date.now()}`;
     flowId = await createFlow(request, token, name);
+    await buildFlow(request, token, flowId);
     await openFlow(page, token, flowId, name);
   });
 
@@ -45,79 +116,68 @@ test.describe("Canvas notebook dock", () => {
     if (flowId) await closeFlow(request, token, flowId);
   });
 
-  test("drop, configure and move a node", async ({ page, request }) => {
-    const dock = page.locator(".canvas-notebook-dock");
-
+  test("render, run, push, undo and move", async ({ page, request }) => {
+    const panel = page.locator(".notebook-dock .notebook-panel");
     await page.getByTestId("canvas-notebook-toggle").click();
-    await expect(dock).toHaveAttribute("data-render-count", /\d+/);
-    await expect(dock.locator('[data-cell-id="imports"]')).toBeVisible();
-    await shot(page, "01-dock-open");
+    for (const id of [1, 2, 3]) {
+      await expect(panel.locator(`[data-cell-id="node-${id}"]`)).toHaveCount(1);
+    }
+    await expect(panel.locator(".nb-banner")).toContainText("Flow session");
+    await shot(page, "01-open");
 
-    await dragPaletteNode(page, "manual", "manual_input", 520, 420);
-    const [nodeId] = (await nodeIdsByType(request, token, flowId)).manual_input;
-    const cell = dock.locator(`[data-cell-id="node-${nodeId}"]`);
-    await expect(cell).toHaveAttribute("data-status", "placeholder");
-    await expect(cell.locator(".cn-cell-reason")).toBeVisible();
-    await shot(page, "02-placeholder");
+    const added = panel.locator(".nb-cell").nth(await panel.locator(".nb-cell").count());
+    await panel.getByRole("button", { name: "Add cell" }).click();
+    await added.locator(".cm-content").click();
+    await page.keyboard.insertText("x = fl.from_dict({'a': [1, 2]}); x");
+    await page.keyboard.press("Shift+Enter");
+    const rows = added.locator(".display-table .ag-center-cols-container .ag-row");
+    await expect(rows).toHaveCount(2, { timeout: 60_000 });
+    await shot(page, "02-ran");
+    await added.locator(".nb-cell-menu").click();
+    await page.locator(".nb-cell-menu-popper:visible [data-action='delete']").click();
 
-    await openNodeSettings(page, nodeId, ".manual-input-root");
-    await page.getByRole("button", { name: "Add Column" }).click();
-    await expect(page.locator(".manual-input-root .info-badge").first()).toHaveText("2 columns");
-    await page.getByRole("button", { name: "Apply" }).click();
-    await expect(cell).toHaveAttribute("data-status", "code", { timeout: 2000 });
-    await expect(cell.locator(".cm-content")).toContainText("fl.");
-    await shot(page, "03-configured");
+    const filterCell = panel.locator('[data-cell-id="node-2"] .cm-content');
+    await filterCell.click();
+    await page.keyboard.press("ControlOrMeta+A");
+    await page.keyboard.insertText('filtered_2 = source_1.filter(fl.col("salary") > 80000)');
+    const pushed = page.waitForResponse((r) => r.url().includes("/editor/notebook/push/"));
+    await panel.getByTestId("nb-push").click();
+    expect((await pushed).status()).toBe(200);
+    // Read raw: the canvas reload after a push or undo can briefly answer non-200.
+    const filterValue = async () =>
+      (
+        await request.get(`${API_URL}/node?flow_id=${flowId}&node_id=2&get_data=false`, {
+          headers: authHeaders(token),
+        })
+      ).text();
+    await expect.poll(filterValue).toContain("80000");
+    await expect(page.getByText("Pushed to the canvas")).toBeVisible();
+    await shot(page, "03-pushed");
 
-    // Fold the drawer and palette off the node and let any close save settle before moving.
-    await page.locator("#rightDrawer button[title='Minimize']").click();
+    await page.locator(".undo-redo-controls .control-btn").first().click();
+    await expect.poll(filterValue).toContain("60000");
+    await expect(panel.locator('[data-cell-id="node-2"] .cm-content')).toContainText("60000");
+    await shot(page, "04-undone");
+
     await minimizePalette(page);
-    await page.waitForTimeout(1000);
-    const before = await renderCount(page);
-
-    const node = page.locator(`.vue-flow__node[data-id="${nodeId}"]`);
+    const before = await cellTexts(page);
+    const node = page.locator('.vue-flow__node[data-id="1"]');
     const box = await node.boundingBox();
     if (!box) throw new Error("node not visible");
-    const positionOf = async () => {
-      const response = await request.get(`${API_URL}/flow_data/v2?flow_id=${flowId}`, {
-        headers: authHeaders(token),
-      });
-      const input = (await response.json()).node_inputs.find((n: any) => String(n.id) === nodeId);
-      return [input.pos_x, input.pos_y];
-    };
-    const positionBefore = await positionOf();
     const rerender = page.waitForResponse((r) => r.url().includes("/notebook/render"));
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2 + 80, { steps: 10 });
+    await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 160, { steps: 10 });
     await page.mouse.up();
-    await expect.poll(positionOf).not.toEqual(positionBefore);
-    // The move is refetched after the debounce, and its unchanged fingerprint is ignored.
     await rerender;
     await page.waitForTimeout(300);
-    expect(await renderCount(page)).toBe(before);
-    await shot(page, "04-moved");
-  });
+    expect(await cellTexts(page)).toEqual(before);
+    await shot(page, "05-moved");
 
-  test("the split resizes by dragging and keeps its width", async ({ page }) => {
-    await page.getByTestId("canvas-notebook-toggle").click();
-    const dock = page.locator(".canvas-notebook-dock");
-    const canvas = page.locator(".canvas-wrap main");
-    const [dockBefore, canvasBefore] = [await dock.boundingBox(), await canvas.boundingBox()];
-    if (!dockBefore || !canvasBefore) throw new Error("dock or canvas not visible");
-    const handle = await page.locator(".cn-resizer").boundingBox();
-    if (!handle) throw new Error("resizer not visible");
-    await page.mouse.move(handle.x + handle.width / 2, handle.y + 200);
-    await page.mouse.down();
-    await page.mouse.move(handle.x + handle.width / 2 - 100, handle.y + 200, { steps: 5 });
-    await page.mouse.up();
-    const dockAfter = await dock.boundingBox();
-    const canvasAfter = await canvas.boundingBox();
-    expect(Math.round(dockAfter!.width - dockBefore.width)).toBe(100);
-    expect(Math.round(canvasBefore.width - canvasAfter!.width)).toBe(100);
-    const stored = await page.evaluate(() =>
-      localStorage.getItem("flowfile.canvasNotebook.width.v1"),
-    );
-    expect(Number(stored)).toBe(Math.round(dockAfter!.width));
-    await shot(page, "05-resized");
+    await panel.locator('[data-cell-id="node-3"] .nb-cell-menu').click();
+    await page.locator(".nb-cell-menu-popper:visible [data-action='run-on-canvas']").click();
+    const preview = page.getByText("double", { exact: true });
+    await expect(preview).toBeVisible({ timeout: 30_000 });
+    await shot(page, "06-run-on-canvas");
   });
 });

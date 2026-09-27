@@ -515,3 +515,16 @@ While `FlowGraph`, `FlowNode`, and `FlowDataEngine` power the core pipeline logi
 - **State management** – Keeps track of all active `FlowGraph` sessions. When the UI triggers a change, it's really calling one of these endpoints, which updates the in-memory graph.
 - **Security** – Handles authentication and authorization so only the right users can access or modify flows.
 - **Data previews** – When you view a node's output in the UI, the API calls `.get_resulting_data()` on the corresponding `FlowNode` and returns a sample to the client.
+
+## The canvas notebook package
+
+`flowfile_core/notebook/` turns an open `FlowGraph` into notebook cells and back. It is gated by `FEATURE_FLAG_CANVAS_NOTEBOOK` (`notebook/gate.py`), and each step is a separate module:
+
+| Module | Role |
+|---|---|
+| `render.py` | `FlowGraph` → one cell per node in the `fl.*` dialect, placeholders as `fl.canvas_node(...)`, and a `code_fingerprint` of settings (minus layout), edges and parameters that the dock uses to skip layout-only changes and push uses as its precondition. |
+| `registry.py`, `protocol.py`, `bootstrap.py`, `session_main.py` | The session subprocess: one per `(user, flow)`, spawned with a stdlib-only bootstrap (frozen builds re-enter through `--notebook-session` at the top of `main.py`), seeded from the canvas, idle-timed and LRU-capped, closed in the lifespan before kernels. |
+| `relabel.py`, `reconcile.py`, `compare.py` | Pure functions: map a clean run's node ids onto the canvas's by per-cell provenance, then compute the minimal list of editor operations between the live graph and the clean run. |
+| `push.py`, `bridge.py` | The push pipeline behind `POST /editor/notebook/push/` and its preview `POST /notebook/plan`: fingerprint check (409), clean run, refusals (422), reconcile. |
+
+The routes live in `routes/notebook.py` (`/notebook/*`) plus `POST /editor/notebook/push/` and `POST /editor/notebook/run_lineage/` in `routes/routes.py`. Only those two are `editor/` routes, so a long session start or a cell run never queues behind the canvas's mutation channel. The frame side is `flowfile_frame/notebook.py` (build mode) and `flowfile_frame/notebook_cells.py` (seed, execute, display, clean run).

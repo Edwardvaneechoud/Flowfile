@@ -568,6 +568,54 @@ class TestRouteMiddleware:
         assert names(sent) == []
 
 
+class TestNotebookRouteEvents:
+    """The canvas notebook's events: opened once per flow, pushed per push; cells run behind the kernel routes."""
+
+    @staticmethod
+    def _app() -> FastAPI:
+        app = FastAPI()
+
+        @app.get("/notebook/render")
+        def _render(flow_id: int):
+            return {"cells": []}
+
+        @app.post("/editor/notebook/push/")
+        def _push(fail: bool = False):
+            if fail:
+                raise HTTPException(409, "canvas changed")
+            return {}
+
+        app.add_middleware(glue.TelemetryMiddleware)
+        return app
+
+    @pytest.fixture
+    def http(self, monkeypatch) -> Iterator[TestClient]:
+        monkeypatch.setattr(glue, "_route_once_seen", set())
+        with TestClient(self._app(), raise_server_exceptions=False) as testclient:
+            yield testclient
+
+    def test_rendering_counts_each_flow_once(self, sent, http) -> None:
+        for flow_id in (1, 1, 2, 1, 2):
+            assert http.get(f"/notebook/render?flow_id={flow_id}").status_code == 200
+        emitted = drain(sent)
+        assert [e["event"] for e in emitted] == ["notebook_opened", "notebook_opened"]
+        assert all(e["props"] == {} for e in emitted), "the flow id is a dedupe key only and never travels"
+
+    def test_a_render_without_a_flow_id_emits_nothing(self, sent, http) -> None:
+        assert http.get("/notebook/render").status_code == 422
+        assert names(sent) == []
+
+    def test_every_successful_push_emits(self, sent, http) -> None:
+        assert http.post("/editor/notebook/push/").status_code == 200
+        assert http.post("/editor/notebook/push/").status_code == 200
+        assert http.post("/editor/notebook/push/?fail=true").status_code == 409
+        assert names(sent) == ["notebook_pushed", "notebook_pushed"]
+
+
+def test_every_once_route_is_a_mapped_route() -> None:
+    assert set(glue.ROUTE_ONCE) <= set(glue.ROUTE_EVENTS)
+
+
 class TestInstall:
     def test_install_is_idempotent(self, monkeypatch) -> None:
         monkeypatch.setattr(glue, "_middleware_installed", False)

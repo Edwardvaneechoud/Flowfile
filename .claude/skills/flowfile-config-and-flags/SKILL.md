@@ -96,6 +96,7 @@ Non-env port facts: Tauri scans a free `(core, worker)` port pair starting at 63
 | `FLOWFILE_SINGLE_FILE_MODE` | settings.py:19; `flowfile/web/__init__.py:72-73` | `"0"` | **exact `"1"` only** | Worker routes co-hosted on core under `/worker`; worker URL gets a `/worker` suffix. |
 | `FLOWFILE_OFFLOAD_TO_WORKER` | settings.py:22 | `"1"` | **exact `"1"` only** | Heavy compute routed to the worker; off = in-core execution (violates the "core never collects" contract if you rely on it for large data — see `flowfile-architecture-contract`). |
 | `FEATURE_FLAG_AI` | settings.py:25-27 | on | `true`/`1`/`yes`/`on` (case/space-insensitive) | Master gate for the entire `/ai/*` router (503 when off). |
+| `FEATURE_FLAG_CANVAS_NOTEBOOK` | settings.py:29-32; read per call by `notebook/gate.py::is_canvas_notebook_enabled` | **off** | `true`/`1`/`yes`/`on` | Master gate for the canvas notebook: every `/notebook/*` route plus `POST /editor/notebook/push/` and `/editor/notebook/run_lineage/` (503 when off; the frontend reads the 503 from `GET /notebook/status` and hides the header button). No admin flip route; `.set()` works in-process (tests). |
 | `FLOWFILE_LSP_ENABLED` | settings.py:32-34 | on | `true`/`1`/`yes`/`on` | Notebook Jedi/LSP bridge; off ⇒ `/lsp/*` degrades to empty 200 (never 503) so editors silently fall back to client-side completion. |
 | `FLOWFILE_AI_LOG_PROMPTS` | settings.py:37-39 | off | `true`/`1`/`yes`/`on` | Appends a JSONL line per LLM call to `<base>/ai_prompts/YYYY-MM-DD.jsonl`. |
 | `FLOWFILE_AI_LOG_PROMPTS_SCRUB` | settings.py:42-44 | off | `true`/`1`/`yes`/`on` | PII-scrubs user/tool messages in the prompt log (system + assistant stay verbatim). |
@@ -114,7 +115,7 @@ Non-env port facts: Tauri scans a free `(core, worker)` port pair starting at 63
 | `TESTING` | `shared/storage_config.py` (`get_database_url`, `logs_directory`) | none; `flowfile_core/tests/conftest.py:23` sets `'True'` | `== "True"` ⇒ DB becomes `<base>/temp/test_flowfile_catalog.db` — **one shared file per machine**; concurrent pytest sessions clobber each other's teardown. Isolate with `FLOWFILE_DB_PATH` per session. Also redirects `logs_directory` to `<base>/temp/test_logs` so suites never write into or expire the developer's real logs. |
 | `FLOWFILE_SKIP_STARTUP_MIGRATION` | `flowfile_core/flowfile_core/database/init_db.py:26` | unset | Any value ⇒ skip the Alembic startup migration on import. Needed for diagnostics — importing `flowfile_core` otherwise migrates the live catalog DB. |
 | `FLOWFILE_DB_READ_HEDGE_DELAY` | `shared/db_reader.py:25` | `8` (seconds, float) | Delay before a hedged SQLAlchemy read races `connectorx`. |
-| `FLOWFILE_RUN_LOG_RETENTION_DAYS` | `shared/run_logs.py:_retention_days` (**read per call**) | `30` | Age cutoff for the `scheduled_run_*.log` / `flow_*.log` sweep in `cleanup_old_logs()`, run at core startup and on the throttled scheduler tick (`LOG_SWEEP_INTERVAL`, 1 h). `0` or negative disables retention; an unparseable value warns and falls back to 30. |
+| `FLOWFILE_RUN_LOG_RETENTION_DAYS` | `shared/run_logs.py:_retention_days` (**read per call**) | `30` | Age cutoff for the `scheduled_run_*.log` / `flow_*.log` / `notebook_session_*.log` sweep in `cleanup_old_logs()`, run at core startup and on the throttled scheduler tick (`LOG_SWEEP_INTERVAL`, 1 h). `0` or negative disables retention; an unparseable value warns and falls back to 30. |
 | `TEMP_DIR` (env var, distinct from the `TEMP_DIR` module constant) | settings.py:88 (`get_temp_dir()`) | `tempfile.gettempdir()` | **DEAD.** `get_temp_dir()` has zero callers repo-wide. The unrelated `TEMP_DIR` module constant (settings.py:134) is `storage.temp_directory`. |
 
 ### 3.5 Catalog object storage
@@ -141,6 +142,17 @@ Non-env port facts: Tauri scans a free `(core, worker)` port pair starting at 63
 | `FLOWFILE_KERNEL_IMAGE_BASE` / `_ML` / `_LITE` | manager.py:65-76 | base/ml `...:0.4.0` (manager.py:38-39); lite `edwardvaneechoud/flowfile-kernel-lite:0.4.0` | Per-flavour pins; `_BASE` wins over the legacy `FLOWFILE_KERNEL_IMAGE`. |
 | `FLOWFILE_DOCKER_NETWORK` | manager.py:393 | auto-detected (`_detect_docker_network`) | Docker-in-Docker network that kernel containers join. |
 | `FLOWFILE_CORE_URL` | manager.py:1216 (core writes it into the kernel's env); `kernel_runtime/flowfile_client.py:219` (kernel reads it) | DinD: `http://flowfile-core:63578`; local: `http://host.docker.internal:63578` | How a kernel container dials core back. |
+
+### 3.7a Canvas notebook sessions (core side)
+
+| Var | Read at | Default | Effect |
+|---|---|---|---|
+| `FLOWFILE_NOTEBOOK_SESSIONS_MULTIUSER` | `notebook/gate.py::notebook_sessions_allowed` (**read per call**, as is `FLOWFILE_MODE` there) | `off` | `admin` (case/space-insensitive, the only accepted value) lets admin accounts start a session in `docker`/`package`; anything else keeps sessions off there (403). Ignored in `electron`, where every user may. Enabling it grants the admin host-level access: the session subprocess inherits core's Docker socket, master key and JWT secret. |
+| `FLOWFILE_NOTEBOOK_IDLE_TTL` | `notebook/registry.py` `NotebookSessionRegistry.__init__` via `_env_number` (read once, when the registry singleton is built) | `900` (s) | Idle sessions are closed by the janitor thread after this long. |
+| `FLOWFILE_NOTEBOOK_MAX_SESSIONS` | same | `3` | Cap on live session subprocesses; opening one more evicts the least recently used. |
+| `FLOWFILE_NOTEBOOK_INPROCESS_CLEAN_RUN` | `routes/notebook.py` (import time), `notebook/registry.py` | unset | **Test-only**: `1` runs push's clean run in-process instead of in a session child. Never set it in a deployment. |
+
+The session child's env is set by `notebook/bootstrap.py`, not the operator: it inherits core's env minus `FLOWFILE_ADMIN_PASSWORD`, plus `FLOWFILE_TELEMETRY=0`, `FLOWFILE_KERNEL_GC=0`, `FLOWFILE_OFFLOAD_TO_WORKER=0` and the skip-migration/skip-init-DB switches. Its stderr goes to `<storage>/logs/notebook_session_<flow_id>.log`, swept by `FLOWFILE_RUN_LOG_RETENTION_DAYS`.
 
 ### 3.8 Kernel-container contract vars (set by core in `_build_kernel_env`, `manager.py:1200-1258`; read inside `kernel_runtime`)
 
@@ -270,7 +282,7 @@ This is the single most common source of "I set the var and nothing changed" bug
 
 | Rule | Applies to |
 |---|---|
-| `true`/`1`/`yes`/`on` (case/whitespace-insensitive) | `FEATURE_FLAG_AI`, `FLOWFILE_LSP_ENABLED`, `FLOWFILE_AI_LOG_PROMPTS`, `FLOWFILE_AI_LOG_PROMPTS_SCRUB`, `FLOWFILE_ENABLE_PROJECTS` |
+| `true`/`1`/`yes`/`on` (case/whitespace-insensitive) | `FEATURE_FLAG_AI`, `FEATURE_FLAG_CANVAS_NOTEBOOK`, `FLOWFILE_LSP_ENABLED`, `FLOWFILE_AI_LOG_PROMPTS`, `FLOWFILE_AI_LOG_PROMPTS_SCRUB`, `FLOWFILE_ENABLE_PROJECTS` |
 | `true`/`1`/`yes` — **no `on`** | `FLOWFILE_SCHEDULER_ENABLED` — `FLOWFILE_SCHEDULER_ENABLED=on` silently does nothing. |
 | exact string `"1"` only | `FLOWFILE_SINGLE_FILE_MODE`, `FLOWFILE_OFFLOAD_TO_WORKER` — `=true` or `=yes` silently does nothing. |
 | presence-only (value ignored) | `TEST_MODE` (`TEST_MODE=0` still enables it!), `FLOWFILE_SKIP_STARTUP_MIGRATION`, `FLOWFILE_SUPERVISOR_PID`. |

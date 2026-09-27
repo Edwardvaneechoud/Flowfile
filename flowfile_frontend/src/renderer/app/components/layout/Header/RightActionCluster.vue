@@ -8,7 +8,7 @@ import { View, Minus } from "@element-plus/icons-vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useItemStore } from "../../common/DraggableItem/stateStore";
-import { useCanvasNotebookStore } from "../../../stores/canvasNotebook-store";
+import { useNotebookStore } from "../../../stores/notebook-store";
 import AiAssistantTrigger from "../../../features/ai/AiAssistantTrigger.vue";
 import RunButton from "./run.vue";
 import PopOver from "../../../features/designer/editor/PopOver.vue";
@@ -17,10 +17,10 @@ import ShareLinkDialog from "../../sharing/ShareLinkDialog.vue";
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const draggableItemStore = useItemStore();
-const notebookStore = useCanvasNotebookStore();
+const notebookStore = useNotebookStore();
 
 onMounted(() => {
-  void notebookStore.loadStatus();
+  void notebookStore.loadFlowStatus();
 });
 
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
@@ -76,15 +76,15 @@ defineExpose({
       </button>
     </pop-over>
 
-    <pop-over v-if="notebookStore.available" content="Toggle Notebook" placement="bottom">
+    <pop-over v-if="notebookStore.flowStatus" content="Toggle Notebook" placement="bottom">
       <button
         class="action-btn"
         data-testid="canvas-notebook-toggle"
-        :class="{ active: notebookStore.open }"
-        :aria-label="notebookStore.open ? 'Hide Notebook' : 'Show Notebook'"
-        :aria-pressed="notebookStore.open"
+        :class="{ active: notebookStore.flowPanelOpen }"
+        :aria-label="notebookStore.flowPanelOpen ? 'Hide Notebook' : 'Show Notebook'"
+        :aria-pressed="notebookStore.flowPanelOpen"
         type="button"
-        @click="notebookStore.toggle()"
+        @click="notebookStore.flowPanelOpen = !notebookStore.flowPanelOpen"
       >
         <span class="material-icons btn-icon" aria-hidden="true">menu_book</span>
         <span class="btn-text">Notebook</span>

@@ -2,7 +2,14 @@
 import { defineStore } from "pinia";
 import { KernelApi } from "../api/kernel.api";
 import { NotebookApi } from "../api/notebook.api";
-import type { NotebookCellWire, NotebookSummary } from "../api/notebook.api";
+import type {
+  NotebookCellWire,
+  NotebookPushBody,
+  NotebookPushResult,
+  NotebookRendering,
+  NotebookSummary,
+  RenderedCell,
+} from "../api/notebook.api";
 import type { CellType, NotebookCellModel } from "../components/notebook/types";
 import {
   disposeOwnerViews,
@@ -42,6 +49,7 @@ import {
   type RuntimeCellRef,
   type SettledMeta,
 } from "../components/notebook/notebookRuntimeState";
+import { FLOW_SESSION_PREFIX } from "../components/notebook/notebookKernelStatus";
 import { sanitiseMarkdown } from "../features/ai/markdown";
 import {
   loadPersistedNotebooks,
@@ -154,6 +162,80 @@ export interface OpenNotebook {
   saving: boolean;
   executionCount: number;
   focusedCellId: string | null; // transient: last cell the caret was in
+  /** Set for a flow's canvas notebook: an ephemeral tab rendered from the canvas, never persisted. */
+  flowId?: number;
+  /** Per cell id, the code last rendered from (or pushed to) the canvas; equal code means unedited. */
+  generated?: Record<string, string>;
+  /** Per cell id, the canvas node ids the rendering attributed to it. */
+  nodeIds?: Record<string, number[]>;
+  fingerprint?: string;
+}
+
+/** A placeholder keeps its `fl.canvas_node(...)` text under its reason as a comment. */
+function renderedCode(cell: RenderedCell): string {
+  return cell.status !== "code" && cell.reason
+    ? `# ${cell.reason.replace(/\n/g, " ")}\n${cell.code}`
+    : cell.code;
+}
+
+const isEdited = (nb: OpenNotebook, cell: NotebookCellModel): boolean =>
+  nb.generated?.[cell.id] !== cell.code;
+
+/**
+ * Merge a rendering into a flow tab: unedited cells take the new text, edited and user-added
+ * cells stay, new node cells land in render order and cells of deleted nodes go.
+ */
+function applyRendering(nb: OpenNotebook, rendering: NotebookRendering): void {
+  const previous = nb.generated ?? {};
+  const order = new Map(rendering.cells.map((c, i) => [c.cell_id, i]));
+  const present = new Set(nb.cells.map((c) => c.id));
+  const pending = rendering.cells.filter((c) => !present.has(c.cell_id));
+  const next: NotebookCellModel[] = [];
+  const insertBefore = (index: number) => {
+    while (pending.length && order.get(pending[0].cell_id)! < index) {
+      const fresh = pending.shift()!;
+      next.push({ ...newCell("python"), id: fresh.cell_id, code: renderedCode(fresh) });
+    }
+  };
+  for (const cell of nb.cells) {
+    const index = order.get(cell.id);
+    if (index === undefined && cell.id in previous && !isEdited(nb, cell)) continue;
+    if (index !== undefined) {
+      insertBefore(index);
+      if (!isEdited(nb, cell)) cell.code = renderedCode(rendering.cells[index]);
+    }
+    next.push(cell);
+  }
+  insertBefore(Infinity);
+  const generated = Object.fromEntries(rendering.cells.map((c) => [c.cell_id, renderedCode(c)]));
+  for (const cell of next)
+    if (!(cell.id in generated) && cell.id in previous) generated[cell.id] = previous[cell.id];
+  nb.generated = generated;
+  nb.nodeIds = Object.fromEntries(rendering.cells.map((c) => [c.cell_id, c.node_ids]));
+  nb.fingerprint = rendering.code_fingerprint;
+  nb.cells = ensureCells(next);
+  nb.dirty = nb.cells.some((c) => isEdited(nb, c));
+}
+
+/** The push body: every cell, the edited ones marked, and each cell's live nodes as `[type, id]`. */
+export function flowPushBody(
+  nb: OpenNotebook,
+  nodeTypes: Map<number, string>,
+  clientMaxNodeId: number,
+): NotebookPushBody {
+  const provenance: Record<string, [string, number][]> = {};
+  for (const cell of nb.cells) {
+    const live = (nb.nodeIds?.[cell.id] ?? []).filter((id) => nodeTypes.has(id));
+    if (live.length) provenance[cell.id] = live.map((id) => [nodeTypes.get(id)!, id]);
+  }
+  return {
+    flow_id: nb.flowId!,
+    cells: nb.cells.map((c) => [c.id, c.code]),
+    changed_cell_ids: nb.cells.filter((c) => isEdited(nb, c)).map((c) => c.id),
+    provenance,
+    code_fingerprint: nb.fingerprint ?? "",
+    client_max_node_id: Math.max(clientMaxNodeId, ...nodeTypes.keys()),
+  };
 }
 
 const ownerOf = (nb: OpenNotebook): string => ownerIdForNotebook(nb.tabId);
@@ -203,6 +285,9 @@ interface NotebookState {
   activeTabId: string | null;
   loading: boolean;
   hydrated: boolean;
+  /** `GET /notebook/status`: null while the canvas notebook is off (or not yet asked). */
+  flowStatus: { sessions: boolean } | null;
+  flowPanelOpen: boolean;
 }
 
 let _persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -214,6 +299,8 @@ export const useNotebookStore = defineStore("notebook", {
     activeTabId: null,
     loading: false,
     hydrated: false,
+    flowStatus: null,
+    flowPanelOpen: false,
   }),
 
   getters: {
@@ -223,21 +310,27 @@ export const useNotebookStore = defineStore("notebook", {
     hasPythonCells(): boolean {
       return this.active?.cells.some((c) => c.cellType === "python") ?? false;
     },
+    /** A new catalog tab inherits the active tab's kernel, never a flow's session. */
+    inheritedKernelId(): string | null {
+      return this.active?.flowId == null ? (this.active?.kernelId ?? null) : null;
+    },
   },
 
   actions: {
     _snapshot() {
       return {
-        openNotebooks: this.openNotebooks.map((n) => ({
-          tabId: n.tabId,
-          persistedId: n.persistedId,
-          name: n.name,
-          description: n.description,
-          namespaceId: n.namespaceId,
-          cells: toWire(n.cells),
-          kernelId: n.kernelId,
-          dirty: n.dirty,
-        })),
+        openNotebooks: this.openNotebooks
+          .filter((n) => n.flowId == null)
+          .map((n) => ({
+            tabId: n.tabId,
+            persistedId: n.persistedId,
+            name: n.name,
+            description: n.description,
+            namespaceId: n.namespaceId,
+            cells: toWire(n.cells),
+            kernelId: n.kernelId,
+            dirty: n.dirty,
+          })),
         activeTabId: this.activeTabId,
       };
     },
@@ -296,7 +389,7 @@ export const useNotebookStore = defineStore("notebook", {
         description: null,
         namespaceId: null,
         cells: [newCell("python")],
-        kernelId: this.active?.kernelId ?? null, // inherit the current kernel
+        kernelId: this.inheritedKernelId,
         dirty: false,
         saving: false,
         executionCount: 0,
@@ -329,7 +422,7 @@ export const useNotebookStore = defineStore("notebook", {
           description: nb.description,
           namespaceId: nb.namespace_id,
           cells: ensureCells(fromWire(nb.cells)),
-          kernelId: nb.default_kernel_id ?? this.active?.kernelId ?? null,
+          kernelId: nb.default_kernel_id ?? this.inheritedKernelId,
           dirty: false,
           saving: false,
           executionCount: 0,
@@ -342,6 +435,54 @@ export const useNotebookStore = defineStore("notebook", {
       } finally {
         this.loading = false;
       }
+    },
+
+    async loadFlowStatus() {
+      this.flowStatus = await NotebookApi.flowStatus();
+    },
+
+    /** Open (or reuse) the flow's notebook tab, rendered from the canvas, and activate it. */
+    async openFlowNotebook(flowId: number, name: string) {
+      this.ensureHydrated();
+      const rendering = await NotebookApi.renderFlowNotebook(flowId);
+      let nb = this.openNotebooks.find((n) => n.flowId === flowId);
+      if (!nb) {
+        this.openNotebooks.push({
+          tabId: uid("tab"),
+          persistedId: null,
+          sessionFlowId: flowId,
+          name,
+          description: null,
+          namespaceId: null,
+          cells: [],
+          kernelId: `${FLOW_SESSION_PREFIX}${flowId}`,
+          dirty: false,
+          saving: false,
+          executionCount: 0,
+          focusedCellId: null,
+          flowId,
+        });
+        nb = this.openNotebooks[this.openNotebooks.length - 1];
+        ensureOwner(ownerOf(nb));
+      }
+      this.activeTabId = nb.tabId;
+      if (nb.fingerprint !== rendering.code_fingerprint) applyRendering(nb, rendering);
+      return nb;
+    },
+
+    /** Re-render a flow tab after a canvas change; an unchanged fingerprint (a layout move) is a no-op. */
+    async refreshFlowNotebook(flowId: number) {
+      const rendering = await NotebookApi.renderFlowNotebook(flowId);
+      const nb = this.openNotebooks.find((n) => n.flowId === flowId);
+      if (nb && nb.fingerprint !== rendering.code_fingerprint) applyRendering(nb, rendering);
+    },
+
+    /** The canvas now holds these cells: they count as unedited until the next rendering. */
+    markFlowPushed(nb: OpenNotebook, result: NotebookPushResult) {
+      nb.generated = Object.fromEntries(nb.cells.map((c) => [c.id, c.code]));
+      nb.nodeIds = { ...nb.nodeIds, ...result.node_ids_by_cell };
+      nb.fingerprint = result.code_fingerprint;
+      nb.dirty = false;
     },
 
     setActiveTab(tabId: string) {
@@ -662,7 +803,8 @@ export const useNotebookStore = defineStore("notebook", {
       cell.execState = "running";
       try {
         const res = await KernelApi.executeCell(nb.kernelId, {
-          node_id: cellNodeId(cell.id),
+          // A flow session reads node_id as the cell's canvas node (0 for none), never a hash.
+          node_id: nb.flowId != null ? (nb.nodeIds?.[cell.id]?.at(-1) ?? 0) : cellNodeId(cell.id),
           code: cell.code,
           flow_id: nb.sessionFlowId, // negative session id: can't collide with positive flow ids
         });
@@ -764,10 +906,11 @@ export const useNotebookStore = defineStore("notebook", {
       nb.executionCount = 0;
     },
 
-    /** Free every open notebook's kernel namespace (don't leak them into the
-     * 20-slot LRU shared with flow runs). Called when the panel unmounts. */
+    /** Free every open catalog notebook's kernel namespace (don't leak them into the
+     * 20-slot LRU shared with flow runs). Called when the panel unmounts; a flow's
+     * session lives as long as its flow. */
     async closeAllSessions() {
-      for (const nb of this.openNotebooks) {
+      for (const nb of this.openNotebooks.filter((n) => n.flowId == null)) {
         // The namespace is gone, so nothing still on screen can be current.
         bumpSessionEpoch(ownerOf(nb));
         if (nb.kernelId) {

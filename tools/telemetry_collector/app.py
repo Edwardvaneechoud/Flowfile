@@ -53,6 +53,8 @@ EVENT_PROPS: dict[str, frozenset[str]] = {
     "export_code_used": frozenset({"target"}),
     "alteryx_imported": frozenset({"tool_count_bucket", "converted_tools", "partial_tools", "placeholder_tools"}),
     "alteryx_import_failed": frozenset({"error_class"}),
+    "notebook_opened": frozenset(),
+    "notebook_pushed": frozenset(),
 }
 ALLOWED_EVENTS = frozenset(EVENT_PROPS)
 

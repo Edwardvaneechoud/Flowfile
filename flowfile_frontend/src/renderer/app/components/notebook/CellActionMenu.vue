@@ -39,6 +39,7 @@
           <i class="fa-solid fa-table-list nb-menu-icon"></i>
           {{ outputCollapsed ? "Expand output" : "Collapse output" }}
         </el-dropdown-item>
+        <slot />
         <el-dropdown-item
           divided
           data-action="delete"

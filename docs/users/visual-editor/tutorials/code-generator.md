@@ -240,4 +240,4 @@ Key points:
 From the Code panel you can either **download the project as a .zip** or **save it directly into a folder** using the built-in file browser.
 
 !!! info "Editing exported code"
-    Exported code runs standalone; it does not round-trip back into the visual canvas. To keep editing a flow visually, work in the Designer and re-export.
+    Exported code runs standalone; it does not round-trip back into the visual canvas. To edit a flow as code and apply the changes to the canvas, use the [canvas notebook](../notebook.md), which pushes edited cells back onto the flow.
