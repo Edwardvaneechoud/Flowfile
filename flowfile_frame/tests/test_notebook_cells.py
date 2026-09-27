@@ -1,10 +1,12 @@
 """Notebook cells: provenance, the cell compiler, name capture, seeding, fl.canvas_node, display and the clean run."""
 
 import linecache
+from pathlib import Path
 
 import pytest
 
 import flowfile as fl
+from flowfile_core.flowfile import schema_callbacks
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
 from flowfile_frame import callable_utils, notebook
 from flowfile_frame.native import NativeNodeError
@@ -18,6 +20,7 @@ from flowfile_frame.notebook_cells import (
     seed_session,
 )
 from shared.notebook_display import TABLE_MIME
+from shared.storage_config import storage
 
 DATA = "fl.from_dict({'a': [1, 2, 3], 'g': ['x', 'x', 'y']})"
 
@@ -93,6 +96,15 @@ def test_inspect_getsource_works_for_a_function_defined_in_a_cell(session):
     assert ns["source"] == "def add_one(x):\n    return x + 1\n"
 
 
+def test_polars_code_reads_a_function_defined_in_a_cell(session):
+    mode, ns = session
+    code = f"df = {DATA}\ndef top(input_df: fl.FlowFrame): output_df = input_df.head(2)\nout = df.polars_code(top)"
+    run(ns, code)
+    assert reference(mode, ns["out"].node_id) == "out"
+    settings = mode.graph.get_node(ns["out"].node_id).setting_input
+    assert settings.polars_code_input.polars_code == "output_df = input_df.head(2)"
+
+
 def test_python_script_in_a_cell_needs_no_console_hook(session, monkeypatch):
     def no_console(func):
         raise AssertionError("the console-source hook was consulted")
@@ -145,6 +157,22 @@ def test_generated_label_is_not_captured(session):
     mode, ns = session
     result = run(ns, f"src = {DATA}\nfiltered_99 = src.filter(fl.col('a') > 1)")
     assert result.references == {ns["src"].node_id: "src"}
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "filtered_{n}_pass, filtered_{n}_fail = src.filter_split(fl.col('a') > 1)",
+        "random_split_{n}_train, random_split_{n}_test = src.random_split({{'train': 50, 'test': 50}}, seed=1)",
+    ],
+)
+def test_a_split_label_derived_from_the_generated_one_is_not_captured(session, code):
+    mode, ns = session
+    run(ns, f"src = {DATA}")
+    next_id = max(n.node_id for n in mode.graph.nodes) + 1
+    result = run(ns, code.format(n=next_id))
+    assert result.references == {}
+    assert all(reference(mode, node.node_id) in (None, "src") for node in mode.graph.nodes)
 
 
 def test_a_name_bound_to_an_existing_node_is_not_captured(session):
@@ -331,6 +359,53 @@ def test_canvas_node_adopts_settings_wires_inputs_and_seeds_outputs():
         assert canvas_node(gate.node_id, frame, output="else").output_handle == output_handle(1)
     finally:
         notebook.exit()
+
+
+def test_canvas_node_of_a_split_filter_exposes_pass_and_fail():
+    graph = fl.create_flow_graph()
+    source = fl.from_dict({"a": [1, 2, 3]}, flow_graph=graph)
+    passed, _ = source.filter_split(fl.col("a") > 1)
+    data = graph.get_flowfile_data().model_dump(mode="json")
+    try:
+        bound = seed_session(data, [], {source.node_id: "src"}, {})
+        split = canvas_node(passed.node_id, bound["src"])
+        assert isinstance(split, SeededNode) and split.outputs == ["pass", "fail"]
+        assert split.then.output_handle == output_handle(0) and split["pass"] is split.then
+        assert split.otherwise.output_handle == output_handle(1) and split["output-1"] is split.otherwise
+        assert canvas_node(passed.node_id, bound["src"], output="fail").output_handle == output_handle(1)
+        assert split.then._deferred and split.otherwise.columns == ["a"]
+    finally:
+        notebook.exit()
+
+
+def _storage_files() -> set:
+    return {
+        path
+        for path in Path(storage.base_directory).rglob("*")
+        if path.is_file() and not any(part.endswith("logs") for part in path.parts) and ".db" not in path.name
+    }
+
+
+def test_seeding_never_predicts_a_pivot_and_writes_nothing_under_storage(monkeypatch):
+    """A pivot predicts by collecting its pivot values, through the worker's cache when one is up."""
+    graph = fl.create_flow_graph()
+    source = fl.from_dict({"g": ["a", "a", "b"], "k": ["x", "y", "x"], "v": [1, 2, 3]}, flow_graph=graph)
+    pivoted = source.pivot(on="k", index="g", values="v", aggregate_function="sum")
+    pivoted.select("g", "x").sort("g")
+    source.unpivot(["v"], index="g").group_by("g").agg(fl.col("value").std())
+    data = graph.get_flowfile_data().model_dump(mode="json")
+    predicted = []
+    monkeypatch.setattr(schema_callbacks, "fetch_unique_values", lambda lf: predicted.append(lf) or ["x", "y"])
+    before = _storage_files()
+    for schemas in ({}, {pivoted.node_id: {"output-0": [{"name": "g", "data_type": "String"}]}}):
+        try:
+            bound = seed_session(data, [], {pivoted.node_id: "wide"}, schemas)
+            assert bound["wide"]._deferred
+            assert bound["wide"].columns == [c["name"] for c in schemas.get(pivoted.node_id, {}).get("output-0", [])]
+        finally:
+            notebook.exit()
+    assert predicted == []
+    assert _storage_files() - before == set()
 
 
 def test_canvas_node_refuses_an_unknown_id_and_outside_a_session():

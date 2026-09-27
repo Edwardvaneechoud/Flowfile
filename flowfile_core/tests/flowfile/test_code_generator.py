@@ -560,9 +560,9 @@ def test_manual_input_with_select(export_func):
         assert 'pl.col("city")' not in code
     verify_if_execute(code)
     result = normalize_result(get_result_from_generated_code(code))
-    expected_result = normalize_result(get_reference_polars_dataframe()
-                       .select(pl.col('name').alias("full_name"), "age", pl.col("salary").cast(pl.Float64))
-                       )
+    # keep_missing (the default) passes the unlisted id column through
+    expected_result = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert "id" in expected_result.columns
     assert_frame_equal(result, expected_result)
 
 

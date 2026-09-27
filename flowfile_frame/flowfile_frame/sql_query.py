@@ -97,7 +97,11 @@ def _with_table_names(query: str, aliases: Mapping[int, str]) -> str:
 
 
 def _default_description(query: str) -> str:
-    """The query's first non-empty line, cut like the canvas default so the generated header never labels the node."""
+    """The query's first non-empty line, cut like the canvas default so the generated header never labels the node.
+
+    Only a query that gets a ``WITH`` header (named tables) is labelled this way; a positional
+    query is stored as written, so it carries no description the caller did not give.
+    """
     first_line = next((line.strip() for line in query.splitlines() if line.strip()), "")
     if len(first_line) > _DESCRIPTION_LIMIT:
         return first_line[: _DESCRIPTION_LIMIT - 3] + "..."
@@ -132,7 +136,7 @@ def _sql_frame(
         "sql_query",
         *frames,
         settings={"sql_query_input": {"sql_code": _with_table_names(query, aliases)}},
-        description=description if description is not None else _default_description(query),
+        description=description if description is not None or not aliases else _default_description(query),
     )
     return node.output
 

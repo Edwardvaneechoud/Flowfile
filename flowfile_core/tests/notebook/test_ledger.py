@@ -22,7 +22,7 @@ import pytest
 import flowfile_core.kernel as kernel_package
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.notebook.compare import parameters_equal, settings_equal
-from flowfile_core.notebook.render import NotebookRendering, node_label, render
+from flowfile_core.notebook.render import NotebookRendering, render
 from flowfile_frame import notebook
 from flowfile_frame.notebook_cells import clean_run, seed_session
 from shared.storage_config import storage
@@ -82,41 +82,14 @@ def _canvas_schemas(graph: FlowGraph) -> dict[int, dict[str, list[dict]]]:
     return schemas
 
 
-def _rerender(graph: FlowGraph, result: dict, *, frame_gaps: bool = True) -> NotebookRendering:
-    """Render the relabelled clean-run payload as a graph, rebuilt the way a session seeds it.
-
-    With ``frame_gaps`` the payload first loses what the frame adds on its own and the canvas never
-    had (see :func:`_undo_frame_gaps`); the strict xfail below renders it untouched.
-    """
+def _rerender(graph: FlowGraph, result: dict) -> NotebookRendering:
+    """Render the relabelled clean-run payload as a graph, rebuilt the way a session seeds it."""
     payload = copy.deepcopy(result["flowfile_data"])
-    if frame_gaps:
-        _undo_frame_gaps(payload, graph)
     bound = seed_session(payload, payload["flowfile_settings"]["parameters"], {}, _canvas_schemas(graph))
     try:
         return render(bound["flow"])
     finally:
         notebook.exit()
-
-
-def _undo_frame_gaps(payload: dict, graph: FlowGraph) -> None:
-    """Two flowfile_frame gaps that change a rebuilt node's record without changing its settings.
-
-    * The frame writes its own default text into ``description`` (``"Sort by age"``, ``"Join with
-      inner strategy"``), which then renders as ``description=``: cleared when the canvas node had none.
-    * Name capture takes a split's derived label (``filtered_2_pass``) as a ``node_reference``:
-      cleared when the canvas node had no reference and the captured one extends its label.
-    Both belong in the frame (``flow_frame.py`` defaults, ``notebook_cells._capturable``).
-    """
-    by_id = {node["id"]: node for node in _payload(graph)["nodes"]}
-    for node in payload["nodes"]:
-        twin, live = by_id.get(node["id"]), graph.get_node(node["id"])
-        if twin is None or live is None:
-            continue
-        if not getattr(live.setting_input, "description", None):
-            node["description"] = ""
-        reference = node.get("node_reference")
-        if reference and not twin.get("node_reference") and reference.startswith(node_label(node["type"], node["id"])):
-            node["node_reference"] = None
 
 
 def grade(graph: FlowGraph, result: dict) -> dict[int, str]:
@@ -216,13 +189,13 @@ def test_ledger_rows_only_improve(ledger_rows):
     assert not worse, f"ledger rows got worse (committed, now): {worse}"
 
 
-@pytest.mark.xfail(strict=True, reason="group_by (std/var), join (right-side renames), polars_code rows are LOSSY")
+@pytest.mark.xfail(strict=True, reason="join keeping its right keys and a Polars-code node with no input are LOSSY")
 def test_no_lossy_row_for_a_node_type_the_demo_uses(ledger_rows):
     """Plan 2b's done-when: the corpus-wide row of every node type the demo uses is at least DIFFER.
 
-    Strict xfail until the frame closes the gaps: std/var aggregations lower to Polars code,
-    a join that renames a right-side column rebuilds as with_columns + join + select, and a
-    canvas Polars-code node has no frame call that places one.
+    Strict xfail until the frame closes the gaps: its native join always drops the right join keys,
+    so a canvas join that keeps them rebuilds as with_columns + join + rename, and a Polars-code node
+    with no input has no frame call that places one.
     """
     grades = _grades(ledger_rows)
     demo_types = {node_type for node_type, _ in grades["demo"].values()}
@@ -238,27 +211,17 @@ def test_demo_uses_no_lossy_node_type(ledger_rows):
     assert not lossy, f"LOSSY node types in the demo: {lossy}"
 
 
-def _unstable(ledger_rows, *, frame_gaps: bool) -> dict:
+def test_exact_flows_render_back_to_the_same_cells(ledger_rows):
     grades = _grades(ledger_rows)
     unstable = {}
     for name, flow in _flows(ledger_rows).items():
         if not flow["result"]["ok"] or any(status != "EXACT" for _, status in grades[name].values()):
             continue
-        again = _rerender(flow["graph"], flow["result"], frame_gaps=frame_gaps)
+        again = _rerender(flow["graph"], flow["result"])
         before = {c.cell_id: c.code for c in flow["rendering"].cells}
         after = {c.cell_id: c.code for c in again.cells}
         keys = sorted(set(before) | set(after))
         diff = {k: (before.get(k), after.get(k)) for k in keys if before.get(k) != after.get(k)}
         if diff:
             unstable[name] = diff
-    return unstable
-
-
-def test_exact_flows_render_back_to_the_same_cells(ledger_rows):
-    unstable = _unstable(ledger_rows, frame_gaps=True)
     assert not unstable, json.dumps(unstable, indent=1)
-
-
-@pytest.mark.xfail(strict=True, reason="frame default descriptions and split-label capture (see _undo_frame_gaps)")
-def test_exact_flows_render_back_untouched(ledger_rows):
-    assert not _unstable(ledger_rows, frame_gaps=False)

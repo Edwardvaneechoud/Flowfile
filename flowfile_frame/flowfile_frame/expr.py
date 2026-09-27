@@ -809,8 +809,11 @@ class Expr:
         return result
 
     def std(self, ddof=1):
+        """Standard deviation; at the default ``ddof=1`` (the Group By node's) it aggregates natively."""
         result_expr = self.expr.std(ddof=ddof) if self.expr is not None else None
-        result = self._create_next_expr(method_name="std", result_expr=result_expr, ddof=ddof, is_complex=True)
+        result = self._create_next_expr(
+            method_name="std", result_expr=result_expr, ddof=ddof, is_complex=self.is_complex or ddof != 1
+        )
         result.agg_func = "std"
         return result
 
@@ -836,8 +839,11 @@ class Expr:
         return result
 
     def var(self, ddof=1):
+        """Variance; at the default ``ddof=1`` (the Group By node's) it aggregates natively."""
         result_expr = self.expr.var(ddof=ddof) if self.expr is not None else None
-        result = self._create_next_expr(method_name="var", result_expr=result_expr, ddof=ddof, is_complex=True)
+        result = self._create_next_expr(
+            method_name="var", result_expr=result_expr, ddof=ddof, is_complex=self.is_complex or ddof != 1
+        )
         result.agg_func = "var"
         return result
 

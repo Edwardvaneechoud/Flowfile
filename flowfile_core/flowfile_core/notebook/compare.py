@@ -10,6 +10,8 @@ node type, on top of the fields every node drops.
 from __future__ import annotations
 
 import copy
+import re
+import textwrap
 from collections.abc import Callable
 from pathlib import PurePath
 from typing import Any
@@ -31,6 +33,20 @@ DROPPED_FIELDS = frozenset(
     }
 )
 _SELECT_POSITION_FIELDS = ("position", "original_position", "is_altered", "is_available")
+_OPERATORS = {
+    "==": "equals",
+    "=": "equals",
+    "!=": "not_equals",
+    ">": "greater_than",
+    ">=": "greater_than_or_equals",
+    "<": "less_than",
+    "<=": "less_than_or_equals",
+}
+_PARAM_COMPARISON = re.compile(r"\[(?P<field>[^\[\]]+)\]\s*(?P<op>==|=|!=|>=|<=|>|<)\s*\$\{(?P<value>\w+)\}")
+_PARAM_BETWEEN = re.compile(
+    r"\(\s*\[(?P<field>[^\[\]]+)\]\s*>=\s*\$\{(?P<value>\w+)\}\s*\)\s*and\s*"
+    r"\(\s*\[(?P<field2>[^\[\]]+)\]\s*<=\s*\$\{(?P<value2>\w+)\}\s*\)"
+)
 
 
 def normalise_formula(formula: str | None) -> str:
@@ -58,6 +74,56 @@ def normalise_formula(formula: str | None) -> str:
     return spelled.strip() if isinstance(spelled, str) and spelled.strip() else text
 
 
+def strip_outer_parens(formula: str) -> str:
+    """``formula`` without parentheses that wrap all of it (quoted text and ``[column]`` names respected)."""
+    text = formula.strip()
+    while text.startswith("(") and text.endswith(")"):
+        depth, quote, closes_at = 0, None, None
+        for index, char in enumerate(text):
+            if quote:
+                quote = None if char == quote else quote
+            elif char in "\"'[":
+                quote = "]" if char == "[" else char
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    closes_at = index
+                    break
+        if closes_at != len(text) - 1:
+            break
+        text = text[1:-1].strip()
+    return text
+
+
+def param_comparison_filter(formula: str | None) -> dict | None:
+    """The basic ``filter_input`` an advanced ``[col] <op> ${name}`` (or a between of two refs) spells, or None.
+
+    The frame stores ``fl.col("x") > PARAM`` as ``([x] > ${param})``; a canvas basic filter whose value
+    is the whole-field ``${param}`` is the same comparison, since both substitute before they run.
+    """
+    text = strip_outer_parens(formula or "")
+    match = _PARAM_COMPARISON.fullmatch(text)
+    if match:
+        basic = {"field": match["field"], "operator": _OPERATORS[match["op"]], "value": f"${{{match['value']}}}"}
+    else:
+        match = _PARAM_BETWEEN.fullmatch(text)
+        if match is None or match["field"] != match["field2"]:
+            return None
+        basic = {
+            "field": match["field"],
+            "operator": "between",
+            "value": f"${{{match['value']}}}",
+            "value2": f"${{{match['value2']}}}",
+        }
+    return {"mode": "basic", "basic_filter": basic, "advanced_filter": ""}
+
+
+def _operator_name(operator: str | None) -> str:
+    return _OPERATORS.get(operator or "", operator or "equals")
+
+
 def _formula(settings: dict) -> None:
     entries = settings.get("functions") or ([settings["function"]] if settings.get("function") else [])
     settings.pop("function", None)
@@ -73,7 +139,8 @@ def _filter(settings: dict) -> None:
     filter_input = settings.get("filter_input") or {}
     filter_input.pop("filter_type", None)
     if filter_input.get("mode") == "advanced":
-        basic = translate_advanced_filter(filter_input.get("advanced_filter") or "")
+        advanced = filter_input.get("advanced_filter") or ""
+        basic = param_comparison_filter(advanced) if "${" in advanced else translate_advanced_filter(advanced)
         if basic is not None:
             filter_input.clear()
             filter_input.update(basic)
@@ -84,7 +151,7 @@ def _filter(settings: dict) -> None:
         basic = filter_input.get("basic_filter") or {}
         filter_input["basic_filter"] = {
             "field": basic.get("field") or "",
-            "operator": basic.get("operator") or "equals",
+            "operator": _operator_name(basic.get("operator")),
             "value": basic.get("value") or "",
             "value2": basic.get("value2") or None,
         }
@@ -107,6 +174,24 @@ def _select(settings: dict) -> None:
     if not settings.get("keep_missing", True):
         entries = [entry for entry in entries if entry["keep"]]
     settings["select_input"] = entries
+
+
+def _record_id(settings: dict) -> None:
+    """Group-by columns only count while grouping is on."""
+    record = settings.get("record_id_input") or {}
+    if not record.get("group_by"):
+        record["group_by"] = False
+        record["group_by_columns"] = []
+
+
+def _polars_code(settings: dict) -> None:
+    """The code as it runs: dedented, stripped, and without a closing ``return output_df`` the runtime adds anyway."""
+    code_input = settings.get("polars_code_input") or {}
+    code = textwrap.dedent(code_input.get("polars_code") or "").strip()
+    head, _, last = code.rpartition("\n")
+    if last.strip() == "return output_df" and re.search(r"^output_df\s*=[^=]", head, re.M):
+        code = head.rstrip()
+    code_input["polars_code"] = code
 
 
 def _output(settings: dict) -> None:
@@ -181,6 +266,8 @@ RULES: dict[str, tuple[Callable[[dict], None], ...]] = {
     "text_to_rows": (_text_to_rows,),
     "gate": (_gate,),
     "python_script": (_python_script,),
+    "record_id": (_record_id,),
+    "polars_code": (_polars_code,),
 }
 
 

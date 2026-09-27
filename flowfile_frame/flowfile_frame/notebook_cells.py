@@ -229,8 +229,15 @@ def _columns(entries: Sequence[Any]) -> list[FlowfileColumn]:
 
 
 def _handle_schemas(given: Mapping[str, Any] | None, handles: list[str], node: FlowNode) -> dict[str, list]:
-    """Per-handle seed schemas: the given ones, else output-0's, else predicted without running."""
+    """Per-handle seed schemas: the given ones, else output-0's, else predicted without running.
+
+    A node whose prediction needs data (a pivot collects its pivot values, through the worker's
+    cache when one is up) is never predicted: without a given schema it seeds no columns, so
+    seeding a session never writes under storage.
+    """
     given = {handle: _columns(entries) for handle, entries in (given or {}).items()}
+    if DEFAULT_OUTPUT_HANDLE not in given and getattr(node, "_prediction_requires_data", False):
+        given[DEFAULT_OUTPUT_HANDLE] = []
     if DEFAULT_OUTPUT_HANDLE not in given:
         try:
             given[DEFAULT_OUTPUT_HANDLE] = _placeholder_schema(node)
@@ -555,10 +562,14 @@ def _bound_node_id(value: Any, graph: FlowGraph, *, any_handle: bool = False) ->
 
 
 def _capturable(name: str, node_type: str) -> bool:
-    """The name-capture rules of a reference: lowercase identifier, not reserved, not a generated label."""
+    """The name-capture rules of a reference: lowercase identifier, not reserved, not a generated label.
+
+    A generated label is the node's own (``filtered_2``) or one derived from it for an output
+    (``filtered_2_pass``, ``random_split_2_train``).
+    """
     if not _REFERENCE.match(name) or name in _NOT_CAPTURED:
         return False
-    return re.fullmatch(rf"{re.escape(_type_label(node_type))}_\d+", name) is None
+    return re.fullmatch(rf"{re.escape(_type_label(node_type))}_\d+(_[a-z0-9_]+)?", name) is None
 
 
 def _clear_reference(graph: FlowGraph, name: str, keep: int | None = None) -> None:

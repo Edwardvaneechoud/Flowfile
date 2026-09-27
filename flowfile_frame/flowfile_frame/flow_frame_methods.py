@@ -240,7 +240,6 @@ def read_csv(
             except Exception as e:
                 logger.warning(f"Could not determine absolute path for {current_source_path_for_native}: {e}")
 
-        read_node_description = description or f"Read CSV from {Path(current_source_path_for_native).name}"
         read_node = input_schema.NodeRead(
             flow_id=flow_id,
             node_id=node_id,
@@ -248,7 +247,7 @@ def read_csv(
             pos_x=100,
             pos_y=100,
             is_setup=True,
-            description=read_node_description,
+            description=description,
         )
         flow_graph.add_read(read_node)
         flow_graph.get_node(1)

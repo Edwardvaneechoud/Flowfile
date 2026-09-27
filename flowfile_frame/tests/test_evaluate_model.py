@@ -83,9 +83,9 @@ def test_evaluate_model_node_type_and_settings(regression_df):
     assert eval_input.upstream_train_node_id is None
 
 
-def test_evaluate_model_default_description_is_built(regression_df):
+def test_evaluate_model_writes_no_description_of_its_own(regression_df):
     result = regression_df.evaluate_model("y")
-    assert result.get_node_settings().setting_input.description == "Evaluate prediction vs y"
+    assert not result.get_node_settings().setting_input.description
 
 
 def test_evaluate_model_custom_description_passes_through(regression_df):

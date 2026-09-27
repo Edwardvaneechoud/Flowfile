@@ -20,6 +20,7 @@ import io
 import json
 import keyword
 import re
+import textwrap
 import tokenize
 import types
 from typing import Literal
@@ -31,6 +32,7 @@ from flowfile_core.configs import logger
 from flowfile_core.flowfile.code_generator.code_generator import (
     NODE_TYPE_VAR_LABEL,
     FlowGraphToFlowFrameConverter,
+    _polars_code_function_body,
 )
 from flowfile_core.flowfile.code_generator.connector_handlers import ConnectorHandlersMixin
 from flowfile_core.flowfile.flow_graph import FlowGraph
@@ -38,6 +40,7 @@ from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.param_types import stringify_param_value
 from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
 from flowfile_core.flowfile.util.skip_rules import classify_graph, is_error_ish
+from flowfile_core.notebook.compare import param_comparison_filter, strip_outer_parens
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.transform_schema import AUTO_DATA_TYPE
 
@@ -177,15 +180,28 @@ def _to_fl(code: str) -> str:
     return "\n".join(lines)
 
 
+_DEFINITIONS = (ast.FunctionDef, ast.Import, ast.ImportFrom)
+_PARAM_REF = re.compile(r"\$\{(\w+)\}")
+_COMPARISON_SYMBOLS = {
+    "equals": "==",
+    "not_equals": "!=",
+    "greater_than": ">",
+    "greater_than_or_equals": ">=",
+    "less_than": "<",
+    "less_than_or_equals": "<=",
+}
+
+
 def _with_description(code: str, description: str) -> str | None:
-    """Add ``description=`` to the one call a single-assignment cell makes, else None."""
+    """Add ``description=`` to the call a cell's last statement assigns (after defs and imports only), else None."""
     try:
         tree = ast.parse(code)
     except SyntaxError:
         return None
-    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+    *head, last = tree.body or [None]
+    if not isinstance(last, ast.Assign) or not all(isinstance(stmt, _DEFINITIONS) for stmt in head):
         return None
-    call = tree.body[0].value
+    call = last.value
     if not isinstance(call, ast.Call):
         return None
     while isinstance(call.func, ast.Attribute) and call.func.attr == "agg" and isinstance(call.func.value, ast.Call):
@@ -375,29 +391,6 @@ def _decorator_parts(cells: list[str]) -> tuple | None:
     return prelude, [match["name"] for match in reads], candidates, named["name"] if named else None
 
 
-def _strip_outer_parens(formula: str) -> str:
-    """``formula`` without parentheses that wrap all of it (quoted text and ``[column]`` names respected)."""
-    text = formula.strip()
-    while text.startswith("(") and text.endswith(")"):
-        depth, quote, closes_at = 0, None, None
-        for index, char in enumerate(text):
-            if quote:
-                quote = None if char == quote else quote
-            elif char in "\"'[":
-                quote = "]" if char == "[" else char
-            elif char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-                if depth == 0:
-                    closes_at = index
-                    break
-        if closes_at != len(text) - 1:
-            break
-        text = text[1:-1].strip()
-    return text
-
-
 class _NotebookConverter(FlowGraphToFlowFrameConverter):
     """The FlowFrame converter with the notebook's settings access and formula policy."""
 
@@ -428,24 +421,97 @@ class _NotebookConverter(FlowGraphToFlowFrameConverter):
         """
         if "${" in formula:
             return None
-        return super()._translate_to_ff_code(_strip_outer_parens(formula))
+        return super()._translate_to_ff_code(strip_outer_parens(formula))
+
+    param_vars: dict[str, str] = {}
+
+    def _param_var(self, value: str | None) -> str | None:
+        """The declared parameter variable a whole-field ``${name}`` value stands for, else None."""
+        match = _PARAM_REF.fullmatch(value) if isinstance(value, str) else None
+        return self.param_vars.get(match.group(1)) if match else None
+
+    def _create_basic_filter_expr(self, basic: transform_schema.BasicFilter, field_dtype: str | None = None) -> str:
+        """A comparison against a whole-field ``${name}`` compares with the parameter's variable.
+
+        ``fl.col("x") > MIN_SALARY`` is what the frame stores back as the ``${min_salary}`` ref; the
+        literal ``"${min_salary}"`` would compare with text once substituted.
+        """
+        try:
+            operator = str(basic.get_operator())
+        except (ValueError, AttributeError):
+            operator = str(basic.operator)
+        column = f"{self.framework}.col({self._py_str(basic.field)})"
+        value = self._param_var(basic.value)
+        if value is not None and operator in _COMPARISON_SYMBOLS:
+            return f"{column} {_COMPARISON_SYMBOLS[operator]} {value}"
+        value2 = self._param_var(basic.value2)
+        if operator == "between" and value is not None and value2 is not None:
+            return f"({column} >= {value}) & ({column} <= {value2})"
+        return super()._create_basic_filter_expr(basic, field_dtype)
 
     def _handle_filter(self, settings: input_schema.NodeFilter, var_name: str, input_vars: dict[str, str]) -> None:
         """An advanced filter that is exactly one basic comparison renders as the basic filter does.
 
         The frame stores every filter it builds as advanced text, so a canvas basic filter comes back
-        advanced; rendering both through the basic emission keeps the cell text stable.
+        advanced; rendering both through the basic emission keeps the cell text stable. That covers a
+        comparison with a declared parameter (``([x] > ${p})``) as well.
         """
         from flowfile_core.flowfile.share.filter_translation import translate_advanced_filter
 
         filter_input = settings.filter_input
-        if not settings.split_mode and filter_input.is_advanced() and "${" not in filter_input.advanced_filter:
-            basic = translate_advanced_filter(_strip_outer_parens(filter_input.advanced_filter))
+        if not settings.split_mode and filter_input.is_advanced():
+            advanced = filter_input.advanced_filter
+            if "${" not in advanced:
+                basic = translate_advanced_filter(strip_outer_parens(advanced))
+            else:
+                basic = param_comparison_filter(advanced)
+                refs = [basic["basic_filter"]["value"], basic["basic_filter"].get("value2")] if basic else []
+                if not all(self._param_var(ref) for ref in refs if ref is not None):
+                    basic = None
             if basic is not None:
                 settings = settings.model_copy(
                     update={"filter_input": transform_schema.FilterInput.model_validate(basic)}
                 )
         super()._handle_filter(settings, var_name, input_vars)
+
+    def _handle_polars_code(
+        self, settings: input_schema.NodePolarsCode, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """``<input>.polars_code(_polars_code_N, *others)`` over a ``def`` holding the stored code verbatim.
+
+        The frame reads the function's source rather than calling it, so ``pl.`` stays as written. The
+        body ends in the ``return`` the node's runtime wrapper adds (the frame drops a lone ``return
+        <expr>`` or a closing ``return output_df`` again); a body whose result is another assigned
+        name is left without one, since the frame would keep it. A node with no input keeps the
+        exporter's direct call.
+        """
+        if len(input_vars) == 1:
+            inputs = list(input_vars.values())
+        else:
+            inputs = [input_vars[key] for key in sorted(input_vars) if key.startswith("main")]
+        if not inputs:
+            super()._handle_polars_code(settings, var_name, input_vars)
+            return
+        code = textwrap.dedent(settings.polars_code_input.polars_code).strip()
+        names = ["input_df"] if len(inputs) == 1 else [f"input_df_{i}" for i in range(1, len(inputs) + 1)]
+        function = f"_polars_code_{settings.node_id}"
+        if re.search(r"\bpl\.", code):
+            self.imports.add("import polars as pl")
+        body, returned = _polars_code_function_body(code)
+        assigned = returned is not None and re.search(rf"^{re.escape(returned)}\s*=[^=]", "\n".join(body), re.M)
+        if assigned and returned != "output_df":
+            returned = None
+        self._add_code(f"def {function}({', '.join(f'{name}: ff.FlowFrame' for name in names)}):")
+        for line in body:
+            self._add_code(f"    {line}")
+        if returned is not None:
+            self._add_code(f"    return {returned}")
+        elif not body:
+            self._add_code("    pass")
+        self._add_code("")
+        self._add_code("")
+        self._add_code(f"{var_name} = {inputs[0]}.polars_code({', '.join([function, *inputs[1:]])})")
+        self._add_code("")
 
     def _formula_entry_native_expr(self, entry) -> str | None:
         """A typed entry keeps its keyword form: ``.cast()`` would rebuild as ``to_float(...)`` with an Auto type."""
@@ -523,26 +589,25 @@ class _NotebookConverter(FlowGraphToFlowFrameConverter):
         self._add_code("")
 
     def _handle_record_id(self, settings: input_schema.NodeRecordId, var_name: str, input_vars: dict[str, str]) -> None:
-        """``.with_row_index(...)`` where the frame places a Record Id node for it, else the exporter's form."""
+        """``.with_row_index(name, offset=..., group_by=[...])``, the frame's native Record Id node."""
         record = settings.record_id_input
-        name = record.output_column_name
-        native = name == "record_id" or (record.offset == 1 and name != "index")
-        if record.group_by and record.group_by_columns or not native:
-            super()._handle_record_id(settings, var_name, input_vars)
-            return
-        source = input_vars.get("main", "df")
-        self._add_code(f"{var_name} = {source}.with_row_index({self._py_str(name)}, offset={record.offset})")
+        args = [self._py_str(record.output_column_name), f"offset={record.offset}"]
+        if record.group_by and record.group_by_columns:
+            args.append(f"group_by={[str(column) for column in record.group_by_columns]}")
+        self._add_code(f"{var_name} = {input_vars.get('main', 'df')}.with_row_index({', '.join(args)})")
         self._add_code("")
 
     def _handle_unpivot(self, settings: input_schema.NodeUnpivot, var_name: str, input_vars: dict[str, str]) -> None:
-        """A single value column is passed as a string: the frame places its native Unpivot node for that form."""
+        """``.unpivot(on=[...], index=[...])``, the frame's native Unpivot node; a dtype selector keeps its form."""
         unpivot = settings.unpivot_input
-        if unpivot.data_type_selector_mode != "column" or len(unpivot.value_columns) != 1:
+        if unpivot.data_type_selector_mode != "column":
             super()._handle_unpivot(settings, var_name, input_vars)
             return
-        args = [self._py_str(unpivot.value_columns[0])]
+        args = []
+        if unpivot.value_columns:
+            args.append(f"on={list(unpivot.value_columns)}")
         if unpivot.index_columns:
-            args.append(f"index={unpivot.index_columns}")
+            args.append(f"index={list(unpivot.index_columns)}")
         self._add_code(f"{var_name} = {input_vars.get('main', 'df')}.unpivot({', '.join(args)})")
         self._add_code("")
 
@@ -556,6 +621,7 @@ class NotebookRenderer:
         self.warnings: list[str] = []
         self.used: set[str] = set(_RESERVED)
         self.param_vars: dict[str, str] = {}
+        self.converter.param_vars = self.param_vars
         self.prelude: dict[str, str] = {}
 
     def render(self) -> NotebookRendering:

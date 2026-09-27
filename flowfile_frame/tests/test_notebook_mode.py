@@ -197,6 +197,24 @@ def test_polars_code_is_seeded_with_its_predicted_schema(mode):
     assert frame.collect_schema().names() == ["a", "g", "running"]
 
 
+def test_fluent_polars_code_is_seeded_not_run_in_the_mode(mode):
+    frame = ff.from_dict(DATA).polars_code("input_df.with_columns(pl.col('a').cum_sum().alias('running'))")
+    node = core_node(frame)
+    assert node.node_type == "polars_code" and node.deferred_until_run is True
+    assert frame._deferred is True
+    assert frame.collect_schema().names() == ["a", "g", "running"]
+
+
+def test_fluent_native_nodes_stay_lazy_safe_in_the_mode(mode):
+    source = ff.from_dict({"g": ["x", "x"], "a": [1.0, 3.0], "b": [2.0, 4.0]})
+    numbered = source.with_row_index("n", 1, group_by=["g"])
+    long = numbered.unpivot(["a", "b"], index=["n", "g"])
+    spread = long.group_by("g").agg(ff.col("value").std())
+    assert [core_node(f).node_type for f in (numbered, long, spread)] == ["record_id", "unpivot", "group_by"]
+    assert not spread._deferred
+    assert spread.collect()["value"].round(4).to_list() == [1.291]
+
+
 def test_explicit_deferred_false_is_overridden(mode, tmp_path):
     path = tmp_path / "eager.csv"
     frame = ff.from_dict(DATA)

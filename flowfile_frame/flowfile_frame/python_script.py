@@ -90,6 +90,18 @@ def _declared_columns(
     return declared
 
 
+def _output_schemas(
+    schemas: Mapping[str, Mapping[str, PolarsDataType]] | None,
+) -> dict[str, list[dict[str, str]]] | None:
+    """``schemas`` in the node's ``output_schemas`` form: ``{output: [{"name", "data_type"}]}``; ``None`` if empty."""
+    if not schemas:
+        return None
+    return {
+        output: [{"name": column, "data_type": str(dtype)} for column, dtype in columns.items()]
+        for output, columns in schemas.items()
+    }
+
+
 class PythonScript(NativeNode):
     """A Python Script node: its code runs on a kernel container when the flow runs.
 
@@ -102,7 +114,8 @@ class PythonScript(NativeNode):
     flow runs, and a node without one fails the run. The outputs are deferred: typed zero-row
     placeholders until ``collect()`` runs the flow. ``schemas`` declares an output's columns as
     ``{output: {column: dtype}}``; an undeclared output carries the first input's schema (no
-    columns without inputs). The declared schema only shapes the placeholder; it is not saved.
+    columns without inputs). The declared schema shapes the placeholder and is saved as the node's
+    ``output_schemas``, so the canvas predicts the output without running the kernel.
     """
 
     code: str
@@ -144,6 +157,7 @@ class PythonScript(NativeNode):
                         cells=[input_schema.NotebookCell(id=cell_id, code=cell) for cell_id, cell in pairs],
                     ),
                     output_names=list(outputs) if outputs is not None else ["main"],
+                    output_schemas=_output_schemas(schemas),
                     **base,
                 )
             except ValidationError as exc:
@@ -644,7 +658,7 @@ class PythonScriptFunction:
         self._parameters = _parameters(fn, fn.__name__)
         self._schemas = _returns_as_schemas(returns, self._outputs)
         _declared_columns(self._schemas, self._outputs, "returns=")
-        self._description = description if description is not None else fn.__name__
+        self._description = description
         self._flow_graph = flow_graph
         self.fn = fn
 
@@ -698,9 +712,10 @@ def python_script(
     or a dict of frames with ``outputs=[...]`` naming its keys. Modules and plain constants it
     reads from its module become prelude lines; any other outside name raises. ``returns``
     declares the output columns (``{column: dtype}``, or ``{output: {column: dtype}}`` for
-    several) so frames built on the output know them before the flow runs. ``kernel`` and
-    ``description`` (default: the function name) are the node's; ``flow_graph`` places a function
-    without inputs. Everything is checked here, when the function is decorated.
+    several) so frames built on the output know them before the flow runs; they are saved as the
+    node's ``output_schemas``. ``kernel`` and ``description`` (none by default) are the node's;
+    ``flow_graph`` places a function without inputs. Everything is checked here, when the
+    function is decorated.
     """
 
     def decorate(func: Callable[..., Any]) -> PythonScriptFunction:

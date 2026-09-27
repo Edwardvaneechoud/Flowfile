@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ast
 import inspect
 import os
 import re
-from collections.abc import Iterable, Iterator, Mapping
+import textwrap
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin
 
@@ -24,7 +26,7 @@ from flowfile_core.flowfile.param_types import ParamValue, typed_parameter_value
 from flowfile_core.flowfile.parameter_resolver import resolve_expression_parameters
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.schemas import GroupColor
-from flowfile_frame.callable_utils import process_callable_args
+from flowfile_frame.callable_utils import _read_source, process_callable_args
 from flowfile_frame.cloud_storage.frame_helpers import add_write_ff_to_cloud_storage
 from flowfile_frame.config import logger
 from flowfile_frame.expr import Column, Expr, col, lit
@@ -52,6 +54,37 @@ from flowfile_frame.utils import (
     generate_node_id,
     stringify_values,
 )
+
+
+def _polars_code_source(code: Any) -> str:
+    """The Polars Code node text of ``code``: a string dedented and stripped, or a function's body.
+
+    The function is read with ``inspect.getsource`` (a notebook cell's through ``linecache``) and
+    its ``def`` line dropped: a body that is one ``return <expr>`` stores ``<expr>``, a last
+    ``return output_df`` is dropped, and any other body is stored as written, with the comment
+    lines right above its first statement.
+    """
+    if isinstance(code, str):
+        return textwrap.dedent(code).strip()
+    if not inspect.isfunction(code) or code.__name__ == "<lambda>":
+        raise NativeNodeError(f"polars_code takes a string or a def function, got {type(code).__name__}")
+    source = _read_source(code)
+    if source is None:
+        raise NativeNodeError(f"The source of `{code.__name__}` cannot be read; pass the code as a string")
+    source = textwrap.dedent(source)
+    fn = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef))
+    body = fn.body
+    if len(body) == 1 and isinstance(body[0], ast.Return) and body[0].value is not None:
+        return ast.get_source_segment(source, body[0].value).strip()
+    if len(body) > 1 and ast.unparse(body[-1]) == "return output_df":
+        body = body[:-1]
+    if body[0].lineno == fn.lineno:
+        return "\n".join(ast.get_source_segment(source, stmt) for stmt in body).strip()
+    lines = source.splitlines()
+    start = body[0].lineno - 1
+    while start - 1 >= fn.lineno and lines[start - 1].strip().startswith("#"):
+        start -= 1
+    return textwrap.dedent("\n".join(lines[start : body[-1].end_lineno])).strip()
 
 
 def can_be_expr(param: inspect.Parameter) -> bool:
@@ -305,7 +338,6 @@ class FlowFrame:
             A new FlowFrame with the data loaded as a manual input node
         """
         node_id = node_id or generate_node_id()
-        description = "Data imported from Python object"
         if flow_graph is None:
             flow_graph = _implicit_graph()
 
@@ -338,7 +370,6 @@ class FlowFrame:
                 pos_x=100,
                 pos_y=100,
                 is_setup=True,
-                description=description,
             )
             flow_graph.add_manual_input(input_node)
         return FlowFrame(
@@ -415,7 +446,6 @@ class FlowFrame:
         if data is None:
             data = pl.LazyFrame()
         if not isinstance(data, pl.LazyFrame):
-            description = "Data imported from Python object"
             try:
                 pl_df = pl.DataFrame(
                     data,
@@ -442,7 +472,6 @@ class FlowFrame:
                 pos_x=100,
                 pos_y=100,
                 is_setup=True,
-                description=description,
             )
             source_graph.add_manual_input(input_node)
         else:
@@ -682,7 +711,7 @@ class FlowFrame:
                 pos_y=150,
                 is_setup=True,
                 depending_on_id=self.node_id,
-                description=description or f"Sort by {', '.join(column_names_for_native_node)}",
+                description=description,
             )
             self.flow_graph.add_sort(sort_settings)
 
@@ -1070,7 +1099,7 @@ class FlowFrame:
             cross_join_input=join_input,
             is_setup=True,
             depending_on_ids=[self.node_id, other.node_id],
-            description=description or "Join with cross strategy",
+            description=description,
             auto_generate_selection=True,
             verify_integrity=True,
         )
@@ -1094,7 +1123,7 @@ class FlowFrame:
             pos_y=150,
             is_setup=True,
             depending_on_ids=[self.node_id, other.node_id],
-            description=description or f"Join with {join_input.how} strategy",
+            description=description,
         )
         self.flow_graph.add_join(join_settings)
 
@@ -1610,7 +1639,7 @@ class FlowFrame:
             pos_y=150,
             is_setup=True,
             depending_on_id=self.node_id,
-            description=description or (f"Train {model_type} '{model_name}'" if model_name else f"Train {model_type}"),
+            description=description,
         )
         self.flow_graph.add_train_model(train_settings)
         return self._create_child_frame(new_node_id)
@@ -1649,7 +1678,7 @@ class FlowFrame:
             pos_x=200,
             pos_y=150,
             is_setup=True,
-            description=description or "Wait for dependency",
+            description=description,
         )
         self.flow_graph.add_wait_for(wait_settings)
         right_conn = _is.NodeConnection.create_from_simple_input(
@@ -1721,7 +1750,6 @@ class FlowFrame:
                 upstream_node_id=upstream.node_id,
                 output_column=output_column,
             )
-            default_desc = f"Apply (upstream node {upstream.node_id}) -> {output_column}"
         else:
             apply_input = input_schema.ApplyModelSettings(
                 source="catalog",
@@ -1730,7 +1758,6 @@ class FlowFrame:
                 namespace_id=resolved_namespace_id,
                 output_column=output_column,
             )
-            default_desc = f"Apply '{model_name}' -> {output_column}"
 
         apply_settings = input_schema.NodeApplyModel(
             flow_id=self.flow_graph.flow_id,
@@ -1740,7 +1767,7 @@ class FlowFrame:
             pos_y=150,
             is_setup=True,
             depending_on_id=self.node_id,
-            description=description or default_desc,
+            description=description,
         )
         self.flow_graph.add_apply_model(apply_settings)
         return self._create_child_frame(
@@ -1814,7 +1841,7 @@ class FlowFrame:
             pos_y=150,
             is_setup=True,
             depending_on_id=self.node_id,
-            description=description or f"Evaluate {predicted_column} vs {actual_column}",
+            description=description,
         )
         self.flow_graph.add_evaluate_model(evaluate_settings)
         return self._create_child_frame(
@@ -2716,6 +2743,56 @@ class FlowFrame:
 
         return _sql_frame(query, [], {table_name: self}, description)
 
+    def polars_code(
+        self, code: str | Callable[..., Any], *others: FlowFrame, description: str | None = None
+    ) -> FlowFrame:
+        """Place one Polars Code node over this frame, and ``others`` as its further inputs, in order.
+
+        ``code`` is the node's code: a string, stored dedented and stripped, or a ``def`` function
+        whose body is stored instead (a single ``return <expr>`` becomes ``<expr>``, a trailing
+        ``return output_df`` is dropped, anything else is kept as written; the parameters, typed
+        ``fl.FlowFrame`` or not, are ignored). The code reads its input as ``input_df``, or
+        ``input_df_1``, ``input_df_2``, ... with several inputs, and yields ``output_df`` or its
+        last expression, exactly as on the canvas.
+        """
+        text = _polars_code_source(code)
+        frames = [self, *others]
+        for frame in others:
+            if not isinstance(frame, FlowFrame):
+                raise NativeNodeError(f"polars_code takes FlowFrames as inputs, got {type(frame).__name__}")
+        ids = [frame.node_id for frame in frames]
+        if len(set(ids)) != len(ids):
+            raise NativeNodeError("polars_code reads each input node once; pass every frame a single time")
+        graph = merge_frames(frames)
+        new_node_id = generate_node_id()
+        settings = input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=new_node_id,
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=text),
+            is_setup=True,
+            depending_on_ids=ids,
+            description=description,
+        )
+        graph.add_polars_code(settings)
+        node = graph.get_node(new_node_id)
+        if node.results.errors:
+            error = node.results.errors
+            graph.delete_node(new_node_id)
+            raise NativeNodeError(f"polars_code node {new_node_id}: {error}")
+        for frame in frames:
+            frame._add_connection(frame.node_id, new_node_id, "main", output_handle=frame.output_handle)
+        deferred = any(frame._deferred for frame in frames)
+        if seeded_at_build(node.node_type, frames, inputs_deferred=deferred):
+            seed_from_predicted_schema(node)
+            deferred = True
+        return FlowFrame(
+            data=materialise(graph.get_node(new_node_id)).data_frame,
+            flow_graph=graph,
+            node_id=new_node_id,
+            parent_node_id=self.node_id,
+            deferred=deferred,
+        )
+
     def collect(self, *args, **kwargs) -> pl.DataFrame:
         """Collect lazy data into memory.
 
@@ -3211,7 +3288,7 @@ class FlowFrame:
                 pos_y=150,
                 is_setup=True,
                 depending_on_id=self.node_id,
-                description=description or f"Pivot {value_col} by {on_value}",
+                description=description,
             )
 
             self.flow_graph.add_pivot(pivot_settings)
@@ -3293,8 +3370,7 @@ class FlowFrame:
             value_columns = [on]
         elif isinstance(on, Iterable):
             value_columns = list(on)
-            if isinstance(value_columns[0], Iterable):
-                can_use_native = False
+            can_use_native = all(isinstance(column, str) for column in value_columns)
         else:
             value_columns = [on]
 
@@ -3316,7 +3392,7 @@ class FlowFrame:
                 pos_y=150,
                 is_setup=True,
                 depending_on_id=self.node_id,
-                description=description or "Unpivot data from wide to long format",
+                description=description,
             )
 
             self.flow_graph.add_unpivot(unpivot_settings)
@@ -3336,7 +3412,7 @@ class FlowFrame:
     """
             if description is None:
                 index_str = ", ".join(index_columns) if index_columns else "none"
-                value_str = ", ".join(value_columns) if value_columns else "all non-index columns"
+                value_str = ", ".join(map(str, value_columns)) if value_columns else "all non-index columns"
                 description = f"Unpivot data with index: {index_str} and value cols: {value_str}"
 
             self._add_polars_code(new_node_id, code, description)
@@ -3427,7 +3503,7 @@ class FlowFrame:
                 pos_y=150,
                 is_setup=True,
                 depending_on_ids=list(unique_node_ids),
-                description=description or "Concatenate dataframes",
+                description=description,
             )
 
             self.flow_graph.add_union(union_settings)
@@ -3524,7 +3600,7 @@ class FlowFrame:
                 pos_y=150,
                 is_setup=True,
                 depending_on_id=self.node_id,
-                description=description or f"Add cumulative count as '{output_name}'",
+                description=description,
             )
 
             self.flow_graph.add_record_id(record_id_settings)
@@ -3753,9 +3829,16 @@ class FlowFrame:
         self.flow_graph.add_window_functions(settings)
         return self._create_child_frame(new_node_id)
 
-    def with_row_index(self, name: str = "index", offset: int = 0, description: str = None) -> FlowFrame:
+    def with_row_index(
+        self,
+        name: str = "index",
+        offset: int = 0,
+        *,
+        group_by: list[str] | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
         """
-        Add a row index as the first column in the DataFrame.
+        Add a row index as the first column in the DataFrame, as one Record ID node.
 
         Parameters
         ----------
@@ -3763,6 +3846,9 @@ class FlowFrame:
             Name of the index column.
         offset : int, default 0
             Start the index at this offset. Cannot be negative.
+        group_by : list[str], optional
+            Number the rows within each group of these columns (the index restarts at
+            ``offset`` per group), like ``pl.int_range(pl.len()).over(group_by) + offset``.
         description : str, optional
             Description of this operation for the ETL graph
 
@@ -3772,32 +3858,26 @@ class FlowFrame:
             A new FlowFrame with the row index column added
         """
         refuse_parameter_as_column(name, "with_row_index(name=)")
+        refuse_parameter_as_column(group_by, "with_row_index(group_by=)")
+        if isinstance(group_by, str):
+            group_by = [group_by]
         new_node_id = generate_node_id()
-
-        if name == "record_id" or (offset == 1 and name != "index"):
-            record_id_input = transform_schema.RecordIdInput(
+        record_id_settings = input_schema.NodeRecordId(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            record_id_input=transform_schema.RecordIdInput(
                 output_column_name=name,
                 offset=offset,
-                group_by=False,
-                group_by_columns=[],
-            )
-
-            record_id_settings = input_schema.NodeRecordId(
-                flow_id=self.flow_graph.flow_id,
-                node_id=new_node_id,
-                record_id_input=record_id_input,
-                pos_x=200,
-                pos_y=150,
-                is_setup=True,
-                depending_on_id=self.node_id,
-                description=description or f"Add row index column '{name}'",
-            )
-
-            self.flow_graph.add_record_id(record_id_settings)
-        else:
-            code = f"input_df.with_row_index(name='{name}', offset={offset})"
-            self._add_polars_code(new_node_id, code, description or f"Add row index column '{name}'")
-
+                group_by=bool(group_by),
+                group_by_columns=list(group_by or []),
+            ),
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description,
+        )
+        self.flow_graph.add_record_id(record_id_settings)
         return self._create_child_frame(new_node_id)
 
     def explode(
@@ -3870,7 +3950,7 @@ class FlowFrame:
             join_input=transform_schema.FuzzyMatchInput(
                 join_mapping=fuzzy_mappings, left_select=self.columns, right_select=other.columns
             ),
-            description=description or "Fuzzy match between two FlowFrames",
+            description=description,
             depending_on_ids=[self.node_id, other.node_id],
         )
         self.flow_graph.add_fuzzy_match(node_fuzzy_match)
@@ -3942,7 +4022,7 @@ class FlowFrame:
             pos_y=150,
             is_setup=True,
             depending_on_id=self.node_id,
-            description=description or f"Split text in '{column_name}' to rows",
+            description=description,
         )
 
         self.flow_graph.add_text_to_rows(text_to_rows_settings)
@@ -4020,7 +4100,7 @@ class FlowFrame:
                 pos_y=150,
                 is_setup=True,
                 depending_on_id=self.node_id,
-                description=description or f"Get unique rows (strategy: {keep})",
+                description=description,
             )
 
             self.flow_graph.add_unique(unique_settings)

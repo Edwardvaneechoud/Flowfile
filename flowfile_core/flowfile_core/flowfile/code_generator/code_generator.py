@@ -1368,6 +1368,34 @@ class FlowGraphCodeConverter(
             return None
         return dropped or None
 
+    def _emit_select_chain(self, settings: input_schema.NodeSelect, var_name: str, input_df: str) -> None:
+        """A ``keep_missing`` select over an unknown input as ``.drop()``, ``.rename()`` and a cast, in that order.
+
+        A ``.select([...])`` of the listed columns would drop every column the canvas passes through.
+        Dropping first lets a rename take the name of a dropped column. Column order follows the
+        input, where the canvas moves the listed columns first.
+        """
+        rows = [row for row in settings.select_input if row.is_available]
+        renames = {row.old_name: row.new_name for row in rows if row.keep and row.new_name != row.old_name}
+        drops = [row.old_name for row in rows if not row.keep]
+        casts = [
+            f"{self.framework}.col({self._py_str(row.new_name)}).cast({self._get_polars_dtype(row.data_type)})"
+            for row in rows
+            if row.keep and (row.data_type_change or row.is_altered) and row.data_type
+        ]
+        chain = ""
+        if drops:
+            chain += f".drop([{', '.join(self._py_str(name) for name in drops)}])"
+        if renames:
+            chain += ".rename({" + ", ".join(f"{self._py_str(k)}: {self._py_str(v)}" for k, v in renames.items()) + "})"
+        if casts:
+            chain += f".with_columns([{', '.join(casts)}])"
+        if not chain:
+            self.node_var_mapping[settings.node_id] = input_df
+            return
+        self._add_code(f"{var_name} = {input_df}{chain}")
+        self._add_code("")
+
     def _handle_select(self, settings: input_schema.NodeSelect, var_name: str, input_vars: dict[str, str]) -> None:
         """Handle select/rename nodes."""
         input_df = input_vars.get("main", "df")
@@ -1376,6 +1404,14 @@ class FlowGraphCodeConverter(
             self._add_code(f"{var_name} = {input_df}.drop([{', '.join(self._py_str(c) for c in drop_cols)}])")
             self._add_code("")
             return
+        unlisted: list[str] = []
+        if settings.keep_missing and settings.select_input:
+            input_names = self._input_column_names(settings.node_id)
+            if input_names is None:
+                self._emit_select_chain(settings, var_name, input_df)
+                return
+            listed = {row.old_name for row in settings.select_input}
+            unlisted = [name for name in input_names if name not in listed]
         select_exprs = []
         for select_input in settings.select_input:
             if select_input.keep and select_input.is_available:
@@ -1390,6 +1426,8 @@ class FlowGraphCodeConverter(
                     expr = f"{expr}.cast({polars_dtype})"
 
                 select_exprs.append(expr)
+        # keep_missing passes every unlisted input column through, after the listed ones
+        select_exprs += [f"{self.framework}.col({self._py_str(name)})" for name in unlisted]
 
         if select_exprs:
             self._add_code(f"{var_name} = {input_df}.select([")
