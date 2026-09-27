@@ -406,15 +406,15 @@ check_stubs: stubs
 	fi
 	@echo "Stubs are in sync."
 
-# Regenerate the static fl./FlowFrame/Expr completion source for the canvas notebook dock.
-# Run after changing flowfile.__all__ or the frame stubs (make stubs).
+# Regenerate the static fl. completion source for the notebook cell editors.
+# Run after changing flowfile.__all__.
 fl_completions:
 	@echo "Generating fl completions..."
 	$(POETRY_RUN) python tools/generate_fl_completions.py
 
 # Drift check: regenerate and fail if the committed completions changed.
 check_fl_completions: fl_completions
-	@if ! git diff --exit-code -- flowfile_frontend/src/renderer/app/components/canvasNotebook/flCompletions.json; then \
+	@if ! git diff --exit-code -- flowfile_frontend/src/renderer/app/components/notebook/flCompletions.json; then \
 		echo "ERROR: fl completions are out of sync. Run 'make fl_completions' and commit the result."; \
 		exit 1; \
 	fi
