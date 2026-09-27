@@ -56,6 +56,7 @@
         <span class="switch-spinner" />
         <span>Loading flow…</span>
       </div>
+      <canvas-notebook-dock v-if="hasOpenFlow && notebookStore.open" class="notebook-dock" />
     </div>
   </div>
 </template>
@@ -68,11 +69,13 @@ import CanvasFlow from "./Canvas.vue";
 import FlowSelector from "../FlowSelectorView/FlowSelectorView.vue";
 import UndoRedoControls from "./UndoRedoControls.vue";
 import DesignerEmptyState from "./DesignerEmptyState.vue";
+import CanvasNotebookDock from "../../components/canvasNotebook/CanvasNotebookDock.vue";
 import { FlowApi } from "../../api";
 import { fetchNodes } from "../../features/designer/utils";
 import type { NodeTemplate, FlowSettings } from "../../types";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
+import { useCanvasNotebookStore } from "../../stores/canvasNotebook-store";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import type { RecentFlow } from "../../composables/useRecentFlows";
 import { resolveBootFlowId, resolveNextFlowAfterClose } from "./flowSessionState";
@@ -95,6 +98,7 @@ const initialLoadComplete = ref(false);
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
+const notebookStore = useCanvasNotebookStore();
 const { openFlow: openFlowFromPath } = useFlowOpener();
 
 // Hide undo/redo when no flow is loaded — same gating as the Save button.
@@ -303,10 +307,17 @@ onMounted(async () => {
 
 .canvas-wrap {
   position: relative;
+  display: flex;
   height: calc(100vh - 100px);
 }
 
 .canvas {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+}
+
+.notebook-dock {
   height: 100%;
 }
 
@@ -385,7 +396,8 @@ onMounted(async () => {
     justify-content: flex-end;
   }
 
-  .canvas {
+  .canvas,
+  .notebook-dock {
     height: calc(100vh - 50px);
   }
 }
@@ -432,7 +444,8 @@ onMounted(async () => {
     justify-content: flex-end;
   }
 
-  .canvas {
+  .canvas,
+  .notebook-dock {
     height: calc(100vh - 90px);
   }
 }

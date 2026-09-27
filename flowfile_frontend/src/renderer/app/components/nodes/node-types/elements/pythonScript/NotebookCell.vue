@@ -8,6 +8,7 @@
       <!-- Toolbar (shown on hover/focus) -->
       <div class="cell-toolbar">
         <button
+          v-if="!readOnly"
           type="button"
           class="nb-drag-handle"
           :aria-label="`Reorder cell ${cellIndex + 1} of ${cellCount}`"
@@ -20,6 +21,7 @@
           <i class="fa-solid fa-grip-vertical"></i>
         </button>
         <button
+          v-if="editable"
           :disabled="busy"
           title="Run and advance (Shift+Enter) · Run (Cmd/Ctrl+Enter)"
           @click="emit('run-cell')"
@@ -27,6 +29,7 @@
           <i class="fa-solid fa-play"></i>
         </button>
         <button
+          v-if="!readOnly"
           :disabled="cellIndex === 0 || structuralDisabled"
           title="Move up"
           @click="emit('move-up')"
@@ -34,6 +37,7 @@
           <i class="fa-solid fa-chevron-up"></i>
         </button>
         <button
+          v-if="!readOnly"
           :disabled="isLastCell || structuralDisabled"
           title="Move down"
           @click="emit('move-down')"
@@ -53,7 +57,12 @@
           @toggle-output="toggleOutputCollapsed(ownerId, cell.id)"
           @delete="emit('delete')"
         />
+        <span v-if="locked" class="cell-locked-tag">
+          <i class="fa-solid fa-lock"></i> {{ cell.status }}
+        </span>
       </div>
+
+      <div v-if="locked && cell.reason" class="cell-locked-reason">{{ cell.reason }}</div>
 
       <!-- CodeMirror editor: v-show keeps the EditorView (and its undo history) alive -->
       <div v-show="!pres.codeCollapsed" class="cell-editor-wrapper">
@@ -63,6 +72,7 @@
           :autofocus="false"
           :indent-with-tab="false"
           :tab-size="4"
+          :disabled="!editable"
           :extensions="cellExtensions"
           @ready="onReady"
           @update:model-value="(val: string) => emit('update:code', val)"
@@ -111,13 +121,18 @@ import {
 } from "../../../../notebook/cellPresentation";
 import { registerCellView, unregisterCellView } from "../../../../notebook/editorViews";
 import type { CellRuntime } from "../../../../notebook/notebookRuntimeState";
-import type { NotebookCell } from "../../../../../types/node.types";
+import {
+  isLockedCell,
+  NO_LSP_CONTEXT,
+  type NotebookViewCell,
+} from "../../../../notebook/notebookExecutor";
 import CellOutput from "./CellOutput.vue";
+import type { LspContext } from "./lspCompletionSource";
 import { buildNotebookEditorExtensions } from "./notebookEditor";
 import type { UpstreamColumn } from "./useUpstreamColumns";
 
 interface Props {
-  cell: NotebookCell;
+  cell: NotebookViewCell;
   /** Identifies the open notebook this cell's editor view belongs to. */
   ownerId: string;
   cellIndex: number;
@@ -136,9 +151,10 @@ interface Props {
   priorCellCodes?: string[];
   /** Cells before this one with their ids, so column inference can date each assignment. */
   priorCells?: { id: string; code: string }[];
-  kernelId?: string | null;
-  flowId?: number;
-  nodeId?: number;
+  /** Resolved per request, so the executor's current kernel/session is what Jedi sees. */
+  lspContext?: () => LspContext;
+  /** No run button, no editing, no structural controls. */
+  readOnly?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -151,9 +167,8 @@ const props = withDefaults(defineProps<Props>(), {
   upstreamColumns: () => [],
   priorCellCodes: () => [],
   priorCells: () => [],
-  kernelId: null,
-  flowId: 0,
-  nodeId: 0,
+  lspContext: () => NO_LSP_CONTEXT,
+  readOnly: false,
 });
 
 const emit = defineEmits<{
@@ -175,6 +190,8 @@ const emit = defineEmits<{
 const pres = computed(() => cellPresentation(props.ownerId, props.cell.id));
 
 const status = computed(() => props.runtime?.status ?? "idle");
+const locked = computed(() => isLockedCell(props.cell));
+const editable = computed(() => !props.readOnly && !locked.value);
 
 const cellClasses = computed(() => ({
   "cell--active": props.active,
@@ -182,6 +199,7 @@ const cellClasses = computed(() => ({
   "cell--queued": status.value === "queued",
   "cell--error": props.cell.output?.error,
   "is-dragging": props.dragging,
+  "cell--locked": locked.value,
 }));
 
 const collapsedCodeLabel = computed(() => {
@@ -200,9 +218,7 @@ const cellExtensions = [
     getOwnerId: () => props.ownerId,
     getCellId: () => props.cell.id,
     getSurface: () => "node",
-    getKernelId: () => props.kernelId,
-    getFlowId: () => props.flowId,
-    getNodeId: () => props.nodeId,
+    getLspContext: () => props.lspContext(),
   }),
   EditorView.updateListener.of((u) => {
     if (u.focusChanged && u.view.hasFocus) emit("focus");
@@ -368,6 +384,25 @@ onBeforeUnmount(() => {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 3px;
   overflow: hidden;
+}
+
+.cell-wrapper.cell--locked {
+  border-left-color: var(--el-border-color-darker);
+}
+
+.cell-locked-tag {
+  margin-left: auto;
+  font-size: 0.65rem;
+  color: var(--el-text-color-secondary);
+}
+
+.cell-locked-reason {
+  padding: 0.2rem 0.5rem;
+  margin-bottom: 0.2rem;
+  font-size: 0.7rem;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-lighter);
+  border-radius: 3px;
 }
 
 .cell-status-badge {

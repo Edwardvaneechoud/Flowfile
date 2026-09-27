@@ -1,0 +1,2589 @@
+{
+  "fl": [
+    {
+      "name": "Array",
+      "kind": "class",
+      "signature": "(inner, shape=None, *, width=None)",
+      "doc_first_line": "Fixed length list type."
+    },
+    {
+      "name": "Binary",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Binary type."
+    },
+    {
+      "name": "Boolean",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Boolean type."
+    },
+    {
+      "name": "CatalogReference",
+      "kind": "class",
+      "signature": "(name, *, auto_create=False, description=None)",
+      "doc_first_line": "Validated handle to a level-0 catalog namespace."
+    },
+    {
+      "name": "Categorical",
+      "kind": "class",
+      "signature": "(categories=None, *, ordering=None)",
+      "doc_first_line": "A categorical encoding of a set of strings."
+    },
+    {
+      "name": "CustomNode",
+      "kind": "class",
+      "signature": "(node, *inputs, settings=None, kernel=None, deferred=None, schemas=None, description=None, flow_graph=None)",
+      "doc_first_line": "A user-defined (custom) node, placed from its class, an instance of it, or its node type name."
+    },
+    {
+      "name": "DataType",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Base class for all Polars data types."
+    },
+    {
+      "name": "DataTypeClass",
+      "kind": "class",
+      "signature": "",
+      "doc_first_line": "Metaclass for nicely printing DataType classes."
+    },
+    {
+      "name": "Date",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Data type representing a calendar date."
+    },
+    {
+      "name": "Datetime",
+      "kind": "class",
+      "signature": "(time_unit='us', time_zone=None)",
+      "doc_first_line": "Data type representing a calendar date and time of day."
+    },
+    {
+      "name": "Decimal",
+      "kind": "class",
+      "signature": "(precision=None, scale=0)",
+      "doc_first_line": "Decimal 128-bit type with an optional precision and non-negative scale."
+    },
+    {
+      "name": "Duration",
+      "kind": "class",
+      "signature": "(time_unit='us')",
+      "doc_first_line": "Data type representing a time duration."
+    },
+    {
+      "name": "Enum",
+      "kind": "class",
+      "signature": "(categories)",
+      "doc_first_line": "A fixed categorical encoding of a unique set of strings."
+    },
+    {
+      "name": "Field",
+      "kind": "class",
+      "signature": "(name, dtype)",
+      "doc_first_line": "Definition of a single field within a `Struct` DataType."
+    },
+    {
+      "name": "Float32",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "32-bit floating point type."
+    },
+    {
+      "name": "Float64",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "64-bit floating point type."
+    },
+    {
+      "name": "FlowDataEngine",
+      "kind": "class",
+      "signature": "(raw_data=None, path_ref=None, name=None, optimize_memory=True, schema=None, number_of_records=None, calculate_schema_stats=False, streamable=True, number_of_records_callback=None, data_callback=None)",
+      "doc_first_line": "The core data handling engine for Flowfile."
+    },
+    {
+      "name": "FlowFrame",
+      "kind": "class",
+      "signature": "(data=None, schema=None, *, schema_overrides=None, strict=True, orient=None, infer_schema_length=100, nan_to_null=False, flow_graph=None, node_id=None, parent_node_id=None, output_handle='output-0', deferred=False, **kwargs)",
+      "doc_first_line": "Main class that wraps FlowDataEngine and maintains the ETL graph."
+    },
+    {
+      "name": "FlowGraph",
+      "kind": "class",
+      "signature": "(flow_settings=None, name=None, input_cols=None, output_cols=None, path_ref=None, input_flow=None, cache_results=False)",
+      "doc_first_line": "A class representing a Directed Acyclic Graph (DAG) for data processing pipelines."
+    },
+    {
+      "name": "FlowInformation",
+      "kind": "class",
+      "signature": "(*, flow_id, flow_name='', flow_settings, data={}, node_starts, node_connections=[], groups=<factory>, comments=<factory>)",
+      "doc_first_line": "Represents the complete state of a flow, including settings, nodes, and connections."
+    },
+    {
+      "name": "FlowInput",
+      "kind": "function",
+      "signature": "(name, *, schema=None, sample=None, flow_graph=None, description=None)",
+      "doc_first_line": "Place a named ``flow_input`` node, an input a parent flow's ``RunFlow`` feeds, and return its frame."
+    },
+    {
+      "name": "FlowNode",
+      "kind": "class",
+      "signature": "(node_id, function, parent_uuid, setting_input, name, node_type, input_columns=None, output_schema=None, drop_columns=None, renew_schema=True, pos_x=0, pos_y=0, schema_callback=None)",
+      "doc_first_line": "Represents a single node in a data flow graph."
+    },
+    {
+      "name": "FlowOutput",
+      "kind": "class",
+      "signature": "(name, *, description=None)",
+      "doc_first_line": "A flow output name, declared once and used by ``to_flow_output`` and ``RunFlow``."
+    },
+    {
+      "name": "FlowRef",
+      "kind": "class",
+      "signature": "(registration_id, flow_uuid, flow_path, name, schema=None)",
+      "doc_first_line": "Handle to a catalog-registered flow: what ``RunFlow`` runs."
+    },
+    {
+      "name": "FlowSettings",
+      "kind": "class",
+      "signature": "(*, flow_id=<factory>, description=None, save_location=None, name='', path='', source_registration_id=None, execution_mode='Performance', execution_location=<factory>, max_parallel_workers=4, parameters=<factory>, auto_save=False, modified_on=None, show_detailed_progress=True, show_edge_labels=False, is_running=False, is_canceled=False, track_history=True, validate_settings=True)",
+      "doc_first_line": "Extends FlowGraphConfig with additional operational settings for a flow."
+    },
+    {
+      "name": "FlowfileColumn",
+      "kind": "class",
+      "signature": "(polars_type)",
+      "doc_first_line": "FlowfileColumn(polars_type: flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type.PlType)"
+    },
+    {
+      "name": "FullCloudStorageConnection",
+      "kind": "class",
+      "signature": "(*, storage_type, auth_method, connection_name='None', aws_region=None, aws_access_key_id=None, aws_secret_access_key=None, aws_role_arn=None, aws_allow_unsafe_html=None, aws_session_token=None, aws_profile=None, azure_account_name=None, azure_account_key=None, azure_tenant_id=None, azure_client_id=None, azure_client_secret=None, azure_sas_token=None, gcs_service_account_key=None, gcs_project_id=None, endpoint_url=None, verify_ssl=True)",
+      "doc_first_line": "Internal model with decrypted secrets"
+    },
+    {
+      "name": "FuzzyMapping",
+      "kind": "class",
+      "signature": "(left_col, right_col=None, threshold_score=80.0, fuzzy_type='levenshtein', perc_unique=0, output_column_name=None, valid=True)",
+      "doc_first_line": "Represents the configuration for a fuzzy string match between two columns."
+    },
+    {
+      "name": "Gate",
+      "kind": "class",
+      "signature": "(frame, formula=None, *, parameter=None, operator='equals', value=None, control=None, else_output=True, description=None)",
+      "doc_first_line": "A gate node: its data input flows through, and its downstream only runs when the condition holds."
+    },
+    {
+      "name": "GateOperator",
+      "kind": "class",
+      "signature": "(*values)",
+      "doc_first_line": "Operators of a parameter-mode gate condition."
+    },
+    {
+      "name": "GroupByFrame",
+      "kind": "class",
+      "signature": "(node_id, parent_frame, by_cols, maintain_order=False, description=None)",
+      "doc_first_line": "Represents a grouped DataFrame for aggregation operations."
+    },
+    {
+      "name": "Int128",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "128-bit signed integer type."
+    },
+    {
+      "name": "Int16",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "16-bit signed integer type."
+    },
+    {
+      "name": "Int32",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "32-bit signed integer type."
+    },
+    {
+      "name": "Int64",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "64-bit signed integer type."
+    },
+    {
+      "name": "Int8",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "8-bit signed integer type."
+    },
+    {
+      "name": "List",
+      "kind": "class",
+      "signature": "(inner)",
+      "doc_first_line": "Variable length list type."
+    },
+    {
+      "name": "NativeNodeError",
+      "kind": "class",
+      "signature": "",
+      "doc_first_line": "A native node or deferred frame could not be built or materialised."
+    },
+    {
+      "name": "Node",
+      "kind": "class",
+      "signature": "(node_type, *inputs, settings=None, deferred=None, description=None, flow_graph=None)",
+      "doc_first_line": "Any built-in node type, placed from its type and settings."
+    },
+    {
+      "name": "NodeType",
+      "kind": "class",
+      "signature": "(*values)",
+      "doc_first_line": "Every built-in node type the canvas can place."
+    },
+    {
+      "name": "Null",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Data type representing null values."
+    },
+    {
+      "name": "Object",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Data type for wrapping arbitrary Python objects."
+    },
+    {
+      "name": "ParamType",
+      "kind": "class",
+      "signature": "(*values)",
+      "doc_first_line": "Types of a flow parameter."
+    },
+    {
+      "name": "Parameter",
+      "kind": "class",
+      "signature": "(name, *, default='', type='string', description='', enum_values=None)",
+      "doc_first_line": "A flow parameter, declared once and used wherever a value or a parameter name is taken."
+    },
+    {
+      "name": "PythonScript",
+      "kind": "class",
+      "signature": "(*inputs, code=None, cells=None, kernel=None, outputs=None, schemas=None, description=None, flow_graph=None)",
+      "doc_first_line": "A Python Script node: its code runs on a kernel container when the flow runs."
+    },
+    {
+      "name": "RunFlow",
+      "kind": "class",
+      "signature": "(flow, *, name=None, schema=None, overwrite=False, inputs=None, params=None, param_frame=None, iterate=False, append_metadata=True, description=None, flow_graph=None, **input_frames)",
+      "doc_first_line": "A run_flow node: runs a registered flow inside this one, feeding its inputs and parameters."
+    },
+    {
+      "name": "SchemaReference",
+      "kind": "class",
+      "signature": "(catalog, name, *, auto_create=False, description=None)",
+      "doc_first_line": "Validated handle to a level-1 schema namespace."
+    },
+    {
+      "name": "String",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "UTF-8 encoded string type."
+    },
+    {
+      "name": "Struct",
+      "kind": "class",
+      "signature": "(fields)",
+      "doc_first_line": "Struct composite type."
+    },
+    {
+      "name": "Time",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Data type representing the time of day."
+    },
+    {
+      "name": "UInt16",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "16-bit unsigned integer type."
+    },
+    {
+      "name": "UInt32",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "32-bit unsigned integer type."
+    },
+    {
+      "name": "UInt64",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "64-bit unsigned integer type."
+    },
+    {
+      "name": "UInt8",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "8-bit unsigned integer type."
+    },
+    {
+      "name": "Unknown",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "Type representing DataType values that could not be determined statically."
+    },
+    {
+      "name": "Utf8",
+      "kind": "class",
+      "signature": "()",
+      "doc_first_line": "UTF-8 encoded string type."
+    },
+    {
+      "name": "add_flow_parameter",
+      "kind": "function",
+      "signature": "(flow, parameter)",
+      "doc_first_line": "Declare ``parameter`` on the flow and return it."
+    },
+    {
+      "name": "all_",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "boolean",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "by_dtype",
+      "kind": "function",
+      "signature": "(dtypes)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "canvas_node",
+      "kind": "function",
+      "signature": "(node_id, *inputs, output=None)",
+      "doc_first_line": "Adopt canvas node ``node_id`` from the seeded session: a placeholder for a node not editable as code."
+    },
+    {
+      "name": "categorical",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "col",
+      "kind": "function",
+      "signature": "(name)",
+      "doc_first_line": "Creates a Column expression."
+    },
+    {
+      "name": "column",
+      "kind": "function",
+      "signature": "(name)",
+      "doc_first_line": "Alias for col(). Creates a Column expression."
+    },
+    {
+      "name": "concat",
+      "kind": "function",
+      "signature": "(frames, how='vertical', rechunk=False, parallel=True, description=None)",
+      "doc_first_line": "Concatenate multiple FlowFrames into one."
+    },
+    {
+      "name": "contains",
+      "kind": "function",
+      "signature": "(pattern)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "count",
+      "kind": "function",
+      "signature": "(*names)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "create_cloud_storage_connection",
+      "kind": "function",
+      "signature": "(connection)",
+      "doc_first_line": "Create a cloud storage connection using the provided connection details."
+    },
+    {
+      "name": "create_cloud_storage_connection_if_not_exists",
+      "kind": "function",
+      "signature": "(connection)",
+      "doc_first_line": "Create a cloud storage connection if it does not already exist."
+    },
+    {
+      "name": "create_database_connection",
+      "kind": "function",
+      "signature": "(connection_name, *, database_type='postgresql', host=None, port=None, database=None, username=None, password=None, ssl_enabled=False, url=None)",
+      "doc_first_line": "Create and store a new database connection."
+    },
+    {
+      "name": "create_database_connection_if_not_exists",
+      "kind": "function",
+      "signature": "(connection_name, *, database_type='postgresql', host=None, port=None, database=None, username=None, password=None, ssl_enabled=False, url=None)",
+      "doc_first_line": "Create a database connection if it doesn't already exist."
+    },
+    {
+      "name": "create_flow_graph",
+      "kind": "function",
+      "signature": "(flow_id=None)",
+      "doc_first_line": "Create a new FlowGraph instance with a unique flow ID."
+    },
+    {
+      "name": "cum_count",
+      "kind": "function",
+      "signature": "(expr, reverse=False)",
+      "doc_first_line": "Return the cumulative count of the non-null values in the column."
+    },
+    {
+      "name": "custom_node",
+      "kind": "function",
+      "signature": "(node)",
+      "doc_first_line": "A factory placing custom node ``node`` (a class, an instance, or its node type name)."
+    },
+    {
+      "name": "custom_nodes",
+      "kind": "constant",
+      "signature": "",
+      "doc_first_line": ""
+    },
+    {
+      "name": "date",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "datetime",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "default_schema",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": "Return the seeded ``General/default`` schema reference."
+    },
+    {
+      "name": "del_cloud_storage_connection",
+      "kind": "function",
+      "signature": "(connection_name)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "del_database_connection",
+      "kind": "function",
+      "signature": "(connection_name)",
+      "doc_first_line": "Delete a database connection by its name."
+    },
+    {
+      "name": "duration",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "ends_with",
+      "kind": "function",
+      "signature": "(pattern)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "float_",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "flow_ref",
+      "kind": "function",
+      "signature": "(namespace=None, name=None, *, uuid=None, registration_id=None)",
+      "doc_first_line": "Find a registered flow by ``uuid``, by ``registration_id``, or by ``name`` within ``namespace``."
+    },
+    {
+      "name": "from_dict",
+      "kind": "function",
+      "signature": "(data, *, flow_graph=None, description=None)",
+      "doc_first_line": "Create a FlowFrame from a dictionary or list of dictionaries."
+    },
+    {
+      "name": "from_raw_data",
+      "kind": "function",
+      "signature": "(raw_data, *, flow_graph=None, description=None)",
+      "doc_first_line": "Create a FlowFrame from a RawData object."
+    },
+    {
+      "name": "get_all_available_cloud_storage_connections",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "get_all_available_database_connections",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": "Get all available database connections for the current user."
+    },
+    {
+      "name": "get_catalog",
+      "kind": "function",
+      "signature": "(name)",
+      "doc_first_line": "Return the existing catalog ``name``, like ``CatalogReference(name)``."
+    },
+    {
+      "name": "get_database_connection_by_name",
+      "kind": "function",
+      "signature": "(connection_name)",
+      "doc_first_line": "Get a database connection by its name."
+    },
+    {
+      "name": "integer",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "len",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "list_",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "list_catalogs",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": "Return every catalog (level-0 namespace) in the backend."
+    },
+    {
+      "name": "list_files",
+      "kind": "function",
+      "signature": "(directory, *, file_types=None, recursive=False, max_depth=5, include_hidden=False, include_files=True, include_directories=False, max_files=None, flow_graph=None, description=None)",
+      "doc_first_line": "List the contents of a directory as a table."
+    },
+    {
+      "name": "lit",
+      "kind": "function",
+      "signature": "(value)",
+      "doc_first_line": "Creates a Literal expression; a ``Parameter`` becomes its ``to_expr()``."
+    },
+    {
+      "name": "matches",
+      "kind": "function",
+      "signature": "(pattern)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "max",
+      "kind": "function",
+      "signature": "(*names)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "mean",
+      "kind": "function",
+      "signature": "(*names)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "min",
+      "kind": "function",
+      "signature": "(*names)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "node_designer",
+      "kind": "module",
+      "signature": "",
+      "doc_first_line": "Re-export shim — the custom-node authoring SDK moved to shared/node_designer."
+    },
+    {
+      "name": "node_interface",
+      "kind": "module",
+      "signature": "",
+      "doc_first_line": ""
+    },
+    {
+      "name": "numeric",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "object_",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "open_graph_in_editor",
+      "kind": "function",
+      "signature": "(flow_graph, storage_location=None, module_name='flowfile', automatically_open_browser=True)",
+      "doc_first_line": "Save the ETL graph, ensure the Flowfile server is running (starting it"
+    },
+    {
+      "name": "python_script",
+      "kind": "function",
+      "signature": "(fn=None, /, *, kernel=None, outputs=None, returns=None, description=None, flow_graph=None)",
+      "doc_first_line": "Decorate a module-level function to place it as a Python Script (notebook) node."
+    },
+    {
+      "name": "read_api",
+      "kind": "function",
+      "signature": "(url, *, method='GET', headers=None, params=None, json_body=None, auth=None, pagination=None, record_path='', timeout_seconds=30.0, max_retries=3, flow_graph=None)",
+      "doc_first_line": "Read JSON data from a REST API into a FlowFrame."
+    },
+    {
+      "name": "read_catalog_sql",
+      "kind": "function",
+      "signature": "(sql_query, *, flow_graph=None)",
+      "doc_first_line": "Execute a SQL query against all catalog Delta tables."
+    },
+    {
+      "name": "read_catalog_table",
+      "kind": "function",
+      "signature": "(table_name, *, schema=None, namespace_id=None, namespace_full_name=None, delta_version=None, scd2_view=None, scd2_as_of=None, changes_since=None, changes_consumer=None, changes_start='now', include_change_preimage=False, flow_graph=None)",
+      "doc_first_line": "Read a table from the Flowfile catalog."
+    },
+    {
+      "name": "read_csv",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, separator=',', convert_to_absolute_path=True, description=None, scan_mode=None, include_file_paths=None, has_header=True, new_columns=None, comment_prefix=None, quote_char='\"', skip_rows=0, skip_lines=0, schema=None, schema_overrides=None, null_values=None, missing_utf8_is_empty_string=False, ignore_errors=False, try_parse_dates=False, infer_schema=True, infer_schema_length=100, n_rows=None, encoding='utf8', low_memory=False, rechunk=False, storage_options=None, skip_rows_after_header=0, row_index_name=None, row_index_offset=0, eol_char='\\n', raise_if_empty=True, truncate_ragged_lines=False, decimal_comma=False, glob=True, cache=True, with_column_names=None, **other_options)",
+      "doc_first_line": "Read a CSV file into a FlowFrame."
+    },
+    {
+      "name": "read_database",
+      "kind": "function",
+      "signature": "(connection_name, *, table_name=None, schema_name=None, query=None, flow_graph=None)",
+      "doc_first_line": "Read data from a database using a stored connection."
+    },
+    {
+      "name": "read_excel",
+      "kind": "function",
+      "signature": "(source, *, sheet_name=None, has_header=True, flow_graph=None, description=None, convert_to_absolute_path=True)",
+      "doc_first_line": "Read an Excel file into a FlowFrame."
+    },
+    {
+      "name": "read_from_cloud_storage",
+      "kind": "function",
+      "signature": "(source, *, file_format='parquet', connection_name=None, scan_mode=None, delimiter=';', has_header=True, encoding='utf8', delta_version=None, changes_since=None, include_change_preimage=False, output_field_config=None)",
+      "doc_first_line": "Read data from cloud storage."
+    },
+    {
+      "name": "read_kafka",
+      "kind": "function",
+      "signature": "(connection_name, *, topic_name, max_messages=100000, start_offset='latest', poll_timeout_seconds=30.0, value_format='json', flow_graph=None)",
+      "doc_first_line": "Read messages from a Kafka topic using a named Flowfile connection."
+    },
+    {
+      "name": "read_parquet",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, description=None, convert_to_absolute_path=True, scan_mode=None, include_file_paths=None, **options)",
+      "doc_first_line": "Read a Parquet file into a FlowFrame."
+    },
+    {
+      "name": "register_flow",
+      "kind": "function",
+      "signature": "(flow_or_frame, *, name, schema=None, overwrite=False)",
+      "doc_first_line": "Save a flow as a YAML file and register it in the catalog under ``name``; return its ``FlowRef``."
+    },
+    {
+      "name": "scan_csv",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, separator=',', convert_to_absolute_path=True, description=None, scan_mode=None, include_file_paths=None, has_header=True, new_columns=None, comment_prefix=None, quote_char='\"', skip_rows=0, skip_lines=0, schema=None, schema_overrides=None, null_values=None, missing_utf8_is_empty_string=False, ignore_errors=False, try_parse_dates=False, infer_schema=True, infer_schema_length=100, n_rows=None, encoding='utf8', low_memory=False, rechunk=False, storage_options=None, skip_rows_after_header=0, row_index_name=None, row_index_offset=0, eol_char='\\n', raise_if_empty=True, truncate_ragged_lines=False, decimal_comma=False, glob=True, cache=True, with_column_names=None, **other_options)",
+      "doc_first_line": "Scan a CSV file into a FlowFrame. This function is an alias for read_csv."
+    },
+    {
+      "name": "scan_csv_from_cloud_storage",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, connection_name=None, scan_mode=None, delimiter=';', has_header=True, encoding='utf8', output_field_config=None)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "scan_delta",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, connection_name=None, version=None, changes_since=None, include_change_preimage=False, output_field_config=None)",
+      "doc_first_line": "Scan a Delta table in cloud storage into a FlowFrame."
+    },
+    {
+      "name": "scan_json_from_cloud_storage",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, connection_name=None, scan_mode=None, output_field_config=None)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "scan_parquet",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, description=None, convert_to_absolute_path=True, scan_mode=None, include_file_paths=None, **options)",
+      "doc_first_line": "Scan a Parquet file into a FlowFrame. This function is an alias for read_parquet."
+    },
+    {
+      "name": "scan_parquet_from_cloud_storage",
+      "kind": "function",
+      "signature": "(source, *, flow_graph=None, connection_name=None, scan_mode=None, description=None, output_field_config=None)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "set_flow_parameter",
+      "kind": "function",
+      "signature": "(flow, name, value)",
+      "doc_first_line": "Set the value of a declared flow parameter (its stored default), checked against its type."
+    },
+    {
+      "name": "sql",
+      "kind": "function",
+      "signature": "(query, /, *frames, description=None, **tables)",
+      "doc_first_line": "Run ``query`` over the given frames as a SQL Query node and return its output frame."
+    },
+    {
+      "name": "start_web_ui",
+      "kind": "function",
+      "signature": "(host='127.0.0.1', port=63578, open_browser=True)",
+      "doc_first_line": "Start the flowfile_core FastAPI app with the web UI routes and worker functionality."
+    },
+    {
+      "name": "starts_with",
+      "kind": "function",
+      "signature": "(pattern)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "string",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "struct",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "sum",
+      "kind": "function",
+      "signature": "(*names)",
+      "doc_first_line": ""
+    },
+    {
+      "name": "temporal",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "time",
+      "kind": "function",
+      "signature": "()",
+      "doc_first_line": ""
+    },
+    {
+      "name": "transform_schema",
+      "kind": "module",
+      "signature": "",
+      "doc_first_line": ""
+    },
+    {
+      "name": "when",
+      "kind": "function",
+      "signature": "(condition)",
+      "doc_first_line": "Start a when-then-otherwise expression."
+    },
+    {
+      "name": "write_catalog_table",
+      "kind": "function",
+      "signature": "(df, table_name, *, schema=None, namespace_id=None, namespace_full_name=None, write_mode='overwrite', merge_keys=None, partition_by=None, scd2_compare_columns=None, scd2_full_snapshot=False, scd2_surrogate_key_column='sk', scd2_valid_from_column='valid_from', scd2_valid_to_column='valid_to', scd2_is_current_column='is_current', scd2_partition_on_current=True, scd2_output_mode='input', track_changes=False, description=None)",
+      "doc_first_line": "Write a LazyFrame to the Flowfile catalog as a Delta table."
+    },
+    {
+      "name": "write_database",
+      "kind": "function",
+      "signature": "(df, connection_name, table_name, *, schema_name=None, if_exists='append')",
+      "doc_first_line": "Write data to a database using a stored connection."
+    },
+    {
+      "name": "write_to_cloud_storage",
+      "kind": "function",
+      "signature": "(df, path, *, file_format='parquet', connection_name=None, delimiter=';', encoding='utf8', compression='snappy', write_mode='overwrite', partition_by=None, merge_keys=None, track_changes=False)",
+      "doc_first_line": "Write data to cloud storage."
+    }
+  ],
+  "FlowFrame": [
+    {
+      "name": "apply_model",
+      "signature": "(upstream: FlowFrame | None=None, *, model_name: str='', output_column: str='prediction', version: int | None=None, schema: SchemaReference | None=None, namespace_id: int | None=None, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Score the data using a trained model."
+    },
+    {
+      "name": "approx_n_unique",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Approximate count of unique values."
+    },
+    {
+      "name": "bottom_k",
+      "signature": "(k: int, *, by: IntoExpr | Iterable[IntoExpr], reverse: bool | Sequence[bool]=False, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Return the `k` smallest rows."
+    },
+    {
+      "name": "cache",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "cast",
+      "signature": "(dtypes: Mapping[ColumnNameOrSelector | PolarsDataType, PolarsDataType | PythonDataType] | PolarsDataType | pl.DataTypeExpr | Schema, *, strict: bool=True, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Cast LazyFrame column(s) to the specified dtype(s)."
+    },
+    {
+      "name": "clear",
+      "signature": "(n: int=0, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Create an empty copy of the current LazyFrame, with zero to 'n' rows."
+    },
+    {
+      "name": "clone",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Create a copy of this LazyFrame."
+    },
+    {
+      "name": "collect",
+      "signature": "(*args, **kwargs) -> pl.DataFrame",
+      "doc_first_line": "Collect lazy data into memory."
+    },
+    {
+      "name": "collect_async",
+      "signature": "(*, gevent: bool=False, engine: EngineType='auto', optimizations: QueryOptFlags=DEFAULT_QUERY_OPT_FLAGS) -> Awaitable[DataFrame] | _GeventDataFrameResult[DataFrame]",
+      "doc_first_line": "Collect DataFrame asynchronously in thread pool."
+    },
+    {
+      "name": "collect_batches",
+      "signature": "(*, chunk_size: int | None=None, maintain_order: bool=True, lazy: bool=False, engine: EngineType='auto', optimizations: QueryOptFlags=DEFAULT_QUERY_OPT_FLAGS, description: Optional[str]=None) -> Iterator[DataFrame]",
+      "doc_first_line": "Evaluate the query in streaming mode and get a generator that returns chunks."
+    },
+    {
+      "name": "collect_schema",
+      "signature": "() -> Schema",
+      "doc_first_line": "Resolve the schema of this LazyFrame."
+    },
+    {
+      "name": "columns",
+      "signature": ": list[str]",
+      "doc_first_line": "Get the column names."
+    },
+    {
+      "name": "concat",
+      "signature": "(other: FlowFrame | list[FlowFrame], how: str='vertical', rechunk: bool=False, parallel: bool=True, description: str=None) -> 'FlowFrame'",
+      "doc_first_line": "Combine multiple FlowFrames into a single FlowFrame."
+    },
+    {
+      "name": "count",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Return the number of non-null elements for each column."
+    },
+    {
+      "name": "create_from_any_type",
+      "signature": "(data: FrameInitTypes=None, schema: SchemaDefinition | None=None, *, schema_overrides: SchemaDict | None=None, strict: bool=True, orient: Orientation | None=None, infer_schema_length: int | None=100, nan_to_null: bool=False, flow_graph=None, node_id=None, parent_node_id=None, description: Optional[str]=None) -> Any",
+      "doc_first_line": "Simple naive implementation of creating the frame from any type. It converts the data to a polars frame,"
+    },
+    {
+      "name": "data",
+      "signature": ": LazyFrame",
+      "doc_first_line": ""
+    },
+    {
+      "name": "data_cleansing",
+      "signature": "(columns: list[str] | None=None, *, remove_null_rows: bool=False, remove_null_columns: bool=False, replace_nulls_with_blank: bool=True, replace_nulls_with_zero: bool=True, trim_whitespace: bool=True, normalize_whitespace: bool=False, remove_all_whitespace: bool=False, remove_letters: bool=False, remove_numbers: bool=False, remove_punctuation: bool=False, case_mode: Literal['none', 'uppercase', 'lowercase', 'titlecase']='none', description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Fix common data quality issues in one node."
+    },
+    {
+      "name": "describe",
+      "signature": "(percentiles: Sequence[float] | float | None=..., *, interpolation: QuantileMethod='nearest') -> DataFrame",
+      "doc_first_line": "Creates a summary of statistics for a LazyFrame, returning a DataFrame."
+    },
+    {
+      "name": "deserialize",
+      "signature": "(source: str | bytes | Path | IOBase, *, format: SerializationFormat='binary', description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Read a logical plan from a file to construct a LazyFrame."
+    },
+    {
+      "name": "drop",
+      "signature": "(*columns, strict: bool=True, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Remove columns from the frame."
+    },
+    {
+      "name": "drop_nans",
+      "signature": "(subset: ColumnNameOrSelector | Collection[ColumnNameOrSelector] | None=None, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Drop all rows that contain one or more NaN values."
+    },
+    {
+      "name": "drop_nulls",
+      "signature": "(subset: ColumnNameOrSelector | Collection[ColumnNameOrSelector] | None=None, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Drop all rows that contain one or more null values."
+    },
+    {
+      "name": "dtypes",
+      "signature": ": Any",
+      "doc_first_line": "Get the column data types."
+    },
+    {
+      "name": "dynamic_rename",
+      "signature": "(mode: Literal['prefix', 'suffix', 'formula', 'first_row']='prefix', *, prefix: str='', suffix: str='', formula: str='', columns: list[str] | None=None, data_type: Literal['Numeric', 'String', 'Date', 'Other', 'Boolean', 'Binary', 'Complex'] | None=None, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Rename many columns at once via a single rule."
+    },
+    {
+      "name": "evaluate_model",
+      "signature": "(actual_column: str, *, predicted_column: str='prediction', task_type: Literal['auto', 'regression', 'classification']='auto', upstream: FlowFrame | None=None, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Compute model-quality metrics by comparing an actual column with a prediction column."
+    },
+    {
+      "name": "execute",
+      "signature": "(*, optimizations: QueryOptFlags=DEFAULT_QUERY_OPT_FLAGS, engine: EngineType='auto', description: Optional[str]=None, **_kwargs) -> QueryResult",
+      "doc_first_line": "Execute the query into a `QueryResult`."
+    },
+    {
+      "name": "explain",
+      "signature": "(*, format: ExplainFormat='plain', optimized: bool=True, type_coercion: bool=True, predicate_pushdown: bool=True, projection_pushdown: bool=True, simplify_expression: bool=True, slice_pushdown: bool=True, comm_subplan_elim: bool=True, comm_subexpr_elim: bool=True, cluster_with_columns: bool=True, collapse_joins: bool=True, streaming: bool=False, engine: EngineType='auto', tree_format: bool | None=None, optimizations: QueryOptFlags=DEFAULT_QUERY_OPT_FLAGS) -> str",
+      "doc_first_line": "Create a string representation of the query plan."
+    },
+    {
+      "name": "explode",
+      "signature": "(columns: str | Column | Iterable[str | Column], *more_columns, description: str=None) -> 'FlowFrame'",
+      "doc_first_line": "Explode the dataframe to long format by exploding the given columns."
+    },
+    {
+      "name": "fetch",
+      "signature": "(n_rows: int=500, **kwargs) -> DataFrame",
+      "doc_first_line": "Collect a small number of rows for debugging purposes."
+    },
+    {
+      "name": "fill_nan",
+      "signature": "(value: int | float | Expr | None, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Fill floating point NaN values."
+    },
+    {
+      "name": "fill_null",
+      "signature": "(value: Any | Expr | None=None, strategy: FillNullStrategy | None=None, limit: int | None=None, *, matches_supertype: bool=True, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Fill null values using the specified value or strategy."
+    },
+    {
+      "name": "filter",
+      "signature": "(*predicates, flowfile_formula: str | None=None, description: str | None=None, **constraints) -> 'FlowFrame'",
+      "doc_first_line": "Filter rows based on a predicate."
+    },
+    {
+      "name": "filter_split",
+      "signature": "(*predicates, flowfile_formula: str | None=None, description: str | None=None, **constraints) -> tuple[FlowFrame, FlowFrame]",
+      "doc_first_line": "Split the frame by a predicate into (pass, fail) frames."
+    },
+    {
+      "name": "first",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Get the first row of the DataFrame."
+    },
+    {
+      "name": "flow_graph",
+      "signature": ": FlowGraph",
+      "doc_first_line": ""
+    },
+    {
+      "name": "fuzzy_join",
+      "signature": "(other: FlowFrame, fuzzy_mappings: list[FuzzyMapping], description: str=None) -> 'FlowFrame'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "gather",
+      "signature": "(indices: int | Sequence[int] | IntoExpr | pl.Series | np.ndarray[Any, Any] | pl.LazyFrame, *, null_on_oob: bool=False, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Selects rows from this LazyFrame at the given indices."
+    },
+    {
+      "name": "gather_every",
+      "signature": "(n: int, offset: int=0, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Take every nth row in the LazyFrame and return as a new LazyFrame."
+    },
+    {
+      "name": "get_node_settings",
+      "signature": "(description: Optional[str]=None) -> FlowNode",
+      "doc_first_line": ""
+    },
+    {
+      "name": "group",
+      "signature": "(name: str, *, color: GroupColor | None=None, description: Optional[str]=None) -> Iterator[FlowFrame]",
+      "doc_first_line": "Group every node created inside this block into a labeled visual container."
+    },
+    {
+      "name": "group_by",
+      "signature": "(*by, description: Optional[str]=None, maintain_order: bool=False, **named_by) -> group_frame.GroupByFrame",
+      "doc_first_line": "Start a group by operation."
+    },
+    {
+      "name": "group_by_dynamic",
+      "signature": "(index_column: IntoExpr, *, every: str | timedelta, period: str | timedelta | None=None, offset: str | timedelta | None=None, include_boundaries: bool=False, closed: ClosedInterval='left', label: Label='left', group_by: IntoExpr | Iterable[IntoExpr] | None=None, start_by: StartBy='window', description: Optional[str]=None) -> LazyGroupBy",
+      "doc_first_line": "Group based on a time value (or index value of type Int32, Int64)."
+    },
+    {
+      "name": "head",
+      "signature": "(n: int, description: str=None) -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "inspect",
+      "signature": "(fmt: str='{}', description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Inspect a node in the computation graph."
+    },
+    {
+      "name": "interpolate",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Interpolate intermediate values. The interpolation method is linear."
+    },
+    {
+      "name": "join",
+      "signature": "(other, on: list[str | Column] | str | Column=None, how: str='inner', left_on: list[str | Column] | str | Column=None, right_on: list[str | Column] | str | Column=None, suffix: str='_right', validate: str=None, nulls_equal: bool=False, coalesce: bool=None, maintain_order: Literal[None, 'left', 'right', 'left_right', 'right_left']=None, description: str=None) -> 'FlowFrame'",
+      "doc_first_line": "Add a join operation to the Logical Plan."
+    },
+    {
+      "name": "join_asof",
+      "signature": "(other: FlowFrame, *, left_on: str | None | Expr=None, right_on: str | None | Expr=None, on: str | None | Expr=None, by_left: str | Sequence[str] | None=None, by_right: str | Sequence[str] | None=None, by: str | Sequence[str] | None=None, strategy: AsofJoinStrategy='backward', suffix: str='_right', tolerance: str | int | float | timedelta | None=None, allow_parallel: bool=True, force_parallel: bool=False, coalesce: bool=True, allow_exact_matches: bool=True, check_sortedness: bool=True, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Perform an asof join."
+    },
+    {
+      "name": "join_where",
+      "signature": "(other: FlowFrame, *predicates, suffix: str='_right', description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Perform a join based on one or multiple (in)equality predicates."
+    },
+    {
+      "name": "last",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Get the last row of the DataFrame."
+    },
+    {
+      "name": "lazy",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Return lazy representation, i.e. itself."
+    },
+    {
+      "name": "limit",
+      "signature": "(n: int, description: str=None) -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "map_batches",
+      "signature": "(function: Callable[[DataFrame], DataFrame], *, predicate_pushdown: bool=False, projection_pushdown: bool=False, slice_pushdown: bool=False, no_optimizations: bool | None=None, schema: None | SchemaDict=None, validate_output_schema: bool=True, streamable: bool=False, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Apply a custom function."
+    },
+    {
+      "name": "match_to_schema",
+      "signature": "(schema: SchemaDict | Schema, *, missing_columns: Literal['insert', 'raise'] | Mapping[str, Literal['insert', 'raise'] | Expr] | Expr='raise', missing_struct_fields: Literal['insert', 'raise'] | Mapping[str, Literal['insert', 'raise']]='raise', extra_columns: Literal['ignore', 'raise']='raise', extra_struct_fields: Literal['ignore', 'raise'] | Mapping[str, Literal['ignore', 'raise']]='raise', integer_cast: Literal['upcast', 'forbid'] | Mapping[str, Literal['upcast', 'forbid']]='forbid', float_cast: Literal['upcast', 'forbid'] | Mapping[str, Literal['upcast', 'forbid']]='forbid', description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Match or evolve the schema of a LazyFrame into a specific schema."
+    },
+    {
+      "name": "max",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their maximum value."
+    },
+    {
+      "name": "mean",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their mean value."
+    },
+    {
+      "name": "median",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their median value."
+    },
+    {
+      "name": "melt",
+      "signature": "(id_vars: ColumnNameOrSelector | Sequence[ColumnNameOrSelector] | None=None, value_vars: ColumnNameOrSelector | Sequence[ColumnNameOrSelector] | None=None, variable_name: str | None=None, value_name: str | None=None, *, streamable: bool=True, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Unpivot a DataFrame from wide to long format."
+    },
+    {
+      "name": "merge_sorted",
+      "signature": "(other: FlowFrame, key: str | Sequence[str], *, maintain_order: bool=False, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Take two sorted DataFrames and merge them by the sorted key."
+    },
+    {
+      "name": "min",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their minimum value."
+    },
+    {
+      "name": "multi_field_formula",
+      "signature": "(formula: str, columns: list[str] | None=None, *, data_type: Literal['Numeric', 'String', 'Date', 'Other', 'Boolean', 'Binary', 'Complex'] | None=None, prefix: str='', suffix: str='', output_data_type: str | None=None, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Apply one Flowfile formula to many columns at once."
+    },
+    {
+      "name": "node_id",
+      "signature": ": int",
+      "doc_first_line": ""
+    },
+    {
+      "name": "node_reference",
+      "signature": ": str | None",
+      "doc_first_line": "The reference of the node behind this frame, ``None`` for the default ``df_<node id>``."
+    },
+    {
+      "name": "null_count",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Aggregate the columns in the LazyFrame as the sum of their null value count."
+    },
+    {
+      "name": "parent_node_id",
+      "signature": ": Optional[int]",
+      "doc_first_line": ""
+    },
+    {
+      "name": "pipe",
+      "signature": "(function: Callable[Concatenate[LazyFrame, P], T], *args, description: Optional[str]=None, **kwargs) -> T",
+      "doc_first_line": "Offers a structured way to apply a sequence of user-defined functions (UDFs)."
+    },
+    {
+      "name": "pipe_with_schema",
+      "signature": "(function: Callable[[LazyFrame, Schema], LazyFrame], description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Allows to alter the lazy frame during the plan stage with the resolved schema."
+    },
+    {
+      "name": "pivot",
+      "signature": "(on: str | list[str], *, index: str | list[str] | None=None, values: str | list[str] | None=None, aggregate_function: str | None='first', maintain_order: bool=True, sort_columns: bool=False, separator: str='_', description: str=None) -> 'FlowFrame'",
+      "doc_first_line": "Pivot a DataFrame from long to wide format."
+    },
+    {
+      "name": "polars_code",
+      "signature": "(code: str | Callable[..., Any], *others, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Place one Polars Code node over this frame, and ``others`` as its further inputs, in order."
+    },
+    {
+      "name": "profile",
+      "signature": "(*, type_coercion: bool=True, predicate_pushdown: bool=True, projection_pushdown: bool=True, simplify_expression: bool=True, no_optimization: bool=False, slice_pushdown: bool=True, comm_subplan_elim: bool=True, comm_subexpr_elim: bool=True, cluster_with_columns: bool=True, collapse_joins: bool=True, show_plot: bool=False, truncate_nodes: int=0, figsize: tuple[int, int]=..., engine: EngineType='auto', optimizations: QueryOptFlags=DEFAULT_QUERY_OPT_FLAGS, **_kwargs) -> tuple[DataFrame, DataFrame]",
+      "doc_first_line": "Profile a LazyFrame."
+    },
+    {
+      "name": "quantile",
+      "signature": "(quantile: float | Expr, interpolation: QuantileMethod='nearest', description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their quantile value."
+    },
+    {
+      "name": "random_split",
+      "signature": "(splits: Mapping[str, float] | list[input_schema.RandomSplitGroup], seed: int | None=None, description: str | None=None) -> tuple[FlowFrame, ...]",
+      "doc_first_line": "Randomly partition rows into N labeled FlowFrames."
+    },
+    {
+      "name": "remote",
+      "signature": "(context: pc.ClientContext | None=None, *, plan_type: pc._typing.PlanTypePreference='dot', n_retries: int=0, engine: pc._typing.Engine='auto', scaling_mode: pc._typing.ScalingMode='auto', description: Optional[str]=None) -> pc.LazyFrameRemote",
+      "doc_first_line": "Run a query remotely on Polars Cloud."
+    },
+    {
+      "name": "remove",
+      "signature": "(*predicates, description: Optional[str]=None, **constraints) -> 'FlowFrame'",
+      "doc_first_line": "Remove rows, dropping those that match the given predicate expression(s)."
+    },
+    {
+      "name": "rename",
+      "signature": "(mapping: Mapping[str, str], *, strict: bool=True, description: str=None) -> 'FlowFrame'",
+      "doc_first_line": "Rename columns based on a mapping or function."
+    },
+    {
+      "name": "reverse",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Reverse the DataFrame."
+    },
+    {
+      "name": "rolling",
+      "signature": "(index_column: IntoExpr, *, period: str | timedelta, offset: str | timedelta | None=None, closed: ClosedInterval='right', group_by: IntoExpr | Iterable[IntoExpr] | None=None, description: Optional[str]=None) -> LazyGroupBy",
+      "doc_first_line": "Create rolling groups based on a temporal or integer column."
+    },
+    {
+      "name": "sample",
+      "signature": "(n: int | None=None, *, fraction: float | None=None, seed: int | None=None, description: str=None) -> Any",
+      "doc_first_line": "Take a uniform random sample of rows."
+    },
+    {
+      "name": "save_graph",
+      "signature": "(file_path: str, auto_arrange: bool=True, description: Optional[str]=None) -> Any",
+      "doc_first_line": "Save the graph"
+    },
+    {
+      "name": "schema",
+      "signature": ": Any",
+      "doc_first_line": "Get an ordered mapping of column names to their data type."
+    },
+    {
+      "name": "select",
+      "signature": "(*columns, _keep_missing: bool=False, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Select columns from the frame."
+    },
+    {
+      "name": "select_seq",
+      "signature": "(*exprs, description: Optional[str]=None, **named_exprs) -> 'FlowFrame'",
+      "doc_first_line": "Select columns from this LazyFrame."
+    },
+    {
+      "name": "serialize",
+      "signature": "(file: IOBase | str | Path | None=None, *, format: SerializationFormat='binary', description: Optional[str]=None) -> bytes | str | None",
+      "doc_first_line": "Serialize the logical plan of this LazyFrame to a file or string in JSON format."
+    },
+    {
+      "name": "set_group",
+      "signature": "(name: str, *, color: GroupColor | None=None, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Assign this frame's current node to a (new or existing) named visual group."
+    },
+    {
+      "name": "set_sorted",
+      "signature": "(column: str | list[str], *more_columns, descending: bool | list[bool]=False, nulls_last: bool | list[bool]=False, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Flag a column as sorted."
+    },
+    {
+      "name": "shift",
+      "signature": "(n: int | IntoExprColumn=1, *, fill_value: IntoExpr | None=None, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Shift values by the given number of indices."
+    },
+    {
+      "name": "show",
+      "signature": "(limit: int | None=5, *, ascii_tables: bool | None=None, decimal_separator: str | None=None, thousands_separator: str | bool | None=None, float_precision: int | None=None, fmt_float: FloatFmt | None=None, fmt_str_lengths: int | None=None, fmt_table_cell_list_len: int | None=None, tbl_cell_alignment: Alignment | None=None, tbl_cell_numeric_alignment: Alignment | None=None, tbl_cols: int | None=None, tbl_column_data_type_inline: bool | None=None, tbl_dataframe_shape_below: bool | None=None, tbl_formatting: TableFormatNames | None=None, tbl_hide_column_data_types: bool | None=None, tbl_hide_column_names: bool | None=None, tbl_hide_dtype_separator: bool | None=None, tbl_hide_dataframe_shape: bool | None=None, tbl_width_chars: int | None=None, trim_decimal_zeros: bool | None=True, description: Optional[str]=None) -> None",
+      "doc_first_line": "Show the first `n` rows."
+    },
+    {
+      "name": "show_graph",
+      "signature": "(*, optimized: bool=True, show: bool=True, output_path: str | Path | None=None, raw_output: bool=False, figsize: tuple[float, float]=..., type_coercion: bool=True, _type_check: bool=True, predicate_pushdown: bool=True, projection_pushdown: bool=True, simplify_expression: bool=True, slice_pushdown: bool=True, comm_subplan_elim: bool=True, comm_subexpr_elim: bool=True, cluster_with_columns: bool=True, collapse_joins: bool=True, engine: EngineType='auto', plan_stage: PlanStage | None=None, _check_order: bool=True, optimizations: QueryOptFlags=DEFAULT_QUERY_OPT_FLAGS) -> str | None",
+      "doc_first_line": "Show a plot of the query plan."
+    },
+    {
+      "name": "sink_batches",
+      "signature": "(function: Callable[[DataFrame], bool | None], *, chunk_size: int | None=None, maintain_order: bool=True, lazy: bool=False, engine: EngineType='auto', optimizations: QueryOptFlags=DEFAULT_QUERY_OPT_FLAGS, description: Optional[str]=None) -> pl.LazyFrame | None",
+      "doc_first_line": "Evaluate the query and call a user-defined function for every ready batch."
+    },
+    {
+      "name": "sink_csv",
+      "signature": "(file: str, *args, separator: str=',', encoding: str='utf-8', description: str=None) -> 'FlowFrame'",
+      "doc_first_line": "Write the data to a CSV file."
+    },
+    {
+      "name": "sink_delta",
+      "signature": "(target: str | Path | deltalake.DeltaTable, *, mode: Literal['error', 'append', 'overwrite', 'ignore', 'merge']='error', storage_options: StorageOptionsDict | None=None, credential_provider: CredentialProviderFunction | Literal['auto'] | None='auto', delta_write_options: dict[str, Any] | None=None, delta_merge_options: dict[str, Any] | None=None, optimizations: QueryOptFlags=DEFAULT_QUERY_OPT_FLAGS, description: Optional[str]=None) -> deltalake.table.TableMerger | None",
+      "doc_first_line": "Sink DataFrame as delta table."
+    },
+    {
+      "name": "sink_iceberg",
+      "signature": "(target: str | pyiceberg.table.Table, *, mode: Literal['append', 'overwrite'], catalog: pyiceberg.catalog.Catalog | polars.io.iceberg.IcebergCatalogConfig | None=None, storage_options: StorageOptionsDict | None=None, description: Optional[str]=None) -> pl.DataFrame",
+      "doc_first_line": "Sink a LazyFrame to an Iceberg table."
+    },
+    {
+      "name": "sink_ipc",
+      "signature": "(path: str | os.PathLike, *, compression: str | None=None, description: str=None, **kwargs) -> 'FlowFrame'",
+      "doc_first_line": "Alias for :meth:`write_ipc`."
+    },
+    {
+      "name": "sink_ndjson",
+      "signature": "(path: str | os.PathLike, *, compression: str | None=None, description: str=None, **kwargs) -> 'FlowFrame'",
+      "doc_first_line": "Alias for :meth:`write_ndjson`."
+    },
+    {
+      "name": "sink_parquet",
+      "signature": "(path: str | Path | IO[bytes] | PartitionBy, *, compression: str='zstd', compression_level: int | None=None, statistics: bool | str | dict[str, bool]=True, row_group_size: int | None=None, data_page_size: int | None=None, maintain_order: bool=True, storage_options: StorageOptionsDict | None=None, credential_provider: CredentialProviderFunction | Literal['auto'] | None='auto', retries: int | None=None, sync_on_close: SyncOnCloseMethod | None=None, metadata: ParquetMetadata | None=None, arrow_schema: ArrowSchemaExportable | None=None, mkdir: bool=False, lazy: bool=False, engine: EngineType='auto', optimizations: QueryOptFlags=DEFAULT_QUERY_OPT_FLAGS, _sinked_paths_callback: SinkedPathsCallback | None=None, description: Optional[str]=None) -> LazyFrame | None",
+      "doc_first_line": "Evaluate the query in streaming mode and write to a Parquet file."
+    },
+    {
+      "name": "slice",
+      "signature": "(offset: int, length: int | None=None, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Get a slice of this DataFrame."
+    },
+    {
+      "name": "solve_graph",
+      "signature": "(col_from: str, col_to: str, output_column_name: str='graph_group', *, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "sort",
+      "signature": "(by: list[Expr | str] | Expr | str, *more_by, descending: bool | list[bool]=False, nulls_last: bool | list[bool]=False, multithreaded: bool=True, maintain_order: bool=False, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Sort the dataframe by the given columns."
+    },
+    {
+      "name": "sql",
+      "signature": "(query: str, *, table_name: str='self', description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Run ``query`` against this frame as a SQL Query node; the frame is the table ``table_name``."
+    },
+    {
+      "name": "std",
+      "signature": "(ddof: int=1, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their standard deviation value."
+    },
+    {
+      "name": "sum",
+      "signature": "(description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their sum value."
+    },
+    {
+      "name": "tail",
+      "signature": "(n: int=5, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Get the last `n` rows."
+    },
+    {
+      "name": "text_to_rows",
+      "signature": "(column: str | Column, output_column: str=None, delimiter: str=None, split_by_column: str=None, description: str=None) -> 'FlowFrame'",
+      "doc_first_line": "Split text in a column into multiple rows."
+    },
+    {
+      "name": "to_flow_output",
+      "signature": "(name: str | FlowOutput, *, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Mark this frame as the flow output ``name`` (a ``flow_output`` node) and return it unchanged."
+    },
+    {
+      "name": "to_graph",
+      "signature": "(description: Optional[str]=None) -> Any",
+      "doc_first_line": "Get the underlying ETL graph."
+    },
+    {
+      "name": "top_k",
+      "signature": "(k: int, *, by: IntoExpr | Iterable[IntoExpr], reverse: bool | Sequence[bool]=False, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Return the `k` largest rows."
+    },
+    {
+      "name": "train_model",
+      "signature": "(target: str, features: list[str] | None=None, model_type: str='linear_regression', params: dict | None=None, publish_to_catalog: bool=False, model_name: str='', namespace_id: int | None=None, catalog_description: str | None=None, catalog_tags: list[str] | None=None, description: str | None=None, *, schema: SchemaReference | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Fit an ML model (regression or classification) and optionally publish it to the catalog."
+    },
+    {
+      "name": "unique",
+      "signature": "(subset: str | Expr | list[str | Expr]=None, *, keep: Literal['first', 'last', 'any', 'none']='any', maintain_order: bool=False, description: str=None) -> 'FlowFrame'",
+      "doc_first_line": "Drop duplicate rows from this dataframe."
+    },
+    {
+      "name": "unnest",
+      "signature": "(columns: ColumnNameOrSelector | Collection[ColumnNameOrSelector] | None=None, *more_columns, separator: str | None=None, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Decompose struct columns into separate columns for each of their fields."
+    },
+    {
+      "name": "unpivot",
+      "signature": "(on: list[str | Selector] | str | None | Selector=None, *, index: list[str] | str | None=None, variable_name: str='variable', value_name: str='value', description: str=None) -> 'FlowFrame'",
+      "doc_first_line": "Unpivot a DataFrame from wide to long format."
+    },
+    {
+      "name": "update",
+      "signature": "(other: FlowFrame, on: str | Sequence[str] | None=None, how: Literal['left', 'inner', 'full']='left', *, left_on: str | Sequence[str] | None=None, right_on: str | Sequence[str] | None=None, include_nulls: bool=False, maintain_order: MaintainOrderJoin | None='left', description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Update the values in this `LazyFrame` with the values in `other`."
+    },
+    {
+      "name": "var",
+      "signature": "(ddof: int=1, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Aggregate the columns in the LazyFrame to their variance value."
+    },
+    {
+      "name": "wait_for",
+      "signature": "(dependency: FlowFrame, *, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Pass this frame through unchanged, but force execution to wait until"
+    },
+    {
+      "name": "width",
+      "signature": ": int",
+      "doc_first_line": "Get the number of columns."
+    },
+    {
+      "name": "with_columns",
+      "signature": "(*exprs: Union[Expr, Iterable[Expr], Any], flowfile_formulas: Optional[List[str]]=None, output_column_names: Optional[List[str]]=None, output_column_datatypes: Optional[List[str]]=None, description: Optional[str]=None, **named_exprs: Union[Expr, Any]) -> 'FlowFrame'",
+      "doc_first_line": "Add or replace columns in the DataFrame."
+    },
+    {
+      "name": "with_columns_seq",
+      "signature": "(*exprs, description: Optional[str]=None, **named_exprs) -> 'FlowFrame'",
+      "doc_first_line": "Add columns to this LazyFrame."
+    },
+    {
+      "name": "with_context",
+      "signature": "(other: Self | list[Self], description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Add an external context to the computation graph."
+    },
+    {
+      "name": "with_row_count",
+      "signature": "(name: str='row_nr', offset: int=0, description: Optional[str]=None) -> 'FlowFrame'",
+      "doc_first_line": "Add a column at index 0 that counts the rows."
+    },
+    {
+      "name": "with_row_index",
+      "signature": "(name: str='index', offset: int=0, *, group_by: list[str] | None=None, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Add a row index as the first column in the DataFrame, as one Record ID node."
+    },
+    {
+      "name": "write_avro",
+      "signature": "(path: str | os.PathLike, *, compression: str | None=None, convert_to_absolute_path: bool=True, description: str=None, **kwargs) -> 'FlowFrame'",
+      "doc_first_line": "Write the data to an Avro file."
+    },
+    {
+      "name": "write_catalog_table",
+      "signature": "(table_name: str, *, schema: SchemaReference | None=None, namespace_id: int | None=None, namespace_full_name: str | None=None, write_mode: Literal['overwrite', 'error', 'append', 'upsert', 'update', 'delete', 'scd2', 'virtual']='overwrite', merge_keys: list[str] | None=None, partition_by: list[str] | None=None, scd2_compare_columns: list[str] | None=None, scd2_full_snapshot: bool=False, scd2_surrogate_key_column: str='sk', scd2_valid_from_column: str='valid_from', scd2_valid_to_column: str='valid_to', scd2_is_current_column: str='is_current', scd2_partition_on_current: bool=True, scd2_output_mode: Literal['input', 'changed', 'current']='input', track_changes: bool=False, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Write the data frame to the Flowfile catalog."
+    },
+    {
+      "name": "write_csv",
+      "signature": "(file: str | os.PathLike, *, separator: str=',', encoding: str='utf-8', convert_to_absolute_path: bool=True, description: str=None, **kwargs) -> 'FlowFrame'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "write_csv_to_cloud_storage",
+      "signature": "(path: str, connection_name: str | None=None, delimiter: str=';', encoding: CsvEncoding='utf8', description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Write the data frame to cloud storage in CSV format."
+    },
+    {
+      "name": "write_database",
+      "signature": "(connection_name: str, table_name: str, *, schema_name: str | None=None, if_exists: Literal['append', 'replace', 'fail']='append', description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Write the data frame to a database using a stored connection."
+    },
+    {
+      "name": "write_delta",
+      "signature": "(path: str, connection_name: str | None=None, write_mode: Literal['overwrite', 'append', 'error', 'upsert', 'update', 'delete']='overwrite', partition_by: list[str] | None=None, merge_keys: list[str] | None=None, track_changes: bool=False, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Write the data frame to cloud storage in Delta Lake format."
+    },
+    {
+      "name": "write_excel",
+      "signature": "(path: str | os.PathLike, *, worksheet: str='Sheet1', write_mode: Literal['overwrite', 'update', 'create']='overwrite', convert_to_absolute_path: bool=True, description: str=None, **kwargs) -> 'FlowFrame'",
+      "doc_first_line": "Write the data to an Excel file."
+    },
+    {
+      "name": "write_ipc",
+      "signature": "(path: str | os.PathLike, *, compression: str | None=None, convert_to_absolute_path: bool=True, description: str=None, **kwargs) -> 'FlowFrame'",
+      "doc_first_line": "Write the data to an Arrow IPC/Feather file."
+    },
+    {
+      "name": "write_json_to_cloud_storage",
+      "signature": "(path: str, connection_name: str | None=None, description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Write the data frame to cloud storage in JSON format."
+    },
+    {
+      "name": "write_ndjson",
+      "signature": "(path: str | os.PathLike, *, compression: str | None=None, convert_to_absolute_path: bool=True, description: str=None, **kwargs) -> 'FlowFrame'",
+      "doc_first_line": "Write the data to a newline-delimited JSON file."
+    },
+    {
+      "name": "write_parquet",
+      "signature": "(path: str | os.PathLike, *, compression: str | None=None, convert_to_absolute_path: bool=True, description: str=None, **kwargs) -> 'FlowFrame'",
+      "doc_first_line": "Write the data to a Parquet file. Creates a standard Output node if only"
+    },
+    {
+      "name": "write_parquet_to_cloud_storage",
+      "signature": "(path: str, connection_name: str | None=None, compression: Literal['snappy', 'gzip', 'brotli', 'lz4', 'zstd']='snappy', description: str | None=None) -> 'FlowFrame'",
+      "doc_first_line": "Write the data frame to cloud storage in Parquet format."
+    }
+  ],
+  "Expr": [
+    {
+      "name": "abs",
+      "signature": "() -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "add",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of addition operator `expr + other`."
+    },
+    {
+      "name": "agg_groups",
+      "signature": "() -> Expr",
+      "doc_first_line": "Get the group indexes of the group by operation."
+    },
+    {
+      "name": "alias",
+      "signature": "(name) -> 'Expr'",
+      "doc_first_line": "Rename the expression result."
+    },
+    {
+      "name": "all",
+      "signature": "(ignore_nulls: bool=True) -> Expr",
+      "doc_first_line": "Return whether all values in the column are `True`."
+    },
+    {
+      "name": "and_",
+      "signature": "(*others) -> Expr",
+      "doc_first_line": "Method equivalent of bitwise \"and\" operator `expr & other & ...`."
+    },
+    {
+      "name": "any",
+      "signature": "(ignore_nulls: bool=True) -> Expr",
+      "doc_first_line": "Return whether any of the values in the column are `True`."
+    },
+    {
+      "name": "append",
+      "signature": "(other: IntoExpr, upcast: bool=True) -> Expr",
+      "doc_first_line": "Append expressions."
+    },
+    {
+      "name": "approx_n_unique",
+      "signature": "() -> Expr",
+      "doc_first_line": "Approximate count of unique values."
+    },
+    {
+      "name": "arccos",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise value for the inverse cosine."
+    },
+    {
+      "name": "arccosh",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise value for the inverse hyperbolic cosine."
+    },
+    {
+      "name": "arcsin",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise value for the inverse sine."
+    },
+    {
+      "name": "arcsinh",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise value for the inverse hyperbolic sine."
+    },
+    {
+      "name": "arctan",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise value for the inverse tangent."
+    },
+    {
+      "name": "arctanh",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise value for the inverse hyperbolic tangent."
+    },
+    {
+      "name": "arg_max",
+      "signature": "() -> Expr",
+      "doc_first_line": "Get the index of the maximal value."
+    },
+    {
+      "name": "arg_min",
+      "signature": "() -> Expr",
+      "doc_first_line": "Get the index of the minimal value."
+    },
+    {
+      "name": "arg_sort",
+      "signature": "(descending: bool=False, nulls_last: bool=False) -> Expr",
+      "doc_first_line": ""
+    },
+    {
+      "name": "arg_true",
+      "signature": "() -> Expr",
+      "doc_first_line": "Return indices where expression evaluates `True`."
+    },
+    {
+      "name": "arg_unique",
+      "signature": "() -> Expr",
+      "doc_first_line": ""
+    },
+    {
+      "name": "backward_fill",
+      "signature": "(limit: int | None=None) -> Expr",
+      "doc_first_line": "Fill missing values with the next non-null value."
+    },
+    {
+      "name": "bitwise_and",
+      "signature": "() -> Expr",
+      "doc_first_line": "Perform an aggregation of bitwise ANDs."
+    },
+    {
+      "name": "bitwise_count_ones",
+      "signature": "() -> Expr",
+      "doc_first_line": "Evaluate the number of set bits."
+    },
+    {
+      "name": "bitwise_count_zeros",
+      "signature": "() -> Expr",
+      "doc_first_line": "Evaluate the number of unset bits."
+    },
+    {
+      "name": "bitwise_leading_ones",
+      "signature": "() -> Expr",
+      "doc_first_line": "Evaluate the number most-significant set bits before seeing an unset bit."
+    },
+    {
+      "name": "bitwise_leading_zeros",
+      "signature": "() -> Expr",
+      "doc_first_line": "Evaluate the number most-significant unset bits before seeing a set bit."
+    },
+    {
+      "name": "bitwise_or",
+      "signature": "() -> Expr",
+      "doc_first_line": "Perform an aggregation of bitwise ORs."
+    },
+    {
+      "name": "bitwise_trailing_ones",
+      "signature": "() -> Expr",
+      "doc_first_line": "Evaluate the number least-significant set bits before seeing an unset bit."
+    },
+    {
+      "name": "bitwise_trailing_zeros",
+      "signature": "() -> Expr",
+      "doc_first_line": "Evaluate the number least-significant unset bits before seeing a set bit."
+    },
+    {
+      "name": "bitwise_xor",
+      "signature": "() -> Expr",
+      "doc_first_line": "Perform an aggregation of bitwise XORs."
+    },
+    {
+      "name": "bottom_k",
+      "signature": "(k: int | IntoExprColumn=5) -> Expr",
+      "doc_first_line": "Return the `k` smallest elements."
+    },
+    {
+      "name": "bottom_k_by",
+      "signature": "(by: IntoExpr | Iterable[IntoExpr], k: int | IntoExprColumn=5, reverse: bool | Sequence[bool]=False) -> Expr",
+      "doc_first_line": "Return the elements corresponding to the `k` smallest elements of the `by` column(s)."
+    },
+    {
+      "name": "cast",
+      "signature": "(dtype: pl.DataType | str | pl.datatypes.classes.DataTypeClass, strict=True) -> 'Expr'",
+      "doc_first_line": "Casts the Expr to a specified data type."
+    },
+    {
+      "name": "cbrt",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the cube root of the elements."
+    },
+    {
+      "name": "ceil",
+      "signature": "() -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "clip",
+      "signature": "(lower_bound: NumericLiteral | TemporalLiteral | IntoExprColumn | None=None, upper_bound: NumericLiteral | TemporalLiteral | IntoExprColumn | None=None) -> Expr",
+      "doc_first_line": "Set values outside the given boundaries to the boundary value."
+    },
+    {
+      "name": "cos",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise value for the cosine."
+    },
+    {
+      "name": "cosh",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise value for the hyperbolic cosine."
+    },
+    {
+      "name": "cot",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise value for the cotangent."
+    },
+    {
+      "name": "count",
+      "signature": "() -> 'Expr'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "cum_count",
+      "signature": "(reverse: bool=False) -> Expr",
+      "doc_first_line": "Return the cumulative count of the non-null values in the column."
+    },
+    {
+      "name": "cum_max",
+      "signature": "(reverse: bool=False) -> Expr",
+      "doc_first_line": "Get an array with the cumulative max computed at every element."
+    },
+    {
+      "name": "cum_min",
+      "signature": "(reverse: bool=False) -> Expr",
+      "doc_first_line": "Get an array with the cumulative min computed at every element."
+    },
+    {
+      "name": "cum_prod",
+      "signature": "(reverse: bool=False) -> Expr",
+      "doc_first_line": "Get an array with the cumulative product computed at every element."
+    },
+    {
+      "name": "cum_sum",
+      "signature": "(reverse: bool=False) -> Expr",
+      "doc_first_line": "Get an array with the cumulative sum computed at every element."
+    },
+    {
+      "name": "cumulative_eval",
+      "signature": "(expr: Expr, min_samples: int=1) -> Expr",
+      "doc_first_line": "Run an expression over a sliding window that increases `1` slot every iteration."
+    },
+    {
+      "name": "cut",
+      "signature": "(breaks: Sequence[float], labels: Sequence[str_] | None=None, left_closed: bool=False, include_breaks: bool=False) -> Expr",
+      "doc_first_line": "Bin continuous values into discrete categories."
+    },
+    {
+      "name": "degrees",
+      "signature": "() -> Expr",
+      "doc_first_line": "Convert from radians to degrees."
+    },
+    {
+      "name": "deserialize",
+      "signature": "(source: str_ | Path | IOBase | bytes, format: SerializationFormat='binary') -> Expr",
+      "doc_first_line": "Read a serialized expression from a file."
+    },
+    {
+      "name": "diff",
+      "signature": "(n: int | IntoExpr=1, null_behavior: NullBehavior='ignore') -> Expr",
+      "doc_first_line": "Calculate the first discrete difference between shifted items."
+    },
+    {
+      "name": "dist",
+      "signature": "(expr: Expr) -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "dist_arr",
+      "signature": "(expr: Expr) -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "dist_list",
+      "signature": "(expr: Expr) -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "dist_str",
+      "signature": "(expr: Expr) -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "dot",
+      "signature": "(other: Expr | str_) -> Expr",
+      "doc_first_line": "Compute the dot/inner product between two Expressions."
+    },
+    {
+      "name": "drop_nans",
+      "signature": "() -> Expr",
+      "doc_first_line": "Drop all floating point NaN values."
+    },
+    {
+      "name": "drop_nulls",
+      "signature": "() -> Expr",
+      "doc_first_line": "Drop all null values."
+    },
+    {
+      "name": "dt",
+      "signature": ": DateTimeMethods",
+      "doc_first_line": ""
+    },
+    {
+      "name": "entropy",
+      "signature": "(base: float=2.718281828459045, normalize: bool=True) -> Expr",
+      "doc_first_line": "Computes the entropy."
+    },
+    {
+      "name": "eq",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of equality operator `expr == other`."
+    },
+    {
+      "name": "eq_missing",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of equality operator `expr == other` where `None == None`."
+    },
+    {
+      "name": "ewm_mean",
+      "signature": "(com: float | None=None, span: float | None=None, half_life: float | None=None, alpha: float | None=None, adjust: bool=True, min_samples: int=1, ignore_nulls: bool=False) -> Expr",
+      "doc_first_line": "Compute exponentially-weighted moving average."
+    },
+    {
+      "name": "ewm_mean_by",
+      "signature": "(by: str_ | IntoExpr, half_life: str_ | timedelta) -> Expr",
+      "doc_first_line": "Compute time-based exponentially weighted moving average."
+    },
+    {
+      "name": "ewm_std",
+      "signature": "(com: float | None=None, span: float | None=None, half_life: float | None=None, alpha: float | None=None, adjust: bool=True, bias: bool=False, min_samples: int=1, ignore_nulls: bool=False) -> Expr",
+      "doc_first_line": "Compute exponentially-weighted moving standard deviation."
+    },
+    {
+      "name": "ewm_sum",
+      "signature": "(com: float | None=None, span: float | None=None, half_life: float | None=None, alpha: float | None=None, min_samples: int=1, ignore_nulls: bool=False) -> Expr",
+      "doc_first_line": "Compute exponentially-weighted moving sum."
+    },
+    {
+      "name": "ewm_sum_by",
+      "signature": "(by: str_ | IntoExpr, half_life: str_ | timedelta) -> Expr",
+      "doc_first_line": "Compute time-based exponentially-weighted moving sum."
+    },
+    {
+      "name": "ewm_var",
+      "signature": "(com: float | None=None, span: float | None=None, half_life: float | None=None, alpha: float | None=None, adjust: bool=True, bias: bool=False, min_samples: int=1, ignore_nulls: bool=False) -> Expr",
+      "doc_first_line": "Compute exponentially-weighted moving variance."
+    },
+    {
+      "name": "exclude",
+      "signature": "(columns: str_ | PolarsDataType | Collection[str_ | PolarsDataType], *more_columns) -> Expr",
+      "doc_first_line": "Exclude columns from a multi-column expression."
+    },
+    {
+      "name": "exp",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the exponential, element-wise."
+    },
+    {
+      "name": "explode",
+      "signature": "() -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "extend_constant",
+      "signature": "(value: IntoExpr, n: int | IntoExprColumn) -> Expr",
+      "doc_first_line": "Extremely fast method for extending the Series with 'n' copies of a value."
+    },
+    {
+      "name": "fill_nan",
+      "signature": "(value) -> 'Expr'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "fill_null",
+      "signature": "(value) -> 'Expr'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "filter",
+      "signature": "(*predicates, **constraints) -> Expr",
+      "doc_first_line": "Filter expression"
+    },
+    {
+      "name": "first",
+      "signature": "() -> 'Expr'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "flatten",
+      "signature": "() -> Expr",
+      "doc_first_line": "Flatten a list or string column."
+    },
+    {
+      "name": "floor",
+      "signature": "() -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "floordiv",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of integer division operator `expr // other`."
+    },
+    {
+      "name": "forward_fill",
+      "signature": "(limit: int | None=None) -> Expr",
+      "doc_first_line": "Fill missing values with the last non-null value."
+    },
+    {
+      "name": "from_json",
+      "signature": "(value: str_) -> Expr",
+      "doc_first_line": "Read an expression from a JSON encoded string to construct an Expression."
+    },
+    {
+      "name": "gather",
+      "signature": "(indices: int | Sequence[int] | IntoExpr | Series | np.ndarray[Any, Any], null_on_oob: bool=False) -> Expr",
+      "doc_first_line": "Take values by index."
+    },
+    {
+      "name": "gather_every",
+      "signature": "(n: int, offset: int=0) -> Expr",
+      "doc_first_line": "Take every nth value in the Series and return as a new Series."
+    },
+    {
+      "name": "ge",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of \"greater than or equal\" operator `expr >= other`."
+    },
+    {
+      "name": "get",
+      "signature": "(index: int | Expr, null_on_oob: bool=False) -> Expr",
+      "doc_first_line": "Return a single value by index."
+    },
+    {
+      "name": "get_polars_code",
+      "signature": "() -> str",
+      "doc_first_line": "Get the Polars code representation of this expression, including any function definitions."
+    },
+    {
+      "name": "gt",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of \"greater than\" operator `expr > other`."
+    },
+    {
+      "name": "has_nulls",
+      "signature": "() -> Expr",
+      "doc_first_line": "Check whether the expression contains one or more null values."
+    },
+    {
+      "name": "hash",
+      "signature": "(seed: int=0, seed_1: int | None=None, seed_2: int | None=None, seed_3: int | None=None) -> Expr",
+      "doc_first_line": "Hash the elements in the selection."
+    },
+    {
+      "name": "head",
+      "signature": "(n: int | Expr=10) -> Expr",
+      "doc_first_line": "Get the first `n` rows."
+    },
+    {
+      "name": "hist",
+      "signature": "(bins: IntoExpr | None=None, bin_count: int | None=None, include_category: bool=False, include_breakpoint: bool=False) -> Expr",
+      "doc_first_line": "Bin values into buckets and count their occurrences."
+    },
+    {
+      "name": "implode",
+      "signature": "() -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "index_of",
+      "signature": "(element: IntoExpr) -> Expr",
+      "doc_first_line": "Get the index of the first occurrence of a value, or ``None`` if it's not found."
+    },
+    {
+      "name": "inspect",
+      "signature": "(fmt: str_='{}') -> Expr",
+      "doc_first_line": "Print the value that this expression evaluates to and pass on the value."
+    },
+    {
+      "name": "interpolate",
+      "signature": "(method: InterpolationMethod='linear') -> Expr",
+      "doc_first_line": "Interpolate intermediate values."
+    },
+    {
+      "name": "interpolate_by",
+      "signature": "(by: IntoExpr) -> Expr",
+      "doc_first_line": "Fill null values using interpolation based on another column."
+    },
+    {
+      "name": "is_between",
+      "signature": "(lower_bound: IntoExpr, upper_bound: IntoExpr, closed: ClosedInterval='both') -> Expr",
+      "doc_first_line": "Check if this expression is between the given lower and upper bounds."
+    },
+    {
+      "name": "is_close",
+      "signature": "(other: IntoExpr, abs_tol: float=0.0, rel_tol: float=1e-09, nans_equal: bool=False) -> Expr",
+      "doc_first_line": "Check if this expression is close, i.e. almost equal, to the other expression."
+    },
+    {
+      "name": "is_complex",
+      "signature": ": bool",
+      "doc_first_line": ""
+    },
+    {
+      "name": "is_duplicated",
+      "signature": "() -> Expr",
+      "doc_first_line": "Return a boolean mask indicating duplicated values."
+    },
+    {
+      "name": "is_empty",
+      "signature": "(ignore_nulls: bool=False) -> Expr",
+      "doc_first_line": "Return whether the column is empty."
+    },
+    {
+      "name": "is_finite",
+      "signature": "() -> Expr",
+      "doc_first_line": "Returns a boolean Series indicating which values are finite."
+    },
+    {
+      "name": "is_first_distinct",
+      "signature": "() -> Expr",
+      "doc_first_line": "Return a boolean mask indicating the first occurrence of each distinct value."
+    },
+    {
+      "name": "is_in",
+      "signature": "(values) -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "is_infinite",
+      "signature": "() -> Expr",
+      "doc_first_line": "Returns a boolean Series indicating which values are infinite."
+    },
+    {
+      "name": "is_last_distinct",
+      "signature": "() -> Expr",
+      "doc_first_line": "Return a boolean mask indicating the last occurrence of each distinct value."
+    },
+    {
+      "name": "is_nan",
+      "signature": "() -> Expr",
+      "doc_first_line": "Returns a boolean Series indicating which values are NaN."
+    },
+    {
+      "name": "is_not_nan",
+      "signature": "() -> Expr",
+      "doc_first_line": "Returns a boolean Series indicating which values are not NaN."
+    },
+    {
+      "name": "is_not_null",
+      "signature": "() -> 'Expr'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "is_null",
+      "signature": "() -> 'Expr'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "is_simple",
+      "signature": ": bool",
+      "doc_first_line": ""
+    },
+    {
+      "name": "is_sorted",
+      "signature": "(descending: bool | None=False, nulls_last: bool | None=False) -> Expr",
+      "doc_first_line": "Checks if an expression is sorted."
+    },
+    {
+      "name": "is_unique",
+      "signature": "() -> Expr",
+      "doc_first_line": "Get mask of unique values."
+    },
+    {
+      "name": "item",
+      "signature": "(allow_empty: bool=False) -> Expr",
+      "doc_first_line": "Get the single value."
+    },
+    {
+      "name": "kurtosis",
+      "signature": "(fisher: bool=True, bias: bool=True) -> Expr",
+      "doc_first_line": "Compute the kurtosis (Fisher or Pearson) of a dataset."
+    },
+    {
+      "name": "last",
+      "signature": "() -> 'Expr'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "le",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of \"less than or equal\" operator `expr <= other`."
+    },
+    {
+      "name": "len",
+      "signature": "() -> Expr",
+      "doc_first_line": "Return the number of elements in the column."
+    },
+    {
+      "name": "limit",
+      "signature": "(n: int | Expr=10) -> Expr",
+      "doc_first_line": "Get the first `n` rows (alias for :func:`Expr.head`)."
+    },
+    {
+      "name": "list",
+      "signature": ": ExprListNameSpace",
+      "doc_first_line": ""
+    },
+    {
+      "name": "log",
+      "signature": "(base: float | IntoExpr=2.718281828459045) -> Expr",
+      "doc_first_line": "Compute the logarithm to a given base."
+    },
+    {
+      "name": "log10",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the base 10 logarithm of the input array, element-wise."
+    },
+    {
+      "name": "log1p",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the natural logarithm of each element plus one."
+    },
+    {
+      "name": "lower_bound",
+      "signature": "() -> Expr",
+      "doc_first_line": "Calculate the lower bound."
+    },
+    {
+      "name": "lt",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of \"less than\" operator `expr < other`."
+    },
+    {
+      "name": "map_batches",
+      "signature": "(function: Callable[[Series], Series | Any], return_dtype: PolarsDataType | pl.DataTypeExpr | None=None, agg_list: bool=False, is_elementwise: bool=False, returns_scalar: bool=False) -> Expr",
+      "doc_first_line": "Apply a custom python function to a whole Series or sequence of Series."
+    },
+    {
+      "name": "map_elements",
+      "signature": "(function: Callable[[Any], Any], return_dtype: PolarsDataType | pl.DataTypeExpr | None=None, skip_nulls: bool=True, pass_name: bool=False, strategy: MapElementsStrategy='thread_local', returns_scalar: bool=False) -> Expr",
+      "doc_first_line": "Map a custom/user-defined function (UDF) to each element of a column."
+    },
+    {
+      "name": "max",
+      "signature": "() -> 'Expr'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "max_by",
+      "signature": "(by: IntoExpr) -> Expr",
+      "doc_first_line": "Get maximum value, ordered by another expression."
+    },
+    {
+      "name": "mean",
+      "signature": "() -> 'Expr'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "median",
+      "signature": "() -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "min",
+      "signature": "() -> 'Expr'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "min_by",
+      "signature": "(by: IntoExpr) -> Expr",
+      "doc_first_line": "Get minimum value, ordered by another expression."
+    },
+    {
+      "name": "mod",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of modulus operator `expr % other`."
+    },
+    {
+      "name": "mode",
+      "signature": "(maintain_order: bool=False) -> Expr",
+      "doc_first_line": "Compute the most occurring value(s)."
+    },
+    {
+      "name": "mul",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of multiplication operator `expr * other`."
+    },
+    {
+      "name": "n_unique",
+      "signature": "() -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "name",
+      "signature": ": ExprNameNameSpace",
+      "doc_first_line": ""
+    },
+    {
+      "name": "nan_max",
+      "signature": "() -> Expr",
+      "doc_first_line": "Get maximum value, but propagate/poison encountered NaN values."
+    },
+    {
+      "name": "nan_min",
+      "signature": "() -> Expr",
+      "doc_first_line": "Get minimum value, but propagate/poison encountered NaN values."
+    },
+    {
+      "name": "ne",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of inequality operator `expr != other`."
+    },
+    {
+      "name": "ne_missing",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of equality operator `expr != other` where `None == None`."
+    },
+    {
+      "name": "neg",
+      "signature": "() -> Expr",
+      "doc_first_line": "Method equivalent of unary minus operator `-expr`."
+    },
+    {
+      "name": "not_",
+      "signature": "() -> Expr",
+      "doc_first_line": "Method equivalent of bitwise \"not\" operator `~expr`."
+    },
+    {
+      "name": "null_count",
+      "signature": "() -> Expr",
+      "doc_first_line": "Count null values."
+    },
+    {
+      "name": "or_",
+      "signature": "(*others) -> Expr",
+      "doc_first_line": "Method equivalent of bitwise \"or\" operator `expr | other | ...`."
+    },
+    {
+      "name": "over",
+      "signature": "(partition_by: ExprStrOrList, *more_exprs, order_by: ExprStrOrList | None=None, descending: bool=False, nulls_last: bool=False, mapping_strategy: Literal['group_to_rows', 'join', 'explode']='group_to_rows') -> Expr",
+      "doc_first_line": "Compute expressions over the given groups."
+    },
+    {
+      "name": "pct_change",
+      "signature": "(n: int | IntoExprColumn=1) -> Expr",
+      "doc_first_line": "Computes percentage change between values."
+    },
+    {
+      "name": "peak_max",
+      "signature": "() -> Expr",
+      "doc_first_line": "Get a boolean mask of the local maximum peaks."
+    },
+    {
+      "name": "peak_min",
+      "signature": "() -> Expr",
+      "doc_first_line": "Get a boolean mask of the local minimum peaks."
+    },
+    {
+      "name": "pipe",
+      "signature": "(function: Callable[Concatenate[Expr, P], T], *args, **kwargs) -> T",
+      "doc_first_line": "Offers a structured way to apply a sequence of user-defined functions (UDFs)."
+    },
+    {
+      "name": "pow",
+      "signature": "(exponent: IntoExprColumn | int | float) -> Expr",
+      "doc_first_line": "Method equivalent of exponentiation operator `expr ** exponent`."
+    },
+    {
+      "name": "product",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the product of an expression."
+    },
+    {
+      "name": "qcut",
+      "signature": "(quantiles: Sequence[float] | int, labels: Sequence[str_] | None=None, left_closed: bool=False, allow_duplicates: bool=False, include_breaks: bool=False) -> Expr",
+      "doc_first_line": "Bin continuous values into discrete categories based on their quantiles."
+    },
+    {
+      "name": "quantile",
+      "signature": "(quantile: float | list_[float] | Expr, interpolation: QuantileMethod='nearest') -> Expr",
+      "doc_first_line": "Get quantile value."
+    },
+    {
+      "name": "radians",
+      "signature": "() -> Expr",
+      "doc_first_line": "Convert from degrees to radians."
+    },
+    {
+      "name": "rank",
+      "signature": "(method: RankMethod='average', descending: bool=False, seed: int | None=None) -> Expr",
+      "doc_first_line": "Assign ranks to data, dealing with ties appropriately."
+    },
+    {
+      "name": "rechunk",
+      "signature": "() -> Expr",
+      "doc_first_line": "Create a single chunk of memory for this Series."
+    },
+    {
+      "name": "register_plugin",
+      "signature": "(lib: str_, symbol: str_, args: list_[IntoExpr] | None=None, kwargs: dict[Any, Any] | None=None, is_elementwise: bool=False, input_wildcard_expansion: bool=False, returns_scalar: bool=False, cast_to_supertypes: bool=False, pass_name_to_apply: bool=False, changes_length: bool=False) -> Expr",
+      "doc_first_line": "Register a plugin function."
+    },
+    {
+      "name": "reinterpret",
+      "signature": "(signed: bool | None=None, dtype: PolarsDataType | None=None) -> Expr",
+      "doc_first_line": "Reinterpret the underlying bits as a signed/unsigned integer or float."
+    },
+    {
+      "name": "repeat_by",
+      "signature": "(by: pl.Series | Expr | str_ | int) -> Expr",
+      "doc_first_line": "Repeat the elements in this Series as specified in the given expression."
+    },
+    {
+      "name": "replace",
+      "signature": "(old: IntoExpr | Sequence[Any] | Mapping[Any, Any], new: IntoExpr | Sequence[Any], default: IntoExpr, return_dtype: PolarsDataType | None=None) -> Expr",
+      "doc_first_line": "Replace the given values by different values of the same data type."
+    },
+    {
+      "name": "replace_strict",
+      "signature": "(old: IntoExpr | Sequence[Any] | Mapping[Any, Any], new: IntoExpr | Sequence[Any], default: IntoExpr, return_dtype: PolarsDataType | pl.DataTypeExpr | None=None) -> Expr",
+      "doc_first_line": "Replace all values by different values."
+    },
+    {
+      "name": "reshape",
+      "signature": "(dimensions: tuple[int, ...]) -> Expr",
+      "doc_first_line": "Reshape this Expr to a flat column or an Array column."
+    },
+    {
+      "name": "reverse",
+      "signature": "() -> Expr",
+      "doc_first_line": "Reverse the selection."
+    },
+    {
+      "name": "rle",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compress the column data using run-length encoding."
+    },
+    {
+      "name": "rle_id",
+      "signature": "() -> Expr",
+      "doc_first_line": "Get a distinct integer ID for each run of identical values."
+    },
+    {
+      "name": "rolling",
+      "signature": "(index_column: IntoExprColumn, period: str_ | timedelta, offset: str_ | timedelta | None=None, closed: ClosedInterval='right') -> Expr",
+      "doc_first_line": "Create rolling groups based on a temporal or integer column."
+    },
+    {
+      "name": "rolling_kurtosis",
+      "signature": "(window_size: int, fisher: bool=True, bias: bool=True, min_samples: int | None=None, center: bool=False) -> Expr",
+      "doc_first_line": "Compute a rolling kurtosis."
+    },
+    {
+      "name": "rolling_map",
+      "signature": "(function: Callable[[Series], Any], window_size: int, weights: list_[float] | None=None, min_samples: int | None=None, center: bool=False) -> Expr",
+      "doc_first_line": "Compute a custom rolling window function."
+    },
+    {
+      "name": "rolling_max",
+      "signature": "(window_size: int, weights: list_[float] | None=None, min_samples: int | None=None, center: bool=False) -> Expr",
+      "doc_first_line": "Apply a rolling max (moving max) over the values in this array."
+    },
+    {
+      "name": "rolling_max_by",
+      "signature": "(by: IntoExpr, window_size: timedelta | str_, min_samples: int=1, closed: ClosedInterval='right') -> Expr",
+      "doc_first_line": "Apply a rolling max based on another column."
+    },
+    {
+      "name": "rolling_mean",
+      "signature": "(window_size: int, weights: list_[float] | None=None, min_samples: int | None=None, center: bool=False) -> Expr",
+      "doc_first_line": "Apply a rolling mean (moving mean) over the values in this array."
+    },
+    {
+      "name": "rolling_mean_by",
+      "signature": "(by: IntoExpr, window_size: timedelta | str_, min_samples: int=1, closed: ClosedInterval='right') -> Expr",
+      "doc_first_line": "Apply a rolling mean based on another column."
+    },
+    {
+      "name": "rolling_median",
+      "signature": "(window_size: int, weights: list_[float] | None=None, min_samples: int | None=None, center: bool=False) -> Expr",
+      "doc_first_line": "Compute a rolling median."
+    },
+    {
+      "name": "rolling_median_by",
+      "signature": "(by: IntoExpr, window_size: timedelta | str_, min_samples: int=1, closed: ClosedInterval='right') -> Expr",
+      "doc_first_line": "Compute a rolling median based on another column."
+    },
+    {
+      "name": "rolling_min",
+      "signature": "(window_size: int, weights: list_[float] | None=None, min_samples: int | None=None, center: bool=False) -> Expr",
+      "doc_first_line": "Apply a rolling min (moving min) over the values in this array."
+    },
+    {
+      "name": "rolling_min_by",
+      "signature": "(by: IntoExpr, window_size: timedelta | str_, min_samples: int=1, closed: ClosedInterval='right') -> Expr",
+      "doc_first_line": "Apply a rolling min based on another column."
+    },
+    {
+      "name": "rolling_quantile",
+      "signature": "(quantile: float, interpolation: QuantileMethod='nearest', window_size: int=2, weights: list_[float] | None=None, min_samples: int | None=None, center: bool=False) -> Expr",
+      "doc_first_line": "Compute a rolling quantile."
+    },
+    {
+      "name": "rolling_quantile_by",
+      "signature": "(by: IntoExpr, window_size: timedelta | str_, quantile: float, interpolation: QuantileMethod='nearest', min_samples: int=1, closed: ClosedInterval='right') -> Expr",
+      "doc_first_line": "Compute a rolling quantile based on another column."
+    },
+    {
+      "name": "rolling_rank",
+      "signature": "(window_size: int, method: RankMethod='average', seed: int | None=None, min_samples: int | None=None, center: bool=False) -> Expr",
+      "doc_first_line": "Compute a rolling rank."
+    },
+    {
+      "name": "rolling_rank_by",
+      "signature": "(by: IntoExpr, window_size: timedelta | str_, method: RankMethod='average', seed: int | None=None, min_samples: int=1, closed: ClosedInterval='right') -> Expr",
+      "doc_first_line": "Compute a rolling rank based on another column."
+    },
+    {
+      "name": "rolling_skew",
+      "signature": "(window_size: int, bias: bool=True, min_samples: int | None=None, center: bool=False) -> Expr",
+      "doc_first_line": "Compute a rolling skew."
+    },
+    {
+      "name": "rolling_std",
+      "signature": "(window_size: int, weights: list_[float] | None=None, min_samples: int | None=None, center: bool=False, ddof: int=1) -> Expr",
+      "doc_first_line": "Compute a rolling standard deviation."
+    },
+    {
+      "name": "rolling_std_by",
+      "signature": "(by: IntoExpr, window_size: timedelta | str_, min_samples: int=1, closed: ClosedInterval='right', ddof: int=1) -> Expr",
+      "doc_first_line": "Compute a rolling standard deviation based on another column."
+    },
+    {
+      "name": "rolling_sum",
+      "signature": "(window_size: int, weights: list_[float] | None=None, min_samples: int | None=None, center: bool=False) -> Expr",
+      "doc_first_line": "Apply a rolling sum (moving sum) over the values in this array."
+    },
+    {
+      "name": "rolling_sum_by",
+      "signature": "(by: IntoExpr, window_size: timedelta | str_, min_samples: int=0, closed: ClosedInterval='right') -> Expr",
+      "doc_first_line": "Apply a rolling sum based on another column."
+    },
+    {
+      "name": "rolling_var",
+      "signature": "(window_size: int, weights: list_[float] | None=None, min_samples: int | None=None, center: bool=False, ddof: int=1) -> Expr",
+      "doc_first_line": "Compute a rolling variance."
+    },
+    {
+      "name": "rolling_var_by",
+      "signature": "(by: IntoExpr, window_size: timedelta | str_, min_samples: int=1, closed: ClosedInterval='right', ddof: int=1) -> Expr",
+      "doc_first_line": "Compute a rolling variance based on another column."
+    },
+    {
+      "name": "round",
+      "signature": "(decimals: int=0) -> Any",
+      "doc_first_line": ""
+    },
+    {
+      "name": "round_sig_figs",
+      "signature": "(digits: int) -> Expr",
+      "doc_first_line": "Round to a number of significant figures."
+    },
+    {
+      "name": "sample",
+      "signature": "(n: int | IntoExprColumn | None=None, fraction: float | IntoExprColumn | None=None, with_replacement: bool=False, shuffle: bool | None=None, seed: int | None=None) -> Expr",
+      "doc_first_line": "Sample from this expression."
+    },
+    {
+      "name": "search_sorted",
+      "signature": "(element: IntoExpr | np.ndarray[Any, Any], side: SearchSortedSide='any', descending: bool=False) -> Expr",
+      "doc_first_line": "Find indices where elements should be inserted to maintain order."
+    },
+    {
+      "name": "set_sorted",
+      "signature": "(descending: bool=False, nulls_last: bool=False) -> Expr",
+      "doc_first_line": "Flags the expression as 'sorted'."
+    },
+    {
+      "name": "shift",
+      "signature": "(n: int | IntoExprColumn=1, fill_value: IntoExpr | None=None) -> Expr",
+      "doc_first_line": "Shift values by the given number of indices."
+    },
+    {
+      "name": "shrink_dtype",
+      "signature": "() -> Expr",
+      "doc_first_line": "Shrink numeric columns to the minimal required datatype."
+    },
+    {
+      "name": "shuffle",
+      "signature": "(seed: int | None=None) -> Expr",
+      "doc_first_line": "Shuffle the contents of this expression."
+    },
+    {
+      "name": "sign",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise sign function on numeric types."
+    },
+    {
+      "name": "sin",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise value for the sine."
+    },
+    {
+      "name": "sinh",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise value for the hyperbolic sine."
+    },
+    {
+      "name": "skew",
+      "signature": "(bias: bool=True) -> Expr",
+      "doc_first_line": "Compute the sample skewness of a data set."
+    },
+    {
+      "name": "slice",
+      "signature": "(offset: int | Expr, length: int | Expr | None=None) -> Expr",
+      "doc_first_line": "Get a slice of this expression."
+    },
+    {
+      "name": "sort",
+      "signature": "(descending=False, nulls_last=False) -> 'Expr'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "sort_by",
+      "signature": "(by: IntoExpr | Iterable[IntoExpr], *more_by, descending: bool | Sequence[bool]=False, nulls_last: bool | Sequence[bool]=False, multithreaded: bool=True, maintain_order: bool=False) -> Expr",
+      "doc_first_line": "Sort this column by the ordering of other columns."
+    },
+    {
+      "name": "sqrt",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the square root of the elements."
+    },
+    {
+      "name": "std",
+      "signature": "(ddof=1) -> Any",
+      "doc_first_line": "Standard deviation; at the default ``ddof=1`` (the Group By node's) it aggregates natively."
+    },
+    {
+      "name": "str",
+      "signature": ": StringMethods",
+      "doc_first_line": ""
+    },
+    {
+      "name": "sub",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of subtraction operator `expr - other`."
+    },
+    {
+      "name": "sum",
+      "signature": "() -> 'Expr'",
+      "doc_first_line": ""
+    },
+    {
+      "name": "tail",
+      "signature": "(n: int | Expr=10) -> Expr",
+      "doc_first_line": "Get the last `n` rows."
+    },
+    {
+      "name": "tan",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise value for the tangent."
+    },
+    {
+      "name": "tanh",
+      "signature": "() -> Expr",
+      "doc_first_line": "Compute the element-wise value for the hyperbolic tangent."
+    },
+    {
+      "name": "to_physical",
+      "signature": "() -> Expr",
+      "doc_first_line": "Cast to physical representation of the logical dtype."
+    },
+    {
+      "name": "top_k",
+      "signature": "(k: int | IntoExprColumn=5) -> Expr",
+      "doc_first_line": "Return the `k` largest elements."
+    },
+    {
+      "name": "top_k_by",
+      "signature": "(by: IntoExpr | Iterable[IntoExpr], k: int | IntoExprColumn=5, reverse: bool | Sequence[bool]=False) -> Expr",
+      "doc_first_line": "Return the elements corresponding to the `k` largest elements of the `by` column(s)."
+    },
+    {
+      "name": "truediv",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of float division operator `expr / other`."
+    },
+    {
+      "name": "truncate",
+      "signature": "(decimals: int=0) -> Expr",
+      "doc_first_line": "Truncate numeric data toward zero to `decimals` number of decimal places."
+    },
+    {
+      "name": "unique",
+      "signature": "(maintain_order: bool=False) -> Expr",
+      "doc_first_line": "Get unique values of this expression."
+    },
+    {
+      "name": "unique_counts",
+      "signature": "() -> Any",
+      "doc_first_line": "Return the number of unique values in the column."
+    },
+    {
+      "name": "upper_bound",
+      "signature": "() -> Expr",
+      "doc_first_line": "Calculate the upper bound."
+    },
+    {
+      "name": "value_counts",
+      "signature": "(sort: bool=False, parallel: bool=False, name: str_ | None=None, normalize: bool=False) -> Expr",
+      "doc_first_line": "Count the occurrence of unique values."
+    },
+    {
+      "name": "var",
+      "signature": "(ddof=1) -> Any",
+      "doc_first_line": "Variance; at the default ``ddof=1`` (the Group By node's) it aggregates natively."
+    },
+    {
+      "name": "where",
+      "signature": "(predicate: Expr) -> Expr",
+      "doc_first_line": "Filter a single column."
+    },
+    {
+      "name": "xor",
+      "signature": "(other: Any) -> Expr",
+      "doc_first_line": "Method equivalent of bitwise exclusive-or operator `expr ^ other`."
+    }
+  ]
+}

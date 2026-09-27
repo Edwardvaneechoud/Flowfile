@@ -47,6 +47,8 @@ export interface NotebookEditorOptions {
   getKernelId?: () => string | null;
   getFlowId?: () => number;
   getNodeId?: () => number;
+  // Takes precedence over the three getters above: the notebook's executor supplies it whole.
+  getLspContext?: () => LspContext;
 }
 
 const cellEditorTheme = EditorView.theme({
@@ -120,6 +122,7 @@ const cellEditorTheme = EditorView.theme({
 
 // Resolved fresh per request so a live kernel selection / flow change takes effect.
 function lspCtxGetter(opts: NotebookEditorOptions): () => LspContext {
+  if (opts.getLspContext) return opts.getLspContext;
   return () => ({
     kernelId: opts.getKernelId?.() ?? null,
     flowId: opts.getFlowId?.() ?? 0,
