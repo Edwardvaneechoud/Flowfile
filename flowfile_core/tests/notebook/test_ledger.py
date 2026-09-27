@@ -19,13 +19,13 @@ from pathlib import Path
 
 import pytest
 
-import flowfile_core.kernel as kernel_package
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.notebook.compare import parameters_equal, settings_equal
 from flowfile_core.notebook.render import NotebookRendering, render
 from flowfile_frame import notebook
 from flowfile_frame.notebook_cells import clean_run, seed_session
 from shared.storage_config import storage
+from tests.notebook.conftest import no_kernel_manager
 
 LEDGER_FILE = Path(__file__).parent / "ledger.json"
 RANK = {"EXACT": 0, "DIFFER": 1, "LOSSY": 2}
@@ -129,12 +129,14 @@ def ledger_rows(notebook_corpus, expected_placeholders):
     """``{flow name: {node_id: (node_type, grade, detail)}}`` plus the rendering checks, computed once."""
     before = _files()
     flows = {}
-    for name, graph in notebook_corpus:
-        rendering = render(graph)
-        placeholders = sorted(n for cell in rendering.cells if cell.status != "code" for n in cell.node_ids)
-        result = _clean_run(graph, rendering)
-        flows[name] = {"rendering": rendering, "placeholders": placeholders, "result": result, "graph": graph}
+    with no_kernel_manager() as kernel_calls:
+        for name, graph in notebook_corpus:
+            rendering = render(graph)
+            placeholders = sorted(n for cell in rendering.cells if cell.status != "code" for n in cell.node_ids)
+            result = _clean_run(graph, rendering)
+            flows[name] = {"rendering": rendering, "placeholders": placeholders, "result": result, "graph": graph}
     flows["__files__"] = _files() - before
+    flows["__kernel_calls__"] = list(kernel_calls)
     return flows
 
 
@@ -155,7 +157,7 @@ def test_every_flow_clean_runs(ledger_rows):
 
 def test_clean_runs_write_nothing_and_start_no_kernel(ledger_rows):
     assert ledger_rows["__files__"] == set()
-    assert kernel_package.get_kernel_manager_if_initialized() is None
+    assert ledger_rows["__kernel_calls__"] == []
 
 
 def test_clean_runs_keep_the_parameters(ledger_rows):

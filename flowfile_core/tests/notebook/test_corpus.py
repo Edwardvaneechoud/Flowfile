@@ -17,9 +17,9 @@ def test_corpus_is_large_named_uniquely_and_covers_the_native_types(notebook_cor
 
 
 def test_building_the_corpus_started_no_kernel_manager(notebook_corpus):
-    import flowfile_core.kernel as kernel_package
+    from tests.notebook.conftest import KERNEL_CALLS_DURING_CORPUS
 
-    assert kernel_package.get_kernel_manager_if_initialized() is None
+    assert KERNEL_CALLS_DURING_CORPUS == []
 
 
 def test_demo_graph_holds_the_whole_showcase(notebook_corpus):
