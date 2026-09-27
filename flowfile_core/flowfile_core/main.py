@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 import asyncio
@@ -9,6 +10,16 @@ import sys
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+# Frozen notebook session: swap the protocol off fd 1 before any flowfile_core import (V3 F1, F9).
+if __name__ == "__main__" and sys.argv[1:2] == ["--notebook-session"]:
+    _proto_out = os.fdopen(os.dup(1), "wb", 0)
+    _proto_in = os.fdopen(os.dup(0), "rb", 0)
+    os.dup2(2, 1)
+    os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+    from flowfile_core.notebook.session_main import main as _notebook_session_main
+
+    sys.exit(_notebook_session_main(_proto_out, _proto_in))
 
 import uvicorn
 from fastapi import BackgroundTasks, FastAPI
@@ -113,6 +124,13 @@ async def shutdown_handler(app: FastAPI):
 
     publish("app_started")
 
+    try:
+        from flowfile_core.notebook import registry as notebook_sessions
+
+        notebook_sessions.install()
+    except Exception:
+        logging.getLogger(__name__).exception("Notebook session runner not installed")
+
     # Only auto-start scheduler if explicitly opted in via env var
     if os.environ.get("FLOWFILE_SCHEDULER_ENABLED", "").lower() in ("true", "1", "yes"):
         scheduler = FlowScheduler()
@@ -138,6 +156,7 @@ async def shutdown_handler(app: FastAPI):
             print("Flow scheduler stopped")
 
         print("Cleaning up core service resources...")
+        _shutdown_notebook_sessions()
         _shutdown_kernels()
         _shutdown_local_model()
         await asyncio.sleep(0.1)  # Give a moment for cleanup
@@ -152,6 +171,16 @@ def _warm_kernel_manager():
         print("Kernel manager warmed up")
     except Exception as exc:
         print(f"Kernel manager warm-up skipped: {exc}")
+
+
+def _shutdown_notebook_sessions():
+    """Close every notebook session: stdin EOF in parallel, then a bounded parallel terminate/kill."""
+    try:
+        from flowfile_core.notebook.registry import shutdown_sessions
+
+        shutdown_sessions()
+    except Exception as exc:
+        print(f"Error closing notebook sessions: {exc}")
 
 
 def _shutdown_kernels():
@@ -337,8 +366,7 @@ def _run_flow_cli(flow_path: str, run_id: int) -> int:
     """Execute a flow in-process (used by PyInstaller builds via ``--run-flow``).
 
     Replicates the logic from ``flowfile/__main__.py:run_flow()`` without
-    importing from the top-level ``flowfile`` package (which is not bundled
-    in the PyInstaller binary).
+    importing from the top-level ``flowfile`` package.
     """
     # Configure logging early so all messages are captured in the subprocess log file
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
