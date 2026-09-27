@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException
 from pydantic import BaseModel, ValidationError
 
-from flowfile_core.auth.utils import get_local_user_id
 from flowfile_core.configs import node_store
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
@@ -31,8 +30,10 @@ from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model, 
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import GraphicWalkerInput
 from flowfile_core.schemas.schemas import NodeTemplate, get_settings_class_for_node_type
+from flowfile_frame._identity import current_user_id
 from flowfile_frame.enums import NodeType, NodeTypeLiteral, _literal
-from flowfile_frame.utils import create_flow_graph, generate_node_id, set_node_id
+from flowfile_frame.notebook import current
+from flowfile_frame.utils import _implicit_graph, generate_node_id, set_node_id
 from flowfile_frame.utils import data as node_id_data
 
 if TYPE_CHECKING:
@@ -49,6 +50,10 @@ DEFERRED_NODE_TYPES: frozenset[str] = frozenset(
 )
 
 SIDE_EFFECT_NODE_TYPES: frozenset[str] = frozenset({"train_model", "apply_model", "evaluate_model"})
+
+NOTEBOOK_DEFERRED_NODE_TYPES: frozenset[str] = frozenset(
+    {"database_reader", "rest_api_reader", "kafka_source", "api_response", "pivot", "polars_code"}
+)
 
 
 def is_side_effect_node_type(node_type: str) -> bool:
@@ -68,6 +73,23 @@ def is_side_effect_node_type(node_type: str) -> bool:
     return template.node_group == "output" or (template.custom_node and template.node_type == "output")
 
 
+def notebook_defers(node_type: str, setting_input: Any = None) -> bool:
+    """Whether notebook mode seeds a node of ``node_type`` from its schema instead of executing it at build.
+
+    The deferred row of the plan's seeding table: ``DEFERRED_NODE_TYPES``, every side-effect
+    type, the sources and transforms of ``NOTEBOOK_DEFERRED_NODE_TYPES`` (they do real I/O, or
+    may, when built in a local graph) and SQL-mode or virtual catalog readers (the latter
+    re-execute their producer). Always ``False`` outside notebook mode.
+    """
+    if current() is None:
+        return False
+    if node_type in DEFERRED_NODE_TYPES or node_type in NOTEBOOK_DEFERRED_NODE_TYPES:
+        return True
+    if node_type == "catalog_reader" and setting_input is not None:
+        return bool(setting_input.sql_query) or setting_input.is_virtual_optimized is not None
+    return is_side_effect_node_type(node_type)
+
+
 def seeded_at_build(node_type: str, frames: Sequence[FlowFrame], *, inputs_deferred: bool | None = None) -> bool:
     """Whether a node of ``node_type`` over ``frames`` is seeded instead of executed when it is built.
 
@@ -77,7 +99,7 @@ def seeded_at_build(node_type: str, frames: Sequence[FlowFrame], *, inputs_defer
     side only. ``inputs_deferred`` replaces the frames' own ``_deferred`` for a caller that
     tracks it across more inputs than it passes. The gate walk only happens for side-effect types.
     """
-    if node_type in DEFERRED_NODE_TYPES:
+    if node_type in DEFERRED_NODE_TYPES or notebook_defers(node_type):
         return True
     if not is_side_effect_node_type(node_type):
         return False
@@ -136,8 +158,35 @@ def predicted_schema_without_running(node: FlowNode) -> list[FlowfileColumn]:
 
 
 def seed_from_predicted_schema(node: FlowNode) -> None:
-    """Seed ``node`` on output-0 with its own predicted schema, never executing it."""
+    """Seed ``node`` on output-0 with its own predicted schema, never executing it.
+
+    A ``polars_code`` transform (seeded only in notebook mode) has no schema callback, so it
+    predicts lazily over its inputs the way the canvas does; the frame's own writer fallbacks, the
+    only fluent code that writes, are refused in notebook mode. A ``polars_code`` source would
+    read to predict, so it gets the callback-only (empty) schema like any other source.
+    """
+    if node.node_type == "polars_code" and node.all_inputs:
+        seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: _placeholder_schema(node)})
+        return
     seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: predicted_schema_without_running(node)})
+
+
+def source_frame(flow_graph: FlowGraph, node_id: int) -> FlowFrame:
+    """The frame of a source node just added to ``flow_graph``.
+
+    In notebook mode a source of the deferred row (:func:`notebook_defers`) is seeded from its
+    schema callback and wrapped as a deferred frame, so building it never reads; otherwise the
+    node's build-time result is wrapped as before.
+    """
+    from flowfile_frame.flow_frame import FlowFrame
+
+    node = flow_graph.get_node(node_id)
+    if notebook_defers(node.node_type, node.setting_input):
+        seed_from_predicted_schema(node)
+        return FlowFrame(
+            data=node.results.resulting_data.data_frame, flow_graph=flow_graph, node_id=node_id, deferred=True
+        )
+    return FlowFrame(data=node.get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id)
 
 
 def _placeholder_schema(node: FlowNode) -> list[FlowfileColumn]:
@@ -337,6 +386,12 @@ def merge_frames(frames: Sequence[FlowFrame]) -> FlowGraph:
         if frame.flow_graph.flow_id not in seen_flow_ids:
             seen_flow_ids.add(frame.flow_graph.flow_id)
             unique_graphs.append(frame.flow_graph)
+    mode = current()
+    if mode is not None and len(unique_graphs) > 1 and any(graph is not mode.graph for graph in unique_graphs):
+        raise NativeNodeError(
+            "In a notebook every frame lives on the session graph; this one comes from another graph. "
+            "Build on the session graph: drop the explicit flow_graph= (and fl.create_flow_graph())"
+        )
     if len(unique_graphs) <= 1:
         return frames[0].flow_graph
 
@@ -503,7 +558,13 @@ class NativeNode:
 
     @staticmethod
     def _decide_deferred(node_type: str, frames: Sequence[FlowFrame], deferred: bool | None) -> bool:
-        """:func:`seeded_at_build` unless ``deferred`` is given; no node is forced to run on placeholder rows."""
+        """:func:`seeded_at_build` unless ``deferred`` is given; no node is forced to run on placeholder rows.
+
+        In notebook mode a node of the deferred row (:func:`notebook_defers`) is always deferred,
+        whatever ``deferred`` says.
+        """
+        if notebook_defers(node_type):
+            return True
         if deferred is None:
             return seeded_at_build(node_type, frames)
         if not deferred and any(f._deferred for f in frames):
@@ -517,7 +578,7 @@ class NativeNode:
     def _resolve_graph(frames: Sequence[FlowFrame], flow_graph: FlowGraph | None) -> FlowGraph:
         """The graph to place on: the input frames' (merged when they differ), else ``flow_graph`` or a new one."""
         if not frames:
-            return flow_graph if flow_graph is not None else create_flow_graph()
+            return flow_graph if flow_graph is not None else _implicit_graph()
         if flow_graph is not None and all(f.flow_graph is not flow_graph for f in frames):
             raise NativeNodeError("flow_graph= must be the input frames' graph; a node is placed where its inputs are")
         return merge_frames(frames)
@@ -536,7 +597,7 @@ class NativeNode:
             "pos_x": 0.0,
             "pos_y": 0.0,
             "is_setup": True,
-            "user_id": get_local_user_id(),
+            "user_id": current_user_id(),
         }
         if description is not None:
             fields["description"] = description

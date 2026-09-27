@@ -24,6 +24,7 @@ from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
 from flowfile_core.flowfile.user_defined.registry import KernelRequiredError, missing_custom_node_error, registry
 from flowfile_core.schemas import input_schema
 from flowfile_frame.native import NativeNode, NativeNodeError, _kernel_id, predicted_schema_without_running
+from flowfile_frame.notebook import current
 from flowfile_frame.parameters import Parameter
 from flowfile_frame.python_script import _declared_columns
 from shared.node_designer.custom_node import CustomNodeBase, node_key_for
@@ -245,6 +246,8 @@ class CustomNode(NativeNode):
             or instance.node_type == "output"
             or (instance.requires_data_for_prediction and not has_hook)
         ):
+            deferred = True
+        if current() is not None and (self._on_kernel or instance.node_type == "output"):
             deferred = True
 
         def make_settings(base_fields: dict[str, Any]) -> input_schema.UserDefinedNode:

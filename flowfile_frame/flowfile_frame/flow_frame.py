@@ -41,12 +41,13 @@ from flowfile_frame.native import (
     seeded_at_build,
     set_node_reference,
 )
+from flowfile_frame.notebook import current
 from flowfile_frame.parameters import refuse_parameter_as_column, refuse_parameter_column_in_formula
 from flowfile_frame.selectors import Selector
 from flowfile_frame.utils import (
     _check_if_convertible_to_code,
+    _implicit_graph,
     _parse_inputs_as_iterable,
-    create_flow_graph,
     ensure_inputs_as_iterable,
     generate_node_id,
     stringify_values,
@@ -306,7 +307,7 @@ class FlowFrame:
         node_id = node_id or generate_node_id()
         description = "Data imported from Python object"
         if flow_graph is None:
-            flow_graph = create_flow_graph()
+            flow_graph = _implicit_graph()
 
         flow_id = flow_graph.flow_id
         if isinstance(data, pl.LazyFrame):
@@ -408,7 +409,7 @@ class FlowFrame:
             )
             return instance
 
-        source_graph = create_flow_graph()
+        source_graph = _implicit_graph()
         source_node_id = generate_node_id()
 
         if data is None:
@@ -1840,8 +1841,14 @@ class FlowFrame:
 
         That node writes when it is built, which on a deferred frame means writing the zero-row
         placeholder and below a gate means writing both exits; only the native Output node waits
-        for the flow run.
+        for the flow run. In notebook mode the fallback is refused outright: it writes at build.
         """
+        if current() is not None:
+            raise NativeNodeError(
+                f"{method_name} with extra writer options builds a Polars-code node that writes when it is "
+                f"built, which a notebook never does. Use the typed writer instead: {method_name}(path) with only "
+                "the options it takes (a native Output node that writes when the flow runs)"
+            )
         if self._deferred or self._below_a_gate():
             reason = (
                 "this frame only holds placeholder rows until the flow runs"
@@ -2738,6 +2745,11 @@ class FlowFrame:
         """
         if not (self._deferred or self._below_a_gate()):
             return self.data
+        if current() is not None:
+            raise NativeNodeError(
+                f"Node {self.node_id} only has rows once the flow runs (it is deferred or below a gate), and a "
+                "notebook does not run the flow: use Run on canvas"
+            )
         node = self.flow_graph.get_node(self.node_id)
         lineage = ancestors(node)
         run_info = self.flow_graph.run_graph(node_ids=lineage.keys())

@@ -99,11 +99,11 @@ def read_kafka(
     Raises:
         ValueError: If the connection is not found.
     """
-    from flowfile_frame.flow_frame import FlowFrame
-    from flowfile_frame.utils import create_flow_graph
+    from flowfile_frame.native import source_frame
+    from flowfile_frame.utils import _implicit_graph
 
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     node_id = add_kafka_source(
         flow_graph,
@@ -115,8 +115,4 @@ def read_kafka(
         value_format=value_format,
     )
 
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id,
-    )
+    return source_frame(flow_graph, node_id)

@@ -18,7 +18,6 @@ import polars as pl
 from pydantic import ValidationError
 
 from flowfile_core.auth import sharing
-from flowfile_core.auth.utils import get_local_user_id
 from flowfile_core.catalog import (
     AmbiguousFlowError,
     CatalogError,
@@ -40,11 +39,13 @@ from flowfile_core.flowfile.flow_node.multi_output import output_handle
 from flowfile_core.flowfile.param_types import coerce_param_value
 from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
 from flowfile_core.schemas import input_schema
+from flowfile_frame._identity import current_user_id
 from flowfile_frame.catalog_reference import CatalogReference, SchemaReference
 from flowfile_frame.config import logger
 from flowfile_frame.custom_node import _warn_session_only_custom_nodes
 from flowfile_frame.expr import Expr
 from flowfile_frame.native import NativeNode, NativeNodeError, Node
+from flowfile_frame.notebook import refuse
 from flowfile_frame.parameters import (
     Parameter,
     _as_parameter_string,
@@ -292,7 +293,7 @@ def flow_ref(
     """
     if uuid is None and registration_id is None and not name:
         raise NativeNodeError("flow_ref needs a flow name, uuid= or registration_id=")
-    user_id = get_local_user_id()
+    user_id = current_user_id()
     with get_db_context() as db:
         service = CatalogService(SQLAlchemyCatalogRepository(db))
         resolved_namespace = _resolve_namespace(service, namespace)
@@ -309,7 +310,7 @@ def flow_ref(
 
 def _list_flow_refs(schema: SchemaReference) -> list[FlowRef]:
     """Every flow filed under ``schema`` that the local user may use, by name."""
-    user_id = get_local_user_id()
+    user_id = current_user_id()
     with get_db_context() as db:
         service = CatalogService(SQLAlchemyCatalogRepository(db))
         namespace_id, _ = _resolve_namespace(service, schema)
@@ -368,6 +369,7 @@ def register_flow(
     on the canvas, and afterwards lives at the registered file (``flow_settings.path``). Warns
     about custom node classes that are not installed.
     """
+    refuse("fl.register_flow")
     graph = _graph_of(flow_or_frame)
     if not name or not name.strip():
         raise NativeNodeError("register_flow needs a non-empty name")
@@ -386,7 +388,7 @@ def register_flow(
     graph.apply_layout()
     try:
         registration_id = register_python_editor_flow(
-            graph, name=name, namespace_id=namespace_id, flow_path=str(path), user_id=get_local_user_id()
+            graph, name=name, namespace_id=namespace_id, flow_path=str(path), user_id=current_user_id()
         )
     except CatalogError as exc:
         raise NativeNodeError(
@@ -521,6 +523,7 @@ def _as_flow_ref(
     from flowfile_frame.flow_frame import FlowFrame
 
     if isinstance(flow, FlowGraph | FlowFrame):
+        refuse("RunFlow(<graph>, name=...) registers the graph first; it")
         if not name:
             raise NativeNodeError(
                 "RunFlow(<graph>) needs name=: the flow is registered under that name, and a re-run reuses it"

@@ -11,6 +11,7 @@ from shared._version import get_version
 
 __version__ = get_version()
 
+import functools
 import logging
 import os
 import sys
@@ -52,7 +53,7 @@ from polars.datatypes import (
     Utf8,
 )
 
-from flowfile.api import open_graph_in_editor
+from flowfile.api import open_graph_in_editor as _open_graph_in_editor
 from flowfile.web import start_server as start_web_ui
 from flowfile_core.flowfile import node_designer
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
@@ -116,6 +117,8 @@ from flowfile_frame.custom_nodes import custom_nodes
 from flowfile_frame.expr import col, column, count, cum_count, len, lit, max, mean, min, sum, when
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.group_frame import GroupByFrame
+from flowfile_frame.notebook import refuse
+from flowfile_frame.notebook_cells import canvas_node
 from flowfile_frame.python_script import PythonScript, python_script
 from flowfile_frame.run_flow import FlowInput, FlowOutput, FlowRef, RunFlow, flow_ref, register_flow
 from flowfile_frame.selectors import (
@@ -145,6 +148,13 @@ from flowfile_frame.utils import create_flow_graph
 
 LazyFrame = FlowFrame
 DataFrame = FlowFrame
+
+
+@functools.wraps(_open_graph_in_editor)
+def open_graph_in_editor(*args, **kwargs):
+    refuse("fl.open_graph_in_editor")
+    return _open_graph_in_editor(*args, **kwargs)
+
 
 # Bind node_designer as a real submodule so `from flowfile.node_designer import ...`
 # resolves (it is otherwise only an attribute); the os.path idiom.
@@ -262,6 +272,7 @@ __all__ = [
     # Utilities
     "create_flow_graph",
     "open_graph_in_editor",
+    "canvas_node",
     # Data types from Polars
     "Int8",
     "Int16",

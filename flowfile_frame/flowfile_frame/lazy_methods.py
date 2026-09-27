@@ -7,6 +7,7 @@ from flowfile_frame.adding_expr import refuse_parameter_argument
 from flowfile_frame.callable_utils import process_callable_args
 from flowfile_frame.config import logger
 from flowfile_frame.native import NativeNodeError
+from flowfile_frame.notebook import current
 
 PASSTHROUGH_METHODS = {
     "collect",
@@ -116,6 +117,11 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
         refuse_parameter_argument(
             method_name, args, kwargs, hint="pass a plain value, or an expression such as fl.lit(parameter)"
         )
+        if _has_build_time_effect(method_name) and current() is not None:
+            raise NativeNodeError(
+                f"{method_name} runs when it is built, which a notebook never does. Use a write_* method (a native "
+                "Output node that writes when the flow runs)"
+            )
         if _has_build_time_effect(method_name) and (self._deferred or self._below_a_gate()):
             reason = (
                 "this frame only holds placeholder rows until the flow runs"

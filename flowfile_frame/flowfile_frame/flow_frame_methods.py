@@ -15,7 +15,7 @@ from flowfile_frame.cloud_storage.secret_manager import get_current_user_id
 from flowfile_frame.config import logger
 from flowfile_frame.expr import col
 from flowfile_frame.flow_frame import FlowFrame
-from flowfile_frame.utils import create_flow_graph, generate_node_id
+from flowfile_frame.utils import _implicit_graph, generate_node_id
 from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_glob_pattern, is_url
 
 
@@ -167,7 +167,7 @@ def read_csv(
     """
     node_id = generate_node_id()
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
     flow_id = flow_graph.flow_id
     current_source_path_for_native = None
     if isinstance(source, str | os.PathLike):
@@ -456,7 +456,7 @@ def read_parquet(
     node_id = generate_node_id()
 
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     flow_id = flow_graph.flow_id
 
@@ -509,7 +509,7 @@ def _read_simple_file(
     node_id = generate_node_id()
 
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     flow_id = flow_graph.flow_id
 
@@ -685,7 +685,7 @@ def read_excel(
     node_id = generate_node_id()
 
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     flow_id = flow_graph.flow_id
 
@@ -729,7 +729,7 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
     node_id = generate_node_id()
 
     if not flow_graph:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
     flow_id = flow_graph.flow_id
 
     input_node = input_schema.NodeManualInput(
@@ -764,7 +764,7 @@ def from_raw_data(
     node_id = generate_node_id()
 
     if not flow_graph:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     input_node = input_schema.NodeManualInput(
         flow_id=flow_graph.flow_id,
@@ -820,7 +820,7 @@ def list_files(
     node_id = generate_node_id()
 
     if not flow_graph:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     settings = input_schema.NodeListFiles(
         flow_id=flow_graph.flow_id,
@@ -1065,7 +1065,7 @@ def scan_parquet_from_cloud_storage(
             scan_mode: Literal["single_file", "directory"] = "single_file"
 
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     flow_id = flow_graph.flow_id
     settings = input_schema.NodeCloudStorageReader(
@@ -1104,7 +1104,7 @@ def scan_csv_from_cloud_storage(
             scan_mode: Literal["single_file", "directory"] = "single_file"
 
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
     flow_id = flow_graph.flow_id
     settings = input_schema.NodeCloudStorageReader(
         flow_id=flow_id,
@@ -1172,7 +1172,7 @@ def scan_delta(
     cdc_mode, cdc_from_version, cdc_from_timestamp = _resolve_change_mode(changes_since)
     node_id = generate_node_id()
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
     flow_id = flow_graph.flow_id
     settings = input_schema.NodeCloudStorageReader(
         flow_id=flow_id,
@@ -1213,7 +1213,7 @@ def scan_json_from_cloud_storage(
             scan_mode: Literal["single_file", "directory"] = "single_file"
 
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
     flow_id = flow_graph.flow_id
     settings = input_schema.NodeCloudStorageReader(
         flow_id=flow_id,

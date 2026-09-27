@@ -1,4 +1,3 @@
-from flowfile_core.auth.jwt import create_access_token, get_current_user_sync
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_cloud_connection,
@@ -6,13 +5,13 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
     store_cloud_connection,
 )
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
+from flowfile_frame._identity import current_user_id
+from flowfile_frame.notebook import refuse
 
 
 def get_current_user_id() -> int | None:
-    access_token = create_access_token(data={"sub": "local_user"})
-    with get_db_context() as db:
-        current_user_id = get_current_user_sync(access_token, db).id
-    return current_user_id
+    """The user the connection helpers act as (``_identity.current_user_id``)."""
+    return current_user_id()
 
 
 def create_cloud_storage_connection(connection: FullCloudStorageConnection) -> None:
@@ -25,11 +24,9 @@ def create_cloud_storage_connection(connection: FullCloudStorageConnection) -> N
     Returns:
         None
     """
-    access_token = create_access_token(data={"sub": "local_user"})
-
+    refuse("fl.create_cloud_storage_connection")
     with get_db_context() as db:
-        current_user_id = get_current_user_sync(access_token, db).id
-        store_cloud_connection(db, connection, current_user_id)
+        store_cloud_connection(db, connection, current_user_id())
 
 
 def create_cloud_storage_connection_if_not_exists(connection: FullCloudStorageConnection) -> None:
@@ -42,6 +39,7 @@ def create_cloud_storage_connection_if_not_exists(connection: FullCloudStorageCo
     Returns:
         None
     """
+    refuse("fl.create_cloud_storage_connection_if_not_exists")
     all_connections = get_all_available_cloud_storage_connections()
     if not any(conn.connection_name == connection.connection_name for conn in all_connections):
         create_cloud_storage_connection(connection)
@@ -54,6 +52,7 @@ def get_all_available_cloud_storage_connections() -> list[FullCloudStorageConnec
 
 
 def del_cloud_storage_connection(connection_name: str) -> None:
+    refuse("fl.del_cloud_storage_connection")
     with get_db_context() as db:
         user_id = get_current_user_id()
         delete_cloud_connection(db, connection_name, user_id)

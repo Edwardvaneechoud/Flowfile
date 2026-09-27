@@ -27,6 +27,7 @@ from flowfile_core.flowfile.user_defined.registry import (
 from flowfile_core.schemas.schemas import NodeTemplate
 from flowfile_frame.custom_node import _INSTALLED_CLASSES, CustomNodeFactory
 from flowfile_frame.native import NativeNodeError
+from flowfile_frame.notebook import refuse
 from flowfile_frame.python_script import _global_names
 from shared.node_designer.custom_node import CustomNodeBase, NodeSettings, node_key_for
 
@@ -237,6 +238,7 @@ class CustomNodes:
         does not is removed again, and a file it replaced is put back. A running designer shows it
         after Settings → Extensions → Custom Nodes → Rescan.
         """
+        refuse("fl.custom_nodes.install")
         node_class = None
         if isinstance(node, type) and issubclass(node, CustomNodeBase):
             node_class, source, label = node, _class_file_source(node), f"class {node.__name__}"

@@ -149,11 +149,11 @@ def read_api(
     Returns:
         FlowFrame: A FlowFrame backed by a REST API reader node.
     """
-    from flowfile_frame.flow_frame import FlowFrame
-    from flowfile_frame.utils import create_flow_graph
+    from flowfile_frame.native import source_frame
+    from flowfile_frame.utils import _implicit_graph
 
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     node_id = add_read_from_api(
         flow_graph,
@@ -169,8 +169,4 @@ def read_api(
         max_retries=max_retries,
     )
 
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id,
-    )
+    return source_frame(flow_graph, node_id)

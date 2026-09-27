@@ -18,6 +18,7 @@ from flowfile_core.flowfile.param_types import FlowParameter, ParamValue, coerce
 from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
 from flowfile_frame.enums import ParamType, ParamTypeLiteral, _literal
 from flowfile_frame.native import NativeNodeError
+from flowfile_frame.notebook import current
 
 if TYPE_CHECKING:
     from flowfile_frame.expr import Expr
@@ -199,7 +200,8 @@ def add_flow_parameter(flow: FlowGraph | FlowFrame, parameter: Parameter) -> Par
 
     The graph stores its own copy of the declaration (``parameter.model``), so
     ``fl.set_flow_parameter`` on it never changes the ``Parameter`` or another graph it was
-    added to. A name that is already declared raises.
+    added to. A name that is already declared raises, except on the notebook session graph,
+    where the declaration replaces it (a seeded session already holds the canvas's parameters).
     """
     graph = _graph_of(flow)
     if not isinstance(parameter, Parameter):
@@ -207,7 +209,13 @@ def add_flow_parameter(flow: FlowGraph | FlowFrame, parameter: Parameter) -> Par
             f"add_flow_parameter takes a fl.Parameter, got {type(parameter).__name__}; "
             "declare it as fl.Parameter(name, default=..., type=...)"
         )
-    if any(p.name == parameter.name for p in graph.flow_settings.parameters):
+    declared = graph.flow_settings.parameters
+    existing = next((i for i, p in enumerate(declared) if p.name == parameter.name), None)
+    mode = current()
+    if existing is not None and mode is not None and graph is mode.graph:
+        declared[existing] = parameter.model.model_copy()
+        return parameter
+    if existing is not None:
         raise NativeNodeError(
             f"Flow parameter {parameter.name!r} is already declared; change it with fl.set_flow_parameter"
         )

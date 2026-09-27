@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
+from flowfile_frame._identity import current_user_id
 from flowfile_frame.catalog_reference import WriteMode, _resolve_namespace_id
 
 if TYPE_CHECKING:
@@ -21,9 +22,9 @@ def get_current_user_id() -> int:
     """Get the current user ID for catalog operations.
 
     Returns:
-        int: The current user ID (defaults to 1 for single-user mode).
+        int: The current user ID (``_identity.current_user_id``: the notebook session's, else 1).
     """
-    return 1
+    return current_user_id()
 
 
 def _resolve_change_mode(changes_since: int | str | datetime | None) -> tuple[str, int | None, str | None]:
@@ -239,15 +240,15 @@ def read_catalog_table(
             cannot be found, or if ``changes_since="last_run"`` has no cursor identity.
     """
     from flowfile_core.schemas import input_schema
-    from flowfile_frame.flow_frame import FlowFrame
-    from flowfile_frame.utils import create_flow_graph, generate_node_id
+    from flowfile_frame.native import source_frame
+    from flowfile_frame.utils import _implicit_graph, generate_node_id
 
     resolved_namespace_id = _resolve_namespace_id(schema, namespace_id)
     cdc_mode, cdc_from_version, cdc_from_timestamp = _resolve_change_mode(changes_since)
     node_id = generate_node_id()
 
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     flow_id = flow_graph.flow_id
     settings = input_schema.NodeCatalogReader(
@@ -270,11 +271,7 @@ def read_catalog_table(
     if cdc_mode == "since_last_run" and not settings.cdc_consumer_name:
         _require_cursor_identity(flow_graph, settings)
     flow_graph.add_catalog_reader(settings)
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id,
-    )
+    return source_frame(flow_graph, node_id)
 
 
 def read_catalog_sql(
@@ -298,13 +295,13 @@ def read_catalog_sql(
         ValueError: If no Delta catalog tables are available.
     """
     from flowfile_core.schemas import input_schema
-    from flowfile_frame.flow_frame import FlowFrame
-    from flowfile_frame.utils import create_flow_graph, generate_node_id
+    from flowfile_frame.native import source_frame
+    from flowfile_frame.utils import _implicit_graph, generate_node_id
 
     node_id = generate_node_id()
 
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     flow_id = flow_graph.flow_id
     settings = input_schema.NodeCatalogReader(
@@ -314,11 +311,7 @@ def read_catalog_sql(
         sql_query=sql_query,
     )
     flow_graph.add_catalog_reader(settings)
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id,
-    )
+    return source_frame(flow_graph, node_id)
 
 
 def register_flow_with_catalog(
