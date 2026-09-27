@@ -474,6 +474,61 @@ class _NotebookConverter(FlowGraphToFlowFrameConverter):
                 )
         super()._handle_filter(settings, var_name, input_vars)
 
+    @staticmethod
+    def _join_suffix(settings: transform_schema.JoinInputManager) -> str | None:
+        """The exporter's suffix rule without its key-order condition.
+
+        The Polars export needs kept right keys after the other right columns to match the canvas
+        column order; the frame's native join (``keep_right_keys=True``) rebuilds the same node, so
+        any order is exact here.
+        """
+        if settings.how not in ("left", "inner"):
+            return None
+        left = settings.left_select.renames
+        if any(not column.keep or column.new_name != column.old_name for column in left):
+            return None
+        left_names = {column.old_name for column in left}
+        right = settings.right_select.renames
+        if len({column.keep for column in right if column.join_key}) != 1:
+            return None
+        suffixes = set()
+        for column in right:
+            if not column.keep:
+                if not column.join_key:
+                    return None
+            elif column.old_name in left_names:
+                if not column.new_name.startswith(column.old_name) or column.new_name in left_names:
+                    return None
+                suffixes.add(column.new_name[len(column.old_name) :])
+            elif column.new_name != column.old_name:
+                return None
+        if len(suffixes) > 1:
+            return None
+        return suffixes.pop() if suffixes else "_right"
+
+    def _emit_suffix_join(
+        self,
+        settings: input_schema.NodeJoin,
+        var_name: str,
+        left_df: str,
+        right_df: str,
+        left_on: list[str],
+        right_on: list[str],
+        suffix: str,
+        keep_right_keys: bool,
+    ) -> None:
+        """One native ``.join``: kept right keys as ``keep_right_keys=True``, never ``coalesce=False`` (Polars code)."""
+        kwargs = [f"left_on={left_on}", f"right_on={right_on}", f'how="{settings.join_input.how}"']
+        if suffix != "_right":
+            kwargs.append(f"suffix={self._py_str(suffix)}")
+        if keep_right_keys:
+            kwargs.append("keep_right_keys=True")
+        self._add_code(f"{var_name} = {left_df}.join(")
+        self._add_code(f"        {right_df},")
+        for index, kwarg in enumerate(kwargs):
+            self._add_code(f"        {kwarg}{',' if index < len(kwargs) - 1 else ''}")
+        self._add_code("    )")
+
     def _handle_polars_code(
         self, settings: input_schema.NodePolarsCode, var_name: str, input_vars: dict[str, str]
     ) -> None:
@@ -482,18 +537,15 @@ class _NotebookConverter(FlowGraphToFlowFrameConverter):
         The frame reads the function's source rather than calling it, so ``pl.`` stays as written. The
         body ends in the ``return`` the node's runtime wrapper adds (the frame drops a lone ``return
         <expr>`` or a closing ``return output_df`` again); a body whose result is another assigned
-        name is left without one, since the frame would keep it. A node with no input keeps the
-        exporter's direct call.
+        name is left without one, since the frame would keep it. A node with no input is a source:
+        ``ff.polars_code(_polars_code_N)`` over a ``def`` without parameters.
         """
         if len(input_vars) == 1:
             inputs = list(input_vars.values())
         else:
             inputs = [input_vars[key] for key in sorted(input_vars) if key.startswith("main")]
-        if not inputs:
-            super()._handle_polars_code(settings, var_name, input_vars)
-            return
         code = textwrap.dedent(settings.polars_code_input.polars_code).strip()
-        names = ["input_df"] if len(inputs) == 1 else [f"input_df_{i}" for i in range(1, len(inputs) + 1)]
+        names = [f"input_df_{i}" for i in range(1, len(inputs) + 1)] if len(inputs) > 1 else ["input_df"][: len(inputs)]
         function = f"_polars_code_{settings.node_id}"
         if re.search(r"\bpl\.", code):
             self.imports.add("import polars as pl")
@@ -510,7 +562,10 @@ class _NotebookConverter(FlowGraphToFlowFrameConverter):
             self._add_code("    pass")
         self._add_code("")
         self._add_code("")
-        self._add_code(f"{var_name} = {inputs[0]}.polars_code({', '.join([function, *inputs[1:]])})")
+        if inputs:
+            self._add_code(f"{var_name} = {inputs[0]}.polars_code({', '.join([function, *inputs[1:]])})")
+        else:
+            self._add_code(f"{var_name} = ff.polars_code({function})")
         self._add_code("")
 
     def _formula_entry_native_expr(self, entry) -> str | None:

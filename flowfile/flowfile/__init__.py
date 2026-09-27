@@ -119,6 +119,7 @@ from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.notebook import refuse
 from flowfile_frame.notebook_cells import canvas_node
+from flowfile_frame.polars_code_node import polars_code
 from flowfile_frame.python_script import PythonScript, python_script
 from flowfile_frame.run_flow import FlowInput, FlowOutput, FlowRef, RunFlow, flow_ref, register_flow
 from flowfile_frame.selectors import (
@@ -229,6 +230,7 @@ __all__ = [
     "PythonScript",
     "python_script",
     "sql",
+    "polars_code",
     "Parameter",
     "add_flow_parameter",
     "set_flow_parameter",

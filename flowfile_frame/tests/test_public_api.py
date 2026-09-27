@@ -34,6 +34,7 @@ NATIVE_NODE_API = [
     "PythonScript",
     "python_script",
     "sql",
+    "polars_code",
     "create_flow_graph",
     "FlowGraph",
 ]

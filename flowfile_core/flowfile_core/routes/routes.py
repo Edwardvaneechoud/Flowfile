@@ -114,6 +114,9 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
+from flowfile_core.notebook.gate import require_canvas_notebook_enabled
+from flowfile_core.notebook.push import NotebookPushRequest, plan_push
+from flowfile_core.notebook.render import code_fingerprint
 from flowfile_core.routes._connection_sharing import (
     authorize_connection_mutation,
     changed_target_fields,
@@ -393,7 +396,7 @@ def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
     return reg_id, display_name, flow_path
 
 
-def _run_and_track(flow, user_id: int | None):
+def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
     """Wrapper that runs a flow and persists the run record to the database.
 
     Uses a two-phase pattern:
@@ -451,7 +454,7 @@ def _run_and_track(flow, user_id: int | None):
     except Exception as exc:
         logger.error(f"Failed to create run record for flow '{flow_name}': {exc}", exc_info=True)
 
-    run_info = flow.run_graph()
+    run_info = flow.run_graph(node_ids=node_ids)
     if run_info is None:
         logger.error(f"Flow '{flow_name}' returned no run_info - run tracking skipped")
         return
@@ -979,6 +982,16 @@ def delete_comment(flow_id: int, comment_id: int) -> OperationResponse:
     return OperationResponse(success=True, history=txn.history)
 
 
+class NotebookPushResponse(BaseModel):
+    """``POST /editor/notebook/push/``: the new history, fingerprint and max node id, and each cell's node ids."""
+
+    history: HistoryState
+    code_fingerprint: str
+    max_node_id: int
+    node_ids_by_cell: dict[str, list[int]]
+    warnings: list[str] = Field(default_factory=list)
+
+
 @router.post("/editor/apply_operations/", tags=["editor"], response_model=OperationResponse)
 def apply_operations(
     request: schemas.ApplyOperationsRequest, current_user=Depends(get_current_active_user)
@@ -992,15 +1005,28 @@ def apply_operations(
     """
     flow = get_flow_or_404(request.flow_id)
     with edit_flow(flow, request.label, HistoryActionType.BATCH) as txn:
-        for index, operation in enumerate(request.operations):
+        _run_operations(flow, request.flow_id, request.operations, current_user)
+    return OperationResponse(success=True, history=txn.history)
+
+
+def _run_operations(flow, flow_id: int, operations: list[schemas.EditorOperation], current_user) -> None:
+    """Apply ops in order inside the caller's transaction; a failure also restores the parameters.
+
+    Parameters are outside the undo scope, so the transaction's rollback does not bring them back.
+    """
+    parameters = list(flow.flow_settings.parameters)
+    try:
+        for index, operation in enumerate(operations):
             try:
-                _apply_operation(request.flow_id, operation, current_user)
+                _apply_operation(flow_id, operation, current_user)
             except HTTPException as exc:
                 raise HTTPException(exc.status_code, f"Operation {index} ({operation.op}): {exc.detail}") from exc
             except Exception as exc:
                 logger.exception(f"apply_operations: operation {index} ({operation.op}) failed")
                 raise HTTPException(500, f"Operation {index} ({operation.op}): {exc}") from exc
-    return OperationResponse(success=True, history=txn.history)
+    except BaseException:
+        flow.flow_settings.parameters = parameters
+        raise
 
 
 def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_user) -> None:
@@ -1028,6 +1054,87 @@ def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_u
             delete_comment(flow_id, operation.comment_id)
         case "insert_on_edge":
             insert_node_on_edge(get_flow_or_404(flow_id), operation.node_id, operation.connection)
+        case "update_user_defined_settings":
+            from flowfile_core.routes.user_defined_components import update_user_defined_node
+
+            settings = dict(operation.settings)
+            if int(settings.setdefault("flow_id", flow_id)) != flow_id:
+                raise HTTPException(422, "settings.flow_id does not match the batch flow_id")
+            update_user_defined_node(settings, operation.node_type, current_user=current_user)
+        case "set_flow_parameters":
+            get_flow_or_404(flow_id).flow_settings.parameters = list(operation.parameters)
+
+
+@router.post(
+    "/editor/notebook/push/",
+    tags=["editor"],
+    response_model=NotebookPushResponse,
+    dependencies=[Depends(require_canvas_notebook_enabled)],
+)
+def push_notebook(request: NotebookPushRequest, current_user=Depends(get_current_active_user)) -> NotebookPushResponse:
+    """Push notebook cells onto the canvas: clean run, reconcile, and apply the ops as one transaction.
+
+    The clean run happens outside the edit lock; the fingerprint is checked again under it, so a
+    canvas edit that lands meanwhile is a 409 instead of being overwritten.
+    """
+    flow = flow_file_handler.get_flow(request.flow_id, current_user.id)
+    if flow is None:
+        raise HTTPException(404, "Flow not found")
+    plan, result = plan_push(flow, current_user, request)
+    if plan.operations:
+        with edit_flow(flow, "Push notebook", HistoryActionType.BATCH) as txn:
+            live_fingerprint = code_fingerprint(flow)
+            if live_fingerprint != request.code_fingerprint:
+                detail = {"message": "The canvas changed during the push.", "code_fingerprint": live_fingerprint}
+                raise HTTPException(409, detail)
+            _run_operations(flow, request.flow_id, plan.operations, current_user)
+        history = txn.history
+    else:
+        history = flow.get_history_state()
+    max_node_id = max([request.client_max_node_id, *(node.node_id for node in flow.nodes)], default=0)
+    return NotebookPushResponse(
+        history=history,
+        code_fingerprint=code_fingerprint(flow),
+        max_node_id=max_node_id,
+        node_ids_by_cell=result.node_ids_by_cell,
+        warnings=plan.warnings,
+    )
+
+
+class RunLineageRequest(BaseModel):
+    flow_id: int
+    node_id: int
+
+
+def _lineage(flow, node_id: int) -> set[int]:
+    """``node_id`` and every node it reads from."""
+    seen: set[int] = set()
+    stack = [flow.get_node(node_id)]
+    while stack:
+        node = stack.pop()
+        if node is None or node.node_id in seen:
+            continue
+        seen.add(node.node_id)
+        stack.extend(node.all_inputs)
+    return seen
+
+
+@router.post("/editor/notebook/run_lineage/", tags=["editor"], dependencies=[Depends(require_canvas_notebook_enabled)])
+async def run_notebook_lineage(
+    request: RunLineageRequest, background_tasks: BackgroundTasks, current_user=Depends(get_current_active_user)
+) -> JSONResponse:
+    """Run one node and its ancestors on the canvas, gate-aware, like ``/flow/run/``; poll ``/flow/run_status/``."""
+    flow = flow_file_handler.get_flow(request.flow_id, current_user.id)
+    if flow is None:
+        raise HTTPException(404, "Flow not found")
+    if flow.get_node(request.node_id) is None:
+        raise HTTPException(404, f"Node {request.node_id} not found")
+    node_ids = _lineage(flow, request.node_id)
+    async with get_flow_run_lock(request.flow_id):
+        if flow.flow_settings.is_running:
+            raise HTTPException(422, "Flow is already running")
+        background_tasks.add_task(_run_and_track, flow, current_user.id, node_ids)
+    return JSONResponse(content={"message": "Data started", "flow_id": request.flow_id, "node_ids": sorted(node_ids)})
 
 
 @router.get("/editor/expression_doc", tags=["editor"], response_model=list[output_model.ExpressionsOverview])
@@ -1281,6 +1388,9 @@ def close_flow(flow_id: int, current_user=Depends(get_current_active_user)) -> N
     if not flow_file_handler.user_has_flow(user_id, flow_id):
         return
     flow_file_handler.delete_flow(flow_id, user_id=user_id)
+    from flowfile_core.notebook.registry import close_flow_sessions
+
+    close_flow_sessions(flow_id, user_id)
 
 
 class RenameFlowInput(BaseModel):

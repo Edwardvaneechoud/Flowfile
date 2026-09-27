@@ -189,13 +189,11 @@ def test_ledger_rows_only_improve(ledger_rows):
     assert not worse, f"ledger rows got worse (committed, now): {worse}"
 
 
-@pytest.mark.xfail(strict=True, reason="join keeping its right keys and a Polars-code node with no input are LOSSY")
 def test_no_lossy_row_for_a_node_type_the_demo_uses(ledger_rows):
     """Plan 2b's done-when: the corpus-wide row of every node type the demo uses is at least DIFFER.
 
-    Strict xfail until the frame closes the gaps: its native join always drops the right join keys,
-    so a canvas join that keeps them rebuilds as with_columns + join + rename, and a Polars-code node
-    with no input has no frame call that places one.
+    A canvas join that keeps its right keys rebuilds through ``join(..., keep_right_keys=True)`` and
+    a Polars-code node with no input through ``fl.polars_code(fn)``.
     """
     grades = _grades(ledger_rows)
     demo_types = {node_type for node_type, _ in grades["demo"].values()}

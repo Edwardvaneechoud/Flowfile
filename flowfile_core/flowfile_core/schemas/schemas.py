@@ -1061,6 +1061,21 @@ class InsertOnEdgeOperation(BaseModel):
     connection: input_schema.NodeConnection
 
 
+class UpdateUserDefinedSettingsOperation(BaseModel):
+    """Same as ``POST /user_defined_components/update_user_defined_node``: a custom node's settings."""
+
+    op: Literal["update_user_defined_settings"]
+    node_type: str
+    settings: dict[str, Any]
+
+
+class SetFlowParametersOperation(BaseModel):
+    """Replace the flow parameters, like ``POST /flow_settings``: applied in the batch, outside its undo step."""
+
+    op: Literal["set_flow_parameters"]
+    parameters: list[FlowParameter]
+
+
 EditorOperation = Annotated[
     AddNodeOperation
     | UpdateSettingsOperation
@@ -1070,7 +1085,9 @@ EditorOperation = Annotated[
     | UpdateLayoutOperation
     | CopyNodeOperation
     | DeleteCommentOperation
-    | InsertOnEdgeOperation,
+    | InsertOnEdgeOperation
+    | UpdateUserDefinedSettingsOperation
+    | SetFlowParametersOperation,
     Field(discriminator="op"),
 ]
 

@@ -87,6 +87,25 @@ def _polars_code_source(code: Any) -> str:
     return textwrap.dedent("\n".join(lines[start : body[-1].end_lineno])).strip()
 
 
+def _suffixed_right_names(
+    left: list[str], right: list[str], right_keys: list[str], suffix: str, keep_right_keys: bool
+) -> dict[str, str] | None:
+    """The right-column renames a native join stores for ``suffix``; None when Polars code must place the join.
+
+    The default ``_right`` stores no rename (the node's auto-rename appends it, as on the canvas). Any
+    other suffix renames each kept right column the left side also has; a renamed name that still
+    clashes leaves the join to Polars code.
+    """
+    if suffix == "_right":
+        return {}
+    kept = [name for name in right if keep_right_keys or name not in right_keys]
+    renames = {name: name + suffix for name in kept if name in left}
+    final = [renames.get(name, name) for name in kept]
+    if len(set(final)) != len(final) or set(renames.values()) & set(left):
+        return None
+    return renames
+
+
 def can_be_expr(param: inspect.Parameter) -> bool:
     """Check if a parameter can be of type pl.Expr"""
     if param.annotation == inspect.Parameter.empty:
@@ -836,6 +855,7 @@ class FlowFrame:
         coalesce: bool = None,
         maintain_order: Literal[None, "left", "right", "left_right", "right_left"] = None,
         description: str = None,
+        keep_right_keys: bool = False,
     ) -> FlowFrame:
         """
         Add a join operation to the Logical Plan.
@@ -874,13 +894,33 @@ class FlowFrame:
             right_left: First preserves the order of the right DataFrame, then the left.
         description : str, optional
             Description of the join operation for the ETL graph.
+        keep_right_keys : bool, default False
+            Keep the right join keys, a right key whose name the left side also has renamed with
+            ``suffix``: Polars' ``coalesce=False``, except that the kept keys follow the other right
+            columns, where the canvas join puts them. An inner or left join places one native join
+            node for it and for any ``suffix``; ``coalesce=True``, and ``coalesce=False`` when the
+            right keys already trail the right frame, do too. Other join types keep the Polars code
+            node.
 
         Returns
         -------
         FlowFrame
             New FlowFrame with join operation applied.
         """
-        use_polars_code = self._should_use_polars_code_for_join(maintain_order, coalesce, nulls_equal, validate, suffix)
+        if keep_right_keys and how in ("semi", "anti", "cross"):
+            raise ValueError(f"keep_right_keys has no meaning for a {how} join")
+        if keep_right_keys and coalesce:
+            raise ValueError("keep_right_keys=True keeps the right keys; coalesce=True drops them")
+        native_how = how in ("left", "inner")
+        polars_key_order = native_how and coalesce is False
+        if native_how and coalesce is not None:
+            keep_right_keys = keep_right_keys or coalesce is False
+            coalesce = None
+        elif keep_right_keys and coalesce is None and not native_how:
+            coalesce = False
+        use_polars_code = self._should_use_polars_code_for_join(
+            maintain_order, coalesce, nulls_equal, validate, "_right" if native_how else suffix
+        )
         self._ensure_same_graph(other)
 
         new_node_id = generate_node_id()
@@ -896,7 +936,17 @@ class FlowFrame:
         if not use_polars_code and how != "cross":
             join_mappings, use_polars_code = _create_join_mappings(left_columns or [], right_columns or [])
 
-        if use_polars_code or suffix != "_right":
+        right_names = None
+        if not use_polars_code and native_how:
+            right_keys = [mapping.right_col for mapping in join_mappings or []]
+            right_names = _suffixed_right_names(self.columns, other.columns, right_keys, suffix, keep_right_keys)
+            is_key = [name in right_keys for name in other.columns]
+            keys_trail = is_key == sorted(is_key)
+            use_polars_code = right_names is None or (polars_key_order and not keys_trail)
+
+        if use_polars_code:
+            if keep_right_keys and coalesce is None:
+                coalesce = False
             return self._execute_polars_code_join(
                 other,
                 new_node_id,
@@ -914,7 +964,9 @@ class FlowFrame:
                 description,
             )
         elif join_mappings or how == "cross":
-            return self._execute_native_join(other, new_node_id, join_mappings, how, description)
+            return self._execute_native_join(
+                other, new_node_id, join_mappings, how, description, keep_right_keys, right_names
+            )
         else:
             raise ValueError("Could not execute join")
 
@@ -1046,8 +1098,14 @@ class FlowFrame:
         join_mappings: list | None,
         how: str,
         description: str,
+        keep_right_keys: bool = False,
+        right_names: dict[str, str] | None = None,
     ) -> FlowFrame:
-        """Execute join using native FlowFile join nodes."""
+        """Execute join using native FlowFile join nodes.
+
+        ``right_names`` renames right columns (a non-default ``suffix``); the default ``_right`` suffix is
+        left to the node's own auto-rename, so the stored settings match a join drawn on the canvas.
+        """
         left_select = transform_schema.SelectInputs.create_from_pl_df(self.data)
         right_select = transform_schema.SelectInputs.create_from_pl_df(other.data)
         if how == "cross":
@@ -1068,7 +1126,9 @@ class FlowFrame:
 
         for right_column in join_input_manager.right_select.renames:
             if right_column.join_key:
-                right_column.keep = False
+                right_column.keep = keep_right_keys
+            if right_names and right_column.keep and right_column.old_name in right_names:
+                right_column.new_name = right_names[right_column.old_name]
 
         if how == "cross":
             self._add_cross_join_node(new_node_id, join_input_manager.to_cross_join_input(), description, other)
