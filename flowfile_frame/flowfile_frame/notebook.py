@@ -36,7 +36,9 @@ class NotebookMode:
     """The active notebook build mode: the session graph, the session's user id, and what cells did.
 
     ``provenance`` holds ``(cell_id, node_type, node_id)`` for every node a cell created on the
-    session graph; ``refusals`` every refusal message raised while the mode was active.
+    session graph; ``refusals`` every message raised through :func:`refuse`. Other notebook-mode
+    errors (writer fallbacks, ``sink_*``, deferred ``collect()``, cross-graph merges, the refused
+    ``run_graph`` and the ``KernelManager`` sentinel) are raised directly and not recorded.
     """
 
     graph: FlowGraph
@@ -60,21 +62,18 @@ def current() -> NotebookMode | None:
     return _ACTIVE[-1] if _ACTIVE else None
 
 
-def refuse(what: str) -> None:
+def refuse(what: str, reason: str = "writes at build or runs a flow") -> None:
     """Raise ``NativeNodeError`` for ``what`` when notebook mode is active; a no-op otherwise.
 
-    The message is also recorded on the mode's ``refusals``, so a clean run reports a refusal
-    that user code caught.
+    The message reads ``"<what> <reason>, so it is not available in a notebook"``. It is also
+    recorded on the mode's ``refusals``, so a clean run reports a refusal that user code caught.
     """
     mode = current()
     if mode is None:
         return
     from flowfile_frame.native import NativeNodeError
 
-    message = (
-        f"{what} writes files or catalog rows, or runs a flow, so it is not available in a notebook: "
-        "run it from a script"
-    )
+    message = f"{what} {reason}, so it is not available in a notebook: run it from a script"
     mode.refusals.append(message)
     raise NativeNodeError(message)
 

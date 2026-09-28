@@ -1,7 +1,6 @@
 <template>
   <div class="notebook-panel">
-    <!-- One header row: the open-notebook tabs are the notebook selector (double-click
-         a tab to rename), "+" opens New / saved notebooks, controls sit on the right. -->
+    <!-- One header row: catalog tabs and "+" in catalog mode, the session pill in flow mode. -->
     <div class="nb-header">
       <div class="nb-toolbar">
         <span
@@ -251,8 +250,7 @@
       </div>
     </div>
 
-    <!-- Kernel status banner: the one place that says why Python cells won't run
-         (no kernel, Docker off, kernel gone, stopped, starting, errored) and what to do. -->
+    <!-- Why Python cells won't run and what to do; flow mode shows only failures (the pill carries the rest). -->
     <div v-if="banner" class="nb-banner" :class="`nb-banner--${banner.tone}`">
       <i :class="banner.icon"></i>
       <span class="nb-banner__text">{{ banner.text }}</span>
@@ -361,8 +359,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
         </div>
       </template>
 
-      <!-- Add cell (centered). Adds a Python cell by default; switch to
-           Markdown via the per-cell type selector or cell menu. -->
+      <!-- Adds Python; switch type from the cell's selector or menu. -->
       <div class="nb-add-row">
         <button
           type="button"
@@ -409,6 +406,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from "vue";
+import debounce from "lodash/debounce";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
 import { useNotebookStore, cellNodeId, flowPushBody } from "../../stores/notebook-store";
@@ -873,7 +871,7 @@ onBeforeUnmount(() => {
   for (const detach of schemaDetachers.values()) detach();
   schemaDetachers.clear();
   if (!props.flowId) store.closeAllSessions();
-  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshSoon.cancel();
 });
 
 // A catalog panel never shows a flow's tab: fall back to a catalog tab when one was active.
@@ -910,18 +908,17 @@ async function openFlow() {
   }
 }
 
-let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+const refreshSoon = debounce(async () => {
+  await whenMutationsIdle();
+  await store.refreshFlowNotebook(props.flowId!).catch(() => undefined);
+}, 400);
 
 // Canvas edits re-render the cells once the edit queue settles; layout moves keep the fingerprint.
 watch(
   () => editorStore.graphVersion,
   () => {
     if (!props.flowId) return;
-    if (refreshTimer) clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(async () => {
-      await whenMutationsIdle();
-      await store.refreshFlowNotebook(props.flowId!).catch(() => undefined);
-    }, 400);
+    refreshSoon();
   },
 );
 
@@ -1172,7 +1169,7 @@ async function onDelete() {
   text-align: center;
 }
 
-/* Session status pill (flow mode): the steady states the banner used to spell out. */
+/* Flow-mode session state pill; failures still get the banner. */
 .nb-session-pill {
   display: inline-flex;
   align-items: center;

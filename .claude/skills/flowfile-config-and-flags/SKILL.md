@@ -50,7 +50,7 @@ Declared `flowfile_core/flowfile_core/configs/settings.py:138`:
 | Value | Who sets it | What it gates |
 |---|---|---|
 | `electron` (default) | unset → stamped at import; Tauri `env.rs` | Single-user desktop. `local_user` (id=1) auto-auth (`auth/jwt.py:97-102`); JWT secret auto-generated + persisted via `SecureStorage` (`auth/jwt.py:61-66`); master key auto-generated + stored (`auth/secrets.py:210-224`); `FLOWFILE_INTERNAL_TOKEN` auto-generated if absent **and persisted via `SecureStorage`** so CLI subprocesses match the server (`auth/jwt.py`); secrets routes force `user_id=1` (`routes/secrets.py:97`); sharing routers 404 (`sharing_enabled()` false); file-manager routes 403 (`routes/file_manager.py:36`); storage under `~/.flowfile`; user data = `$HOME`. |
-| `docker` | Dockerfiles / compose | Multi-user. **Startup fails without `JWT_SECRET_KEY`** (`auth/jwt.py:68-70`); master key required via `FLOWFILE_MASTER_KEY` env or `/run/secrets/flowfile_master_key` (`auth/secrets.py:140-169,210`); `FLOWFILE_INTERNAL_TOKEN` required (`auth/jwt.py:47-51`); admin seeded from `FLOWFILE_ADMIN_USER`/`_PASSWORD` (`database/init_db.py:55-65`); storage `/app/internal_storage` + `/data/user` (compose overrides user data to `/app/user_data`); file manager + sharing enabled; `/project` router 404s unless `FLOWFILE_ENABLE_PROJECTS` truthy; `ambient_credentials_allowed()` is false, so cloud reader/writer nodes refuse "No connection" (the server's own credentials) and absolute local paths, and the storage browser / cloud Delta routes refuse ambient credentials; `uses_server_identity()` is true for `aws-cli`/`env_vars`/`iam_role`/`managed_identity`, so only admins may save such connections and only admin-owned ones resolve (full rule in §3.16's `AWS_*` note; `package` mode keeps all of it). |
+| `docker` | Dockerfiles / compose | Multi-user. **Startup fails without `JWT_SECRET_KEY`** (`auth/jwt.py:68-70`); master key required via `FLOWFILE_MASTER_KEY` env or `/run/secrets/flowfile_master_key` (`auth/secrets.py:140-169,210`); `FLOWFILE_INTERNAL_TOKEN` required (`auth/jwt.py:47-51`); admin seeded from `FLOWFILE_ADMIN_USER`/`_PASSWORD` (`database/init_db.py:55-65`); storage `/app/internal_storage` + `/data/user` (compose overrides user data to `/app/user_data`); file manager + sharing enabled; `/project` router 404s unless `FLOWFILE_ENABLE_PROJECTS` truthy; `ambient_credentials_allowed()` is false, so cloud reader/writer nodes refuse "No connection" (the server's own credentials) and absolute local paths, and the storage browser / cloud Delta routes refuse ambient credentials; `uses_server_identity()` is true for `aws-cli`/`env_vars`/`iam_role`/`managed_identity`, so only admins may save such connections and only admin-owned ones resolve (full rule in §3.17's `AWS_*` note; `package` mode keeps all of it). |
 | `package` | **Nothing in the repo sets this** — an operator sets it manually (verified: only compose/Dockerfiles set `docker`; only import-time defaults set `electron`) | `is_package_mode()` true; because it's ≠ `electron`, sharing is **enabled**, and JWT/master-key follow the non-electron path (`JWT_SECRET_KEY` required; `SecureStorage` path falls to `SECURE_STORAGE_PATH` default `/tmp/.flowfile`). Projects always on (`routes/public.py:49`). |
 | `tauri` (fallback string, never actually set) | `routes/public.py:45`: `mode = os.environ.get("FLOWFILE_MODE", "tauri")` — a **different default string** than everywhere else | Unreachable through normal startup because importing `flowfile_core` always stamps `electron` first. The frontend treats `electron`\|`tauri`\|`desktop` as synonyms (public.py:42-44 comment, env.rs:47-52). Don't "unify" this default — the comment explains the intent. |
 
@@ -142,7 +142,7 @@ Non-env port facts: Tauri scans a free `(core, worker)` port pair starting at 63
 | `FLOWFILE_DOCKER_NETWORK` | manager.py:393 | auto-detected (`_detect_docker_network`) | Docker-in-Docker network that kernel containers join. |
 | `FLOWFILE_CORE_URL` | manager.py:1216 (core writes it into the kernel's env); `kernel_runtime/flowfile_client.py:219` (kernel reads it) | DinD: `http://flowfile-core:63578`; local: `http://host.docker.internal:63578` | How a kernel container dials core back. |
 
-### 3.7a Canvas notebook sessions (core side)
+### 3.8 Canvas notebook sessions (core side)
 
 | Var | Read at | Default | Effect |
 |---|---|---|---|
@@ -153,7 +153,7 @@ Non-env port facts: Tauri scans a free `(core, worker)` port pair starting at 63
 
 The session child's env is set by `notebook/bootstrap.py`, not the operator: it inherits core's env minus `FLOWFILE_ADMIN_PASSWORD`, plus `FLOWFILE_TELEMETRY=0`, `FLOWFILE_KERNEL_GC=0`, `FLOWFILE_OFFLOAD_TO_WORKER=0` and the skip-migration/skip-init-DB switches. Its stderr goes to `<storage>/logs/notebook_session_<flow_id>.log`, swept by `FLOWFILE_RUN_LOG_RETENTION_DAYS`.
 
-### 3.8 Kernel-container contract vars (set by core in `_build_kernel_env`, `manager.py:1200-1258`; read inside `kernel_runtime`)
+### 3.9 Kernel-container contract vars (set by core in `_build_kernel_env`, `manager.py:1200-1258`; read inside `kernel_runtime`)
 
 These are **container-internal contract vars** — an operator normally never sets them by hand; core sets them per-kernel at launch.
 
@@ -177,14 +177,14 @@ These are **container-internal contract vars** — an operator normally never se
 | `MAX_DISPLAY_OUTPUTS` | not set by core | `main.py:82` | `200` | LRU cap on stored display outputs. |
 | `FLOWFILE_SHARED_PATH` | **nobody sets it** | `flowfile_client.py:221` (`_SHARED_PATH`) | `/shared` | **DEAD** — assigned once into a module var, never read again. |
 
-### 3.9 Public flow-API tunables
+### 3.10 Public flow-API tunables
 
 | Var | Read at | Default | Effect |
 |---|---|---|---|
 | `FLOWFILE_API_RUN_TIMEOUT_SECONDS` | `flowfile_core/flowfile_core/routes/flow_api.py:51` | `120` (float) | Timeout for one public-API-triggered flow run. |
 | `FLOWFILE_API_MAX_CONCURRENT_RUNS` | `routes/flow_api.py:57` | `4` (int → `asyncio.Semaphore`) | Global cap on concurrent public-API runs; beyond cap ⇒ fast 503. |
 
-### 3.10 Global-artifact storage backend
+### 3.11 Global-artifact storage backend
 
 | Var | Read at | Default | Effect |
 |---|---|---|---|
@@ -194,20 +194,20 @@ These are **container-internal contract vars** — an operator normally never se
 | `FLOWFILE_S3_REGION` | `artifacts/__init__.py:76` | `us-east-1` | Region. |
 | `FLOWFILE_S3_ENDPOINT_URL` | `artifacts/__init__.py:77` | none | Custom endpoint (MinIO etc.). |
 
-### 3.11 Project git-tracking secret placeholders
+### 3.12 Project git-tracking secret placeholders
 
 | Var | Read at | Effect |
 |---|---|---|
 | `FLOWFILE_SECRET_<NAME>` | `flowfile_core/flowfile_core/project/secrets_resolver.py:24-26` (`env_key`: `FLOWFILE_SECRET_` + name uppercased, non-alnum runs → `_`), `:44-48` (`resolve`: **env var wins over the project's `.env`**) | Supplies values for `${secret:NAME}` placeholders when importing a git project. Project-root `.env` (untracked) is the fallback. |
 
-### 3.12 Google OAuth (GA connections)
+### 3.13 Google OAuth (GA connections)
 
 | Var | Read at | Default | Effect |
 |---|---|---|---|
 | `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` | settings.py:163-164 | `""` | Fallback OAuth app credentials when no per-user DB secret row exists (`configs/app_settings.py:69-70`: `get_user_secret(...) or GOOGLE_OAUTH_CLIENT_ID`). |
 | `GOOGLE_OAUTH_REDIRECT_URI` | settings.py:165-168 | `http://localhost:{SERVER_PORT}/ga_connections/oauth/callback` | OAuth redirect fallback. |
 
-### 3.13 Sidecar / desktop shell (Rust — vars *written* for the Python children)
+### 3.14 Sidecar / desktop shell (Rust — vars *written* for the Python children)
 
 `build_child_env(core_port, worker_port)` in `flowfile_frontend/src-tauri/src/env.rs:10-96` starts from the shell's environment and **overrides**: `HOME`, `TMPDIR`, `DOCKER_CONFIG` (=`~/.docker`), `FLOWFILE_STORAGE_DIR` (=`~/.flowfile`, pre-creating cache/temp/logs/system_logs/flows/database subdirs), `FLOWFILE_MODE=electron` (env.rs:52), `FLOWFILE_SUPERVISOR_PID` (=shell PID, env.rs:58-61), `FLOWFILE_WORKER_PORT`, `CORE_PORT`, `CORE_HOST=127.0.0.1`, `WORKER_HOST=127.0.0.1` (env.rs:67-72), `DOCKER_HOST` (`npipe:////./pipe/docker_engine` on Windows else `unix:///var/run/docker.sock`, env.rs:74-84), and prepends `/usr/local/bin:...` to `PATH` on Unix.
 
@@ -216,7 +216,7 @@ These are **container-internal contract vars** — an operator normally never se
 | `FLOWFILE_SUPERVISOR_PID` | `shared/parent_watcher.py:32` | Presence-gated: enables a parent-death watcher thread in sidecars (polls `os.getppid()` every 1s; exits when reparented). Never set for CLI/Docker runs, so the watcher never fires there. |
 | `FLOWFILE_TARGET_TRIPLE` | **compile-time** `env!()` in `src-tauri/src/sidecar/mod.rs:162`, emitted by `build.rs:8` `cargo:rustc-env` | Picks the `binaries/<name>-<triple>` sidecar filename. |
 
-### 3.14 Frontend / WASM build & test-time (not backend config)
+### 3.15 Frontend / WASM build & test-time (not backend config)
 
 | Var | Read at | Effect |
 |---|---|---|
@@ -230,7 +230,7 @@ These are **container-internal contract vars** — an operator normally never se
 | `BUILD_MODE` | `flowfile_wasm/vite.config.ts:5` (`'lib'`) | WASM lib-vs-app build; set by `package.json` `build:lib`. |
 | `npm_package_version` | `flowfile_wasm/vite.config.ts:6` | Injected app version. |
 
-### 3.15 Starlette-Config keys (settings.py:129-133 — env var OR `.env` in the process CWD)
+### 3.16 Starlette-Config keys (settings.py:129-133 — env var OR `.env` in the process CWD)
 
 | Key | Default | Status |
 |---|---|---|
@@ -239,7 +239,7 @@ These are **container-internal contract vars** — an operator normally never se
 | `AVAILABLE_RAM` | `8` (GB, int) | Live — `flow_data_engine/utils.py:40` uses it to decide if an estimated frame fits in memory. |
 | `FLOWFILE_WORKER_URL` | computed worker URL | Live — see §3.2. |
 
-### 3.16 Test-infrastructure env (not runtime config, but easy to confuse with the above)
+### 3.17 Test-infrastructure env (not runtime config, but easy to confuse with the above)
 
 - `TEST_MODE` — `flowfile_worker/configs.py:18`: **presence-based** (`"TEST_MODE" in os.environ`) — `TEST_MODE=0` still enables it! Effect: `flowfile_worker/secrets.py:128` returns a static test master key instead of real key resolution. CI sets it in `.github/workflows/test-kafka-integration.yml:115` and `test-kernel-integration.yml:72`.
 - `TESTING='True'` — set by `flowfile_core/tests/conftest.py:23`; see §3.4 for the shared-DB hazard.
@@ -247,11 +247,11 @@ These are **container-internal contract vars** — an operator normally never se
 - `test_utils/` Docker fixtures: `TEST_POSTGRES_{HOST,PORT,USER,PASSWORD,DB,SCHEMA,IMAGE,CONTAINER,STARTUP_TIMEOUT,SHUTDOWN_TIMEOUT}`, `TEST_MYSQL_*` (same shape + `ROOT_PASSWORD`), `TEST_MINIO_{HOST,PORT,CONSOLE_PORT,ACCESS_KEY,SECRET_KEY,CONTAINER}`, `TEST_GCS_{HOST,PORT,CONTAINER}`, `TEST_AZURITE_{HOST,BLOB_PORT,CONTAINER}`, `TEST_REDPANDA_{HOST,PORT,IMAGE,CONTAINER}`, `KEEP_{MINIO,GCS,AZURITE,REDPANDA}_RUNNING`, `CI`, `GITHUB_ACTIONS`.
 - Tests also export `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_ENDPOINT_URL`/`AWS_REGION`/`AWS_ALLOW_HTTP`/`AWS_SESSION_TOKEN` for object-store SDKs. Package source never reads `AWS_*` **itself**, but the ambient AWS environment is still live runtime config: a cloud node with **No connection**, a saved `aws-cli` connection with a blank `aws_profile`, and any `env_vars` connection resolve credentials through boto3's default chain and object_store's own env lookup, so `AWS_*` in the core/worker environment (`AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `AWS_ENDPOINT_URL`, `AWS_ALLOW_HTTP`, …) decides where such a node reads and writes (a saved connection's own `endpoint_url` still wins). **Docker mode** (`auth/sharing.py`, read live): the no-connection fallback is refused for every user, admins included (`ambient_credentials_allowed()` → `flow_graph.get_cloud_connection_settings` raises `ValueError("Select a cloud storage connection; …")`); server-identity connections (`SERVER_IDENTITY_AUTH_METHODS` = `aws-cli`, `env_vars`, `iam_role`, `managed_identity`; `uses_server_identity()`) are admin-only — a non-admin create/update is a 422 in `routes/cloud_connections.py`, and `db_connections.get_cloud_connection_schema` raises `CloudConnectionNotAllowedError` for any such row whose **owner** is not an admin (nodes, storage browser + cloud Delta routes as 400 `CONNECTION_NOT_ALLOWED`, catalog storage), so admin-owned ones keep working, group-shared included; cloud node paths must be cloud URIs (`shared/cloud_storage/utils.py::validate_cloud_resource_path`: empty/relative refused in every mode, absolute local paths refused in docker). Suites that exercise it pin a temp static-key profile plus `AWS_ENDPOINT_URL=http://localhost:9000`, `AWS_ALLOW_HTTP=true` and `AWS_EC2_METADATA_DISABLED=true`, so nothing can reach real AWS.
 
-### 3.17 CI-only runtime env (across all 12 workflows — only 3 hits)
+### 3.18 CI-only runtime env (across all 12 workflows — only 3 hits)
 
 `TEST_MODE: "1"` (kafka + kernel integration workflows); `FLOWFILE_INTERNAL_TOKEN: ${{ github.run_id }}-test-token` (`test-kernel-integration.yml:74`); `FLOWFILE_KERNEL_IMAGE: flowfile-kernel-base:test` (`test-kernel-integration.yml:76`).
 
-### 3.18 Interpreter hygiene (Dockerfiles, not app config)
+### 3.19 Interpreter hygiene (Dockerfiles, not app config)
 
 `PYTHONPATH=/app`, `PYTHONDONTWRITEBYTECODE=1`, `PYTHONUNBUFFERED=1` in `flowfile_core/Dockerfile:69-72`, `flowfile_worker/Dockerfile:61-64`, `kernel_runtime/Dockerfile:80-84` (+ `docker-compose.yml:46-47,75-76`).
 
@@ -307,7 +307,7 @@ Corollary gotchas:
 7. **`DEBUG`** and **`FILE_LOCATION`** Starlette-Config keys — read into module constants with zero consumers.
 
 ### Read in code but absent from BOTH `.env.example` and root `CLAUDE.md`
-`FLOWFILE_LSP_ENABLED` (+ its admin flip endpoint) · `FLOWFILE_API_RUN_TIMEOUT_SECONDS` · `FLOWFILE_API_MAX_CONCURRENT_RUNS` · `FLOWFILE_ARTIFACT_STORAGE` / `FLOWFILE_S3_BUCKET` / `_PREFIX` / `_REGION` / `_ENDPOINT_URL` · `FLOWFILE_LOCAL_MODEL_CTX` · `FLOWFILE_DB_READ_HEDGE_DELAY` · `FLOWFILE_DOCKER_NETWORK` · `FLOWFILE_DB_PATH` / `TESTING` / `FLOWFILE_SKIP_STARTUP_MIGRATION` · `FLOWFILE_HOST` / `FLOWFILE_PORT` / `FLOWFILE_MODULE_NAME` / `FORCE_POETRY` / `POETRY_PATH` · `SECURE_STORAGE_PATH` · `GOOGLE_OAUTH_CLIENT_ID` / `_CLIENT_SECRET` / `_REDIRECT_URI` · `FLOWFILE_SECRET_*` placeholder prefix · `AVAILABLE_RAM` (Starlette key, live) · `FLOWFILE_INTERNAL_SERVICE_USER_ID` (documented only in `docs/for-developers/kernel-architecture.md`) · most of the kernel-container contract vars in §3.8 (`PERSISTENCE_*`, `RECOVERY_MODE`, `KERNEL_ID`, `MAX_NAMESPACES`, `MAX_DISPLAY_OUTPUTS`, `KERNEL_PACKAGES`, `KERNEL_CONSTRAINTS_FILE`, the `FLOWFILE_HOST_*`/`FLOWFILE_KERNEL_*` path-translation quartet — some appear in `docs/for-developers/kernel-architecture.md`, most don't anywhere).
+`FLOWFILE_LSP_ENABLED` (+ its admin flip endpoint) · `FLOWFILE_API_RUN_TIMEOUT_SECONDS` · `FLOWFILE_API_MAX_CONCURRENT_RUNS` · `FLOWFILE_ARTIFACT_STORAGE` / `FLOWFILE_S3_BUCKET` / `_PREFIX` / `_REGION` / `_ENDPOINT_URL` · `FLOWFILE_LOCAL_MODEL_CTX` · `FLOWFILE_DB_READ_HEDGE_DELAY` · `FLOWFILE_DOCKER_NETWORK` · `FLOWFILE_DB_PATH` / `TESTING` / `FLOWFILE_SKIP_STARTUP_MIGRATION` · `FLOWFILE_HOST` / `FLOWFILE_PORT` / `FLOWFILE_MODULE_NAME` / `FORCE_POETRY` / `POETRY_PATH` · `SECURE_STORAGE_PATH` · `GOOGLE_OAUTH_CLIENT_ID` / `_CLIENT_SECRET` / `_REDIRECT_URI` · `FLOWFILE_SECRET_*` placeholder prefix · `AVAILABLE_RAM` (Starlette key, live) · `FLOWFILE_INTERNAL_SERVICE_USER_ID` (documented only in `docs/for-developers/kernel-architecture.md`) · most of the kernel-container contract vars in §3.9 (`PERSISTENCE_*`, `RECOVERY_MODE`, `KERNEL_ID`, `MAX_NAMESPACES`, `MAX_DISPLAY_OUTPUTS`, `KERNEL_PACKAGES`, `KERNEL_CONSTRAINTS_FILE`, the `FLOWFILE_HOST_*`/`FLOWFILE_KERNEL_*` path-translation quartet — some appear in `docs/for-developers/kernel-architecture.md`, most don't anywhere).
 
 ### `.env.example` ↔ `docker-compose.yml` divergences (trap-shaped, not bugs)
 - `.env.example` has **no** `FLOWFILE_SCHEDULER_ENABLED` line at all; compose hard-codes `true`; `docs/users/deployment/docker.md` says default is `false`. Net effect: local/pip runs never start the scheduler unless you set it yourself; a fresh `.env` copied from `.env.example` for a **non-compose** docker run also won't start it.
@@ -324,7 +324,7 @@ When you add a new environment-variable-driven behavior:
 2. **Pick a truthy rule deliberately and be consistent with a sibling flag**, not with "whatever felt natural." Prefer the `true/1/yes/on` rule used by the `MutableBool` flags (§3.3) unless you have a specific reason (e.g. `FLOWFILE_SINGLE_FILE_MODE`'s exact-`"1"` rule exists to avoid ambiguity in a mode-switch, not by accident). Document the rule inline — this table exists because five different rules already crept in un-intentionally (§5).
 3. **Give it a real default in code**, and decide whether an empty string counts as "set" (compose's `${VAR:-}` idiom means it usually shouldn't — mirror `_envvar_or_default`, manager.py:48-55, if the var can be Compose-templated).
 4. **Add a line to `.env.example`** (repo root, the only one in the repo) with a one-line comment; if the semantics are non-obvious (like `FLOWFILE_CATALOG_STORAGE_URI`'s creation-time-only caveat), write the caveat there, not just in code.
-5. **Add it to root `CLAUDE.md`'s Environment Variables table** if it's operator-facing; if it's a container-internal contract var like the ones in §3.8, a one-line mention in `docs/for-developers/kernel-architecture.md` is enough — don't bloat the root table with vars nobody sets by hand.
+5. **Add it to root `CLAUDE.md`'s Environment Variables table** if it's operator-facing; if it's a container-internal contract var like the ones in §3.9, a one-line mention in `docs/for-developers/kernel-architecture.md` is enough — don't bloat the root table with vars nobody sets by hand.
 6. **Wire it into `docker-compose.yml`** if docker deployments need a non-default value, and make sure the compose default doesn't silently diverge from the code default (§6 has three live examples of exactly this drift — don't add a fourth).
 7. **Add or extend a test** that asserts the default behavior AND at least one non-default value takes effect. If the var is read in the worker or a kernel container, a subprocess/container-level test (not just a unit test of the getter) is the only way to catch the "set at core, but the string mismatches at the read site" class of bug.
 8. **If it's a live-flippable flag**, follow the `MutableBool` pattern (§4): mount the admin endpoint under `/system`, not the feature's own gated router, set both the `MutableBool` and `os.environ`, and return `persisted: false` honestly — do not silently write back to a `.env` file.

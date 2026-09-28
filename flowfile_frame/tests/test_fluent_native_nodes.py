@@ -30,9 +30,6 @@ def _ids(frame: ff.FlowFrame) -> set[int]:
     return {n.node_id for n in frame.flow_graph.nodes}
 
 
-# polars_code
-
-
 def test_polars_code_stores_a_string_dedented_and_stripped():
     frame = _frame()
     known = _ids(frame)
@@ -111,9 +108,6 @@ def test_polars_code_refuses_a_lambda_bad_code_and_a_repeated_input():
         frame.polars_code("input_df_1", frame)
 
 
-# with_row_index
-
-
 @pytest.mark.parametrize(
     "kwargs, settings",
     [
@@ -137,9 +131,6 @@ def test_with_row_index_matches_polars():
     assert grouped.columns == ["n", "g", "x", "y"] and grouped["n"].to_list() == [1, 2, 1, 2]
 
 
-# unpivot
-
-
 def test_unpivot_with_a_list_places_the_native_node():
     frame = _frame()
     known = _ids(frame)
@@ -155,9 +146,6 @@ def test_unpivot_with_a_selector_or_renamed_columns_keeps_polars_code():
     frame = _frame()
     assert core_node(frame.unpivot([ff.selectors.numeric()], index="g")).node_type == "polars_code"
     assert core_node(frame.unpivot(["x"], index="g", value_name="v")).node_type == "polars_code"
-
-
-# std / var
 
 
 def test_std_and_var_aggregate_on_the_group_by_node():
@@ -176,9 +164,6 @@ def test_std_with_another_ddof_keeps_polars_code():
     assert core_node(out).node_type == "polars_code"
     expected = pl.DataFrame(DATA).group_by("g").agg(pl.col("x").std(ddof=0))
     assert_frame_equal(out.collect(), expected, check_row_order=False)
-
-
-# descriptions
 
 
 def test_fluent_calls_write_no_description_of_their_own():

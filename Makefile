@@ -407,7 +407,7 @@ check_stubs: stubs
 	@echo "Stubs are in sync."
 
 # Regenerate the static fl. completion source for the notebook cell editors.
-# Run after changing flowfile.__all__.
+# Run after changing flowfile.__all__ or an exported name's signature or docstring.
 fl_completions:
 	@echo "Generating fl completions..."
 	$(POETRY_RUN) python tools/generate_fl_completions.py

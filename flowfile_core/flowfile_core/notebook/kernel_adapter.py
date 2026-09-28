@@ -39,6 +39,14 @@ def _loopback(http: Request) -> bool:
         return False
 
 
+def _flow_id(kernel_id: str) -> int | None:
+    """The flow id a ``flow-session:<id>`` pseudo kernel id names, or None when it is malformed."""
+    try:
+        return int(kernel_id[len(PREFIX) :])
+    except ValueError:
+        return None
+
+
 def _flow(kernel_id: str, http: Request, user) -> Any:
     """The open flow behind ``kernel_id`` after the mode, loopback and ownership gates."""
     from flowfile_core import flow_file_handler
@@ -47,10 +55,9 @@ def _flow(kernel_id: str, http: Request, user) -> Any:
         raise HTTPException(status_code=403, detail="Notebook sessions are disabled on this server")
     if os.environ.get("FLOWFILE_MODE", "electron") == "electron" and not _loopback(http):
         raise HTTPException(status_code=403, detail="Notebook sessions only accept local connections")
-    try:
-        flow_id = int(kernel_id[len(PREFIX) :])
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found") from exc
+    flow_id = _flow_id(kernel_id)
+    if flow_id is None:
+        raise HTTPException(status_code=404, detail=f"Kernel '{kernel_id}' not found")
     flow = flow_file_handler.get_flow(flow_id, user.id)
     if flow is None:
         raise HTTPException(status_code=404, detail="Flow not found")
@@ -113,9 +120,8 @@ def clear_namespace(kernel_id: str, http: Request, user) -> dict:
 
 def dataframe_schemas(kernel_id: str, user) -> dict:
     """The frames bound in a running session, in the kernel's ``dataframe_schemas`` shape; never starts one."""
-    try:
-        flow_id = int(kernel_id[len(PREFIX) :])
-    except ValueError:
+    flow_id = _flow_id(kernel_id)
+    if flow_id is None:
         return {}
     session = registry.get_registry().find(user.id, flow_id)
     if session is None or session.state == "starting":

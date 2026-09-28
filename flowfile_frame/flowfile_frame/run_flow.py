@@ -286,7 +286,7 @@ def flow_ref(
     itself), a ``SchemaReference``/``CatalogReference``, or ``None`` for every namespace. A uuid
     or id is exact and is cross-checked against ``name`` and ``namespace`` when those are given
     too. A flow name is unique neither across namespaces nor within one, so more than one
-    match raises rather than picking one; flows the local user may not use are left out. The
+    match raises rather than picking one; flows the current user may not use are left out. The
     registration must store an absolute path to an existing file: the run_flow node opens it
     without a base directory. The result always carries the uuid. Every failed lookup raises
     ``NativeNodeError``, chained from the ``flowfile_core.catalog`` error it stands for.
@@ -309,7 +309,7 @@ def flow_ref(
 
 
 def _list_flow_refs(schema: SchemaReference) -> list[FlowRef]:
-    """Every flow filed under ``schema`` that the local user may use, by name."""
+    """Every flow filed under ``schema`` that the current user (``_identity.current_user_id``) may use, by name."""
     user_id = current_user_id()
     with get_db_context() as db:
         service = CatalogService(SQLAlchemyCatalogRepository(db))
@@ -523,7 +523,7 @@ def _as_flow_ref(
     from flowfile_frame.flow_frame import FlowFrame
 
     if isinstance(flow, FlowGraph | FlowFrame):
-        refuse("RunFlow(<graph>, name=...) registers the graph first; it")
+        refuse("RunFlow(<graph>, name=...)", "registers the graph as a flow file and catalog row")
         if not name:
             raise NativeNodeError(
                 "RunFlow(<graph>) needs name=: the flow is registered under that name, and a re-run reuses it"

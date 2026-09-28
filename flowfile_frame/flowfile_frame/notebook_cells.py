@@ -25,7 +25,7 @@ from typing import Any
 import polars as pl
 from pydantic import BaseModel
 
-from flowfile_core.flowfile.code_generator.code_generator import NODE_TYPE_VAR_LABEL
+from flowfile_core.flowfile.code_generator.code_generator import NODE_TYPE_VAR_LABEL, node_label
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -49,6 +49,7 @@ from flowfile_frame.native import (
     is_side_effect_node_type,
     materialise,
     notebook_defers,
+    output_names_of,
     seed_deferred_node,
     set_node_reference,
 )
@@ -104,12 +105,13 @@ class CellResult:
         return self.error is None
 
 
-class SeededNode:
+class SeededNode(NativeNode):
     """A node with several outputs (or a native node) bound as one variable in a notebook session.
 
-    Mirrors the native classes' handles, so rendered cells run unchanged: ``.then`` / ``.otherwise``
-    (output-0 / output-1), ``.output`` (the only output; a gate's ``then``), ``node[name]`` and
-    ``get_output(name)``. A node with one output also forwards frame methods to that output.
+    A :class:`NativeNode` handle over an already placed node (built without ``_build``), so
+    rendered cells run unchanged. On top of the native handle it adds ``.then`` / ``.otherwise``
+    (output-0 / output-1), a gate's ``.output`` (its ``then``) and ``node["output-<n>"]``; a node
+    with one output also forwards frame methods to that output.
     """
 
     node_id: int
@@ -125,16 +127,6 @@ class SeededNode:
         self.node_type = node_type
         self.output_names = list(output_names)
         self._frames = frames
-
-    @property
-    def node(self) -> FlowNode:
-        """The node on the session graph."""
-        return self.flow_graph.get_node(self.node_id)
-
-    @property
-    def outputs(self) -> list[str]:
-        """The output names, in handle order."""
-        return list(self.output_names)
 
     @property
     def then(self) -> FlowFrame:
@@ -162,27 +154,10 @@ class SeededNode:
             )
         return self._frames[DEFAULT_OUTPUT_HANDLE]
 
-    @property
-    def node_reference(self) -> str | None:
-        """The node's reference (its variable name in exported code); see ``FlowFrame.node_reference``."""
-        return getattr(self.node.setting_input, "node_reference", None)
-
-    @node_reference.setter
-    def node_reference(self, value: str | None) -> None:
-        set_node_reference(self.flow_graph, self.node_id, value)
-
     def __getitem__(self, name: str | FlowOutput) -> FlowFrame:
-        if isinstance(name, FlowOutput):
-            name = name.name
-        if name in self._frames:
+        if isinstance(name, str) and name in self._frames:
             return self._frames[name]
-        if name not in self.output_names:
-            raise NativeNodeError(f"{self.node_type} node {self.node_id} has no output {name!r}: {self.output_names}")
-        return self._frames[output_handle(self.output_names.index(name))]
-
-    def get_output(self, name: str | FlowOutput) -> FlowFrame:
-        """The output frame named ``name``; the spelled-out ``node[name]``."""
-        return self[name]
+        return super().__getitem__(name)
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_") or len(self.__dict__.get("_frames", {})) != 1:
@@ -193,25 +168,16 @@ class SeededNode:
         return f"SeededNode({self.node_type} {self.node_id}, outputs={self.output_names})"
 
 
-def _output_names(setting_input: Any) -> list[str]:
-    return list(getattr(setting_input, "output_names", None) or ["main"])
-
-
 def _binds_seeded_node(node_type: str, setting_input: Any) -> bool:
     return (
         node_type in SEEDED_NODE_TYPES
         or isinstance(setting_input, input_schema.UserDefinedNode)
-        or len(_output_names(setting_input)) > 1
+        or len(output_names_of(setting_input)) > 1
     )
 
 
 def _type_label(node_type: str) -> str:
     return NODE_TYPE_VAR_LABEL.get(node_type, re.sub(r"\W", "_", node_type))
-
-
-def node_label(node_type: str, node_id: int) -> str:
-    """The deterministic variable name of an unnamed node: ``<type_label>_<id>`` (``filtered_12``)."""
-    return f"{_type_label(node_type)}_{node_id}"
 
 
 def _columns(entries: Sequence[Any]) -> list[FlowfileColumn]:
@@ -365,7 +331,7 @@ def _flowfile_data_model(flowfile_data: dict[str, Any] | core_schemas.FlowfileDa
 
 def _seed_node(graph: FlowGraph, node: FlowNode, live: set[int], given: Mapping[str, Any] | None) -> Any:
     """Seed one rebuilt node as live or deferred and return its binding (a frame or a ``SeededNode``)."""
-    output_names = _output_names(node.setting_input)
+    output_names = output_names_of(node.setting_input)
     handles = [output_handle(i) for i in range(len(output_names))]
     is_live = _seeds_live(node, live)
     if is_live:
@@ -389,7 +355,7 @@ def _frame(graph: FlowGraph, node: FlowNode, handle: str, *, deferred: bool) -> 
     return FlowFrame(data=data, flow_graph=graph, node_id=node.node_id, output_handle=handle, deferred=deferred)
 
 
-class _CanvasNode(NativeNode):
+class _CanvasNode(SeededNode):
     """A canvas node adopted from the seeded snapshot: its settings, wired to the frames given, deferred."""
 
     def __init__(self, snapshot: _SnapshotNode, frames: Sequence[FlowFrame]) -> None:
@@ -458,7 +424,7 @@ def canvas_node(node_id: int, *inputs: FlowFrame, output: str | FlowOutput | Non
         return node[name]
     if len(node._frames) == 1:
         return node._frames[DEFAULT_OUTPUT_HANDLE]
-    return SeededNode(node.flow_graph, node.node_id, node.node_type, node.output_names, node._frames)
+    return node
 
 
 def _schema_entries(frame: FlowFrame) -> list[dict[str, str]]:
@@ -496,7 +462,7 @@ def display_payload(value: Any, max_rows: int = DISPLAY_MAX_ROWS) -> dict[str, A
     """
     if isinstance(value, FlowFrame):
         return _frame_payload(value, max_rows)
-    if isinstance(value, NativeNode | SeededNode):
+    if isinstance(value, NativeNode):
         return {
             "kind": "node",
             "node_id": value.node_id,
@@ -510,7 +476,7 @@ def display_payload(value: Any, max_rows: int = DISPLAY_MAX_ROWS) -> dict[str, A
 
 
 def display(value: Any) -> dict[str, Any] | None:
-    """Show ``value`` below the running cell (up to 2,000 rows); outside a cell, return its payload."""
+    """Show ``value`` below the running cell (up to ``DISPLAY_MAX_ROWS`` rows); outside a cell, return its payload."""
     payload = display_payload(value, DISPLAY_MAX_ROWS)
     if _OUTPUTS:
         _OUTPUTS[-1].append(payload)
@@ -556,7 +522,7 @@ def _bound_node_id(value: Any, graph: FlowGraph, *, any_handle: bool = False) ->
     if isinstance(value, FlowFrame):
         if value.flow_graph is graph and (any_handle or value.output_handle == DEFAULT_OUTPUT_HANDLE):
             return value.node_id
-    elif isinstance(value, NativeNode | SeededNode) and value.flow_graph is graph:
+    elif isinstance(value, NativeNode) and value.flow_graph is graph:
         return value.node_id
     return None
 
@@ -606,9 +572,9 @@ def execute_cell(cell_id: str, code: str, namespace: dict[str, Any]) -> CellResu
 
     The code is compiled under ``<cell-{cell_id}-{n}>`` (registered in ``linecache`` first, so
     ``inspect.getsource`` works for functions a cell defines and tracebacks name the cell) with
-    ``optimize=0``. A last-expression value is auto-displayed (100 rows). Every node the cell
-    created is recorded on the mode's ``provenance`` as ``(cell_id, node_type, node_id)``, and on
-    success the names it bound become ``node_reference`` per the capture rules.
+    ``optimize=0``. A last-expression value is auto-displayed (``AUTO_DISPLAY_MAX_ROWS`` rows).
+    Every node the cell created is recorded on the mode's ``provenance`` as ``(cell_id, node_type,
+    node_id)``, and on success the names it bound become ``node_reference`` per the capture rules.
     """
     mode = notebook.current()
     result = CellResult(cell_id=cell_id, filename=_cell_filename(cell_id, code))

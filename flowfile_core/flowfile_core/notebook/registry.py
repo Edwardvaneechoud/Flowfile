@@ -29,6 +29,7 @@ from collections.abc import Callable
 from typing import Any
 
 from flowfile_core.notebook import bootstrap, protocol
+from shared.run_logs import NOTEBOOK_SESSION_LOG_PREFIX
 from shared.storage_config import storage
 
 logger = logging.getLogger("flowfile.notebook.sessions")
@@ -51,8 +52,7 @@ def seed_snapshot(flow: Any) -> dict[str, Any]:
         named = getattr(node, "_named_schemas", None) or {}
         if named:
             schemas[node.node_id] = {
-                handle: [{"name": c.column_name, "data_type": c.data_type} for c in columns]
-                for handle, columns in named.items()
+                handle: [c.get_minimal_field_info().model_dump() for c in columns] for handle, columns in named.items()
             }
     return {
         "flowfile_data": flow.get_flowfile_data().model_dump(mode="json"),
@@ -79,7 +79,7 @@ def _spill_dir() -> str:
 def _log_path(flow_id: int):
     directory = storage.logs_directory
     directory.mkdir(parents=True, exist_ok=True)
-    return directory / f"notebook_session_{flow_id}.log"
+    return directory / f"{NOTEBOOK_SESSION_LOG_PREFIX}{flow_id}.log"
 
 
 def kill_process(process: subprocess.Popen, grace: float = 1.0) -> None:
@@ -409,16 +409,20 @@ class NotebookSessionRegistry:
         with self._lock:
             return list(self._sessions.values())
 
+    @staticmethod
+    def _is_live_for(session: NotebookSession, user_id: int, flow_id: int) -> bool:
+        same = session.user_id == user_id and session.flow_id == flow_id
+        return same and not session.closed and session.state != "dead"
+
     def open(self, user_id: int, flow_id: int, snapshot: dict[str, Any] | None = None) -> NotebookSession:
         """The live session of ``(user_id, flow_id)``, else a new one (evicting idle and LRU sessions first)."""
         self.sweep_idle()
         evicted: list[NotebookSession] = []
         with self._lock:
             for session in self._sessions.values():
-                if session.user_id == user_id and session.flow_id == flow_id and not session.closed:
-                    if session.state != "dead":
-                        session.touch()
-                        return session
+                if self._is_live_for(session, user_id, flow_id):
+                    session.touch()
+                    return session
             for sid in [sid for sid, s in self._sessions.items() if s.closed or s.state == "dead"]:
                 evicted.append(self._sessions.pop(sid))
             while len(self._sessions) >= max(self.max_sessions, 1):
@@ -435,14 +439,7 @@ class NotebookSessionRegistry:
         """The live session of ``(user_id, flow_id)`` without starting one."""
         with self._lock:
             sessions = list(self._sessions.values())
-        return next(
-            (
-                s
-                for s in sessions
-                if s.user_id == user_id and s.flow_id == flow_id and not s.closed and s.state != "dead"
-            ),
-            None,
-        )
+        return next((s for s in sessions if self._is_live_for(s, user_id, flow_id)), None)
 
     def _pop(self, predicate: Callable[[NotebookSession], bool]) -> list[NotebookSession]:
         with self._lock:
@@ -500,17 +497,8 @@ class NotebookSessionRegistry:
         snapshot = getattr(request, "snapshot", None) or None
         reply = self.open(user_id, flow_id, snapshot).clean_run(request)
         if reply.get("type") != "graph":
-            return CleanRunResult(
-                flowfile_data={}, node_ids_by_cell={}, names={}, refusals=[], warnings=[], error=reply.get("error")
-            )
-        return CleanRunResult(
-            flowfile_data=reply.get("flowfile_data") or {},
-            node_ids_by_cell=reply.get("node_ids_by_cell") or {},
-            names={int(k): v for k, v in (reply.get("names") or {}).items()},
-            refusals=list(reply.get("refusals") or []),
-            warnings=list(reply.get("warnings") or []),
-            error=reply.get("error"),
-        )
+            return CleanRunResult(error=reply.get("error"))
+        return CleanRunResult.model_validate(reply)
 
 
 _registry: NotebookSessionRegistry | None = None

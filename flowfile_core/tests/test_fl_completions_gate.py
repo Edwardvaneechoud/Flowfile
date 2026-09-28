@@ -6,13 +6,8 @@ offered, so regeneration must offer the same names as the committed file (byte e
 """
 
 import json
-import sys
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT))
-
-from tools import generate_fl_completions as gen  # noqa: E402
+from tools import generate_fl_completions as gen
 
 
 def test_committed_file_exists():

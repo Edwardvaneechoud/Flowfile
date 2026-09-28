@@ -29,7 +29,7 @@ class NodeEmission:
     lines: list[str]  # non-empty code lines for this node (no trailing blanks)
     main_producer_id: int | None  # sole input node id, or None for sources / multi-input
     num_inputs: int  # number of distinct (resolved) input nodes
-    is_flow_output: bool
+    is_boundary: bool
     pinned: bool = False  # user named the node (node_reference) -> keep it a variable
     placeholder_reason: str | None = None  # set when the node emitted ``fl.canvas_node``; never fused
     node_ids: list[int] = field(default_factory=list)  # after fusion: every node of the statement, in order
@@ -122,9 +122,9 @@ def render_pipeline(emissions: list[NodeEmission], consumers: dict[int, list[int
 
     absorbed_into: dict[int, int] = {}
     for producer in emissions:
-        if not simple[producer.node_id] or producer.num_inputs > 1 or producer.is_flow_output:
+        if not simple[producer.node_id] or producer.num_inputs > 1 or producer.is_boundary:
             continue
-        if producer.pinned or producer.placeholder_reason:  # keep it as its own variable
+        if producer.pinned or producer.placeholder_reason:  # user-named or a canvas_node placeholder: never fuse
             continue
         consuming = consumers.get(producer.node_id, [])
         if len(consuming) != 1:

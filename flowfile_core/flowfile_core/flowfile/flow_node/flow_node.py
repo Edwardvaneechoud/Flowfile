@@ -49,7 +49,7 @@ from flowfile_core.flowfile.flow_node.state import NodeExecutionState
 from flowfile_core.flowfile.param_types import ParamValue
 from flowfile_core.flowfile.parameter_resolver import apply_parameters_in_place, restore_parameters
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
-from flowfile_core.flowfile.utils import get_hash
+from flowfile_core.flowfile.utils import HASH_EXCLUDED_KEYS, get_hash
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.output_model import FileColumn, NodeData, TableExample
 from flowfile_core.utils.arrow_reader import get_read_top_n
@@ -136,7 +136,7 @@ def _settings_for_hash(setting_input: Any) -> Any:
     excluded = getattr(type(setting_input), "hash_excluded_fields", None)
     if not excluded or not hasattr(setting_input, "__dict__"):
         return setting_input
-    skip = excluded | {"pos_x", "pos_y", "description"}
+    skip = HASH_EXCLUDED_KEYS | excluded
     return {k: v for k, v in setting_input.__dict__.items() if k not in skip}
 
 

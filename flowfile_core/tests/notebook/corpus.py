@@ -15,9 +15,7 @@ Three sources, all built Docker-free under the test session's scratch DB and sto
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import shutil
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -25,10 +23,8 @@ from pathlib import Path
 import polars as pl
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
+from test_utils.notebook_demo import REGIONS, SALES, installed_mood_emoji, load_demo
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEMO_FILE = REPO_ROOT / "flowfile_frame" / "tests" / "fixtures" / "demo_catalog_pipeline.py"
-MOOD_EMOJI = REPO_ROOT / "flowfile_core/tests/flowfile/community_nodes/fixture_registry/nodes/mood_emoji/node.py"
 PLACEHOLDERS_FILE = Path(__file__).parent / "placeholders.json"
 
 CODEGEN_TESTS = (
@@ -68,19 +64,6 @@ CODEGEN_TESTS = (
     "test_wait_for_round_trip",
     "test_window_functions_partition_aggregate",
 )
-
-SALES = {
-    "order_id": [1, 2, 3, 4, 5, 6],
-    "region": ["N", "S", "N", "S", "N", "S"],
-    "product": ["a", "b", "a", "c", "b", "a"],
-    "category": ["x", "y", "x", "y", "x", "x"],
-    "status": ["Completed"] * 5 + ["Cancelled"],
-    "amount": [30.0, 50.0, 70.0, 20.0, 90.0, 40.0],
-    "quantity": [1, 2, 3, 1, 2, 1],
-    "order_date": pl.date_range(pl.date(2024, 1, 1), pl.date(2024, 6, 1), "1mo", eager=True).to_list(),
-}
-REGIONS = {"region": ["N", "S"], "manager": ["Ann", "Bob"], "target_sales": [100.0, 100.0]}
-
 
 class _Captured(Exception):
     def __init__(self, flow: FlowGraph):
@@ -183,40 +166,6 @@ def build_python_script_cells() -> FlowGraph:
     )
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
     return graph
-
-
-def load_demo():
-    spec = importlib.util.spec_from_file_location("notebook_corpus_demo_catalog_pipeline", DEMO_FILE)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-@contextmanager
-def installed_mood_emoji() -> Iterator[None]:
-    """Install the ``mood_emoji`` community fixture node into the registry, restoring the node store after."""
-    from flowfile_core.configs import node_store
-    from flowfile_core.flowfile.user_defined.registry import registry
-
-    directory = registry.directory
-    directory.mkdir(parents=True, exist_ok=True)
-    node_file = directory / "mood_emoji.py"
-    installed = not node_file.exists()
-    saved = dict(node_store.node_dict), list(node_store.nodes_list), dict(node_store.CUSTOM_NODE_STORE._overrides)
-    if installed:
-        shutil.copyfile(MOOD_EMOJI, node_file)
-        registry.load_file(node_file)
-    try:
-        yield
-    finally:
-        if installed:
-            registry.remove_file(node_file)
-            node_file.unlink()
-            node_store.node_dict.clear()
-            node_store.node_dict.update(saved[0])
-            node_store.nodes_list[:] = saved[1]
-            node_store.CUSTOM_NODE_STORE.clear()
-            node_store.CUSTOM_NODE_STORE.update(saved[2])
 
 
 def _drop_catalog(name: str) -> None:

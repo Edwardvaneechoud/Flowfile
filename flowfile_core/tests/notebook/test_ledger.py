@@ -21,37 +21,21 @@ import pytest
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.notebook.compare import parameters_equal, settings_equal
+from flowfile_core.notebook.registry import seed_snapshot
 from flowfile_core.notebook.render import NotebookRendering, render
 from flowfile_frame import notebook
 from flowfile_frame.notebook_cells import clean_run, seed_session
-from shared.storage_config import storage
+from test_utils.notebook_demo import storage_files
 from tests.notebook.conftest import no_kernel_manager
 
 LEDGER_FILE = Path(__file__).parent / "ledger.json"
 RANK = {"EXACT": 0, "DIFFER": 1, "LOSSY": 2}
 
 
-def _files() -> set[Path]:
-    return {
-        path
-        for path in Path(storage.base_directory).rglob("*")
-        if path.is_file()
-        and not any(part.endswith("logs") or part == "__pycache__" for part in path.parts)
-        and ".db" not in path.name
-    }
-
-
-def _payload(graph: FlowGraph) -> dict:
-    return graph.get_flowfile_data().model_dump(mode="json")
-
-
 def _clean_run(graph: FlowGraph, rendering: NotebookRendering) -> dict:
-    """Clean-run the rendered cells; the session is seeded from ``graph`` first only when ``fl.canvas_node`` needs it.
-
-    Seeding rebuilds the canvas graph, which runs schema prediction (a pivot caches its input), so it
-    is kept out of the no-write check unless a placeholder cell needs the snapshot.
-    """
-    payload = _payload(graph)
+    """Clean-run the rendered cells, seeding the session from ``graph`` first when a placeholder cell
+    (``fl.canvas_node``) needs the snapshot."""
+    payload = seed_snapshot(graph)["flowfile_data"]
     parameters = list(graph.flow_settings.parameters)
     placeholders = any(cell.status != "code" for cell in rendering.cells)
     if placeholders:
@@ -69,23 +53,10 @@ def _clean_run(graph: FlowGraph, rendering: NotebookRendering) -> dict:
         notebook.exit()
 
 
-def _canvas_schemas(graph: FlowGraph) -> dict[int, dict[str, list[dict]]]:
-    """Per-node, per-handle schemas of the canvas graph, as the session seed message carries them."""
-    schemas = {}
-    for node in graph.nodes:
-        named = getattr(node, "_named_schemas", None) or {}
-        if named:
-            schemas[node.node_id] = {
-                handle: [{"name": c.column_name, "data_type": c.data_type} for c in columns]
-                for handle, columns in named.items()
-            }
-    return schemas
-
-
 def _rerender(graph: FlowGraph, result: dict) -> NotebookRendering:
     """Render the relabelled clean-run payload as a graph, rebuilt the way a session seeds it."""
     payload = copy.deepcopy(result["flowfile_data"])
-    bound = seed_session(payload, payload["flowfile_settings"]["parameters"], {}, _canvas_schemas(graph))
+    bound = seed_session(payload, payload["flowfile_settings"]["parameters"], {}, seed_snapshot(graph)["schemas"])
     try:
         return render(bound["flow"])
     finally:
@@ -95,7 +66,7 @@ def _rerender(graph: FlowGraph, result: dict) -> NotebookRendering:
 def grade(graph: FlowGraph, result: dict) -> dict[int, str]:
     """Per canvas node: EXACT, DIFFER or LOSSY against the relabelled clean-run payload."""
     rebuilt = {node["id"]: node for node in result["flowfile_data"]["nodes"]}
-    canvas = {node["id"]: node for node in _payload(graph)["nodes"]}
+    canvas = {node["id"]: node for node in seed_snapshot(graph)["flowfile_data"]["nodes"]}
     cell_of = {node_id: cell_id for cell_id, node_ids in result["cells"].items() for node_id in node_ids}
     extra = {cell_id for cell_id, node_ids in result["cells"].items() if set(node_ids) - set(canvas)}
     grades = {}
@@ -125,7 +96,7 @@ def _worst(a: str | None, b: str) -> str:
 @pytest.fixture(scope="module")
 def ledger_rows(notebook_corpus, expected_placeholders):
     """``{flow name: {node_id: (node_type, grade, detail)}}`` plus the rendering checks, computed once."""
-    before = _files()
+    before = storage_files()
     flows = {}
     with no_kernel_manager() as kernel_calls:
         for name, graph in notebook_corpus:
@@ -133,7 +104,7 @@ def ledger_rows(notebook_corpus, expected_placeholders):
             placeholders = sorted(n for cell in rendering.cells if cell.status != "code" for n in cell.node_ids)
             result = _clean_run(graph, rendering)
             flows[name] = {"rendering": rendering, "placeholders": placeholders, "result": result, "graph": graph}
-    flows["__files__"] = _files() - before
+    flows["__files__"] = storage_files() - before
     flows["__kernel_calls__"] = list(kernel_calls)
     return flows
 

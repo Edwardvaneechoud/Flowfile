@@ -52,9 +52,6 @@ def canvas_payload():
     return graph.get_flowfile_data().model_dump(mode="json"), graph, source, big, gate
 
 
-# provenance and the cell compiler
-
-
 def test_provenance_records_each_created_node_once_per_cell(session):
     mode, ns = session
     first = run(ns, f"df = {DATA}\nbig = df.filter(fl.col('a') > 1)", "one")
@@ -126,9 +123,6 @@ def test_names_bound_are_reported(session):
     run(ns, "x = 1")
     result = run(ns, "x = 2\ny = 3\nz = x")
     assert result.names == ["x", "y", "z"]
-
-
-# name capture
 
 
 def test_a_name_bound_to_a_node_created_in_the_cell_becomes_its_reference(session):
@@ -232,9 +226,6 @@ def test_a_failing_cell_captures_nothing(session):
     assert reference(mode, result.created[0][1]) is None
 
 
-# display
-
-
 def test_auto_display_of_a_live_frame_shows_schema_and_rows(session):
     _, ns = session
     result = run(ns, "fl.from_dict({'a': list(range(150))})")
@@ -278,9 +269,6 @@ def test_display_of_a_node_and_of_a_plain_value(session):
 def test_display_outside_a_cell_returns_the_payload(session):
     payload = display_payload(fl.from_dict({"a": [1, 2]}))
     assert payload[TABLE_MIME]["data"] == [{"a": 1}, {"a": 2}]
-
-
-# seed_session, SeededNode and fl.canvas_node
 
 
 def test_seed_session_binds_live_and_deferred_variables():
@@ -420,9 +408,6 @@ def test_canvas_node_refuses_an_unknown_id_and_outside_a_session():
         notebook.exit()
     with pytest.raises(NativeNodeError, match="seeded from the canvas"):
         canvas_node(1)
-
-
-# clean_run
 
 
 def test_clean_run_prunes_relabels_and_restores_the_session(session):

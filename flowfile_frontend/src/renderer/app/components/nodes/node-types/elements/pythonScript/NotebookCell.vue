@@ -8,7 +8,6 @@
       <!-- Toolbar (shown on hover/focus) -->
       <div class="cell-toolbar">
         <button
-          v-if="!readOnly"
           type="button"
           class="nb-drag-handle"
           :aria-label="`Reorder cell ${cellIndex + 1} of ${cellCount}`"
@@ -29,7 +28,6 @@
           <i class="fa-solid fa-play"></i>
         </button>
         <button
-          v-if="!readOnly"
           :disabled="cellIndex === 0 || structuralDisabled"
           title="Move up"
           @click="emit('move-up')"
@@ -37,7 +35,6 @@
           <i class="fa-solid fa-chevron-up"></i>
         </button>
         <button
-          v-if="!readOnly"
           :disabled="isLastCell || structuralDisabled"
           title="Move down"
           @click="emit('move-down')"
@@ -151,10 +148,8 @@ interface Props {
   priorCellCodes?: string[];
   /** Cells before this one with their ids, so column inference can date each assignment. */
   priorCells?: { id: string; code: string }[];
-  /** Resolved per request, so the executor's current kernel/session is what Jedi sees. */
+  /** Resolved per request, so the executor's current kernel is what Jedi sees. */
   lspContext?: () => LspContext;
-  /** No run button, no editing, no structural controls. */
-  readOnly?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -168,7 +163,6 @@ const props = withDefaults(defineProps<Props>(), {
   priorCellCodes: () => [],
   priorCells: () => [],
   lspContext: () => NO_LSP_CONTEXT,
-  readOnly: false,
 });
 
 const emit = defineEmits<{
@@ -191,7 +185,7 @@ const pres = computed(() => cellPresentation(props.ownerId, props.cell.id));
 
 const status = computed(() => props.runtime?.status ?? "idle");
 const locked = computed(() => isLockedCell(props.cell));
-const editable = computed(() => !props.readOnly && !locked.value);
+const editable = computed(() => !locked.value);
 
 const cellClasses = computed(() => ({
   "cell--active": props.active,

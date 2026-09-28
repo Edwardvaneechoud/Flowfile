@@ -25,7 +25,7 @@ def get_current_user_id() -> int:
     """Get the current user ID for database operations.
 
     Returns:
-        int: The current user ID (``_identity.current_user_id``: the notebook session's, else 1).
+        int: The current user ID; see ``_identity.current_user_id``.
     """
     return current_user_id()
 

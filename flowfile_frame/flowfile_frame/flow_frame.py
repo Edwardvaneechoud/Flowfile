@@ -26,7 +26,7 @@ from flowfile_core.flowfile.param_types import ParamValue, typed_parameter_value
 from flowfile_core.flowfile.parameter_resolver import resolve_expression_parameters
 from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.schemas import GroupColor
-from flowfile_frame.callable_utils import _read_source, process_callable_args
+from flowfile_frame.callable_utils import _get_function_source, process_callable_args
 from flowfile_frame.cloud_storage.frame_helpers import add_write_ff_to_cloud_storage
 from flowfile_frame.config import logger
 from flowfile_frame.expr import Column, Expr, col, lit
@@ -35,6 +35,7 @@ from flowfile_frame.join import _create_join_mappings, _normalize_columns_to_lis
 from flowfile_frame.lazy_methods import add_lazyframe_methods
 from flowfile_frame.native import (
     NativeNodeError,
+    Node,
     add_connection_checked,
     ancestors,
     materialise,
@@ -68,10 +69,9 @@ def _polars_code_source(code: Any) -> str:
         return textwrap.dedent(code).strip()
     if not inspect.isfunction(code) or code.__name__ == "<lambda>":
         raise NativeNodeError(f"polars_code takes a string or a def function, got {type(code).__name__}")
-    source = _read_source(code)
+    source, _ = _get_function_source(code)
     if source is None:
         raise NativeNodeError(f"The source of `{code.__name__}` cannot be read; pass the code as a string")
-    source = textwrap.dedent(source)
     fn = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef))
     body = fn.body
     if len(body) == 1 and isinstance(body[0], ast.Return) and body[0].value is not None:
@@ -895,12 +895,11 @@ class FlowFrame:
         description : str, optional
             Description of the join operation for the ETL graph.
         keep_right_keys : bool, default False
-            Keep the right join keys, a right key whose name the left side also has renamed with
-            ``suffix``: Polars' ``coalesce=False``, except that the kept keys follow the other right
-            columns, where the canvas join puts them. An inner or left join places one native join
-            node for it and for any ``suffix``; ``coalesce=True``, and ``coalesce=False`` when the
-            right keys already trail the right frame, do too. Other join types keep the Polars code
-            node.
+            Keep the right join keys, placed after the other right columns as the canvas join does
+            (Polars' ``coalesce=False`` puts them elsewhere); a right key whose name the left side
+            also has is renamed with ``suffix``. An inner or left join stays one native join node,
+            also with any ``suffix``, with ``coalesce=True``, and with ``coalesce=False`` when the
+            right keys already trail the right frame; other join types use a Polars Code node.
 
         Returns
         -------
@@ -2816,42 +2815,15 @@ class FlowFrame:
         last expression, exactly as on the canvas.
         """
         text = _polars_code_source(code)
-        frames = [self, *others]
         for frame in others:
             if not isinstance(frame, FlowFrame):
                 raise NativeNodeError(f"polars_code takes FlowFrames as inputs, got {type(frame).__name__}")
-        ids = [frame.node_id for frame in frames]
+        ids = [frame.node_id for frame in (self, *others)]
         if len(set(ids)) != len(ids):
             raise NativeNodeError("polars_code reads each input node once; pass every frame a single time")
-        graph = merge_frames(frames)
-        new_node_id = generate_node_id()
-        settings = input_schema.NodePolarsCode(
-            flow_id=graph.flow_id,
-            node_id=new_node_id,
-            polars_code_input=transform_schema.PolarsCodeInput(polars_code=text),
-            is_setup=True,
-            depending_on_ids=ids,
-            description=description,
-        )
-        graph.add_polars_code(settings)
-        node = graph.get_node(new_node_id)
-        if node.results.errors:
-            error = node.results.errors
-            graph.delete_node(new_node_id)
-            raise NativeNodeError(f"polars_code node {new_node_id}: {error}")
-        for frame in frames:
-            frame._add_connection(frame.node_id, new_node_id, "main", output_handle=frame.output_handle)
-        deferred = any(frame._deferred for frame in frames)
-        if seeded_at_build(node.node_type, frames, inputs_deferred=deferred):
-            seed_from_predicted_schema(node)
-            deferred = True
-        return FlowFrame(
-            data=materialise(graph.get_node(new_node_id)).data_frame,
-            flow_graph=graph,
-            node_id=new_node_id,
-            parent_node_id=self.node_id,
-            deferred=deferred,
-        )
+        return Node(
+            "polars_code", self, *others, settings={"polars_code_input": {"polars_code": text}}, description=description
+        ).output
 
     def collect(self, *args, **kwargs) -> pl.DataFrame:
         """Collect lazy data into memory.

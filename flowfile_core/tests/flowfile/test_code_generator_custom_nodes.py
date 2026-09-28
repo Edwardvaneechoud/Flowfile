@@ -116,7 +116,7 @@ def connect(graph: FlowGraph, from_id: int, to_id: int, input_handle: str = "inp
 
 
 def add_record_count(graph: FlowGraph, node_id: int, depends_on: int) -> FlowGraph:
-    """Wire a downstream record_count node — a FlowFrame-only op (emits ff.len())."""
+    """Wire a downstream record_count node — a FlowFrame-only op (emits fl.len())."""
     graph.add_record_count(
         input_schema.NodeRecordCount(flow_id=graph.flow_id, node_id=node_id, depending_on_id=depends_on)
     )
@@ -362,7 +362,7 @@ class TestFlowFrameConverter:
 
     def test_custom_node_executes_with_downstream_ff_op(self, AddColumnNode):
         """Regression guard: the custom-node output feeds a FlowFrame-only op
-        (record_count -> ff.len()), which only runs if the output is a FlowFrame."""
+        (record_count -> fl.len()), which only runs if the output is a FlowFrame."""
         add_to_custom_node_store(AddColumnNode)
         graph = create_graph()
         add_manual_input(graph, [{"Column 1": "test"}], node_id=1)
@@ -727,7 +727,7 @@ class TestManualInputPublicApiOnly:
         exec(compile(code, "<gen>", "exec"), ns)
         result = ns["run_etl_pipeline"]()
         df = result.collect() if hasattr(result, "collect") else result
-        # Explicit Float64 preserved (ff.from_dict would re-infer Int64 for [1, 2, 3]).
+        # Explicit Float64 preserved (fl.from_dict would re-infer Int64 for [1, 2, 3]).
         assert df.schema["amount"] == pl.Float64
         assert df["amount"].to_list() == [1.0, 2.0, 3.0]
         assert df["label"].to_list() == ["a", "b", "c"]

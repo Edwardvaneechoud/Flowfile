@@ -38,10 +38,8 @@ from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.output_model import ProjectExportFile, ProjectExportManifest
 from flowfile_core.utils.utils import camel_case_to_snake_case
 
-# ParamType -> fl dtype expression for run-metadata casts (fl re-exports the
-# polars datatypes; values mirror subflow._PARAM_TYPE_TO_PL so generated output
-# dtypes match runtime output).
-_PARAM_TYPE_TO_FF_EXPR = {
+# ParamType -> fl dtype for run-metadata casts; mirrors subflow._PARAM_TYPE_TO_PL.
+_PARAM_TYPE_TO_FL_EXPR = {
     "string": "fl.String",
     "enum": "fl.String",
     "integer": "fl.Int64",
@@ -210,8 +208,6 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         self._subflow_modules: dict[str, str] = {}
         self._subflow_module_info: dict[str, dict] = {}
         self._subflow_ancestry: set[str] = set()
-        # This flow's parameters that become function kwargs (set in convert()).
-        self._codegen_params: list[FlowParameter] = []
 
     # --- flow parameters as function arguments -------------------------------------------
 
@@ -409,21 +405,12 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         self.imports.add(f"from subflows import {module_stem}")
 
         node = self.flow_graph.get_node(settings.node_id)
-        keyed = (node.node_inputs.keyed_inputs or {}) if node is not None else {}
-        source_handles = (node.node_inputs.keyed_source_handles or {}) if node is not None else {}
-
-        def upstream_var(handle: str) -> str | None:
-            source = keyed.get(handle)
-            if source is None:
-                return None
-            src_handle = source_handles.get(handle, "output-0")
-            per_handle = self.node_handle_var_mapping.get((source.node_id, src_handle))
-            return per_handle or self.node_var_mapping.get(source.node_id, f"df_{source.node_id}")
+        keyed_vars = self._keyed_vars(node) if node is not None else {}
 
         prefix = f"_sf_{settings.node_id}"
         call_kwargs: list[str] = []
         for index, slot in enumerate(settings.input_slots):
-            source_var = upstream_var(f"input-{index + 1}")
+            source_var = keyed_vars.get(f"input-{index + 1}")
             if source_var is not None:
                 call_kwargs.append(f"{info['input_args'].get(slot, slot)}={source_var}")
 
@@ -442,7 +429,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             elif binding.source == "column":
                 column_bindings.append(binding)
 
-        param_frame_var = upstream_var("input-0")
+        param_frame_var = keyed_vars.get("input-0")
         if column_bindings and param_frame_var is None:
             self.warnings.append(
                 f"run_flow node {settings.node_id}: column-mapped parameter(s) have no data connected "
@@ -552,7 +539,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         exprs = []
         for binding in bindings:
             spec = specs_by_name.get(binding.parameter_name)
-            dtype = _PARAM_TYPE_TO_FF_EXPR.get(spec.type if spec else "string", "fl.String")
+            dtype = _PARAM_TYPE_TO_FL_EXPR.get(spec.type if spec else "string", "fl.String")
             exprs.append(
                 f'fl.lit({value_expr(binding)}).cast({dtype}).alias("param_{binding.parameter_name}")'
             )

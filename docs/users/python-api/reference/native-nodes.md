@@ -555,7 +555,7 @@ Scripts outside a notebook session are unaffected.
 
 ### Join keys
 
-The canvas join keeps the right join keys after the other right columns; Polars' `coalesce=False` puts them elsewhere. `FlowFrame.join(..., keep_right_keys=True)` keeps them where the canvas does, renaming a right key whose name the left side also has with `suffix`, so the notebook renders such a canvas join as one native join node. An inner or left join places a native join node for it; other join types keep a Polars Code node. It is refused with `how="semi"`, `"anti"` or `"cross"` and with `coalesce=True`.
+The notebook renders a canvas join that keeps its right keys as `join(..., keep_right_keys=True)` (see [Joins](joins.md#keeping-the-right-keys)).
 
 ## Errors
 
@@ -578,7 +578,7 @@ Every build or materialisation failure raises `ff.NativeNodeError`, a subclass o
 - **`@ff.python_script` needs the function's source.** Files, notebook cells and PyCharm's Python console provide it; in the console, a definition run before flowfile was imported has to be run again. The plain `python` prompt before Python 3.13 keeps none.
 - **Notebook variables are shared across a flow's scripts.** The body runs at the top level of the kernel's namespace for the flow, so a name it assigns (even one that shadows a builtin, such as `max`) is visible to the flow's other Python Script nodes.
 - **An upstream node referenced as `main` fails a script's run.** `read_inputs()["main"]` holds every input in wiring order, so running the script refuses an input of that name. Give the node another reference.
-- **Code export emits `ff.sql`, not these classes.** The FlowFrame export writes a SQL Query node as `ff.sql(...)`, a gate as `if` blocks and a custom node as its inlined `process()`; a Python Script node does not become a `@ff.python_script` function.
+- **The FlowFrame export writes these classes back.** A gate becomes `fl.Gate(...)`, a SQL Query node `fl.sql(...)`, a custom node `fl.custom_nodes.<key>(...)`, and a Python Script node `@fl.python_script` when its cells regenerate byte for byte, else `fl.PythonScript(cells=...)`. The Polars export still writes gates as `if` blocks.
 - **No typed class per built-in node.** Node types without a dedicated class above are placed with `ff.Node` and a settings dict or model.
 
 ---

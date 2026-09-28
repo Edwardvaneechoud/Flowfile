@@ -345,7 +345,7 @@ def _query_value(scope: dict[str, Any], name: str) -> str | None:
 
 
 class TelemetryMiddleware:
-    """Emit one event per successful request on a route in :data:`ROUTE_EVENTS`.
+    """Emit an event for a successful request on a route in :data:`ROUTE_EVENTS` (deduplicated per :data:`ROUTE_ONCE`).
 
     Pure ASGI on purpose: ``BaseHTTPMiddleware`` wraps and buffers the response
     body, which would break the streaming ``/ai`` endpoints.

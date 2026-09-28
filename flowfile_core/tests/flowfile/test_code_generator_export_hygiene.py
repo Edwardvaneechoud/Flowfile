@@ -16,7 +16,8 @@ from flowfile_core.flowfile.code_generator.code_generator import (
 from flowfile_core.flowfile.code_generator.project_exporter import export_flow_to_project
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.param_types import FlowParameter
-from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas import input_schema, transform_schema
+from tests.flowfile.test_project_exporter import create_basic_flow
 
 _SINGLE_FILE_ENV = ("FLOWFILE_SINGLE_FILE_MODE", "FLOWFILE_WORKER_PORT")
 
@@ -31,13 +32,6 @@ def _manual_input(flow: FlowGraph, node_id: int = 1) -> None:
             ),
         )
     )
-
-
-def _base_flow(flow_id: int = 1) -> FlowGraph:
-    settings = schemas.FlowSettings(
-        flow_id=flow_id, execution_mode="Performance", execution_location="local", path="/tmp/test_flow"
-    )
-    return FlowGraph(flow_settings=settings, name="export_hygiene")
 
 
 def _formula(flow: FlowGraph, node_id: int, depends_on: int, name: str, function: str, data_type: str) -> None:
@@ -56,7 +50,7 @@ def _formula(flow: FlowGraph, node_id: int, depends_on: int, name: str, function
 
 def _parameterised_flow() -> FlowGraph:
     """Filter, formula and Polars-code nodes that all reference flow parameters."""
-    flow = _base_flow()
+    flow = create_basic_flow(name="export_hygiene")
     flow.flow_settings.parameters = [
         FlowParameter(name="x", default_value="2", type="integer"),
         FlowParameter(name="limit", default_value="3", type="integer"),
@@ -149,7 +143,7 @@ def test_parameterised_export_still_emits_function_arguments(export):
 
 
 def test_formula_translation_is_memoised_across_exports():
-    flow = _base_flow()
+    flow = create_basic_flow(name="export_hygiene")
     _manual_input(flow)
     _formula(flow, 2, 1, "doubled", "[a] * 2", "Auto")
     _formula(flow, 3, 2, "shifted", "[a] + 10", "Auto")
@@ -164,14 +158,9 @@ def test_formula_translation_is_memoised_across_exports():
     assert info.hits >= 2
 
 
-def test_validation_namespace_mirrors_the_flowfile_package(monkeypatch):
+def test_validation_namespace_mirrors_the_flowfile_package(keep_single_file_env):
     """Every validation name is the very object ``flowfile`` exports, and the expression surface
     ``flowfile`` re-exports is covered in full; names neither package has stay absent."""
-    for key in _SINGLE_FILE_ENV:
-        if key in os.environ:
-            monkeypatch.setenv(key, os.environ[key])
-        else:
-            monkeypatch.delenv(key, raising=False)
     import flowfile
 
     namespace = cg._ff_validation_namespace()
@@ -198,7 +187,7 @@ def test_export_does_not_import_flowfile_or_touch_environ(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     cg._try_translate_to_ff_code.cache_clear()
     cg._ff_validation_namespace.cache_clear()
-    flow = _base_flow()
+    flow = create_basic_flow(name="export_hygiene")
     _manual_input(flow)
     _formula(flow, 2, 1, "doubled", "[a] * 2", "Auto")
     _formula(flow, 3, 2, "as_text", "[a] + 1", "String")

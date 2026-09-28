@@ -1,5 +1,4 @@
 // Minimizing the right drawer saves the open node settings first; a refused save keeps it open.
-// The code generator is DesignerView's split pane, so the drawer neither shows nor closes it.
 
 import { setActivePinia, createPinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";

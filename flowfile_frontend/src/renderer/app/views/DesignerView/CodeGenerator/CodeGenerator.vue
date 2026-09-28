@@ -85,21 +85,20 @@
         Export Code
       </button>
     </div>
-    <template v-if="active">
-      <div v-if="codeMode === 'project'" class="code-project">
-        <ProjectExport />
-      </div>
-      <div v-else-if="codeMode === 'notebook'" class="code-notebook">
-        <NotebookPanel :key="nodeStore.flow_id" :flow-id="nodeStore.flow_id" />
-      </div>
-      <codemirror v-else v-model="code" :extensions="extensions" :disabled="true" />
-    </template>
+    <div v-if="codeMode === 'project'" class="code-project">
+      <ProjectExport />
+    </div>
+    <div v-else-if="codeMode === 'notebook'" class="code-notebook">
+      <NotebookPanel :key="nodeStore.flow_id" :flow-id="nodeStore.flow_id" />
+    </div>
+    <codemirror v-else v-model="code" :extensions="extensions" :disabled="true" />
   </div>
 </template>
 
 <script lang="ts" setup>
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
 import axios from "axios";
+import debounce from "lodash/debounce";
 import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
 import { EditorView } from "@codemirror/view";
@@ -107,10 +106,6 @@ import { flowfileEditorTheme } from "@/utils/codemirrorTheme";
 import ProjectExport from "./ProjectExport.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
-
-// `active` = the pane is shown. CodeMirror must not be created while its pane is
-// display:none, so the editor renders (and code fetches) only when active.
-const props = defineProps<{ active?: boolean }>();
 
 const NotebookPanel = defineAsyncComponent(() => import("../../CatalogView/NotebookPanel.vue"));
 
@@ -194,11 +189,10 @@ const setMode = (mode: CodeMode) => {
   }
 };
 
-// Fetch when the pane becomes visible (active) for a flow we haven't loaded yet.
 watch(
-  () => [props.active, nodeStore.flow_id] as const,
-  ([active, flowId]) => {
-    if (active && flowId > 0 && flowId !== lastLoadedFlowId.value) {
+  () => nodeStore.flow_id,
+  (flowId) => {
+    if (flowId > 0 && flowId !== lastLoadedFlowId.value) {
       fetchCode();
     }
   },
@@ -206,22 +200,18 @@ watch(
 );
 
 // A graph edit invalidates the cached code; the open pane regenerates it once edits settle.
-let refetchTimer: ReturnType<typeof setTimeout> | null = null;
+const refetchSoon = debounce(() => {
+  if (nodeStore.flow_id > 0) fetchCode();
+}, 400);
 watch(
   () => editorStore.graphVersion,
   () => {
     lastLoadedFlowId.value = null;
-    if (refetchTimer) clearTimeout(refetchTimer);
-    refetchTimer = setTimeout(() => {
-      refetchTimer = null;
-      if (props.active && nodeStore.flow_id > 0) fetchCode();
-    }, 400);
+    refetchSoon();
   },
 );
 
-onBeforeUnmount(() => {
-  if (refetchTimer) clearTimeout(refetchTimer);
-});
+onBeforeUnmount(() => refetchSoon.cancel());
 
 const refreshCode = () => {
   if (nodeStore.flow_id > 0) {

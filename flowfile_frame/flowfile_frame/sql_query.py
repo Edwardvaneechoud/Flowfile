@@ -148,8 +148,9 @@ def sql(query: str, /, *frames: FlowFrame, description: str | None = None, **tab
     is the table of that name (and also ``input_<n>``, numbered after the positional ones).
     The names are stored in the node's SQL as a ``WITH <name> AS (SELECT * FROM input_<n>)``
     header, which the designer shows as-is. Without frames the query reads no tables and the
-    node starts a new graph. The query uses the Polars SQL dialect and must be a single
-    ``SELECT`` or ``WITH`` statement; flow parameters go in as ``${name}`` (``Parameter.ref``).
+    node lands on the implicit graph (the notebook session's in a notebook, a new one otherwise).
+    The query uses the Polars SQL dialect and must be a single ``SELECT`` or ``WITH`` statement;
+    flow parameters go in as ``${name}`` (``Parameter.ref``).
     Frames on different graphs are merged onto one.
 
     Example::

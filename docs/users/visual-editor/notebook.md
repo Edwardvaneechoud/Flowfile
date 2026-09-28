@@ -10,7 +10,7 @@ The canvas notebook shows the open flow as Python code, one cell per statement, 
 
 ## Opening it
 
-Press **Code** in the header (Ctrl/Cmd+G), then **Notebook** in the panel's FlowFrame / Polars / Project / Notebook switch. The Code panel opens as a pane beside the canvas, which narrows to make room, so every node stays reachable while you edit cells. Drag the pane's left edge to resize it. The panel remembers its width and the mode, so the next **Code** press opens the notebook again. Clicking the canvas or a node, or switching to another flow tab, leaves the panel open; only **Code**, Ctrl/Cmd+G, the panel's close button or closing the last open flow closes it, and closing it keeps your unpushed edits. The notebook renders the flow:
+Open the [Code panel](tutorials/code-generator.md) (Ctrl/Cmd+G) and pick **Notebook**. The panel stays open while you click the canvas or switch flows, and closing it keeps unpushed edits. The notebook renders the flow:
 
 - The leading cells hold the imports and the flow parameters, then one cell per statement in the order the flow runs; a cell holds every node its statement chains together.
 - Cells use the [Python API](../python-api/index.md) (`import flowfile as fl`): fluent `FlowFrame` calls for built-in transforms, and the [native node classes](../python-api/reference/native-nodes.md) (`fl.Gate`, `fl.RunFlow`, `fl.PythonScript`, custom nodes, parameters) for the rest.
@@ -33,7 +33,7 @@ A node the notebook cannot express as code becomes a **placeholder** cell that s
 | downstream of node N, which is not editable as code | Fix node N; everything below it follows. |
 | headers or query parameters hold a credential | A REST API reader with a key in its headers or parameters. Move the key to a [secret](catalog/secrets.md). |
 | explore data is interactive only | Explore Data has no code form. |
-| no code form for node type ... yet | The node type is not rendered yet; edit it on the canvas. |
+| No code generator implemented for node type '...' | The node type has no code form; edit it on the canvas. |
 
 A Polars LazyFrame node (a frame passed in from Python) is **unsupported**: it cannot be rebuilt, and a flow that contains one cannot be pushed until the node is replaced on the canvas.
 
@@ -45,7 +45,7 @@ A Polars LazyFrame node (a frame passed in from Python) is **unsupported**: it c
 | **Run on canvas** (a node cell's ⋯ menu) | Where the flow runs: the backend and worker, a kernel node on its kernel | Runs the cell's node and everything it depends on, honouring [gates](nodes/combine.md), and shows the node's preview. A writer in that lineage writes. |
 | **Push** | The session, then the canvas | Runs every cell top to bottom in a fresh namespace and applies the difference to the canvas as one step that **Undo** reverts. |
 
-**Run** builds, it does not execute the flow. Frames whose data only exists once the flow runs (a subflow's output, a Python Script node's output, anything below a gate, and nodes adopted from the canvas) show their predicted schema, not rows. Calling `collect()` on such a frame is refused with a message pointing at **Run on canvas**. The session also refuses anything that writes at build time or runs a flow: `fl.register_flow`, `fl.RunFlow(<graph>, name=...)`, `fl.custom_nodes.install`, creating connections, and running the session graph. **Reset session** (the ⋯ menu) re-seeds the session from the canvas as it is now.
+**Run** builds, it does not execute the flow. Frames whose data only exists once the flow runs (a subflow's output, a Python Script node's output, anything below a gate, and nodes adopted from the canvas) show their predicted schema, not rows. Calling `collect()` on such a frame is refused with a message pointing at **Run on canvas**. The session also refuses anything that writes at build time or runs a flow; [notebook mode](../python-api/reference/native-nodes.md#notebook-mode) lists the calls. **Reset session** (the ⋯ menu) re-seeds the session from the canvas as it is now.
 
 **Push** keeps the id, position, description and cached results of every node the edit does not touch. A lowercase variable name assigned in a cell becomes that node's reference. **Run on canvas** runs the canvas as it is, so push edited cells first.
 
@@ -53,7 +53,7 @@ A Polars LazyFrame node (a frame passed in from Python) is **unsupported**: it c
 
 A push is refused, with the reason in a message, when:
 
-- the canvas changed since the cells were rendered (re-render, then push again);
+- the canvas changed since the cells were rendered (the panel refreshes the cells; push again);
 - the flow contains a Polars LazyFrame node, from the canvas or from a cell (`fl.FlowFrame(pl.LazyFrame(...))`);
 - a cell defines a custom node class instead of using an installed one;
 - a REST API reader carries an inline secret instead of a secret name;

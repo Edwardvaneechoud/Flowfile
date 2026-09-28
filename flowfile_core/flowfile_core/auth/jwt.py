@@ -144,16 +144,20 @@ def verify_internal_token(token: str) -> bool:
     return secrets.compare_digest(token, get_internal_token())
 
 
+def internal_token_valid(token: str | None) -> bool:
+    """True only when ``token`` is present and matches; False when core has no token configured."""
+    try:
+        return bool(token) and verify_internal_token(token)
+    except ValueError:
+        return False
+
+
 def require_internal_token(x_internal_token: str | None = Header(None, alias="X-Internal-Token")) -> None:
     """Admit only the worker and kernels, which sign their core callbacks with the internal token.
 
     Fails closed (401) when the header is missing or wrong, and when core has no token configured.
     """
-    try:
-        valid = bool(x_internal_token) and verify_internal_token(x_internal_token)
-    except ValueError:
-        valid = False
-    if not valid:
+    if not internal_token_valid(x_internal_token):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing internal token")
 
 
@@ -328,34 +332,11 @@ def decode_refresh_token(token: str) -> str:
 def get_current_user_from_query(
     access_token: str = Query(..., description="JWT access token"), db: Session = Depends(get_db)
 ):
-    """Authenticate from an ``access_token`` query parameter, for clients that cannot send headers.
+    """Authenticate from an ``access_token`` query parameter; no route uses it.
 
-    Prefer header auth: a query string lands in access logs and proxy logs. Core's uvicorn
-    access log redacts ``access_token`` (``configs/access_log.py``), but anything in front
-    of core does not.
+    Routes authenticate by header: a query string lands in access logs and proxy logs.
     """
-    credentials_exception = HTTPException(
-        status_code=401,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-    if not access_token:
-        raise credentials_exception
-
-    try:
-        payload = jwt.decode(access_token, get_jwt_secret(), algorithms=[ALGORITHM])
-        # Reject refresh tokens used as access tokens
-        if payload.get("type") == "refresh":
-            raise credentials_exception
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception from None
-
-    return _resolve_token_user(db, token_data.username, credentials_exception)
+    return get_current_user_sync(access_token, db)
 
 
 async def get_current_admin_user(current_user: User = Depends(get_current_user)):

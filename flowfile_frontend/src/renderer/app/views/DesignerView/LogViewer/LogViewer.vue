@@ -101,7 +101,7 @@ const startStreamingLogs = async () => {
         await authService.getToken();
       }
 
-      setTimeout(startStreamingLogs, 1000 * connectionRetries.value); // Exponential backoff
+      setTimeout(startStreamingLogs, 1000 * connectionRetries.value);
     } else {
       console.error("Max retries reached for log connection");
       errorMessage.value = "Failed to connect after multiple attempts. Try refreshing the page.";

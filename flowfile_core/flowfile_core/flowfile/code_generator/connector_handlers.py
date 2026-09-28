@@ -203,14 +203,15 @@ class ConnectorHandlersMixin(ConverterMixinBase):
     )
 
     @classmethod
+    def _is_sensitive_key(cls, key) -> bool:
+        return isinstance(key, str) and key.lower() in cls._SENSITIVE_KEYS
+
+    @classmethod
     def _redact_sensitive(cls, mapping: dict) -> dict:
         """Mask values of well-known credential keys so a token placed directly in
         a header/param never lands verbatim in generated code."""
         placeholder = "<redacted: provide via env/secret>"
-        return {
-            key: (placeholder if isinstance(key, str) and key.lower() in cls._SENSITIVE_KEYS else val)
-            for key, val in mapping.items()
-        }
+        return {key: (placeholder if cls._is_sensitive_key(key) else val) for key, val in mapping.items()}
 
     def _handle_rest_api_reader(
         self, settings: input_schema.NodeRestApiReader, var_name: str, input_vars: dict[str, str]

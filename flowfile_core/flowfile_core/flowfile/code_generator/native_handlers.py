@@ -21,7 +21,6 @@ from flowfile_core.flowfile.param_types import coerce_param_value, stringify_par
 from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
 from flowfile_core.schemas import input_schema
 
-# Declares a parameter gate's parameter, with this run's value, on the frame's graph.
 FLOW_PARAMETER_HELPER = '''\
 def _flowfile_flow_parameter(frame, name, value, **declaration):
     """Declare flow parameter ``name`` with this run's value on ``frame``'s graph; returns ``name``."""
@@ -133,7 +132,7 @@ def _script_function_text(name: str, parameters: list[str], body_cells: list[str
 def _decorator_parts(cells: list[str]) -> tuple | None:
     """Split stored cells into prelude lines, parameters, candidate ``(docstring, body cells)`` and a name, or None.
 
-    The layout is ``python_script._notebook_cells``': optional prelude, the inputs cell, an optional
+    The layout is ``python_script._notebook_cells``: optional prelude, the inputs cell, an optional
     docstring note, the body, and a last cell holding the outputs marker. Each body candidate (with or
     without the docstring) is checked by regenerating it. The function name is only recoverable from
     a dict guard's message, which spells it.
@@ -190,7 +189,7 @@ class NativeHandlersMixin(ConverterMixinBase):
 
     def _description_args(self, settings) -> list[str]:
         description = user_description(settings)
-        return [f"description={json.dumps(description, ensure_ascii=False)}"] if description else []
+        return [f"description={self._py_str(description)}"] if description else []
 
     def _bind_outputs(self, node_id: int, var: str, accessors: list[str]) -> None:
         """Consumers of output handle ``k`` read ``var`` + ``accessors[k]`` (``.then``, ``["name"]``, ...)."""
@@ -225,13 +224,13 @@ class NativeHandlersMixin(ConverterMixinBase):
             if param.type != "string":
                 declaration.append(f"type={json.dumps(param.type)}")
             if param.enum_values:
-                declaration.append(f"enum_values={json.dumps(list(param.enum_values), ensure_ascii=False)}")
+                declaration.append(f"enum_values={self._py_str(list(param.enum_values))}")
             if FLOW_PARAMETER_HELPER not in self._module_helpers:
                 self._module_helpers.append(FLOW_PARAMETER_HELPER)
             args.append(f"parameter=_flowfile_flow_parameter({', '.join(declaration)})")
             if gate.operator != "equals":
                 args.append(f"operator={json.dumps(gate.operator)}")
-            args.append(f"value={json.dumps(gate.value, ensure_ascii=False)}")
+            args.append(f"value={self._py_str(gate.value)}")
         args.append(f"else_output={settings.else_output}")
         args += self._description_args(settings)
         self._bind_outputs(settings.node_id, var_name, [".then", ".otherwise"] if settings.else_output else [".then"])
@@ -289,17 +288,17 @@ class NativeHandlersMixin(ConverterMixinBase):
             if slot.isidentifier() and not keyword.iskeyword(slot) and slot not in _RUN_FLOW_KEYWORDS:
                 args.append(f"{slot}={source}")
             else:
-                slots.append(f"{json.dumps(slot, ensure_ascii=False)}: {source}")
+                slots.append(f"{self._py_str(slot)}: {source}")
         if slots:
             args.append("inputs={" + ", ".join(slots) + "}")
         specs = {spec.name: spec for spec in settings.parameter_specs}
         params = []
         for binding in settings.parameter_bindings:
-            name = json.dumps(binding.parameter_name, ensure_ascii=False)
+            name = self._py_str(binding.parameter_name)
             if binding.source == "constant":
                 params.append(f"{name}: {self._binding_literal(binding, specs)}")
             elif binding.source == "column":
-                params.append(f"{name}: fl.col({json.dumps(binding.column_name, ensure_ascii=False)})")
+                params.append(f"{name}: fl.col({self._py_str(binding.column_name)})")
         if params:
             args.append("params={" + ", ".join(params) + "}")
         if keyed.get("input-0") is not None:
@@ -311,7 +310,7 @@ class NativeHandlersMixin(ConverterMixinBase):
         args += self._description_args(settings)
         outputs = settings.output_slots
         if len(outputs) > 1:
-            self._bind_outputs(settings.node_id, var_name, [f"[{json.dumps(n, ensure_ascii=False)}]" for n in outputs])
+            self._bind_outputs(settings.node_id, var_name, [f"[{self._py_str(n)}]" for n in outputs])
         else:
             self._bind_outputs(settings.node_id, var_name, [".output"])
         self._add_statement(f"{var_name} = {call('fl.RunFlow', args)}")
@@ -321,7 +320,7 @@ class NativeHandlersMixin(ConverterMixinBase):
     ) -> None:
         """``fl.FlowInput(name, schema= | sample=pl.DataFrame(...), flow_graph=flow)``."""
         raw = settings.raw_data_format
-        args = [json.dumps(settings.input_name, ensure_ascii=False)]
+        args = [self._py_str(settings.input_name)]
         if raw is not None and raw.columns:
             schema = schema_literal([(column.name, column.data_type) for column in raw.columns])
             if schema is None:
@@ -335,7 +334,7 @@ class NativeHandlersMixin(ConverterMixinBase):
                     if literal is None:
                         reason = f"sample column {column.name!r} holds values with no literal form"
                         return self._refuse(settings.node_id, "flow_input", reason)
-                    columns.append(f"{json.dumps(column.name, ensure_ascii=False)}: {literal}")
+                    columns.append(f"{self._py_str(column.name)}: {literal}")
                 self.imports.add("import polars as pl")
                 args.append(f"sample=pl.DataFrame({{{', '.join(columns)}}}, schema={schema}, strict=False)")
         args.append(f"flow_graph={FLOW_VAR}")
@@ -350,7 +349,7 @@ class NativeHandlersMixin(ConverterMixinBase):
         if source is None:
             return self._refuse(settings.node_id, "flow_output", "the flow output has no input")
         self.node_var_mapping[settings.node_id] = source
-        args = [json.dumps(settings.output_name, ensure_ascii=False)] + self._description_args(settings)
+        args = [self._py_str(settings.output_name)] + self._description_args(settings)
         self._add_statement(f"{source}.to_flow_output({', '.join(args)})")
 
     @staticmethod
@@ -400,7 +399,7 @@ class NativeHandlersMixin(ConverterMixinBase):
             if schema_literals:
                 args.append(f"schemas={_nested_literal(schema_literals)}")
             args += self._description_args(settings)
-            code = "fl.PythonScript(\n" + "".join(f"    {arg},\n" for arg in args) + ")"
+            code = call("fl.PythonScript", args)
             code = f"{var_name} = {code}.output" if len(outputs) == 1 else f"{var_name} = {code}"
         if len(outputs) > 1:
             self._bind_outputs(settings.node_id, var_name, [f"[{json.dumps(name)}]" for name in outputs])
@@ -417,7 +416,7 @@ class NativeHandlersMixin(ConverterMixinBase):
         """The ``@fl.python_script`` form, when regenerating its cells reproduces the stored ones exactly.
 
         Pure text on the core side: prelude imports become stub modules (each must pass
-        ``importlib.util.find_spec``) and constants literals, so nothing the script imports is loaded;
+        ``importlib.util.find_spec``) and constant assignments become literals, so nothing the script imports is loaded;
         only the ``def`` is compiled, then the frame's own ``_notebook_cells`` regenerates the cells.
         """
         import importlib.util
@@ -496,7 +495,7 @@ class NativeHandlersMixin(ConverterMixinBase):
                 kwargs.append(f"returns={next(iter(schema_literals.values()))}")
             else:
                 kwargs.append(f"returns={_nested_literal(schema_literals)}")
-        kwargs.append(f"description={json.dumps(settings.description or '', ensure_ascii=False)}")
+        kwargs.append(f"description={self._py_str(settings.description or '')}")
         single = len(settings.output_names or ["main"]) == 1
         invocation = f"{var_name} = {function}{'' if single else '.node'}({', '.join(inputs)})"
         head = "\n".join(prelude) + "\n\n\n" if prelude else ""

@@ -50,6 +50,15 @@ export interface SettledMeta {
   revision?: number | null;
 }
 
+/** The generation/revision stamp is optional on older kernels, so never assume it is there. */
+export function settledMeta(res: unknown): SettledMeta {
+  const stamped = (res ?? {}) as { namespace_generation?: string | null; revision?: number | null };
+  return {
+    namespace_generation: stamped.namespace_generation ?? null,
+    revision: stamped.revision ?? null,
+  };
+}
+
 export type SessionEpochListener = (epoch: number) => void;
 
 export type ExecutionSettledListener = (

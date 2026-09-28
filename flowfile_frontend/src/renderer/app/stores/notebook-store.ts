@@ -46,8 +46,8 @@ import {
   markDownstreamStale,
   runExecutionBatch,
   settleExecution,
+  settledMeta,
   type RuntimeCellRef,
-  type SettledMeta,
 } from "../components/notebook/notebookRuntimeState";
 import { FLOW_SESSION_PREFIX } from "../components/notebook/notebookKernelStatus";
 import { sanitiseMarkdown } from "../features/ai/markdown";
@@ -246,15 +246,6 @@ const refs = (nb: OpenNotebook): RuntimeCellRef[] =>
 /** First position a structural op can have invalidated; a move reaches back to its origin. */
 function affectedIndex(op: CellOperation<NotebookCellModel>): number {
   return op.kind === "move" ? Math.min(op.from, op.to) : op.index;
-}
-
-/** The generation/revision stamp is optional on older kernels, so never assume it is there. */
-function settledMeta(res: unknown): SettledMeta {
-  const stamped = (res ?? {}) as { namespace_generation?: string | null; revision?: number | null };
-  return {
-    namespace_generation: stamped.namespace_generation ?? null,
-    revision: stamped.revision ?? null,
-  };
 }
 
 /** Re-resolve by id: the cells array may have been rebuilt while the request was out. */
@@ -804,7 +795,7 @@ export const useNotebookStore = defineStore("notebook", {
           // A flow session reads node_id as the cell's canvas node (0 for none), never a hash.
           node_id: nb.flowId != null ? (nb.nodeIds?.[cell.id]?.at(-1) ?? 0) : cellNodeId(cell.id),
           code: cell.code,
-          flow_id: nb.sessionFlowId, // negative session id: can't collide with positive flow ids
+          flow_id: nb.sessionFlowId, // catalog tabs: negative, never a real flow id; flow tabs: the flow id
         });
         if (settleExecution(ticket, settledMeta(res)) === "discard") {
           cell.execState = "idle"; // nothing newer owns this cell (re-entrancy guard), so release it

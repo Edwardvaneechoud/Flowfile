@@ -40,9 +40,9 @@ express into `fl.canvas_node(...)` instead of failing. The round-trip tests (exe
 | `project_exporter.py` | `FlowGraphToProjectConverter` — emits a multi-file project tree (`pipeline.py`, `main.py`, per-node notebooks, custom-node modules, scaffolding) instead of one script. |
 | `project_shim.py` | Standalone `flowfile_ctx` shim shipped inside exported projects so python-script node code runs unchanged outside Flowfile's kernel. |
 
-The handler logic is split across mixins purely to keep files focused; all mixins
-compose into `FlowGraphCodeConverter`, so a handler can call any other handler or
-helper via `self`.
+The handler logic is split across mixins purely to keep files focused; every mixin
+except `NativeHandlersMixin` (FlowFrame converter only) composes into
+`FlowGraphCodeConverter`, so a handler can call any other handler or helper via `self`.
 
 ## Adding a node type
 

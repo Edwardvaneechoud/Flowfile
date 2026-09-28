@@ -4,39 +4,15 @@ The clean run goes through the test-only in-process runner (``InProcessCleanRunn
 """
 
 import pytest
-from fastapi.testclient import TestClient
 
 import flowfile as fl
-from flowfile_core import flow_file_handler, main
-from flowfile_core.auth.jwt import get_current_active_user, get_current_user
-from flowfile_core.auth.models import User as PydanticUser
+from flowfile_core import flow_file_handler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.notebook import bridge
 from flowfile_core.notebook.push import push_refusals
 from flowfile_core.notebook.render import code_fingerprint, render
 
 OWNER_ID = 1
-
-
-@pytest.fixture
-def runner():
-    before = bridge._runner
-    bridge.set_clean_runner(bridge.InProcessCleanRunner())
-    yield
-    bridge.set_clean_runner(before)
-
-
-@pytest.fixture
-def client_as():
-    def _as(user_id: int) -> TestClient:
-        user = PydanticUser(username=f"nb_{user_id}", id=user_id, disabled=False, is_admin=user_id == OWNER_ID)
-        main.app.dependency_overrides[get_current_active_user] = lambda: user
-        main.app.dependency_overrides[get_current_user] = lambda: user
-        return TestClient(main.app)
-
-    yield _as
-    main.app.dependency_overrides.pop(get_current_active_user, None)
-    main.app.dependency_overrides.pop(get_current_user, None)
 
 
 @pytest.fixture

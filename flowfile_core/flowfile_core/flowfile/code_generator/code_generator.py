@@ -204,12 +204,12 @@ def _assigns_name(statements: list[ast.stmt], name: str) -> bool:
 def _polars_code_function_body(code: str) -> tuple[list[str], str | None]:
     """Split a Polars-code node's source into function body lines and the expression to return.
 
-    Mirrors the runtime ``PolarsCodeParser._wrap_in_function``: the source is dedented, a
-    function that assigns ``output_df`` returns it, and a lone expression is returned as is.
-    The code is parsed inside a function so a user-written top-level ``return`` is valid;
-    when one is present nothing is appended. Otherwise the last top-level assignment to a
-    plain name is returned. ``return_expr`` is None when nothing should be appended, and the
-    body is empty when the whole source is the returned expression.
+    Like the runtime ``PolarsCodeParser._wrap_in_function`` the source is dedented and a function
+    that assigns ``output_df`` returns it; unlike it, any lone expression is returned as is and
+    otherwise the last top-level plain-name assignment is returned, so code the runtime accepts
+    always exports. The code is parsed inside a function so a user-written top-level ``return`` is
+    valid; when one is present nothing is appended. ``return_expr`` is None when nothing should be
+    appended, and the body is empty when the whole source is the returned expression.
     """
     code = textwrap.dedent(code).strip()
     try:
@@ -298,8 +298,7 @@ def _sql_query_input_vars(input_vars: dict[str, str]) -> list[str]:
     return [var for key, var in input_vars.items() if key.startswith("main")]
 
 
-# The expression surface the top-level ``flowfile`` package re-exports from flowfile_frame
-# (expressions, selectors, Polars dtypes); a parity test pins it to ``flowfile``'s own names.
+# Expression names ``flowfile`` re-exports from flowfile_frame; a parity test pins them.
 FF_VALIDATION_NAMES: tuple[str, ...] = (
     "col", "column", "count", "cum_count", "len", "lit", "max", "mean", "min", "sum", "when",
     "all_", "boolean", "by_dtype", "categorical", "contains", "date", "datetime", "duration", "ends_with",
@@ -392,7 +391,7 @@ _NATIVE_TYPES = frozenset({"gate", "run_flow", "python_script", "flow_input", "f
 
 
 def node_label(node_type: str, node_id: int) -> str:
-    """The deterministic variable name of an unnamed node, matching the frame's ``node_label``."""
+    """The deterministic variable name of an unnamed node: ``<type_label>_<id>`` (``filtered_12``)."""
     label = NODE_TYPE_VAR_LABEL.get(node_type) or re.sub(r"\W", "_", node_type)
     return f"{label}_{node_id}"
 
@@ -1544,12 +1543,6 @@ class FlowGraphCodeConverter(
         self, settings: input_schema.NodePolarsCode, var_name: str, input_vars: dict[str, str]
     ) -> None:
         """Handle custom Polars code nodes."""
-        # TODO(FlowFrame): When framework == "ff", this generates `ff.LazyFrame` in the
-        # function signature, but flowfile doesn't export LazyFrame. User-written polars code
-        # also uses pl.col, pl.LazyFrame directly. Options:
-        # (a) Always use pl.LazyFrame in signatures (polars_code is inherently polars),
-        # (b) Override _handle_polars_code in FlowFrameConverter to add `import polars as pl`,
-        # (c) Add LazyFrame export to the flowfile package.
         code = textwrap.dedent(settings.polars_code_input.polars_code).strip()
         if len(input_vars) == 0:
             params = ""
@@ -1636,7 +1629,8 @@ class FlowGraphCodeConverter(
             node_id = self._passthrough[node_id]
         return node_id
 
-    def _is_flow_output(self, node: FlowNode) -> bool:
+    def _ends_statement(self, node: FlowNode) -> bool:
+        """A flow output ends its statement instead of fusing into the next call."""
         return bool(getattr(self._settings_for(node), "is_flow_output", False))
 
     def _is_filter_split(self, node: FlowNode) -> bool:
@@ -1665,7 +1659,7 @@ class FlowGraphCodeConverter(
             main_producer_id = next(iter(resolved)) if num_inputs == 1 else None
             pinned = bool(getattr(self._settings_for(node), "node_reference", None))
             # A node read through per-exit accessors (a gate's ``.then``) stays its own statement.
-            boundary = self._is_flow_output(node) or node.node_id in routed
+            boundary = self._ends_statement(node) or node.node_id in routed
             emissions.append(
                 NodeEmission(
                     node.node_id, effective_var, lines, main_producer_id,
@@ -2257,9 +2251,9 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         """The user description a frame call carries; the native classes spell their own."""
         return "" if node.node_type in _NATIVE_TYPES else user_description(node.setting_input)
 
-    def _is_flow_output(self, node: FlowNode) -> bool:
-        """A described node ends its statement, so ``description=`` lands on its own call."""
-        return super()._is_flow_output(node) or bool(self._description(node))
+    def _ends_statement(self, node: FlowNode) -> bool:
+        """A flow output or a described node ends its statement, so ``description=`` lands on its own call."""
+        return super()._ends_statement(node) or bool(self._description(node))
 
     def _describe(self, node: FlowNode) -> None:
         """Add ``description=`` to the call the node's span assigns, when it has one to carry."""
@@ -2309,7 +2303,7 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
                 return "explore data is interactive only"
             rest = getattr(settings, "rest_api_settings", None)
             keys = list((rest.headers or {}).keys()) + list((rest.query_params or {}).keys()) if rest else []
-            if any(isinstance(k, str) and k.lower() in self._SENSITIVE_KEYS for k in keys):
+            if any(self._is_sensitive_key(k) for k in keys):
                 return "headers or query parameters hold a credential"
             return None
         self._blocked.add(node.node_id)
@@ -2416,8 +2410,7 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
     def _handle_manual_input(
         self, settings: input_schema.NodeManualInput, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        # fl.from_raw_data coerces the columnar dict into RawData via pydantic, so
-        # the exported script needs no flowfile_core import (public API only).
+        # Public API only: fl.from_raw_data coerces the dict into RawData via pydantic.
         raw_data = settings.raw_data_format
         self._add_code(f"{var_name} = fl.from_raw_data({raw_data.model_dump()})")
         self._add_code("")

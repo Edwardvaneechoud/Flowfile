@@ -63,7 +63,7 @@
         :style="{ width: `${codeDockWidth}px` }"
       >
         <div class="code-dock-resizer" @pointerdown="startResize" />
-        <code-generator :key="nodeStore.flow_id" :active="true" />
+        <code-generator :key="nodeStore.flow_id" />
       </aside>
     </div>
   </div>

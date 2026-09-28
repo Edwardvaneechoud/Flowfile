@@ -93,11 +93,12 @@ def notebook_defers(node_type: str, setting_input: Any = None) -> bool:
 def seeded_at_build(node_type: str, frames: Sequence[FlowFrame], *, inputs_deferred: bool | None = None) -> bool:
     """Whether a node of ``node_type`` over ``frames`` is seeded instead of executed when it is built.
 
-    Deferred node types always are. A side-effect node is when an input frame is deferred (it
-    would write or train on placeholder rows) or below a gate (only a run decides which exit
-    is live, so building would also write the dead side); the run then executes it on the live
-    side only. ``inputs_deferred`` replaces the frames' own ``_deferred`` for a caller that
-    tracks it across more inputs than it passes. The gate walk only happens for side-effect types.
+    Deferred node types always are, and in notebook mode so is every type :func:`notebook_defers`
+    names. A side-effect node is when an input frame is deferred (it would write or train on
+    placeholder rows) or below a gate (only a run decides which exit is live, so building would
+    also write the dead side); the run then executes it on the live side only. ``inputs_deferred``
+    replaces the frames' own ``_deferred`` for a caller that tracks it across more inputs than it
+    passes. The gate walk only happens for side-effect types.
     """
     if node_type in DEFERRED_NODE_TYPES or notebook_defers(node_type):
         return True
@@ -106,6 +107,11 @@ def seeded_at_build(node_type: str, frames: Sequence[FlowFrame], *, inputs_defer
     if inputs_deferred is None:
         inputs_deferred = any(f._deferred for f in frames)
     return inputs_deferred or any(f._below_a_gate() for f in frames)
+
+
+def output_names_of(setting_input: Any) -> list[str]:
+    """The node's output names from its settings; ``["main"]`` when it declares none."""
+    return list(getattr(setting_input, "output_names", None) or ["main"])
 
 
 def _kernel_id(kernel: str | Any | None) -> str | None:
@@ -576,7 +582,10 @@ class NativeNode:
 
     @staticmethod
     def _resolve_graph(frames: Sequence[FlowFrame], flow_graph: FlowGraph | None) -> FlowGraph:
-        """The graph to place on: the input frames' (merged when they differ), else ``flow_graph`` or a new one."""
+        """The graph to place on: the input frames' (merged when they differ), else ``flow_graph``.
+
+        Without either, the implicit graph (``utils._implicit_graph``).
+        """
         if not frames:
             return flow_graph if flow_graph is not None else _implicit_graph()
         if flow_graph is not None and all(f.flow_graph is not flow_graph for f in frames):
@@ -649,7 +658,7 @@ class NativeNode:
         """One frame per output handle; a deferred node is seeded first, so nothing executes it."""
         from flowfile_frame.flow_frame import FlowFrame
 
-        self.output_names = list(getattr(node.setting_input, "output_names", None) or ["main"])
+        self.output_names = output_names_of(node.setting_input)
         handles = [output_handle(i) for i in range(len(self.output_names))]
         if self.deferred:
             seed_deferred_node(node, self._seed_schemas(node, frames, handles))
@@ -722,8 +731,9 @@ class Node(NativeNode):
     order: every frame on ``input-0`` for multi-input nodes (``union``, ``polars_code``,
     ``sql_query``), else frame i on ``input-i``. Outputs are deferred for subflow, script and
     external-source nodes, and for writers below a deferred frame or a gate; ``deferred``
-    overrides that. The dedicated classes (``fl.Gate`` and the like) are the normal route for the
-    nodes they cover; custom nodes go through ``fl.CustomNode``.
+    overrides that. In a canvas notebook session the node types :func:`notebook_defers` names
+    are always deferred, whatever ``deferred`` says. The dedicated classes (``fl.Gate`` and the
+    like) are the normal route for the nodes they cover; custom nodes go through ``fl.CustomNode``.
     """
 
     def __init__(

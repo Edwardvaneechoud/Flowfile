@@ -42,7 +42,6 @@ const okResult = (over: Partial<CellRunResult> = {}): CellRunResult => ({
 function fakeExecutor(run: NotebookExecutor["run"], canRun = true): NotebookExecutor {
   return {
     run: vi.fn(run),
-    interrupt: vi.fn(() => Promise.resolve()),
     reset: vi.fn(() => Promise.resolve()),
     canRun: ref(canRun),
   };
@@ -132,14 +131,13 @@ describe("createKernelExecutor", () => {
     expect(clearNamespace).toHaveBeenCalledWith("k1", 7);
   });
 
-  it("hands the LSP the kernel, flow and node, and has no status text", () => {
+  it("hands the LSP the kernel, flow and node", () => {
     const executor = createKernelExecutor({
       getKernelId: () => "k1",
       getFlowId: () => 7,
       getNodeId: () => 3,
     });
     expect(executor.lspContext?.()).toEqual({ kernelId: "k1", flowId: 7, nodeId: 3 });
-    expect(executor.statusText).toBeUndefined();
   });
 });
 

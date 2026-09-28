@@ -5,7 +5,8 @@ bytes of UTF-8 JSON, written in binary mode and flushed per message. A body abov
 travels as a temp file instead: the frame carries ``{"type": ..., "$spill": <path>}`` and the reader loads
 and deletes the file, so a multi-MB seed or graph never sits in a pipe buffer.
 
-Core to session: ``seed``, ``execute``, ``interrupt``, ``reset``, ``clean_run``, ``schemas``, ``shutdown``.
+Core to session: ``seed``, ``execute``, ``reset``, ``clean_run``, ``schemas`` (core closes a session with stdin
+EOF).
 Session to core: ``ready``, ``stream``, ``display``, ``done``, ``graph``, ``schemas``.
 
 The module is stdlib-only: the session imports it right after its fd swap.
@@ -27,9 +28,6 @@ HEADER = struct.Struct(">I")
 SPILL_THRESHOLD = 1_000_000
 SPILL_KEY = "$spill"
 MAX_FRAME = 256 * 1024 * 1024
-
-CORE_TO_SESSION = frozenset({"seed", "execute", "interrupt", "reset", "clean_run", "schemas", "shutdown"})
-SESSION_TO_CORE = frozenset({"ready", "stream", "display", "done", "graph", "schemas"})
 
 logger = logging.getLogger("flowfile.notebook.protocol")
 

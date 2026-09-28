@@ -58,7 +58,7 @@ class NotebookPlanResponse(BaseModel):
 
 
 def _columns(columns) -> list[dict[str, str]]:
-    return [{"name": c.column_name, "data_type": c.data_type} for c in columns or []]
+    return [c.get_minimal_field_info().model_dump() for c in columns or []]
 
 
 def node_schemas(node: FlowNode) -> dict[str, list[dict[str, str]]]:
@@ -166,6 +166,11 @@ def live_cells(provenance: dict[str, list[tuple[str, int]]]) -> dict[int, str]:
     return {int(node_id): cell_id for cell_id, entries in provenance.items() for _, node_id in entries}
 
 
+def node_id_ceiling(flow: FlowGraph, client_max_node_id: int) -> int:
+    """The highest node id either the canvas or the client has seen; new nodes number above it."""
+    return max([client_max_node_id, *(node.node_id for node in flow.nodes)], default=0)
+
+
 def plan_push(flow: FlowGraph, user, request: NotebookPushRequest) -> tuple[ReconcilePlan, CleanRunResult]:
     """Everything a push does before it mutates the canvas; raises 409, 422 or 503 as ``HTTPException``."""
     live_fingerprint = code_fingerprint(flow)
@@ -179,7 +184,7 @@ def plan_push(flow: FlowGraph, user, request: NotebookPushRequest) -> tuple[Reco
         )
     snapshot = seed_snapshot(flow)
     live = snapshot["flowfile_data"]
-    ceiling = max([request.client_max_node_id, *(node.node_id for node in flow.nodes)], default=0)
+    ceiling = node_id_ceiling(flow, request.client_max_node_id)
     runner = get_clean_runner()
     result = runner.clean_run(
         user.id,

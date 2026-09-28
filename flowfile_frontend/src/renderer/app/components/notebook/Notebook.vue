@@ -1,37 +1,34 @@
 <template>
-  <div class="notebook-editor" :class="{ 'is-read-only': readOnly }">
+  <div class="notebook-editor">
     <div class="notebook-toolbar">
-      <template v-if="!readOnly">
-        <button :disabled="!canRun || busy" title="Run All Cells" @click="runAllCells">
-          <i class="fa-solid fa-play"></i> Run All
-        </button>
-        <button :disabled="busy" title="Clear All Outputs" @click="clearAllOutputs">
-          <i class="fa-solid fa-eraser"></i> Clear
-        </button>
-        <button
-          :disabled="!canRun || busy"
-          title="Reset session (clears variables; the kernel keeps running)"
-          @click="resetSession"
-        >
-          <i class="fa-solid fa-rotate-right"></i> Reset session
-        </button>
-        <button
-          :disabled="structuralDisabled || !canUndo"
-          title="Undo cell action (insert, delete, move, duplicate)"
-          @click="undoCellAction"
-        >
-          <i class="fa-solid fa-arrow-rotate-left"></i> Undo
-        </button>
-        <button
-          :disabled="structuralDisabled || !canRedo"
-          title="Redo cell action"
-          @click="redoCellAction"
-        >
-          <i class="fa-solid fa-arrow-rotate-right"></i> Redo
-        </button>
-      </template>
+      <button :disabled="!canRun || busy" title="Run All Cells" @click="runAllCells">
+        <i class="fa-solid fa-play"></i> Run All
+      </button>
+      <button :disabled="busy" title="Clear All Outputs" @click="clearAllOutputs">
+        <i class="fa-solid fa-eraser"></i> Clear
+      </button>
+      <button
+        :disabled="!canRun || busy"
+        title="Reset session (clears variables; the kernel keeps running)"
+        @click="resetSession"
+      >
+        <i class="fa-solid fa-rotate-right"></i> Reset session
+      </button>
+      <button
+        :disabled="structuralDisabled || !canUndo"
+        title="Undo cell action (insert, delete, move, duplicate)"
+        @click="undoCellAction"
+      >
+        <i class="fa-solid fa-arrow-rotate-left"></i> Undo
+      </button>
+      <button
+        :disabled="structuralDisabled || !canRedo"
+        title="Redo cell action"
+        @click="redoCellAction"
+      >
+        <i class="fa-solid fa-arrow-rotate-right"></i> Redo
+      </button>
       <span v-if="progressLabel" class="notebook-progress">{{ progressLabel }}</span>
-      <span v-if="statusText" class="notebook-status">{{ statusText }}</span>
       <span class="notebook-info">{{ cells.length }} cell{{ cells.length !== 1 ? "s" : "" }}</span>
     </div>
 
@@ -50,7 +47,6 @@
           :cell-index="index"
           :runtime="cellRuntime(ownerId, cell.id)"
           :busy="busy"
-          :read-only="readOnly"
           :is-last-cell="index === cells.length - 1"
           :cell-count="cells.length"
           :structural-disabled="structuralDisabled"
@@ -77,7 +73,7 @@
 
         <!-- Hover-to-insert: a faint "+" between cells adds a cell at this position. -->
         <div
-          v-if="!readOnly && index < cells.length - 1"
+          v-if="index < cells.length - 1"
           class="nb-insert-zone"
           :class="{ 'is-disabled': structuralDisabled }"
           title="Add cell here"
@@ -88,12 +84,7 @@
       </template>
     </div>
 
-    <button
-      v-if="!readOnly"
-      class="add-cell-button"
-      :disabled="structuralDisabled"
-      @click="addCell"
-    >
+    <button class="add-cell-button" :disabled="structuralDisabled" @click="addCell">
       <i class="fa-solid fa-plus"></i> Add Cell
     </button>
 
@@ -103,7 +94,7 @@
 
 <script lang="ts" setup>
 /**
- * The reusable notebook: cell list, structural edits with undo, execution tickets and batches.
+ * The notebook: cell list, structural edits with undo, execution tickets and batches.
  * It knows nothing about kernels; every run goes through the injected `executor`, and every
  * owner-keyed piece of state (history, views, presentation, runtime) lives under `ownerId`,
  * which the host both chooses and disposes.
@@ -151,16 +142,13 @@ import { getCellHistory } from "./useCellHistory";
 interface Props {
   cells: NotebookViewCell[];
   executor: NotebookExecutor;
-  /** Namespace for undo, views and runtime state: `node:<flow>:<node>` or `canvas:<flow>`. */
+  /** Namespace for undo, views and runtime state (`ownerIdForNode`). */
   ownerId: string;
-  /** No run buttons and no editing; the cells are only shown. */
-  readOnly?: boolean;
   inputNames?: string[];
   upstreamColumns?: UpstreamColumn[];
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  readOnly: false,
   inputNames: () => [],
   upstreamColumns: () => [],
 });
@@ -174,10 +162,9 @@ const announcement = ref("");
 const activeCellId = ref<string | null>(null);
 
 const canRun = computed(() => props.executor.canRun.value);
-const statusText = computed(() => props.executor.statusText?.value ?? "");
 const lspContext = computed(() => props.executor.lspContext ?? (() => NO_LSP_CONTEXT));
 const busy = computed(() => isBatchActive(props.ownerId));
-const structuralDisabled = computed(() => busy.value || props.readOnly);
+const structuralDisabled = computed(() => busy.value);
 const progressLabel = computed(() => {
   const progress = batchProgress(props.ownerId);
   if (!progress || progress.total < 1) return "";
@@ -230,7 +217,6 @@ const focusAfterTick = (cellId: string | null) => {
 };
 
 const updateCellCode = (cellId: string, code: string) => {
-  if (props.readOnly) return;
   const index = props.cells.findIndex((c) => c.id === cellId);
   if (index < 0 || isLockedCell(props.cells[index])) return;
   const cells = props.cells.map((c) => (c.id === cellId ? { ...c, code } : c));
@@ -284,7 +270,6 @@ const moveCellToIndex = (cellId: string, targetIndex: number): MoveInfo | null =
   applyMove(moveCellOp(props.cells, cellId, targetIndex));
 
 const replayHistory = (direction: "undo" | "redo") => {
-  if (props.readOnly) return;
   const history = getCellHistory<NotebookViewCell>(props.ownerId);
   const entry = direction === "undo" ? history.undo() : history.redo();
   if (!entry) return;
@@ -352,7 +337,6 @@ const stillPresent = (cellId: string) => props.cells.some((c) => c.id === cellId
 
 /** A single run is a batch of one, so one busy flag covers every execution path. */
 const runCell = async (cellId: string): Promise<boolean> => {
-  if (props.readOnly) return false;
   const cell = props.cells.find((c) => c.id === cellId);
   if (!cell || isLockedCell(cell)) return false;
   let ok = false;
@@ -368,18 +352,16 @@ const runCell = async (cellId: string): Promise<boolean> => {
   return started && ok;
 };
 
-const runAllCells = () => {
-  if (props.readOnly) return;
-  return runExecutionBatch({
+const runAllCells = () =>
+  runExecutionBatch({
     ownerId: props.ownerId,
     cells: runtimeRefs(props.cells),
     runOne: async (id) => ({ ok: await executeOne(id) }),
     stillPresent,
   });
-};
 
 const runCellAndAdvance = (cellId: string) => {
-  if (busy.value || props.readOnly) return;
+  if (busy.value) return;
   const index = props.cells.findIndex((c) => c.id === cellId);
   if (index < 0) return;
   // Advance on submit, Jupyter-style — before the run, whose busy flag blocks inserts.
@@ -399,10 +381,6 @@ const resetSession = async () => {
     ElMessage.error(error instanceof Error ? error.message : "Failed to reset the session");
   }
 };
-
-const interrupt = () => props.executor.interrupt();
-
-defineExpose({ runAllCells, resetSession, interrupt });
 </script>
 
 <style scoped>
@@ -451,11 +429,6 @@ defineExpose({ runAllCells, resetSession, interrupt });
   font-size: 0.7rem;
 }
 
-.notebook-status {
-  color: var(--el-text-color-secondary);
-  font-size: 0.7rem;
-}
-
 .notebook-info {
   margin-left: auto;
   color: var(--el-text-color-secondary);
@@ -490,8 +463,7 @@ defineExpose({ runAllCells, resetSession, interrupt });
   clip: rect(0 0 0 0);
 }
 
-/* Hover-to-insert zone between cells: a thin gap that reveals a centered "+"
-   (with a faint connecting line) only on hover. */
+/* Hover-to-insert gap: a hairline and "+" appear on hover. */
 .nb-insert-zone {
   position: relative;
   height: 12px;

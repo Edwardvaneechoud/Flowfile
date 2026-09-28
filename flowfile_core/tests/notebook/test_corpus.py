@@ -1,7 +1,5 @@
 """Sanity checks on the notebook corpus fixture itself (the renderer tests consume it)."""
 
-from tests.notebook.corpus import load_expected_placeholders
-
 NATIVE_TYPES = {"gate", "run_flow", "flow_input", "flow_output", "python_script", "mood_emoji"}
 
 
@@ -38,9 +36,9 @@ def test_python_script_flow_declares_its_output_schema(notebook_corpus):
     assert [c.name for c in script.schema] == ["amount", "double"]
 
 
-def test_placeholder_manifest_names_only_corpus_flows_and_nodes(notebook_corpus):
+def test_placeholder_manifest_names_only_corpus_flows_and_nodes(notebook_corpus, expected_placeholders):
     graphs = dict(notebook_corpus)
-    manifest = load_expected_placeholders()
+    manifest = expected_placeholders
     assert set(manifest) == set(graphs)
     for name, node_ids in manifest.items():
         assert set(node_ids) <= {node.node_id for node in graphs[name].nodes}, name

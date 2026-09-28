@@ -86,8 +86,7 @@ export const drawers: DrawerDef[] = [
         props: ({ drawer }) => ({
           nodeId: drawer.previewNodeId,
           refreshToken: drawer.previewRefreshToken,
-          // Gate the fetch to when the Data tab is actually shown.
-          // undefined activeTab => default first tab "data".
+          // Fetch only while the Data tab (the default) is shown.
           active: (drawer.activeTab["bottomDock"] ?? "data") === "data",
         }),
       },
@@ -95,8 +94,7 @@ export const drawers: DrawerDef[] = [
         id: "logs",
         label: "Logs",
         component: markRaw(LogViewer),
-        // Always available as a tab (decoupled from the results toggle); the
-        // run/results signal only pulls focus to it.
+        // Always a tab; the run/results signal only pulls focus to it.
         visibleWhen: ({ editor }) => editor.displayLogViewer,
         focusWhen: ({ editor }) => editor.isShowingLogViewer,
       },

@@ -823,8 +823,7 @@ export default function useDragAndDrop() {
     );
     // Groups first so a parent exists before its children reference it.
     addNodes([...groupNodes, ...childNodes, ...commentNodes]);
-    // Never lower the counter: an undone node's id may still be referenced by a redo.
-    id = Math.max(id, getMaxDataId(flowData.node_inputs));
+    seedNodeId(getMaxDataId(flowData.node_inputs));
 
     // Add labels to edges from source node output handles, node_reference, or df_{nodeId} default
     const editorStore = useEditorStore();

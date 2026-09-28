@@ -7,6 +7,7 @@ import {
   beginExecution,
   markDownstreamStale,
   settleExecution,
+  settledMeta,
   type RuntimeCellRef,
   type SettledMeta,
 } from "./notebookRuntimeState";
@@ -23,17 +24,14 @@ export interface CellRunResult extends SettledMeta {
 
 /**
  * Where a `<Notebook>` sends its code. The notebook owns cells, tickets and undo; the executor
- * owns the backend: the Python Script node passes a kernel executor, the canvas dock a session one.
+ * owns the backend (the Python Script node's kernel).
  */
 export interface NotebookExecutor {
   run(cellId: string, code: string): Promise<CellRunResult>;
-  interrupt(): Promise<void>;
   reset(): Promise<void>;
   canRun: Ref<boolean>;
   /** Jedi code intelligence; absent means the static completion sources serve. */
   lspContext?: () => LspContext;
-  /** One-line state shown in the notebook toolbar (e.g. why nothing can run). */
-  statusText?: Ref<string>;
 }
 
 /** Rendered cells carry a status; anything but `code` is a locked placeholder with a reason. */
@@ -59,8 +57,7 @@ export interface KernelExecutorOptions {
 
 /**
  * The Python Script node's executor: cells run in the selected kernel's per-flow namespace.
- * Reads the ids through getters, so a kernel switch takes effect on the next run. The kernel
- * has no interrupt route, so `interrupt` resolves without doing anything.
+ * Reads the ids through getters, so a kernel switch takes effect on the next run.
  */
 export function createKernelExecutor(opts: KernelExecutorOptions): NotebookExecutor {
   return {
@@ -75,7 +72,6 @@ export function createKernelExecutor(opts: KernelExecutorOptions): NotebookExecu
         flow_id: opts.getFlowId(),
       });
     },
-    interrupt: () => Promise.resolve(),
     async reset() {
       const kernelId = opts.getKernelId();
       if (kernelId) await KernelApi.clearNamespace(kernelId, opts.getFlowId());
@@ -138,10 +134,7 @@ export async function runNotebookCell(args: RunNotebookCellArgs): Promise<boolea
   try {
     const result = await executor.run(cellId, code);
     // Kernel images before 0.6.0 stamp neither identity field.
-    const verdict = settleExecution(ticket, {
-      namespace_generation: result.namespace_generation ?? null,
-      revision: result.revision ?? null,
-    });
+    const verdict = settleExecution(ticket, settledMeta(result));
     if (verdict === "discard") return result.success;
     args.onOutput(cellId, outputOf(result, args.nextExecutionCount()));
     return result.success;

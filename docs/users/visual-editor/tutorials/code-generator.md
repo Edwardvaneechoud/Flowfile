@@ -165,7 +165,7 @@ if __name__ == "__main__":
 
 ### Example 5: A Gated If/Else Branch
 
-A [Gate](../nodes/combine.md#gate) node exports as a real `if` block. Flow parameters become keyword arguments of the generated function, so the exported script takes the same switch the flow does. With the **else output** enabled the two branches are exactly complementary, so the generator emits a genuine `if`/`else` pair — and the Union that re-converges them collapses to a plain conditional assignment: whichever side ran is the result.
+In the Polars export a [Gate](../nodes/combine.md#gate) node becomes a real `if` block. Flow parameters become keyword arguments of the generated function, so the exported script takes the same switch the flow does. With the **else output** enabled the two branches are exactly complementary, so the generator emits a genuine `if`/`else` pair — and the Union that re-converges them collapses to a plain conditional assignment: whichever side ran is the result.
 
 **Flowfile Pipeline:**
 

@@ -194,7 +194,7 @@ def _cell_pairs(cells: Any) -> list[tuple[str, str]]:
     if all(isinstance(cell, str) for cell in cells):
         return [(uuid4().hex, cell) for cell in cells]
     if not all(isinstance(cell, tuple) for cell in cells):
-        raise NativeNodeError("code= is a string and cells= a list of strings or of (id, code) tuples, not a mix")
+        raise NativeNodeError("cells= is a list of strings or of (id, code) tuples, not a mix")
     bad = [cell for cell in cells if len(cell) != 2 or not all(isinstance(part, str) for part in cell)]
     if bad:
         raise NativeNodeError(f"cells= tuples are (id, code) pairs of strings, got {bad[0]!r}")

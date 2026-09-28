@@ -2,13 +2,13 @@
 
 Entered from the bootstrap (dev / pip) or the ``--notebook-session`` verb (frozen), both of which have
 already moved the protocol off fd 1 and handed over the protocol streams. The main thread runs the
-protocol loop; every message but ``interrupt`` and ``shutdown`` runs in order on one cell thread, so an
-``interrupt`` is never queued behind the cell it must stop. ``interrupt`` raises ``KeyboardInterrupt`` in
-the cell thread with ``PyThreadState_SetAsyncExc``, which stops Python bytecode but not a blocked call; core
-escalates to kill-and-restart after a grace period. Writes from both threads go through one lock, and
-``sys.stdout`` / ``sys.stderr`` become ``stream`` messages. Cells run inside ``flowfile_frame`` notebook mode
-(:mod:`flowfile_frame.notebook_cells`). No signal handler is installed; stdin EOF is ``os._exit(0)``, so a
-cell thread stuck in native code cannot keep the process alive.
+protocol loop; every message but ``interrupt`` and ``shutdown`` runs in order on one cell thread.
+``interrupt`` (not sent by core today) raises ``KeyboardInterrupt`` in the cell thread via
+``PyThreadState_SetAsyncExc``; a reset of a busy session is a kill-and-restart in the registry, never an
+interrupt. Writes from both threads go through one lock, and ``sys.stdout`` / ``sys.stderr`` become
+``stream`` messages. Cells run inside ``flowfile_frame`` notebook mode (:mod:`flowfile_frame.notebook_cells`).
+No signal handler is installed; stdin EOF is ``os._exit(0)``, so a cell thread stuck in native code cannot
+keep the process alive.
 """
 
 from __future__ import annotations
@@ -209,20 +209,11 @@ class Session:
         )
 
     def on_clean_run(self, job: dict[str, Any]) -> None:
+        from flowfile_core.notebook.bridge import CleanRunResult, result_from_payload
         from flowfile_frame import notebook
         from flowfile_frame.notebook_cells import clean_run, seed_session
 
         self._namespace()
-        reply: dict[str, Any] = {
-            "type": "graph",
-            "ticket": job.get("ticket"),
-            "flowfile_data": {},
-            "node_ids_by_cell": {},
-            "names": {},
-            "refusals": [],
-            "warnings": [],
-            "error": None,
-        }
         previous = notebook.current()
         snapshot = job.get("snapshot") or None
         try:
@@ -236,23 +227,16 @@ class Session:
                 )
             cells = [tuple(cell) for cell in job.get("cells") or []]
             provenance = {k: [tuple(e) for e in v] for k, v in (job.get("provenance") or {}).items()}
-            result = clean_run(cells, int(job.get("ceiling") or 0), provenance)
-            reply["refusals"] = list(result.get("refusals") or [])
-            if result.get("ok"):
-                reply["flowfile_data"] = result["flowfile_data"]
-                reply["node_ids_by_cell"] = result["cells"]
-                reply["names"] = {str(k): v for k, v in result["names"].items()}
-            else:
-                reply["error"] = f"Cell {result.get('cell_id')} failed:\n{result.get('error')}"
+            outcome = result_from_payload(clean_run(cells, int(job.get("ceiling") or 0), provenance))
         except BaseException as exc:
-            reply["error"] = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            outcome = CleanRunResult(error="".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
         finally:
             if snapshot and notebook.current() is not previous:
                 notebook.exit()
                 if previous is not None:
                     notebook._activate(previous)
         self._flush_streams()
-        self.channel.send(reply)
+        self.channel.send({"type": "graph", "ticket": job.get("ticket"), **outcome.model_dump(mode="json")})
 
     def on_schemas(self, job: dict[str, Any]) -> None:
         from flowfile_frame.flow_frame import FlowFrame
@@ -338,11 +322,7 @@ def main(proto_out: IO[bytes] | int, proto_in: IO[bytes] | int | None = None) ->
             traceback.print_exc(file=sys.__stderr__)
             message = None
         if message is None or message.get("type") == "shutdown":
-            for stream in (sys.stdout, sys.stderr):
-                try:
-                    stream.flush()
-                except Exception:
-                    pass
+            session._flush_streams()
             os._exit(0)
         if message["type"] == "interrupt":
             session.interrupt()

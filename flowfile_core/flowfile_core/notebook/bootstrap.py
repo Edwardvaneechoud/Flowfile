@@ -4,8 +4,8 @@ Dev and pip installs run ``[sys.executable, "-c", BOOTSTRAP]``; a frozen build r
 ``[sys.executable, "--notebook-session"]``, the verb checked at the very top of ``flowfile_core/main.py``.
 Both move the protocol off fd 1 before importing anything from flowfile, because ``flowfile_core``'s
 logger binds a ``StreamHandler`` to ``sys.__stdout__`` at import: the protocol keeps a dup of the
-original stdout (and stdin), fd 1 becomes stderr (a per-session log file) and fd 0 ``/dev/null``, so a
-cell's ``input()`` can never read protocol bytes. ``-m`` is not used because it imports
+original stdout (and stdin), fd 1 becomes stderr (the flow's ``notebook_session_<flow_id>.log``) and fd 0
+``/dev/null``, so a cell's ``input()`` can never read protocol bytes. ``-m`` is not used because it imports
 ``flowfile_core/__init__.py`` before any code of ours runs, and the empty ``sys.path`` entry ``-c`` adds is
 dropped so a file in core's working directory cannot shadow a module.
 

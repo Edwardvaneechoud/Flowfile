@@ -82,12 +82,12 @@ def test_cleanup_expires_notebook_session_logs(logs_dir):
     assert [p.name for p in logs_dir.iterdir()] == [fresh.name]
 
 
-def test_notebook_session_log_prefix_matches_the_registry():
-    """The prefix is duplicated from core's session registry (read as text: importing core opens its DB)."""
-    from shared.run_logs import NOTEBOOK_SESSION_LOG_PREFIX
-
+def test_notebook_session_log_prefix_is_shared_with_the_registry():
+    """Core's session registry names its log files with this prefix (read as text: importing core opens its DB)."""
     registry = Path(__file__).resolve().parents[2] / "flowfile_core" / "flowfile_core" / "notebook" / "registry.py"
-    assert f'f"{NOTEBOOK_SESSION_LOG_PREFIX}{{flow_id}}.log"' in registry.read_text(encoding="utf-8")
+    text = registry.read_text(encoding="utf-8")
+    assert "from shared.run_logs import NOTEBOOK_SESSION_LOG_PREFIX" in text
+    assert 'f"{NOTEBOOK_SESSION_LOG_PREFIX}{flow_id}.log"' in text
 
 
 def test_cleanup_ignores_unrelated_files(logs_dir):

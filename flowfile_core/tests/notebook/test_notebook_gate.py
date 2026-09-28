@@ -6,33 +6,20 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
-from flowfile_core.auth.jwt import get_current_active_user, get_current_user
-from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.notebook.gate import notebook_sessions_allowed
 
 ADMIN = SimpleNamespace(id=1, is_admin=True)
 MEMBER = SimpleNamespace(id=2, is_admin=False)
 
 
-def _client(is_admin: bool):
-    user = PydanticUser(username="nb_user", id=1 if is_admin else 2, disabled=False, is_admin=is_admin)
-    main.app.dependency_overrides[get_current_active_user] = lambda: user
-    main.app.dependency_overrides[get_current_user] = lambda: user
-    return TestClient(main.app)
+@pytest.fixture
+def admin_client(client_as):
+    return client_as(1)
 
 
 @pytest.fixture
-def admin_client():
-    yield _client(is_admin=True)
-    main.app.dependency_overrides.pop(get_current_active_user, None)
-    main.app.dependency_overrides.pop(get_current_user, None)
-
-
-@pytest.fixture
-def member_client():
-    yield _client(is_admin=False)
-    main.app.dependency_overrides.pop(get_current_active_user, None)
-    main.app.dependency_overrides.pop(get_current_user, None)
+def member_client(client_as):
+    return client_as(2)
 
 
 def test_status_route_reports_sessions_on_in_electron(admin_client, monkeypatch):

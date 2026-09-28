@@ -14,7 +14,7 @@ INTERNAL_TOKEN_HEADER = "X-Flowfile-Internal"
 
 
 def _header_matches(supplied: str) -> bool:
-    # No token found means every request is rejected.
+    """True only when a token is configured and the supplied header matches it."""
     token = resolve_internal_token()
     return bool(token) and secrets.compare_digest(supplied, token)
 

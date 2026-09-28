@@ -200,9 +200,10 @@ class CustomNode(NativeNode):
     A local node runs its ``process()`` when it is built. Kernel nodes, nodes whose schema needs
     data, installed nodes the worker would run, and output nodes (``node_type="output"``: a build
     would write once more than the run) are deferred instead; ``deferred`` overrides that, as on
-    ``fl.Node``. ``schemas`` (``{output: {column: dtype}}``) shapes a hookless deferred node's
-    placeholder. A class that is not installed opens on the canvas in this process only; see
-    ``fl.custom_nodes.install``.
+    ``fl.Node``. In a canvas notebook session the node types :func:`notebook_defers` names are
+    always deferred, whatever ``deferred`` says. ``schemas`` (``{output: {column: dtype}}``)
+    shapes a hookless deferred node's placeholder. A class that is not installed opens on the
+    canvas in this process only; see ``fl.custom_nodes.install``.
     """
 
     node_class: type[CustomNodeBase]

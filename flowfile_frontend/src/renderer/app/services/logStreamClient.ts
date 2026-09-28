@@ -1,5 +1,4 @@
-// Reads core's flow-log SSE stream (GET logs/{flow_id}) with fetch, so the JWT
-// travels in the Authorization header; native EventSource could only put it in the URL.
+/** Core's flow-log SSE stream (GET logs/{flow_id}) read with fetch, so the JWT rides in the Authorization header, not the URL. */
 
 import { flowfileCorebaseURL } from "../../config/constants";
 

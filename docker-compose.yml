@@ -46,6 +46,10 @@ services:
       # Anonymous usage telemetry — hard-off by default in multi-user deployments. See .env.example.
       - FLOWFILE_TELEMETRY=${FLOWFILE_TELEMETRY:-0}
       - FLOWFILE_TELEMETRY_ENDPOINT=${FLOWFILE_TELEMETRY_ENDPOINT:-}
+      # Canvas notebook sessions (off in docker unless set to admin). See .env.example.
+      - FLOWFILE_NOTEBOOK_SESSIONS_MULTIUSER=${FLOWFILE_NOTEBOOK_SESSIONS_MULTIUSER:-off}
+      - FLOWFILE_NOTEBOOK_IDLE_TTL=${FLOWFILE_NOTEBOOK_IDLE_TTL:-900}
+      - FLOWFILE_NOTEBOOK_MAX_SESSIONS=${FLOWFILE_NOTEBOOK_MAX_SESSIONS:-3}
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:

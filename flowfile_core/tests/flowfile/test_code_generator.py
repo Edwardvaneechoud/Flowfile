@@ -7813,7 +7813,7 @@ def test_fusion_node_reference_pins_variable():
 
 
 def test_catalog_reader_id_only_is_unsupported():
-    """An ID-only catalog reader cannot map to ff.read_catalog_table (needs a name)."""
+    """An ID-only catalog reader cannot map to fl.read_catalog_table (needs a name)."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 
     flow = create_basic_flow()

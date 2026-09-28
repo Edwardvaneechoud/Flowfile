@@ -27,7 +27,7 @@ def merge_directories(directories: list[str], target_dir: str, cleanup_after_mer
                 shutil.rmtree(directory)
 
 
-# `--notebook-session` runs `import flowfile` in the core binary; frame modules load lazily, so collect them.
+# `--notebook-session` imports flowfile and execs cell code that may import any frame module, so collect them all.
 NOTEBOOK_HIDDEN_IMPORTS = ["flowfile", "flowfile_core.notebook.session_main"]
 NOTEBOOK_COLLECTED_PACKAGES = ["flowfile_frame"]
 
@@ -35,8 +35,7 @@ NOTEBOOK_COLLECTED_PACKAGES = ["flowfile_frame"]
 def create_spec_file(directory, script_name, output_name, hidden_imports, collected_packages=()):
     """Create an optimized spec file for faster startup.
 
-    ``collected_packages`` are expanded with ``collect_submodules`` at spec time and added to the
-    hiddenimports; a failure there fails the build rather than shipping a partial package.
+    ``collected_packages`` are expanded with ``collect_submodules`` at spec time and added to the hiddenimports.
     """
     spec_content = f'''
 import sys

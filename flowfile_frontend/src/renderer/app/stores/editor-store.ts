@@ -332,10 +332,7 @@ export const useEditorStore = defineStore("editor", {
       this.isAiOpen = !this.isAiOpen;
     },
 
-    // ========== Bulk panel control ==========
-    // Closes every floating overlay (right-side and bottom). The left palette
-    // (`dataActions`) is owned by the canvas component and stays visible.
-    /** `keepCodePane` leaves the code split pane open: canvas gestures and flow switches keep it, closing the last flow does not. */
+    /** Close the floating overlays (the canvas owns the left palette); `keepCodePane` leaves the code split pane open. */
     hideAllPanels({ keepCodePane = false }: { keepCodePane?: boolean } = {}) {
       this.showFlowResult = false;
       if (!keepCodePane) this.showCodeGenerator = false;

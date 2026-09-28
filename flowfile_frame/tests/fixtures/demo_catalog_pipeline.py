@@ -1,6 +1,8 @@
 """Flowfile showcase: read the catalog, publish reusable flows, gate the analysis, write back to the catalog.
 
-Everything below is one graph. It runs twice (once per gate mode) and then opens in the Flowfile designer.
+``main()`` publishes the 'Clean orders' child flow, builds 'Sales analytics' on it, runs it once per gate
+mode and opens it in the Flowfile designer. Call ``main()`` to run it; there is no ``__main__`` guard because
+the notebook tests exec this file as a cell.
 """
 
 import time
@@ -191,7 +193,3 @@ def main() -> None:
     banner("Done")
     print(f"Flowfile app > Catalog > {CATALOG} > {SCHEMA}: flows 'Clean orders' + 'Sales analytics', tables sales_*")
     fl.open_graph_in_editor(flow)
-
-#
-# if __name__ == "__main__":
-#     main()

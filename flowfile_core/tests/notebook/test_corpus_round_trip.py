@@ -13,11 +13,8 @@ import json
 import re
 
 import pytest
-from fastapi.testclient import TestClient
 
-from flowfile_core import flow_file_handler, main
-from flowfile_core.auth.jwt import get_current_active_user, get_current_user
-from flowfile_core.auth.models import User as PydanticUser
+from flowfile_core import flow_file_handler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.notebook import bridge
 from flowfile_core.notebook.push import live_cells, seed_snapshot
@@ -119,16 +116,8 @@ def _downstream(graph, node_id) -> set[int]:
 
 
 @pytest.fixture
-def client():
-    user = PydanticUser(username="nb_round_trip", id=OWNER_ID, disabled=False, is_admin=True)
-    main.app.dependency_overrides[get_current_active_user] = lambda: user
-    main.app.dependency_overrides[get_current_user] = lambda: user
-    before_runner = bridge._runner
-    bridge.set_clean_runner(bridge.InProcessCleanRunner())
-    yield TestClient(main.app)
-    bridge.set_clean_runner(before_runner)
-    main.app.dependency_overrides.pop(get_current_active_user, None)
-    main.app.dependency_overrides.pop(get_current_user, None)
+def client(runner, client_as):
+    return client_as(OWNER_ID)
 
 
 def test_one_cell_edit_touches_only_that_cells_nodes(corpus_round_trips, client, tmp_path):

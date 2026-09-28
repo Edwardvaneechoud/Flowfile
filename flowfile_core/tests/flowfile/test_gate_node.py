@@ -1304,9 +1304,10 @@ class TestAllGatedOffUnionExport:
     """Pins the deliberate engine/export divergence when every union input closes.
 
     Engine: the union and its downstream are deliberately skipped (green
-    skipped rows, no result). Export: the guarded append list stays empty, the
-    generator's fallback appends an empty schema-typed frame, and downstream
-    runs to a zero-row result. Accepted behavior — documented next to the
+    skipped rows, no result). Export: in the Polars export the guarded append
+    list stays empty and the generator's fallback appends an empty schema-typed
+    frame; the FlowFrame export's closed ``fl.Gate`` nodes leave the union
+    empty; both run downstream to a zero-row result. Accepted behavior — documented next to the
     ``if not df_6_frames`` explanation in
     docs/users/visual-editor/tutorials/code-generator.md. Built with two
     INDEPENDENT gates (build_diamond-style, not one gate's then/else pair) so
@@ -1993,8 +1994,9 @@ class TestNestedParameterGates:
 
     Engine: the doubly-gated branch runs only when BOTH gates are open, and the
     inner gate itself only executes (decides) when the outer gate lets data
-    reach it. Export: the inner node's guard renders the two-atom conjunction —
-    never flat-merged into an else, which would invert the outer condition.
+    reach it. Export: the Polars export's inner guard renders the two-atom
+    conjunction — never flat-merged into an else, which would invert the outer
+    condition; the FlowFrame export places both ``fl.Gate`` nodes.
     """
 
     _COMBOS = [("prod", "x"), ("prod", "y"), ("qa", "x"), ("qa", "y")]

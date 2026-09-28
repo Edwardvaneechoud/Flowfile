@@ -114,7 +114,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
-from flowfile_core.notebook.push import NotebookPushRequest, plan_push
+from flowfile_core.notebook.push import NotebookPushRequest, node_id_ceiling, plan_push
 from flowfile_core.notebook.render import code_fingerprint
 from flowfile_core.routes._connection_sharing import (
     authorize_connection_mutation,
@@ -508,6 +508,14 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
         )
 
 
+async def _start_run(flow, flow_id: int, user_id, background_tasks: BackgroundTasks, node_ids=None) -> None:
+    """Queue a tracked run under the flow's run lock; 422 when it is already running."""
+    async with get_flow_run_lock(flow_id):
+        if flow.flow_settings.is_running:
+            raise HTTPException(422, "Flow is already running")
+        background_tasks.add_task(_run_and_track, flow, user_id, node_ids)
+
+
 @router.post("/flow/run/", tags=["editor"])
 async def run_flow(
     flow_id: int, background_tasks: BackgroundTasks, current_user=Depends(get_current_active_user)
@@ -531,12 +539,8 @@ async def run_flow(
             status_code=404,
             detail=f"Flow {flow_id} is no longer in memory. Reload the flow and try again.",
         )
-    lock = get_flow_run_lock(flow_id)
     user_id = current_user.id if current_user else None
-    async with lock:
-        if flow.flow_settings.is_running:
-            raise HTTPException(422, "Flow is already running")
-        background_tasks.add_task(_run_and_track, flow, user_id)
+    await _start_run(flow, flow_id, user_id, background_tasks)
     return JSONResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_200_OK)
 
 
@@ -1028,15 +1032,20 @@ def _run_operations(flow, flow_id: int, operations: list[schemas.EditorOperation
         raise
 
 
+def _batch_settings(operation: schemas.EditorOperation, flow_id: int) -> dict:
+    """The operation's settings with ``flow_id`` defaulted to the batch's; 422 when it names another flow."""
+    settings = dict(operation.settings)
+    if int(settings.setdefault("flow_id", flow_id)) != flow_id:
+        raise HTTPException(422, "settings.flow_id does not match the batch flow_id")
+    return settings
+
+
 def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_user) -> None:
     match operation.op:
         case "add_node":
             add_node(flow_id, operation.node_id, operation.node_type, operation.pos_x, operation.pos_y)
         case "update_settings":
-            settings = dict(operation.settings)
-            if int(settings.setdefault("flow_id", flow_id)) != flow_id:
-                raise HTTPException(422, "settings.flow_id does not match the batch flow_id")
-            add_generic_settings(settings, operation.node_type, current_user=current_user)
+            add_generic_settings(_batch_settings(operation, flow_id), operation.node_type, current_user=current_user)
         case "delete_node":
             delete_node(flow_id, operation.node_id)
         case "connect":
@@ -1056,9 +1065,7 @@ def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_u
         case "update_user_defined_settings":
             from flowfile_core.routes.user_defined_components import update_user_defined_node
 
-            settings = dict(operation.settings)
-            if int(settings.setdefault("flow_id", flow_id)) != flow_id:
-                raise HTTPException(422, "settings.flow_id does not match the batch flow_id")
+            settings = _batch_settings(operation, flow_id)
             update_user_defined_node(settings, operation.node_type, current_user=current_user)
         case "set_flow_parameters":
             get_flow_or_404(flow_id).flow_settings.parameters = list(operation.parameters)
@@ -1089,7 +1096,7 @@ def push_notebook(request: NotebookPushRequest, current_user=Depends(get_current
         history = txn.history
     else:
         history = flow.get_history_state()
-    max_node_id = max([request.client_max_node_id, *(node.node_id for node in flow.nodes)], default=0)
+    max_node_id = node_id_ceiling(flow, request.client_max_node_id)
     return NotebookPushResponse(
         history=history,
         code_fingerprint=code_fingerprint(flow),
@@ -1104,19 +1111,6 @@ class RunLineageRequest(BaseModel):
     node_id: int
 
 
-def _lineage(flow, node_id: int) -> set[int]:
-    """``node_id`` and every node it reads from."""
-    seen: set[int] = set()
-    stack = [flow.get_node(node_id)]
-    while stack:
-        node = stack.pop()
-        if node is None or node.node_id in seen:
-            continue
-        seen.add(node.node_id)
-        stack.extend(node.all_inputs)
-    return seen
-
-
 @router.post("/editor/notebook/run_lineage/", tags=["editor"])
 async def run_notebook_lineage(
     request: RunLineageRequest, background_tasks: BackgroundTasks, current_user=Depends(get_current_active_user)
@@ -1127,11 +1121,8 @@ async def run_notebook_lineage(
         raise HTTPException(404, "Flow not found")
     if flow.get_node(request.node_id) is None:
         raise HTTPException(404, f"Node {request.node_id} not found")
-    node_ids = _lineage(flow, request.node_id)
-    async with get_flow_run_lock(request.flow_id):
-        if flow.flow_settings.is_running:
-            raise HTTPException(422, "Flow is already running")
-        background_tasks.add_task(_run_and_track, flow, current_user.id, node_ids)
+    node_ids = {request.node_id, *flow._get_upstream_node_ids(request.node_id)}
+    await _start_run(flow, request.flow_id, current_user.id, background_tasks, node_ids)
     return JSONResponse(content={"message": "Data started", "flow_id": request.flow_id, "node_ids": sorted(node_ids)})
 
 

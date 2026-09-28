@@ -47,12 +47,12 @@ def create_cloud_storage_connection_if_not_exists(connection: FullCloudStorageCo
 
 def get_all_available_cloud_storage_connections() -> list[FullCloudStorageConnectionInterface]:
     with get_db_context() as db:
-        all_connections = get_all_cloud_connections_interface(db, get_current_user_id())
+        all_connections = get_all_cloud_connections_interface(db, current_user_id())
     return all_connections
 
 
 def del_cloud_storage_connection(connection_name: str) -> None:
     refuse("fl.del_cloud_storage_connection")
     with get_db_context() as db:
-        user_id = get_current_user_id()
+        user_id = current_user_id()
         delete_cloud_connection(db, connection_name, user_id)

@@ -1042,9 +1042,8 @@ class TestRunFlowProjectExport:
         ast.parse(pipeline)
 
     def test_subflow_module_renders_else_output_split(self, tmp_path):
-        """A subflow with an else_output gate exports as a real if/else inside its
-        module — fused branch blocks and a direct union assignment, no guarded
-        list — and the executed module routes exactly one side per env value."""
+        """A subflow with an else_output gate exports as one ``fl.Gate`` read through
+        ``.then``/``.otherwise``, and the executed module routes exactly one side per env value."""
         sub = _build_split_subflow(tmp_path)
         flow = create_basic_flow(flow_id=53, name="parent_split")
         add_sample_input(flow, node_id=1)

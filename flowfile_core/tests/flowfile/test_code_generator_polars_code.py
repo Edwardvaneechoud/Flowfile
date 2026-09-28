@@ -1,4 +1,4 @@
-"""Polars-code node export: runtime-parity return detection and a token-level ``pl`` -> ``ff`` rename."""
+"""Polars-code node export: runtime-parity return detection and a token-level ``pl`` -> ``fl`` rename."""
 
 import polars as pl
 import pytest
@@ -11,7 +11,8 @@ from flowfile_core.flowfile.code_generator.code_generator import (
     export_flow_to_polars,
 )
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas import input_schema, transform_schema
+from tests.flowfile.test_project_exporter import create_basic_flow
 from tests.flowfile_core_test_utils import exec_script
 
 _EXPORTS = [
@@ -20,16 +21,7 @@ _EXPORTS = [
 ]
 
 
-@pytest.fixture(autouse=True)
-def _keep_single_file_env(monkeypatch):
-    """Exec'ing a FlowFrame export imports ``flowfile``, which rewrites these for the process."""
-    import os
-
-    for key in ("FLOWFILE_SINGLE_FILE_MODE", "FLOWFILE_WORKER_PORT"):
-        if key in os.environ:
-            monkeypatch.setenv(key, os.environ[key])
-        else:
-            monkeypatch.delenv(key, raising=False)
+pytestmark = pytest.mark.usefixtures("keep_single_file_env")
 
 
 def _run_export(code: str) -> pl.DataFrame:
@@ -37,10 +29,7 @@ def _run_export(code: str) -> pl.DataFrame:
 
 
 def _polars_code_flow(polars_code: str) -> FlowGraph:
-    settings = schemas.FlowSettings(
-        flow_id=1, execution_mode="Performance", execution_location="local", path="/tmp/test_flow"
-    )
-    flow = FlowGraph(flow_settings=settings, name="polars_code_export")
+    flow = create_basic_flow(name="polars_code_export")
     flow.add_manual_input(
         input_schema.NodeManualInput(
             flow_id=1,

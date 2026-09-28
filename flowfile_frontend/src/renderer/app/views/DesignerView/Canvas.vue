@@ -463,7 +463,6 @@ const handleMainDblClick = async (event: MouseEvent) => {
   }
   window.getSelection()?.removeAllRanges();
   if (!(await releaseOpenSettings())) return;
-  // Hide every floating overlay (right-side + bottom). Left palette and code pane stay.
   editorStore.hideAllPanels({ keepCodePane: true });
   nodeStore.nodeId = -1;
 };

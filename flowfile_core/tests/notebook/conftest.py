@@ -1,10 +1,18 @@
-"""Shared fixtures for the canvas-notebook tests: the corpus and its placeholder manifest."""
+"""Shared fixtures for the canvas-notebook tests: the corpus and its placeholder manifest, the in-process
+clean runner and a per-user ``TestClient`` factory."""
 
 from contextlib import contextmanager
 
 import pytest
+from fastapi.testclient import TestClient
 
+from flowfile_core import main
+from flowfile_core.auth.jwt import get_current_active_user, get_current_user
+from flowfile_core.auth.models import User as PydanticUser
+from flowfile_core.notebook import bridge
 from tests.notebook.corpus import build_corpus, demo_graph, load_expected_placeholders
+
+NOTEBOOK_OWNER_ID = 1
 
 KERNEL_CALLS_DURING_CORPUS: list[str] = []
 
@@ -64,3 +72,24 @@ def notebook_corpus(tmp_path_factory):
 def expected_placeholders():
     """Flow name -> node ids allowed to render as placeholders; the ledger may only shrink."""
     return load_expected_placeholders()
+
+
+@pytest.fixture
+def runner():
+    before = bridge._runner
+    bridge.set_clean_runner(bridge.InProcessCleanRunner())
+    yield
+    bridge.set_clean_runner(before)
+
+
+@pytest.fixture
+def client_as():
+    def _as(user_id: int) -> TestClient:
+        user = PydanticUser(username=f"nb_{user_id}", id=user_id, disabled=False, is_admin=user_id == NOTEBOOK_OWNER_ID)
+        main.app.dependency_overrides[get_current_active_user] = lambda: user
+        main.app.dependency_overrides[get_current_user] = lambda: user
+        return TestClient(main.app)
+
+    yield _as
+    main.app.dependency_overrides.pop(get_current_active_user, None)
+    main.app.dependency_overrides.pop(get_current_user, None)
