@@ -1,10 +1,13 @@
 """Tests for kernel_runtime.main (FastAPI endpoints)."""
 
+import json
 import os
 import signal
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
@@ -1761,6 +1764,71 @@ class TestDisplayOutputStore:
 
         resp = client.get("/display_outputs", params={"flow_id": 4, "node_id": 50})
         assert resp.json() == []
+
+
+@pytest.fixture()
+def raw_logs_sink():
+    """A real loopback endpoint standing in for core's /raw_logs; records each post and answers ``status``."""
+    received: list[dict] = []
+    state = SimpleNamespace(status=200)
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            received.append({"token": self.headers.get("X-Internal-Token"), "body": body})
+            self.send_response(state.status)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    state.url = f"http://127.0.0.1:{server.server_port}/raw_logs"
+    state.received = received
+    yield state
+    server.shutdown()
+    server.server_close()
+
+
+class TestLogCallback:
+    """flowfile_ctx.log() posts to core's /raw_logs, which only accepts internal-token-signed posts."""
+
+    def _log(self, client: TestClient, sink) -> dict:
+        resp = client.post(
+            "/execute",
+            json={
+                "node_id": 7,
+                "code": 'flowfile_ctx.log("fitting model", level="WARNING")',
+                "flow_id": 42,
+                "input_paths": {},
+                "output_dir": "",
+                "log_callback_url": sink.url,
+                "internal_token": "core-issued-token",
+            },
+        )
+        data = resp.json()
+        assert data["success"] is True, f"Execution failed: {data['error']}"
+        return data
+
+    def test_log_post_carries_the_internal_token(self, client: TestClient, raw_logs_sink):
+        data = self._log(client, raw_logs_sink)
+
+        assert raw_logs_sink.received == [
+            {
+                "token": "core-issued-token",
+                "body": {"flowfile_flow_id": 42, "node_id": 7, "log_message": "fitting model", "log_type": "WARNING"},
+            }
+        ]
+        assert "fitting model" not in data["stdout"]
+
+    def test_refused_log_post_falls_back_to_stdout(self, client: TestClient, raw_logs_sink):
+        raw_logs_sink.status = 401
+        data = self._log(client, raw_logs_sink)
+
+        assert len(raw_logs_sink.received) == 1
+        assert "[WARNING] fitting model" in data["stdout"]
 
 
 class TestArtifactLineage:

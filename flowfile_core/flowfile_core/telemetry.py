@@ -401,10 +401,10 @@ def install_headless() -> None:
 
     Publishes ``app_started`` once per process: a headless run has no lifespan,
     so a scheduled- or CLI-only install would otherwise never register a launch
-    at all. The guard is its own flag rather than the subscription, because the
-    in-process ``--run-flow`` path imports ``main`` — where :func:`install`
-    already subscribed — before it gets here. Nothing else calls this, so the
-    server's lifespan publish and a consent grant's cannot be duplicated.
+    at all. The guard is its own flag rather than the subscription, because a
+    process that imported ``main`` has already subscribed through :func:`install`.
+    Nothing else calls this, so the server's lifespan publish and a consent
+    grant's cannot be duplicated.
     Publishing once per headless process cannot inflate the funnel, which counts
     installs that ever launched, not launches.
     """

@@ -4,12 +4,19 @@ import os
 from datetime import datetime, timedelta
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from jose import jwt as jose_jwt
 from sqlalchemy.orm import Session
 
 from flowfile_core import main
-from flowfile_core.auth.jwt import ALGORITHM, create_refresh_token, get_jwt_secret
+from flowfile_core.auth.jwt import (
+    ALGORITHM,
+    create_access_token,
+    create_refresh_token,
+    get_current_user_from_query,
+    get_jwt_secret,
+)
 from flowfile_core.auth.password import get_password_hash, verify_password
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
@@ -501,6 +508,19 @@ class TestRefreshToken:
                 headers={"Authorization": f"Bearer {login_data['refresh_token']}"},
             )
             assert response.status_code == 401
+
+    def test_refresh_token_rejected_as_query_token(self, create_test_user, test_user_credentials):
+        """A refresh token in the ``access_token`` query parameter is refused, like a Bearer one."""
+        refresh_token = create_refresh_token(data={"sub": test_user_credentials["username"]})
+        with get_db_context() as db, pytest.raises(HTTPException) as exc_info:
+            get_current_user_from_query(access_token=refresh_token, db=db)
+        assert exc_info.value.status_code == 401
+
+    def test_access_token_accepted_as_query_token(self, create_test_user, test_user_credentials):
+        access_token = create_access_token(data={"sub": test_user_credentials["username"]})
+        with get_db_context() as db:
+            user = get_current_user_from_query(access_token=access_token, db=db)
+        assert user.username == test_user_credentials["username"]
 
     def test_refresh_fails_for_disabled_user(self, test_user_credentials):
         """Test that refresh fails if the user has been disabled since login."""

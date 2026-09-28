@@ -164,7 +164,7 @@ class TestCatalogWriter:
         runners did not, so manual/scheduled runs lost lineage.
 
         Exercises flowfile.__main__.run_flow (the non-frozen subprocess path);
-        flowfile_core.main._run_flow_cli is an identical mirror for frozen builds.
+        flowfile_core.run_flow_cli.run_flow_cli is an identical mirror for frozen builds.
         """
         from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 

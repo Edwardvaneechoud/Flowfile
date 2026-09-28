@@ -144,6 +144,19 @@ def verify_internal_token(token: str) -> bool:
     return secrets.compare_digest(token, get_internal_token())
 
 
+def require_internal_token(x_internal_token: str | None = Header(None, alias="X-Internal-Token")) -> None:
+    """Admit only the worker and kernels, which sign their core callbacks with the internal token.
+
+    Fails closed (401) when the header is missing or wrong, and when core has no token configured.
+    """
+    try:
+        valid = bool(x_internal_token) and verify_internal_token(x_internal_token)
+    except ValueError:
+        valid = False
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing internal token")
+
+
 def get_jwt_secret():
     if os.environ.get("FLOWFILE_MODE") == "electron":
         key = get_password("flowfile", "jwt_secret")
@@ -315,9 +328,11 @@ def decode_refresh_token(token: str) -> str:
 def get_current_user_from_query(
     access_token: str = Query(..., description="JWT access token"), db: Session = Depends(get_db)
 ):
-    """
-    Authenticate user using only the query parameter token.
-    Specialized for log streaming where header-based auth isn't possible.
+    """Authenticate from an ``access_token`` query parameter, for clients that cannot send headers.
+
+    Prefer header auth: a query string lands in access logs and proxy logs. Core's uvicorn
+    access log redacts ``access_token`` (``configs/access_log.py``), but anything in front
+    of core does not.
     """
     credentials_exception = HTTPException(
         status_code=401,
@@ -330,6 +345,9 @@ def get_current_user_from_query(
 
     try:
         payload = jwt.decode(access_token, get_jwt_secret(), algorithms=[ALGORITHM])
+        # Reject refresh tokens used as access tokens
+        if payload.get("type") == "refresh":
+            raise credentials_exception
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception

@@ -2,14 +2,14 @@
 import { ref, onUnmounted, nextTick, onMounted, watch } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
-import { flowfileCorebaseURL } from "../../../../config/constants";
 import authService from "../../../services/auth.service";
+import { streamFlowLogs } from "../../../services/logStreamClient";
 
 // Store & Refs
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const logs = ref<string>("");
-const eventSourceRef = ref<EventSource | null>(null);
+let streamController: AbortController | null = null;
 const autoScroll = ref(true);
 const connectionRetries = ref(0);
 const maxRetries = 5;
@@ -38,87 +38,85 @@ watch(
 watch(
   () => editorStore.isShowingLogViewer,
   (show) => {
-    if (show && !nodeStore.isRunning && !eventSourceRef.value) startStreamingLogs();
+    if (show && !nodeStore.isRunning && !streamController) startStreamingLogs();
   },
 );
 
 const startStreamingLogs = async () => {
-  if (eventSourceRef.value) eventSourceRef.value.close();
+  streamController?.abort();
+  const controller = new AbortController();
+  streamController = controller;
 
   logs.value = "";
   connectionRetries.value = 0;
   errorMessage.value = null;
   connectionStatus.value = "disconnected";
 
-  try {
-    const token = await authService.getToken();
-    if (!token) {
-      console.error("No auth token available for log streaming");
-      errorMessage.value = "Authentication failed. Please log in again.";
-      connectionStatus.value = "error";
-      return;
-    }
-
-    const url = new URL(`${flowfileCorebaseURL}logs/${nodeStore.flow_id}`, window.location.origin);
-    url.searchParams.append("access_token", token);
-
-    const eventSource = new EventSource(url.toString());
-    eventSourceRef.value = eventSource;
-
-    let hasReceivedMessage = false;
-
-    eventSource.onopen = () => {
-      connectionStatus.value = "connected";
-      console.log("Log connection established");
-    };
-
-    eventSource.onmessage = (event) => {
-      hasReceivedMessage = true;
-      try {
-        logs.value += JSON.parse(event.data) + "\n";
-        scrollToBottom();
-      } catch (error) {
-        console.error("Error parsing log data:", error);
-      }
-    };
-
-    eventSource.onerror = async (error) => {
-      console.error("EventSource error:", error);
-
-      if (!hasReceivedMessage && nodeStore.isRunning) {
-        if (connectionRetries.value < maxRetries) {
-          connectionRetries.value++;
-          errorMessage.value = `Connection failed. Retrying (${connectionRetries.value}/${maxRetries})...`;
-          connectionStatus.value = "error";
-          stopStreamingLogs();
-
-          if (!authService.hasValidToken()) {
-            await authService.getToken();
-          }
-
-          setTimeout(startStreamingLogs, 1000 * connectionRetries.value); // Exponential backoff
-        } else {
-          console.error("Max retries reached for log connection");
-          errorMessage.value =
-            "Failed to connect after multiple attempts. Try refreshing the page.";
-          connectionStatus.value = "error";
-          stopStreamingLogs();
-        }
-      } else {
-        console.log("Log connection closed.");
-        stopStreamingLogs();
-      }
-    };
-  } catch (error) {
-    console.error("Failed to start log streaming:", error);
-    errorMessage.value = `Error: ${error instanceof Error ? error.message : "Unknown error"}`;
+  const token = await authService.getToken();
+  if (streamController !== controller) return;
+  if (!token) {
+    console.error("No auth token available for log streaming");
+    errorMessage.value = "Authentication failed. Please log in again.";
     connectionStatus.value = "error";
+    streamController = null;
+    return;
+  }
+
+  let hasReceivedMessage = false;
+  let streamError: unknown = null;
+  try {
+    await streamFlowLogs({
+      flowId: nodeStore.flow_id,
+      token,
+      signal: controller.signal,
+      onOpen: () => {
+        connectionStatus.value = "connected";
+        console.log("Log connection established");
+      },
+      onData: (data) => {
+        hasReceivedMessage = true;
+        try {
+          logs.value += JSON.parse(data) + "\n";
+          scrollToBottom();
+        } catch (error) {
+          console.error("Error parsing log data:", error);
+        }
+      },
+    });
+  } catch (error) {
+    streamError = error;
+  }
+  // Stopped or superseded by a newer stream: its owner handles state.
+  if (streamController !== controller) return;
+  if (streamError) console.error("Log stream error:", streamError);
+
+  if (!hasReceivedMessage && nodeStore.isRunning) {
+    if (connectionRetries.value < maxRetries) {
+      connectionRetries.value++;
+      errorMessage.value = `Connection failed. Retrying (${connectionRetries.value}/${maxRetries})...`;
+      connectionStatus.value = "error";
+      stopStreamingLogs();
+
+      if (!authService.hasValidToken()) {
+        await authService.getToken();
+      }
+
+      setTimeout(startStreamingLogs, 1000 * connectionRetries.value); // Exponential backoff
+    } else {
+      console.error("Max retries reached for log connection");
+      errorMessage.value = "Failed to connect after multiple attempts. Try refreshing the page.";
+      connectionStatus.value = "error";
+      stopStreamingLogs();
+    }
+  } else {
+    console.log("Log connection closed.");
+    stopStreamingLogs();
   }
 };
 
 const stopStreamingLogs = () => {
-  eventSourceRef.value?.close();
-  eventSourceRef.value = null;
+  streamController?.abort();
+  streamController = null;
   if (connectionStatus.value === "connected") {
     connectionStatus.value = "disconnected";
   }
@@ -143,7 +141,7 @@ const setupTokenRefresh = () => {
   // Check token every 5 minutes
   tokenRefreshInterval = window.setInterval(
     async () => {
-      if (eventSourceRef.value && !authService.hasValidToken()) {
+      if (streamController && !authService.hasValidToken()) {
         console.log("Token expired, reconnecting log stream");
         stopStreamingLogs();
         await authService.getToken();
@@ -156,7 +154,7 @@ const setupTokenRefresh = () => {
 
 // Lifecycle Hooks
 onMounted(() => {
-  // Don't open an SSE just because the dock opened for a data preview; only
+  // Don't open a log stream just because the dock opened for a data preview; only
   // stream when a run is active or logs are explicitly shown.
   if (nodeStore.isRunning || editorStore.isShowingLogViewer) startStreamingLogs();
   setupTokenRefresh();

@@ -672,7 +672,7 @@ class TestInstall:
             glue._subscribe()
 
     def test_install_headless_publishes_even_when_install_already_subscribed(self, sent) -> None:
-        """``--run-flow`` imports ``main``, so ``install(app)`` subscribed long before this call."""
+        """A process that imported ``main`` already subscribed through ``install(app)``."""
         from flowfile_core import main  # noqa: F401  — importing it is what runs install(app)
 
         assert glue._subscribed is True, "importing main.py must leave the observer subscribed"

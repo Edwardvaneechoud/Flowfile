@@ -4,34 +4,18 @@ Core is the worker's only intended client; it signs every request with the
 shared internal token (``FLOWFILE_INTERNAL_TOKEN``).
 """
 
-import os
 import secrets
 
 from fastapi import HTTPException, Request, WebSocket
 
+from flowfile_worker.internal_token import resolve_internal_token
+
 INTERNAL_TOKEN_HEADER = "X-Flowfile-Internal"
-
-_token: str | None = None
-
-
-def _resolve_token() -> str | None:
-    """Resolve lazily per request: env var, else the secure store core persists
-    the token to, so a worker started before core minted it needs no restart.
-    Cached only on success; no token found means every request is rejected."""
-    global _token
-    if _token is None:
-        token = os.environ.get("FLOWFILE_INTERNAL_TOKEN")
-        if not token:
-            from flowfile_worker.secrets import get_password
-
-            token = get_password("flowfile", "internal_token")
-        if token:
-            _token = token
-    return _token
 
 
 def _header_matches(supplied: str) -> bool:
-    token = _resolve_token()
+    # No token found means every request is rejected.
+    token = resolve_internal_token()
     return bool(token) and secrets.compare_digest(supplied, token)
 
 
