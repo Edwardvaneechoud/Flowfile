@@ -18,7 +18,6 @@ from fastapi.testclient import TestClient
 from flowfile_core import flow_file_handler, main
 from flowfile_core.auth.jwt import get_current_active_user, get_current_user
 from flowfile_core.auth.models import User as PydanticUser
-from flowfile_core.configs import settings
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.notebook import bridge
 from flowfile_core.notebook.push import live_cells, seed_snapshot
@@ -124,12 +123,10 @@ def client():
     user = PydanticUser(username="nb_milestone", id=OWNER_ID, disabled=False, is_admin=True)
     main.app.dependency_overrides[get_current_active_user] = lambda: user
     main.app.dependency_overrides[get_current_user] = lambda: user
-    before_flag, before_runner = bool(settings.FEATURE_FLAG_CANVAS_NOTEBOOK), bridge._runner
-    settings.FEATURE_FLAG_CANVAS_NOTEBOOK.set(True)
+    before_runner = bridge._runner
     bridge.set_clean_runner(bridge.InProcessCleanRunner())
     yield TestClient(main.app)
     bridge.set_clean_runner(before_runner)
-    settings.FEATURE_FLAG_CANVAS_NOTEBOOK.set(before_flag)
     main.app.dependency_overrides.pop(get_current_active_user, None)
     main.app.dependency_overrides.pop(get_current_user, None)
 

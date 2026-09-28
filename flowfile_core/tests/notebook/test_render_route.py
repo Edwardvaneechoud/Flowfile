@@ -1,4 +1,4 @@
-"""``GET /notebook/render?flow_id=``: flag gate, the owner's rendering, and 404 for flows the caller has not open."""
+"""``GET /notebook/render?flow_id=``: the owner's rendering, and 404 for flows the caller has not open."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,18 +7,10 @@ import flowfile_frame as ff
 from flowfile_core import flow_file_handler, main
 from flowfile_core.auth.jwt import get_current_active_user, get_current_user
 from flowfile_core.auth.models import User as PydanticUser
-from flowfile_core.configs import settings
 from flowfile_core.notebook.render import render
 
 OWNER_ID = 1
 OTHER_ID = 2
-
-
-@pytest.fixture
-def flag():
-    before = bool(settings.FEATURE_FLAG_CANVAS_NOTEBOOK)
-    yield settings.FEATURE_FLAG_CANVAS_NOTEBOOK
-    settings.FEATURE_FLAG_CANVAS_NOTEBOOK.set(before)
 
 
 @pytest.fixture
@@ -47,14 +39,7 @@ def client_as():
     main.app.dependency_overrides.pop(get_current_user, None)
 
 
-def test_render_route_503_when_flag_off(flag, open_flow, client_as):
-    flag.set(False)
-    response = client_as(OWNER_ID).get("/notebook/render", params={"flow_id": open_flow.flow_id})
-    assert response.status_code == 503
-
-
-def test_render_route_returns_the_owner_rendering(flag, open_flow, client_as):
-    flag.set(True)
+def test_render_route_returns_the_owner_rendering(open_flow, client_as):
     response = client_as(OWNER_ID).get("/notebook/render", params={"flow_id": open_flow.flow_id})
     assert response.status_code == 200
     body = response.json()
@@ -68,18 +53,15 @@ def test_render_route_returns_the_owner_rendering(flag, open_flow, client_as):
         compile(cell["code"], cell["cell_id"], "exec")
 
 
-def test_render_route_404_for_another_users_flow(flag, open_flow, client_as):
-    flag.set(True)
+def test_render_route_404_for_another_users_flow(open_flow, client_as):
     response = client_as(OTHER_ID).get("/notebook/render", params={"flow_id": open_flow.flow_id})
     assert response.status_code == 404
 
 
-def test_render_route_404_for_a_flow_that_is_not_open(flag, client_as):
-    flag.set(True)
+def test_render_route_404_for_a_flow_that_is_not_open(client_as):
     response = client_as(OWNER_ID).get("/notebook/render", params={"flow_id": 987654321})
     assert response.status_code == 404
 
 
-def test_render_route_requires_auth(flag):
-    flag.set(True)
+def test_render_route_requires_auth():
     assert TestClient(main.app).get("/notebook/render", params={"flow_id": 1}).status_code == 401

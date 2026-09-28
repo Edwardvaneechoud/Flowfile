@@ -1,8 +1,8 @@
-"""The ``/notebook/*`` router: every route is gated by ``FEATURE_FLAG_CANVAS_NOTEBOOK`` (503 when off).
+"""The ``/notebook/*`` router: status, render and push preview for the canvas notebook.
 
-Mounted at ``/notebook``. A 503 from ``GET /notebook/status`` is how the frontend learns the flag is off;
-a 200 says it is on and whether this user may start a notebook session. Sessions themselves are driven
-through the kernel routes as the pseudo kernel ``flow-session:<flow_id>`` (``notebook/kernel_adapter.py``).
+Mounted at ``/notebook``. ``GET /notebook/status`` tells the frontend whether this user may start a notebook
+session. Sessions themselves are driven through the kernel routes as the pseudo kernel
+``flow-session:<flow_id>`` (``notebook/kernel_adapter.py``).
 """
 
 import os
@@ -13,27 +13,20 @@ from pydantic import BaseModel
 from flowfile_core import flow_file_handler
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.notebook import bridge as _bridge
-from flowfile_core.notebook.gate import (
-    is_canvas_notebook_enabled,
-    notebook_sessions_allowed,
-    require_canvas_notebook_enabled,
-)
+from flowfile_core.notebook.gate import notebook_sessions_allowed
 from flowfile_core.notebook.push import NotebookPlanResponse, NotebookPushRequest, plan_push, plan_response
 from flowfile_core.notebook.render import NotebookRendering, render
 
-router = APIRouter(dependencies=[Depends(require_canvas_notebook_enabled)])
+router = APIRouter()
 
 
 class NotebookStatus(BaseModel):
-    canvas_notebook: bool
     sessions: bool
 
 
 @router.get("/status", response_model=NotebookStatus)
 def notebook_status(current_user=Depends(get_current_active_user)) -> NotebookStatus:
-    return NotebookStatus(
-        canvas_notebook=is_canvas_notebook_enabled(), sessions=notebook_sessions_allowed(current_user)
-    )
+    return NotebookStatus(sessions=notebook_sessions_allowed(current_user))
 
 
 @router.get("/render", response_model=NotebookRendering)

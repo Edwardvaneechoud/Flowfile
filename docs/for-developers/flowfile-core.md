@@ -518,7 +518,7 @@ While `FlowGraph`, `FlowNode`, and `FlowDataEngine` power the core pipeline logi
 
 ## The canvas notebook package
 
-`flowfile_core/notebook/` turns an open `FlowGraph` into notebook cells and back. It is gated by `FEATURE_FLAG_CANVAS_NOTEBOOK` (`notebook/gate.py`), and each step is a separate module:
+`flowfile_core/notebook/` turns an open `FlowGraph` into notebook cells and back. Each step is a separate module:
 
 | Module | Role |
 |---|---|

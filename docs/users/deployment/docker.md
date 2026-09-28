@@ -140,13 +140,11 @@ volumes:
 | `FLOWFILE_KERNEL_IMAGE` | Override the base kernel image for Python-script nodes | Registry default (unset ⇒ the tag in `kernel/images.py`) |
 | `FLOWFILE_TELEMETRY` | Disables usage telemetry for the whole deployment when set to `0`/`false`/`no`/`off`. Other values have no effect; users still have to opt in. | `0` in the bundled compose |
 | `FLOWFILE_TELEMETRY_ENDPOINT` | Send telemetry to a different collector URL. Unset or empty means the default `https://events.flowfile.app/events`. Blanking it does not disable telemetry. | Empty in the bundled compose ⇒ the built-in collector |
-
-| `FEATURE_FLAG_CANVAS_NOTEBOOK` | Turns on the [canvas notebook](../visual-editor/notebook.md). Accepts `true`/`1`/`yes`/`on`. | Off |
 | `FLOWFILE_NOTEBOOK_SESSIONS_MULTIUSER` | `admin` lets administrator accounts run and push notebook cells. Any other value keeps notebook sessions off. | `off` |
 
 ### Canvas notebook sessions
 
-With `FEATURE_FLAG_CANVAS_NOTEBOOK` on, every user can open the [canvas notebook](../visual-editor/notebook.md) and read their flows as code. Running and pushing cells needs a notebook session, a Python process that the core container starts for that user and flow, and sessions are off in Docker mode by default: a session runs user code as the server, inside the core container, with its Docker socket, master key and JWT secret. `FLOWFILE_NOTEBOOK_SESSIONS_MULTIUSER=admin` turns sessions on for administrator accounts only, which gives each administrator host-level access; there is no setting that turns them on for other users. `FLOWFILE_MODE=package` follows the same policy. `FLOWFILE_NOTEBOOK_IDLE_TTL` (seconds, default `900`) and `FLOWFILE_NOTEBOOK_MAX_SESSIONS` (default `3`) bound how long and how many sessions run.
+Every user can open the [canvas notebook](../visual-editor/notebook.md) and read their flows as code. Running and pushing cells needs a notebook session, a Python process that the core container starts for that user and flow, and sessions are off in Docker mode by default: a session runs user code as the server, inside the core container, with its Docker socket, master key and JWT secret. `FLOWFILE_NOTEBOOK_SESSIONS_MULTIUSER=admin` turns sessions on for administrator accounts only, which gives each administrator host-level access; there is no setting that turns them on for other users. `FLOWFILE_MODE=package` follows the same policy. `FLOWFILE_NOTEBOOK_IDLE_TTL` (seconds, default `900`) and `FLOWFILE_NOTEBOOK_MAX_SESSIONS` (default `3`) bound how long and how many sessions run.
 
 ### Git project tracking
 

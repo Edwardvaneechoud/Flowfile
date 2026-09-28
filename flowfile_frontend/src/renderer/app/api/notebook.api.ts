@@ -84,7 +84,7 @@ export interface NotebookPushResult {
 }
 
 export class NotebookApi {
-  /** `{sessions}` when the canvas notebook is on, `null` when its router answers 503 (flag off). */
+  /** `{sessions}` for the current user, `null` when the status request fails. */
   static async flowStatus(): Promise<{ sessions: boolean } | null> {
     return (await axios.get("/notebook/status").catch(() => null))?.data ?? null;
   }

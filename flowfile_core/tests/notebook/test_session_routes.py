@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 from flowfile_core import flow_file_handler, main
 from flowfile_core.auth.jwt import get_current_active_user, get_current_user
 from flowfile_core.auth.models import User as PydanticUser
-from flowfile_core.configs import settings
 from flowfile_core.notebook import registry as session_registry
 from shared.notebook_display import TABLE_MIME
 from tests.notebook.conftest import no_kernel_manager
@@ -24,15 +23,7 @@ LOOPBACK = ("127.0.0.1", 50123)
 
 
 @pytest.fixture
-def flag():
-    before = bool(settings.FEATURE_FLAG_CANVAS_NOTEBOOK)
-    settings.FEATURE_FLAG_CANVAS_NOTEBOOK.set(True)
-    yield
-    settings.FEATURE_FLAG_CANVAS_NOTEBOOK.set(before)
-
-
-@pytest.fixture
-def open_flow(flag, monkeypatch):
+def open_flow(monkeypatch):
     monkeypatch.setenv("FLOWFILE_MODE", "electron")
     graph = small_flow()
     flow_file_handler._flows[graph.flow_id] = graph
@@ -80,11 +71,6 @@ def test_multi_user_mode_refuses_without_the_opt_in(open_flow, client_as, monkey
     owner = client_as(OWNER_ID)
     assert owner.post(f"{_kernel(open_flow)}/execute_cell", json={"node_id": 0, "code": "1"}).status_code == 403
     assert owner.get(_kernel(open_flow)).status_code == 403
-
-
-def test_the_flag_off_is_a_503(open_flow, client_as):
-    settings.FEATURE_FLAG_CANVAS_NOTEBOOK.set(False)
-    assert client_as(OWNER_ID).get(_kernel(open_flow)).status_code == 503
 
 
 def test_another_users_flow_is_404(open_flow, client_as):

@@ -6,9 +6,6 @@ description: Edit a flow as Python cells beside the canvas, run them, and push t
 
 The canvas notebook shows the open flow as Python code, one cell per node, in the notebook panel beside the canvas. It is the same notebook as a [catalog notebook](catalog/notebooks.md): the same cells, outputs, shortcuts, undo, drag and completions, running on the flow's own session instead of a kernel. This page covers what the cells contain, the three ways to run them (**Run**, **Run on canvas**, **Push**), what a push refuses, and how the notebook behaves in the desktop app, the Python package and a Docker deployment.
 
-!!! info "Feature flag"
-    The notebook is behind `FEATURE_FLAG_CANVAS_NOTEBOOK`. While it is off, the header has no **Notebook** button. Set `FEATURE_FLAG_CANVAS_NOTEBOOK=true` in the environment of the backend to turn it on.
-
 <!-- IMAGE-PLACEHOLDER-TO-CHANGE: a flow on the canvas with the notebook panel open on the right, one cell per node, one placeholder cell with its reason comment -->
 
 ## Opening it

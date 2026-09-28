@@ -285,7 +285,7 @@ interface NotebookState {
   activeTabId: string | null;
   loading: boolean;
   hydrated: boolean;
-  /** `GET /notebook/status`: null while the canvas notebook is off (or not yet asked). */
+  /** `GET /notebook/status`: null until asked, or when the request failed. */
   flowStatus: { sessions: boolean } | null;
   flowPanelOpen: boolean;
 }

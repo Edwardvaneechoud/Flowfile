@@ -2,8 +2,8 @@
 
 The notebook UI already talks to kernels through ``/kernels/{kernel_id}/...``; ``kernel/routes.py`` hands
 the pseudo ids here before any Docker lookup, so nothing on this path calls ``get_kernel_manager()``.
-Sessions are gated like the old session routes: the canvas-notebook flag, ``notebook_sessions_allowed``
-and, in ``electron`` mode, a loopback caller. The flow must be open in the caller's editor session.
+Sessions are gated like the old session routes: ``notebook_sessions_allowed`` and, in ``electron`` mode,
+a loopback caller. The flow must be open in the caller's editor session.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from fastapi import HTTPException, Request
 
 from flowfile_core.kernel.models import DisplayOutput, ExecuteRequest, ExecuteResult, KernelInfo, KernelState
 from flowfile_core.notebook import registry
-from flowfile_core.notebook.gate import notebook_sessions_allowed, require_canvas_notebook_enabled
+from flowfile_core.notebook.gate import notebook_sessions_allowed
 
 PREFIX = "flow-session:"
 _STATES = {"ready": KernelState.IDLE, "busy": KernelState.EXECUTING, "dead": KernelState.ERROR}
@@ -40,10 +40,9 @@ def _loopback(http: Request) -> bool:
 
 
 def _flow(kernel_id: str, http: Request, user) -> Any:
-    """The open flow behind ``kernel_id`` after the flag, mode, loopback and ownership gates."""
+    """The open flow behind ``kernel_id`` after the mode, loopback and ownership gates."""
     from flowfile_core import flow_file_handler
 
-    require_canvas_notebook_enabled()
     if not notebook_sessions_allowed(user):
         raise HTTPException(status_code=403, detail="Notebook sessions are disabled on this server")
     if os.environ.get("FLOWFILE_MODE", "electron") == "electron" and not _loopback(http):

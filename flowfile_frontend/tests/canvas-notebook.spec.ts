@@ -6,8 +6,7 @@ import { minimizePalette, openFlow } from "./helpers/canvas";
 /**
  * The canvas notebook is the catalog NotebookPanel on the flow's session: render, run, push, undo.
  *
- * Needs a core started with FEATURE_FLAG_CANVAS_NOTEBOOK=1 (the spec skips when the status
- * route answers 503) and no Docker. Set SHOTS_DIR to keep a screenshot of each step.
+ * Needs no Docker. Set SHOTS_DIR to keep a screenshot of each step.
  */
 
 const SHOTS_DIR = process.env.SHOTS_DIR;
@@ -118,8 +117,6 @@ test.describe("Canvas notebook", () => {
 
   test.beforeEach(async ({ page, request }) => {
     token = await getAuthToken(request);
-    const status = await request.get(`${API_URL}/notebook/status`, { headers: authHeaders(token) });
-    test.skip(status.status() === 503, "FEATURE_FLAG_CANVAS_NOTEBOOK is off on this core");
     const name = `canvas_notebook_${Date.now()}`;
     flowId = await createFlow(request, token, name);
     await buildFlow(request, token, flowId);

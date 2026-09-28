@@ -114,7 +114,6 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
-from flowfile_core.notebook.gate import require_canvas_notebook_enabled
 from flowfile_core.notebook.push import NotebookPushRequest, plan_push
 from flowfile_core.notebook.render import code_fingerprint
 from flowfile_core.routes._connection_sharing import (
@@ -1069,7 +1068,6 @@ def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_u
     "/editor/notebook/push/",
     tags=["editor"],
     response_model=NotebookPushResponse,
-    dependencies=[Depends(require_canvas_notebook_enabled)],
 )
 def push_notebook(request: NotebookPushRequest, current_user=Depends(get_current_active_user)) -> NotebookPushResponse:
     """Push notebook cells onto the canvas: clean run, reconcile, and apply the ops as one transaction.
@@ -1119,7 +1117,7 @@ def _lineage(flow, node_id: int) -> set[int]:
     return seen
 
 
-@router.post("/editor/notebook/run_lineage/", tags=["editor"], dependencies=[Depends(require_canvas_notebook_enabled)])
+@router.post("/editor/notebook/run_lineage/", tags=["editor"])
 async def run_notebook_lineage(
     request: RunLineageRequest, background_tasks: BackgroundTasks, current_user=Depends(get_current_active_user)
 ) -> JSONResponse:

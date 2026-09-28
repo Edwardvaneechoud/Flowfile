@@ -10,21 +10,12 @@ import flowfile as fl
 from flowfile_core import flow_file_handler, main
 from flowfile_core.auth.jwt import get_current_active_user, get_current_user
 from flowfile_core.auth.models import User as PydanticUser
-from flowfile_core.configs import settings
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.notebook import bridge
 from flowfile_core.notebook.push import push_refusals
 from flowfile_core.notebook.render import code_fingerprint, render
 
 OWNER_ID = 1
-
-
-@pytest.fixture
-def flag():
-    before = bool(settings.FEATURE_FLAG_CANVAS_NOTEBOOK)
-    settings.FEATURE_FLAG_CANVAS_NOTEBOOK.set(True)
-    yield settings.FEATURE_FLAG_CANVAS_NOTEBOOK
-    settings.FEATURE_FLAG_CANVAS_NOTEBOOK.set(before)
 
 
 @pytest.fixture
@@ -108,7 +99,7 @@ def _raise_threshold(cells):
     return {**cells, filter_cell: cells[filter_cell].replace("> 10", "> 20")}
 
 
-def test_push_one_filter_edit_is_one_update_and_one_undo_step(flag, runner, orders_flow, client_as):
+def test_push_one_filter_edit_is_one_update_and_one_undo_step(runner, orders_flow, client_as):
     client = client_as(OWNER_ID)
     graph = orders_flow
     source, filt, formula = (_node_of_type(graph, t) for t in ("manual_input", "filter", "formula"))
@@ -141,7 +132,7 @@ def test_push_one_filter_edit_is_one_update_and_one_undo_step(flag, runner, orde
     assert code_fingerprint(graph) == fingerprint
 
 
-def test_push_with_nothing_changed_applies_nothing(flag, runner, orders_flow, client_as):
+def test_push_with_nothing_changed_applies_nothing(runner, orders_flow, client_as):
     client = client_as(OWNER_ID)
     undo_before = client.get("/editor/history_status/", params={"flow_id": orders_flow.flow_id}).json()["undo_count"]
     response = client.post("/editor/notebook/push/", json=_body(orders_flow))
@@ -150,14 +141,14 @@ def test_push_with_nothing_changed_applies_nothing(flag, runner, orders_flow, cl
     assert response.json()["code_fingerprint"] == code_fingerprint(orders_flow)
 
 
-def test_push_refuses_a_stale_fingerprint_with_the_live_one(flag, runner, orders_flow, client_as):
+def test_push_refuses_a_stale_fingerprint_with_the_live_one(runner, orders_flow, client_as):
     body = {**_body(orders_flow, _raise_threshold), "code_fingerprint": "0" * 64}
     response = client_as(OWNER_ID).post("/editor/notebook/push/", json=body)
     assert response.status_code == 409
     assert response.json()["detail"]["code_fingerprint"] == code_fingerprint(orders_flow)
 
 
-def test_push_refuses_a_failing_cell_and_leaves_the_canvas(flag, runner, orders_flow, client_as):
+def test_push_refuses_a_failing_cell_and_leaves_the_canvas(runner, orders_flow, client_as):
     fingerprint = code_fingerprint(orders_flow)
 
     def broken(cells):
@@ -168,7 +159,7 @@ def test_push_refuses_a_failing_cell_and_leaves_the_canvas(flag, runner, orders_
     assert code_fingerprint(orders_flow) == fingerprint
 
 
-def test_push_refuses_an_in_memory_lazy_frame(flag, runner, orders_flow, client_as):
+def test_push_refuses_an_in_memory_lazy_frame(runner, orders_flow, client_as):
     def lazy(cells):
         return {**cells, "node-99": "import polars as pl\nextra = fl.FlowFrame(pl.LazyFrame({'x': [1]}))"}
 
@@ -199,7 +190,7 @@ def test_refusals_name_custom_classes_inline_rest_secrets_and_lazy_frames():
     assert push_refusals(live, session, installed=lambda node_type: True)[1:] == refusals[2:]
 
 
-def test_push_is_503_without_a_runner_or_the_flag(flag, orders_flow, client_as):
+def test_push_is_503_without_a_runner(orders_flow, client_as):
     before = bridge._runner
     bridge.set_clean_runner(None)
     try:
@@ -207,12 +198,9 @@ def test_push_is_503_without_a_runner_or_the_flag(flag, orders_flow, client_as):
         assert response.status_code == 503 and response.json()["detail"] == bridge.NO_RUNNER_DETAIL
     finally:
         bridge.set_clean_runner(before)
-    flag.set(False)
-    assert client_as(OWNER_ID).post("/editor/notebook/push/", json=_body(orders_flow)).status_code == 503
-    assert client_as(OWNER_ID).post("/notebook/plan", json=_body(orders_flow)).status_code == 503
 
 
-def test_user_2_cannot_push_plan_or_run_user_3s_flow(flag, runner, open_as, client_as):
+def test_user_2_cannot_push_plan_or_run_user_3s_flow(runner, open_as, client_as):
     graph = open_as(fl.from_dict({"a": [1, 2]}).filter(fl.col("a") > 1).flow_graph, user_id=3)
     fingerprint = code_fingerprint(graph)
     body = _body(graph, _raise_threshold)
@@ -237,7 +225,7 @@ def _gated_writer(tmp_path, default):
 
 
 @pytest.mark.parametrize("default, written", [("quick", False), ("full", True)])
-def test_run_lineage_honours_a_closed_gate(flag, open_as, client_as, tmp_path, default, written):
+def test_run_lineage_honours_a_closed_gate(open_as, client_as, tmp_path, default, written):
     graph, target = _gated_writer(tmp_path, default)
     assert not target.exists()
     open_as(graph)
@@ -252,7 +240,7 @@ def test_run_lineage_honours_a_closed_gate(flag, open_as, client_as, tmp_path, d
     assert target.exists() is written
 
 
-def test_run_lineage_runs_only_the_ancestors(flag, open_as, client_as):
+def test_run_lineage_runs_only_the_ancestors(open_as, client_as):
     source = fl.from_dict({"a": [1, 2, 3]})
     kept = source.filter(fl.col("a") > 1)
     source.sort("a")

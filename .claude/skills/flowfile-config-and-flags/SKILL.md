@@ -96,7 +96,6 @@ Non-env port facts: Tauri scans a free `(core, worker)` port pair starting at 63
 | `FLOWFILE_SINGLE_FILE_MODE` | settings.py:19; `flowfile/web/__init__.py:72-73` | `"0"` | **exact `"1"` only** | Worker routes co-hosted on core under `/worker`; worker URL gets a `/worker` suffix. |
 | `FLOWFILE_OFFLOAD_TO_WORKER` | settings.py:22 | `"1"` | **exact `"1"` only** | Heavy compute routed to the worker; off = in-core execution (violates the "core never collects" contract if you rely on it for large data — see `flowfile-architecture-contract`). |
 | `FEATURE_FLAG_AI` | settings.py:25-27 | on | `true`/`1`/`yes`/`on` (case/space-insensitive) | Master gate for the entire `/ai/*` router (503 when off). |
-| `FEATURE_FLAG_CANVAS_NOTEBOOK` | settings.py:29-32; read per call by `notebook/gate.py::is_canvas_notebook_enabled` | **off** | `true`/`1`/`yes`/`on` | Master gate for the canvas notebook: every `/notebook/*` route plus `POST /editor/notebook/push/` and `/editor/notebook/run_lineage/` (503 when off; the frontend reads the 503 from `GET /notebook/status` and hides the header button). No admin flip route; `.set()` works in-process (tests). |
 | `FLOWFILE_LSP_ENABLED` | settings.py:32-34 | on | `true`/`1`/`yes`/`on` | Notebook Jedi/LSP bridge; off ⇒ `/lsp/*` degrades to empty 200 (never 503) so editors silently fall back to client-side completion. |
 | `FLOWFILE_AI_LOG_PROMPTS` | settings.py:37-39 | off | `true`/`1`/`yes`/`on` | Appends a JSONL line per LLM call to `<base>/ai_prompts/YYYY-MM-DD.jsonl`. |
 | `FLOWFILE_AI_LOG_PROMPTS_SCRUB` | settings.py:42-44 | off | `true`/`1`/`yes`/`on` | PII-scrubs user/tool messages in the prompt log (system + assistant stay verbatim). |
@@ -282,7 +281,7 @@ This is the single most common source of "I set the var and nothing changed" bug
 
 | Rule | Applies to |
 |---|---|
-| `true`/`1`/`yes`/`on` (case/whitespace-insensitive) | `FEATURE_FLAG_AI`, `FEATURE_FLAG_CANVAS_NOTEBOOK`, `FLOWFILE_LSP_ENABLED`, `FLOWFILE_AI_LOG_PROMPTS`, `FLOWFILE_AI_LOG_PROMPTS_SCRUB`, `FLOWFILE_ENABLE_PROJECTS` |
+| `true`/`1`/`yes`/`on` (case/whitespace-insensitive) | `FEATURE_FLAG_AI`, `FLOWFILE_LSP_ENABLED`, `FLOWFILE_AI_LOG_PROMPTS`, `FLOWFILE_AI_LOG_PROMPTS_SCRUB`, `FLOWFILE_ENABLE_PROJECTS` |
 | `true`/`1`/`yes` — **no `on`** | `FLOWFILE_SCHEDULER_ENABLED` — `FLOWFILE_SCHEDULER_ENABLED=on` silently does nothing. |
 | exact string `"1"` only | `FLOWFILE_SINGLE_FILE_MODE`, `FLOWFILE_OFFLOAD_TO_WORKER` — `=true` or `=yes` silently does nothing. |
 | presence-only (value ignored) | `TEST_MODE` (`TEST_MODE=0` still enables it!), `FLOWFILE_SKIP_STARTUP_MIGRATION`, `FLOWFILE_SUPERVISOR_PID`. |
