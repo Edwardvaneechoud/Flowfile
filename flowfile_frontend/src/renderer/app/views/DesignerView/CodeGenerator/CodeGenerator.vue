@@ -1,5 +1,10 @@
 <template>
-  <div :class="['code-container', { 'is-notebook': codeMode === 'notebook' }]">
+  <div
+    :class="[
+      'code-container',
+      { 'is-notebook': codeMode === 'notebook', 'has-toolbar': codeMode !== 'project' },
+    ]"
+  >
     <div class="code-header">
       <h4>Generated code</h4>
       <div class="mode-toggle" role="group" aria-label="Code mode">
@@ -262,8 +267,8 @@ const exportCode = () => {
   flex-shrink: 0;
 }
 
-/* The notebook toolbar continues the header, so the seam between them is lighter. */
-.code-container.is-notebook .code-header {
+/* A toolbar continues the header, so the seam between them is lighter. */
+.code-container.has-toolbar .code-header {
   border-bottom-color: var(--color-border-light);
 }
 
@@ -271,7 +276,7 @@ const exportCode = () => {
 .code-container:not(.is-notebook) :deep(.cm-editor) {
   flex: 1;
   min-height: 0;
-  margin: 0 16px 16px;
+  margin: var(--spacing-3) var(--spacing-4) var(--spacing-4);
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
   overflow: hidden;
@@ -372,6 +377,12 @@ const exportCode = () => {
   box-shadow: var(--shadow-xs);
 }
 
+/* The dark primary surface is darker than the tertiary track, so lift the active segment instead. */
+[data-theme="dark"] .mode-segment.active {
+  background: color-mix(in srgb, var(--color-background-tertiary) 78%, white);
+  color: var(--color-accent-dark);
+}
+
 .mode-segment:not(.active):hover {
   color: var(--color-text-primary);
 }
@@ -381,35 +392,47 @@ const exportCode = () => {
   outline-offset: 1px;
 }
 
+/* Same chrome band and 28px buttons as the notebook toolbar. */
 .code-toolbar {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
+  gap: var(--spacing-2);
+  min-height: 40px;
+  padding: 0 var(--spacing-3);
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
   flex-shrink: 0;
 }
 
 .action-btn {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 10px;
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
   cursor: pointer;
+  font-family: inherit;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
+  white-space: nowrap;
   box-shadow: var(--shadow-xs);
   transition: all var(--transition-fast);
 }
 
 .action-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
+  color: var(--color-text-secondary);
+}
+
+.action-btn.primary svg {
+  color: inherit;
 }
 
 .action-btn:hover:not(:disabled) {
@@ -430,7 +453,7 @@ const exportCode = () => {
 .action-btn.primary {
   background: var(--color-accent);
   border-color: var(--color-accent);
-  color: var(--color-text-inverse);
+  color: #fff;
 }
 
 .action-btn.primary:hover:not(:disabled) {

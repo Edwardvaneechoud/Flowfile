@@ -1,85 +1,121 @@
-// Token-based light editor look + One Dark in dark mode, swapped live with the app theme.
-import { Compartment, type Extension } from "@codemirror/state";
-import { EditorView, ViewPlugin } from "@codemirror/view";
+// Token-based editor look for light and dark, swapped live with the app theme.
+import { Compartment, RangeSetBuilder, countColumn, type Extension } from "@codemirror/state";
+import {
+  Decoration,
+  EditorView,
+  ViewPlugin,
+  type DecorationSet,
+  type ViewUpdate,
+} from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { oneDark } from "@codemirror/theme-one-dark";
 import { tags as t } from "@lezer/highlight";
 
-const lightHighlightStyle = HighlightStyle.define([
-  {
-    tag: [t.variableName, t.propertyName, t.definition(t.variableName), t.labelName],
-    color: "var(--color-text-primary)",
-  },
-  {
-    tag: [
-      t.keyword,
-      t.controlKeyword,
-      t.definitionKeyword,
-      t.moduleKeyword,
-      t.operatorKeyword,
-      t.bool,
-      t.null,
-      t.self,
-    ],
-    color: "var(--color-accent-purple)",
-  },
-  {
-    tag: [
-      t.function(t.variableName),
-      t.function(t.propertyName),
-      t.function(t.definition(t.variableName)),
-      t.definition(t.function(t.variableName)),
-      t.className,
-      t.definition(t.className),
-      t.typeName,
-      t.namespace,
-      t.meta,
-    ],
-    color: "var(--color-accent-dark)",
-  },
-  {
-    tag: [t.string, t.special(t.string), t.docString, t.character, t.regexp],
-    color: "var(--color-success-dark)",
-  },
-  { tag: t.escape, color: "var(--color-warning-hover)" },
-  { tag: [t.number, t.integer, t.float], color: "var(--color-warning-hover)" },
-  {
-    tag: [t.comment, t.lineComment, t.blockComment, t.docComment],
-    color: "var(--color-text-muted)",
-    fontStyle: "italic",
-  },
-  {
-    tag: [
-      t.operator,
-      t.derefOperator,
-      t.arithmeticOperator,
-      t.logicOperator,
-      t.compareOperator,
-      t.updateOperator,
-      t.definitionOperator,
-      t.punctuation,
-      t.separator,
-      t.paren,
-      t.squareBracket,
-      t.brace,
-    ],
-    color: "var(--color-text-secondary)",
-  },
-  { tag: t.invalid, color: "var(--color-danger)" },
-]);
+interface SyntaxPalette {
+  identifier: string;
+  keyword: string;
+  fn: string;
+  string: string;
+  number: string;
+  comment: string;
+  operator: string;
+}
 
-const lightChrome = EditorView.theme(
-  {
-    "&.cm-focused .cm-matchingBracket, &.cm-focused .cm-nonmatchingBracket": {
-      backgroundColor: "var(--color-focus-ring-accent-strong) !important",
-      outline: "none",
+const highlightStyleFor = (p: SyntaxPalette) =>
+  HighlightStyle.define([
+    {
+      tag: [t.variableName, t.propertyName, t.definition(t.variableName), t.labelName],
+      color: p.identifier,
     },
-  },
-  { dark: false },
-);
+    {
+      tag: [
+        t.keyword,
+        t.controlKeyword,
+        t.definitionKeyword,
+        t.moduleKeyword,
+        t.operatorKeyword,
+        t.bool,
+        t.null,
+        t.self,
+      ],
+      color: p.keyword,
+    },
+    {
+      tag: [
+        t.function(t.variableName),
+        t.function(t.propertyName),
+        t.function(t.definition(t.variableName)),
+        t.definition(t.function(t.variableName)),
+        t.className,
+        t.definition(t.className),
+        t.typeName,
+        t.namespace,
+        t.meta,
+      ],
+      color: p.fn,
+    },
+    { tag: [t.string, t.special(t.string), t.docString, t.character, t.regexp], color: p.string },
+    { tag: [t.escape, t.number, t.integer, t.float], color: p.number },
+    {
+      tag: [t.comment, t.lineComment, t.blockComment, t.docComment],
+      color: p.comment,
+      fontStyle: "italic",
+    },
+    {
+      tag: [
+        t.operator,
+        t.derefOperator,
+        t.arithmeticOperator,
+        t.logicOperator,
+        t.compareOperator,
+        t.updateOperator,
+        t.definitionOperator,
+        t.punctuation,
+        t.separator,
+        t.paren,
+        t.squareBracket,
+        t.brace,
+      ],
+      color: p.operator,
+    },
+    { tag: t.invalid, color: "var(--color-danger)" },
+  ]);
 
-const LIGHT: Extension = [lightChrome, syntaxHighlighting(lightHighlightStyle)];
-const DARK: Extension = oneDark;
+const lightHighlightStyle = highlightStyleFor({
+  identifier: "var(--color-text-primary)",
+  keyword: "var(--color-accent-purple)",
+  fn: "var(--color-accent-dark)",
+  string: "var(--color-success-dark)",
+  number: "var(--color-warning-hover)",
+  comment: "var(--color-text-muted)",
+  operator: "var(--color-text-secondary)",
+});
+
+// Dark tokens resolve to light tints (--color-success-dark is #6ee7b7, --color-warning-dark #fbbf24).
+const darkHighlightStyle = highlightStyleFor({
+  identifier: "var(--color-text-primary)",
+  keyword: "#a5b4fc",
+  fn: "var(--color-accent-light)",
+  string: "var(--color-success-dark)",
+  number: "var(--color-warning-dark)",
+  comment: "var(--color-text-tertiary)",
+  operator: "var(--color-text-secondary)",
+});
+
+const bracketChrome = {
+  "&.cm-focused .cm-matchingBracket, &.cm-focused .cm-nonmatchingBracket": {
+    backgroundColor: "var(--color-focus-ring-accent-strong) !important",
+    outline: "none",
+  },
+};
+
+const LIGHT: Extension = [
+  EditorView.theme(bracketChrome, { dark: false }),
+  syntaxHighlighting(lightHighlightStyle),
+];
+const DARK: Extension = [
+  EditorView.theme(bracketChrome, { dark: true }),
+  syntaxHighlighting(darkHighlightStyle),
+];
 
 // `!important` + the extra `.cm-editor` class outrank the global main.css `.cm-editor` rules.
 const sharedChrome = EditorView.theme({
@@ -130,7 +166,54 @@ const themeTracker = ViewPlugin.define((view) => {
   return { destroy: () => views.delete(view) };
 });
 
-/** Editor theme for notebook cells and the code pane viewer: light token highlighting, One Dark in dark mode. */
+/** Editor theme for notebook cells and the code pane viewer: token highlighting in either app theme. */
 export function flowfileEditorTheme(): Extension {
   return [themeCompartment.of(modeTheme()), sharedChrome, themeTracker];
 }
+
+// Matches the base theme's `.cm-line` left padding, which the inline padding replaces.
+const LINE_PAD_LEFT = 6;
+
+function hangingIndentDecorations(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const charWidth = view.defaultCharacterWidth;
+  const { doc, tabSize } = view.state;
+  for (const { from, to } of view.visibleRanges) {
+    for (let pos = from; pos <= to; ) {
+      const line = doc.lineAt(pos);
+      const lead = /^[ \t]*/.exec(line.text)![0];
+      if (lead.length > 0 && lead.length < line.length) {
+        const px = countColumn(lead, tabSize) * charWidth;
+        builder.add(
+          line.from,
+          line.from,
+          Decoration.line({
+            attributes: { style: `padding-left: ${px + LINE_PAD_LEFT}px; text-indent: -${px}px` },
+          }),
+        );
+      }
+      pos = line.to + 1;
+    }
+  }
+  return builder.finish();
+}
+
+/** Wrapped continuation lines align under their line's indentation instead of column 0. */
+export const hangingIndent = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    charWidth: number;
+    constructor(view: EditorView) {
+      this.charWidth = view.defaultCharacterWidth;
+      this.decorations = hangingIndentDecorations(view);
+    }
+    update(update: ViewUpdate) {
+      const charWidth = update.view.defaultCharacterWidth;
+      if (update.docChanged || update.viewportChanged || charWidth !== this.charWidth) {
+        this.charWidth = charWidth;
+        this.decorations = hangingIndentDecorations(update.view);
+      }
+    }
+  },
+  { decorations: (v) => v.decorations },
+);

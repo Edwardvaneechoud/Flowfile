@@ -253,7 +253,7 @@ function onRootEnter() {
   if (props.cell.cellType === "markdown" && !props.cell.editing) emit("update:editing", true);
 }
 
-// Shown in the editor corner, so the output block itself carries no meta row.
+// Shown under the editor's last line, so the output block itself carries no meta row.
 const execMeta = computed(() => {
   const out = props.cell.cellType === "python" ? props.cell.output : null;
   if (!out?.execution_count) return null;
@@ -356,7 +356,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding-top: var(--spacing-2);
+  /* Centres the run button on the first code line. */
+  padding-top: calc(var(--spacing-2) + 5px);
 }
 .nb-cell-main {
   position: relative;
@@ -412,6 +413,9 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
 }
 
+.nb-run {
+  color: var(--color-text-secondary);
+}
 .nb-cell:hover .nb-run:not(:disabled),
 .nb-cell:focus-within .nb-run:not(:disabled),
 .nb-cell--active .nb-run:not(:disabled),
@@ -499,20 +503,35 @@ onBeforeUnmount(() => {
   border-radius: var(--border-radius-md);
   overflow: hidden;
 }
+.nb-cell-editor :deep(.cm-content) {
+  min-height: 0;
+}
+.nb-cell-editor :deep(.cm-gutters) {
+  min-width: 0;
+}
+.nb-cell-editor :deep(.cm-lineNumbers .cm-gutterElement) {
+  min-width: calc(2ch + 8px);
+  padding: 0 4px;
+}
+/* The lint gutter only takes room while it has a marker to show. */
+.nb-cell-editor :deep(.cm-gutter-lint:not(:has(.cm-lint-marker))) {
+  width: 0;
+  overflow: hidden;
+}
 .nb-cell-editor :deep(.el-textarea__inner) {
   font-family: var(--font-family-mono);
   font-size: 12.5px;
 }
 .nb-cell-meta {
   position: absolute;
-  top: 5px;
   right: var(--spacing-2);
+  bottom: 3px;
   z-index: 1;
   display: inline-flex;
   align-items: baseline;
   gap: var(--spacing-1);
-  color: var(--color-text-muted);
-  font-size: var(--font-size-2xs);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
   line-height: 16px;
   white-space: nowrap;
@@ -521,9 +540,9 @@ onBeforeUnmount(() => {
 .nb-cell-meta__count {
   font-family: var(--font-family-mono);
 }
-/* Keep the first line of code clear of the corner meta. */
-.nb-cell.has-meta .nb-cell-editor :deep(.cm-content > .cm-line:first-child) {
-  padding-right: 72px;
+/* Room under the last line for the bottom-right meta. */
+.nb-cell.has-meta .nb-cell-editor :deep(.cm-content) {
+  padding-bottom: 20px;
 }
 
 .nb-md-rendered {
@@ -571,7 +590,7 @@ onBeforeUnmount(() => {
   display: none;
 }
 
-/* The editor corner carries count + timing, so the output drops its own meta row. */
+/* The editor carries count + timing, so the output drops its own meta row. */
 .nb-cell-main > :deep(.cell-output) {
   padding: var(--spacing-2) 0 0;
 }

@@ -11,7 +11,7 @@ import {
 } from "@codemirror/autocomplete";
 import { indentLess, indentMore } from "@codemirror/commands";
 import { bodyTooltips } from "@/utils/codemirrorTooltips";
-import { flowfileEditorTheme } from "@/utils/codemirrorTheme";
+import { flowfileEditorTheme, hangingIndent } from "@/utils/codemirrorTheme";
 import { createDataframeColumnCompletions } from "./dataframeColumnCompletions";
 import {
   catalogRefChainCompletions,
@@ -223,6 +223,7 @@ export function buildNotebookEditorExtensions(opts: NotebookEditorOptions): Exte
     flowfileEditorTheme(),
     cellEditorTheme,
     EditorView.lineWrapping,
+    hangingIndent,
     EditorState.tabSize.of(4),
     autocompletion({
       override: buildNotebookCompletionSources(opts),
