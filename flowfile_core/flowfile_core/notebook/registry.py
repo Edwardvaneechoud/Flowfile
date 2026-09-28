@@ -183,6 +183,7 @@ class NotebookSession:
             creationflags=bootstrap.creation_flags(),
         )
         self._process = process
+        # TODO(windows): verify on a real Windows run that closing the Job kills the interpreter the venv launcher spawns.
         self._job = bootstrap.attach_kill_on_close_job(process)
         writer: queue.Queue = queue.Queue()
         self._writer = writer
