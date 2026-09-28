@@ -3,12 +3,11 @@
 // canvas event handlers binding `@run` / `@open-settings` to the
 // rightCluster ref's exposed runFlow / openSettings methods.
 
-import { computed, onMounted, ref } from "vue";
+import { computed, ref } from "vue";
 import { View, Minus } from "@element-plus/icons-vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useItemStore } from "../../common/DraggableItem/stateStore";
-import { useNotebookStore } from "../../../stores/notebook-store";
 import AiAssistantTrigger from "../../../features/ai/AiAssistantTrigger.vue";
 import RunButton from "./run.vue";
 import PopOver from "../../../features/designer/editor/PopOver.vue";
@@ -17,11 +16,6 @@ import ShareLinkDialog from "../../sharing/ShareLinkDialog.vue";
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const draggableItemStore = useItemStore();
-const notebookStore = useNotebookStore();
-
-onMounted(() => {
-  void notebookStore.loadFlowStatus();
-});
 
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
 const showShareLink = ref(false);
@@ -73,21 +67,6 @@ defineExpose({
       >
         <span class="material-icons btn-icon" aria-hidden="true">code</span>
         <span class="btn-text">Code</span>
-      </button>
-    </pop-over>
-
-    <pop-over v-if="notebookStore.flowStatus" content="Toggle Notebook" placement="bottom">
-      <button
-        class="action-btn"
-        data-testid="canvas-notebook-toggle"
-        :class="{ active: notebookStore.flowPanelOpen }"
-        :aria-label="notebookStore.flowPanelOpen ? 'Hide Notebook' : 'Show Notebook'"
-        :aria-pressed="notebookStore.flowPanelOpen"
-        type="button"
-        @click="notebookStore.flowPanelOpen = !notebookStore.flowPanelOpen"
-      >
-        <span class="material-icons btn-icon" aria-hidden="true">menu_book</span>
-        <span class="btn-text">Notebook</span>
       </button>
     </pop-over>
 

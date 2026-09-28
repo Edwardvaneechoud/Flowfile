@@ -56,21 +56,12 @@
         <span class="switch-spinner" />
         <span>Loading flow…</span>
       </div>
-      <aside
-        v-if="hasOpenFlow && notebookStore.flowPanelOpen"
-        class="notebook-dock"
-        data-canvas-notebook
-        :style="{ width: `${notebookWidth}px` }"
-      >
-        <div class="notebook-resizer" @pointerdown="startResize" />
-        <notebook-panel :key="nodeStore.flow_id" :flow-id="nodeStore.flow_id" />
-      </aside>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch, defineAsyncComponent } from "vue";
+import { ref, computed, onMounted, nextTick, watch } from "vue";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
 import RightActionCluster from "../../components/layout/Header/RightActionCluster.vue";
 import CanvasFlow from "./Canvas.vue";
@@ -82,7 +73,6 @@ import { fetchNodes } from "../../features/designer/utils";
 import type { NodeTemplate, FlowSettings } from "../../types";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
-import { useNotebookStore } from "../../stores/notebook-store";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import type { RecentFlow } from "../../composables/useRecentFlows";
 import { resolveBootFlowId, resolveNextFlowAfterClose } from "./flowSessionState";
@@ -105,39 +95,6 @@ const initialLoadComplete = ref(false);
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
-const notebookStore = useNotebookStore();
-const NotebookPanel = defineAsyncComponent(() => import("../CatalogView/NotebookPanel.vue"));
-
-const NOTEBOOK_WIDTH_KEY = "flowfile.flowNotebook.width.v1";
-const clampWidth = (w: number) => Math.round(Math.min(Math.max(w, 320), window.innerWidth - 360));
-const readWidth = () => {
-  try {
-    return Number(localStorage.getItem(NOTEBOOK_WIDTH_KEY)) || 520;
-  } catch {
-    return 520;
-  }
-};
-const notebookWidth = ref(clampWidth(readWidth()));
-
-/** Drag the pane's left edge; the width is saved when the gesture ends. */
-const startResize = (down: PointerEvent) => {
-  const target = down.target as HTMLElement;
-  const startX = down.clientX;
-  const startWidth = notebookWidth.value;
-  target.setPointerCapture(down.pointerId);
-  const move = (e: PointerEvent) =>
-    (notebookWidth.value = clampWidth(startWidth + startX - e.clientX));
-  const up = () => {
-    target.removeEventListener("pointermove", move);
-    try {
-      localStorage.setItem(NOTEBOOK_WIDTH_KEY, String(notebookWidth.value));
-    } catch {
-      // Private mode or blocked storage: the width just isn't remembered.
-    }
-  };
-  target.addEventListener("pointermove", move);
-  target.addEventListener("pointerup", up, { once: true });
-};
 const { openFlow: openFlowFromPath } = useFlowOpener();
 
 // Hide undo/redo when no flow is loaded — same gating as the Save button.
@@ -346,37 +303,11 @@ onMounted(async () => {
 
 .canvas-wrap {
   position: relative;
-  display: flex;
   height: calc(100vh - 100px);
 }
 
 .canvas {
-  flex: 1 1 auto;
-  min-width: 0;
   height: 100%;
-}
-
-.notebook-dock {
-  position: relative;
-  flex: 0 0 auto;
-  height: 100%;
-  border-left: 1px solid var(--color-border-primary);
-  background: var(--color-background-primary);
-}
-
-.notebook-resizer {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -3px;
-  z-index: 2;
-  width: 6px;
-  cursor: col-resize;
-}
-
-.notebook-resizer:hover {
-  background: var(--color-primary);
-  opacity: 0.4;
 }
 
 .switch-indicator {
@@ -454,8 +385,7 @@ onMounted(async () => {
     justify-content: flex-end;
   }
 
-  .canvas,
-  .notebook-dock {
+  .canvas {
     height: calc(100vh - 50px);
   }
 }
@@ -502,8 +432,7 @@ onMounted(async () => {
     justify-content: flex-end;
   }
 
-  .canvas,
-  .notebook-dock {
+  .canvas {
     height: calc(100vh - 90px);
   }
 }

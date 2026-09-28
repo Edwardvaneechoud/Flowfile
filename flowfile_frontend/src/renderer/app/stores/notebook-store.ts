@@ -287,7 +287,6 @@ interface NotebookState {
   hydrated: boolean;
   /** `GET /notebook/status`: null until asked, or when the request failed. */
   flowStatus: { sessions: boolean } | null;
-  flowPanelOpen: boolean;
 }
 
 let _persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -300,7 +299,6 @@ export const useNotebookStore = defineStore("notebook", {
     loading: false,
     hydrated: false,
     flowStatus: null,
-    flowPanelOpen: false,
   }),
 
   getters: {

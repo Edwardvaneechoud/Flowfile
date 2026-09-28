@@ -522,7 +522,7 @@ While `FlowGraph`, `FlowNode`, and `FlowDataEngine` power the core pipeline logi
 
 | Module | Role |
 |---|---|
-| `render.py` | `FlowGraph` → the FlowFrame export in the `fl.*` dialect, split into cells at its statements (a cell carries every node id of its statement), placeholders as `fl.canvas_node(...)`, and a `code_fingerprint` of settings (minus layout), edges and parameters that the dock uses to skip layout-only changes and push uses as its precondition. |
+| `render.py` | `FlowGraph` → the FlowFrame export in the `fl.*` dialect, split into cells at its statements (a cell carries every node id of its statement), placeholders as `fl.canvas_node(...)`, and a `code_fingerprint` of settings (minus layout), edges and parameters that the notebook panel uses to skip layout-only changes and push uses as its precondition. |
 | `registry.py`, `protocol.py`, `bootstrap.py`, `session_main.py` | The session subprocess: one per `(user, flow)`, spawned with a stdlib-only bootstrap (frozen builds re-enter through `--notebook-session` at the top of `main.py`), seeded from the canvas, idle-timed and LRU-capped, closed in the lifespan before kernels. |
 | `relabel.py`, `reconcile.py`, `compare.py` | Pure functions: map a clean run's node ids onto the canvas's by per-cell provenance, then compute the minimal list of editor operations between the live graph and the clean run. |
 | `push.py`, `bridge.py` | The push pipeline behind `POST /editor/notebook/push/` and its preview `POST /notebook/plan`: fingerprint check (409), clean run, refusals (422), reconcile. |

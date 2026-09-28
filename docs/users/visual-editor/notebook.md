@@ -1,16 +1,16 @@
 ---
-description: Edit a flow as Python cells beside the canvas, run them, and push the changes back onto the canvas.
+description: Edit a flow as Python cells in the Code panel, run them, and push the changes back onto the canvas.
 ---
 
 # The Canvas Notebook
 
-The canvas notebook shows the open flow as Python code, one cell per statement, in the notebook panel beside the canvas. It is the same notebook as a [catalog notebook](catalog/notebooks.md): the same cells, outputs, shortcuts, undo, drag and completions, running on the flow's own session instead of a kernel. This page covers what the cells contain, the three ways to run them (**Run**, **Run on canvas**, **Push**), what a push refuses, and how the notebook behaves in the desktop app, the Python package and a Docker deployment.
+The canvas notebook shows the open flow as Python code, one cell per statement, in the **Notebook** mode of the Code panel. It is the same notebook as a [catalog notebook](catalog/notebooks.md): the same cells, outputs, shortcuts, undo, drag and completions, running on the flow's own session instead of a kernel. This page covers what the cells contain, the three ways to run them (**Run**, **Run on canvas**, **Push**), what a push refuses, and how the notebook behaves in the desktop app, the Python package and a Docker deployment.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: a flow on the canvas with the notebook panel open on the right, its node cells, one placeholder cell with its reason comment -->
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: a flow on the canvas with the Code panel open on the right in Notebook mode, its node cells, one placeholder cell with its reason comment -->
 
 ## Opening it
 
-Press **Notebook** in the header. The panel opens beside the canvas (drag its left edge to resize it) and renders the flow:
+Press **Code** in the header (Ctrl/Cmd+G), then **Notebook** in the panel's FlowFrame / Polars / Project / Notebook switch. The panel floats over the right of the canvas (drag its edges to resize it, or use its full-screen button) and remembers the mode, so the next **Code** press opens the notebook again. Closing the panel keeps your unpushed edits. The notebook renders the flow:
 
 - The leading cells hold the imports and the flow parameters, then one cell per statement in the order the flow runs; a cell holds every node its statement chains together.
 - Cells use the [Python API](../python-api/index.md) (`import flowfile as fl`): fluent `FlowFrame` calls for built-in transforms, and the [native node classes](../python-api/reference/native-nodes.md) (`fl.Gate`, `fl.RunFlow`, `fl.PythonScript`, custom nodes, parameters) for the rest.

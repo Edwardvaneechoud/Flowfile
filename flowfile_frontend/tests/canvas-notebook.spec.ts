@@ -106,8 +106,15 @@ async function renderedCells(request: APIRequestContext, token: string, flowId: 
 const cellOf = (cells: RenderedCell[], nodeId: number) =>
   cells.find((c) => c.node_ids.includes(nodeId))!;
 
-const cellTexts = (page: Page) =>
-  page.locator(".notebook-dock .nb-cell .cm-content").allInnerTexts();
+const NOTEBOOK = "#rightDrawer .code-notebook .notebook-panel";
+
+const cellTexts = (page: Page) => page.locator(`${NOTEBOOK} .nb-cell .cm-content`).allInnerTexts();
+
+/** The notebook is the Code drawer's Notebook mode; the drawer overlays the canvas's right side. */
+async function openNotebook(page: Page) {
+  await page.locator('[data-tutorial="generate-code-btn"]').click();
+  await page.getByTestId("code-mode-notebook").click();
+}
 
 test.describe("Canvas notebook", () => {
   test.use({ viewport: { width: 1600, height: 1000 } });
@@ -128,8 +135,8 @@ test.describe("Canvas notebook", () => {
   });
 
   test("render, run, push, undo and move", async ({ page, request }) => {
-    const panel = page.locator(".notebook-dock .notebook-panel");
-    await page.getByTestId("canvas-notebook-toggle").click();
+    const panel = page.locator(NOTEBOOK);
+    await openNotebook(page);
     const cells = await renderedCells(request, token, flowId);
     for (const cell of cells) {
       await expect(panel.locator(`[data-cell-id="${cell.cell_id}"]`)).toHaveCount(1);

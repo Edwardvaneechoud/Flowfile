@@ -1,29 +1,39 @@
 <template>
-  <div class="code-container">
+  <div :class="['code-container', { 'is-notebook': codeMode === 'notebook' }]">
     <div class="code-header">
       <h4>Generated code</h4>
       <div class="mode-toggle">
         <button
           :class="['toggle-button', { active: codeMode === 'flowframe' }]"
+          data-testid="code-mode-flowframe"
           @click="setMode('flowframe')"
         >
           FlowFrame
         </button>
         <button
           :class="['toggle-button', { active: codeMode === 'polars' }]"
+          data-testid="code-mode-polars"
           @click="setMode('polars')"
         >
           Polars
         </button>
         <button
           :class="['toggle-button', { active: codeMode === 'project' }]"
+          data-testid="code-mode-project"
           @click="setMode('project')"
         >
           Project
         </button>
+        <button
+          :class="['toggle-button', { active: codeMode === 'notebook' }]"
+          data-testid="code-mode-notebook"
+          @click="setMode('notebook')"
+        >
+          Notebook
+        </button>
       </div>
     </div>
-    <div v-if="codeMode !== 'project'" class="code-toolbar">
+    <div v-if="!ownsBody" class="code-toolbar">
       <button class="action-btn" :disabled="loading" @click="refreshCode">
         <svg
           v-if="!loading"
@@ -59,13 +69,16 @@
     </div>
     <template v-if="active">
       <ProjectExport v-if="codeMode === 'project'" />
+      <div v-else-if="codeMode === 'notebook'" class="code-notebook">
+        <NotebookPanel :key="nodeStore.flow_id" :flow-id="nodeStore.flow_id" />
+      </div>
       <codemirror v-else v-model="code" :extensions="extensions" :disabled="true" />
     </template>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, watch } from "vue";
+import { computed, defineAsyncComponent, ref, watch } from "vue";
 import axios from "axios";
 import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
@@ -79,11 +92,27 @@ import { useEditorStore } from "../../../stores/editor-store";
 // pane is display:none, so the editor renders (and code fetches) only when active.
 const props = defineProps<{ active?: boolean }>();
 
-type CodeMode = "flowframe" | "polars" | "project";
+const NotebookPanel = defineAsyncComponent(() => import("../../CatalogView/NotebookPanel.vue"));
+
+type CodeMode = "flowframe" | "polars" | "project" | "notebook";
+
+const MODE_KEY = "flowfile.codeGenerator.mode.v1";
+const MODES: readonly CodeMode[] = ["flowframe", "polars", "project", "notebook"];
+
+const readMode = (): CodeMode => {
+  try {
+    const saved = localStorage.getItem(MODE_KEY) as CodeMode | null;
+    return saved && MODES.includes(saved) ? saved : "flowframe";
+  } catch {
+    return "flowframe";
+  }
+};
 
 const code = ref("");
 const loading = ref(false);
-const codeMode = ref<CodeMode>("flowframe");
+const codeMode = ref<CodeMode>(readMode());
+// Project and notebook render their own component and fetch for themselves.
+const ownsBody = computed(() => codeMode.value === "project" || codeMode.value === "notebook");
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const lastLoadedFlowId = ref<number | null>(null);
@@ -109,8 +138,7 @@ const exportConfirmMap: Partial<Record<CodeMode, string>> = {
 };
 
 const fetchCode = async () => {
-  // Project mode fetches its own manifest in ProjectExport.vue.
-  if (codeMode.value === "project") return;
+  if (ownsBody.value) return;
   loading.value = true;
   try {
     const endpoint = endpointMap[codeMode.value];
@@ -133,6 +161,11 @@ const fetchCode = async () => {
 const setMode = (mode: CodeMode) => {
   if (codeMode.value !== mode) {
     codeMode.value = mode;
+    try {
+      localStorage.setItem(MODE_KEY, mode);
+    } catch {
+      // Storage unavailable: the mode just isn't remembered.
+    }
     if (nodeStore.flow_id > 0) {
       fetchCode();
     }
@@ -201,8 +234,25 @@ const exportCode = () => {
   flex-shrink: 0;
 }
 
+.code-container.is-notebook {
+  padding: 0;
+}
+
 /* The disabled CodeMirror viewer fills the remaining tab height and scrolls. */
-.code-container :deep(.cm-editor) {
+.code-container:not(.is-notebook) :deep(.cm-editor) {
+  flex: 1;
+  min-height: 0;
+}
+
+.code-notebook {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  cursor: auto;
+}
+
+.code-notebook > :deep(.notebook-panel) {
   flex: 1;
   min-height: 0;
 }

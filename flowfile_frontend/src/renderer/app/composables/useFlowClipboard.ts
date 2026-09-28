@@ -250,11 +250,11 @@ export const hasTextSelection = (selection?: { toString(): string } | null): boo
  * Everything a paste can land on that is NOT the bare canvas. DraggableItem
  * (every floating panel incl. the node-settings drawer) carries
  * data-canvas-overlay; the rest are Element Plus overlays (poppers/selects
- * teleport to <body>, so closest() must see their wrapper class), the
- * custom canvas context menu and the flow notebook pane.
+ * teleport to <body>, so closest() must see their wrapper class) and the
+ * custom canvas context menu.
  */
 export const CANVAS_PANEL_SELECTOR =
-  "[data-canvas-overlay], [data-canvas-notebook], .el-dialog, .el-drawer, .el-popper, .el-message-box, .el-overlay, .context-menu";
+  "[data-canvas-overlay], .el-dialog, .el-drawer, .el-popper, .el-message-box, .el-overlay, .context-menu";
 
 const isEditableElement = (el: Element): boolean => {
   if (

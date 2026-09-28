@@ -10,7 +10,7 @@ For pure transformation flows (filter, join, group by, etc.), the generated code
 
 * Transformation nodes translate to Polars operations; I/O nodes (database, catalog, cloud storage, Kafka) translate to FlowFrame API calls (`ff.read_database()`, `ff.read_catalog_table()`, etc.).
 * The structure mirrors your visual flow. Pure transformation flows depend only on Polars (plus a small `polars_*` helper package for formula, fuzzy-match, or graph-solver nodes); flows with I/O nodes require `pip install flowfile`.
-* The **FlowFrame** export writes the same flow in the `fl` dialect instead (`import flowfile as fl`): every node becomes the frame call that adds that node type back — `write_csv`, `.polars_code(fn)`, `with_row_index`, `text_to_rows`, `fl.sql`, and so on — with a node's description as `description=`, so running the script rebuilds the flow as well as computing it. The [canvas notebook](../notebook.md) shows this export split into cells, one per statement; a cell spans every node its statement chains together.
+* The **FlowFrame** export writes the same flow in the `fl` dialect instead (`import flowfile as fl`): every node becomes the frame call that adds that node type back — `write_csv`, `.polars_code(fn)`, `with_row_index`, `text_to_rows`, `fl.sql`, and so on — with a node's description as `description=`, so running the script rebuilds the flow as well as computing it. The [canvas notebook](../notebook.md), the Code panel's fourth mode (**Notebook**), shows this export split into cells, one per statement; a cell spans every node its statement chains together.
 
 ## Examples of Generated Code
 
