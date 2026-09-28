@@ -4,15 +4,15 @@ description: Edit a flow as Python cells beside the canvas, run them, and push t
 
 # The Canvas Notebook
 
-The canvas notebook shows the open flow as Python code, one cell per node, in the notebook panel beside the canvas. It is the same notebook as a [catalog notebook](catalog/notebooks.md): the same cells, outputs, shortcuts, undo, drag and completions, running on the flow's own session instead of a kernel. This page covers what the cells contain, the three ways to run them (**Run**, **Run on canvas**, **Push**), what a push refuses, and how the notebook behaves in the desktop app, the Python package and a Docker deployment.
+The canvas notebook shows the open flow as Python code, one cell per statement, in the notebook panel beside the canvas. It is the same notebook as a [catalog notebook](catalog/notebooks.md): the same cells, outputs, shortcuts, undo, drag and completions, running on the flow's own session instead of a kernel. This page covers what the cells contain, the three ways to run them (**Run**, **Run on canvas**, **Push**), what a push refuses, and how the notebook behaves in the desktop app, the Python package and a Docker deployment.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: a flow on the canvas with the notebook panel open on the right, one cell per node, one placeholder cell with its reason comment -->
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: a flow on the canvas with the notebook panel open on the right, its node cells, one placeholder cell with its reason comment -->
 
 ## Opening it
 
 Press **Notebook** in the header. The panel opens beside the canvas (drag its left edge to resize it) and renders the flow:
 
-- The leading cells hold the imports and the flow parameters, then one cell per node in the order the flow runs.
+- The leading cells hold the imports and the flow parameters, then one cell per statement in the order the flow runs; a cell holds every node its statement chains together.
 - Cells use the [Python API](../python-api/index.md) (`import flowfile as fl`): fluent `FlowFrame` calls for built-in transforms, and the [native node classes](../python-api/reference/native-nodes.md) (`fl.Gate`, `fl.RunFlow`, `fl.PythonScript`, custom nodes, parameters) for the rest.
 - A node's variable is its node reference when it has one, else a label derived from its type and id (`filtered_12`).
 - Dropping, connecting or saving a node on the canvas updates the cells within a couple of seconds; a cell you edited keeps your text. Moving a node changes nothing.

@@ -1,6 +1,6 @@
 """Table display payload for the notebook UI (``application/vnd.flowfile.table+json``).
 
-Extracted from ``kernel_runtime/kernel_runtime/flowfile_client.py``. The kernel image
+Mirrors the table helpers in ``kernel_runtime/kernel_runtime/flowfile_client.py``. The kernel image
 ships only ``kernel_runtime/``, so the kernel keeps its own copy; the two are pinned
 equal by ``shared/tests/test_notebook_display.py``. The dtype -> field mapping mirrors
 flowfile_wasm's explore node.

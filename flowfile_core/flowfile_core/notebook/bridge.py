@@ -1,6 +1,6 @@
 """The seam between a notebook push (core) and whatever runs the cells: the clean-run request, result and runner.
 
-A push (plan section 2.5) sends every cell to a runner that executes them on a fresh session graph under
+A push sends every cell to a runner that executes them on a fresh session graph under
 notebook build mode and returns the save-format payload relabelled onto the canvas ids. In production the
 session registry installs itself at core startup (``set_clean_runner(registry)``) and forwards the request to
 the user's session process for the flow. :class:`InProcessCleanRunner` runs the cells in a thread inside

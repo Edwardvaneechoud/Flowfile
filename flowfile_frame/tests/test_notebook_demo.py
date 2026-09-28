@@ -1,6 +1,6 @@
-"""The PR 1 done-when test: the showcase demo's ``build_sales_analytics`` builds in notebook mode with no write.
+"""The showcase demo's ``build_sales_analytics`` builds in notebook mode with no write.
 
-``fixtures/demo_catalog_pipeline.py`` is a tracked copy of the repo-root demo, so CI has it. The
+``fixtures/demo_catalog_pipeline.py`` is the showcase demo script. The
 fixture seeds its catalog (tables ``sales`` and ``regions``), publishes its child flow outside the
 mode and installs the ``mood_emoji`` custom node from the community-node test registry. The final
 ``schema.register_flow`` is replaced by a recorder, since notebook mode refuses it.

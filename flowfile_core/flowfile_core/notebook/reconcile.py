@@ -2,7 +2,7 @@
 
 Both sides are save-format payloads (``FlowGraph.get_flowfile_data().model_dump(mode="json")``) whose node
 ids already agree (the session's were relabelled onto provenance ids). :func:`reconcile` emits the
-``EditorOperation`` list ``POST /editor/apply_operations/`` runs as one transaction (plan section 2.5 step 3):
+``EditorOperation`` list ``POST /editor/apply_operations/`` runs as one transaction:
 
 * a cell is *pinned* when it is known to the canvas (its provenance names live nodes, or it is ``node-<id>``
   of a live node) and not in ``changed_cell_ids``. A pinned cell's existing nodes keep their settings,

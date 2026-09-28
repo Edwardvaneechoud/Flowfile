@@ -264,7 +264,7 @@ def _topological(graph: FlowGraph) -> list[FlowNode]:
 
 
 def _seeds_live(node: FlowNode, live: set[int]) -> bool:
-    """The live row of the seeding table: named sources and pure transforms whose inputs are all live."""
+    """Whether ``node`` seeds live: a ``LIVE_SOURCE_TYPES`` source, or a pure transform whose inputs are all live."""
     settings = node.setting_input
     if settings is None or isinstance(settings, input_schema.NodePromise | input_schema.UserDefinedNode):
         return False
@@ -298,7 +298,7 @@ def seed_session(
     """Rebuild the canvas flow as the session graph, enter notebook mode on it, and bind one variable per node.
 
     The graph is local, history-off and has its own flow id; ``parameters`` (``FlowParameter``
-    models or dicts) are declared on it. A node of the seeding table's live row (``manual_input``,
+    models or dicts) are declared on it. A node that seeds live (``manual_input``,
     ``read``, ``list_files``, non-virtual non-SQL ``catalog_reader``, ``cloud_storage_reader`` and
     pure transforms whose inputs are all live) holds its lazy plan; every other node is seeded
     from ``schemas[node_id][handle]`` (``{"name", "data_type"}`` entries) and its frames are

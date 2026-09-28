@@ -1,4 +1,4 @@
-"""``reconcile``: live vs relabelled clean-run payload -> editor ops, over hand-built pairs (plan 2.5 step 3)."""
+"""``reconcile``: live vs relabelled clean-run payload -> editor ops, over hand-built pairs."""
 
 import copy
 

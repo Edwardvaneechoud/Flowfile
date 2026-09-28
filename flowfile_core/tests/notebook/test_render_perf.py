@@ -1,4 +1,4 @@
-"""Render p95 benchmark (plan section 7): 50 renders of a synthetic 50-node flow stay under 150 ms at p95."""
+"""Render p95 benchmark: 50 renders of a synthetic 50-node flow stay under 150 ms at p95."""
 
 import statistics
 import time

@@ -2,12 +2,12 @@
 
 A :class:`NotebookSession` owns one child process at a time (a *generation*; restarts bump it). Per
 generation core runs one reader thread that drains the child's protocol stream and one writer thread that
-owns the child's stdin; neither ever runs on the event loop (V3 F3). ``run_cell``, ``clean_run`` and
+owns the child's stdin; neither ever runs on the event loop. ``run_cell``, ``clean_run`` and
 ``schemas`` block the calling (threadpool) thread on a ticket; a cell's ``stream`` and ``display`` messages
 are collected on that ticket until its ``done``.
 
 ``reset`` on a session busy with a cell kills the child (terminate, 1 s, kill), starts it again and re-seeds
-it: a blocked ``sleep``, socket or collect cannot be stopped from inside (V3 F2), and a queued reset would
+it: a blocked ``sleep``, socket or collect cannot be stopped from inside, and a queued reset would
 wait behind it.
 
 The :class:`NotebookSessionRegistry` starts sessions lazily, closes them after ``idle_ttl`` seconds without

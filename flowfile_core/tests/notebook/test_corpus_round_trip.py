@@ -1,4 +1,4 @@
-"""The notebook-surface milestone (plan section 7) over the committed corpus.
+"""End-to-end notebook round trip (render, clean run, reconcile, push) over the committed corpus.
 
 For every corpus flow: render it, clean-run the cells through the in-process runner seeded from the canvas
 (the push path's snapshot), and reconcile against the canvas. A flow with no LOSSY node reconciles to no
@@ -58,7 +58,7 @@ def _reconcile(graph, result, provenance, changed):
 
 
 @pytest.fixture(scope="module")
-def milestone(notebook_corpus):
+def corpus_round_trips(notebook_corpus):
     """``{name: (graph, rendering, provenance, clean-run result, grades)}`` computed once."""
     rows = {}
     for name, graph in notebook_corpus:
@@ -74,14 +74,14 @@ def milestone(notebook_corpus):
     return rows
 
 
-def test_every_corpus_flow_clean_runs_through_the_runner(milestone):
-    failed = {name: row[3].error for name, row in milestone.items() if row[3].error}
+def test_every_corpus_flow_clean_runs_through_the_runner(corpus_round_trips):
+    failed = {name: row[3].error for name, row in corpus_round_trips.items() if row[3].error}
     assert not failed, json.dumps(failed, indent=1)
 
 
-def test_flows_without_a_lossy_node_reconcile_to_no_ops(milestone):
+def test_flows_without_a_lossy_node_reconcile_to_no_ops(corpus_round_trips):
     stray = {}
-    for name, (graph, _, provenance, result, grades) in milestone.items():
+    for name, (graph, _, provenance, result, grades) in corpus_round_trips.items():
         if result.error or "LOSSY" in grades.values():
             continue
         plan = _reconcile(graph, result, provenance, changed=[])
@@ -90,9 +90,9 @@ def test_flows_without_a_lossy_node_reconcile_to_no_ops(milestone):
     assert not stray, json.dumps(stray, indent=1, default=str)
 
 
-def test_exact_flows_reconcile_to_no_ops_with_every_cell_edited(milestone):
+def test_exact_flows_reconcile_to_no_ops_with_every_cell_edited(corpus_round_trips):
     stray = {}
-    for name, (graph, rendering, provenance, result, grades) in milestone.items():
+    for name, (graph, rendering, provenance, result, grades) in corpus_round_trips.items():
         if result.error or set(grades.values()) != {"EXACT"}:
             continue
         plan = _reconcile(graph, result, provenance, changed=[c.cell_id for c in rendering.cells])
@@ -120,7 +120,7 @@ def _downstream(graph, node_id) -> set[int]:
 
 @pytest.fixture
 def client():
-    user = PydanticUser(username="nb_milestone", id=OWNER_ID, disabled=False, is_admin=True)
+    user = PydanticUser(username="nb_round_trip", id=OWNER_ID, disabled=False, is_admin=True)
     main.app.dependency_overrides[get_current_active_user] = lambda: user
     main.app.dependency_overrides[get_current_user] = lambda: user
     before_runner = bridge._runner
@@ -131,9 +131,9 @@ def client():
     main.app.dependency_overrides.pop(get_current_user, None)
 
 
-def test_one_cell_edit_touches_only_that_cells_nodes(milestone, client, tmp_path):
+def test_one_cell_edit_touches_only_that_cells_nodes(corpus_round_trips, client, tmp_path):
     edited = 0
-    for name, (graph, _, _, result, grades) in milestone.items():
+    for name, (graph, _, _, result, grades) in corpus_round_trips.items():
         if result.error or "LOSSY" in grades.values():
             continue
         path = tmp_path / f"{name}.yaml"

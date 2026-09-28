@@ -6,7 +6,7 @@ the mode is active:
 - every implicit graph (a source without ``flow_graph=``, ``fl.Node`` without inputs) is the
   session graph, so new sources never renumber canvas nodes, and a merge with any other graph
   is refused;
-- every node in the deferred row of the plan's seeding table is seeded from its predicted schema
+- every node ``native.notebook_defers`` names is seeded from its predicted schema
   instead of executed at build (writers, subflows, kernel scripts, database / REST / Kafka
   sources, ``pivot``, ``polars_code``, virtual and SQL-mode catalog readers);
 - calls that write YAML, DB rows or files at build, or that run a flow, raise ``NativeNodeError``

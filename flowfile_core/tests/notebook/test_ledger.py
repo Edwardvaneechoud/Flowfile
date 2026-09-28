@@ -1,4 +1,4 @@
-"""The exactness ledger (plan sections 3 item 5 and 7): render, clean run, relabel and compare over the corpus.
+"""The exactness ledger: render, clean run, relabel and compare over the corpus.
 
 For every corpus flow ``g``: ``R = render(g)`` raises nothing and its placeholders stay inside the manifest;
 the cells run as a clean run in notebook mode (in process), which writes nothing and starts no kernel
@@ -70,7 +70,7 @@ def _clean_run(graph: FlowGraph, rendering: NotebookRendering) -> dict:
 
 
 def _canvas_schemas(graph: FlowGraph) -> dict[int, dict[str, list[dict]]]:
-    """Per-node, per-handle schemas of the canvas graph, as the session seed message carries them (plan 2.6)."""
+    """Per-node, per-handle schemas of the canvas graph, as the session seed message carries them."""
     schemas = {}
     for node in graph.nodes:
         named = getattr(node, "_named_schemas", None) or {}
@@ -190,7 +190,7 @@ def test_ledger_rows_only_improve(ledger_rows):
 
 
 def test_no_lossy_row_for_a_node_type_the_demo_uses(ledger_rows):
-    """Plan 2b's done-when: the corpus-wide row of every node type the demo uses is at least DIFFER.
+    """The corpus-wide row of every node type the demo uses is at least DIFFER.
 
     A canvas join that keeps its right keys rebuilds through ``join(..., keep_right_keys=True)`` and
     a Polars-code node with no input through ``fl.polars_code(fn)``.

@@ -1,4 +1,4 @@
-"""Shared fixtures for the canvas-notebook tests: the corpus and its placeholder manifest (plan section 7)."""
+"""Shared fixtures for the canvas-notebook tests: the corpus and its placeholder manifest."""
 
 from contextlib import contextmanager
 

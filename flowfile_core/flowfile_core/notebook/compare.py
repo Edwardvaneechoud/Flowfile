@@ -1,7 +1,7 @@
 """Per-type settings normalisation: which differences between a canvas node and its rebuilt twin are cosmetic.
 
 A notebook push rebuilds every node from its cell and must not re-send a node whose settings only
-differ in ways that never change what it computes (plan section 2.5 step 3). :func:`normalise`
+differ in ways that never change what it computes. :func:`normalise`
 maps a node's ``setting_input`` dict (``model_dump(mode="json")`` or the save format) onto a
 canonical form; :func:`settings_equal` compares two of them. The rules are a small table keyed by
 node type, on top of the fields every node drops.

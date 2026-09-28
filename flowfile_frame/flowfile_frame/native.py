@@ -76,7 +76,7 @@ def is_side_effect_node_type(node_type: str) -> bool:
 def notebook_defers(node_type: str, setting_input: Any = None) -> bool:
     """Whether notebook mode seeds a node of ``node_type`` from its schema instead of executing it at build.
 
-    The deferred row of the plan's seeding table: ``DEFERRED_NODE_TYPES``, every side-effect
+    The node types built without executing: ``DEFERRED_NODE_TYPES``, every side-effect
     type, the sources and transforms of ``NOTEBOOK_DEFERRED_NODE_TYPES`` (they do real I/O, or
     may, when built in a local graph) and SQL-mode or virtual catalog readers (the latter
     re-execute their producer). Always ``False`` outside notebook mode.
@@ -174,9 +174,9 @@ def seed_from_predicted_schema(node: FlowNode) -> None:
 def source_frame(flow_graph: FlowGraph, node_id: int) -> FlowFrame:
     """The frame of a source node just added to ``flow_graph``.
 
-    In notebook mode a source of the deferred row (:func:`notebook_defers`) is seeded from its
+    In notebook mode a source that :func:`notebook_defers` names is seeded from its
     schema callback and wrapped as a deferred frame, so building it never reads; otherwise the
-    node's build-time result is wrapped as before.
+    node's build-time result is wrapped.
     """
     from flowfile_frame.flow_frame import FlowFrame
 
@@ -560,7 +560,7 @@ class NativeNode:
     def _decide_deferred(node_type: str, frames: Sequence[FlowFrame], deferred: bool | None) -> bool:
         """:func:`seeded_at_build` unless ``deferred`` is given; no node is forced to run on placeholder rows.
 
-        In notebook mode a node of the deferred row (:func:`notebook_defers`) is always deferred,
+        In notebook mode a node that :func:`notebook_defers` names is always deferred,
         whatever ``deferred`` says.
         """
         if notebook_defers(node_type):

@@ -110,7 +110,7 @@ def test_raw_log_signed_with_the_internal_token_lands(own_flow):
     assert "Node ID: 3 - signed line" in _flow_log_text(own_flow)
 
 
-def test_unauthenticated_add_log_route_is_gone(own_flow):
+def test_post_to_flow_log_route_is_not_allowed(own_flow):
     response = client.post(f"/logs/{own_flow}", params={"log_message": "forged line"})
     assert response.status_code == 405
     assert "forged line" not in _flow_log_text(own_flow)

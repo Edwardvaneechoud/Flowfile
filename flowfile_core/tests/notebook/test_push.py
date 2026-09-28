@@ -1,4 +1,4 @@
-"""``POST /editor/notebook/push/``, ``POST /notebook/plan`` and ``POST /editor/notebook/run_lineage/`` (plan 2.5, 2.7).
+"""``POST /editor/notebook/push/``, ``POST /notebook/plan`` and ``POST /editor/notebook/run_lineage/``.
 
 The clean run goes through the test-only in-process runner (``InProcessCleanRunner``), installed per test.
 """

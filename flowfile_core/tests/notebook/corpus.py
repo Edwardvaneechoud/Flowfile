@@ -1,4 +1,4 @@
-"""The canvas-notebook corpus: every flow the renderer, clean run and reconcile are held to (plan section 7).
+"""The canvas-notebook corpus: every flow the renderer, clean run and reconcile are held to.
 
 Three sources, all built Docker-free under the test session's scratch DB and storage:
 

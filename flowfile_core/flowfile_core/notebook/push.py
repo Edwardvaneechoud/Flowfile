@@ -1,10 +1,10 @@
 """Plan a notebook push: seed snapshot, fingerprint precondition, clean run through the runner, refusals, reconcile.
 
-:func:`plan_push` is everything a push does before it touches the canvas (plan section 2.5 steps 1 to 3 and
-5, section 2.7): it refuses with 409 when the cells were rendered from another state of the flow, runs the
-cells through the installed :class:`~flowfile_core.notebook.bridge.CleanRunner`, refuses with 422 what the
-canvas cannot hold, and reconciles. ``POST /notebook/plan`` returns the result; ``POST
-/editor/notebook/push/`` applies its operations as one ``apply_operations`` transaction.
+:func:`plan_push` is everything a push does before it touches the canvas: it refuses with 409 when the cells
+were rendered from another state of the flow, runs the cells through the installed
+:class:`~flowfile_core.notebook.bridge.CleanRunner`, refuses with 422 what the canvas cannot hold, and
+reconciles. ``POST /notebook/plan`` returns the result; ``POST /editor/notebook/push/`` applies its operations
+as one ``apply_operations`` transaction.
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ def node_schemas(node: FlowNode) -> dict[str, list[dict[str, str]]]:
 
 
 def seed_snapshot(flow: FlowGraph) -> dict:
-    """What a session seeds from (plan section 2.6): the save-format payload, parameters, names and schemas."""
+    """What a session seeds from: the save-format payload, parameters, names and schemas."""
     schemas: dict[int, dict[str, list[dict[str, str]]]] = {}
     for node in flow.nodes:
         try:

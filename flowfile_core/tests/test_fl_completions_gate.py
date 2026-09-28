@@ -28,7 +28,7 @@ def _names(payload: str) -> dict[str, list[tuple[str, str | None]]]:
 def test_regeneration_offers_the_committed_names():
     """Signatures and docstrings differ between Python and Polars versions, so CI compares the names offered.
 
-    ``make check_fl_completions`` remains the byte-exact gate on the maintainer's machine.
+    ``make check_fl_completions`` remains the byte-exact gate, run locally with the toolchain that generated the file.
     """
     committed = gen.OUTPUT_PATH.read_text(encoding="utf-8")
     assert _names(gen.render()) == _names(committed), (

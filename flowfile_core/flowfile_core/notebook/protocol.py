@@ -3,7 +3,7 @@
 A message is a JSON object with a ``type``, framed as a 4-byte big-endian length followed by that many
 bytes of UTF-8 JSON, written in binary mode and flushed per message. A body above ``SPILL_THRESHOLD``
 travels as a temp file instead: the frame carries ``{"type": ..., "$spill": <path>}`` and the reader loads
-and deletes the file, so a multi-MB seed or graph never sits in a pipe buffer (V3 F3).
+and deletes the file, so a multi-MB seed or graph never sits in a pipe buffer.
 
 Core to session: ``seed``, ``execute``, ``interrupt``, ``reset``, ``clean_run``, ``schemas``, ``shutdown``.
 Session to core: ``ready``, ``stream``, ``display``, ``done``, ``graph``, ``schemas``.

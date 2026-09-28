@@ -183,7 +183,7 @@ def _polars_code_header(settings: input_schema.NodePolarsCode) -> str:
 
 
 def _legacy_polars_code_body(code: str) -> tuple[list[str], str | None]:
-    """Text heuristics for Polars code that does not parse, so a broken node exports as it always did."""
+    """Text heuristics for Polars code that does not parse, so a node with broken code still exports."""
     if "output_df" not in code:
         return [], code
     lines = [line for line in code.split("\n") if line.strip()]

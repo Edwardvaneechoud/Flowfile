@@ -3,7 +3,7 @@
 Dev and pip installs run ``[sys.executable, "-c", BOOTSTRAP]``; a frozen build runs
 ``[sys.executable, "--notebook-session"]``, the verb checked at the very top of ``flowfile_core/main.py``.
 Both move the protocol off fd 1 before importing anything from flowfile, because ``flowfile_core``'s
-logger binds a ``StreamHandler`` to ``sys.__stdout__`` at import (V3 F1): the protocol keeps a dup of the
+logger binds a ``StreamHandler`` to ``sys.__stdout__`` at import: the protocol keeps a dup of the
 original stdout (and stdin), fd 1 becomes stderr (a per-session log file) and fd 0 ``/dev/null``, so a
 cell's ``input()`` can never read protocol bytes. ``-m`` is not used because it imports
 ``flowfile_core/__init__.py`` before any code of ours runs, and the empty ``sys.path`` entry ``-c`` adds is
@@ -12,7 +12,7 @@ dropped so a file in core's working directory cannot shadow a module.
 Never ``multiprocessing`` (core has no ``freeze_support``) and never ``start_new_session``: the session
 stays in core's process group, so the desktop shell's ``killpg`` / ``taskkill /T`` reap it. On Windows it
 runs with ``CREATE_NO_WINDOW`` and joins a Job Object with ``KILL_ON_JOB_CLOSE``, so a hard-killed core
-takes its sessions with it (V3 F10).
+takes its sessions with it.
 """
 
 from __future__ import annotations

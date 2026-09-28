@@ -9,7 +9,7 @@ import sys
 import threading
 from contextlib import asynccontextmanager
 
-# Frozen notebook session: swap the protocol off fd 1 before any flowfile_core import (V3 F1, F9).
+# Frozen notebook session: swap the protocol off fd 1 before any flowfile_core import.
 if __name__ == "__main__" and sys.argv[1:2] == ["--notebook-session"]:
     _proto_out = os.fdopen(os.dup(1), "wb", 0)
     _proto_in = os.fdopen(os.dup(0), "rb", 0)

@@ -770,7 +770,7 @@ def test_project_export_supports_parameter_gates(tmp_path):
     assert "age_prod" in result.stdout
 
 
-def test_project_export_formula_gate_pipeline_contains_helper():
+def test_project_export_formula_gate_places_a_native_gate():
     flow = create_basic_flow(name="formula_gated_flow")
     add_sample_input(flow, node_id=1)
     flow.add_gate(
@@ -842,7 +842,7 @@ def _build_split_diamond_flow(flow_id: int = 1) -> FlowGraph:
     return flow
 
 
-def test_project_export_else_output_split_renders_if_else_and_matches_engine():
+def test_project_export_else_output_split_reads_both_gate_exits_and_matches_engine():
     """The then/else gate exports as one ``fl.Gate`` read through ``.then``/``.otherwise``, and the
     executed module matches the engine for both parameter values."""
     flow = _build_split_diamond_flow()
@@ -1269,7 +1269,7 @@ class TestRunFlowProjectExport:
         assert "${" not in pipeline
         ast.parse(pipeline)
 
-    def test_plain_exports_still_unsupported(self, tmp_path):
+    def test_polars_export_rejects_run_flow_while_flowframe_places_it(self, tmp_path):
         from flowfile_core.flowfile.code_generator.code_generator import (
             FlowGraphToFlowFrameConverter,
             FlowGraphToPolarsConverter,

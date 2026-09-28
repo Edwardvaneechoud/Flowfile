@@ -2,7 +2,7 @@
 
 The notebook UI already talks to kernels through ``/kernels/{kernel_id}/...``; ``kernel/routes.py`` hands
 the pseudo ids here before any Docker lookup, so nothing on this path calls ``get_kernel_manager()``.
-Sessions are gated like the old session routes: ``notebook_sessions_allowed`` and, in ``electron`` mode,
+Sessions require ``notebook_sessions_allowed`` and, in ``electron`` mode,
 a loopback caller. The flow must be open in the caller's editor session.
 """
 
