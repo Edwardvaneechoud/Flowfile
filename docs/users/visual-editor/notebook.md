@@ -10,7 +10,7 @@ The canvas notebook shows the open flow as Python code, one cell per statement, 
 
 ## Opening it
 
-Press **Code** in the header (Ctrl/Cmd+G), then **Notebook** in the panel's FlowFrame / Polars / Project / Notebook switch. The panel floats over the right of the canvas (drag its edges to resize it, or use its full-screen button) and remembers the mode, so the next **Code** press opens the notebook again. Closing the panel keeps your unpushed edits. The notebook renders the flow:
+Press **Code** in the header (Ctrl/Cmd+G), then **Notebook** in the panel's FlowFrame / Polars / Project / Notebook switch. The Code panel opens as a pane beside the canvas, which narrows to make room, so every node stays reachable while you edit cells. Drag the pane's left edge to resize it. The panel remembers its width and the mode, so the next **Code** press opens the notebook again. Clicking the canvas or a node, or switching to another flow tab, leaves the panel open; only **Code**, Ctrl/Cmd+G, the panel's close button or closing the last open flow closes it, and closing it keeps your unpushed edits. The notebook renders the flow:
 
 - The leading cells hold the imports and the flow parameters, then one cell per statement in the order the flow runs; a cell holds every node its statement chains together.
 - Cells use the [Python API](../python-api/index.md) (`import flowfile as fl`): fluent `FlowFrame` calls for built-in transforms, and the [native node classes](../python-api/reference/native-nodes.md) (`fl.Gate`, `fl.RunFlow`, `fl.PythonScript`, custom nodes, parameters) for the rest.

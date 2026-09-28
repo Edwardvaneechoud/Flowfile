@@ -106,13 +106,15 @@ async function renderedCells(request: APIRequestContext, token: string, flowId: 
 const cellOf = (cells: RenderedCell[], nodeId: number) =>
   cells.find((c) => c.node_ids.includes(nodeId))!;
 
-const NOTEBOOK = "#rightDrawer .code-notebook .notebook-panel";
+const NOTEBOOK = ".code-dock .code-notebook .notebook-panel";
 
 const cellTexts = (page: Page) => page.locator(`${NOTEBOOK} .nb-cell .cm-content`).allInnerTexts();
 
-/** The notebook is the Code drawer's Notebook mode; the drawer overlays the canvas's right side. */
+/** The notebook is the code pane's Notebook mode; the pane sits beside the canvas, which narrows. */
 async function openNotebook(page: Page) {
   await page.locator('[data-tutorial="generate-code-btn"]').click();
+  // The Code button's tooltip sits over the pane's mode toggle until the pointer leaves it.
+  await page.mouse.move(400, 500);
   await page.getByTestId("code-mode-notebook").click();
 }
 

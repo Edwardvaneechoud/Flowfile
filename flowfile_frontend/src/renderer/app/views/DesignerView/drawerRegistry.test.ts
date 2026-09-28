@@ -1,10 +1,10 @@
 // Minimizing the right drawer saves the open node settings first; a refused save keeps it open.
+// The code generator is DesignerView's split pane, so the drawer neither shows nor closes it.
 
 import { setActivePinia, createPinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./NodeSettingsDrawer.vue", () => ({ default: {} }));
-vi.mock("./CodeGenerator/CodeGenerator.vue", () => ({ default: {} }));
 vi.mock("./LogViewer/LogViewer.vue", () => ({ default: {} }));
 vi.mock("../../features/designer/editor/results.vue", () => ({ default: {} }));
 vi.mock("../../features/ai/AiAssistant.vue", () => ({ default: {} }));
@@ -67,15 +67,56 @@ describe("rightDrawer.onMinimize", () => {
     expect(editor.drawCloseFunction).toBe(save);
   });
 
-  it("closes results and code without a settings save when no node is open", async () => {
+  it("closes results without a settings save when no node is open, leaving the code pane", async () => {
     const editor = useEditorStore();
     const save = vi.fn(async () => false);
     editor.setCloseFunction(save);
     editor.showFlowResult = true;
+    editor.setCodeGeneratorVisibility(true);
     const ctx = { editor, node: { nodeId: -1 } } as unknown as DrawerCtx;
 
     expect(await nextMinimizedState(false, () => rightDrawer.onMinimize!(ctx))).toBe(true);
     expect(save).not.toHaveBeenCalled();
     expect(editor.showFlowResult).toBe(false);
+    expect(editor.showCodeGenerator).toBe(true);
+  });
+});
+
+describe("rightDrawer visibility", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("has only Settings and Results tabs", () => {
+    expect(rightDrawer.tabs.map((t) => t.id)).toEqual(["settings", "results"]);
+  });
+
+  it("stays closed when only the code pane is open", () => {
+    const editor = useEditorStore();
+    editor.setCodeGeneratorVisibility(true);
+    const ctx = { editor } as unknown as DrawerCtx;
+    expect(rightDrawer.visibleWhen!(ctx)).toBe(false);
+
+    editor.showFlowResult = true;
+    expect(rightDrawer.visibleWhen!(ctx)).toBe(true);
+  });
+});
+
+describe("hideAllPanels", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("closes the code pane unless asked to keep it", () => {
+    const editor = useEditorStore();
+    editor.setCodeGeneratorVisibility(true);
+    editor.showFlowResult = true;
+
+    editor.hideAllPanels({ keepCodePane: true });
+    expect(editor.showFlowResult).toBe(false);
+    expect(editor.showCodeGenerator).toBe(true);
+
+    editor.hideAllPanels();
+    expect(editor.showCodeGenerator).toBe(false);
   });
 });

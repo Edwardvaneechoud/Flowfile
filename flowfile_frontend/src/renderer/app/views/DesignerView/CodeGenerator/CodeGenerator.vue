@@ -32,6 +32,15 @@
           Notebook
         </button>
       </div>
+      <button
+        class="close-btn"
+        type="button"
+        aria-label="Close code pane"
+        title="Close (Ctrl/Cmd+G)"
+        @click="editorStore.setCodeGeneratorVisibility(false)"
+      >
+        <span class="material-icons" aria-hidden="true">close</span>
+      </button>
     </div>
     <div v-if="!ownsBody" class="code-toolbar">
       <button class="action-btn" :disabled="loading" @click="refreshCode">
@@ -68,7 +77,9 @@
       </button>
     </div>
     <template v-if="active">
-      <ProjectExport v-if="codeMode === 'project'" />
+      <div v-if="codeMode === 'project'" class="code-project">
+        <ProjectExport />
+      </div>
       <div v-else-if="codeMode === 'notebook'" class="code-notebook">
         <NotebookPanel :key="nodeStore.flow_id" :flow-id="nodeStore.flow_id" />
       </div>
@@ -78,7 +89,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, defineAsyncComponent, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
 import axios from "axios";
 import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
@@ -88,8 +99,8 @@ import ProjectExport from "./ProjectExport.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 
-// `active` = this is the visible tab. CodeMirror must not be created while its
-// pane is display:none, so the editor renders (and code fetches) only when active.
+// `active` = the pane is shown. CodeMirror must not be created while its pane is
+// display:none, so the editor renders (and code fetches) only when active.
 const props = defineProps<{ active?: boolean }>();
 
 const NotebookPanel = defineAsyncComponent(() => import("../../CatalogView/NotebookPanel.vue"));
@@ -137,15 +148,21 @@ const exportConfirmMap: Partial<Record<CodeMode, string>> = {
   polars: "/editor/code_to_polars/exported",
 };
 
+// Only the latest request writes the viewer, so a mode switch mid-fetch can't be overwritten.
+let fetchSeq = 0;
+
 const fetchCode = async () => {
   if (ownsBody.value) return;
+  const seq = ++fetchSeq;
   loading.value = true;
   try {
     const endpoint = endpointMap[codeMode.value];
     const response = await axios.get(`${endpoint}?flow_id=${nodeStore.flow_id}`);
+    if (seq !== fetchSeq) return;
     code.value = response.data;
     lastLoadedFlowId.value = nodeStore.flow_id;
   } catch (error: any) {
+    if (seq !== fetchSeq) return;
     console.error("Failed to fetch code:", error);
     const detail = error?.response?.data?.detail;
     if (detail) {
@@ -154,7 +171,7 @@ const fetchCode = async () => {
       code.value = "# Failed to generate code. Please check your flow configuration.";
     }
   } finally {
-    loading.value = false;
+    if (seq === fetchSeq) loading.value = false;
   }
 };
 
@@ -172,7 +189,7 @@ const setMode = (mode: CodeMode) => {
   }
 };
 
-// Fetch when the tab becomes visible (active) for a flow we haven't loaded yet.
+// Fetch when the pane becomes visible (active) for a flow we haven't loaded yet.
 watch(
   () => [props.active, nodeStore.flow_id] as const,
   ([active, flowId]) => {
@@ -183,14 +200,23 @@ watch(
   { immediate: true },
 );
 
-// A graph edit invalidates the cached code; drop the cache so the next time the
-// Code tab opens it re-fetches (rather than regenerating on every hidden edit).
+// A graph edit invalidates the cached code; the open pane regenerates it once edits settle.
+let refetchTimer: ReturnType<typeof setTimeout> | null = null;
 watch(
   () => editorStore.graphVersion,
   () => {
     lastLoadedFlowId.value = null;
+    if (refetchTimer) clearTimeout(refetchTimer);
+    refetchTimer = setTimeout(() => {
+      refetchTimer = null;
+      if (props.active && nodeStore.flow_id > 0) fetchCode();
+    }, 400);
   },
 );
+
+onBeforeUnmount(() => {
+  if (refetchTimer) clearTimeout(refetchTimer);
+});
 
 const refreshCode = () => {
   if (nodeStore.flow_id > 0) {
@@ -222,26 +248,30 @@ const exportCode = () => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 20px;
   box-sizing: border-box;
 }
 
 .code-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: 8px;
+  padding: 8px 8px 8px 16px;
+  border-bottom: 1px solid var(--color-border-light);
   flex-shrink: 0;
 }
 
-.code-container.is-notebook {
-  padding: 0;
-}
-
-/* The disabled CodeMirror viewer fills the remaining tab height and scrolls. */
+/* The disabled CodeMirror viewer fills the remaining pane height and scrolls. */
 .code-container:not(.is-notebook) :deep(.cm-editor) {
   flex: 1;
   min-height: 0;
+  margin: 0 16px 16px;
+}
+
+.code-project {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px 16px;
 }
 
 .code-notebook {
@@ -258,11 +288,43 @@ const exportCode = () => {
 }
 
 .code-header h4 {
+  flex: 0 1 auto;
+  min-width: 0;
   margin: 0;
+  overflow: hidden;
+  font-size: var(--font-size-base);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.close-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  border-radius: var(--border-radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.close-btn .material-icons {
+  font-size: 18px;
+}
+
+.close-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-background-tertiary);
 }
 
 .mode-toggle {
   display: flex;
+  flex: none;
   gap: 2px;
   padding: 2px;
   background: var(--color-background-secondary);
@@ -271,7 +333,7 @@ const exportCode = () => {
 }
 
 .toggle-button {
-  padding: 4px 12px;
+  padding: 4px 10px;
   border: none;
   border-radius: var(--border-radius-sm);
   background: transparent;
@@ -297,7 +359,7 @@ const exportCode = () => {
   justify-content: flex-end;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  padding: 12px 16px;
   flex-shrink: 0;
 }
 

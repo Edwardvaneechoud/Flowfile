@@ -2,7 +2,6 @@
 // is a one-entry edit here — TabbedDrawer renders each from this declarative data.
 import { markRaw } from "vue";
 import NodeSettingsDrawer from "./NodeSettingsDrawer.vue";
-import CodeGenerator from "./CodeGenerator/CodeGenerator.vue";
 import LogViewer from "./LogViewer/LogViewer.vue";
 import FlowResults from "../../features/designer/editor/results.vue";
 import AiAssistant from "../../features/ai/AiAssistant.vue";
@@ -19,10 +18,8 @@ export const drawers: DrawerDef[] = [
     // edge meets the bottom dock.
     heightBehaviour: "scale",
     allowFullScreen: true,
-    // Opens for settings / results / code; Code is then always a tab (its own
-    // visibleWhen is always-true), so it can't be the thing that opens it.
-    visibleWhen: ({ editor }) =>
-      editor.isDrawerOpen || editor.showFlowResult || editor.showCodeGenerator,
+    // Settings and results only; the code generator is DesignerView's split pane.
+    visibleWhen: ({ editor }) => editor.isDrawerOpen || editor.showFlowResult,
     onMinimize: async ({ editor, node }) => {
       // Save first: closing unmounts the Settings tab before its nodeId watcher can.
       if (editor.isDrawerOpen && node.nodeId !== -1 && !(await editor.saveDrawerBeforeLeave())) {
@@ -31,7 +28,6 @@ export const drawers: DrawerDef[] = [
       editor.isDrawerOpen = false;
       editor.activeDrawerComponent = null;
       editor.showFlowResult = false;
-      editor.setCodeGeneratorVisibility(false);
     },
     tabs: [
       {
@@ -47,18 +43,6 @@ export const drawers: DrawerDef[] = [
         label: "Results",
         component: markRaw(FlowResults),
         visibleWhen: ({ editor }) => editor.showFlowResult,
-      },
-      {
-        id: "code",
-        label: "Code",
-        component: markRaw(CodeGenerator),
-        // visibleWhen is always-true, so this tab never "appears" and the
-        // auto-focus watcher can't focus it — focusWhen is what grabs Ctrl+G
-        // focus (don't remove it). `active` defers CodeMirror creation until
-        // visible (it breaks if built while hidden).
-        visibleWhen: () => true,
-        focusWhen: ({ editor }) => editor.showCodeGenerator,
-        props: ({ drawer }) => ({ active: drawer.activeTab["rightDrawer"] === "code" }),
       },
     ],
   },
@@ -102,8 +86,8 @@ export const drawers: DrawerDef[] = [
         props: ({ drawer }) => ({
           nodeId: drawer.previewNodeId,
           refreshToken: drawer.previewRefreshToken,
-          // Gate the fetch to when the Data tab is actually shown (mirrors the
-          // Code tab's `active`). undefined activeTab => default first tab "data".
+          // Gate the fetch to when the Data tab is actually shown.
+          // undefined activeTab => default first tab "data".
           active: (drawer.activeTab["bottomDock"] ?? "data") === "data",
         }),
       },
@@ -111,8 +95,8 @@ export const drawers: DrawerDef[] = [
         id: "logs",
         label: "Logs",
         component: markRaw(LogViewer),
-        // Always available as a tab (decoupled from the results toggle); like the
-        // Code tab, the run/results signal only pulls focus to it.
+        // Always available as a tab (decoupled from the results toggle); the
+        // run/results signal only pulls focus to it.
         visibleWhen: ({ editor }) => editor.displayLogViewer,
         focusWhen: ({ editor }) => editor.isShowingLogViewer,
       },

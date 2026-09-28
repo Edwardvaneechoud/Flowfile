@@ -56,12 +56,21 @@
         <span class="switch-spinner" />
         <span>Loading flow…</span>
       </div>
+      <aside
+        v-if="hasOpenFlow && editorStore.showCodeGenerator"
+        class="code-dock"
+        data-canvas-overlay
+        :style="{ width: `${codeDockWidth}px` }"
+      >
+        <div class="code-dock-resizer" @pointerdown="startResize" />
+        <code-generator :key="nodeStore.flow_id" :active="true" />
+      </aside>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from "vue";
+import { ref, computed, onMounted, nextTick, watch, defineAsyncComponent } from "vue";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
 import RightActionCluster from "../../components/layout/Header/RightActionCluster.vue";
 import CanvasFlow from "./Canvas.vue";
@@ -95,6 +104,38 @@ const initialLoadComplete = ref(false);
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
+const CodeGenerator = defineAsyncComponent(() => import("./CodeGenerator/CodeGenerator.vue"));
+
+const CODE_DOCK_WIDTH_KEY = "flowfile.codeDock.width.v1";
+const clampWidth = (w: number) => Math.round(Math.min(Math.max(w, 360), window.innerWidth - 360));
+const readWidth = () => {
+  try {
+    return Number(localStorage.getItem(CODE_DOCK_WIDTH_KEY)) || 600;
+  } catch {
+    return 600;
+  }
+};
+const codeDockWidth = ref(clampWidth(readWidth()));
+
+/** Drag the pane's left edge; the width is saved when the gesture ends. */
+const startResize = (down: PointerEvent) => {
+  const target = down.target as HTMLElement;
+  const startX = down.clientX;
+  const startWidth = codeDockWidth.value;
+  target.setPointerCapture(down.pointerId);
+  const move = (e: PointerEvent) =>
+    (codeDockWidth.value = clampWidth(startWidth + startX - e.clientX));
+  const up = () => {
+    target.removeEventListener("pointermove", move);
+    try {
+      localStorage.setItem(CODE_DOCK_WIDTH_KEY, String(codeDockWidth.value));
+    } catch {
+      // Private mode or blocked storage: the width just isn't remembered.
+    }
+  };
+  target.addEventListener("pointermove", move);
+  target.addEventListener("pointerup", up, { once: true });
+};
 const { openFlow: openFlowFromPath } = useFlowOpener();
 
 // Hide undo/redo when no flow is loaded — same gating as the Save button.
@@ -303,11 +344,37 @@ onMounted(async () => {
 
 .canvas-wrap {
   position: relative;
+  display: flex;
   height: calc(100vh - 100px);
 }
 
 .canvas {
+  flex: 1 1 auto;
+  min-width: 0;
   height: 100%;
+}
+
+.code-dock {
+  position: relative;
+  flex: 0 0 auto;
+  height: 100%;
+  border-left: 1px solid var(--color-border-primary);
+  background: var(--color-background-primary);
+}
+
+.code-dock-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 2;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.code-dock-resizer:hover {
+  background: var(--color-primary);
+  opacity: 0.4;
 }
 
 .switch-indicator {
@@ -385,7 +452,8 @@ onMounted(async () => {
     justify-content: flex-end;
   }
 
-  .canvas {
+  .canvas,
+  .code-dock {
     height: calc(100vh - 50px);
   }
 }
@@ -432,7 +500,8 @@ onMounted(async () => {
     justify-content: flex-end;
   }
 
-  .canvas {
+  .canvas,
+  .code-dock {
     height: calc(100vh - 90px);
   }
 }

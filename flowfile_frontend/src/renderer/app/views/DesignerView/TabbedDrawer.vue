@@ -51,7 +51,7 @@ watch(
 );
 
 // Always-present tabs (visibleWhen always true) never "appear", so they grab
-// focus via an explicit focusWhen signal (e.g. Code on Ctrl+G).
+// focus via an explicit focusWhen signal (e.g. Logs on a run).
 watch(
   () =>
     props.def.tabs

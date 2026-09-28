@@ -250,12 +250,17 @@ split-output mode).
   `FlowApi.applyOperations` when it changes several things) and change the
   canvas only after core accepts it. Drags and arrow-key nudges send the
   whole moved selection; a failed mutation reloads instead of patching back.
-- The right-hand drawer (Settings/Results/Code tabs) is a **declarative
+- The right-hand drawer (Settings/Results tabs) is a **declarative
   registry**, `views/DesignerView/drawerRegistry.ts` — its own comment
   calls it "single source of truth... adding/moving a view is a one-entry
   edit here." Add new tabs there, not by hand-wiring a drawer component.
-  The Code tab defers CodeMirror instantiation until visible — it breaks if
+  A tab that hosts CodeMirror must defer it until visible (gate it on an
+  `active` prop derived from `drawer.activeTab`) — it breaks if
   constructed while hidden.
+  The code generator is **not** a drawer tab: it is the resizable
+  `code-dock` split pane in `DesignerView.vue` (toggled by
+  `editorStore.showCodeGenerator`), holding FlowFrame | Polars | Project |
+  Notebook.
 
 ---
 

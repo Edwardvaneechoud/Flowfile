@@ -2,6 +2,8 @@
 
 The Code Generator exports a visually designed flow as executable Python. Use it to inspect the transformation logic behind a flow, integrate a Flowfile pipeline into an existing Python project, or extend a workflow with custom scripts.
 
+Press **Code** in the header (Ctrl/Cmd+G) to open the Code panel, a pane beside the canvas; the canvas narrows to make room, and dragging the pane's left edge resizes it. The panel has four modes: **FlowFrame** and **Polars** show the flow as a single script (**Export Code** downloads it, **Refresh** regenerates it; an edit on the canvas also regenerates it after a moment), **Project** exports a multi-file project (see [Project Export](#project-export)), and **Notebook** opens the [canvas notebook](../notebook.md). The panel remembers its width and the last mode you used. Press **Code** again, the panel's close button or Ctrl/Cmd+G to close it.
+
 For pure transformation flows (filter, join, group by, etc.), the generated code is Polars — usually just `import polars as pl`, and never an `import flowfile`. A few nodes add a small standalone helper package instead of native Polars: formula and advanced-filter expressions that can't be lowered to native Polars pull in `polars_expr_transformer`, fuzzy match pulls in `pl_fuzzy_frame_match`, and the graph solver pulls in `polars_grouper` — each a lightweight PyPI package, not Flowfile. Flows that include I/O nodes (database, catalog, cloud storage, Kafka) additionally use `import flowfile as ff` for connection-aware operations. The transformation logic is Polars in every case.
 
 ![code_generator](../../../assets/images/guides/code_generator/code_generator.gif)
@@ -10,7 +12,7 @@ For pure transformation flows (filter, join, group by, etc.), the generated code
 
 * Transformation nodes translate to Polars operations; I/O nodes (database, catalog, cloud storage, Kafka) translate to FlowFrame API calls (`ff.read_database()`, `ff.read_catalog_table()`, etc.).
 * The structure mirrors your visual flow. Pure transformation flows depend only on Polars (plus a small `polars_*` helper package for formula, fuzzy-match, or graph-solver nodes); flows with I/O nodes require `pip install flowfile`.
-* The **FlowFrame** export writes the same flow in the `fl` dialect instead (`import flowfile as fl`): every node becomes the frame call that adds that node type back — `write_csv`, `.polars_code(fn)`, `with_row_index`, `text_to_rows`, `fl.sql`, and so on — with a node's description as `description=`, so running the script rebuilds the flow as well as computing it. The [canvas notebook](../notebook.md), the Code panel's fourth mode (**Notebook**), shows this export split into cells, one per statement; a cell spans every node its statement chains together.
+* The **FlowFrame** export writes the same flow in the `fl` dialect instead (`import flowfile as fl`): every node becomes the frame call that adds that node type back — `write_csv`, `.polars_code(fn)`, `with_row_index`, `text_to_rows`, `fl.sql`, and so on — with a node's description as `description=`, so running the script rebuilds the flow as well as computing it. The [canvas notebook](../notebook.md), the Code panel's **Notebook** mode, shows this export split into cells, one per statement; a cell spans every node its statement chains together.
 
 ## Examples of Generated Code
 

@@ -33,7 +33,7 @@ export const useEditorStore = defineStore("editor", {
     isStreamingLogs: false,
     displayLogViewer: true,
 
-    // Code generator state
+    // Code generator split pane beside the canvas (DesignerView)
     showCodeGenerator: false,
 
     // Edge label state
@@ -335,9 +335,10 @@ export const useEditorStore = defineStore("editor", {
     // ========== Bulk panel control ==========
     // Closes every floating overlay (right-side and bottom). The left palette
     // (`dataActions`) is owned by the canvas component and stays visible.
-    hideAllPanels() {
+    /** `keepCodePane` leaves the code split pane open: canvas gestures and flow switches keep it, closing the last flow does not. */
+    hideAllPanels({ keepCodePane = false }: { keepCodePane?: boolean } = {}) {
       this.showFlowResult = false;
-      this.showCodeGenerator = false;
+      if (!keepCodePane) this.showCodeGenerator = false;
       this.activeDrawerComponent = null;
       this.isDrawerOpen = false;
       this.isShowingLogViewer = false;
