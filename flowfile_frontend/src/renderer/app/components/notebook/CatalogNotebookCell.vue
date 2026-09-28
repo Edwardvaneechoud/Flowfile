@@ -8,6 +8,7 @@
         queued: runtime?.status === 'queued',
         'is-dragging': dragging,
         'nb-cell--active': active,
+        'has-meta': !!execMeta,
       },
     ]"
     tabindex="-1"
@@ -17,21 +18,8 @@
     @keydown.meta.enter.self.prevent="emit('run')"
     @keydown.ctrl.enter.self.prevent="emit('run')"
   >
-    <!-- Cell toolbar -->
-    <div class="nb-cell-bar">
-      <button
-        type="button"
-        class="nb-drag-handle"
-        :aria-label="`Reorder cell ${index + 1} of ${cellCount}`"
-        title="Drag to reorder · Alt+↑/↓ to move"
-        :disabled="structuralDisabled"
-        @pointerdown="emit('drag-start', $event)"
-        @keydown.alt.up.prevent="emit('move-key', -1)"
-        @keydown.alt.down.prevent="emit('move-key', 1)"
-      >
-        <i class="fa-solid fa-grip-vertical"></i>
-      </button>
-
+    <!-- Left rail: run on top, reorder handle below it. -->
+    <div class="nb-cell-rail">
       <button
         class="nb-run"
         :disabled="busy || cell.execState === 'running'"
@@ -46,26 +34,35 @@
         <i v-else-if="cell.cellType === 'markdown'" class="fa-solid fa-eye"></i>
         <i v-else class="fa-solid fa-play"></i>
       </button>
-
-      <el-select
-        v-if="allowedTypes.length > 1"
-        :model-value="cell.cellType"
-        size="small"
-        class="nb-type-select"
-        @change="(v: CellType) => emit('update:type', v)"
+      <button
+        type="button"
+        class="nb-drag-handle"
+        :aria-label="`Reorder cell ${index + 1} of ${cellCount}`"
+        title="Drag to reorder · Alt+↑/↓ to move"
+        :disabled="structuralDisabled"
+        @pointerdown="emit('drag-start', $event)"
+        @keydown.alt.up.prevent="emit('move-key', -1)"
+        @keydown.alt.down.prevent="emit('move-key', 1)"
       >
-        <el-option v-for="t in allowedTypes" :key="t" :label="TYPE_LABELS[t]" :value="t" />
-      </el-select>
-      <span v-else class="nb-cell-type-badge">{{ TYPE_LABELS[cell.cellType] }}</span>
+        <i class="fa-solid fa-grip-vertical"></i>
+      </button>
+    </div>
 
-      <CellStatusBadge
-        :runtime="runtime"
-        :has-output="cell.cellType === 'python' && !!cell.output"
-      />
-
-      <div class="nb-cell-bar-spacer"></div>
-
+    <div class="nb-cell-main">
+      <!-- Floating actions, shown on hover/focus/active. -->
       <div class="nb-cell-actions">
+        <el-select
+          v-if="!typeInMenu && allowedTypes.length > 1"
+          :model-value="cell.cellType"
+          size="small"
+          class="nb-type-select"
+          @change="(v: CellType) => emit('update:type', v)"
+        >
+          <el-option v-for="t in allowedTypes" :key="t" :label="TYPE_LABELS[t]" :value="t" />
+        </el-select>
+        <span v-else-if="!typeInMenu" class="nb-cell-type-badge">{{
+          TYPE_LABELS[cell.cellType]
+        }}</span>
         <button
           class="nb-act"
           :disabled="index === 0 || structuralDisabled"
@@ -95,70 +92,93 @@
           @toggle-output="toggleOutputCollapsed(ownerId, cell.id)"
           @delete="emit('remove')"
         >
+          <el-dropdown-item
+            v-if="typeInMenu"
+            data-action="toggle-type"
+            :disabled="readOnly"
+            @click="emit('update:type', cell.cellType === 'python' ? 'markdown' : 'python')"
+          >
+            <i
+              class="nb-menu-icon"
+              :class="cell.cellType === 'python' ? 'fa-solid fa-paragraph' : 'fa-brands fa-python'"
+            ></i>
+            {{ cell.cellType === "python" ? "Convert to Markdown" : "Convert to Python" }}
+          </el-dropdown-item>
           <slot name="menu-extra" />
         </CellActionMenu>
       </div>
-    </div>
 
-    <!-- Editor. Collapse uses v-show so the EditorView (and its text undo history) survives. -->
-    <div v-show="!pres.codeCollapsed" class="nb-cell-editor">
-      <!-- Markdown preview (double-click to edit). Content is sanitised via
-           DOMPurify in sanitiseMarkdown before reaching v-html. -->
-      <!-- eslint-disable vue/no-v-html -->
-      <div
-        v-if="cell.cellType === 'markdown' && !cell.editing"
-        class="nb-md-rendered"
-        @click="emit('activate')"
-        @dblclick="emit('update:editing', true)"
-        v-html="cell.renderedHtml || '<em>Empty markdown cell — double-click to edit</em>'"
-      ></div>
-      <!-- eslint-enable vue/no-v-html -->
-      <el-input
-        v-else-if="cell.cellType === 'markdown'"
-        :model-value="cell.code"
-        type="textarea"
-        :autosize="{ minRows: 3 }"
-        placeholder="# Markdown — Render (Cmd/Ctrl+Enter) to preview"
-        @update:model-value="(v: string) => emit('update:code', v)"
-        @focus="emit('activate')"
-        @keydown.shift.enter.prevent="emit('run-advance')"
-        @keydown.meta.enter.prevent="emit('run')"
-        @keydown.ctrl.enter.prevent="emit('run')"
-      />
-      <!-- Python code -->
-      <codemirror
-        v-else
-        :model-value="cell.code"
-        :disabled="readOnly"
-        placeholder="# Python — Cmd/Ctrl+Enter to run"
-        :indent-with-tab="false"
-        :tab-size="4"
-        :extensions="extensions"
-        @ready="onReady"
-        @update:model-value="(v: string) => emit('update:code', v)"
-      />
-    </div>
-    <button
-      v-if="pres.codeCollapsed"
-      type="button"
-      class="nb-cell-collapsed"
-      @click="toggleCodeCollapsed(ownerId, cell.id)"
-    >
-      Code hidden · {{ codeLineCount }} {{ codeLineCount === 1 ? "line" : "lines" }}
-    </button>
-
-    <!-- Output -->
-    <template v-if="cell.cellType === 'python' && cell.output">
-      <CellOutput v-show="!pres.outputCollapsed" :output="cell.output" />
+      <!-- Editor. Collapse uses v-show so the EditorView (and its text undo history) survives. -->
+      <div v-show="!pres.codeCollapsed" class="nb-cell-editor">
+        <span v-if="execMeta" class="nb-cell-meta" :title="execMeta.title">
+          <span class="nb-cell-meta__count">[{{ execMeta.count }}]</span>
+          <span>{{ execMeta.time }}</span>
+        </span>
+        <!-- Markdown preview (double-click to edit). Content is sanitised via
+             DOMPurify in sanitiseMarkdown before reaching v-html. -->
+        <!-- eslint-disable vue/no-v-html -->
+        <div
+          v-if="cell.cellType === 'markdown' && !cell.editing"
+          class="nb-md-rendered"
+          @click="emit('activate')"
+          @dblclick="emit('update:editing', true)"
+          v-html="cell.renderedHtml || '<em>Empty markdown cell — double-click to edit</em>'"
+        ></div>
+        <!-- eslint-enable vue/no-v-html -->
+        <el-input
+          v-else-if="cell.cellType === 'markdown'"
+          :model-value="cell.code"
+          type="textarea"
+          :autosize="{ minRows: 3 }"
+          placeholder="# Markdown — Render (Cmd/Ctrl+Enter) to preview"
+          @update:model-value="(v: string) => emit('update:code', v)"
+          @focus="emit('activate')"
+          @keydown.shift.enter.prevent="emit('run-advance')"
+          @keydown.meta.enter.prevent="emit('run')"
+          @keydown.ctrl.enter.prevent="emit('run')"
+        />
+        <!-- Python code -->
+        <codemirror
+          v-else
+          :model-value="cell.code"
+          :disabled="readOnly"
+          placeholder="# Python — Cmd/Ctrl+Enter to run"
+          :indent-with-tab="false"
+          :tab-size="4"
+          :extensions="extensions"
+          @ready="onReady"
+          @update:model-value="(v: string) => emit('update:code', v)"
+        />
+      </div>
       <button
-        v-if="pres.outputCollapsed"
+        v-if="pres.codeCollapsed"
         type="button"
         class="nb-cell-collapsed"
-        @click="toggleOutputCollapsed(ownerId, cell.id)"
+        @click="toggleCodeCollapsed(ownerId, cell.id)"
       >
-        Output hidden
+        Code hidden · {{ codeLineCount }} {{ codeLineCount === 1 ? "line" : "lines" }}
       </button>
-    </template>
+
+      <div class="nb-cell-status">
+        <CellStatusBadge
+          :runtime="runtime"
+          :has-output="cell.cellType === 'python' && !!cell.output"
+        />
+      </div>
+
+      <!-- Output -->
+      <template v-if="cell.cellType === 'python' && cell.output">
+        <CellOutput v-show="!pres.outputCollapsed" :output="cell.output" />
+        <button
+          v-if="pres.outputCollapsed"
+          type="button"
+          class="nb-cell-collapsed"
+          @click="toggleOutputCollapsed(ownerId, cell.id)"
+        >
+          Output hidden
+        </button>
+      </template>
+    </div>
   </div>
 </template>
 
@@ -173,6 +193,7 @@ import CellStatusBadge from "./CellStatusBadge.vue";
 import type { CellRuntime } from "./notebookRuntimeState";
 import CellOutput from "../nodes/node-types/elements/pythonScript/CellOutput.vue";
 import { buildNotebookEditorExtensions } from "../nodes/node-types/elements/pythonScript/notebookEditor";
+import { formatExecutionTime } from "../nodes/node-types/elements/pythonScript/notebookDisplay";
 import type { CellType, NotebookCellModel } from "./types";
 
 const props = defineProps<{
@@ -200,6 +221,8 @@ const props = defineProps<{
   flowId?: number;
   nodeId?: number;
   readOnly?: boolean;
+  /** Hide the type select; the cell menu switches between Python and Markdown instead. */
+  typeInMenu?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -229,6 +252,18 @@ const codeLineCount = computed(() => props.cell.code.split("\n").length);
 function onRootEnter() {
   if (props.cell.cellType === "markdown" && !props.cell.editing) emit("update:editing", true);
 }
+
+// Shown in the editor corner, so the output block itself carries no meta row.
+const execMeta = computed(() => {
+  const out = props.cell.cellType === "python" ? props.cell.output : null;
+  if (!out?.execution_count) return null;
+  const time = formatExecutionTime(out.execution_time_ms);
+  return {
+    count: out.execution_count,
+    time,
+    title: `Execution ${out.execution_count} · ${time}`,
+  };
+});
 
 const TYPE_LABELS: Record<CellType, string> = {
   python: "Python",
@@ -285,186 +320,288 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .nb-cell {
-  border: 1px solid var(--el-border-color-lighter, #ebeef5);
-  border-radius: 6px;
-  margin-bottom: 8px;
-  background: var(--el-bg-color, #fff);
-  overflow: hidden;
+  position: relative;
+  display: flex;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-lg);
+  background: var(--color-background-primary);
+  box-shadow: var(--shadow-xs);
   transition:
-    border-color 0.12s,
-    box-shadow 0.12s;
+    border-color var(--transition-base),
+    box-shadow var(--transition-base);
 }
 .nb-cell:hover {
-  border-color: var(--el-border-color, #dcdfe6);
+  border-color: var(--color-border-secondary);
 }
 .nb-cell.is-dragging {
   opacity: 0.55;
 }
-/* Declared before .running so a running cell keeps the stronger accent. */
-.nb-cell.nb-cell--active {
-  border-color: var(--el-color-primary, #409eff);
-  box-shadow: inset 3px 0 0 var(--el-color-primary-light-5, #a0cfff);
-}
+/* State bar on the rail edge: an inset shadow follows the card's rounded corners. */
 .nb-cell.queued {
-  box-shadow: inset 3px 0 0 var(--el-border-color-dark, #d4d7de);
+  box-shadow:
+    inset 2px 0 0 var(--color-border-secondary),
+    var(--shadow-xs);
 }
+.nb-cell.nb-cell--active,
 .nb-cell.running {
-  border-color: var(--el-color-primary, #409eff);
-  box-shadow: inset 3px 0 0 var(--el-color-primary, #409eff);
+  border-color: var(--color-border-secondary);
+  box-shadow:
+    inset 2px 0 0 var(--color-accent),
+    var(--shadow-xs);
 }
 
-/* Toolbar: thin, flat, no filled background */
-.nb-cell-bar {
+.nb-cell-rail {
   display: flex;
+  flex: 0 0 28px;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 3px 6px;
+  gap: 2px;
+  padding-top: var(--spacing-2);
 }
-.nb-cell-bar-spacer {
+.nb-cell-main {
+  position: relative;
   flex: 1;
+  min-width: 0;
+  padding: var(--spacing-2) var(--spacing-2) var(--spacing-2) 0;
 }
 
-/* Six-dot reorder handle: always rendered (so it stays keyboard-reachable) but
-   faint until the cell is hovered or focused. */
-.nb-drag-handle {
+/* Ghost icon buttons share one recipe. */
+.nb-drag-handle,
+.nb-run,
+.nb-act {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--border-radius-sm);
   background: transparent;
-  color: var(--el-text-color-secondary, #909399);
-  font-size: 12px;
-  opacity: 0.35;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+/* Reorder handle: stays in the tab order, visible on hover, focus or when active. */
+.nb-drag-handle {
+  opacity: 0;
   cursor: grab;
   touch-action: none;
   user-select: none;
-  transition:
-    background 0.12s,
-    opacity 0.12s;
 }
 .nb-cell:hover .nb-drag-handle,
-.nb-cell:focus-within .nb-drag-handle {
+.nb-cell:focus-within .nb-drag-handle,
+.nb-cell--active .nb-drag-handle {
   opacity: 1;
+  color: var(--color-text-tertiary);
 }
 .nb-drag-handle:hover:not(:disabled) {
-  background: var(--el-fill-color, #f0f2f5);
-  color: var(--el-text-color-primary, #303133);
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
 }
 .nb-cell.is-dragging .nb-drag-handle {
   cursor: grabbing;
 }
-.nb-drag-handle:disabled {
+.nb-cell .nb-drag-handle:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }
 
-/* Compact ghost run button */
-.nb-run {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--el-color-primary, #409eff);
-  cursor: pointer;
-  font-size: 12px;
-  transition:
-    background 0.12s,
-    color 0.12s;
+.nb-cell:hover .nb-run:not(:disabled),
+.nb-cell:focus-within .nb-run:not(:disabled),
+.nb-cell--active .nb-run:not(:disabled),
+.nb-cell.running .nb-run {
+  color: var(--color-accent);
 }
-.nb-run:hover {
-  background: var(--el-color-primary-light-9, #ecf5ff);
+.nb-run:hover:not(:disabled) {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent-dark);
+}
+.nb-run:disabled {
+  cursor: not-allowed;
 }
 .nb-run .fa-play {
   margin-left: 1px; /* optical-center the triangle */
 }
 
-/* Type selector — lighter, borderless until hover */
-.nb-type-select {
-  width: 92px;
-}
-.nb-type-select :deep(.el-input__wrapper) {
-  box-shadow: none;
-  background: transparent;
-  padding-left: 6px;
-}
-.nb-type-select :deep(.el-input__wrapper:hover),
-.nb-type-select :deep(.el-input__wrapper.is-focus) {
-  background: var(--el-fill-color-light, #f5f7fa);
-}
-.nb-cell-type-badge {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--el-text-color-secondary, #909399);
-}
-
-/* Secondary actions — revealed on hover/focus */
+/* Floating toolbar on the card's top-right edge, clear of the code. */
 .nb-cell-actions {
+  position: absolute;
+  top: -12px;
+  right: var(--spacing-3);
+  z-index: 2;
   display: flex;
-  gap: 2px;
+  align-items: center;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  box-shadow: var(--shadow-xs);
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity var(--transition-fast);
 }
 .nb-cell:hover .nb-cell-actions,
-.nb-cell:focus-within .nb-cell-actions {
+.nb-cell:focus-within .nb-cell-actions,
+.nb-cell--active .nb-cell-actions {
   opacity: 1;
 }
 .nb-act {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--el-text-color-secondary, #909399);
-  cursor: pointer;
-  font-size: 12px;
-  transition:
-    background 0.12s,
-    color 0.12s;
+  color: var(--color-text-tertiary);
 }
 .nb-act:hover:not(:disabled) {
-  background: var(--el-fill-color, #f0f2f5);
-  color: var(--el-text-color-primary, #303133);
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
 }
 .nb-act:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }
 
-.nb-cell-editor {
-  padding: 2px 4px 4px;
+/* Catalog type selector: a compact ghost select inside the toolbar. */
+.nb-type-select {
+  width: 96px;
 }
+.nb-type-select :deep(.el-select__wrapper) {
+  min-height: 22px;
+  padding: 0 6px 0 8px;
+  border-radius: var(--border-radius-sm);
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--font-size-xs);
+}
+.nb-type-select :deep(.el-select__wrapper:hover),
+.nb-type-select :deep(.el-select__wrapper.is-focused) {
+  background: var(--color-background-tertiary);
+  box-shadow: none;
+}
+.nb-type-select :deep(.el-select__placeholder) {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+.nb-cell-type-badge {
+  padding: 0 6px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+}
+
+.nb-cell-editor {
+  position: relative;
+}
+.nb-cell-editor :deep(.cm-editor) {
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  overflow: hidden;
+}
+.nb-cell-editor :deep(.el-textarea__inner) {
+  font-family: var(--font-family-mono);
+  font-size: 12.5px;
+}
+.nb-cell-meta {
+  position: absolute;
+  top: 5px;
+  right: var(--spacing-2);
+  z-index: 1;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--spacing-1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.nb-cell-meta__count {
+  font-family: var(--font-family-mono);
+}
+/* Keep the first line of code clear of the corner meta. */
+.nb-cell.has-meta .nb-cell-editor :deep(.cm-content > .cm-line:first-child) {
+  padding-right: 72px;
+}
+
 .nb-md-rendered {
-  padding: 6px 10px;
+  padding: 2px 4px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-relaxed);
   cursor: text;
-  line-height: 1.5;
+}
+.nb-md-rendered :deep(h1),
+.nb-md-rendered :deep(h2),
+.nb-md-rendered :deep(h3) {
+  margin: 0.4em 0 0.3em;
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+}
+.nb-md-rendered :deep(h1) {
+  font-size: var(--font-size-2xl);
+}
+.nb-md-rendered :deep(h2) {
+  font-size: var(--font-size-xl);
+}
+.nb-md-rendered :deep(strong) {
+  font-weight: var(--font-weight-semibold);
+}
+.nb-md-rendered :deep(p) {
+  margin: 0.3em 0;
+}
+.nb-md-rendered :deep(code) {
+  padding: 1px 5px;
+  border-radius: var(--border-radius-sm);
+  background: var(--color-background-tertiary);
+  font-family: var(--font-family-mono);
+  font-size: 0.9em;
+}
+.nb-md-rendered :deep(em:only-child) {
+  color: var(--color-text-muted);
+}
+
+.nb-cell-status {
+  display: flex;
+  padding-top: var(--spacing-1-5);
+}
+.nb-cell-status:empty {
+  display: none;
+}
+
+/* The editor corner carries count + timing, so the output drops its own meta row. */
+.nb-cell-main > :deep(.cell-output) {
+  padding: var(--spacing-2) 0 0;
+}
+.nb-cell-main > :deep(.cell-output .output-meta) {
+  display: none;
 }
 
 /* Stub row standing in for hidden code/output; click restores it. */
 .nb-cell-collapsed {
-  display: block;
-  width: calc(100% - 8px);
-  margin: 2px 4px 4px;
-  padding: 5px 10px;
-  border: 1px dashed var(--el-border-color, #dcdfe6);
-  border-radius: 5px;
-  background: var(--el-fill-color-lighter, #f5f7fa);
-  color: var(--el-text-color-secondary, #909399);
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px dashed var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+  color: var(--color-text-tertiary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
   text-align: left;
   cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+.cell-output + .nb-cell-collapsed {
+  margin-top: var(--spacing-2);
 }
 .nb-cell-collapsed:hover {
-  color: var(--el-text-color-primary, #303133);
-  border-color: var(--el-color-primary, #409eff);
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
 }
 </style>

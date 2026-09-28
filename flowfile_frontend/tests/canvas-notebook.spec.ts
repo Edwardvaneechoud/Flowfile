@@ -146,7 +146,7 @@ test.describe("Canvas notebook", () => {
     expect(await panel.locator(".nb-cell").count()).toBeGreaterThanOrEqual(cells.length);
     const filter = cellOf(cells, 2);
     const polarsCell = cellOf(cells, 3);
-    await expect(panel.locator(".nb-banner")).toContainText("Flow session");
+    await expect(panel.getByTestId("nb-session-status")).toContainText("Flow session");
     await shot(page, "01-open");
 
     const added = panel.locator(".nb-cell").nth(await panel.locator(".nb-cell").count());

@@ -2,30 +2,34 @@
   <div :class="['code-container', { 'is-notebook': codeMode === 'notebook' }]">
     <div class="code-header">
       <h4>Generated code</h4>
-      <div class="mode-toggle">
+      <div class="mode-toggle" role="group" aria-label="Code mode">
         <button
-          :class="['toggle-button', { active: codeMode === 'flowframe' }]"
+          :class="['mode-segment', { active: codeMode === 'flowframe' }]"
+          :aria-pressed="codeMode === 'flowframe'"
           data-testid="code-mode-flowframe"
           @click="setMode('flowframe')"
         >
           FlowFrame
         </button>
         <button
-          :class="['toggle-button', { active: codeMode === 'polars' }]"
+          :class="['mode-segment', { active: codeMode === 'polars' }]"
+          :aria-pressed="codeMode === 'polars'"
           data-testid="code-mode-polars"
           @click="setMode('polars')"
         >
           Polars
         </button>
         <button
-          :class="['toggle-button', { active: codeMode === 'project' }]"
+          :class="['mode-segment', { active: codeMode === 'project' }]"
+          :aria-pressed="codeMode === 'project'"
           data-testid="code-mode-project"
           @click="setMode('project')"
         >
           Project
         </button>
         <button
-          :class="['toggle-button', { active: codeMode === 'notebook' }]"
+          :class="['mode-segment', { active: codeMode === 'notebook' }]"
+          :aria-pressed="codeMode === 'notebook'"
           data-testid="code-mode-notebook"
           @click="setMode('notebook')"
         >
@@ -93,8 +97,8 @@ import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue
 import axios from "axios";
 import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
-import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView } from "@codemirror/view";
+import { flowfileEditorTheme } from "@/utils/codemirrorTheme";
 import ProjectExport from "./ProjectExport.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
@@ -130,12 +134,8 @@ const lastLoadedFlowId = ref<number | null>(null);
 
 const extensions = [
   python(),
-  oneDark,
-  EditorView.theme({
-    "&": { fontSize: "11px" },
-    ".cm-content": { padding: "20px" },
-    ".cm-focused": { outline: "none" },
-  }),
+  flowfileEditorTheme(),
+  EditorView.theme({ ".cm-content": { padding: "8px 0" } }),
 ];
 
 const endpointMap: Partial<Record<CodeMode, string>> = {
@@ -254,10 +254,17 @@ const exportCode = () => {
 .code-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 8px 8px 16px;
-  border-bottom: 1px solid var(--color-border-light);
+  gap: var(--spacing-3);
+  min-height: 44px;
+  padding: 0 var(--spacing-2) 0 var(--spacing-4);
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
   flex-shrink: 0;
+}
+
+/* The notebook toolbar continues the header, so the seam between them is lighter. */
+.code-container.is-notebook .code-header {
+  border-bottom-color: var(--color-border-light);
 }
 
 /* The disabled CodeMirror viewer fills the remaining pane height and scrolls. */
@@ -265,6 +272,9 @@ const exportCode = () => {
   flex: 1;
   min-height: 0;
   margin: 0 16px 16px;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  overflow: hidden;
 }
 
 .code-project {
@@ -292,7 +302,9 @@ const exportCode = () => {
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -307,10 +319,13 @@ const exportCode = () => {
   margin-left: auto;
   padding: 0;
   border: none;
-  border-radius: var(--border-radius-sm);
+  border-radius: var(--border-radius-md);
   background: transparent;
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
   cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .close-btn .material-icons {
@@ -322,36 +337,48 @@ const exportCode = () => {
   background: var(--color-background-tertiary);
 }
 
+/* Raised-segment control: tertiary track, the active mode lifts onto the surface. */
 .mode-toggle {
   display: flex;
   flex: none;
   gap: 2px;
   padding: 2px;
-  background: var(--color-background-secondary);
+  background: var(--color-background-tertiary);
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
 }
 
-.toggle-button {
-  padding: 4px 10px;
+.mode-segment {
+  height: 24px;
+  padding: 0 10px;
   border: none;
   border-radius: var(--border-radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
+  font-family: inherit;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  transition: all var(--transition-fast);
+  white-space: nowrap;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
-.toggle-button.active {
-  background: var(--color-accent);
-  color: var(--color-text-inverse);
+.mode-segment.active {
+  background: var(--color-background-primary);
+  color: var(--color-primary);
+  box-shadow: var(--shadow-xs);
 }
 
-.toggle-button:not(.active):hover {
+.mode-segment:not(.active):hover {
   color: var(--color-text-primary);
-  background: var(--color-background-tertiary);
+}
+
+.mode-segment:focus-visible {
+  outline: 2px solid var(--color-focus-ring-accent-strong);
+  outline-offset: 1px;
 }
 
 .code-toolbar {

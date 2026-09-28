@@ -4,7 +4,17 @@
          a tab to rename), "+" opens New / saved notebooks, controls sit on the right. -->
     <div class="nb-header">
       <div class="nb-toolbar">
-        <span v-if="flowId" class="nb-flow-title"><i class="fa-solid fa-book"></i> Notebook</span>
+        <span
+          v-if="flowId && sessionPill"
+          class="nb-session-pill"
+          :class="`nb-session-pill--${sessionPill.tone}`"
+          data-testid="nb-session-status"
+          :title="sessionPill.title"
+        >
+          <span v-if="sessionPill.tone === 'ready'" class="nb-session-dot"></span>
+          <i v-else :class="sessionPill.icon"></i>
+          <span class="nb-session-pill__text">{{ sessionPill.text }}</span>
+        </span>
         <el-tabs
           v-else-if="catalogTabs.length"
           :model-value="store.activeTabId ?? undefined"
@@ -110,78 +120,89 @@
           </template>
         </el-select>
 
-        <el-button
-          size="small"
-          class="nb-overflow-btn"
-          title="Undo cell action (insert, delete, move, duplicate)"
-          :disabled="structuralDisabled || !canUndo"
-          @click="onUndoCellAction"
-        >
-          <i class="fa-solid fa-arrow-rotate-left"></i>
-        </el-button>
+        <div class="nb-tool-group">
+          <button
+            type="button"
+            class="nb-tool-btn"
+            title="Undo cell action (insert, delete, move, duplicate)"
+            aria-label="Undo cell action"
+            :disabled="structuralDisabled || !canUndo"
+            @click="onUndoCellAction"
+          >
+            <i class="fa-solid fa-arrow-rotate-left"></i>
+          </button>
+          <button
+            type="button"
+            class="nb-tool-btn"
+            title="Redo cell action"
+            aria-label="Redo cell action"
+            :disabled="structuralDisabled || !canRedo"
+            @click="onRedoCellAction"
+          >
+            <i class="fa-solid fa-arrow-rotate-right"></i>
+          </button>
+          <button
+            type="button"
+            class="nb-tool-btn"
+            title="Notebook help"
+            aria-label="Notebook help"
+            @click="showHelp = true"
+          >
+            <i class="fa-regular fa-circle-question"></i>
+          </button>
 
-        <el-button
-          size="small"
-          class="nb-overflow-btn"
-          title="Redo cell action"
-          :disabled="structuralDisabled || !canRedo"
-          @click="onRedoCellAction"
-        >
-          <i class="fa-solid fa-arrow-rotate-right"></i>
-        </el-button>
+          <!-- Overflow: kernel / output maintenance -->
+          <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
+            <button
+              type="button"
+              class="nb-tool-btn"
+              title="More actions"
+              aria-label="More actions"
+            >
+              <i class="fa-solid fa-ellipsis"></i>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item :disabled="batchBusy" @click="store.clearOutputs()">
+                  <i class="fa-solid fa-eraser nb-menu-icon"></i> Clear outputs
+                </el-dropdown-item>
+                <el-dropdown-item
+                  :disabled="batchBusy || resetPending"
+                  title="Clear this notebook's kernel variables; the kernel keeps running"
+                  @click="onResetSession"
+                >
+                  <i class="fa-solid fa-rotate-right nb-menu-icon"></i> Reset session
+                </el-dropdown-item>
+                <el-dropdown-item
+                  v-if="kernelStatus.kind === 'stopped'"
+                  :disabled="startingKernel"
+                  @click="startKernel"
+                >
+                  <i class="fa-solid fa-play nb-menu-icon"></i> Start kernel
+                </el-dropdown-item>
+                <el-dropdown-item v-if="!flowId" divided @click="router.push(kernelsRoute)">
+                  <i class="fa-solid fa-microchip nb-menu-icon"></i> Manage kernels…
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
 
-        <el-button
-          size="small"
-          class="nb-overflow-btn"
-          title="Notebook help"
-          @click="showHelp = true"
-        >
-          <i class="fa-solid fa-circle-question"></i>
-        </el-button>
+        <span class="nb-toolbar-divider" aria-hidden="true"></span>
 
-        <!-- Overflow: kernel / output maintenance -->
-        <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
-          <el-button size="small" class="nb-overflow-btn" title="More actions">
-            <i class="fa-solid fa-ellipsis"></i>
-          </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item :disabled="batchBusy" @click="store.clearOutputs()">
-                <i class="fa-solid fa-eraser nb-menu-icon"></i> Clear outputs
-              </el-dropdown-item>
-              <el-dropdown-item
-                :disabled="batchBusy || resetPending"
-                title="Clear this notebook's kernel variables; the kernel keeps running"
-                @click="onResetSession"
-              >
-                <i class="fa-solid fa-rotate-right nb-menu-icon"></i> Reset session
-              </el-dropdown-item>
-              <el-dropdown-item
-                v-if="kernelStatus.kind === 'stopped'"
-                :disabled="startingKernel"
-                @click="startKernel"
-              >
-                <i class="fa-solid fa-play nb-menu-icon"></i> Start kernel
-              </el-dropdown-item>
-              <el-dropdown-item v-if="!flowId" divided @click="router.push(kernelsRoute)">
-                <i class="fa-solid fa-microchip nb-menu-icon"></i> Manage kernels…
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-
-        <!-- Save split-button (canvas-style): Save + File menu (Save As / Rename / Delete) -->
-        <el-button
+        <button
           v-if="flowId"
-          size="small"
+          type="button"
+          class="nb-btn"
           data-testid="nb-push"
           title="Write the edited cells onto the canvas"
-          :loading="pushing"
-          :disabled="readOnly || editorStore.isRunning || batchBusy"
+          :disabled="pushing || readOnly || editorStore.isRunning || batchBusy"
           @click="onPush"
         >
-          <i v-if="!pushing" class="fa-solid fa-upload" style="margin-right: 4px"></i> Push
-        </el-button>
+          <i :class="pushing ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-upload'"></i>
+          <span>Push</span>
+        </button>
+        <!-- Save split-button (canvas-style): Save + File menu (Save As / Rename / Delete) -->
         <div v-else class="nb-split" data-tutorial="save-btn">
           <button
             class="nb-split-btn nb-split-btn--main"
@@ -218,15 +239,15 @@
 
         <span v-if="batchLabel" class="nb-batch-progress">{{ batchLabel }}</span>
 
-        <el-button
-          size="small"
-          class="nb-run-all"
-          :loading="batchBusy"
+        <button
+          type="button"
+          class="nb-btn nb-btn--run nb-run-all"
           :disabled="batchBusy || readOnly"
           @click="store.runAll()"
         >
-          <i v-if="!batchBusy" class="fa-solid fa-forward" style="margin-right: 4px"></i> Run All
-        </el-button>
+          <i :class="batchBusy ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-forward'"></i>
+          <span>Run all</span>
+        </button>
       </div>
     </div>
 
@@ -298,6 +319,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           :runtime="runtimeFor(cell.id)"
           :busy="batchBusy || readOnly"
           :read-only="readOnly"
+          :type-in-menu="!!flowId"
           :active="cell.id === store.active.focusedCellId"
           :dragging="drag.draggingId.value === cell.id"
           @run="store.runCell(cell.id)"
@@ -340,16 +362,17 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
       </template>
 
       <!-- Add cell (centered). Adds a Python cell by default; switch to
-           Markdown via the per-cell type selector. -->
+           Markdown via the per-cell type selector or cell menu. -->
       <div class="nb-add-row">
-        <el-button
-          size="small"
+        <button
+          type="button"
           class="nb-add-btn"
           :disabled="structuralDisabled"
           @click="onAddCell('python')"
         >
-          <i class="fa-solid fa-plus" style="margin-right: 4px"></i> Add cell
-        </el-button>
+          <i class="fa-solid fa-plus"></i>
+          <span>Add cell</span>
+        </button>
       </div>
     </div>
 
@@ -493,9 +516,6 @@ const banner = computed<KernelBanner | null>(() => {
         text: "Sessions are disabled on this server",
       };
     }
-    if (s.kind === "starting") {
-      return { tone: "info", icon: "fa-solid fa-spinner fa-spin", text: "Flow session · starting" };
-    }
     if (s.kind === "error") {
       return {
         tone: "danger",
@@ -503,7 +523,7 @@ const banner = computed<KernelBanner | null>(() => {
         text: "Flow session failed",
       };
     }
-    return { tone: "info", icon: "fa-solid fa-diagram-project", text: "Flow session" };
+    return null;
   }
   const name = "kernel" in s ? `"${s.kernel.name}"` : "";
   switch (s.kind) {
@@ -557,6 +577,50 @@ const banner = computed<KernelBanner | null>(() => {
     default:
       return null;
   }
+});
+
+interface SessionPill {
+  tone: "ready" | "starting" | "off" | "error";
+  icon: string;
+  text: string;
+  title: string;
+}
+
+// Flow mode's steady session states live in the toolbar pill; only failures get a banner.
+const sessionPill = computed<SessionPill | null>(() => {
+  if (!props.flowId) return null;
+  if (readOnly.value) {
+    return {
+      tone: "off",
+      icon: "fa-solid fa-lock",
+      text: "Sessions off",
+      title: "Sessions are disabled on this server",
+    };
+  }
+  const kind = kernelStatus.value.kind;
+  // Ready only once a session read says so; anything before that (no id yet, first poll) is starting.
+  if (kind !== "ready" && kind !== "error") {
+    return {
+      tone: "starting",
+      icon: "fa-solid fa-spinner fa-spin",
+      text: "Flow session starting…",
+      title: "The flow session is starting",
+    };
+  }
+  if (kind === "error") {
+    return {
+      tone: "error",
+      icon: "fa-solid fa-triangle-exclamation",
+      text: "Flow session failed",
+      title: "The flow session is in an error state",
+    };
+  }
+  return {
+    tone: "ready",
+    icon: "",
+    text: "Flow session ready",
+    title: "Cells run in this flow's Python session",
+  };
 });
 
 async function startKernel() {
@@ -1055,22 +1119,22 @@ async function onDelete() {
   flex: 0 0 auto;
   background: var(--color-background-secondary);
   border-bottom: 1px solid var(--color-border-primary);
-  box-shadow: var(--shadow-xs);
 }
 .nb-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px 0;
+  gap: var(--spacing-2);
+  min-height: 40px;
+  padding: 0 var(--spacing-3);
 }
 .nb-toolbar-spacer {
   flex: 1;
 }
-.nb-flow-title {
-  margin-bottom: 6px;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-primary);
+.nb-toolbar-divider {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  background: var(--color-border-primary);
 }
 /* "+" beside the tabs: New / Open saved notebook. */
 .nb-tab-add {
@@ -1079,7 +1143,6 @@ async function onDelete() {
   justify-content: center;
   width: 26px;
   height: 26px;
-  margin-bottom: 4px;
   padding: 0;
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
@@ -1097,7 +1160,7 @@ async function onDelete() {
   height: 20px;
   padding: 0 4px;
   border: 1px solid var(--color-primary);
-  border-radius: var(--border-radius-sm, 4px);
+  border-radius: var(--border-radius-sm);
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   font: inherit;
@@ -1108,32 +1171,141 @@ async function onDelete() {
   margin-right: 6px;
   text-align: center;
 }
-.nb-overflow-btn {
-  padding-left: 9px;
-  padding-right: 9px;
+
+/* Session status pill (flow mode): the steady states the banner used to spell out. */
+.nb-session-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 22px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
 }
-.nb-toolbar > .el-select,
-.nb-toolbar > .el-button,
-.nb-toolbar > .nb-split,
-.nb-toolbar > .el-dropdown {
-  margin-bottom: 6px;
+.nb-session-pill > i {
+  flex: none;
+  font-size: 10px;
+}
+.nb-session-pill__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nb-session-pill--ready {
+  background: var(--color-success-light);
+  color: var(--color-success-dark);
+}
+.nb-session-pill--starting {
+  background: var(--color-info-light);
+  color: var(--color-info);
+}
+.nb-session-pill--off {
+  background: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
+}
+.nb-session-pill--error {
+  background: var(--color-danger-light);
+  color: var(--color-danger-dark);
+}
+.nb-session-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-success);
+}
+
+/* Ghost icon buttons for panel-local tools. */
+.nb-tool-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.nb-tool-group :deep(.el-dropdown) {
+  display: inline-flex;
+}
+.nb-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--border-radius-md);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+.nb-tool-btn:hover:not(:disabled),
+.nb-tool-btn[aria-expanded="true"] {
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+}
+.nb-tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Chrome buttons: the designer header's 28px recipe. */
+.nb-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  box-shadow: var(--shadow-xs);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.nb-btn > i {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.nb-btn:hover:not(:disabled) {
+  background: var(--color-background-tertiary);
+  border-color: var(--color-border-secondary);
+}
+.nb-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+.nb-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Run all mirrors the designer header's Run button (accent purple). */
+.nb-btn--run {
+  border-color: var(--color-accent-purple);
+  background: var(--color-accent-purple);
+  color: #fff;
+}
+.nb-btn--run > i {
+  color: inherit;
+}
+.nb-btn--run:hover:not(:disabled) {
+  border-color: var(--color-accent-purple-hover);
+  background: var(--color-accent-purple-hover);
 }
 .nb-batch-progress {
-  margin-bottom: 6px;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   white-space: nowrap;
-}
-/* Run All mirrors the designer header's Run button (accent purple). */
-.nb-run-all:not(:disabled) {
-  background-color: var(--color-accent-purple);
-  border-color: var(--color-accent-purple);
-  color: #fff;
-}
-.nb-run-all:not(:disabled):hover {
-  background-color: var(--color-accent-purple-hover);
-  border-color: var(--color-accent-purple-hover);
-  color: #fff;
 }
 
 /* Kernel picker: state dot in the field and in each option; amber when the
@@ -1148,7 +1320,7 @@ async function onDelete() {
 .nb-kernel-option {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-1-5, 6px);
+  gap: var(--spacing-1-5);
   min-width: 0;
 }
 .nb-kernel-label__name {
@@ -1162,14 +1334,14 @@ async function onDelete() {
 }
 .nb-kernel-option__state {
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted, #909399);
+  color: var(--color-text-muted);
 }
 .nb-kernel-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  background-color: var(--color-gray-400, #909399);
+  background-color: var(--color-gray-400);
 }
 .nb-kernel-dot--idle {
   background-color: var(--color-success);
@@ -1187,7 +1359,7 @@ async function onDelete() {
 .nb-kernel-footer-link {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-1-5, 6px);
+  gap: var(--spacing-1-5);
   font-size: var(--font-size-xs);
   color: var(--color-primary);
   text-decoration: none;
@@ -1202,9 +1374,9 @@ async function onDelete() {
 .nb-split {
   display: inline-flex;
   align-items: stretch;
-  height: var(--el-component-size-small, 24px);
+  height: 28px;
   box-shadow: var(--shadow-xs);
-  border-radius: var(--border-radius-md, 6px);
+  border-radius: var(--border-radius-md);
 }
 .nb-split :deep(.el-dropdown) {
   display: inline-flex;
@@ -1212,9 +1384,9 @@ async function onDelete() {
 .nb-split-btn {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-1-5, 6px);
-  height: var(--el-component-size-small, 24px);
-  padding: 0 var(--spacing-3, 12px);
+  gap: var(--spacing-1-5);
+  height: 28px;
+  padding: 0 var(--spacing-3);
   background-color: var(--color-background-primary);
   border: 1px solid var(--color-border-light);
   color: var(--color-text-primary);
@@ -1239,16 +1411,16 @@ async function onDelete() {
   color: var(--color-text-primary);
 }
 .nb-split-btn--main {
-  border-top-left-radius: var(--border-radius-md, 6px);
-  border-bottom-left-radius: var(--border-radius-md, 6px);
+  border-top-left-radius: var(--border-radius-md);
+  border-bottom-left-radius: var(--border-radius-md);
   border-right: none;
 }
 .nb-split-btn--caret {
   justify-content: center;
   min-width: 22px;
-  padding: 0 var(--spacing-2, 8px);
-  border-top-right-radius: var(--border-radius-md, 6px);
-  border-bottom-right-radius: var(--border-radius-md, 6px);
+  padding: 0 var(--spacing-2);
+  border-top-right-radius: var(--border-radius-md);
+  border-bottom-right-radius: var(--border-radius-md);
 }
 .nb-saveas {
   display: flex;
@@ -1256,17 +1428,17 @@ async function onDelete() {
   gap: 6px;
 }
 .nb-saveas-label {
-  font-size: 12px;
-  color: var(--el-text-color-regular, #606266);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
   margin-top: 4px;
 }
 .nb-saveas-hint {
   font-size: 12px;
-  color: var(--el-color-warning, #e6a23c);
+  color: var(--color-warning-dark);
   margin: 4px 0 0;
 }
 .nb-dirty {
-  color: var(--el-color-warning, #e6a23c);
+  color: var(--color-warning-dark);
   margin-left: 2px;
 }
 /* Notebook tabs match the designer's flow-tabs (FlowSelectorView): top-rounded,
@@ -1324,27 +1496,35 @@ async function onDelete() {
   font-size: var(--font-size-xs);
   color: var(--color-primary);
 }
+/* Soft tinted strip, inset from the panel edges. */
 .nb-banner {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
+  gap: var(--spacing-2);
+  margin: var(--spacing-3) var(--spacing-3) 0;
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid color-mix(in srgb, var(--color-info) 25%, transparent);
+  border-radius: var(--border-radius-lg);
   background: var(--color-info-light);
-  color: var(--color-text-secondary);
-  border-bottom: 1px solid var(--color-border-light);
-  font-size: 13px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
 }
 .nb-banner > i {
+  flex: none;
   color: var(--color-info);
 }
 .nb-banner--warning {
+  border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
   background: var(--color-warning-light);
 }
 .nb-banner--warning > i {
   color: var(--color-warning);
 }
 .nb-banner--danger {
-  background: var(--color-danger-light, rgba(239, 68, 68, 0.12));
+  border-color: color-mix(in srgb, var(--color-danger) 25%, transparent);
+  background: var(--color-danger-light);
 }
 .nb-banner--danger > i {
   color: var(--color-danger);
@@ -1363,7 +1543,7 @@ async function onDelete() {
   height: 24px;
 }
 .nb-banner__link {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--color-primary);
   text-decoration: none;
   white-space: nowrap;
@@ -1375,7 +1555,8 @@ async function onDelete() {
   position: relative;
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: var(--spacing-3) var(--spacing-3) var(--spacing-6);
+  background: var(--color-background-primary);
 }
 /* Drop indicator for a cell drag; the list itself never reorders mid-gesture. */
 .nb-drop-line {
@@ -1384,7 +1565,8 @@ async function onDelete() {
   right: 0;
   z-index: 2;
   height: 2px;
-  background: var(--el-color-primary, #409eff);
+  border-radius: 1px;
+  background: var(--color-accent);
   pointer-events: none;
 }
 .nb-sr-only {
@@ -1396,49 +1578,50 @@ async function onDelete() {
   white-space: nowrap;
 }
 .nb-primer {
-  margin-bottom: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--el-border-color-lighter, #ebeef5);
-  border-radius: 6px;
-  background: var(--el-fill-color-lighter, #fafafa);
+  margin-bottom: var(--spacing-3);
+  padding: var(--spacing-3) 14px;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg);
+  background: var(--color-background-secondary);
 }
 .nb-primer-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--el-text-color-primary, #303133);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
   margin-bottom: 4px;
 }
 .nb-primer-text {
-  font-size: 12px;
-  color: var(--el-text-color-regular, #606266);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
   margin: 0 0 8px;
   line-height: 1.5;
 }
 .nb-primer-text kbd {
-  font-family: inherit;
-  font-size: 11px;
-  padding: 0 4px;
-  border: 1px solid var(--el-border-color, #dcdfe6);
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border: 1px solid var(--color-border-secondary);
   border-bottom-width: 2px;
-  border-radius: 3px;
-  background: var(--el-bg-color, #fff);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-background-tertiary);
 }
 .nb-primer-code {
   margin: 0 0 8px;
   padding: 8px 10px;
-  border-radius: 4px;
-  background: #282c34;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
   overflow-x: auto;
 }
 .nb-primer-code code {
-  font-family: "Fira Code", monospace;
-  font-size: 12px;
-  color: #abb2bf;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
   white-space: pre;
 }
 .nb-primer-link {
-  font-size: 12px;
-  color: var(--el-color-primary, #409eff);
+  font-size: var(--font-size-sm);
+  color: var(--color-primary);
   cursor: pointer;
 }
 .nb-primer-link:hover {
@@ -1447,27 +1630,54 @@ async function onDelete() {
 .nb-add-row {
   display: flex;
   justify-content: center;
-  margin-top: 8px;
+  margin-top: var(--spacing-3);
+}
+.nb-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px dashed var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.nb-add-btn > i {
+  font-size: 10px;
+}
+.nb-add-btn:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent-dark);
+}
+.nb-add-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
-/* Hover-to-insert zone between cells: a thin gap that reveals a centered "+"
-   (with a faint connecting line) only on hover. */
+/* Hover-to-insert zone between cells: a hairline with a small ghost "+" chip. */
 .nb-insert-zone {
   position: relative;
-  height: 14px;
-  margin: 2px 0;
+  height: 16px;
   cursor: pointer;
 }
 .nb-insert-zone::before {
   content: "";
   position: absolute;
   top: 50%;
-  left: 0;
-  right: 0;
+  left: var(--spacing-3);
+  right: var(--spacing-3);
   height: 1px;
-  background: var(--el-color-primary, #409eff);
+  background: var(--color-accent);
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--transition-base) ease;
 }
 .nb-insert-plus {
   position: absolute;
@@ -1477,20 +1687,22 @@ async function onDelete() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--el-color-primary, #409eff);
-  color: #fff;
-  font-size: 10px;
+  width: 28px;
+  height: 18px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-full);
+  background: var(--color-background-primary);
+  box-shadow: var(--shadow-xs);
+  color: var(--color-accent-dark);
+  font-size: 9px;
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--transition-base) ease;
 }
 .nb-insert-zone:hover::before {
-  opacity: 0.35;
+  opacity: 0.4;
 }
 .nb-insert-zone:hover .nb-insert-plus {
-  opacity: 0.85;
+  opacity: 1;
 }
 .nb-insert-zone--disabled {
   pointer-events: none;

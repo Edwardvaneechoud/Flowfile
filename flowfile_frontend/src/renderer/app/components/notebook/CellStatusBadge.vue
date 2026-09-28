@@ -35,19 +35,20 @@ const staleReason = computed<StaleReason | null>(() =>
 .nb-status-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
   line-height: 16px;
   white-space: nowrap;
 }
 .nb-status-badge.is-queued {
-  background: var(--el-fill-color-light, #f5f7fa);
-  color: var(--el-text-color-secondary, #909399);
+  background: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
 }
 .nb-status-badge.is-stale {
-  border: 1px solid var(--el-color-warning-light-7, #f3d19e);
-  background: var(--el-color-warning-light-9, #fdf6ec);
-  color: var(--el-color-warning, #e6a23c);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+  background: var(--color-warning-light);
+  color: var(--color-warning-dark);
 }
 </style>
