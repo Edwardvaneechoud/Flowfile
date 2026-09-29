@@ -100,6 +100,8 @@ def seed_snapshot(flow: FlowGraph) -> dict:
 def _installed_custom_node(node_type: str) -> bool:
     from flowfile_core.flowfile.user_defined.registry import registry
 
+    if registry.get(node_type) is None:
+        registry.refresh()
     return registry.get(node_type) is not None
 
 

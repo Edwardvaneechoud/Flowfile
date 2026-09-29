@@ -224,6 +224,23 @@ def test_a_file_written_after_the_scan_is_placed_by_key(nodes_dir):
     assert out.collect()["name"].to_list() == ["ANN", "BOB", "CY"]
 
 
+def test_a_file_written_after_the_scan_is_listed_before_any_lookup(nodes_dir):
+    (nodes_dir / "install_test_upper.py").write_text(UPPER_SOURCE, encoding="utf-8")
+    assert "install_test_upper" in ff.custom_nodes
+    (nodes_dir / "install_test_never_built.py").write_text(NEVER_BUILT_SOURCE, encoding="utf-8")
+    assert "install_test_never_built" in {info.key for info in ff.custom_nodes.list()}
+    (nodes_dir / "install_test_rerun.py").write_text(RERUN_SOURCE, encoding="utf-8")
+    assert "install_test_rerun" in dir(ff.custom_nodes)
+
+
+def test_a_session_class_is_refused_the_key_of_a_file_written_after_the_scan(nodes_dir):
+    source = RERUN_SOURCE.replace("InstallRerun", "InstallDoubler").replace("Test Rerun", "Test Doubler")
+    (nodes_dir / "install_test_doubler.py").write_text(source, encoding="utf-8")
+
+    with pytest.raises(ff.NativeNodeError, match=r"of the installed node in install_test_doubler\.py"):
+        ff.CustomNode(InstallDoubler, ff.from_dict(DATA))
+
+
 def test_session_class_is_listed_without_a_file(nodes_dir):
     ff.CustomNode(InstallDoubler, ff.from_dict(DATA))
     info = next(info for info in ff.custom_nodes.list() if info.key == "install_test_doubler")

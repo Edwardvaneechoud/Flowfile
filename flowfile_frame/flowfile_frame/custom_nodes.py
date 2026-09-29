@@ -214,10 +214,15 @@ def _restore(path: Path, previous: bytes | None, template: NodeTemplate | None, 
 
 
 class CustomNodes:
-    """The custom nodes this process can place (``fl.custom_nodes``), by node key or display name."""
+    """The custom nodes this process can place (``fl.custom_nodes``), by node key or display name.
+
+    Listing, membership and lookup first pick up node files written since the last scan
+    (``registry.refresh``, exec-free), so they agree on a node another process installed.
+    """
 
     def list(self) -> builtins.list[CustomNodeInfo]:
         """Installed node files (broken ones with their error), then session-only classes."""
+        registry.refresh()
         infos = [_file_info(entry) for entry in registry.all()]
         for key in builtins.list(node_store.CUSTOM_NODE_STORE):
             entry = registry.get(key)
@@ -305,12 +310,19 @@ class CustomNodes:
         return self.get(name)
 
     def __contains__(self, name: object) -> bool:
-        return isinstance(name, str) and node_key_for(name) in node_store.CUSTOM_NODE_STORE
+        if not isinstance(name, str):
+            return False
+        key = node_key_for(name)
+        if key not in node_store.CUSTOM_NODE_STORE:
+            registry.refresh()
+        return key in node_store.CUSTOM_NODE_STORE
 
     def __iter__(self) -> Iterator[str]:
+        registry.refresh()
         return iter(sorted(node_store.CUSTOM_NODE_STORE))
 
     def __len__(self) -> int:
+        registry.refresh()
         return len(node_store.CUSTOM_NODE_STORE)
 
     def __dir__(self) -> builtins.list[str]:

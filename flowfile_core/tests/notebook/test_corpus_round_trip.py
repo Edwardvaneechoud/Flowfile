@@ -20,6 +20,7 @@ from flowfile_core.notebook import bridge
 from flowfile_core.notebook.push import live_cells, seed_snapshot
 from flowfile_core.notebook.reconcile import reconcile
 from flowfile_core.notebook.render import render
+from tests.notebook.conftest import InProcessCleanRunner
 from tests.notebook.test_ledger import grade
 
 OWNER_ID = 1
@@ -37,7 +38,7 @@ def _provenance(graph, rendering) -> dict[str, list[tuple[str, int]]]:
 def _clean_run(graph, cells, provenance) -> bridge.CleanRunResult:
     ceiling = max((node.node_id for node in graph.nodes), default=0)
     request = bridge.CleanRunRequest(cells=cells, provenance=provenance, ceiling=ceiling, snapshot=seed_snapshot(graph))
-    return bridge.InProcessCleanRunner().clean_run(OWNER_ID, graph.flow_id, request)
+    return InProcessCleanRunner().clean_run(OWNER_ID, graph.flow_id, request)
 
 
 def _reconcile(graph, result, provenance, changed):

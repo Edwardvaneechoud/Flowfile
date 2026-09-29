@@ -166,6 +166,24 @@ def test_refusals_name_custom_classes_inline_rest_secrets_and_lazy_frames():
     assert push_refusals(live, session, installed=lambda node_type: True)[1:] == refusals[2:]
 
 
+def test_refusals_accept_a_custom_node_file_written_after_the_scan(tmp_path, monkeypatch):
+    from flowfile_core.flowfile.user_defined.registry import registry
+
+    monkeypatch.setattr(registry, "_directory", tmp_path)
+    monkeypatch.setattr(registry, "_entries", {})
+    monkeypatch.setattr(registry, "on_registered", None)
+    (tmp_path / "late_push_node.py").write_text(  # another process installed it after core's scan
+        "from flowfile import node_designer as nd\n\n\n"
+        "class LatePushNode(nd.CustomNodeBase):\n"
+        '    node_name: str = "Late Push Node"\n\n'
+        "    def process(self, *inputs):\n"
+        "        return inputs[0]\n"
+    )
+    session = {"nodes": [{"id": 5, "type": "late_push_node", "setting_input": {"is_user_defined": True}}]}
+
+    assert push_refusals({"nodes": []}, session) == []
+
+
 def test_push_is_503_without_a_runner(orders_flow, client_as):
     before = bridge._runner
     bridge.set_clean_runner(None)

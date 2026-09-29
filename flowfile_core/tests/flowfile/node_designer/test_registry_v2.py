@@ -385,8 +385,11 @@ class StackNode(CustomNodeBase):
 STACK_KEY = "late_stack_node"
 
 
-def _save_stack_flow(nodes_dir: Path, yaml_path: Path, flow_id: int) -> Path:
-    """Save manual inputs 1-3 -> a three-input node file, then drop its entry: a server that never scanned it."""
+def _save_stack_flow(nodes_dir: Path, yaml_path: Path, flow_id: int, configure: bool = True) -> Path:
+    """Save manual inputs 1-3 -> a three-input node file, then drop its entry: a server that never scanned it.
+
+    ``configure=False`` leaves the node a bare promise, as a canvas drop that was never configured saves.
+    """
     from flowfile_core.flowfile.flow_graph import add_connection
     from flowfile_core.flowfile.handler import FlowfileHandler
     from flowfile_core.schemas import input_schema, schemas
@@ -411,12 +414,13 @@ def _save_stack_flow(nodes_dir: Path, yaml_path: Path, flow_id: int) -> Path:
     flow.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=4, node_type=STACK_KEY))
     for node_id in (1, 2, 3):
         add_connection(flow, input_schema.NodeConnection.create_from_simple_input(node_id, 4))
-    flow.add_user_defined_node(
-        custom_node=node_class(),
-        user_defined_node_settings=input_schema.UserDefinedNode(
-            flow_id=flow_id, node_id=4, settings={}, is_user_defined=True
-        ),
-    )
+    if configure:
+        flow.add_user_defined_node(
+            custom_node=node_class(),
+            user_defined_node_settings=input_schema.UserDefinedNode(
+                flow_id=flow_id, node_id=4, settings={}, is_user_defined=True
+            ),
+        )
     flow.save_flow(str(yaml_path))
     singleton_registry.remove_file(path)
     return path
@@ -443,6 +447,35 @@ def test_imported_flow_resolves_node_file_written_after_scan(nodes_dir, singleto
     result = loaded.run_graph()
     assert result.success, result
     assert sorted(node.get_resulting_data().data_frame.collect()["a"].to_list()) == [1, 2, 3]
+
+
+def test_imported_flow_resolves_unconfigured_late_node(nodes_dir, singleton_on_tmp_dir, tmp_path):
+    _save_stack_flow(nodes_dir, tmp_path / "unconfigured.yaml", flow_id=6305, configure=False)
+    assert "setting_input: null" in (tmp_path / "unconfigured.yaml").read_text()  # only the type says it is custom
+
+    loaded = _import(tmp_path / "unconfigured.yaml")
+
+    assert sorted(n.node_id for n in loaded.get_node(4).all_inputs) == [1, 2, 3]
+
+
+def test_copy_of_a_not_installed_node_resolves_once_its_file_appears(nodes_dir, singleton_on_tmp_dir, tmp_path):
+    from flowfile_core.schemas import input_schema
+
+    path = _save_stack_flow(nodes_dir, tmp_path / "copy.yaml", flow_id=6306)
+    parked = path.rename(tmp_path / path.name)
+    loaded = _import(tmp_path / "copy.yaml")
+    source = loaded.get_node(4)
+    assert source.results.errors == missing_custom_node_error(STACK_KEY)
+    parked.rename(path)
+
+    loaded.copy_node(
+        input_schema.NodePromise(flow_id=loaded.flow_id, node_id=5, node_type=STACK_KEY),
+        source.setting_input,
+        STACK_KEY,
+    )
+
+    assert loaded.get_node(5).results.errors is None
+    assert STACK_KEY in singleton_on_tmp_dir.CUSTOM_NODE_STORE
 
 
 def test_node_promise_resolves_late_file_and_still_raises_for_unknown_type(nodes_dir, singleton_on_tmp_dir):

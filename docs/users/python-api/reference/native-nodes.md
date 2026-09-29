@@ -368,7 +368,7 @@ ff.custom_nodes.trim_text(orders)           # attribute form
 ff.custom_nodes.install(TrimNode)           # or a path to a .py file; overwrite=False by default
 ```
 
-`install` writes `<key>.py` to the custom-nodes directory and registers it. A class is written with the `NodeSettings` classes and imports it uses; a class that reads other module-level names is refused, so install its file instead. The written file must load the way the designer loads it; one that does not is removed again, a file it replaced is put back, and `install` raises. A running designer shows a new node after **Settings → Extensions → Custom Nodes → Rescan**.
+`install` writes `<key>.py` to the custom-nodes directory and registers it. A class is written with the `NodeSettings` classes and imports it uses; a class that reads other module-level names is refused, so install its file instead. The written file must load the way the designer loads it; one that does not is removed again, a file it replaced is put back, and `install` raises. A running designer resolves the node when it opens a flow that uses it, and lists it in the palette after **Settings → Extensions → Custom Nodes → Rescan**.
 
 An unknown key raises `NativeNodeError`; in the attribute form the error is also an `AttributeError`, so `hasattr(ff.custom_nodes, name)` is `False`.
 
@@ -378,7 +378,7 @@ An unknown key raises `NativeNodeError`; in the attribute form the error is also
 
 ```python
 ff.kernels.list() -> list[KernelInfo]         # KernelInfo(id, name, flavour, packages) per kernel, sorted by id
-ff.kernels.get(kernel_id: str) -> KernelInfo  # also ff.kernels[kernel_id]; `in`, len() and iteration (ids) work too
+ff.kernels.get(kernel_id: str) -> KernelInfo  # also ff.kernels[kernel_id]; in, len() and iteration (ids) work too
 ```
 
 `flavour` is the kernel image flavour: `base`, `ml`, `lite` or `custom`. A `KernelInfo` works as a `kernel=` argument: `PythonScript`, `@ff.python_script` and a kernel `CustomNode` store its `id`, still unchecked at build. An unknown id raises `NativeNodeError`, also a `KeyError`, naming your kernel ids. There is no attribute form, since kernel ids can contain hyphens.
@@ -506,7 +506,7 @@ ff.PythonScript(
 
 - Give exactly one of `code` or `cells`. The node stores both forms: the cells, and `code` as the non-empty cells joined by blank lines (what the kernel executes).
 - `cells` is a list of strings, each stored under a fresh cell id, or a list of `(id, code)` tuples whose ids are stored as given. The ids must be non-empty and unique; a list mixing strings and tuples raises.
-- `kernel` is a kernel id, or an object with an `.id`, stored as given. It is **not** checked at build: a missing or unknown kernel fails when the flow runs.
+- `kernel` is a kernel id, or an object with an `.id` such as an [`ff.kernels`](#kernels) entry, stored as given. It is **not** checked at build: a missing or unknown kernel fails when the flow runs.
 - `outputs` names the output handles (default `["main"]`); publish to them with `flowfile_ctx.publish_output(df, "name")`.
 - `schemas` declares output columns as `{output: {column: dtype}}`, the nested form of `returns=`, with the same checks.
 - Inputs are wired in order. Inside the kernel, `flowfile_ctx.read_input()` reads all of them; each is also readable by name, which is the upstream node's reference if set, else `df_<node_id>`.

@@ -1,6 +1,9 @@
 """Shared fixtures for the canvas-notebook tests: the corpus and its placeholder manifest, the in-process
 clean runner and a per-user ``TestClient`` factory."""
 
+import copy
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
 import pytest
@@ -74,10 +77,48 @@ def expected_placeholders():
     return load_expected_placeholders()
 
 
+class InProcessCleanRunner:
+    """Seeds a notebook session from the snapshot and clean-runs the cells with ``exec`` inside the test process.
+
+    Runs on one worker thread (notebook mode is process-global state, so runs are serialized) and imports
+    ``flowfile_frame`` lazily.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="notebook-clean-run")
+
+    def _run(self, user_id: int, request: bridge.CleanRunRequest) -> bridge.CleanRunResult:
+        from flowfile_frame import notebook
+        from flowfile_frame.notebook_cells import clean_run, seed_session
+
+        snapshot = copy.deepcopy(request.snapshot or {})
+        try:
+            if snapshot.get("flowfile_data"):
+                seed_session(
+                    snapshot["flowfile_data"],
+                    snapshot.get("parameters") or [],
+                    snapshot.get("names") or {},
+                    snapshot.get("schemas") or {},
+                    user_id=user_id,
+                )
+            provenance = {cell: [tuple(entry) for entry in entries] for cell, entries in request.provenance.items()}
+            return bridge.result_from_payload(clean_run([tuple(c) for c in request.cells], request.ceiling, provenance))
+        except Exception as exc:
+            return bridge.CleanRunResult(error=f"{type(exc).__name__}: {exc}")
+        finally:
+            if notebook.current() is not None:
+                notebook.exit()
+
+    def clean_run(self, user_id: int, flow_id: int, request: bridge.CleanRunRequest) -> bridge.CleanRunResult:
+        with self._lock:
+            return self._executor.submit(self._run, user_id, request).result()
+
+
 @pytest.fixture
 def runner():
     before = bridge._runner
-    bridge.set_clean_runner(bridge.InProcessCleanRunner())
+    bridge.set_clean_runner(InProcessCleanRunner())
     yield
     bridge.set_clean_runner(before)
 

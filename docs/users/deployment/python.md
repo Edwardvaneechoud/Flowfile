@@ -47,7 +47,3 @@ flowfile run ui
 ```
 
 On first use, the setup screen generates and stores the encryption [master key](docker.md#first-run-master-key).
-
-## The canvas notebook
-
-The editor's [canvas notebook](../visual-editor/notebook.md) runs and pushes cells in a notebook session. `flowfile run ui` runs single-user (it sets `FLOWFILE_MODE=electron` when the variable is unset), so sessions are on; each one is a Python subprocess of the backend using the environment Flowfile is installed in, with whatever libraries that environment has. With `FLOWFILE_MODE=package` users sign in against the database, and sessions are off unless `FLOWFILE_NOTEBOOK_SESSIONS_MULTIUSER=admin` (see [Docker reference](docker.md#canvas-notebook-sessions)).

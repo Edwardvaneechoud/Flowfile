@@ -1377,9 +1377,6 @@ def close_flow(flow_id: int, current_user=Depends(get_current_active_user)) -> N
     if not flow_file_handler.user_has_flow(user_id, flow_id):
         return
     flow_file_handler.delete_flow(flow_id, user_id=user_id)
-    from flowfile_core.notebook.registry import close_flow_sessions
-
-    close_flow_sessions(flow_id, user_id)
 
 
 class RenameFlowInput(BaseModel):

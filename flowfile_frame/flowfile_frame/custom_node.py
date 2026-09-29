@@ -68,6 +68,8 @@ def _register_class(cls: type[CustomNodeBase]) -> type[CustomNodeBase]:
         raise NativeNodeError(
             f"Custom node class {cls.__name__} has the node key {key!r} of a built-in node; rename its node_name"
         )
+    if key not in node_store.CUSTOM_NODE_STORE:
+        registry.refresh()
     entry = registry.get(key)
     if entry is not None:
         if entry.node_class is not cls and _INSTALLED_CLASSES.get(key) is not cls:

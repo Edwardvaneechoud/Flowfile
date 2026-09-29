@@ -1,10 +1,10 @@
 ---
-description: Edit a flow as Python cells in the Code panel, run them, and push the changes back onto the canvas.
+description: Read a flow as Python cells in the Code panel and run a cell's node on the canvas.
 ---
 
 # The Canvas Notebook
 
-The canvas notebook shows the open flow as Python code, one cell per statement, in the **Notebook** mode of the Code panel. It is the same notebook as a [catalog notebook](catalog/notebooks.md): the same cells, outputs, shortcuts, undo, drag and completions, running on the flow's own session instead of a kernel. This page covers what the cells contain, the three ways to run them (**Run**, **Run on canvas**, **Push**), what a push refuses, and how the notebook behaves in the desktop app, the Python package and a Docker deployment.
+The canvas notebook shows the open flow as Python code, one cell per statement, in the **Notebook** mode of the Code panel. It is the same notebook as a [catalog notebook](catalog/notebooks.md): the same cells, outputs, shortcuts, undo, drag and completions. This page covers what the cells contain, how **Run on canvas** runs a cell's node, what a push refuses, and how the notebook behaves in each deployment.
 
 <!-- IMAGE-PLACEHOLDER-TO-CHANGE: a flow on the canvas with the Code panel open on the right in Notebook mode, its node cells, one placeholder cell with its reason comment -->
 
@@ -37,17 +37,16 @@ A node the notebook cannot express as code becomes a **placeholder** cell that s
 
 A Polars LazyFrame node (a frame passed in from Python) is **unsupported**: it cannot be rebuilt, and a flow that contains one cannot be pushed until the node is replaced on the canvas.
 
-## Run, Run on canvas, Push
+## Run on canvas and Push
 
 | Action | Where it runs | What it shows or changes |
 |---|---|---|
-| **Run** (Shift+Enter) | A Python session on the Flowfile backend | Builds the cell's nodes in the session. A frame on the last line shows its schema and computes nothing; `display(df)` shows its first rows when every node above it can be read in the session. The canvas does not change. |
 | **Run on canvas** (a node cell's ⋯ menu) | Where the flow runs: the backend and worker, a kernel node on its kernel | Runs the cell's node and everything it depends on, honouring [gates](nodes/combine.md), and shows the node's preview. A writer in that lineage writes. |
-| **Push** | The session, then the canvas | Runs every cell top to bottom in a fresh namespace and applies the difference to the canvas as one step that **Undo** reverts. |
+| **Push** | The server, then the canvas | Builds every cell top to bottom and applies the difference to the canvas as one step that **Undo** reverts. |
 
-**Run** builds, it does not execute the flow. A frame on a cell's last line shows its schema and points at **Run on canvas**, which runs the cell's node and its lineage and opens its preview. `display(df)` in a cell computes the first rows in the session instead, when every node above the frame can be read there. Frames whose data only exists once the flow runs (a subflow's output, a Python Script node's output, anything below a gate, and nodes adopted from the canvas) show their predicted schema, not rows. Calling `collect()` on such a frame is refused with a message pointing at **Run on canvas**. The session also refuses anything that writes at build time or runs a flow; [notebook mode](../python-api/reference/native-nodes.md#notebook-mode) lists the calls. **Reset session** (the ⋯ menu) re-seeds the session from the canvas as it is now.
+Cell code does not run as Python on the server. **Run on canvas** runs the canvas as it is, not your edited cells.
 
-**Push** keeps the id, position, description and cached results of every node the edit does not touch. A lowercase variable name assigned in a cell becomes that node's reference. **Run on canvas** runs the canvas as it is, so push edited cells first.
+**Push** is not available in this version: the server has no notebook runner installed, so a push or its preview answers "no notebook session runner" and the canvas stays as it is. When it runs, a push keeps the id, position, description and cached results of every node the edit does not touch, and a lowercase variable name assigned in a cell becomes that node's reference.
 
 ## What a push refuses or warns about
 
@@ -57,26 +56,15 @@ A push is refused, with the reason in a message, when:
 - the flow contains a Polars LazyFrame node, from the canvas or from a cell (`fl.FlowFrame(pl.LazyFrame(...))`);
 - a cell defines a custom node class instead of using an installed one;
 - a REST API reader carries an inline secret instead of a secret name;
-- a cell calls one of the refused build-time writes above.
+- a cell calls a build-time write or runs a flow; [notebook mode](../python-api/reference/native-nodes.md#notebook-mode) lists the calls.
 
 It asks for confirmation first, listing the reasons, when it deletes nodes, changes flow parameters (parameter changes are not undone by **Undo**), takes a node reference from another node, drops an input a cell did not rebuild, or names a kernel you do not own.
 
-## Kernels and Docker
+## Kernels, Docker and deployments
 
-The notebook's session is a Python process that the Flowfile backend starts. It is not a [kernel](kernels.md) and needs no Docker. A Python Script node in the flow still runs on its kernel: its cell is an `fl.PythonScript` or `@fl.python_script` definition, **Run** shows its declared output schema, and **Run on canvas** runs it on the kernel, which needs Docker as it does on the canvas.
+The notebook starts no Python process and needs no [kernel](kernels.md) and no Docker. A Python Script node in the flow still runs on its kernel: its cell is an `fl.PythonScript` or `@fl.python_script` definition, and **Run on canvas** runs it on the kernel, which needs Docker as it does on the canvas.
 
-The session runs the libraries of the Python that runs Flowfile. In the desktop app that is the bundled Python, which ships Polars and Flowfile but not pandas, matplotlib, scikit-learn or pip. For other libraries, use a Python Script node on a kernel. With `pip install flowfile`, the session uses the environment Flowfile is installed in.
-
-## Where sessions run
-
-| Deployment | Code view | Run and Push |
-|---|---|---|
-| Desktop app, `flowfile run ui` | Every user | Every user; the session only accepts connections from the same machine |
-| Docker (`FLOWFILE_MODE=docker`), `FLOWFILE_MODE=package` | Every user, for their own flows | Off. With `FLOWFILE_NOTEBOOK_SESSIONS_MULTIUSER=admin`, admin accounts only |
-
-A session runs user Python as the Flowfile server. It inherits the backend's environment, including the Docker socket, the master key and the JWT secret, so enabling sessions for admins gives them host-level access. When sessions are off, the panel says "Sessions are disabled on this server" and its cells are read-only. [Docker reference](../deployment/docker.md#canvas-notebook-sessions) lists the settings.
-
-Each user gets one session per flow. Sessions close after 15 minutes idle (`FLOWFILE_NOTEBOOK_IDLE_TTL`, in seconds) and when the flow closes; at most three run at once (`FLOWFILE_NOTEBOOK_MAX_SESSIONS`), the least recently used closing first. A session writes its log to `<internal storage>/logs/notebook_session_<flow_id>.log`, which expires with the other run logs (`FLOWFILE_RUN_LOG_RETENTION_DAYS`).
+The code view and **Run on canvas** work for every user, for their own flows, in the desktop app, with `pip install flowfile` and in a Docker deployment. The notebook has no settings of its own.
 
 ## What is not saved with the flow
 

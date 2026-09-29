@@ -155,10 +155,10 @@ Gotcha: the browser tab opens after `time.sleep(5)` but **before** uvicorn start
 
 ### Core startup/shutdown side effects worth knowing
 
-- Import-time: `storage.cleanup_directories()` runs (see §8 cleanup policy) — **starting core deletes cache files older than 1 hour**, every time. The `--run-flow` and `--notebook-session` verbs dispatch above it, so headless run children never sweep (`flowfile run flow` never imports `main` at all).
+- Import-time: `storage.cleanup_directories()` runs (see §8 cleanup policy) — **starting core deletes cache files older than 1 hour**, every time. The `--run-flow` verb dispatches above it, so headless run children never sweep (`flowfile run flow` never imports `main` at all).
 - Lifespan startup: `logging.basicConfig(INFO, ...)` to stderr, where the import-time `PipelineHandler` console handler (`configs/__init__.py`) also writes, keeping stdout clean for script output (no file handler — Tauri pipes both streams); starts the embedded scheduler iff `FLOWFILE_SCHEDULER_ENABLED`.
-- Lifespan startup also runs `shared.run_logs.cleanup_old_logs()` — age-based retention over `scheduled_run_*.log`, `flow_*.log` and `notebook_session_*.log` (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30, `0` disables).
-- Lifespan shutdown: stops the scheduler, closes every canvas-notebook session, stops **every** Docker kernel container, and shuts down the optional local LLM. It **no longer deletes logs** — the old `clear_all_flow_logs()` call wiped every `*.log`, run logs included, on every restart. Logs now expire only by age.
+- Lifespan startup also runs `shared.run_logs.cleanup_old_logs()` — age-based retention over `scheduled_run_*.log` and `flow_*.log` (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30, `0` disables).
+- Lifespan shutdown: stops the scheduler, stops **every** Docker kernel container, and shuts down the optional local LLM. It **no longer deletes logs** — the old `clear_all_flow_logs()` call wiped every `*.log`, run logs included, on every restart. Logs now expire only by age.
 - `POST /shutdown` triggers a graceful uvicorn exit (used by the Tauri shutdown ladder).
 - CLI arg parsing (`--host`/`--port`/`--worker-port`) happens at **import** of `flowfile_core.configs.settings` via `parse_known_args()` against whatever `sys.argv` the importing process has — importing core inside a process with unrelated `--host`/`--port` flags on argv will silently repoint the server.
 
@@ -232,7 +232,7 @@ Two roots:
 |---|---|---|---|---|
 | `cache_directory` | `<base>/cache` | same | yes | worker↔core IPC; `.arrow` results under `cache/<flow_id>/<task_id>.arrow`; **cleaned when >1h old at every core startup** |
 | `database_directory` | `<base>/database` | same | yes | `flowfile_catalog.db` (+ legacy `flowfile.db`) |
-| `logs_directory` | `<base>/logs` | same | yes | per-flow `flow_<flow_id>.log` + per-run `scheduled_run_<run_id>.log` + canvas-notebook `notebook_session_<flow_id>.log`; `FLOWFILE_RUN_LOG_RETENTION_DAYS` retention (default 30d). `TESTING=True` redirects to `<base>/temp/test_logs` |
+| `logs_directory` | `<base>/logs` | same | yes | per-flow `flow_<flow_id>.log` + per-run `scheduled_run_<run_id>.log`; `FLOWFILE_RUN_LOG_RETENTION_DAYS` retention (default 30d). `TESTING=True` redirects to `<base>/temp/test_logs` |
 | `system_logs_directory` | `<base>/system_logs` | same | yes | reserved — no writer currently ships to it |
 | `temp_directory` | `<base>/temp` | same | yes | scratch; 24h cleanup |
 | `temp_directory_for_flows` | `<base>/temp/flows` | same | yes | flow-scoped temp |

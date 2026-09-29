@@ -27,8 +27,7 @@ def merge_directories(directories: list[str], target_dir: str, cleanup_after_mer
                 shutil.rmtree(directory)
 
 
-# `--notebook-session` imports flowfile and execs cell code that may import any frame module, so collect them all.
-NOTEBOOK_HIDDEN_IMPORTS = ["flowfile", "flowfile_core.notebook.session_main"]
+# The canvas notebook loads frame modules lazily inside core, so collect them all.
 NOTEBOOK_COLLECTED_PACKAGES = ["flowfile_frame"]
 
 
@@ -524,7 +523,7 @@ def main():
         directory=os.path.join("flowfile_core", "flowfile_core"),
         script_name="main.py",
         output_name="flowfile_core",
-        hidden_imports=common_imports + NOTEBOOK_HIDDEN_IMPORTS,
+        hidden_imports=common_imports,
         collected_packages=NOTEBOOK_COLLECTED_PACKAGES,
     ):
         builds_successful = False

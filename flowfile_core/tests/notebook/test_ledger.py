@@ -1,13 +1,13 @@
 """The exactness ledger: render, clean run, relabel and compare over the corpus.
 
 For every corpus flow ``g``: ``R = render(g)`` raises nothing and its placeholders stay inside the manifest;
-the cells run as a clean run in notebook mode (in process), which writes nothing and starts no kernel
-manager; every canvas node is looked up on the relabelled result and graded EXACT (same type, settings
-equal under :mod:`flowfile_core.notebook.compare`), DIFFER (same type, settings differ) or LOSSY (a
-different type, a missing node, or new nodes in its cell). Rows aggregate worst-case per node type into
-the committed ``ledger.json``, which is written when absent and may only improve afterwards (set
-``FLOWFILE_UPDATE_NOTEBOOK_LEDGER=1`` to record an improvement). A flow whose rows are all EXACT must
-also render back to the same cell text.
+the cells clean-run through the in-process runner seeded from the canvas (the push path's snapshot), which
+writes nothing and starts no kernel manager; every canvas node is looked up on the relabelled result and
+graded EXACT (same type, settings equal under :mod:`flowfile_core.notebook.compare`), DIFFER (same type,
+settings differ) or LOSSY (a different type, a missing node, or new nodes in its cell). Rows aggregate
+worst-case per node type into the committed ``ledger.json``, which is written when absent and may only
+improve afterwards (set ``FLOWFILE_UPDATE_NOTEBOOK_LEDGER=1`` to record an improvement). A flow whose rows
+are all EXACT must also render back to the same cell text.
 """
 
 from __future__ import annotations
@@ -20,42 +20,37 @@ from pathlib import Path
 import pytest
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.notebook.bridge import CleanRunRequest, CleanRunResult
 from flowfile_core.notebook.compare import parameters_equal, settings_equal
-from flowfile_core.notebook.registry import seed_snapshot
+from flowfile_core.notebook.push import seed_snapshot
 from flowfile_core.notebook.render import NotebookRendering, render
 from flowfile_frame import notebook
-from flowfile_frame.notebook_cells import clean_run, seed_session
+from flowfile_frame.notebook_cells import seed_session
 from test_utils.notebook_demo import storage_files
-from tests.notebook.conftest import no_kernel_manager
+from tests.notebook.conftest import NOTEBOOK_OWNER_ID, InProcessCleanRunner, no_kernel_manager
 
 LEDGER_FILE = Path(__file__).parent / "ledger.json"
 RANK = {"EXACT": 0, "DIFFER": 1, "LOSSY": 2}
 
 
-def _clean_run(graph: FlowGraph, rendering: NotebookRendering) -> dict:
-    """Clean-run the rendered cells, seeding the session from ``graph`` first when a placeholder cell
-    (``fl.canvas_node``) needs the snapshot."""
-    payload = seed_snapshot(graph)["flowfile_data"]
-    parameters = list(graph.flow_settings.parameters)
-    placeholders = any(cell.status != "code" for cell in rendering.cells)
-    if placeholders:
-        seed_session(payload, parameters, {}, {})
-    try:
-        cells = [(cell.cell_id, cell.code) for cell in rendering.cells]
-        provenance = {
+def _clean_run(graph: FlowGraph, rendering: NotebookRendering) -> CleanRunResult:
+    """Clean-run the rendered cells through the in-process runner, seeded from ``graph``."""
+    request = CleanRunRequest(
+        cells=[(cell.cell_id, cell.code) for cell in rendering.cells],
+        provenance={
             cell.cell_id: [(graph.get_node(node_id).node_type, node_id) for node_id in cell.node_ids]
             for cell in rendering.cells
             if cell.node_ids
-        }
-        ceiling = max((node.node_id for node in graph.nodes), default=0)
-        return clean_run(cells, ceiling, provenance)
-    finally:
-        notebook.exit()
+        },
+        ceiling=max((node.node_id for node in graph.nodes), default=0),
+        snapshot=seed_snapshot(graph),
+    )
+    return InProcessCleanRunner().clean_run(NOTEBOOK_OWNER_ID, graph.flow_id, request)
 
 
-def _rerender(graph: FlowGraph, result: dict) -> NotebookRendering:
+def _rerender(graph: FlowGraph, result: CleanRunResult) -> NotebookRendering:
     """Render the relabelled clean-run payload as a graph, rebuilt the way a session seeds it."""
-    payload = copy.deepcopy(result["flowfile_data"])
+    payload = copy.deepcopy(result.flowfile_data)
     bound = seed_session(payload, payload["flowfile_settings"]["parameters"], {}, seed_snapshot(graph)["schemas"])
     try:
         return render(bound["flow"])
@@ -66,7 +61,7 @@ def _rerender(graph: FlowGraph, result: dict) -> NotebookRendering:
 def grade(graph: FlowGraph, result: dict) -> dict[int, str]:
     """Per canvas node: EXACT, DIFFER or LOSSY against the relabelled clean-run payload."""
     rebuilt = {node["id"]: node for node in result["flowfile_data"]["nodes"]}
-    canvas = {node["id"]: node for node in seed_snapshot(graph)["flowfile_data"]["nodes"]}
+    canvas = {node["id"]: node for node in graph.get_flowfile_data().model_dump(mode="json")["nodes"]}
     cell_of = {node_id: cell_id for cell_id, node_ids in result["cells"].items() for node_id in node_ids}
     extra = {cell_id for cell_id, node_ids in result["cells"].items() if set(node_ids) - set(canvas)}
     grades = {}
@@ -120,7 +115,7 @@ def test_placeholders_stay_inside_the_manifest(ledger_rows, expected_placeholder
 
 def test_every_flow_clean_runs(ledger_rows):
     flows = _flows(ledger_rows).items()
-    failed = {name: flow["result"].get("error") for name, flow in flows if not flow["result"]["ok"]}
+    failed = {name: flow["result"].error for name, flow in flows if flow["result"].error}
     assert not failed, json.dumps(failed, indent=1)
 
 
@@ -131,8 +126,8 @@ def test_clean_runs_write_nothing_and_start_no_kernel(ledger_rows):
 
 def test_clean_runs_keep_the_parameters(ledger_rows):
     for name, flow in _flows(ledger_rows).items():
-        if flow["result"]["ok"]:
-            params = flow["result"]["flowfile_data"]["flowfile_settings"]["parameters"]
+        if not flow["result"].error:
+            params = flow["result"].flowfile_data["flowfile_settings"]["parameters"]
             assert parameters_equal(flow["graph"].flow_settings.parameters, params), name
 
 
@@ -140,10 +135,11 @@ def _grades(ledger_rows) -> dict[str, dict[int, tuple[str, str]]]:
     out = {}
     for name, flow in _flows(ledger_rows).items():
         graph = flow["graph"]
-        if not flow["result"]["ok"]:
+        if flow["result"].error:
             out[name] = {node.node_id: (node.node_type, "LOSSY") for node in graph.nodes}
             continue
-        out[name] = {nid: (graph.get_node(nid).node_type, g) for nid, g in grade(graph, flow["result"]).items()}
+        payload = {"flowfile_data": flow["result"].flowfile_data, "cells": flow["result"].node_ids_by_cell}
+        out[name] = {nid: (graph.get_node(nid).node_type, g) for nid, g in grade(graph, payload).items()}
     return out
 
 
@@ -184,7 +180,7 @@ def test_exact_flows_render_back_to_the_same_cells(ledger_rows):
     grades = _grades(ledger_rows)
     unstable = {}
     for name, flow in _flows(ledger_rows).items():
-        if not flow["result"]["ok"] or any(status != "EXACT" for _, status in grades[name].values()):
+        if flow["result"].error or any(status != "EXACT" for _, status in grades[name].values()):
             continue
         again = _rerender(flow["graph"], flow["result"])
         before = {c.cell_id: c.code for c in flow["rendering"].cells}

@@ -66,7 +66,7 @@ A kernel's flavour matters beyond notebooks: a [kernel-environment custom node](
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| **Kernel ID** | Unique identifier (alphanumeric) | — |
+| **Kernel ID** | Unique identifier: letters, numbers, hyphens and underscores | — |
 | **Name** | A human-readable display label | — |
 | **Image flavour** | Base, ML, Lite, or a custom image URI (see [Kernel images](#kernel-images)) | `Base` |
 | **Packages** | Extra pip packages baked into the kernel's image on top of the flavour (version pins encouraged) | *(none)* |
