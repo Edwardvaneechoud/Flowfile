@@ -100,16 +100,7 @@ from flowfile_core.flowfile.flow_node.flow_node import (
 from flowfile_core.flowfile.flow_node.input_handles import input_handle, input_handle_index
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
-from flowfile_core.flowfile.graph_tree.graph_tree import (
-    add_un_drawn_nodes,
-    build_flow_paths,
-    build_node_info,
-    calculate_depth,
-    define_node_connections,
-    draw_merged_paths,
-    draw_standalone_paths,
-    group_nodes_by_depth,
-)
+from flowfile_core.flowfile.graph_tree.graph_tree import render_flow
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
 from flowfile_core.flowfile.param_types import ParamValue, typed_parameter_values
 from flowfile_core.flowfile.parameter_resolver import (
@@ -2968,68 +2959,11 @@ class FlowGraph:
         return f"FlowGraph(\nNodes: {self._node_db}\n\nSettings:\n{settings_str}"
 
     def print_tree(self):
-        """Print flow_graph as a visual tree structure, showing the DAG relationships with ASCII art."""
+        """Print the graph top to bottom, one node per line, with lanes where it branches and merges."""
         if not self._node_db:
             self.flow_logger.info("Empty flow graph")
             return
-
-        node_info = build_node_info(self.nodes)
-
-        for node_id in node_info:
-            calculate_depth(node_id, node_info)
-
-        depth_groups, max_depth = group_nodes_by_depth(node_info)
-
-        for depth in depth_groups:
-            depth_groups[depth].sort()
-
-        lines = ["=" * 80, "Flow Graph Visualization", "=" * 80, ""]
-
-        merge_points = define_node_connections(node_info)
-
-        max_label_length = {}
-        for depth in range(max_depth + 1):
-            if depth in depth_groups:
-                max_len = max(len(node_info[nid].label) for nid in depth_groups[depth])
-                max_label_length[depth] = max_len
-
-        drawn_nodes = set()
-        merge_drawn = set()
-
-        paths_by_merge = {}
-        standalone_paths = []
-
-        paths = build_flow_paths(node_info, self._flow_starts, merge_points)
-
-        for path in paths:
-            if len(path) > 1 and path[-1] in merge_points and len(merge_points[path[-1]]) > 1:
-                merge_id = path[-1]
-                if merge_id not in paths_by_merge:
-                    paths_by_merge[merge_id] = []
-                paths_by_merge[merge_id].append(path)
-            else:
-                standalone_paths.append(path)
-
-        draw_merged_paths(node_info, merge_points, paths_by_merge, merge_drawn, drawn_nodes, lines)
-
-        draw_standalone_paths(drawn_nodes, standalone_paths, lines, node_info)
-
-        add_un_drawn_nodes(drawn_nodes, node_info, lines)
-
-        try:
-            execution_plan = compute_execution_plan(
-                nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
-            )
-            ordered_nodes = execution_plan.all_nodes
-            if ordered_nodes:
-                for i, node in enumerate(ordered_nodes, 1):
-                    lines.append(f"  {i:3d}. {node_info[node.node_id].label}")
-        except Exception as e:
-            lines.append(f"  Could not determine execution order: {e}")
-
-        output = "\n".join(lines)
-
-        print(output)
+        print(render_flow(self.nodes))
 
     def get_nodes_overview(self):
         """Gets a list of dictionary representations for all nodes in the graph."""

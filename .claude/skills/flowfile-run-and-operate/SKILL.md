@@ -156,7 +156,7 @@ Gotcha: the browser tab opens after `time.sleep(5)` but **before** uvicorn start
 ### Core startup/shutdown side effects worth knowing
 
 - Import-time: `storage.cleanup_directories()` runs (see §8 cleanup policy) — **starting core deletes cache files older than 1 hour**, every time. The `--run-flow` and `--notebook-session` verbs dispatch above it, so headless run children never sweep (`flowfile run flow` never imports `main` at all).
-- Lifespan startup: `logging.basicConfig(INFO, ...)` to stdout only (no file handler — Electron/Tauri pipes this); starts the embedded scheduler iff `FLOWFILE_SCHEDULER_ENABLED`.
+- Lifespan startup: `logging.basicConfig(INFO, ...)` to stderr, where the import-time `PipelineHandler` console handler (`configs/__init__.py`) also writes, keeping stdout clean for script output (no file handler — Tauri pipes both streams); starts the embedded scheduler iff `FLOWFILE_SCHEDULER_ENABLED`.
 - Lifespan startup also runs `shared.run_logs.cleanup_old_logs()` — age-based retention over `scheduled_run_*.log`, `flow_*.log` and `notebook_session_*.log` (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30, `0` disables).
 - Lifespan shutdown: stops the scheduler, closes every canvas-notebook session, stops **every** Docker kernel container, and shuts down the optional local LLM. It **no longer deletes logs** — the old `clear_all_flow_logs()` call wiped every `*.log`, run logs included, on every restart. Logs now expire only by age.
 - `POST /shutdown` triggers a graceful uvicorn exit (used by the Tauri shutdown ladder).

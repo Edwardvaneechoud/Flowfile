@@ -3,6 +3,10 @@
 Core examples (docs/examples/*.py) must always pass. Integration examples
 (docs/examples/integrations/*.py) skip when their backing Docker service is
 unavailable, reusing the same fixture helpers the rest of the suite gates on.
+
+An example with a docs/examples/output/<name>.txt must print exactly that text; pages
+include the file as the example's output. Refresh it from a fresh run:
+python docs/examples/<name>.py > docs/examples/output/<name>.txt
 """
 
 import os
@@ -15,6 +19,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLES_DIR = REPO_ROOT / "docs" / "examples"
 INTEGRATIONS_DIR = EXAMPLES_DIR / "integrations"
+EXPECTED_OUTPUT_DIR = EXAMPLES_DIR / "output"
 
 
 def _core_examples() -> list[Path]:
@@ -46,7 +51,7 @@ def _skip_unless_remote_data_available(example_path: Path) -> None:
 
 
 # Examples that register flows and custom node classes: flow files go to tmp_path, node classes are removed after.
-EXAMPLES_WITH_PROCESS_SIDE_EFFECTS = {"native_nodes"}
+EXAMPLES_WITH_PROCESS_SIDE_EFFECTS = {"native_nodes", "tutorial_08", "tutorial_09", "tutorial_10"}
 
 
 @pytest.fixture
@@ -66,16 +71,34 @@ def restore_custom_node_store():
 
 
 @pytest.mark.parametrize("example_path", _core_examples(), ids=lambda p: p.stem)
-def test_core_example_runs(example_path: Path, monkeypatch, tmp_path, request):
-    """A core docs example runs cleanly with the repo root as CWD."""
+def test_core_example_runs(example_path: Path, monkeypatch, tmp_path, tmp_path_factory, request, capsys):
+    """A core docs example runs cleanly and prints its expected output.
+
+    Examples run with the repo root as CWD; tutorials read their data by URL and write into
+    their CWD, so they run in tmp_path, and the Designer they open is not started.
+    """
     _skip_unless_remote_data_available(example_path)
+    is_tutorial = example_path.stem.startswith("tutorial_")
+    if is_tutorial:
+        import flowfile
+
+        monkeypatch.setattr(flowfile, "open_graph_in_editor", lambda *args, **kwargs: True)
     if example_path.stem in EXAMPLES_WITH_PROCESS_SIDE_EFFECTS:
         from shared.storage_config import storage
 
-        monkeypatch.setattr(storage, "_base_dir", tmp_path)
+        # Chapters reuse the same child registration, whose path must stay stable.
+        storage_dir = tmp_path_factory.getbasetemp() / "tutorial_storage" if is_tutorial else tmp_path
+        monkeypatch.setattr(storage, "_base_dir", storage_dir)
         request.getfixturevalue("restore_custom_node_store")
-    monkeypatch.chdir(REPO_ROOT)
+    monkeypatch.chdir(tmp_path if is_tutorial else REPO_ROOT)
+    expected_output = EXPECTED_OUTPUT_DIR / f"{example_path.stem}.txt"
+    if expected_output.exists():
+        from flowfile_frame.utils import set_node_id
+
+        set_node_id(0)  # printed node ids then match a fresh `python <example>.py`
     runpy.run_path(str(example_path), run_name="__main__")
+    if expected_output.exists():
+        assert capsys.readouterr().out == expected_output.read_text()
 
 
 def _postgres_available() -> bool:
