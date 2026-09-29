@@ -7,6 +7,7 @@ Tests for the file-backed custom node registry (registry v2):
 - hot reload on save/delete keeps sys.modules and the store views in sync
 - ensure_class execs lazily, caches classes and failures
 """
+import os
 import sys
 import threading
 from pathlib import Path
@@ -366,3 +367,151 @@ def test_store_get_returns_none_for_exec_broken(nodes_dir, singleton_on_tmp_dir)
     assert "boom at import" in singleton_registry.get("bomb_node").load_error
     # visible-with-error: the palette template stays; placement surfaces the error
     assert "bomb_node" in node_store.node_dict
+
+
+STACK_TEMPLATE = '''
+import polars as pl
+from flowfile_core.flowfile.node_designer import CustomNodeBase
+
+
+class StackNode(CustomNodeBase):
+    node_name: str = "{node_name}"
+    number_of_inputs: int = 3
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return pl.concat(inputs)
+'''
+
+STACK_KEY = "late_stack_node"
+
+
+def _save_stack_flow(nodes_dir: Path, yaml_path: Path, flow_id: int) -> Path:
+    """Save manual inputs 1-3 -> a three-input node file, then drop its entry: a server that never scanned it."""
+    from flowfile_core.flowfile.flow_graph import add_connection
+    from flowfile_core.flowfile.handler import FlowfileHandler
+    from flowfile_core.schemas import input_schema, schemas
+
+    path = nodes_dir / f"{STACK_KEY}.py"
+    path.write_text(STACK_TEMPLATE.format(node_name="Late Stack Node"))
+    node_class = singleton_registry.ensure_class(singleton_registry.load_file(path))
+    handler = FlowfileHandler()
+    handler.register_flow(
+        schemas.FlowSettings(
+            flow_id=flow_id, name="late_node_flow", path=".", execution_mode="Development", execution_location="local"
+        )
+    )
+    flow = handler.get_flow(flow_id)
+    for node_id in (1, 2, 3):
+        flow.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=node_id, node_type="manual_input"))
+        flow.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=flow_id, node_id=node_id, raw_data_format=input_schema.RawData.from_pylist([{"a": node_id}])
+            )
+        )
+    flow.add_node_promise(input_schema.NodePromise(flow_id=flow_id, node_id=4, node_type=STACK_KEY))
+    for node_id in (1, 2, 3):
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(node_id, 4))
+    flow.add_user_defined_node(
+        custom_node=node_class(),
+        user_defined_node_settings=input_schema.UserDefinedNode(
+            flow_id=flow_id, node_id=4, settings={}, is_user_defined=True
+        ),
+    )
+    flow.save_flow(str(yaml_path))
+    singleton_registry.remove_file(path)
+    return path
+
+
+def _import(yaml_path: Path):
+    from flowfile_core.flowfile.handler import FlowfileHandler
+
+    handler = FlowfileHandler()
+    return handler.get_flow(handler.import_flow(yaml_path, register_session=False))
+
+
+def test_imported_flow_resolves_node_file_written_after_scan(nodes_dir, singleton_on_tmp_dir, tmp_path):
+    node_store = singleton_on_tmp_dir
+    _save_stack_flow(nodes_dir, tmp_path / "late.yaml", flow_id=6301)
+    assert singleton_registry.get(STACK_KEY) is None and STACK_KEY not in node_store.CUSTOM_NODE_STORE
+
+    loaded = _import(tmp_path / "late.yaml")
+
+    node = loaded.get_node(4)
+    assert node.results.errors is None
+    assert sorted(n.node_id for n in node.all_inputs) == [1, 2, 3]  # wiring read the real three-input template
+    assert any(t.item == STACK_KEY for t in node_store.nodes_list)  # the palette caught up too
+    result = loaded.run_graph()
+    assert result.success, result
+    assert sorted(node.get_resulting_data().data_frame.collect()["a"].to_list()) == [1, 2, 3]
+
+
+def test_node_promise_resolves_late_file_and_still_raises_for_unknown_type(nodes_dir, singleton_on_tmp_dir):
+    from flowfile_core.flowfile.handler import FlowfileHandler
+    from flowfile_core.schemas import input_schema, schemas
+
+    handler = FlowfileHandler()
+    handler.register_flow(schemas.FlowSettings(flow_id=6304, name="build", path=".", execution_mode="Development"))
+    flow = handler.get_flow(6304)
+    (nodes_dir / f"{STACK_KEY}.py").write_text(STACK_TEMPLATE.format(node_name="Late Stack Node"))
+
+    flow.add_node_promise(input_schema.NodePromise(flow_id=6304, node_id=1, node_type=STACK_KEY, is_user_defined=True))
+
+    assert flow.get_node(1).setting_input.is_user_defined is True
+    with pytest.raises(Exception, match="^Node template no_such_late_node not found$"):  # unchanged for no file
+        flow.add_node_promise(
+            input_schema.NodePromise(flow_id=6304, node_id=2, node_type="no_such_late_node", is_user_defined=True)
+        )
+
+
+def test_flow_with_node_type_without_file_keeps_missing_error(nodes_dir, singleton_on_tmp_dir, tmp_path):
+    _save_stack_flow(nodes_dir, tmp_path / "gone.yaml", flow_id=6302).unlink()
+
+    loaded = _import(tmp_path / "gone.yaml")
+
+    assert loaded.get_node(4).results.errors == f"Custom node '{STACK_KEY}' is not installed on this machine"
+    assert singleton_registry.all() == []
+
+
+def test_flow_referencing_ast_broken_late_file_surfaces_its_error(nodes_dir, singleton_on_tmp_dir, tmp_path):
+    _save_stack_flow(nodes_dir, tmp_path / "broken.yaml", flow_id=6303).write_text("def broken(:\n")
+
+    loaded = _import(tmp_path / "broken.yaml")
+
+    assert loaded.get_node(4).results.errors.startswith(f"Custom node '{STACK_KEY}' failed to load: Syntax error")
+    assert singleton_registry.get_by_file(f"{STACK_KEY}.py").is_broken
+
+
+def test_refresh_loads_only_new_files_and_never_execs(nodes_dir, local_registry, tmp_path):
+    from flowfile_core.flowfile.user_defined.mounts import add_mount
+
+    known = local_registry.load_file(write_node_file(nodes_dir, "known_node.py", "Known Node"))
+    mount_dir = tmp_path / "mounted_nodes"
+    mount_dir.mkdir()
+    add_mount(str(mount_dir), base_dir=nodes_dir)
+    sentinel = tmp_path / "exec_log.txt"
+    (nodes_dir / "sentinel_node.py").write_text(SENTINEL_TEMPLATE.format(sentinel=sentinel, node_name="Sentinel Node"))
+    write_node_file(mount_dir, "mounted_late.py", "Mounted Late")
+    (nodes_dir / "broken_late.py").write_text("def broken(:\n")
+
+    loaded = local_registry.refresh()
+
+    assert not sentinel.exists()
+    assert sorted(e.file_name for e in loaded) == ["broken_late.py", "mounted_late.py", "sentinel_node.py"]
+    assert local_registry.get("sentinel_node").node_class is None
+    assert local_registry.get("mounted_late").mount_path == str(mount_dir)
+    assert "Syntax error" in local_registry.get_by_file("broken_late.py").error
+    assert local_registry.get("known_node") is known
+    assert local_registry.refresh() == []  # nothing new: no reloads
+
+
+def test_refresh_retries_broken_file_once_it_changes(nodes_dir, local_registry):
+    path = nodes_dir / "fixed_later.py"
+    path.write_text("def broken(:\n")
+    local_registry.refresh()
+    assert local_registry.get_by_file("fixed_later.py").is_broken
+
+    path.write_text(NODE_TEMPLATE.format(class_name="FixedNode", node_name="Fixed Later"))
+    os.utime(path, (path.stat().st_atime, path.stat().st_mtime + 1))
+
+    assert [e.node_key for e in local_registry.refresh()] == ["fixed_later"]
+    assert not local_registry.get("fixed_later").is_broken

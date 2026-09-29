@@ -2855,6 +2855,8 @@ class FlowGraph:
                     return FlowDataEngine()
                 return n
 
+            if node_promise.is_user_defined and node_promise.node_type not in CUSTOM_NODE_STORE:
+                user_defined_registry.refresh()
             self.add_node_step(
                 node_id=node_promise.node_id,
                 node_type=node_promise.node_type,
@@ -3112,6 +3114,8 @@ class FlowGraph:
     ) -> None:
         """Place a custom node from the store, degrading to a missing-node placeholder when
         its type isn't installed. Shared by copy and both flow-restore paths."""
+        if node_type not in CUSTOM_NODE_STORE:
+            user_defined_registry.refresh()
         user_defined_node_class = CUSTOM_NODE_STORE.get(node_type)
         if user_defined_node_class is not None:
             self.add_user_defined_node(
@@ -6927,7 +6931,8 @@ class FlowGraph:
             node_result.finish(success=errors is None, error="" if errors is None else str(errors))
             if self.flow_settings.is_canceled:
                 node_result.success = None
-            self.latest_run_info.nodes_completed += 1
+            if node_result.success:
+                self.latest_run_info.nodes_completed += 1
             self.latest_run_info.end_time = datetime.datetime.now()
             return self.get_run_info()
         except Exception as e:
@@ -7098,8 +7103,9 @@ class FlowGraph:
             node_result.finish(success=False, error=str(e))
 
         node_logger.info(f"Completed node with success: {node_result.success}")
-        with run_info_lock:
-            self.latest_run_info.nodes_completed += 1
+        if node_result.success:
+            with run_info_lock:
+                self.latest_run_info.nodes_completed += 1
 
         return node_result, node
 
@@ -7269,6 +7275,7 @@ class FlowGraph:
                             except Exception as e:
                                 node_result.success = False
                                 node_result.error = f"Gate formula evaluation failed: {e}"
+                                self.latest_run_info.nodes_completed -= 1
                                 # The node itself ran fine; no stale class may describe this failure.
                                 node._last_exception_class = None
                                 statuses[node.node_id] = NodeRunStatus.FAILED

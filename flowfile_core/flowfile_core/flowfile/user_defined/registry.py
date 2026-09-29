@@ -148,6 +148,34 @@ class CustomNodeRegistry:
                     self.load_file(path, mount_path=mount_path)
             return self.all()
 
+    def refresh(self) -> list[LoadedNode]:
+        """Exec-free catch-up for a lookup of an unknown node type; returns the entries it loaded.
+
+        Loads node files that appeared in the nodes directory or a mount since the last
+        ``scan()`` (another process wrote them: ``fl.custom_nodes.install`` in a script, a
+        designer save seen from a notebook session) and retries broken entries whose file
+        changed. Healthy entries are left alone (on-disk edits are ``ensure_class``'s hot
+        reload, removals are ``scan()``'s), so a miss costs a directory listing and a ``stat``
+        per broken file, never a full rescan.
+        """
+        loaded: list[LoadedNode] = []
+        with self._lock:
+            targets = [(self.directory, None)] + [(mount, str(mount)) for mount in self.mount_directories()]
+            for base, mount_path in targets:
+                if not base.is_dir():
+                    continue
+                for path in sorted(base.glob("*.py")):
+                    entry = self._entries.get(str(path))
+                    if path.name.startswith("__") or (entry is not None and not entry.is_broken):
+                        continue
+                    try:
+                        if entry is not None and path.stat().st_mtime == entry.mtime:
+                            continue
+                    except OSError:
+                        continue
+                    loaded.append(self.load_file(path, mount_path=mount_path))
+        return loaded
+
     @staticmethod
     def _module_name_for(path: Path, mount_path: str | None) -> str:
         if mount_path is None:

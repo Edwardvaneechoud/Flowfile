@@ -109,6 +109,8 @@ def _resolve(node: type[CustomNodeBase] | CustomNodeBase | str) -> tuple[type[Cu
     """The node class and the base settings values (an instance's configured values, else none)."""
     if isinstance(node, str):
         key = node_key_for(node)
+        if key not in node_store.CUSTOM_NODE_STORE:
+            registry.refresh()
         cls = node_store.CUSTOM_NODE_STORE.get(key)
         if cls is None:
             template = node_store.node_dict.get(key)

@@ -547,6 +547,12 @@
       "doc_first_line": ""
     },
     {
+      "name": "kernels",
+      "kind": "constant",
+      "signature": "",
+      "doc_first_line": ""
+    },
+    {
       "name": "len",
       "kind": "function",
       "signature": "()",

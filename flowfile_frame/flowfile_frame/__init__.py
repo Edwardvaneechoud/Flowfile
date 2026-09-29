@@ -133,6 +133,7 @@ from flowfile_frame.gate import Gate  # noqa: F401
 
 # File I/O
 from flowfile_frame.kafka import read_kafka  # noqa: F401
+from flowfile_frame.kernels import kernels  # noqa: F401
 from flowfile_frame.lazy import fold  # noqa: F401
 from flowfile_frame.native import NativeNodeError, Node  # noqa: F401
 from flowfile_frame.parameters import Parameter, add_flow_parameter, set_flow_parameter  # noqa: F401

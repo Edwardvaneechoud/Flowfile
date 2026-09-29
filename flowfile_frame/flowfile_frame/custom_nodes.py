@@ -235,8 +235,8 @@ class CustomNodes:
         """Write a node class or ``.py`` file to the user-defined nodes directory as ``<key>.py`` and register it.
 
         The written file must load the way the designer loads it (scanned, then executed); one that
-        does not is removed again, and a file it replaced is put back. A running designer shows it
-        after Settings → Extensions → Custom Nodes → Rescan.
+        does not is removed again, and a file it replaced is put back. A running designer picks it up
+        when it opens a flow that uses it, and lists it after Settings → Extensions → Custom Nodes → Rescan.
         """
         refuse("fl.custom_nodes.install")
         node_class = None

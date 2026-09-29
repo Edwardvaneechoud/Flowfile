@@ -215,6 +215,15 @@ def test_installed_file_is_listed_and_placed_by_key_name_and_attribute(nodes_dir
     assert out.collect()["name"].to_list() == ["ANN", "BOB", "CY"]
 
 
+def test_a_file_written_after_the_scan_is_placed_by_key(nodes_dir):
+    (nodes_dir / "install_test_upper.py").write_text(UPPER_SOURCE, encoding="utf-8")  # another process wrote it
+    assert registry.get("install_test_upper") is None
+
+    out = ff.custom_nodes.install_test_upper(ff.from_dict(DATA), column="name")
+
+    assert out.collect()["name"].to_list() == ["ANN", "BOB", "CY"]
+
+
 def test_session_class_is_listed_without_a_file(nodes_dir):
     ff.CustomNode(InstallDoubler, ff.from_dict(DATA))
     info = next(info for info in ff.custom_nodes.list() if info.key == "install_test_doubler")

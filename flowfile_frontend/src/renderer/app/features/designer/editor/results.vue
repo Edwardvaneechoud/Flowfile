@@ -2,13 +2,11 @@
   <el-card class="run-card" shadow="hover">
     <div class="clearfix">
       <span>Flow: {{ runInformation?.flow_id }}:</span>
-      <span class="flow-summary" :class="runStatusClass">
-        {{ runStatusText
-        }}<template v-if="hasRun"
-          >, Nodes: {{ runInformation?.nodes_completed }}/{{
-            runInformation?.number_of_nodes
-          }}</template
-        >
+      <span class="flow-summary" :class="runStatusClass">{{ runStatusText }}</span>
+      <span v-if="hasRun && nodeBreakdown.length" class="node-breakdown">
+        <span v-for="part in nodeBreakdown" :key="part.label" :class="part.className">
+          {{ part.count }} {{ part.label }}
+        </span>
       </span>
     </div>
 
@@ -135,6 +133,27 @@ const runStatusText = computed(() => {
   return info.success ? "Succeeded" : "Failed";
 });
 
+// Per-state node counts; nodes blocked by an upstream failure have no result row.
+const nodeBreakdown = computed(() => {
+  const info = runInformation.value;
+  if (!info) return [];
+  const rows = info.node_step_result ?? [];
+  const succeeded = rows.filter((r) => r.success === true && !r.skipped).length;
+  const failed = rows.filter((r) => r.success === false).length;
+  const gatedOff = rows.filter((r) => r.skipped).length;
+  const running = info.is_running
+    ? rows.filter((r) => r.success == null && r.is_running).length
+    : 0;
+  const remaining = Math.max(info.number_of_nodes - succeeded - failed - gatedOff - running, 0);
+  return [
+    { count: succeeded, label: "succeeded", className: "success" },
+    { count: failed, label: "failed", className: "failure" },
+    { count: gatedOff, label: "gated off", className: "skipped" },
+    { count: running, label: "running", className: "running" },
+    { count: remaining, label: info.is_running ? "waiting" : "not run", className: "skipped" },
+  ].filter((part) => part.count > 0);
+});
+
 const runStatusClass = computed(() => ({
   running: !!runInformation.value?.is_running,
   success: !runInformation.value?.is_running && runInformation.value?.success === true,
@@ -241,6 +260,15 @@ const navigateToNode = (nodeId: string) => {
   margin-left: 10px;
   font-weight: bold;
   color: var(--color-text-primary);
+}
+.node-breakdown {
+  margin-left: 10px;
+  font-size: 13px;
+}
+.node-breakdown > span:not(:first-child)::before {
+  content: "·";
+  margin: 0 6px;
+  color: var(--color-text-tertiary);
 }
 .perf-mode-notice {
   display: flex;

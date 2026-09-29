@@ -22,7 +22,7 @@ Build one city sales report from supermarket invoices, then turn it into a reusa
 
 </div>
 
-Use the [Quick Start](../quickstart.md) for installation. Download a chapter script and run it with Python, for example `python tutorial_01.py`. The scripts fetch the public `supermarket_sales.csv`; they do not need a repository checkout. Chapters 7 and 10 write a `city_report` folder into the directory you run them from and a `tutorial_sales` catalog table; chapters 8–10 register flows in your catalog. The output shown on each page is checked against the script by the docs test suite.
+Use the [Quick Start](../quickstart.md) for installation. Download a chapter script and run it with Python, for example `python tutorial_01.py`. The scripts fetch the public `supermarket_sales.csv`; they do not need a repository checkout. Chapters 7 and 10 write a `city_report` folder into the directory you run them from and a `tutorial_sales` catalog table; chapters 8–10 register flows in your catalog, and chapter 9 installs a custom node. The output shown on each page is checked against the script by the docs test suite.
 
 ## Related walkthrough
 

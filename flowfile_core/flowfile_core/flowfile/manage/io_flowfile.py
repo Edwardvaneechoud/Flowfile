@@ -2,7 +2,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
-from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
+from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template, registry
 from flowfile_core.configs.settings import is_docker_mode
 from flowfile_core.flowfile.flow_graph import FlowGraph, restore_dynamic_input_connections
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
@@ -334,7 +334,10 @@ def _source_handle(flow_info: schemas.FlowInformation, source_id: int, target_id
 
 def _add_node_promise(graph: FlowGraph, node_info: schemas.NodeInformation) -> None:
     if getattr(node_info.setting_input, "is_user_defined", False) and node_info.type not in CUSTOM_NODE_STORE:
-        register_missing_node_template(node_info.type)
+        # Before wiring: a node file written since the last scan must lend its real template, not the placeholder.
+        registry.refresh()
+        if node_info.type not in CUSTOM_NODE_STORE:
+            register_missing_node_template(node_info.type)
     node_promise = input_schema.NodePromise(
         flow_id=graph.flow_id,
         node_id=node_info.id,

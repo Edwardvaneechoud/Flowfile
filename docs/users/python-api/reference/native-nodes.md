@@ -1,6 +1,6 @@
 # Native Node Classes
 
-This page covers the canvas node types that have no fluent `FlowFrame` method, and the Python classes that place them: `Gate`, `FlowInput` / `to_flow_output`, `RunFlow`, `custom_node` / `CustomNode`, `python_script` / `PythonScript` and the generic `Node`, plus the helpers they use (flow parameters, flow references, flow registration, the `custom_nodes` registry). Each call adds one node to the same `FlowGraph` the fluent methods build, so the flow opens in the designer like any other.
+This page covers the canvas node types that have no fluent `FlowFrame` method, and the Python classes that place them: `Gate`, `FlowInput` / `to_flow_output`, `RunFlow`, `custom_node` / `CustomNode`, `python_script` / `PythonScript` and the generic `Node`, plus the helpers they use (flow parameters, flow references, flow registration, the `custom_nodes` registry, the `kernels` list). Each call adds one node to the same `FlowGraph` the fluent methods build, so the flow opens in the designer like any other.
 
 The examples use `import flowfile as ff`. The tested ones run in CI on every commit and share these imports:
 
@@ -371,6 +371,17 @@ ff.custom_nodes.install(TrimNode)           # or a path to a .py file; overwrite
 `install` writes `<key>.py` to the custom-nodes directory and registers it. A class is written with the `NodeSettings` classes and imports it uses; a class that reads other module-level names is refused, so install its file instead. The written file must load the way the designer loads it; one that does not is removed again, a file it replaced is put back, and `install` raises. A running designer shows a new node after **Settings → Extensions → Custom Nodes → Rescan**.
 
 An unknown key raises `NativeNodeError`; in the attribute form the error is also an `AttributeError`, so `hasattr(ff.custom_nodes, name)` is `False`.
+
+### `kernels`
+
+`ff.kernels` lists the kernels you created in the designer's [Kernel Manager](../../visual-editor/kernels.md#kernel-manager), by id. It reads the saved kernel definitions, so Docker need not run, and it reports no running or stopped state.
+
+```python
+ff.kernels.list() -> list[KernelInfo]         # KernelInfo(id, name, flavour, packages) per kernel, sorted by id
+ff.kernels.get(kernel_id: str) -> KernelInfo  # also ff.kernels[kernel_id]; `in`, len() and iteration (ids) work too
+```
+
+`flavour` is the kernel image flavour: `base`, `ml`, `lite` or `custom`. A `KernelInfo` works as a `kernel=` argument: `PythonScript`, `@ff.python_script` and a kernel `CustomNode` store its `id`, still unchecked at build. An unknown id raises `NativeNodeError`, also a `KeyError`, naming your kernel ids. There is no attribute form, since kernel ids can contain hyphens.
 
 ## `python_script` and `PythonScript`
 

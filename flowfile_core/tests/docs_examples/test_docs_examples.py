@@ -50,19 +50,31 @@ def _skip_unless_remote_data_available(example_path: Path) -> None:
             pytest.skip(f"remote sample data not reachable: {url} ({exc})")
 
 
-# Examples that register flows and custom node classes: flow files go to tmp_path, node classes are removed after.
+# Examples that register flows or install custom nodes: their files go to temp storage, the nodes are removed after.
 EXAMPLES_WITH_PROCESS_SIDE_EFFECTS = {"native_nodes", "tutorial_08", "tutorial_09", "tutorial_10"}
 
 
 @pytest.fixture
 def restore_custom_node_store():
-    """Undo the custom node classes an example registers in the process-wide store and palette."""
+    """Undo the custom nodes an example adds to the process-wide store and palette.
+
+    That covers classes it registers and node files it installs: the registry entries of files
+    that were not loaded before, and the classes ``ff.custom_nodes.install`` records.
+    """
     from flowfile_core.configs import node_store
+    from flowfile_frame.custom_node import _INSTALLED_CLASSES
 
     saved_store = dict(node_store.CUSTOM_NODE_STORE)
     saved_dict = dict(node_store.node_dict)
     saved_list = list(node_store.nodes_list)
+    saved_files = {entry.file_path for entry in node_store.registry.all()}
+    saved_installed = dict(_INSTALLED_CLASSES)
     yield
+    for entry in node_store.registry.all():
+        if entry.file_path not in saved_files:
+            node_store.registry.remove_file(entry.file_path)
+    _INSTALLED_CLASSES.clear()
+    _INSTALLED_CLASSES.update(saved_installed)
     node_store.CUSTOM_NODE_STORE.clear()
     node_store.CUSTOM_NODE_STORE.update(saved_store)
     node_store.node_dict.clear()

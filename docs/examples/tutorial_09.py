@@ -72,14 +72,18 @@ class ShortfallPercent(nd.CustomNodeBase):
         return inputs[0].with_columns((100.0 * pl.col("shortfall") / pl.col(target)).round(2).alias("shortfall_pct"))
 
 
+ff.custom_nodes.install(ShortfallPercent, overwrite=True)
 score = ff.custom_node(ShortfallPercent)
 custom_scored = score(report, target_column="target")
 # --8<-- [end:custom]
 
 
 # --8<-- [start:script]
+kernel = ff.kernels["tutorial"] if "tutorial" in ff.kernels else None
+
+
 @ff.python_script(
-    kernel="my-kernel",
+    kernel=kernel,
     returns={
         "city": ff.String,
         "orders": ff.UInt32,

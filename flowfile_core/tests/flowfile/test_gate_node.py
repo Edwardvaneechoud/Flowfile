@@ -634,6 +634,19 @@ class TestFormulaGate:
         assert by_id[3].skipped is False
         assert collect_node(graph, 3).height == 3
 
+    def test_failed_formula_evaluation_is_not_counted_as_completed(self, monkeypatch):
+        graph = build_formula_gate_graph([{"flag": True}])
+
+        def _raise(*_args, **_kwargs):
+            raise ValueError("boom")
+
+        monkeypatch.setattr(graph, "_formula_gate_is_closed", _raise)
+        run_info = graph.run_graph()
+
+        assert run_info.success is False
+        assert results_by_id(run_info)[2].error == "Gate formula evaluation failed: boom"
+        assert (run_info.nodes_completed, run_info.number_of_nodes) == (2, 4)
+
     def test_non_matching_formula_skips_the_downstream_and_stays_green(self):
         graph = build_formula_gate_graph([{"flag": False}])
 

@@ -8,6 +8,7 @@ import flowfile
 import flowfile_frame
 from flowfile_frame.custom_nodes import CustomNodes
 from flowfile_frame.flow_frame import FlowFrame
+from flowfile_frame.kernels import Kernels
 
 NATIVE_NODE_API = [
     "Gate",
@@ -31,6 +32,7 @@ NATIVE_NODE_API = [
     "CustomNode",
     "custom_node",
     "custom_nodes",
+    "kernels",
     "PythonScript",
     "python_script",
     "sql",
@@ -46,6 +48,9 @@ SUBMODULE_ONLY = [
     ("CustomNodeFactory", "flowfile_frame.custom_node"),
     ("CustomNodes", "flowfile_frame.custom_nodes"),
     ("CustomNodeInfo", "flowfile_frame.custom_nodes"),
+    ("Kernels", "flowfile_frame.kernels"),
+    ("KernelInfo", "flowfile_frame.kernels"),
+    ("KernelLookupError", "flowfile_frame.kernels"),
     ("PythonScriptFunction", "flowfile_frame.python_script"),
 ]
 
@@ -94,6 +99,11 @@ def test_custom_node_is_the_factory_function_not_the_submodule():
 def test_custom_nodes_is_the_registry_view_not_the_submodule():
     assert isinstance(flowfile_frame.custom_nodes, CustomNodes)
     assert flowfile.custom_nodes is flowfile_frame.custom_nodes
+
+
+def test_kernels_is_the_saved_kernel_view_not_the_submodule():
+    assert isinstance(flowfile_frame.kernels, Kernels)
+    assert flowfile.kernels is flowfile_frame.kernels
 
 
 def test_python_script_is_the_decorator_not_the_submodule():
