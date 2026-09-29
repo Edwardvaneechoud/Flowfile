@@ -13,9 +13,8 @@ import json
 import keyword
 import re
 
-import polars as pl
-
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
 from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
@@ -68,14 +67,12 @@ def call(func: str, args: list[str]) -> str:
 
 
 def _dtype_expr(data_type: str) -> str | None:
-    """``fl.<dtype>`` for a stored dtype string, when it evaluates to a Polars dtype."""
+    """``fl.<dtype>`` for a stored dtype string, when it parses to a Polars dtype."""
     try:
-        value = eval(f"pl.{data_type}", {"__builtins__": {}}, {"pl": pl})  # noqa: S307
-    except Exception:
+        safe_eval_pl_type(f"pl.{data_type}", bare_names=False)
+    except ValueError:
         return None
-    if isinstance(value, pl.DataType) or (isinstance(value, type) and issubclass(value, pl.DataType)):
-        return "fl." + data_type
-    return None
+    return "fl." + data_type
 
 
 def schema_literal(columns: list[tuple[str, str]]) -> str | None:

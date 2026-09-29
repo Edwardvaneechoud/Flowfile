@@ -1,3 +1,5 @@
+import ast
+
 import polars as pl
 
 dtype_to_pl = {
@@ -18,57 +20,87 @@ dtype_to_pl = {
 }
 
 
-def safe_eval_pl_type(type_string: str):
-    """
-    Safely evaluate a Polars type string with restricted namespace.
-    Supports both formats:
-      - With pl. prefix: pl.List(pl.Int64)
-      - Without pl. prefix: List(Int64)
-    """
-    safe_dict = {
-        # Keep pl module for backwards compatibility with pl.X format
-        "pl": pl,
-        # Polars types directly available (without pl. prefix)
-        "List": pl.List,
-        "Array": pl.Array,
-        "Struct": pl.Struct,
-        "Field": pl.Field,
-        "Decimal": pl.Decimal,
-        # Integer types
-        "Int8": pl.Int8,
-        "Int16": pl.Int16,
-        "Int32": pl.Int32,
-        "Int64": pl.Int64,
-        "Int128": pl.Int128,
-        "UInt8": pl.UInt8,
-        "UInt16": pl.UInt16,
-        "UInt32": pl.UInt32,
-        "UInt64": pl.UInt64,
-        "UInt128": pl.UInt128,
-        # Float types
-        "Float16": pl.Float16,
-        "Float32": pl.Float32,
-        "Float64": pl.Float64,
-        # Other types
-        "Boolean": pl.Boolean,
-        "String": pl.String,
-        "Utf8": pl.Utf8,
-        "Binary": pl.Binary,
-        "Date": pl.Date,
-        "Time": pl.Time,
-        "Datetime": pl.Datetime,
-        "Duration": pl.Duration,
-        "Categorical": pl.Categorical,
-        "Enum": pl.Enum,
-        "Null": pl.Null,
-        "Object": pl.Object,
-        "Extension": pl.Extension,
-        # Disable dangerous built-ins
-        "__builtins__": {},
-    }
+_BARE_DTYPE_NAMES = (
+    "List",
+    "Array",
+    "Struct",
+    "Field",
+    "Decimal",
+    "Int8",
+    "Int16",
+    "Int32",
+    "Int64",
+    "Int128",
+    "UInt8",
+    "UInt16",
+    "UInt32",
+    "UInt64",
+    "UInt128",
+    "Float16",
+    "Float32",
+    "Float64",
+    "Boolean",
+    "String",
+    "Utf8",
+    "Binary",
+    "Date",
+    "Time",
+    "Datetime",
+    "Duration",
+    "Categorical",
+    "Enum",
+    "Null",
+    "Object",
+    "Extension",
+)
+_BARE_DTYPES = {name: getattr(pl, name) for name in _BARE_DTYPE_NAMES if hasattr(pl, name)}
 
+
+def _is_dtype(value) -> bool:
+    return isinstance(value, pl.DataType) or (isinstance(value, type) and issubclass(value, pl.DataType))
+
+
+def _is_dtype_constructor(value) -> bool:
+    return value is pl.Field or (isinstance(value, type) and issubclass(value, pl.DataType))
+
+
+def _build_dtype(node: ast.AST, bare_names: bool):
+    """Build the value one node of a dtype expression spells; only literals and dtype constructors."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.List | ast.Tuple):
+        items = [_build_dtype(item, bare_names) for item in node.elts]
+        return items if isinstance(node, ast.List) else tuple(items)
+    if isinstance(node, ast.Dict) and None not in node.keys:
+        pairs = zip(node.keys, node.values, strict=True)
+        return {_build_dtype(key, bare_names): _build_dtype(value, bare_names) for key, value in pairs}
+    if isinstance(node, ast.Name) and bare_names and node.id in _BARE_DTYPES:
+        return _BARE_DTYPES[node.id]
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "pl":
+        value = None if node.attr.startswith("_") else getattr(pl, node.attr, None)
+        if _is_dtype_constructor(value):
+            return value
+    if isinstance(node, ast.Call) and all(keyword.arg is not None for keyword in node.keywords):
+        func = _build_dtype(node.func, bare_names)
+        if _is_dtype_constructor(func):
+            args = [_build_dtype(arg, bare_names) for arg in node.args]
+            kwargs = {keyword.arg: _build_dtype(keyword.value, bare_names) for keyword in node.keywords}
+            return func(*args, **kwargs)
+    raise ValueError(f"unsupported syntax in a dtype: {type(node).__name__}")
+
+
+def safe_eval_pl_type(type_string: str, *, bare_names: bool = True):
+    """Build the Polars dtype a type string spells, without evaluating it as Python.
+
+    Accepts ``pl.List(pl.Int64)`` and, with ``bare_names``, ``List(Int64)``: dtype names, calls to
+    dtype constructors (and ``Field``) and literal arguments. Anything else raises ``ValueError``,
+    because these strings come from node settings and flow files any user can write.
+    """
     try:
-        return eval(type_string, safe_dict, {})
+        dtype = _build_dtype(ast.parse(type_string.strip(), mode="eval").body, bare_names)
+        if not _is_dtype(dtype):
+            raise ValueError("not a Polars dtype")
+        return dtype
     except Exception as e:
         raise ValueError(f"Failed to safely evaluate type string '{type_string}': {e}") from e
 
