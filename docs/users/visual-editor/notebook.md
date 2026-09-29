@@ -10,7 +10,7 @@ The canvas notebook shows the open flow as Python code, one cell per statement, 
 
 ## Opening it
 
-Open the [Code panel](tutorials/code-generator.md) (Ctrl/Cmd+G) and pick **Notebook**. The panel stays open while you click the canvas or switch flows, and closing it keeps unpushed edits. The notebook renders the flow:
+Open the [Code panel](tutorials/code-generator.md) (Ctrl/Cmd+G) and pick **Notebook**. The panel stays open while you click the canvas or switch flows; a double-click on an empty spot of the canvas closes it, and closing it keeps unpushed edits. The notebook renders the flow:
 
 - The leading cells hold the imports and the flow parameters, then one cell per statement in the order the flow runs; a cell holds every node its statement chains together.
 - Cells use the [Python API](../python-api/index.md) (`import flowfile as fl`): fluent `FlowFrame` calls for built-in transforms, and the [native node classes](../python-api/reference/native-nodes.md) (`fl.Gate`, `fl.RunFlow`, `fl.PythonScript`, custom nodes, parameters) for the rest.

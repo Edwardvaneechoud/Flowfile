@@ -214,5 +214,13 @@ test.describe("Canvas notebook", () => {
     const preview = page.getByText("double", { exact: true });
     await expect(preview).toBeVisible({ timeout: 30_000 });
     await shot(page, "06-run-on-canvas");
+
+    // A double-click on empty canvas closes the code pane; a single click keeps it.
+    await minimizePalette(page);
+    await page.locator(".vue-flow__pane").click({ position: { x: 350, y: 60 } });
+    await expect(page.locator(".code-dock")).toHaveCount(1);
+    await page.locator(".vue-flow__pane").dblclick({ position: { x: 350, y: 60 } });
+    await expect(page.locator(".code-dock")).toHaveCount(0);
+    await shot(page, "07-dblclick-closed");
   });
 });

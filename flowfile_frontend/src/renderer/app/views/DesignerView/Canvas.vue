@@ -463,7 +463,7 @@ const handleMainDblClick = async (event: MouseEvent) => {
   }
   window.getSelection()?.removeAllRanges();
   if (!(await releaseOpenSettings())) return;
-  editorStore.hideAllPanels({ keepCodePane: true });
+  editorStore.hideAllPanels();
   nodeStore.nodeId = -1;
 };
 
