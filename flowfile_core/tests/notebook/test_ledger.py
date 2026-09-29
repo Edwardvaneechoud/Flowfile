@@ -51,7 +51,13 @@ def _clean_run(graph: FlowGraph, rendering: NotebookRendering) -> CleanRunResult
 def _rerender(graph: FlowGraph, result: CleanRunResult) -> NotebookRendering:
     """Render the relabelled clean-run payload as a graph, rebuilt the way a session seeds it."""
     payload = copy.deepcopy(result.flowfile_data)
-    bound = seed_session(payload, payload["flowfile_settings"]["parameters"], {}, seed_snapshot(graph)["schemas"])
+    bound = seed_session(
+        payload,
+        payload["flowfile_settings"]["parameters"],
+        {},
+        seed_snapshot(graph)["schemas"],
+        user_id=NOTEBOOK_OWNER_ID,
+    )
     try:
         return render(bound["flow"])
     finally:

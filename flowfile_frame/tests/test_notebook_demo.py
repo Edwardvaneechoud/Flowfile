@@ -76,7 +76,7 @@ def test_build_sales_analytics_builds_in_notebook_mode_without_writing(demo_cata
         + "\nclean_ref = schema.get_flow('Clean orders')"
         + "\nbuild_sales_analytics(schema, clean_ref)\n"
     )
-    result = clean_run([("demo", cell)], ceiling=0)
+    result = clean_run([("demo", cell)], ceiling=0, user_id=1)
     assert result["ok"], result.get("error")
     assert sorted(n["type"] for n in result["flowfile_data"]["nodes"]) == types
     assert sorted(result["cells"]["demo"]) == sorted(n["id"] for n in result["flowfile_data"]["nodes"])

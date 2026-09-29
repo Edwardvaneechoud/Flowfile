@@ -6,6 +6,7 @@ from flowfile_core.notebook.render import code_fingerprint, render
 from flowfile_core.schemas import input_schema
 from flowfile_frame import notebook
 from flowfile_frame.notebook_cells import clean_run
+from tests.notebook.conftest import NOTEBOOK_OWNER_ID
 from tests.notebook.test_ledger import grade
 
 
@@ -52,7 +53,7 @@ def test_the_cells_rebuild_every_node_exactly():
     provenance = {c.cell_id: [(graph.get_node(n).node_type, n) for n in c.node_ids] for c in rendering.cells}
     try:
         cells = [(c.cell_id, c.code) for c in rendering.cells]
-        result = clean_run(cells, max(n.node_id for n in graph.nodes), provenance)
+        result = clean_run(cells, max(n.node_id for n in graph.nodes), provenance, user_id=NOTEBOOK_OWNER_ID)
     finally:
         if notebook.current() is not None:
             notebook.exit()

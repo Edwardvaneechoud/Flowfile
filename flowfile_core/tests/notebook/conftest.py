@@ -2,7 +2,6 @@
 clean runner and a per-user ``TestClient`` factory."""
 
 import copy
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
@@ -80,12 +79,11 @@ def expected_placeholders():
 class InProcessCleanRunner:
     """Seeds a notebook session from the snapshot and clean-runs the cells with ``exec`` inside the test process.
 
-    Runs on one worker thread (notebook mode is process-global state, so runs are serialized) and imports
-    ``flowfile_frame`` lazily.
+    Runs on a worker thread, as a request would, holding ``notebook.RUN_LOCK`` around the seed and the clean
+    run; the mode it enters is local to that thread. Imports ``flowfile_frame`` lazily.
     """
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="notebook-clean-run")
 
     def _run(self, user_id: int, request: bridge.CleanRunRequest) -> bridge.CleanRunResult:
@@ -93,26 +91,26 @@ class InProcessCleanRunner:
         from flowfile_frame.notebook_cells import clean_run, seed_session
 
         snapshot = copy.deepcopy(request.snapshot or {})
-        try:
-            if snapshot.get("flowfile_data"):
-                seed_session(
-                    snapshot["flowfile_data"],
-                    snapshot.get("parameters") or [],
-                    snapshot.get("names") or {},
-                    snapshot.get("schemas") or {},
-                    user_id=user_id,
-                )
-            provenance = {cell: [tuple(entry) for entry in entries] for cell, entries in request.provenance.items()}
-            return bridge.result_from_payload(clean_run([tuple(c) for c in request.cells], request.ceiling, provenance))
-        except Exception as exc:
-            return bridge.CleanRunResult(error=f"{type(exc).__name__}: {exc}")
-        finally:
-            if notebook.current() is not None:
+        with notebook.RUN_LOCK:
+            try:
+                if snapshot.get("flowfile_data"):
+                    seed_session(
+                        snapshot["flowfile_data"],
+                        snapshot.get("parameters") or [],
+                        snapshot.get("names") or {},
+                        snapshot.get("schemas") or {},
+                        user_id=user_id,
+                    )
+                provenance = {cell: [tuple(entry) for entry in entries] for cell, entries in request.provenance.items()}
+                cells = [tuple(c) for c in request.cells]
+                return bridge.result_from_payload(clean_run(cells, request.ceiling, provenance, user_id=user_id))
+            except Exception as exc:
+                return bridge.CleanRunResult(error=f"{type(exc).__name__}: {exc}")
+            finally:
                 notebook.exit()
 
     def clean_run(self, user_id: int, flow_id: int, request: bridge.CleanRunRequest) -> bridge.CleanRunResult:
-        with self._lock:
-            return self._executor.submit(self._run, user_id, request).result()
+        return self._executor.submit(self._run, user_id, request).result()
 
 
 @pytest.fixture

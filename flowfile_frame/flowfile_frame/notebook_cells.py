@@ -2,11 +2,13 @@
 
 Everything here runs inside notebook build mode (:mod:`flowfile_frame.notebook`). A session is
 seeded from the live flow (:func:`seed_session`): the flow is rebuilt on a local session graph,
-each node is bound to one variable, and a snapshot is kept that :func:`canvas_node` adopts. Cells
-run through :func:`execute_cell`, which records which nodes each cell created (provenance),
-turns the variable names they bind into ``node_reference`` and shows the last expression (a
-frame by its schema only). :func:`clean_run` executes every cell on a fresh graph and returns the
-save-format payload relabelled onto the canvas ids.
+each node is bound to one variable, and the mode keeps a snapshot that :func:`canvas_node`
+adopts. Cells run through :func:`execute_cell`, which records which nodes each cell created
+(provenance), turns the variable names they bind into ``node_reference`` and shows the last
+expression (a frame by its schema only). :func:`clean_run` executes every cell on a fresh graph,
+as an explicit user, and returns the save-format payload relabelled onto the canvas ids. Per-run
+state lives on the mode or in context variables, never in module globals, and goes when the
+mode ends.
 """
 
 from __future__ import annotations
@@ -19,7 +21,9 @@ import linecache
 import re
 import traceback
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
+from types import ModuleType
 from typing import Any
 
 import polars as pl
@@ -54,7 +58,6 @@ from flowfile_frame.native import (
     set_node_reference,
 )
 from flowfile_frame.run_flow import FlowOutput
-from flowfile_frame.utils import create_flow_graph
 from shared.notebook_display import DISPLAY_MAX_ROWS, TABLE_MIME, build_table_payload
 
 LIVE_SOURCE_TYPES: frozenset[str] = frozenset(
@@ -66,7 +69,7 @@ KEPT_NODE_TYPES: frozenset[str] = frozenset({"gate", "run_flow", "python_script"
 _REFERENCE = re.compile(r"^[a-z][a-z0-9_]*$")
 _NOT_CAPTURED: frozenset[str] = frozenset(keyword.kwlist) | frozenset(dir(builtins)) | {"fl", "pl", "main"}
 _CELL_RUNS = itertools.count(1)
-_OUTPUTS: list[list[dict[str, Any]]] = []
+_CELL_OUTPUTS: ContextVar[list[dict[str, Any]] | None] = ContextVar("notebook_cell_outputs", default=None)
 
 
 @dataclass
@@ -75,9 +78,6 @@ class _SnapshotNode:
     setting_input: BaseModel | None
     schemas: dict[str, list[FlowfileColumn]]
     input_handles: list[str] | None
-
-
-_SNAPSHOT: dict[int, _SnapshotNode] = {}
 
 
 @dataclass
@@ -271,20 +271,25 @@ def seed_session(
     deferred. A variable is ``names[node_id]``, else ``<type_label>_<id>``; a multi-output or
     native node binds a :class:`SeededNode`, any other node a ``FlowFrame``. ``flow`` is bound to
     the session graph. Once seeded, the graph accepts a subflow port name already in use, since a
-    cell re-places the seeded ``flow_input``/``flow_output``. The snapshot :func:`canvas_node`
-    adopts is replaced. Any active mode is left first; ``user_id`` defaults to its user.
+    cell re-places the seeded ``flow_input``/``flow_output``. The new mode holds the snapshot
+    :func:`canvas_node` adopts. Runs as ``user_id``, else as the active mode's user; with neither
+    it raises ``ValueError`` instead of running as anyone. Any active mode is ended first.
+    ``notebook.exit()`` ends the session and releases the graph's flow logger with the snapshot.
     """
     flow_info = _flowfile_data_to_flow_information(_flowfile_data_model(flowfile_data))
     previous = notebook.current()
+    if user_id is None and previous is not None:
+        user_id = previous.user_id
+    if user_id is None:
+        raise ValueError("seed_session needs the user it runs as: pass user_id=...")
     if previous is not None:
         notebook.exit()
-        user_id = previous.user_id if user_id is None else user_id
-    graph = create_flow_graph()
-    graph.flow_settings.parameters = [
-        p if isinstance(p, FlowParameter) else FlowParameter.model_validate(p) for p in parameters
-    ]
-    mode = notebook.enter(graph, user_id)
+    mode = notebook.enter(user_id=user_id)
+    graph = mode.graph
     try:
+        graph.flow_settings.parameters = [
+            p if isinstance(p, FlowParameter) else FlowParameter.model_validate(p) for p in parameters
+        ]
         owner = current_user_id()
 
         def hold(node_id: int | str, node_type: str, settings: Any, is_new: bool) -> None:
@@ -298,14 +303,13 @@ def seed_session(
         names = {int(k): v for k, v in names.items()}
         given = {int(k): v for k, v in schemas.items()}
         bound: dict[str, Any] = {"flow": graph}
-        _SNAPSHOT.clear()
         live: set[int] = set()
         for node in _topological(graph):
             bound[names.get(node.node_id) or node_label(node.node_type, node.node_id)] = _seed_node(
                 graph, node, live, given.get(node.node_id)
             )
             info = flow_info.data.get(node.node_id)
-            _SNAPSHOT[node.node_id] = _SnapshotNode(
+            mode.snapshot[node.node_id] = _SnapshotNode(
                 node_type=node.node_type,
                 setting_input=info.setting_input if info is not None else None,
                 schemas=_snapshot_schemas(node, given.get(node.node_id)),
@@ -407,12 +411,13 @@ def canvas_node(node_id: int, *inputs: FlowFrame, output: str | FlowOutput | Non
     ``output-<n>``) returns that handle's frame; without it a single-output node returns its frame
     and a multi-output node a :class:`SeededNode`.
     """
-    if notebook.current() is None or not _SNAPSHOT:
+    mode = notebook.current()
+    if mode is None or not mode.snapshot:
         raise NativeNodeError(
             "fl.canvas_node only works in a notebook session seeded from the canvas; "
             "build the node with its fl.* call instead"
         )
-    snapshot = _SNAPSHOT.get(node_id)
+    snapshot = mode.snapshot.get(node_id)
     if snapshot is None:
         raise NativeNodeError(
             f"Canvas node {node_id} is not in this session's snapshot; reset the session to reseed it "
@@ -486,31 +491,45 @@ def _payload(value: Any, max_rows: int | None) -> dict[str, Any]:
 def display(value: Any) -> dict[str, Any] | None:
     """Show ``value`` below the running cell (up to ``DISPLAY_MAX_ROWS`` rows); outside a cell, return its payload."""
     payload = display_payload(value, DISPLAY_MAX_ROWS)
-    if _OUTPUTS:
-        _OUTPUTS[-1].append(payload)
+    outputs = _CELL_OUTPUTS.get()
+    if outputs is not None:
+        outputs.append(payload)
         return None
     return payload
 
 
 def new_namespace() -> dict[str, Any]:
-    """A fresh cell namespace: ``fl``, ``pl``, ``display`` and ``flow`` (the session graph, when a mode is active)."""
-    import flowfile
+    """A fresh cell namespace: ``fl``, ``pl``, ``display`` and ``flow`` (the session graph, when a mode is active).
 
+    ``fl`` is a new module holding the names of ``flowfile.__all__`` except ``open_graph_in_editor``
+    and ``start_web_ui``, the same objects, taken from ``flowfile_frame`` so that ``flowfile``
+    itself (whose import writes the process environment) is never imported.
+    """
+    from flowfile_frame import _fl_namespace
+
+    fl = ModuleType("flowfile", "The flowfile API of a notebook cell (``import flowfile as fl``).")
+    fl.__dict__.update({name: getattr(_fl_namespace, name) for name in _fl_namespace.__all__})
     mode = notebook.current()
     return {
         "__name__": "__main__",
         "__builtins__": builtins,
-        "fl": flowfile,
+        "fl": fl,
         "pl": pl,
         "display": display,
         "flow": mode.graph if mode is not None else None,
     }
 
 
-def _cell_filename(cell_id: str, code: str) -> str:
-    """A unique ``<cell-{id}-{n}>`` name, registered in ``linecache`` so ``inspect`` and tracebacks read the cell."""
+def _cell_filename(mode: notebook.NotebookMode | None, cell_id: str, code: str) -> str:
+    """A unique ``<cell-{id}-{n}>`` name, registered in ``linecache`` so ``inspect`` and tracebacks read the cell.
+
+    The entry stays until ``mode`` ends, since a later cell may read a function an earlier one
+    defined; without a mode nothing runs and nothing is registered.
+    """
     filename = f"<cell-{cell_id}-{next(_CELL_RUNS)}>"
-    linecache.cache[filename] = (len(code), None, code.splitlines(True), filename)
+    if mode is not None:
+        linecache.cache[filename] = (len(code), None, code.splitlines(True), filename)
+        mode.cell_files.append(filename)
     return filename
 
 
@@ -578,16 +597,16 @@ def _capture_names(
 def execute_cell(cell_id: str, code: str, namespace: dict[str, Any]) -> CellResult:
     """Run one cell in ``namespace`` on the session graph; errors come back in the result, never raised.
 
-    The code is compiled under ``<cell-{cell_id}-{n}>`` (registered in ``linecache`` first, so
-    ``inspect.getsource`` works for functions a cell defines and tracebacks name the cell) with
-    ``optimize=0``. A last-expression value is shown without computing anything: a frame (or
-    each output of a node) by its schema only, anything else by its repr; rows come from an
-    explicit ``display()`` call.
+    The code is compiled under ``<cell-{cell_id}-{n}>`` (registered in ``linecache`` first, until
+    the mode ends, so ``inspect.getsource`` works for functions a cell defines and tracebacks name
+    the cell) with ``optimize=0``. A last-expression value is shown without computing anything: a
+    frame (or each output of a node) by its schema only, anything else by its repr; rows come from
+    an explicit ``display()`` call.
     Every node the cell created is recorded on the mode's ``provenance`` as ``(cell_id, node_type,
     node_id)``, and on success the names it bound become ``node_reference`` per the capture rules.
     """
     mode = notebook.current()
-    result = CellResult(cell_id=cell_id, filename=_cell_filename(cell_id, code))
+    result = CellResult(cell_id=cell_id, filename=_cell_filename(mode, cell_id, code))
     if mode is None:
         result.error = "execute_cell needs an active notebook session (notebook.enter or seed_session)"
         return result
@@ -601,7 +620,7 @@ def execute_cell(cell_id: str, code: str, namespace: dict[str, Any]) -> CellResu
         if is_new and node_id not in new_ids:
             new_ids.append(node_id)
 
-    _OUTPUTS.append(result.outputs)
+    outputs_token = _CELL_OUTPUTS.set(result.outputs)
     try:
         body, expression = _compile(result.filename, code)
         with graph.observe_nodes(observe):
@@ -615,7 +634,7 @@ def execute_cell(cell_id: str, code: str, namespace: dict[str, Any]) -> CellResu
         tb = exc.__traceback__.tb_next if exc.__traceback__ is not None else None
         result.error = "".join(traceback.format_exception(type(exc), exc, tb))
     finally:
-        _OUTPUTS.pop()
+        _CELL_OUTPUTS.reset(outputs_token)
     for node_id in new_ids:
         node = graph.get_node(node_id)
         if node is not None:
@@ -657,11 +676,16 @@ def clean_run(
     cells: list[tuple[str, str]],
     ceiling: int,
     provenance: Mapping[str, list[tuple[str, int]]] | None = None,
+    *,
+    user_id: int | None = None,
 ) -> dict[str, Any]:
     """Execute every cell, in order, on a fresh parameter-free session graph and return the push payload.
 
-    Runs in a fresh namespace under notebook mode (any active session is set aside and restored,
-    and the snapshot :func:`canvas_node` adopts is kept). A failing cell aborts: the result is
+    Runs as ``user_id``, else as the active (seeded) session's user; with neither it raises
+    ``ValueError`` instead of running as anyone. Runs in a fresh namespace under its own notebook
+    mode, whose graph, flow logger and ``linecache`` entries are released when it returns; any
+    active session is set aside and activated again, and its snapshot is what :func:`canvas_node`
+    adopts. A failing cell aborts: the result is
     ``{"ok": False, "cell_id", "error", "refusals"}``. Otherwise nodes not upstream of a bound
     variable, a side-effect node or a native node are pruned and the result is ``{"ok": True,
     "flowfile_data", "cells", "names", "refusals"}``: the save-format payload relabelled onto
@@ -670,10 +694,19 @@ def clean_run(
     the refusal messages raised.
     """
     previous = notebook.current()
+    if user_id is None and previous is not None:
+        user_id = previous.user_id
+    if user_id is None:
+        raise ValueError(
+            "clean_run needs the user it runs as: pass user_id=..., or seed the session with "
+            "seed_session(..., user_id=...) first"
+        )
     if previous is not None:
-        notebook.exit()
+        notebook._deactivate()
     try:
-        with notebook.notebook_mode(user_id=previous.user_id if previous is not None else None) as mode:
+        with notebook.notebook_mode(user_id=user_id) as mode:
+            if previous is not None:
+                mode.snapshot.update(previous.snapshot)
             namespace = new_namespace()
             for cell_id, code in cells:
                 result = execute_cell(cell_id, code, namespace)

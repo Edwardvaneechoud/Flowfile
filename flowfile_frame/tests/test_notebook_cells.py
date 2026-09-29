@@ -290,7 +290,7 @@ def test_seed_session_binds_live_and_deferred_variables():
     sort_id = max(n.node_id for n in graph.nodes)
     schemas = {gate.node_id: {"output-0": [{"name": "a", "data_type": "Int64"}]}}
     try:
-        bound = seed_session(data, [{"name": "mode", "default": "full"}], {big.node_id: "big"}, schemas)
+        bound = seed_session(data, [{"name": "mode", "default": "full"}], {big.node_id: "big"}, schemas, user_id=1)
         mode = notebook.current()
         assert mode is not None and bound["flow"] is mode.graph
         assert mode.graph.flow_id != graph.flow_id
@@ -312,7 +312,7 @@ def test_seed_session_binds_live_and_deferred_variables():
 def test_seeded_node_handles_match_the_native_classes():
     data, graph, source, big, gate = canvas_payload()
     try:
-        bound = seed_session(data, [], {gate.node_id: "router"}, {})
+        bound = seed_session(data, [], {gate.node_id: "router"}, {}, user_id=1)
         router = bound["router"]
         assert router.output is router.then and router["then"] is router.then
         assert router.get_output("else") is router.otherwise and router.else_ is router.otherwise
@@ -333,7 +333,7 @@ def test_a_single_output_seeded_node_forwards_frame_methods():
 def test_a_cell_builds_on_seeded_variables_without_renumbering():
     data, graph, *_ = canvas_payload()
     try:
-        bound = seed_session(data, [], {}, {})
+        bound = seed_session(data, [], {}, {}, user_id=1)
         mode = notebook.current()
         before = {n.node_id: n.node_type for n in mode.graph.nodes}
         ns = {**new_namespace(), **bound}
@@ -355,7 +355,7 @@ def test_a_seeded_subflow_re_runs_its_port_cells():
     orders.filter(fl.col("amount") > 10).to_flow_output("big_orders")
     input_id = orders.node_id
     try:
-        bound = seed_session(graph.get_flowfile_data().model_dump(mode="json"), [], {}, {})
+        bound = seed_session(graph.get_flowfile_data().model_dump(mode="json"), [], {}, {}, user_id=1)
         mode = notebook.current()
         ns = {**new_namespace(), **bound}
         for _ in range(2):
@@ -371,8 +371,11 @@ def test_a_seeded_subflow_re_runs_its_port_cells():
 
 
 def test_clean_run_still_refuses_a_duplicate_flow_input_name():
-    cells = [("a", "orders = fl.FlowInput('orders', schema={'amount': pl.Int64})"), ("b", "again = fl.FlowInput('orders')")]
-    result = clean_run(cells, ceiling=0)
+    cells = [
+        ("a", "orders = fl.FlowInput('orders', schema={'amount': pl.Int64})"),
+        ("b", "again = fl.FlowInput('orders')"),
+    ]
+    result = clean_run(cells, ceiling=0, user_id=1)
     assert result["ok"] is False and result["cell_id"] == "b"
     assert "flow_input name 'orders' is already used" in result["error"]
 
@@ -380,7 +383,9 @@ def test_clean_run_still_refuses_a_duplicate_flow_input_name():
 def test_canvas_node_adopts_settings_wires_inputs_and_seeds_outputs():
     data, graph, source, big, gate = canvas_payload()
     try:
-        bound = seed_session(data, [], {source.node_id: "src"}, {big.node_id: {"output-0": [("a", "Int64")]}})
+        bound = seed_session(
+            data, [], {source.node_id: "src"}, {big.node_id: {"output-0": [("a", "Int64")]}}, user_id=1
+        )
         mode = notebook.current()
         frame = canvas_node(big.node_id, bound["src"])
         node = mode.graph.get_node(frame.node_id)
@@ -401,7 +406,7 @@ def test_canvas_node_of_a_split_filter_exposes_pass_and_fail():
     passed, _ = source.filter_split(fl.col("a") > 1)
     data = graph.get_flowfile_data().model_dump(mode="json")
     try:
-        bound = seed_session(data, [], {source.node_id: "src"}, {})
+        bound = seed_session(data, [], {source.node_id: "src"}, {}, user_id=1)
         split = canvas_node(passed.node_id, bound["src"])
         assert isinstance(split, SeededNode) and split.outputs == ["pass", "fail"]
         assert split.then.output_handle == output_handle(0) and split["pass"] is split.then
@@ -433,7 +438,7 @@ def test_seeding_never_predicts_a_pivot_and_writes_nothing_under_storage(monkeyp
     before = _storage_files()
     for schemas in ({}, {pivoted.node_id: {"output-0": [{"name": "g", "data_type": "String"}]}}):
         try:
-            bound = seed_session(data, [], {pivoted.node_id: "wide"}, schemas)
+            bound = seed_session(data, [], {pivoted.node_id: "wide"}, schemas, user_id=1)
             assert bound["wide"]._deferred
             assert bound["wide"].columns == [c["name"] for c in schemas.get(pivoted.node_id, {}).get("output-0", [])]
         finally:
@@ -447,7 +452,7 @@ def test_canvas_node_refuses_an_unknown_id_and_outside_a_session():
         canvas_node(1)
     data, *_ = canvas_payload()
     try:
-        seed_session(data, [], {}, {})
+        seed_session(data, [], {}, {}, user_id=1)
         with pytest.raises(NativeNodeError, match="not in this session's snapshot"):
             canvas_node(987654)
     finally:
@@ -463,7 +468,9 @@ def test_clean_run_prunes_relabels_and_restores_the_session(session):
         ("node-5", f"df = {DATA}\nfl.from_dict({{'dropped': [1]}}).sort('dropped')"),
         ("node-6", "big = df.filter(fl.col('a') > 1)\nbig.write_csv('/nonexistent/never.csv')"),
     ]
-    result = clean_run(cells, ceiling=40, provenance={"node-5": [("manual_input", 5)], "node-6": [("filter", 6)]})
+    result = clean_run(
+        cells, ceiling=40, provenance={"node-5": [("manual_input", 5)], "node-6": [("filter", 6)]}, user_id=1
+    )
     assert result["ok"], result.get("error")
     nodes = {n["id"]: n for n in result["flowfile_data"]["nodes"]}
     assert result["cells"] == {"node-5": [5], "node-6": [6, 41]}
@@ -476,23 +483,23 @@ def test_clean_run_prunes_relabels_and_restores_the_session(session):
 
 
 def test_clean_run_aborts_on_the_first_failing_cell():
-    result = clean_run([("a", f"df = {DATA}"), ("b", "raise ValueError('boom')"), ("c", "x = 1")], ceiling=0)
+    result = clean_run([("a", f"df = {DATA}"), ("b", "raise ValueError('boom')"), ("c", "x = 1")], ceiling=0, user_id=1)
     assert result["ok"] is False and result["cell_id"] == "b" and "boom" in result["error"]
     assert notebook.current() is None
 
 
 def test_clean_run_reports_a_caught_refusal():
     code = f"df = {DATA}\ntry:\n    fl.register_flow(df, name='x')\nexcept ValueError:\n    pass"
-    result = clean_run([("a", code)], ceiling=0)
+    result = clean_run([("a", code)], ceiling=0, user_id=1)
     assert result["ok"] and len(result["refusals"]) == 1 and "run it from a script" in result["refusals"][0]
 
 
 def test_clean_run_reproduces_a_canvas_node_placeholder():
     data, graph, source, big, gate = canvas_payload()
     try:
-        seed_session(data, [], {}, {})
+        seed_session(data, [], {}, {}, user_id=1)
         cells = [("s", f"src = {DATA}"), (f"node-{big.node_id}", f"kept = fl.canvas_node({big.node_id}, src)")]
-        result = clean_run(cells, ceiling=100, provenance={f"node-{big.node_id}": [("filter", big.node_id)]})
+        result = clean_run(cells, ceiling=100, provenance={f"node-{big.node_id}": [("filter", big.node_id)]}, user_id=1)
         assert result["ok"], result.get("error")
         assert result["cells"][f"node-{big.node_id}"] == [big.node_id]
         [node] = [n for n in result["flowfile_data"]["nodes"] if n["id"] == big.node_id]
