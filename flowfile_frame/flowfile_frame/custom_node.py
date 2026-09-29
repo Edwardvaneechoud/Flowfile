@@ -24,7 +24,7 @@ from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
 from flowfile_core.flowfile.user_defined.registry import KernelRequiredError, missing_custom_node_error, registry
 from flowfile_core.schemas import input_schema
 from flowfile_frame.native import NativeNode, NativeNodeError, _kernel_id, predicted_schema_without_running
-from flowfile_frame.notebook import current
+from flowfile_frame.notebook import current, refuse
 from flowfile_frame.parameters import Parameter
 from flowfile_frame.python_script import _declared_columns
 from shared.node_designer.custom_node import CustomNodeBase, node_key_for
@@ -56,7 +56,9 @@ def _register_class(cls: type[CustomNodeBase]) -> type[CustomNodeBase]:
     A key that names a built-in node or a different installed (file-backed) custom node is
     refused (unless this process installed that class): the saved flow would reopen as that
     other node. The template is re-registered even when the key is known, so a class redefined
-    in a notebook replaces the stale one.
+    in a notebook replaces the stale one. In notebook build mode the process-wide node store is
+    never written: an installed class or the one already registered under its key is placed as
+    is, and any other class is refused.
     """
     try:
         instance = cls()
@@ -72,7 +74,8 @@ def _register_class(cls: type[CustomNodeBase]) -> type[CustomNodeBase]:
     entry = registry.get(key)
     if entry is not None:
         if entry.node_class is not cls and _INSTALLED_CLASSES.get(key) is not cls:
-            node_store.CUSTOM_NODE_STORE.pop(key, None)  # an earlier session class must not shadow the file named below
+            if current() is None:  # an earlier session class must not shadow the file named below
+                node_store.CUSTOM_NODE_STORE.pop(key, None)
             raise NativeNodeError(
                 f"Custom node class {cls.__name__} has the node key {key!r} of the installed node in "
                 f"{entry.file_name}; place the installed node by key with fl.CustomNode({key!r}, ...), or replace "
@@ -80,6 +83,13 @@ def _register_class(cls: type[CustomNodeBase]) -> type[CustomNodeBase]:
                 "re-running the cell that defines an installed class), or rename its node_name"
             )
         return cls
+    if current() is not None:
+        if node_store.CUSTOM_NODE_STORE.get(key) is cls:
+            return cls
+        refuse(
+            f"Custom node class {cls.__name__}",
+            f"is not installed (fl.custom_nodes.install), and placing it registers the node type {key!r}",
+        )
     node_store.add_to_custom_node_store(cls)
     node_store.register_custom_node(instance.to_node_template())
     return cls
