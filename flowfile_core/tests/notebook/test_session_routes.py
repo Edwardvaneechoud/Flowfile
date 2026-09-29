@@ -83,13 +83,17 @@ def test_another_users_flow_is_404(open_flow, client_as):
 def test_the_session_behaves_as_a_kernel(open_flow, client_as):
     owner = client_as(OWNER_ID)
     with no_kernel_manager() as calls:
-        result = _execute(owner, open_flow, "print('hi')\nx = fl.from_dict({'a': [1, 2]}); x", node_id=7)
+        result = _execute(owner, open_flow, "print('hi')\nx = fl.from_dict({'a': [1, 2]}); display(x)", node_id=7)
         assert result["success"] is True and result["error"] is None
         assert result["stdout"] == "hi\n"
         [table] = result["display_outputs"]
         assert table["mime_type"] == TABLE_MIME and table["title"] == ""
         assert len(json.loads(table["data"])["data"]) == 2
         assert result["namespace_generation"] and result["revision"] >= 1
+
+        [text] = _execute(owner, open_flow, "x")["display_outputs"]
+        assert text["mime_type"] == "text/plain"
+        assert "  a: Int64" in text["data"] and "Run on canvas" in text["data"] and "display(" in text["data"]
 
         kernel = owner.get(_kernel(open_flow)).json()
         assert kernel["id"] == f"flow-session:{open_flow.flow_id}" and kernel["state"] == "idle"

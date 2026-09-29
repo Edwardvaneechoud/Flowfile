@@ -71,16 +71,27 @@ def _session(kernel_id: str, http: Request, user) -> registry.NotebookSession:
     return existing or sessions.open(user.id, flow.flow_id, registry.seed_snapshot(flow))
 
 
+def _rows_hint(lazy_safe: bool) -> str:
+    canvas = "Run on canvas in the ⋯ menu of the cell that builds it"
+    if lazy_safe:
+        return f"Rows are not computed here. Use {canvas}, or call display(...) to compute them in this session."
+    return f"Rows are not computed here. Use {canvas}."
+
+
 def _displays(payload: dict[str, Any], title: str = "") -> list[DisplayOutput]:
-    """A session display payload as kernel display outputs: its MIME value, JSON-serialised unless text."""
+    """A session display payload as kernel display outputs: its MIME value, JSON-serialised unless text.
+
+    A frame without rows becomes text: its schema, one column per line, then where its rows come from.
+    """
     if payload.get("kind") == "node":
         return [out for name, sub in (payload.get("outputs") or {}).items() for out in _displays(sub, name)]
     for key, value in payload.items():
         if "/" in key:
             data = value if isinstance(value, str) else json.dumps(value, default=str)
             return [DisplayOutput(mime_type=key, data=data, title=title)]
-    columns = ", ".join(f"{c['name']}: {c['data_type']}" for c in payload.get("schema") or [])
-    return [DisplayOutput(mime_type="text/plain", data=f"Schema: {columns}", title=title)]
+    columns = "".join(f"\n  {c['name']}: {c['data_type']}" for c in payload.get("schema") or [])
+    text = f"Schema:{columns}\n\n{_rows_hint(bool(payload.get('lazy_safe')))}"
+    return [DisplayOutput(mime_type="text/plain", data=text, title=title)]
 
 
 def info(kernel_id: str, http: Request, user) -> KernelInfo:

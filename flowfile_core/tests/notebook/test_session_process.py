@@ -9,8 +9,10 @@ import time
 import pytest
 
 from flowfile_core.notebook.bridge import CleanRunRequest
-from flowfile_core.notebook.registry import RESTARTED_MESSAGE, NotebookSession, NotebookSessionRegistry
+from flowfile_core.notebook.registry import RESTARTED_MESSAGE, NotebookSession, NotebookSessionRegistry, seed_snapshot
+from flowfile_core.notebook.render import render
 from shared.notebook_display import TABLE_MIME
+from tests.notebook.corpus import _drop_catalog, build_native_flow_io
 from tests.notebook.session_helpers import small_snapshot
 
 
@@ -37,12 +39,20 @@ def test_the_child_starts_seeded_and_reports_its_cold_start(session, snapshot):
     assert result["stdout"] == f"{canvas_ids}\n"
 
 
-def test_a_cell_streams_stdout_and_displays_a_table(session):
+def test_a_cell_streams_stdout_and_shows_a_bare_frame_by_its_schema(session):
     result = session.run_cell("build", "print('hello')\nframe = fl.from_dict({'v': [1, 2, 3]})\nframe")
     assert result["ok"], result["traceback"]
     assert result["stdout"] == "hello\n" and result["stderr"] == ""
-    assert len(result["displays"]) == 1 and TABLE_MIME in result["displays"][0]
-    assert [c["name"] for c in result["displays"][0]["schema"]] == ["v"]
+    [payload] = result["displays"]
+    assert TABLE_MIME not in payload and payload["lazy_safe"]
+    assert [c["name"] for c in payload["schema"]] == ["v"]
+
+
+def test_display_computes_the_rows_in_the_session(session):
+    result = session.run_cell("show", "display(fl.from_dict({'v': [1, 2, 3]}))")
+    assert result["ok"], result["traceback"]
+    [payload] = result["displays"]
+    assert [row["v"] for row in payload[TABLE_MIME]["data"]] == [1, 2, 3]
 
 
 def test_explicit_display_and_errors_are_payloads(session):
@@ -72,6 +82,25 @@ def test_schemas_lists_bound_frames(session):
     session.run_cell("c", "typed = fl.from_dict({'k': [1], 's': ['a']})")
     frames = session.schemas()
     assert [c["name"] for c in frames["typed"]] == ["k", "s"]
+
+
+def test_a_schema_handle_reads_a_catalog_table_under_both_names(session):
+    import flowfile_frame as ff
+
+    _drop_catalog("NbReadCat")
+    try:
+        schema = ff.CatalogReference("NbReadCat", auto_create=True).schema("market", auto_create=True)
+        schema.write_table(ff.from_dict({"currency": ["EUR", "USD"], "amount": [1.5, 2.0]}), "fx_rates")
+        code = (
+            "sch = fl.get_catalog('NbReadCat').get_schema('market')\n"
+            "for frame in (sch.read_catalog_table('fx_rates'), sch.read_table('fx_rates')):\n"
+            "    print(frame.columns)\n"
+        )
+        result = session.run_cell("c", code)
+        assert result["ok"], result["traceback"]
+        assert result["stdout"] == "['currency', 'amount']\n" * 2
+    finally:
+        _drop_catalog("NbReadCat")
 
 
 def test_reset_drops_variables_and_reseeds(session):
@@ -108,6 +137,53 @@ def test_clean_run_round_trip_through_the_registry(snapshot):
             "c", "import flowfile_core.kernel as kernel\nassert kernel.get_kernel_manager_if_initialized() is None"
         )
         assert result["ok"], result["traceback"]
+    finally:
+        registry.shutdown()
+
+
+def _run_twice(session, cells) -> None:
+    for _ in range(2):
+        for cell_id, code in cells:
+            result = session.run_cell(cell_id, code)
+            assert result["ok"], result["traceback"]
+
+
+def test_a_seeded_subflow_re_runs_its_port_cells_before_and_after_a_reset():
+    graph = build_native_flow_io()
+    cells = [(cell.cell_id, cell.code) for cell in render(graph).cells]
+    assert any("fl.FlowInput(" in code for _, code in cells) and any("to_flow_output(" in code for _, code in cells)
+    session = NotebookSession(1, 91006, seed_snapshot(graph))
+    session.start()
+    try:
+        assert session.wait_ready(60)
+        _run_twice(session, cells)
+        session.reset()
+        _run_twice(session, cells)
+    finally:
+        session.close()
+
+
+def test_an_unseeded_session_re_runs_subflow_port_cells():
+    session = NotebookSession(1, 91007, None)
+    session.start()
+    try:
+        assert session.wait_ready(60)
+        _run_twice(session, [("c", "o = fl.FlowInput('orders', schema={'x': pl.Int64})\no.to_flow_output('out')")])
+    finally:
+        session.close()
+
+
+def test_clean_run_refuses_a_duplicate_flow_input_and_the_session_still_re_runs_ports():
+    graph = build_native_flow_io()
+    cells = [(cell.cell_id, cell.code) for cell in render(graph).cells]
+    registry = NotebookSessionRegistry(idle_ttl=600, max_sessions=3)
+    try:
+        request = CleanRunRequest(
+            cells=[*cells, ("dup", "again = fl.FlowInput('orders')")], provenance={}, ceiling=50, snapshot=seed_snapshot(graph)
+        )
+        result = registry.clean_run(1, 91008, request)
+        assert result.error and "flow_input name 'orders' is already used" in result.error
+        _run_twice(registry.sessions()[0], cells)
     finally:
         registry.shutdown()
 

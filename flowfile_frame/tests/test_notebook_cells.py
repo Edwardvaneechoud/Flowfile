@@ -3,6 +3,7 @@
 import linecache
 from pathlib import Path
 
+import polars as pl
 import pytest
 
 import flowfile as fl
@@ -226,13 +227,26 @@ def test_a_failing_cell_captures_nothing(session):
     assert reference(mode, result.created[0][1]) is None
 
 
-def test_auto_display_of_a_live_frame_shows_schema_and_rows(session):
+def test_a_bare_frame_shows_its_schema_without_executing_the_plan(session, tmp_path):
     _, ns = session
-    result = run(ns, "fl.from_dict({'a': list(range(150))})")
-    payload = result.display
+    source = tmp_path / "gone.parquet"
+    pl.DataFrame({"a": [1, 2, 3], "g": ["x", "x", "y"]}).write_parquet(source)
+    run(ns, f"src = fl.read_parquet({str(source)!r})")
+    source.unlink()
+    payload = run(ns, "src.group_by('g').agg(fl.col('a').sum())").display
+    assert payload["schema"] == [{"name": "g", "data_type": "String"}, {"name": "a", "data_type": "Int64"}]
+    assert payload["lazy_safe"] and TABLE_MIME not in payload
+    shown = execute_cell("c", "display(src.group_by('g').agg(fl.col('a').sum()))", ns)
+    assert not shown.ok and "FileNotFoundError" in shown.error
+
+
+def test_explicit_display_shows_rows(session):
+    _, ns = session
+    result = run(ns, "display(fl.from_dict({'a': list(range(150))}))")
+    [payload] = result.outputs
     assert payload["schema"] == [{"name": "a", "data_type": "Int64"}] and payload["lazy_safe"]
     table = payload[TABLE_MIME]
-    assert (table["loaded_rows"], table["total_rows"], table["truncated"]) == (100, 150, True)
+    assert (table["loaded_rows"], table["total_rows"], table["truncated"]) == (150, 150, False)
 
 
 def test_explicit_display_caps_at_2000_rows(session):
@@ -245,16 +259,16 @@ def test_explicit_display_caps_at_2000_rows(session):
 
 def test_a_deferred_frame_shows_only_its_schema(session, tmp_path):
     _, ns = session
-    result = run(ns, f"{DATA}.write_csv({str(tmp_path / 'x.csv')!r})")
-    assert result.display["schema"] == [{"name": "a", "data_type": "Int64"}, {"name": "g", "data_type": "String"}]
-    assert not result.display["lazy_safe"] and TABLE_MIME not in result.display
+    [payload] = run(ns, f"display({DATA}.write_csv({str(tmp_path / 'x.csv')!r}))").outputs
+    assert payload["schema"] == [{"name": "a", "data_type": "Int64"}, {"name": "g", "data_type": "String"}]
+    assert not payload["lazy_safe"] and TABLE_MIME not in payload
 
 
 def test_a_frame_below_a_gate_shows_only_its_schema(session):
     mode, ns = session
     fl.add_flow_parameter(mode.graph, fl.Parameter("mode", default="full"))
-    result = run(ns, f"fl.Gate({DATA}, parameter='mode', value='full').then.sort('a')")
-    assert TABLE_MIME not in result.display
+    [payload] = run(ns, f"display(fl.Gate({DATA}, parameter='mode', value='full').then.sort('a'))").outputs
+    assert not payload["lazy_safe"] and TABLE_MIME not in payload
 
 
 def test_display_of_a_node_and_of_a_plain_value(session):
@@ -329,6 +343,38 @@ def test_a_cell_builds_on_seeded_variables_without_renumbering():
         assert {k: after[k] for k in before} == before
     finally:
         notebook.exit()
+
+
+FLOW_INPUT_CELL = "orders = fl.FlowInput('orders', sample={'amount': [5, 15]}, flow_graph=flow)"
+FLOW_OUTPUT_CELL = "orders.filter(fl.col('amount') > 10).to_flow_output('big_orders')"
+
+
+def test_a_seeded_subflow_re_runs_its_port_cells():
+    graph = fl.create_flow_graph()
+    orders = fl.FlowInput("orders", sample={"amount": [5, 15]}, flow_graph=graph)
+    orders.filter(fl.col("amount") > 10).to_flow_output("big_orders")
+    input_id = orders.node_id
+    try:
+        bound = seed_session(graph.get_flowfile_data().model_dump(mode="json"), [], {}, {})
+        mode = notebook.current()
+        ns = {**new_namespace(), **bound}
+        for _ in range(2):
+            run(ns, FLOW_INPUT_CELL)
+            run(ns, FLOW_OUTPUT_CELL)
+        assert ns["orders"].node_id != input_id
+        seeded_filter = next(n for n in mode.graph.nodes if n.node_type == "filter")
+        assert seeded_filter.node_inputs.main_inputs[0].node_id == input_id
+        ports = [n.setting_input.input_name for n in mode.graph.nodes if n.node_type == "flow_input"]
+        assert ports == ["orders"] * 3
+    finally:
+        notebook.exit()
+
+
+def test_clean_run_still_refuses_a_duplicate_flow_input_name():
+    cells = [("a", "orders = fl.FlowInput('orders', schema={'amount': pl.Int64})"), ("b", "again = fl.FlowInput('orders')")]
+    result = clean_run(cells, ceiling=0)
+    assert result["ok"] is False and result["cell_id"] == "b"
+    assert "flow_input name 'orders' is already used" in result["error"]
 
 
 def test_canvas_node_adopts_settings_wires_inputs_and_seeds_outputs():

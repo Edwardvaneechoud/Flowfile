@@ -4,9 +4,9 @@ Everything here runs inside notebook build mode (:mod:`flowfile_frame.notebook`)
 seeded from the live flow (:func:`seed_session`): the flow is rebuilt on a local session graph,
 each node is bound to one variable, and a snapshot is kept that :func:`canvas_node` adopts. Cells
 run through :func:`execute_cell`, which records which nodes each cell created (provenance),
-turns the variable names they bind into ``node_reference`` and auto-displays the last
-expression. :func:`clean_run` executes every cell on a fresh graph and returns the save-format
-payload relabelled onto the canvas ids.
+turns the variable names they bind into ``node_reference`` and shows the last expression (a
+frame by its schema only). :func:`clean_run` executes every cell on a fresh graph and returns the
+save-format payload relabelled onto the canvas ids.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ from flowfile_frame.native import (
 )
 from flowfile_frame.run_flow import FlowOutput
 from flowfile_frame.utils import create_flow_graph
-from shared.notebook_display import AUTO_DISPLAY_MAX_ROWS, DISPLAY_MAX_ROWS, TABLE_MIME, build_table_payload
+from shared.notebook_display import DISPLAY_MAX_ROWS, TABLE_MIME, build_table_payload
 
 LIVE_SOURCE_TYPES: frozenset[str] = frozenset(
     {"manual_input", "read", "list_files", "catalog_reader", "cloud_storage_reader"}
@@ -86,8 +86,8 @@ class CellResult:
 
     ``created`` lists ``(node_type, node_id)`` for every node the cell created, ``names`` the
     variables it bound or rebound, ``references`` the ``node_reference`` each name capture set,
-    ``display`` the auto-display payload of the last expression and ``outputs`` the payloads of
-    explicit ``display()`` calls, in order.
+    ``display`` the payload of the last expression (schema only for a frame) and ``outputs`` the
+    payloads of explicit ``display()`` calls, in order.
     """
 
     cell_id: str
@@ -270,8 +270,9 @@ def seed_session(
     from ``schemas[node_id][handle]`` (``{"name", "data_type"}`` entries) and its frames are
     deferred. A variable is ``names[node_id]``, else ``<type_label>_<id>``; a multi-output or
     native node binds a :class:`SeededNode`, any other node a ``FlowFrame``. ``flow`` is bound to
-    the session graph. The snapshot :func:`canvas_node` adopts is replaced. Any active mode is
-    left first; ``user_id`` defaults to its user.
+    the session graph. Once seeded, the graph accepts a subflow port name already in use, since a
+    cell re-places the seeded ``flow_input``/``flow_output``. The snapshot :func:`canvas_node`
+    adopts is replaced. Any active mode is left first; ``user_id`` defaults to its user.
     """
     flow_info = _flowfile_data_to_flow_information(_flowfile_data_model(flowfile_data))
     previous = notebook.current()
@@ -293,6 +294,7 @@ def seed_session(
 
         with graph.observe_nodes(hold), graph.rebuilding():
             populate_graph_from_flow_information(graph, flow_info, owner_of=lambda _node_id: owner)
+        graph.unique_subflow_port_names = False
         names = {int(k): v for k, v in names.items()}
         given = {int(k): v for k, v in schemas.items()}
         bound: dict[str, Any] = {"flow": graph}
@@ -437,7 +439,8 @@ def _lazy_safe(frame: FlowFrame) -> bool:
     return not frame._deferred and not frame._below_a_gate()
 
 
-def _frame_payload(frame: FlowFrame, max_rows: int) -> dict[str, Any]:
+def _frame_payload(frame: FlowFrame, max_rows: int | None) -> dict[str, Any]:
+    """The frame payload; ``max_rows=None`` keeps it to the schema and never executes the plan."""
     payload: dict[str, Any] = {
         "kind": "frame",
         "node_id": frame.node_id,
@@ -445,7 +448,7 @@ def _frame_payload(frame: FlowFrame, max_rows: int) -> dict[str, Any]:
         "schema": _schema_entries(frame),
         "lazy_safe": _lazy_safe(frame),
     }
-    if payload["lazy_safe"]:
+    if max_rows is not None and payload["lazy_safe"]:
         data = frame.data.lazy() if isinstance(frame.data, pl.DataFrame) else frame.data
         head = data.head(max_rows + 1).collect()
         total = data.select(pl.len()).collect().item() if head.height > max_rows else head.height
@@ -454,12 +457,17 @@ def _frame_payload(frame: FlowFrame, max_rows: int) -> dict[str, Any]:
 
 
 def display_payload(value: Any, max_rows: int = DISPLAY_MAX_ROWS) -> dict[str, Any]:
-    """The display payload of ``value``.
+    """The display payload of ``value``, as an explicit :func:`display` call shows it.
 
     A ``FlowFrame`` always shows its schema and, only when its lineage is lazy-safe (not deferred,
     not below a gate), its first ``max_rows`` rows as the ``application/vnd.flowfile.table+json``
     payload. A native node or :class:`SeededNode` shows each output that way; anything else its repr.
+    A cell's last expression is shown without rows (:func:`execute_cell`).
     """
+    return _payload(value, max_rows)
+
+
+def _payload(value: Any, max_rows: int | None) -> dict[str, Any]:
     if isinstance(value, FlowFrame):
         return _frame_payload(value, max_rows)
     if isinstance(value, NativeNode):
@@ -572,7 +580,9 @@ def execute_cell(cell_id: str, code: str, namespace: dict[str, Any]) -> CellResu
 
     The code is compiled under ``<cell-{cell_id}-{n}>`` (registered in ``linecache`` first, so
     ``inspect.getsource`` works for functions a cell defines and tracebacks name the cell) with
-    ``optimize=0``. A last-expression value is auto-displayed (``AUTO_DISPLAY_MAX_ROWS`` rows).
+    ``optimize=0``. A last-expression value is shown without computing anything: a frame (or
+    each output of a node) by its schema only, anything else by its repr; rows come from an
+    explicit ``display()`` call.
     Every node the cell created is recorded on the mode's ``provenance`` as ``(cell_id, node_type,
     node_id)``, and on success the names it bound become ``node_reference`` per the capture rules.
     """
@@ -598,7 +608,7 @@ def execute_cell(cell_id: str, code: str, namespace: dict[str, Any]) -> CellResu
             exec(body, namespace)
             value = eval(expression, namespace) if expression is not None else None
         if value is not None:
-            result.display = display_payload(value, AUTO_DISPLAY_MAX_ROWS)
+            result.display = _payload(value, None)
     except SyntaxError as exc:
         result.error = "".join(traceback.format_exception_only(type(exc), exc))
     except BaseException as exc:

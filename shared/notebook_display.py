@@ -17,7 +17,6 @@ from typing import Any
 import polars as pl
 
 TABLE_MIME = "application/vnd.flowfile.table+json"
-AUTO_DISPLAY_MAX_ROWS = 100
 DISPLAY_MAX_ROWS = 2_000
 
 _QUANTITATIVE = {

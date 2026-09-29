@@ -140,7 +140,7 @@ class Session:
             )
         else:
             notebook.exit()
-            notebook.enter(user_id=self.user_id)
+            notebook.enter(user_id=self.user_id).graph.unique_subflow_port_names = False
             bound = {}
         namespace = new_namespace()
         namespace.update(bound)

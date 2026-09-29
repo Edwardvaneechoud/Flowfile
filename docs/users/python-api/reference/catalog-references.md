@@ -133,6 +133,14 @@ changes = schema.read_table(
 )
 ```
 
+#### `read_catalog_table(name, *, ...) -> FlowFrame`
+
+Same method as `read_table`, with the same keywords, named like `ff.read_catalog_table` and like `flowfile_ctx`'s `SchemaRef.read_catalog_table`.
+
+```python
+fx = ff.get_catalog("Demo").get_schema("market").read_catalog_table("fx_rates")
+```
+
 #### `write_table(df, name, *, write_mode="overwrite", merge_keys=None, partition_by=None, scd2_compare_columns=None, scd2_full_snapshot=False, scd2_surrogate_key_column="sk", scd2_valid_from_column="valid_from", scd2_valid_to_column="valid_to", scd2_is_current_column="is_current", scd2_partition_on_current=True, scd2_output_mode="input", track_changes=False, description=None) -> FlowFrame`
 
 Convenience for [`df.write_catalog_table(name, schema=self, ...)`](writing-data.md#catalog-writing).

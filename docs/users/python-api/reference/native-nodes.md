@@ -545,6 +545,7 @@ The [canvas notebook](../../visual-editor/notebook.md) runs its cells with `impo
 - Nodes are built, never run. Writers, subflows, kernel scripts, database, REST and Kafka sources, `pivot`, `polars_code` and virtual or SQL-mode catalog readers get their predicted schema instead of executing, and `collect()` on a [deferred](#deferred-frames) frame raises `NativeNodeError` pointing at **Run on canvas**.
 - Calls that write at build time or run a flow raise `NativeNodeError`: `register_flow`, `RunFlow(<graph>, name=...)`, `custom_nodes.install`, the connection helpers, `open_graph_in_editor` and `run_graph` on the session graph. Constructing a kernel manager raises too, so nothing in a cell reaches Docker.
 - `add_flow_parameter` on the session graph updates an existing parameter instead of failing.
+- `FlowInput` and `to_flow_output` on the session graph accept a port name already in use, so a cell that places the canvas's own subflow ports can run again. Push runs the cells on a fresh graph, where a duplicate name still raises.
 - A lowercase name a cell binds to a frame or node it created becomes that node's `node_reference` (the rule above; reserved names such as `fl`, `pl` and `main` are skipped).
 
 Scripts outside a notebook session are unaffected.

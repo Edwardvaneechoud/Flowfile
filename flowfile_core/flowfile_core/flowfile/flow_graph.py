@@ -2179,6 +2179,8 @@ class FlowGraph:
         # live graph is empty at undo time (snapshots intentionally omit user_id).
         self._owner_user_id: int | None = None
         self._node_observers: list[NodeObserver] = []
+        # Off only on a notebook session's scratch graph, where cells re-place the seeded ports.
+        self.unique_subflow_port_names = True
 
         from flowfile_core.flowfile.history_manager import HistoryManager
         from flowfile_core.schemas.history_schema import HistoryConfig
@@ -5271,16 +5273,21 @@ class FlowGraph:
         """Adds a named subflow-output sink (passthrough, always materialized).
 
         When this flow runs inside another flow via a run_flow node, the parent
-        reads this node's result as one of the subflow's outputs.
+        reads this node's result as one of the subflow's outputs. The name must be
+        unique among the graph's flow_output nodes unless ``unique_subflow_port_names``
+        is off.
         """
-        for other in self.nodes:
-            if (
-                other.node_type == "flow_output"
-                and other.node_id != settings.node_id
-                and isinstance(other.setting_input, input_schema.NodeFlowOutput)
-                and other.setting_input.output_name == settings.output_name
-            ):
-                raise ValueError(f"flow_output name '{settings.output_name}' is already used by node {other.node_id}")
+        if self.unique_subflow_port_names:
+            for other in self.nodes:
+                if (
+                    other.node_type == "flow_output"
+                    and other.node_id != settings.node_id
+                    and isinstance(other.setting_input, input_schema.NodeFlowOutput)
+                    and other.setting_input.output_name == settings.output_name
+                ):
+                    raise ValueError(
+                        f"flow_output name '{settings.output_name}' is already used by node {other.node_id}"
+                    )
 
         def _func(df: FlowDataEngine):
             return df
@@ -6768,16 +6775,19 @@ class FlowGraph:
         """Adds a named subflow-input placeholder source.
 
         Standalone runs serve the optional sample data (empty frame otherwise);
-        a parent run_flow node overwrites ``node.function`` with real data.
+        a parent run_flow node overwrites ``node.function`` with real data. The name
+        must be unique among the graph's flow_input nodes unless
+        ``unique_subflow_port_names`` is off.
         """
-        for other in self.nodes:
-            if (
-                other.node_type == "flow_input"
-                and other.node_id != settings.node_id
-                and isinstance(other.setting_input, input_schema.NodeFlowInput)
-                and other.setting_input.input_name == settings.input_name
-            ):
-                raise ValueError(f"flow_input name '{settings.input_name}' is already used by node {other.node_id}")
+        if self.unique_subflow_port_names:
+            for other in self.nodes:
+                if (
+                    other.node_type == "flow_input"
+                    and other.node_id != settings.node_id
+                    and isinstance(other.setting_input, input_schema.NodeFlowInput)
+                    and other.setting_input.input_name == settings.input_name
+                ):
+                    raise ValueError(f"flow_input name '{settings.input_name}' is already used by node {other.node_id}")
         if settings.raw_data_format is not None and settings.raw_data_format.columns:
             input_data = FlowDataEngine(settings.raw_data_format)
         else:

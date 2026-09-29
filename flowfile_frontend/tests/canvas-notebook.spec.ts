@@ -152,11 +152,19 @@ test.describe("Canvas notebook", () => {
     const added = panel.locator(".nb-cell").nth(await panel.locator(".nb-cell").count());
     await panel.getByRole("button", { name: "Add cell" }).click();
     await added.locator(".cm-content").click();
-    await page.keyboard.insertText("x = fl.from_dict({'a': [1, 2]}); x");
+    await page.keyboard.insertText("x = fl.from_dict({'a': [1, 2]}); display(x)");
     await page.keyboard.press("Shift+Enter");
     const rows = added.locator(".display-table .ag-center-cols-container .ag-row");
     await expect(rows).toHaveCount(2, { timeout: 60_000 });
     await shot(page, "02-ran");
+    const bare = panel.locator(".nb-cell").nth(await panel.locator(".nb-cell").count());
+    await panel.getByRole("button", { name: "Add cell" }).click();
+    await bare.locator(".cm-content").click();
+    await page.keyboard.insertText("x");
+    await page.keyboard.press("Shift+Enter");
+    await expect(bare.locator(".display-text")).toContainText("Run on canvas", { timeout: 60_000 });
+    await bare.locator(".nb-cell-menu").click();
+    await page.locator(".nb-cell-menu-popper:visible [data-action='delete']").click();
     await added.locator(".nb-cell-menu").click();
     await page.locator(".nb-cell-menu-popper:visible [data-action='delete']").click();
 
