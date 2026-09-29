@@ -15,7 +15,6 @@ import pytest
 
 import flowfile_core.kernel as kernel_package
 import flowfile_frame as ff
-from flowfile_core.configs import node_store
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.kernel import persistence
@@ -27,8 +26,8 @@ from shared.node_designer import CustomNodeBase
 
 
 @pytest.fixture
-def saved(monkeypatch):
-    """Users ``me`` (the frame's user), ``other`` and ``empty``; ``me`` and ``other`` own kernels."""
+def kernel_rows():
+    """Users ``me``, ``other`` and ``empty``; ``me`` and ``other`` own kernels."""
     tag = uuid4().hex[:8]
     with get_db_context() as db:
         users = {
@@ -47,7 +46,6 @@ def saved(monkeypatch):
     with get_db_context() as db:
         for kernel, owner in rows:
             persistence.save_kernel(db, kernel, owner)
-    monkeypatch.setenv("FLOWFILE_SESSION_USER_ID", str(ids["me"]))
     added = []
     yield SimpleNamespace(tag=tag, users=ids, ml=ml.id, base=f"base-{tag}", theirs=f"theirs-{tag}", added=added)
     with get_db_context() as db:
@@ -58,17 +56,10 @@ def saved(monkeypatch):
 
 
 @pytest.fixture
-def store_snapshot():
-    """A session-registered custom node class is process-global; restore the store after the test."""
-    saved_overrides = dict(node_store.CUSTOM_NODE_STORE._overrides)
-    saved_dict = dict(node_store.node_dict)
-    saved_list = list(node_store.nodes_list)
-    yield
-    node_store.CUSTOM_NODE_STORE.clear()
-    node_store.CUSTOM_NODE_STORE.update(saved_overrides)
-    node_store.node_dict.clear()
-    node_store.node_dict.update(saved_dict)
-    node_store.nodes_list[:] = saved_list
+def saved(kernel_rows):
+    """``kernel_rows`` with the frame acting as ``me``: a notebook mode for that user."""
+    with notebook_mode(user_id=kernel_rows.users["me"]):
+        yield kernel_rows
 
 
 def test_list_is_the_current_users_kernels_sorted_by_id(saved):
@@ -111,21 +102,21 @@ def test_unknown_id_names_the_users_kernels(saved):
         ff.kernels.get(7)
 
 
-def test_unknown_id_without_kernels(saved, monkeypatch):
-    monkeypatch.setenv("FLOWFILE_SESSION_USER_ID", str(saved.users["empty"]))
-    assert ff.kernels.list() == [] and len(ff.kernels) == 0
-    with pytest.raises(KernelLookupError) as raised:
-        ff.kernels.get(saved.ml)
+def test_unknown_id_without_kernels(kernel_rows):
+    with notebook_mode(user_id=kernel_rows.users["empty"]):
+        assert ff.kernels.list() == [] and len(ff.kernels) == 0
+        with pytest.raises(KernelLookupError) as raised:
+            ff.kernels.get(kernel_rows.ml)
     assert str(raised.value) == (
-        f"No kernel {saved.ml!r}; you have no kernels yet. "
+        f"No kernel {kernel_rows.ml!r}; you have no kernels yet. "
         "Kernels are created in the Designer, on the Python Kernels page."
     )
 
 
-def test_notebook_mode_reads_the_sessions_user(saved):
-    with notebook_mode(user_id=saved.users["other"]):
-        assert list(ff.kernels) == [saved.theirs]
-        assert ff.kernels[saved.theirs].flavour == "lite"
+def test_notebook_mode_reads_the_sessions_user(kernel_rows):
+    with notebook_mode(user_id=kernel_rows.users["other"]):
+        assert list(ff.kernels) == [kernel_rows.theirs]
+        assert ff.kernels[kernel_rows.theirs].flavour == "lite"
 
 
 def _passthrough(orders):
@@ -154,10 +145,12 @@ class KernelsTestScorer(CustomNodeBase):
         return inputs[0].with_columns(pl.lit(0.0).alias("score"))
 
 
-def test_a_kernel_info_places_a_kernel_custom_node(saved, store_snapshot):
-    node = ff.CustomNode(KernelsTestScorer, ff.from_dict({"amount": [1, 2]}), kernel=ff.kernels[saved.base])
-    assert node.kernel == saved.base
-    assert node.node.setting_input.kernel_id == saved.base
+def test_a_kernel_info_places_a_kernel_custom_node(kernel_rows, store_snapshot):
+    with notebook_mode(user_id=kernel_rows.users["me"]):
+        kernel = ff.kernels[kernel_rows.base]
+    node = ff.CustomNode(KernelsTestScorer, ff.from_dict({"amount": [1, 2]}), kernel=kernel)
+    assert node.kernel == kernel_rows.base
+    assert node.node.setting_input.kernel_id == kernel_rows.base
     assert node.output.columns == ["amount", "score"]
 
 

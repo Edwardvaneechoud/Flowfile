@@ -7,7 +7,8 @@ from polars.testing import assert_frame_equal
 import flowfile as fl
 import flowfile_core.kernel as kernel_package
 import flowfile_frame as ff
-from flowfile_frame import catalog, notebook
+from flowfile_core.configs.flow_logger import FlowLogger
+from flowfile_frame import catalog, catalog_reference, kafka, notebook, rest_api
 from flowfile_frame._identity import current_user_id
 from flowfile_frame.cloud_storage import secret_manager
 from flowfile_frame.database import connection_manager
@@ -36,16 +37,20 @@ def test_mode_exit_restores_everything():
     real_manager = kernel_package.KernelManager
     with notebook.notebook_mode() as active:
         graph = active.graph
-        assert kernel_package.KernelManager is not real_manager
+        assert kernel_package.kernel_manager_refusal.get() is not None
+        assert kernel_package.KernelManager is real_manager
     assert notebook.current() is None
+    assert kernel_package.kernel_manager_refusal.get() is None
     assert kernel_package.KernelManager is real_manager
     assert "run_graph" not in graph.__dict__
     assert ff.from_dict(DATA).flow_graph is not graph
 
 
 def test_modes_do_not_nest(mode):
+    loggers = set(FlowLogger._instances)
     with pytest.raises(NativeNodeError, match="already active"):
         notebook.enter()
+    assert set(FlowLogger._instances) == loggers
 
 
 def test_writer_on_an_ungated_frame_writes_nothing_in_the_mode(mode, tmp_path):
@@ -229,28 +234,36 @@ def test_explicit_deferred_false_is_overridden(mode, tmp_path):
     assert not path.exists()
 
 
-def test_kernel_manager_sentinel_keeps_docker_out(mode):
+def test_get_kernel_manager_refuses_in_the_mode_even_when_one_is_cached(mode, monkeypatch):
+    from flowfile_core.flowfile import flow_graph as flow_graph_module
+
     initialized_before = kernel_package.get_kernel_manager_if_initialized()
     script = ff.PythonScript(ff.from_dict(DATA), code="x = 1", kernel="ml-kernel")
     assert core_node(script.output).node_type == "python_script"
     assert kernel_package.get_kernel_manager_if_initialized() is initialized_before
-    if initialized_before is None:
+    monkeypatch.setattr(kernel_package, "_manager", object())
+    for get_kernel_manager in (kernel_package.get_kernel_manager, flow_graph_module.get_kernel_manager):
         with pytest.raises(NativeNodeError, match="kernel nodes run on the canvas: use Run on canvas"):
-            kernel_package.get_kernel_manager()
-        assert kernel_package.get_kernel_manager_if_initialized() is None
+            get_kernel_manager()
 
 
-def test_identity_hook(monkeypatch):
-    monkeypatch.delenv("FLOWFILE_SESSION_USER_ID", raising=False)
+def test_identity_hook():
+    hooks = (
+        catalog.get_current_user_id,
+        catalog_reference._get_current_user_id,
+        connection_manager.get_current_user_id,
+        kafka.get_current_user_id,
+        rest_api.get_current_user_id,
+        secret_manager.get_current_user_id,
+    )
     assert current_user_id() == 1
-    monkeypatch.setenv("FLOWFILE_SESSION_USER_ID", "7")
-    assert current_user_id() == 7
-    assert connection_manager.get_current_user_id() == 7
+    assert [hook() for hook in hooks] == [1] * len(hooks)
+    with notebook.notebook_mode():
+        assert current_user_id() == 1
     with notebook.notebook_mode(user_id=5):
         assert current_user_id() == 5
-        assert catalog.get_current_user_id() == 5
-        assert connection_manager.get_current_user_id() == 5
-        assert secret_manager.get_current_user_id() == 5
+        assert [hook() for hook in hooks] == [5] * len(hooks)
         node = ff.Node("sample", ff.from_dict(DATA), settings={"sample_size": 1})
         assert node.node.setting_input.user_id == 5
-    assert current_user_id() == 7
+    assert current_user_id() == 1
+    assert [hook() for hook in hooks] == [1] * len(hooks)

@@ -21,6 +21,7 @@ os.environ.setdefault(
 import pytest
 from pydantic import SecretStr
 
+from flowfile_core.configs import node_store
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from flowfile_frame.cloud_storage.secret_manager import (
     create_cloud_storage_connection,
@@ -29,6 +30,20 @@ from flowfile_frame.cloud_storage.secret_manager import (
 )
 
 pytest.register_assert_rewrite(f"{__package__}.native_helpers")
+
+
+@pytest.fixture
+def store_snapshot():
+    """Placing a class outside notebook mode registers it process-wide; restore the store after the test."""
+    saved_overrides = dict(node_store.CUSTOM_NODE_STORE._overrides)
+    saved_dict = dict(node_store.node_dict)
+    saved_list = list(node_store.nodes_list)
+    yield
+    node_store.CUSTOM_NODE_STORE.clear()
+    node_store.CUSTOM_NODE_STORE.update(saved_overrides)
+    node_store.node_dict.clear()
+    node_store.node_dict.update(saved_dict)
+    node_store.nodes_list[:] = saved_list
 
 
 def create_cloud_connection():

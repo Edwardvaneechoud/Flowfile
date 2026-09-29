@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from typing import Any
 from flowfile_core.flowfile.flow_graph import FlowGraph
 
 class NotebookMode:
@@ -10,7 +11,11 @@ class NotebookMode:
     user_id: int | None
     refusals: list[str]
     provenance: list[tuple[str, str, int]]
-    def __init__(self, graph: FlowGraph, user_id: int | None=None) -> None: ...
+    snapshot: dict[int, Any]
+    cell_files: list[str]
+    owns_graph: bool
+    def __init__(self, graph: FlowGraph, user_id: int | None=None, *, owns_graph: bool=False) -> None: ...
+    def close(self) -> None: ...
 
 
 def current() -> NotebookMode | None: ...

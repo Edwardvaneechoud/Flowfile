@@ -1,16 +1,15 @@
-"""The user id the frame acts as: the notebook session's, else ``FLOWFILE_SESSION_USER_ID``, else 1."""
-
-import os
+"""The user id the frame acts as: the active notebook mode's, else 1 (a single-user script)."""
 
 from flowfile_frame.notebook import current
 
 
 def current_user_id() -> int:
-    """The notebook mode's ``user_id``, else ``int(FLOWFILE_SESSION_USER_ID)``, else 1 (single-user mode)."""
+    """The ``user_id`` of the notebook mode active in this context, else 1 (single-user mode).
+
+    Nothing else sets it: the mode is context-local, so a thread or request that did not enter
+    the mode acts as a script, and the process environment plays no part.
+    """
     mode = current()
     if mode is not None and mode.user_id is not None:
         return mode.user_id
-    env_user = os.environ.get("FLOWFILE_SESSION_USER_ID")
-    if env_user:
-        return int(env_user)
     return 1

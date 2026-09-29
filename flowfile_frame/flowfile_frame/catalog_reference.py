@@ -31,6 +31,7 @@ from flowfile_core.catalog import (
     SQLAlchemyCatalogRepository,
 )
 from flowfile_core.database.connection import get_db_context
+from flowfile_frame._identity import current_user_id
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -45,8 +46,8 @@ WriteMode: TypeAlias = Literal["overwrite", "error", "append", "upsert", "update
 
 
 def _get_current_user_id() -> int:
-    """User id used for ownership in single-user mode (matches catalog.py)."""
-    return 1
+    """User id used for ownership (matches catalog.py); see ``_identity.current_user_id``."""
+    return current_user_id()
 
 
 def _get_service(db: Session) -> CatalogService:

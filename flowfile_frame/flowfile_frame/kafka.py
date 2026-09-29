@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from flowfile_frame._identity import current_user_id
+
 if TYPE_CHECKING:
     from flowfile_frame.flow_frame import FlowFrame
 
@@ -16,9 +18,9 @@ def get_current_user_id() -> int:
     """Get the current user ID for Kafka operations.
 
     Returns:
-        int: The current user ID (defaults to 1 for single-user mode).
+        int: The current user ID; see ``_identity.current_user_id``.
     """
-    return 1
+    return current_user_id()
 
 
 def add_kafka_source(
