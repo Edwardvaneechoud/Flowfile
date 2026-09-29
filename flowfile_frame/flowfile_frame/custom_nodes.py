@@ -11,7 +11,7 @@ import os
 import sys
 from collections.abc import Iterator
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from flowfile_core.configs import node_store
 from flowfile_core.flowfile.node_designer.parsing import NodeSourceError, scan_node_source
@@ -25,6 +25,7 @@ from flowfile_core.flowfile.user_defined.registry import (
     registry,
 )
 from flowfile_core.schemas.schemas import NodeTemplate
+from flowfile_frame._console_source import console_class_source, console_import_for
 from flowfile_frame.custom_node import _INSTALLED_CLASSES, CustomNodeFactory
 from flowfile_frame.native import NativeNodeError
 from flowfile_frame.notebook import refuse
@@ -78,11 +79,19 @@ def _class_info(key: str, cls: type[CustomNodeBase]) -> CustomNodeInfo:
 
 
 def _defining_module(cls: type[CustomNodeBase]) -> tuple[str, ast.Module]:
-    """Source and AST of the file or notebook cell defining ``cls`` (a notebook cell via its methods' filename)."""
+    """Source and AST of the file, notebook cell or console selection defining ``cls``.
+
+    A notebook cell is found through its methods' filename; a console selection (PyCharm's console,
+    the ``code`` module) through the fragments ``_console_source`` keeps, since it fills no ``linecache``.
+    """
     filenames = []
     with contextlib.suppress(TypeError, OSError):
         filenames.append(inspect.getsourcefile(cls))
-    filenames += [value.__code__.co_filename for value in vars(cls).values() if inspect.isfunction(value)]
+    filenames += [
+        value.__code__.co_filename
+        for value in vars(cls).values()
+        if inspect.isfunction(value) and value.__qualname__.startswith(f"{cls.__qualname__}.")
+    ]
     for filename in dict.fromkeys(name for name in filenames if name):
         text = "".join(linecache.getlines(filename))
         try:
@@ -91,10 +100,41 @@ def _defining_module(cls: type[CustomNodeBase]) -> tuple[str, ast.Module]:
             continue
         if any(isinstance(stmt, ast.ClassDef) and stmt.name == cls.__name__ for stmt in module.body):
             return text, module
+    text = console_class_source(cls)
+    if text is not None:
+        return text, ast.parse(text)
+    kind = "custom node class" if issubclass(cls, CustomNodeBase) else "class"
     raise NativeNodeError(
-        f"Cannot read the source of custom node class {cls.__name__}; save it in a .py file and install "
+        f"Cannot read the source of {kind} {cls.__name__}; save it in a .py file and install "
         "the file: fl.custom_nodes.install('path/to/node.py')"
     )
+
+
+def _defining_namespace(cls: type[CustomNodeBase]) -> dict[str, Any]:
+    """The globals ``cls`` was defined in: its own methods' globals, else its module's (a console's ``__main__``)."""
+    for value in vars(cls).values():
+        if inspect.isfunction(value) and value.__qualname__.startswith(f"{cls.__qualname__}."):
+            return value.__globals__
+    return vars(sys.modules[cls.__module__]) if cls.__module__ in sys.modules else {}
+
+
+def _import_for(name: str, value: Any, home: str) -> str | None:
+    """An import statement binding ``name`` to ``value``, or ``None`` when ``value`` was not imported.
+
+    A module binds by its name; a class or function by its own module and qualname, when that module
+    is loaded, holds it under that name and is not ``home`` (the module ``name`` is read from) or a
+    console's ``__main__``, whose definitions cannot be imported by a node file.
+    """
+    if inspect.ismodule(value):
+        aliases = [key for key, module in sys.modules.items() if module is value and key != "__main__"]
+        origin = min(aliases, key=len, default=value.__name__)
+        return None if origin == "__main__" else f"import {origin}" + (f" as {name}" if origin != name else "")
+    origin, qualname = getattr(value, "__module__", None), getattr(value, "__qualname__", None)
+    if not isinstance(origin, str) or not isinstance(qualname, str) or origin in (home, "__main__"):
+        return None
+    if "." in qualname or origin not in sys.modules or getattr(sys.modules[origin], qualname, None) is not value:
+        return None
+    return f"from {origin} import {qualname}" + (f" as {name}" if qualname != name else "")
 
 
 def _bound_names(stmt: ast.Import | ast.ImportFrom) -> set[str]:
@@ -132,59 +172,133 @@ def _read_names(tree: ast.AST) -> set[str]:
     return read - bound
 
 
+class _Fragment(NamedTuple):
+    """The module, notebook cell or console selection a class was defined in, parsed once."""
+
+    lines: list[str]
+    classes: dict[str, ast.ClassDef]
+    imports: dict[ast.stmt, set[str]]
+    futures: list[str]
+
+
+def _fragment_of(cls: type, cache: dict[str, _Fragment]) -> _Fragment:
+    """The fragment defining ``cls``; ``cache`` (by source text) hands classes of one selection the same object."""
+    text, module = _defining_module(cls)
+    if text in cache:
+        return cache[text]
+    lines = text.splitlines()
+    cache[text] = _Fragment(
+        lines=lines,
+        classes={stmt.name: stmt for stmt in module.body if isinstance(stmt, ast.ClassDef)},
+        imports={
+            stmt: _bound_names(stmt)
+            for stmt in module.body
+            if isinstance(stmt, ast.Import | ast.ImportFrom)
+            and not (isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__")
+        },
+        futures=[
+            _verbatim(stmt, lines)
+            for stmt in module.body
+            if isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__"
+        ],
+    )
+    return cache[text]
+
+
 def _class_file_source(cls: type[CustomNodeBase]) -> str:
     """A node file for ``cls``: the class, the ``NodeSettings`` classes it uses and the imports they need.
 
-    Any other module-level name the classes read is refused; install the module's file instead.
+    A settings class defined beside it (in the same module or console session, a selection of its own
+    is fine) is written too; one imported from another module stays an import. Any other name
+    the classes read must be imported, else the install is refused; install the module's file instead.
     """
     if cls.__qualname__ != cls.__name__:
         raise NativeNodeError(
             f"Custom node class {cls.__qualname__} is defined inside a function or class; install takes a "
             "class defined at the top level of a module, or a node file: fl.custom_nodes.install('path/to/node.py')"
         )
-    text, module = _defining_module(cls)
-    lines = text.splitlines()
-    namespace = vars(sys.modules[cls.__module__]) if cls.__module__ in sys.modules else {}
-    classes = {stmt.name: stmt for stmt in module.body if isinstance(stmt, ast.ClassDef)}
-    futures = [
-        _verbatim(stmt, lines)
-        for stmt in module.body
-        if isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__"
-    ]
-    imports = {
-        stmt: _bound_names(stmt)
-        for stmt in module.body
-        if isinstance(stmt, ast.Import | ast.ImportFrom)
-        and not (isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__")
-    }
-    prefix = "".join(f"{line}\n" for line in futures)
-    carried: dict[str, ast.ClassDef] = {}
-    pending, needed = [cls.__name__], set()
+    home, namespace = cls.__module__, _defining_namespace(cls)
+    carried: dict[str, tuple[ast.ClassDef, _Fragment]] = {}
+    reads: dict[str, list[str]] = {}
+    fragments: dict[str, _Fragment] = {}
+    pending, needed = [(cls.__name__, _fragment_of(cls, fragments))], set()
     while pending:
-        name = pending.pop()
+        name, fragment = pending.pop()
         if name in carried:
             continue
-        carried[name] = classes[name]
-        code = compile(prefix + _verbatim(classes[name], lines), f"<{cls.__name__} source>", "exec")
-        for used in sorted(_read_names(classes[name]).union(_global_names(code))):
-            if used in carried or hasattr(builtins, used) or (used.startswith("__") and used.endswith("__")):
+        if name not in fragment.classes:
+            fragment = _fragment_of(namespace[name], fragments)
+        stmt = fragment.classes[name]
+        carried[name] = stmt, fragment
+        reads[name] = []
+        prefix = "".join(f"{line}\n" for line in fragment.futures)
+        code = compile(prefix + _verbatim(stmt, fragment.lines), f"<{cls.__name__} source>", "exec")
+        for used in sorted(_read_names(stmt).union(_global_names(code))):
+            if used in carried:
+                reads[name].append(used)
+                continue
+            if hasattr(builtins, used) or (used.startswith("__") and used.endswith("__")):
                 continue
             value = namespace.get(used)
-            if used in classes and isinstance(value, type) and issubclass(value, NodeSettings):
-                pending.append(used)
+            if (
+                isinstance(value, type)
+                and issubclass(value, NodeSettings)
+                and value.__name__ == used
+                and not _import_for(used, value, home)
+            ):
+                pending.append((used, fragment))
+                reads[name].append(used)
             else:
                 needed.add(used)
-    kept = [stmt for stmt, names in imports.items() if names & needed]
-    uncovered = sorted(needed.difference(*(imports[stmt] for stmt in kept)))
+    futures = carried[cls.__name__][1].futures
+    if any(fragment.futures != futures for fragment in fragments.values()):
+        raise NativeNodeError(
+            f"Custom node class {cls.__name__} and a NodeSettings class it uses were defined under different "
+            "`from __future__` imports; define them in one selection, or install the module's file instead: "
+            "fl.custom_nodes.install('path/to/node.py')"
+        )
+    kept = [
+        (stmt, fragment)
+        for fragment in fragments.values()
+        for stmt, names in fragment.imports.items()
+        if names & needed
+    ]
+    uncovered = sorted(needed.difference(*(fragment.imports[stmt] for stmt, fragment in kept)))
+    # A name imported by an earlier console selection, or inside a block: the console's own import, else where it lives.
+    synthesized = {
+        name: console_import_for(name, namespace[name]) or _import_for(name, namespace[name], home)
+        for name in uncovered
+        if name in namespace
+    }
+    uncovered = [name for name in uncovered if synthesized.get(name) is None]
     if uncovered:
         raise NativeNodeError(
             f"Custom node class {cls.__name__} reads {uncovered} from its module; install writes only the class, "
             "the NodeSettings classes it uses and top-level imports, so install the module's file instead: "
             "fl.custom_nodes.install('path/to/node.py')"
         )
-    header = futures + [_verbatim(stmt, lines) for stmt in kept]
-    body = [_verbatim(stmt, lines) for stmt in sorted(carried.values(), key=lambda stmt: stmt.lineno)]
+    imports = [_verbatim(stmt, fragment.lines) for stmt, fragment in kept] + sorted(filter(None, synthesized.values()))
+    header = list(dict.fromkeys(futures + imports))
+    body = [_verbatim(carried[name][0], carried[name][1].lines) for name in _dependency_order(cls.__name__, reads)]
     return "\n".join(header) + "\n\n\n" + "\n\n\n".join(body) + "\n"
+
+
+def _dependency_order(root: str, reads: dict[str, list[str]]) -> list[str]:
+    """``root`` and the classes it reads, each after the classes it reads; a cycle (only possible through
+    methods) is cut where it closes."""
+    ordered: dict[str, None] = {}
+    visiting: set[str] = set()
+
+    def place(name: str) -> None:
+        if name in ordered or name in visiting:
+            return
+        visiting.add(name)
+        for used in reads[name]:
+            place(used)
+        ordered[name] = None
+
+    place(root)
+    return list(ordered)
 
 
 def _load_error(path: Path) -> str | None:
@@ -216,13 +330,12 @@ def _restore(path: Path, previous: bytes | None, template: NodeTemplate | None, 
 class CustomNodes:
     """The custom nodes this process can place (``fl.custom_nodes``), by node key or display name.
 
-    Listing, membership and lookup first pick up node files written since the last scan
-    (``registry.refresh``, exec-free), so they agree on a node another process installed.
+    A membership test or lookup that misses first picks up node files written since the last
+    scan (``registry.refresh``, exec-free), so a node another process installed resolves.
     """
 
     def list(self) -> builtins.list[CustomNodeInfo]:
         """Installed node files (broken ones with their error), then session-only classes."""
-        registry.refresh()
         infos = [_file_info(entry) for entry in registry.all()]
         for key in builtins.list(node_store.CUSTOM_NODE_STORE):
             entry = registry.get(key)
@@ -318,11 +431,9 @@ class CustomNodes:
         return key in node_store.CUSTOM_NODE_STORE
 
     def __iter__(self) -> Iterator[str]:
-        registry.refresh()
         return iter(sorted(node_store.CUSTOM_NODE_STORE))
 
     def __len__(self) -> int:
-        registry.refresh()
         return len(node_store.CUSTOM_NODE_STORE)
 
     def __dir__(self) -> builtins.list[str]:

@@ -37,7 +37,7 @@ from flowfile_core.catalog.storage_backend import _is_cloud_uri, resolve_for_nam
 from flowfile_core.configs import logger
 from flowfile_core.configs.app_settings import get_google_oauth_config
 from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
-from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, node_dict, register_missing_node_template
+from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
 from flowfile_core.configs.node_store.nodes import get_source_node_types, get_source_node_types_str
 from flowfile_core.configs.settings import is_electron_mode
 from flowfile_core.database import models as db_models
@@ -2855,9 +2855,7 @@ class FlowGraph:
                     return FlowDataEngine()
                 return n
 
-            template = node_dict.get(node_promise.node_type)
-            is_custom_type = node_promise.is_user_defined or template is None or template.custom_node
-            if is_custom_type and node_promise.node_type not in CUSTOM_NODE_STORE:
+            if node_promise.is_user_defined and node_promise.node_type not in CUSTOM_NODE_STORE:
                 user_defined_registry.refresh()
             self.add_node_step(
                 node_id=node_promise.node_id,

@@ -171,6 +171,7 @@ def test_refusals_accept_a_custom_node_file_written_after_the_scan(tmp_path, mon
 
     monkeypatch.setattr(registry, "_directory", tmp_path)
     monkeypatch.setattr(registry, "_entries", {})
+    monkeypatch.setattr(registry, "_stamps", None)
     monkeypatch.setattr(registry, "on_registered", None)
     (tmp_path / "late_push_node.py").write_text(  # another process installed it after core's scan
         "from flowfile import node_designer as nd\n\n\n"

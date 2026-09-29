@@ -79,7 +79,8 @@ custom_scored = score(report, target_column="target")
 
 
 # --8<-- [start:script]
-kernel = ff.kernels["tutorial"] if "tutorial" in ff.kernels else None
+my_kernels = ff.kernels.list()
+kernel = my_kernels[0] if my_kernels else None
 
 
 @ff.python_script(

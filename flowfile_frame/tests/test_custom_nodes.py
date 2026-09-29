@@ -10,8 +10,10 @@ import json
 import os
 import subprocess
 import sys
+import time
 import types
 import warnings
+from pathlib import Path
 from uuid import uuid4
 
 import polars as pl
@@ -19,12 +21,13 @@ import pytest
 
 import flowfile_frame as ff
 from flowfile_core.configs import node_store
+from flowfile_core.flowfile.user_defined.mounts import mounts_file_path
 from flowfile_core.flowfile.user_defined.registry import registry
 from flowfile_frame.custom_node import _INSTALLED_CLASSES, CustomNodeFactory
 from flowfile_frame.custom_nodes import CustomNodeInfo, CustomNodeLookupError
 from shared.node_designer import CustomNodeBase, NodeSettings, NumericInput, Section
 
-from .utils import is_docker_available
+from .utils import console_namespace, is_docker_available
 
 DATA = {"name": ["ann", "bob", "cy"], "amount": [1, 2, 3]}
 
@@ -224,21 +227,47 @@ def test_a_file_written_after_the_scan_is_placed_by_key(nodes_dir):
     assert out.collect()["name"].to_list() == ["ANN", "BOB", "CY"]
 
 
-def test_a_file_written_after_the_scan_is_listed_before_any_lookup(nodes_dir):
+def test_a_file_written_after_the_scan_is_a_member(nodes_dir):
     (nodes_dir / "install_test_upper.py").write_text(UPPER_SOURCE, encoding="utf-8")
+
     assert "install_test_upper" in ff.custom_nodes
-    (nodes_dir / "install_test_never_built.py").write_text(NEVER_BUILT_SOURCE, encoding="utf-8")
-    assert "install_test_never_built" in {info.key for info in ff.custom_nodes.list()}
-    (nodes_dir / "install_test_rerun.py").write_text(RERUN_SOURCE, encoding="utf-8")
-    assert "install_test_rerun" in dir(ff.custom_nodes)
 
 
-def test_a_session_class_is_refused_the_key_of_a_file_written_after_the_scan(nodes_dir):
+def test_listing_does_not_rescan_when_nothing_changed(nodes_dir, monkeypatch):
+    _add_file(nodes_dir, "install_test_upper.py", UPPER_SOURCE)
+    past = time.time() - 60
+    for path in [nodes_dir, mounts_file_path(nodes_dir), *registry.mount_directories()]:
+        if path.exists():
+            os.utime(path, (past, past))
+    registry.refresh()
+    globbed = []
+    real_glob = Path.glob
+
+    def glob(self, *args, **kwargs):
+        globbed.append(self)
+        return real_glob(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "glob", glob)
+
+    for _ in range(3):
+        ff.custom_nodes.list(), len(ff.custom_nodes), list(ff.custom_nodes), dir(ff.custom_nodes), repr(ff.custom_nodes)
+        assert "install_test_upper" in ff.custom_nodes and "install_test_not_installed" not in ff.custom_nodes
+
+    assert globbed == []
+
+
+@pytest.mark.parametrize("class_first", [False, True], ids=["file-first", "class-first"])
+def test_a_session_class_is_refused_the_key_of_a_file_written_after_the_scan(nodes_dir, class_first):
+    if class_first:
+        ff.CustomNode(InstallDoubler, ff.from_dict(DATA))
     source = RERUN_SOURCE.replace("InstallRerun", "InstallDoubler").replace("Test Rerun", "Test Doubler")
     (nodes_dir / "install_test_doubler.py").write_text(source, encoding="utf-8")
 
     with pytest.raises(ff.NativeNodeError, match=r"of the installed node in install_test_doubler\.py"):
         ff.CustomNode(InstallDoubler, ff.from_dict(DATA))
+
+    placed = ff.CustomNode("install_test_doubler", ff.from_dict(DATA))  # as the error advises: the file's node
+    assert placed.node_class is not InstallDoubler and "doubled" not in placed.output.collect().columns
 
 
 def test_session_class_is_listed_without_a_file(nodes_dir):
@@ -351,6 +380,38 @@ def test_install_carries_imports_read_only_in_annotations(nodes_dir, tmp_path, m
     assert out.collect()["name"].to_list() == ["ann?", "bob?", "cy?"]
 
 
+LAYERED_SOURCE = """import polars as pl
+
+from shared.node_designer import CustomNodeBase, NodeSettings, NumericInput, Section
+
+
+class TextSettings(NodeSettings):
+    main: Section = Section(title="Main", factor=NumericInput(label="Factor", default=2))
+
+
+class AdvancedSettings(TextSettings):
+    extra: Section = Section(title="Extra", offset=NumericInput(label="Offset", default=1))
+
+
+class InstallLayered(CustomNodeBase):
+    node_name: str = "Install Test Layered"
+    settings_schema: AdvancedSettings = AdvancedSettings()
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        settings: TextSettings = self.settings_schema
+        return inputs[0].with_columns((pl.col("amount") * settings.main.factor.value).alias("doubled"))
+"""
+
+
+def test_install_writes_a_settings_class_after_the_one_it_extends(nodes_dir, tmp_path, monkeypatch):
+    module = _module(tmp_path, monkeypatch, "install_layered_module", LAYERED_SOURCE)
+
+    text = ff.custom_nodes.install(module.InstallLayered).read_text(encoding="utf-8")
+
+    assert text.index("class TextSettings") < text.index("class AdvancedSettings") < text.index("class InstallLayered")
+    assert ff.custom_nodes.install_test_layered(ff.from_dict(DATA)).collect()["doubled"].to_list() == [2, 4, 6]
+
+
 def test_install_keeps_no_file_that_does_not_load(nodes_dir, tmp_path, monkeypatch):
     module = _module(tmp_path, monkeypatch, "install_string_annotated_module", STRING_ANNOTATED_SOURCE)
     cls = module.InstallStringAnnotated
@@ -425,11 +486,63 @@ def test_install_refuses_a_class_defined_in_a_function(nodes_dir):
         ff.custom_nodes.install(InstallNested)
 
 
-def test_install_of_a_class_from_a_console_raises_a_clear_error(nodes_dir, monkeypatch):
-    monkeypatch.setitem(sys.modules, "__main__", types.ModuleType("__main__"))  # a console's __main__ has no file
+def _console(*fragments: str) -> dict:
+    """PyCharm's console compiles each selection under ``<input>``."""
+    return console_namespace(*fragments, filename="<input>")
+
+
+CONSOLE_NODE = """class ConsoleSettings(nd.NodeSettings):
+    main: nd.Section = nd.Section(title="Main", factor=NumericInput(label="Factor", default=2))
+
+
+class InstallTestConsole(nd.CustomNodeBase):
+    node_name: str = "Install Test Console"
+    settings_schema: ConsoleSettings = ConsoleSettings()
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0].with_columns((pl.col("amount") * self.settings_schema.main.factor.value).alias("doubled"))
+"""
+
+
+def test_install_of_a_class_from_one_console_selection(nodes_dir):
+    namespace = _console(
+        "import polars as pl\nimport flowfile_frame as ff\nfrom flowfile import node_designer as nd\n"
+        "from shared.node_designer import NumericInput\n\n\n" + CONSOLE_NODE + "\npath = ff.custom_nodes.install(InstallTestConsole)\n"
+    )
+
+    text = namespace["path"].read_text(encoding="utf-8")
+    assert text.index("import polars as pl") < text.index("class ConsoleSettings") < text.index("class InstallTestConsole")
+    assert "import flowfile_frame" not in text
+    assert ff.custom_nodes.install_test_console(ff.from_dict(DATA), factor=3).collect()["doubled"].to_list() == [3, 6, 9]
+
+
+def test_install_of_a_class_whose_imports_and_settings_ran_in_earlier_selections(nodes_dir):
+    settings, node = CONSOLE_NODE.split("\n\n\n")
+    namespace = _console(
+        "import polars as pl\nimport flowfile_frame as ff\nfrom flowfile import node_designer as nd\n"
+        "from shared.node_designer import NumericInput\n",
+        settings,
+        "class ConsoleSettings(nd.NodeSettings):\n    main: nd.Section = nd.Section(title='Main', factor=NumericInput(label='Factor', default=5))\n",
+        node,
+        "path = ff.custom_nodes.install(InstallTestConsole)\n",
+    )
+
+    text = namespace["path"].read_text(encoding="utf-8")
+    header = text.split("\n\n\n")[0].splitlines()
+    assert header == [  # as the earlier selection wrote them
+        "from flowfile import node_designer as nd",
+        "from shared.node_designer import NumericInput",
+        "import polars as pl",
+    ]
+    assert "default=5" in text and "default=2" not in text  # the newest ConsoleSettings, the one the node was built with
+    assert text.index("class ConsoleSettings") < text.index("class InstallTestConsole")
+    assert ff.custom_nodes.install_test_console(ff.from_dict(DATA)).collect()["doubled"].to_list() == [5, 10, 15]
+
+
+def test_install_of_a_class_whose_source_no_interpreter_kept_raises_a_clear_error(nodes_dir):
     namespace = {"__name__": "__main__"}
     source = "from shared.node_designer import CustomNodeBase\n\nclass ConsoleNode(CustomNodeBase):\n    node_name: str = 'Install Test Console'\n\n    def process(self, *inputs):\n        return inputs[0]\n"
-    exec(compile(source, "<input>", "exec"), namespace)
+    exec(compile(source, "<string>", "exec"), namespace)  # <string> is exec's own name, never a console's
     with pytest.raises(ff.NativeNodeError, match="Cannot read the source of custom node class ConsoleNode"):
         ff.custom_nodes.install(namespace["ConsoleNode"])
 

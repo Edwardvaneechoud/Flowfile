@@ -4,10 +4,13 @@
 the ``code`` module's consoles compile each executed selection under a pseudo-filename (``<input>``,
 ``<console>``) and never cache the text, so ``inspect.getsource`` raises ``OSError`` for anything
 defined there. The parser raises the ``compile`` audit event with the source it is given, so a hook
-records the fragments compiled under those names that could define a function, and
-:func:`console_function_source` finds a function's definition among them. A selection compiled
-before the hook existed (one that imports flowfile itself) is still read while it runs, from the
-``code.InteractiveInterpreter.runsource`` call on the stack that both consoles run it through.
+records the fragments compiled under those names that could define a function or class or import
+a name. :func:`console_function_source` finds a function's definition among them,
+:func:`console_class_source` the selection that defined a class (through its methods' code objects
+and the literals its body assigns), and :func:`console_import_for` the import that bound a name.
+Running selections are read from the ``code.InteractiveInterpreter.runsource`` calls on the stack
+that both consoles run them through, and the one running when the hook installs (a selection that
+imports flowfile itself) is recorded from there too, so it stays readable after it finished.
 
 Audit hooks cannot be removed, so importing flowfile_frame installs the hook only in an interactive
 interpreter (``python -i``, a REPL, ``code.interact``), in PyCharm's console (``pydevconsole``), or
@@ -35,11 +38,13 @@ from typing import Any
 _FRAGMENTS: dict[str, deque[bytes]] = {name: deque(maxlen=500) for name in ("<input>", "<console>")}
 _RUNSOURCE = InteractiveInterpreter.runsource.__code__
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
+_MISSING = object()
+_CONSOLE_MODULES = frozenset({"__main__", "__console__"})  # what a console names its namespace
 _hooked: bool = globals().get("_hooked", False)  # kept across a reload, which must not add a second hook
 
 
 def _record(event: str, args: tuple[Any, ...]) -> None:
-    """Audit hook, called for every audit event: keep each console source that could define a function."""
+    """Audit hook, called for every audit event: keep each console source that could define a function or class."""
     if event != "compile" or len(args) != 2:
         return
     source, filename = args
@@ -47,17 +52,20 @@ def _record(event: str, args: tuple[Any, ...]) -> None:
     if (
         fragments is not None
         and isinstance(source, bytes)
-        and (b"def " in source or b"lambda" in source)
+        and (b"def " in source or b"lambda" in source or b"class " in source or b"import " in source)
         and (not fragments or fragments[-1] != source)
     ):
         fragments.append(source)
 
 
 def install_hook() -> None:
-    """Record the fragments a console compiles from now on; a no-op when the hook is already installed."""
+    """Record the fragments a console compiles from now on, and the selections running now; a no-op when installed."""
     global _hooked
     if not _hooked:
         _hooked = True
+        for filename in _FRAGMENTS:
+            for source in reversed(tuple(_running_sources(filename))):
+                _record("compile", (source, filename))
         sys.addaudithook(_record)
 
 
@@ -166,6 +174,120 @@ def console_function_source(fn: Any) -> str | None:
         if isinstance(node, ast.Lambda):
             return ast.get_source_segment(text, node)
         return "\n".join(text.split("\n")[code.co_firstlineno - 1 : node.end_lineno]) + "\n"
+    return None
+
+
+def console_class_source(cls: type) -> str | None:
+    """The whole text of the console selection that defined ``cls``, with the imports and classes beside it.
+
+    A fragment answers when it defines a top-level class of the same name whose body assigns only
+    literals equal to ``cls``'s values (pydantic fields by their default) and, for a class with
+    methods of its own, recompiling it (under the methods' ``from __future__ import annotations``
+    flag) yields every method's code object, with literal defaults equal to the method's (as for a
+    function). A class without methods (a ``NodeSettings`` declaration) is checked by its literals
+    alone, and only when it was defined in a console namespace (``__main__``, ``__console__``), since
+    nothing else ties a fragment to it; a non-literal value cannot be compared, so a redefinition
+    that differs only there still answers. Running selections come first, then the
+    recorded fragments newest first. ``None`` when the methods come from a file or an unlisted
+    console, or when no fragment matches.
+    """
+    # A base's metaclass may add functions from its own file (pydantic's model_post_init); only ours identify cls.
+    methods = [value for value in vars(cls).values() if isinstance(value, types.FunctionType)]
+    own = [inspect.unwrap(m) for m in methods if m.__qualname__.startswith(f"{cls.__qualname__}.")]
+    codes = [fn.__code__ for fn in own]
+    filenames = {code.co_filename for code in codes}
+    if len(filenames) > 1 or not filenames <= _FRAGMENTS.keys():
+        return None
+    if not codes and cls.__module__ not in _CONSOLE_MODULES:
+        return None
+    flags = codes[0].co_flags & __future__.annotations.compiler_flag if codes else 0
+    for filename in filenames or _FRAGMENTS:
+        for fragment in (*_running_sources(filename), *reversed(tuple(_FRAGMENTS[filename]))):
+            try:
+                text = fragment.decode()
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    tree = ast.parse(text)
+                    nodes = [stmt for stmt in tree.body if isinstance(stmt, ast.ClassDef) and stmt.name == cls.__name__]
+                    if not any(_literals_match(node, cls) for node in nodes):
+                        continue
+                    compiled = compile(tree, filename, "exec", flags=flags, dont_inherit=True)
+            except (SyntaxError, ValueError):
+                continue
+            nested = list(_code_objects(compiled))
+            if all(any(candidate == code for candidate in nested) for code in codes) and all(
+                len(found := _candidates(tree, fn.__code__)) == 1 and _defaults_match(found[0], fn) for fn in own
+            ):
+                return text
+    return None
+
+
+def _literals_match(node: ast.ClassDef, cls: type) -> bool:
+    """Whether every literal ``node``'s body assigns to a name equals ``cls``'s value of it, where that is known."""
+    fields = getattr(cls, "model_fields", None)
+    fields = fields if isinstance(fields, dict) else {}
+    for stmt in node.body:
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.value is not None:
+            name = stmt.target.id
+        elif isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+            name = stmt.targets[0].id
+        else:
+            continue
+        if name in fields:
+            current = fields[name].default
+        elif name in vars(cls):
+            current = vars(cls)[name]
+        else:
+            continue
+        try:
+            literal = ast.literal_eval(stmt.value)
+        except Exception:  # not a literal, so nothing to compare
+            continue
+        if not _same_literal(literal, current):
+            return False
+    return True
+
+
+def _bound_value(stmt: ast.Import | ast.ImportFrom, alias: ast.alias) -> tuple[str, Any]:
+    """The name ``alias`` binds and the loaded object it binds to, ``_MISSING`` when that is not loaded."""
+    if isinstance(stmt, ast.Import):
+        if alias.asname is not None:
+            return alias.asname, sys.modules.get(alias.name, _MISSING)
+        top = alias.name.split(".")[0]
+        return top, sys.modules.get(top, _MISSING)
+    module = sys.modules.get(stmt.module or "") if not stmt.level else None
+    value = getattr(module, alias.name, _MISSING) if module is not None else _MISSING
+    if value is _MISSING and module is not None:
+        value = sys.modules.get(f"{stmt.module}.{alias.name}", _MISSING)
+    return alias.asname or alias.name, value
+
+
+def console_import_for(name: str, value: Any) -> str | None:
+    """The import statement a console selection bound ``name`` with, when it still binds ``value``.
+
+    Running selections come first, then the recorded fragments newest first, each read from its last
+    top-level statement up. Only absolute imports of already loaded modules resolve, so nothing is
+    imported. The statement is rebuilt for ``name`` alone, so ``from a import b, c`` gives
+    ``from a import c`` for ``c``. ``None`` when no console import of ``name`` binds ``value``.
+    """
+    for filename in _FRAGMENTS:
+        for fragment in (*_running_sources(filename), *reversed(tuple(_FRAGMENTS[filename]))):
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    tree = ast.parse(fragment.decode())
+            except (SyntaxError, ValueError):
+                continue
+            for stmt in reversed(tree.body):
+                if not isinstance(stmt, ast.Import | ast.ImportFrom):
+                    continue
+                for alias in stmt.names:
+                    bound, bound_to = _bound_value(stmt, alias)
+                    if bound != name or bound_to is not value:
+                        continue
+                    if isinstance(stmt, ast.Import):
+                        return ast.unparse(ast.Import(names=[alias]))
+                    return ast.unparse(ast.ImportFrom(module=stmt.module, names=[alias], level=0))
     return None
 
 

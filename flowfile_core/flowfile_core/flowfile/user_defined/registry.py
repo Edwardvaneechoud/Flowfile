@@ -13,6 +13,7 @@ import hashlib
 import logging
 import sys
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from flowfile_core.configs.settings import FLOWFILE_CUSTOM_NODE_HOT_RELOAD
 from flowfile_core.flowfile.node_designer.parsing import NodeSourceError, scan_node_source
-from flowfile_core.flowfile.user_defined.mounts import load_mounts
+from flowfile_core.flowfile.user_defined.mounts import load_mounts, mounts_file_path
 from flowfile_core.flowfile.user_defined.templates import manifest_to_template
 from shared import storage
 from shared.node_designer.custom_node import CustomNodeBase
@@ -31,6 +32,18 @@ if TYPE_CHECKING:
     from flowfile_core.schemas.schemas import NodeTemplate
 
 logger = logging.getLogger(__name__)
+
+# Coarse-mtime filesystems (FAT: 2 s) can hide a write within this window of a stamp.
+_RECENT_MTIME_NS = 2_000_000_000
+
+DirectoryStamps = tuple[tuple[str, int | None], ...]
+
+
+def _mtime_ns(path: Path) -> int | None:
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
 
 
 class KernelRequiredError(ValueError):
@@ -109,6 +122,7 @@ class CustomNodeRegistry:
     def __init__(self, directory: Path | None = None):
         self._directory = directory
         self._entries: dict[str, LoadedNode] = {}  # keyed by str(file_path)
+        self._stamps: DirectoryStamps | None = None  # directory state at the last glob; None = glob on refresh
         # Guards _entries + the sys.modules pops: FastAPI runs these sync handlers on a
         # threadpool, so a save-driven load_file can race a mount-driven scan (reentrant:
         # scan() calls load_file()/_remove_entry()/all()).
@@ -133,11 +147,13 @@ class CustomNodeRegistry:
             for key in list(self._entries):
                 self._remove_entry(key)
             directory = self.directory
+            mounts = self.mount_directories()
+            self._remember(self._directory_stamps(mounts), time.time_ns())
             if not directory.exists() or not directory.is_dir():
                 logger.warning("User-defined nodes directory %s does not exist", directory)
                 return []
             scan_targets: list[tuple[Path, str | None]] = [(directory, None)]
-            scan_targets += [(mount, str(mount)) for mount in self.mount_directories()]
+            scan_targets += [(mount, str(mount)) for mount in mounts]
             for base, mount_path in scan_targets:
                 if mount_path is not None and (not base.exists() or not base.is_dir()):
                     logger.warning("Custom node mount %s does not exist", base)
@@ -151,30 +167,52 @@ class CustomNodeRegistry:
     def refresh(self) -> list[LoadedNode]:
         """Exec-free catch-up for a lookup of an unknown node type; returns the entries it loaded.
 
-        Loads node files that appeared in the nodes directory or a mount since the last
-        ``scan()`` (another process wrote them: ``fl.custom_nodes.install`` in a script, a
-        designer save seen from a notebook session) and retries broken entries whose file
-        changed. Healthy entries are left alone (on-disk edits are ``ensure_class``'s hot
-        reload, removals are ``scan()``'s), so a miss costs a directory listing and a ``stat``
-        per broken file, never a full rescan.
+        Loads node files that appeared in the nodes directory or a mount since the last glob
+        (another process wrote them, e.g. ``fl.custom_nodes.install`` in a script) and retries
+        broken entries whose file changed. The glob is skipped while the nodes directory,
+        ``mounts.json`` and every mount directory keep the ``st_mtime_ns`` they had at the last
+        glob, so a refresh with nothing new costs a few ``stat`` calls (``mounts.json`` is re-read
+        only when its stamp moved) and can run on every miss. Healthy entries are left alone:
+        on-disk edits are ``ensure_class``'s hot reload, removals are ``scan()``'s, and ``/rescan``,
+        saves and deletes go through ``scan``, ``load_file`` and ``remove_file`` directly, never
+        through this gate (``remove_file`` drops the stamps, so a file it leaves on disk is found again).
         """
         loaded: list[LoadedNode] = []
         with self._lock:
-            targets = [(self.directory, None)] + [(mount, str(mount)) for mount in self.mount_directories()]
-            for base, mount_path in targets:
-                if not base.is_dir():
+            now = time.time_ns()
+            mounts_file = mounts_file_path(self.directory)
+            known = self._stamps
+            if known is not None and known[1] == (str(mounts_file), _mtime_ns(mounts_file)):
+                mounts = [Path(path) for path, _ in known[2:]]
+            else:
+                mounts = self.mount_directories()
+            stamps = self._directory_stamps(mounts)
+            if stamps != known:
+                for base, mount_path in [(self.directory, None)] + [(mount, str(mount)) for mount in mounts]:
+                    if not base.is_dir():
+                        continue
+                    for path in sorted(base.glob("*.py")):
+                        if not path.name.startswith("__") and str(path) not in self._entries:
+                            loaded.append(self.load_file(path, mount_path=mount_path))
+                self._remember(stamps, now)
+            for entry in [entry for entry in self._entries.values() if entry.is_broken]:
+                try:
+                    if entry.file_path.stat().st_mtime == entry.mtime:
+                        continue
+                except OSError:
                     continue
-                for path in sorted(base.glob("*.py")):
-                    entry = self._entries.get(str(path))
-                    if path.name.startswith("__") or (entry is not None and not entry.is_broken):
-                        continue
-                    try:
-                        if entry is not None and path.stat().st_mtime == entry.mtime:
-                            continue
-                    except OSError:
-                        continue
-                    loaded.append(self.load_file(path, mount_path=mount_path))
+                loaded.append(self.load_file(entry.file_path, mount_path=entry.mount_path))
         return loaded
+
+    def _directory_stamps(self, mounts: list[Path]) -> DirectoryStamps:
+        """``st_mtime_ns`` of the nodes directory, ``mounts.json`` and each mount directory (None when missing)."""
+        paths = [self.directory, mounts_file_path(self.directory), *mounts]
+        return tuple((str(path), _mtime_ns(path)) for path in paths)
+
+    def _remember(self, stamps: DirectoryStamps, taken_ns: int) -> None:
+        """Trust ``stamps`` (taken at ``taken_ns``) unless one was recent enough then to hide a same-tick write."""
+        cutoff = taken_ns - _RECENT_MTIME_NS
+        self._stamps = stamps if all(mtime is None or mtime < cutoff for _, mtime in stamps) else None
 
     @staticmethod
     def _module_name_for(path: Path, mount_path: str | None) -> str:
@@ -237,6 +275,7 @@ class CustomNodeRegistry:
         with self._lock:
             path = Path(file_name)
             key = str(path) if path.is_absolute() else str(self.directory / path)
+            self._stamps = None  # a file left on disk (a failed unlink) is found again by the next refresh
             return self._remove_entry(key)
 
     def _remove_entry(self, key: str) -> LoadedNode | None:

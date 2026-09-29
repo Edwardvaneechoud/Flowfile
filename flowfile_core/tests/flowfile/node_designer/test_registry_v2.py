@@ -10,6 +10,7 @@ Tests for the file-backed custom node registry (registry v2):
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -195,13 +196,16 @@ def singleton_on_tmp_dir(nodes_dir):
     saved_list = list(node_store.nodes_list)
     saved_entries = dict(singleton_registry._entries)
     saved_directory = singleton_registry._directory
+    saved_stamps = singleton_registry._stamps
     singleton_registry._entries = {}
     singleton_registry._directory = nodes_dir
+    singleton_registry._stamps = None
     try:
         yield node_store
     finally:
         singleton_registry._directory = saved_directory
         singleton_registry._entries = saved_entries
+        singleton_registry._stamps = saved_stamps
         node_store.CUSTOM_NODE_STORE.clear()
         node_store.CUSTOM_NODE_STORE.update(saved_store)
         node_store.node_dict.clear()
@@ -548,3 +552,141 @@ def test_refresh_retries_broken_file_once_it_changes(nodes_dir, local_registry):
 
     assert [e.node_key for e in local_registry.refresh()] == ["fixed_later"]
     assert not local_registry.get("fixed_later").is_broken
+
+
+@pytest.fixture
+def globbed(monkeypatch):
+    """Every directory ``Path.glob`` lists during the test; a registry rescan is one glob per directory."""
+    calls: list[Path] = []
+    real_glob = Path.glob
+
+    def glob(self, pattern, *args, **kwargs):
+        calls.append(self)
+        return real_glob(self, pattern, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "glob", glob)
+    return calls
+
+
+def _backdate(*paths: Path) -> None:
+    """Age mtimes past the recent-mtime window, so a refresh may trust them."""
+    past = time.time() - 60
+    for path in paths:
+        os.utime(path, (past, past))
+
+
+def test_refresh_skips_the_glob_until_a_directory_changes(nodes_dir, local_registry, tmp_path, globbed):
+    from flowfile_core.flowfile.user_defined.mounts import add_mount, mounts_file_path
+
+    mount_dir = tmp_path / "mounted_nodes"
+    mount_dir.mkdir()
+    add_mount(str(mount_dir), base_dir=nodes_dir)
+    _backdate(nodes_dir, mounts_file_path(nodes_dir), mount_dir)
+    local_registry.scan()
+    globbed.clear()
+
+    assert local_registry.refresh() == [] and local_registry.refresh() == []
+    assert globbed == []
+
+    write_node_file(nodes_dir, "late_node.py", "Late Node")
+    assert [e.node_key for e in local_registry.refresh()] == ["late_node"]
+    _backdate(nodes_dir)
+    local_registry.refresh()
+    write_node_file(mount_dir, "mounted_late.py", "Mounted Late")
+    assert [e.node_key for e in local_registry.refresh()] == ["mounted_late"]
+
+
+def test_refresh_does_not_trust_a_recent_directory_mtime(nodes_dir, local_registry):
+    os.utime(nodes_dir)  # modified just now
+    local_registry.scan()
+    stamp = nodes_dir.stat().st_mtime_ns
+    write_node_file(nodes_dir, "same_tick.py", "Same Tick")
+    os.utime(nodes_dir, ns=(stamp, stamp))  # a coarse-mtime filesystem shows no change
+
+    assert [e.node_key for e in local_registry.refresh()] == ["same_tick"]
+
+
+def test_opening_and_undoing_a_flow_with_a_missing_node_rescan_at_most_once(
+    nodes_dir, singleton_on_tmp_dir, tmp_path, globbed
+):
+    from flowfile_core.schemas import input_schema
+
+    _save_stack_flow(nodes_dir, tmp_path / "missing.yaml", flow_id=6307).unlink()
+    _backdate(nodes_dir)
+    globbed.clear()
+
+    loaded = _import(tmp_path / "missing.yaml")
+
+    assert loaded.get_node(4).results.errors == missing_custom_node_error(STACK_KEY)
+    assert globbed.count(nodes_dir) <= 1
+
+    loaded.add_node_promise(input_schema.NodePromise(flow_id=loaded.flow_id, node_id=9, node_type="manual_input"))
+    globbed.clear()
+
+    assert loaded.undo().success
+    assert loaded.get_node(9) is None and loaded.get_node(4).results.errors == missing_custom_node_error(STACK_KEY)
+    assert globbed.count(nodes_dir) <= 1
+
+
+def test_refresh_finds_a_file_whose_entry_was_removed_but_stayed_on_disk(nodes_dir, local_registry):
+    path = write_node_file(nodes_dir, "kept_on_disk.py", "Kept On Disk")
+    _backdate(nodes_dir)
+    local_registry.scan()
+
+    local_registry.remove_file(path)  # its delete could not unlink the file
+
+    assert [e.node_key for e in local_registry.refresh()] == ["kept_on_disk"]
+
+
+def test_a_slow_glob_does_not_make_a_recent_stamp_trusted(nodes_dir, local_registry, monkeypatch):
+    from types import SimpleNamespace
+
+    registry_module = sys.modules["flowfile_core.flowfile.user_defined.registry"]
+
+    clock = [time.time_ns()]
+    monkeypatch.setattr(registry_module, "time", SimpleNamespace(time_ns=lambda: clock[0]))
+    real_glob = Path.glob
+
+    def slow_glob(self, *args, **kwargs):
+        clock[0] += 3_000_000_000  # the listing outlasts the recent-mtime window
+        return real_glob(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "glob", slow_glob)
+    stamp = clock[0] - 1_000_000_000
+    os.utime(nodes_dir, ns=(stamp, stamp))
+    local_registry.refresh()
+
+    write_node_file(nodes_dir, "same_tick.py", "Same Tick")
+    os.utime(nodes_dir, ns=(stamp, stamp))  # a coarse-mtime filesystem shows no change
+
+    assert [e.node_key for e in local_registry.refresh()] == ["same_tick"]
+
+
+def test_refresh_reads_mounts_json_only_when_it_changed(nodes_dir, local_registry, tmp_path, monkeypatch):
+    registry_module = sys.modules["flowfile_core.flowfile.user_defined.registry"]
+    from flowfile_core.flowfile.user_defined.mounts import add_mount, mounts_file_path
+
+    mount_dir = tmp_path / "mounted_nodes"
+    mount_dir.mkdir()
+    add_mount(str(mount_dir), base_dir=nodes_dir)
+    _backdate(nodes_dir, mounts_file_path(nodes_dir), mount_dir)
+    local_registry.scan()
+    reads = []
+    real_load_mounts = registry_module.load_mounts
+
+    def load_mounts(base_dir):
+        reads.append(base_dir)
+        return real_load_mounts(base_dir)
+
+    monkeypatch.setattr(registry_module, "load_mounts", load_mounts)
+
+    assert local_registry.refresh() == [] and local_registry.refresh() == []
+    assert reads == []
+
+    second = tmp_path / "second_mount"
+    second.mkdir()
+    write_node_file(second, "second_late.py", "Second Late")
+    add_mount(str(second), base_dir=nodes_dir)  # rewrites mounts.json in place
+
+    assert [e.node_key for e in local_registry.refresh()] == ["second_late"]
+    assert reads == [nodes_dir]

@@ -22,7 +22,7 @@ A class defined in a script exists only in that Python process. [`ff.custom_node
 
 ## A Python Script version
 
-The Python Script node needs a kernel. [Create one](../../visual-editor/kernels.md#creating-a-kernel) in the Designer with the **Kernel ID** `tutorial`; the script looks it up with [`ff.kernels`](../reference/native-nodes.md#kernels).
+The Python Script node needs a kernel. [Create one](../../visual-editor/kernels.md#creating-a-kernel) in the Designer; [`ff.kernels.list()`](../reference/native-nodes.md#kernels) then returns it, and the script passes the first kernel in that list as `kernel=`.
 
 ```python
 --8<-- "docs/examples/tutorial_09.py:script"
@@ -30,10 +30,10 @@ The Python Script node needs a kernel. [Create one](../../visual-editor/kernels.
 
 Calling the decorated function places a deferred Python Script node. `returns=` declares the output columns so downstream nodes can be built. The function body runs on the kernel when the graph executes that branch.
 
-Without a `tutorial` kernel, `kernel` is `None`: the script still builds, and the node opens in the Designer with an empty kernel picker (**Select a kernel...**).
+`ff.kernels.list()` is sorted by kernel id. With several kernels, pick one by id instead, for example `ff.kernels["tutorial"]`. Without any kernel, `kernel` is `None`: the script still builds, and the node opens in the Designer with an empty kernel picker (**Select a kernel...**).
 
 !!! info "Running the Python Script"
-    The script builds this node but does not run it. With Docker running and the `tutorial` kernel created, `script_scored.collect()` runs the function on that kernel.
+    The script builds this node but does not run it. With Docker running and a kernel created, `script_scored.collect()` runs the function on that kernel.
 
 ## Check it
 
@@ -73,7 +73,7 @@ flowfile_frame/flowfile_frame/sql_query.py: sql, _sql_frame;
 custom_node.py: CustomNodeFactory.__call__, _resolve, _register_class (accepts the class install recorded),
 _session_only_custom_nodes (empty after install, so open_graph_in_editor does not warn);
 custom_nodes.py: CustomNodes.install (writes <node key>.py to registry.directory, the custom nodes folder; overwrite=);
-kernels.py: Kernels.__contains__/__getitem__, KernelInfo; native.py: _kernel_id (stores KernelInfo.id);
+kernels.py: Kernels.list (sorted by id), Kernels.__getitem__, KernelInfo; native.py: _kernel_id (stores KernelInfo.id);
 python_script.py: python_script, PythonScriptFunction (kernel id stored as given, not checked until the node runs);
 shared/node_designer/custom_node.py: CustomNodeBase, process; shared/node_designer/ui_components.py: TextInput, Section.
 UI labels: kernel/KernelCreateForm.vue ("Kernel ID"), pythonScript/PythonScript.vue ("Select a kernel..."),

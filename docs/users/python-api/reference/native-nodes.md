@@ -368,7 +368,7 @@ ff.custom_nodes.trim_text(orders)           # attribute form
 ff.custom_nodes.install(TrimNode)           # or a path to a .py file; overwrite=False by default
 ```
 
-`install` writes `<key>.py` to the custom-nodes directory and registers it. A class is written with the `NodeSettings` classes and imports it uses; a class that reads other module-level names is refused, so install its file instead. The written file must load the way the designer loads it; one that does not is removed again, a file it replaced is put back, and `install` raises. A running designer resolves the node when it opens a flow that uses it, and lists it in the palette after **Settings → Extensions → Custom Nodes → Rescan**.
+`install` writes `<key>.py` to the custom-nodes directory and registers it. A class is written with the `NodeSettings` classes and imports it uses; a class that reads other module-level names is refused, so install its file instead. The class may come from a file, a notebook cell or PyCharm's Python console: in the console, the class, its settings classes and their imports can each be run as a selection of their own, and a settings class is taken from the newest selection that defined it. The written file must load the way the designer loads it; one that does not is removed again, a file it replaced is put back, and `install` raises. A running designer resolves the node when it opens a flow that uses it, and lists it in the palette after **Settings → Extensions → Custom Nodes → Rescan**.
 
 An unknown key raises `NativeNodeError`; in the attribute form the error is also an `AttributeError`, so `hasattr(ff.custom_nodes, name)` is `False`.
 
@@ -381,7 +381,7 @@ ff.kernels.list() -> list[KernelInfo]         # KernelInfo(id, name, flavour, pa
 ff.kernels.get(kernel_id: str) -> KernelInfo  # also ff.kernels[kernel_id]; in, len() and iteration (ids) work too
 ```
 
-`flavour` is the kernel image flavour: `base`, `ml`, `lite` or `custom`. A `KernelInfo` works as a `kernel=` argument: `PythonScript`, `@ff.python_script` and a kernel `CustomNode` store its `id`, still unchecked at build. An unknown id raises `NativeNodeError`, also a `KeyError`, naming your kernel ids. There is no attribute form, since kernel ids can contain hyphens.
+`flavour` is the kernel image flavour: `base`, `ml`, `lite` or `custom`. A `KernelInfo` works as a `kernel=` argument, whether it comes from the list (`ff.kernels.list()[0]`) or from a lookup by id (`ff.kernels["tutorial"]`): `PythonScript`, `@ff.python_script` and a kernel `CustomNode` store its `id`, still unchecked at build. [Tutorial chapter 9](../tutorials/custom-logic.md#a-python-script-version) passes the first listed kernel to a Python Script node. An unknown id raises `NativeNodeError`, also a `KeyError`, naming your kernel ids. There is no attribute form, since kernel ids can contain hyphens.
 
 ## `python_script` and `PythonScript`
 
@@ -550,7 +550,7 @@ An API Response node, which has no fluent method, with its settings as a dict:
 
 ## Notebook mode
 
-The [canvas notebook](../../visual-editor/notebook.md) runs its cells with `import flowfile as fl`, the same package as `ff`, in **notebook build mode**. While a notebook session runs a cell:
+**Notebook build mode** is how `flowfile_frame` builds the [canvas notebook](../../visual-editor/notebook.md)'s cells, which use `import flowfile as fl`, the same package as `ff`. The server runs no notebook process and does not execute cells, so **Push**, which builds the cells in this mode, is unavailable until the server's notebook runner lands. While the mode is active:
 
 - Every source without `flow_graph=` lands on the session graph, the flow seeded from the canvas; a merge with any other graph is refused.
 - Nodes are built, never run. Writers, subflows, kernel scripts, database, REST and Kafka sources, `pivot`, `polars_code` and virtual or SQL-mode catalog readers get their predicted schema instead of executing, and `collect()` on a [deferred](#deferred-frames) frame raises `NativeNodeError` pointing at **Run on canvas**.
@@ -559,7 +559,7 @@ The [canvas notebook](../../visual-editor/notebook.md) runs its cells with `impo
 - `FlowInput` and `to_flow_output` on the session graph accept a port name already in use, so a cell that places the canvas's own subflow ports can run again. Push runs the cells on a fresh graph, where a duplicate name still raises.
 - A lowercase name a cell binds to a frame or node it created becomes that node's `node_reference` (the rule above; reserved names such as `fl`, `pl` and `main` are skipped).
 
-Scripts outside a notebook session are unaffected.
+Scripts outside notebook mode are unaffected.
 
 ### `canvas_node`
 

@@ -1,26 +1,24 @@
 """Console source recovery: when the hook is installed, what it keeps, and which fragment answers for a function."""
 
-import code
 import json
 import os
 import subprocess
 import sys
-from typing import Any
 
 import pytest
 
+from .utils import console_namespace
+
 from flowfile_frame import _console_source
-from flowfile_frame._console_source import console_function_source, install_hook
+from flowfile_frame._console_source import (
+    console_class_source,
+    console_function_source,
+    console_import_for,
+    install_hook,
+)
 
 
-def _console(*fragments: str) -> dict[str, Any]:
-    """Run each fragment through ``code.InteractiveConsole`` as the ``code`` module's REPL does."""
-    install_hook()  # pytest is not a console, so importing flowfile_frame left it out
-    namespace: dict[str, Any] = {}
-    interpreter = code.InteractiveConsole(namespace)
-    for fragment in fragments:
-        assert interpreter.runsource(fragment, "<console>", "exec") is False
-    return namespace
+_console = console_namespace  # the ``code`` module's REPL compiles under <console>
 
 
 def test_a_stale_lambda_keeps_its_own_default_when_a_newer_one_differs_only_there():
@@ -65,12 +63,84 @@ def test_a_mutated_default_no_longer_matches_its_text():
     assert console_function_source(namespace["collect_into"]) is None
 
 
-def test_only_fragments_that_could_define_a_function_are_kept():
-    _console("unkept_console_marker = 1\n", "kept_console_marker = lambda x: x\n", "def kept_def_marker():\n    pass\n")
+def test_only_fragments_that_could_define_a_function_or_class_or_import_are_kept():
+    _console(
+        "unkept_console_marker = 1\n",
+        "kept_console_marker = lambda x: x\n",
+        "def kept_def_marker():\n    pass\n",
+        "class KeptClassMarker:\n    pass\n",
+        "import json as kept_import_marker\n",
+    )
     kept = _console_source._FRAGMENTS["<console>"]
     assert not any(b"unkept_console_marker" in fragment for fragment in kept)
     assert any(b"kept_console_marker" in fragment for fragment in kept)
     assert any(b"kept_def_marker" in fragment for fragment in kept)
+    assert any(b"KeptClassMarker" in fragment for fragment in kept)
+    assert any(b"kept_import_marker" in fragment for fragment in kept)
+
+
+def test_a_class_with_methods_is_answered_by_the_selection_that_compiled_them():
+    older = "import math\n\nclass Scaler:\n    factor = 2\n\n    def scale(self, x):\n        return x * self.factor\n"
+    newer = "class Scaler:\n    factor = 3\n\n    def scale(self, x):\n        return x * self.factor * 1\n"
+    namespace = _console(older, "kept = Scaler\n", newer)
+
+    assert console_class_source(namespace["kept"]) == older
+    assert console_class_source(namespace["Scaler"]) == newer
+    assert console_class_source(int) is None  # not a console class
+
+
+def test_a_class_without_methods_is_answered_by_the_newest_selection_defining_it():
+    namespace = _console("class Plain:\n    factor = 2\n", "class Plain:\n    factor = 3\n")
+    assert console_class_source(namespace["Plain"]) == "class Plain:\n    factor = 3\n"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "class Named:\n    label = '{label}'\n\n    def run(self):\n        return 1\n",
+        "from pydantic import BaseModel\n\nclass Named(BaseModel):\n    label: str = '{label}'\n\n    def run(self):\n        return 1\n",
+    ],
+    ids=["plain", "pydantic"],
+)
+def test_a_class_is_not_answered_by_a_redefinition_that_differs_only_in_a_literal(source):
+    older, newer = source.format(label="old"), source.format(label="new")
+    namespace = _console(older, "kept_named = Named\n", newer)
+    assert namespace["kept_named"].run.__code__ == namespace["Named"].run.__code__
+
+    assert console_class_source(namespace["kept_named"]) == older
+    assert console_class_source(namespace["Named"]) == newer
+
+
+def test_an_import_is_answered_by_the_console_statement_that_bound_it():
+    namespace = _console("import json as kept_json\nfrom os import path as kept_path, sep\n")
+
+    assert console_import_for("kept_json", namespace["kept_json"]) == "import json as kept_json"
+    assert console_import_for("kept_path", namespace["kept_path"]) == "from os import path as kept_path"
+    assert console_import_for("kept_json", namespace["kept_path"]) is None  # bound, but to something else
+
+
+_SELECTION_PROBE = """
+import code, json
+namespace = {"__name__": "__main__"}
+console = code.InteractiveConsole(namespace)
+console.runsource(
+    "from flowfile_frame import _console_source\\n\\nclass Probe:\\n    def run(self):\\n        return 1\\n",
+    "<input>",
+    "exec",
+)
+console.runsource("found = _console_source.console_class_source(Probe)\\n", "<input>", "exec")
+print(json.dumps(namespace["found"]))
+"""
+
+
+def test_the_selection_running_when_the_hook_installs_stays_readable():
+    env = {**os.environ, "FLOWFILE_CONSOLE_SOURCE": "1"}
+    run = subprocess.run([sys.executable, "-c", _SELECTION_PROBE], capture_output=True, text=True, env=env, timeout=300)
+
+    assert run.returncode == 0, run.stderr[-3000:]
+    assert json.loads(run.stdout.splitlines()[-1]) == (
+        "from flowfile_frame import _console_source\n\nclass Probe:\n    def run(self):\n        return 1\n"
+    )
 
 
 _HOOK_PROBE = """
