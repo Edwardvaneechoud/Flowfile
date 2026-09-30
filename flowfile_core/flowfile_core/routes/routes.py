@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from flowfile_core import flow_file_handler
+from flowfile_core import events, flow_file_handler
 
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
@@ -114,7 +114,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
-from flowfile_core.notebook.push import NotebookPushRequest, node_id_ceiling, plan_push
+from flowfile_core.notebook.push import NotebookPushRequest, needs_confirmation, node_id_ceiling, plan_push
 from flowfile_core.notebook.render import code_fingerprint
 from flowfile_core.routes._connection_sharing import (
     authorize_connection_mutation,
@@ -445,7 +445,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
                 flow_name=flow_name,
                 flow_path=flow_path,
                 user_id=user_id if user_id is not None else 0,
-                number_of_nodes=len(flow.nodes),
+                number_of_nodes=len(node_ids) if node_ids is not None else len(flow.nodes),
                 run_type="in_designer_run",
                 flow_snapshot=snapshot_yaml,
             )
@@ -987,13 +987,20 @@ def delete_comment(flow_id: int, comment_id: int) -> OperationResponse:
 
 
 class NotebookPushResponse(BaseModel):
-    """``POST /editor/notebook/push/``: the new history, fingerprint and max node id, and each cell's node ids."""
+    """``POST /editor/notebook/push/``: the new history, fingerprint and max node id, and each cell's node ids.
+
+    ``applied`` is false when the request's ``trigger`` needs the plan confirmed first; history and fingerprint
+    are then the current ones and ``warnings``, ``deletions`` and ``parameter_changes`` are what to review.
+    """
 
     history: HistoryState
     code_fingerprint: str
     max_node_id: int
     node_ids_by_cell: dict[str, list[int]]
     warnings: list[str] = Field(default_factory=list)
+    applied: bool = True
+    deletions: list[int]
+    parameter_changes: bool
 
 
 @router.post("/editor/apply_operations/", tags=["editor"], response_model=OperationResponse)
@@ -1081,29 +1088,38 @@ def push_notebook(request: NotebookPushRequest, current_user=Depends(require_not
     """Push notebook cells onto the canvas: clean run, reconcile, and apply the ops as one transaction.
 
     The clean run happens outside the edit lock; the fingerprint is checked again under it, so a
-    canvas edit that lands meanwhile is a 409 instead of being overwritten.
+    canvas edit that lands meanwhile is a 409 instead of being overwritten. A ``trigger`` whose plan
+    needs confirmation applies nothing and answers ``applied=False``.
     """
     flow = flow_file_handler.get_flow(request.flow_id, current_user.id)
     if flow is None:
         raise HTTPException(404, "Flow not found")
     plan, result = plan_push(flow, current_user, request)
-    if plan.operations:
+    applied = request.trigger is None or not needs_confirmation(plan, request.trigger)
+    fingerprint = request.code_fingerprint
+    if applied and plan.operations:
         with edit_flow(flow, "Push notebook", HistoryActionType.BATCH) as txn:
             live_fingerprint = code_fingerprint(flow)
             if live_fingerprint != request.code_fingerprint:
                 detail = {"message": "The canvas changed during the push.", "code_fingerprint": live_fingerprint}
                 raise HTTPException(409, detail)
             _run_operations(flow, request.flow_id, plan.operations, current_user)
+            fingerprint = code_fingerprint(flow)
         history = txn.history
     else:
         history = flow.get_history_state()
+    if applied:
+        events.publish("notebook_pushed")
     max_node_id = node_id_ceiling(flow, request.client_max_node_id)
     return NotebookPushResponse(
         history=history,
-        code_fingerprint=code_fingerprint(flow),
+        code_fingerprint=fingerprint,
         max_node_id=max_node_id,
         node_ids_by_cell=result.node_ids_by_cell,
         warnings=plan.warnings,
+        applied=applied,
+        deletions=plan.deletions,
+        parameter_changes=plan.parameter_changes,
     )
 
 

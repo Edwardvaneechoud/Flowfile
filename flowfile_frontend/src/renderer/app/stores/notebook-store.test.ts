@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   nbUpdate: vi.fn(),
   nbRemove: vi.fn(),
   render: vi.fn(),
-  planPush: vi.fn(),
   push: vi.fn(),
   runLineage: vi.fn(),
   getFlowData: vi.fn(),
@@ -33,7 +32,6 @@ vi.mock("../api/notebook.api", () => ({
     update: mocks.nbUpdate,
     remove: mocks.nbRemove,
     renderFlowNotebook: mocks.render,
-    planPush: mocks.planPush,
     pushFlowNotebook: mocks.push,
     runLineage: mocks.runLineage,
   },
@@ -65,7 +63,6 @@ import {
   flowPushBody,
   nodePreviewDisplay,
   notOnCanvasText,
-  planNeedsConfirmation,
   registerFlowNotebookHooks,
   syncErrorFor,
   type FlowNotebookHooks,
@@ -953,6 +950,9 @@ describe("flow notebook", () => {
         max_node_id: 4,
         node_ids_by_cell: {},
         warnings: [],
+        applied: true,
+        deletions: [],
+        parameter_changes: false,
       },
       nb.cells.map((c) => [c.id, c.code]),
     );
@@ -1095,22 +1095,19 @@ describe("flow notebook run", () => {
     nodeCell([1], 'source_1 = fl.read_csv("a.csv")'),
     nodeCell([2, 3], "filtered_2 = source_1.filter(fl.col('q') >= n).head(5)"),
   ];
-  const plan = (extra = {}) => ({
-    operations: [],
-    warnings: [],
-    deletions: [],
-    parameter_changes: false,
-    node_ids_by_cell: {},
-    ...extra,
-  });
   const pushed = (extra = {}) => ({
     history: { flow_id: FLOW },
     code_fingerprint: "f2",
     max_node_id: 3,
     node_ids_by_cell: {},
     warnings: [],
+    applied: true,
+    deletions: [],
+    parameter_changes: false,
     ...extra,
   });
+  /** What core answers a push it holds for review: nothing applied, the fingerprint unchanged. */
+  const held = (extra = {}) => pushed({ applied: false, code_fingerprint: "f1", ...extra });
   const example = (extra = {}) => ({
     node_id: 3,
     number_of_records: null,
@@ -1144,7 +1141,6 @@ describe("flow notebook run", () => {
   beforeEach(() => {
     for (const m of [
       mocks.render,
-      mocks.planPush,
       mocks.push,
       mocks.runLineage,
       mocks.getFlowData,
@@ -1171,7 +1167,6 @@ describe("flow notebook run", () => {
       name: "flow",
       parameters: [{ name: "n", default_value: "10", description: "", type: "integer" }],
     });
-    mocks.planPush.mockResolvedValue(plan());
     mocks.push.mockResolvedValue(pushed());
     hooks = {
       prepare: vi.fn(async () => true),
@@ -1200,7 +1195,6 @@ describe("flow notebook run", () => {
   it("runs an unedited node cell's last node on the canvas without syncing", async () => {
     const { store, nb } = await openFlow();
     expect(await store.runCell("cell-2")).toBe(true);
-    expect(mocks.planPush).not.toHaveBeenCalled();
     expect(mocks.push).not.toHaveBeenCalled();
     expect(mocks.runLineage).toHaveBeenCalledWith(FLOW, 3);
     expect(mocks.getTableExample).toHaveBeenCalledWith(FLOW, 3);
@@ -1245,10 +1239,11 @@ describe("flow notebook run", () => {
       finishedRun({ node_step_result: [1, 2, 4].map((node_id) => ({ node_id, success: true })) }),
     );
     expect(await store.runCell("cell-2")).toBe(true);
-    const body = mocks.planPush.mock.calls[0][0];
+    expect(mocks.push).toHaveBeenCalledTimes(1);
+    const body = mocks.push.mock.calls[0][0];
     expect(body.changed_cell_ids).toEqual(["cell-2"]);
     expect(body.code_fingerprint).toBe("f1");
-    expect(mocks.push).toHaveBeenCalledWith(body);
+    expect(body.trigger).toBe("run");
     expect(hooks.confirm).not.toHaveBeenCalled();
     expect(hooks.pushed).toHaveBeenCalledWith(expect.objectContaining({ code_fingerprint: "f2" }));
     expect(mocks.runLineage).toHaveBeenCalledWith(FLOW, 4);
@@ -1260,20 +1255,14 @@ describe("flow notebook run", () => {
   it("asks before a run's sync deletes canvas nodes, and a cancel stops the run", async () => {
     const { store } = await openFlow();
     store.setCellCode("cell-2", "filtered_2 = source_1");
-    mocks.planPush.mockResolvedValue(plan({ deletions: [3] }));
+    mocks.push.mockResolvedValue(held({ deletions: [3] }));
     hooks.confirm.mockResolvedValue(false);
     expect(await store.runCell("cell-2")).toBe(false);
     expect(hooks.confirm).toHaveBeenCalledWith(expect.objectContaining({ deletions: [3] }), "run");
-    expect(mocks.push).not.toHaveBeenCalled();
+    expect(mocks.push).toHaveBeenCalledTimes(1);
+    expect(mocks.push.mock.calls[0][0].trigger).toBe("run");
+    expect(hooks.pushed).not.toHaveBeenCalled();
     expect(mocks.runLineage).not.toHaveBeenCalled();
-  });
-
-  it("confirms a run's sync only for deletions, a push for anything to review", () => {
-    const warned = plan({ warnings: ["Changes the flow parameters"] }) as never;
-    expect(planNeedsConfirmation(warned, "run")).toBe(false);
-    expect(planNeedsConfirmation(warned, "push")).toBe(true);
-    expect(planNeedsConfirmation(plan({ deletions: [1] }) as never, "run")).toBe(true);
-    expect(planNeedsConfirmation(plan() as never, "push")).toBe(false);
   });
 
   it("reports a node the sync removed as not on the canvas without reading its data", async () => {
@@ -1282,10 +1271,11 @@ describe("flow notebook run", () => {
     mocks.getFlowData
       .mockResolvedValueOnce({ node_inputs: [1, 2, 3].map((id) => ({ id, item: "filter" })) })
       .mockResolvedValue({ node_inputs: [1, 2].map((id) => ({ id, item: "filter" })) });
-    mocks.planPush.mockResolvedValue(plan({ deletions: [3] }));
+    mocks.push.mockResolvedValueOnce(held({ deletions: [3] }));
     expect(await store.runCell("cell-2")).toBe(true);
     expect(hooks.confirm).toHaveBeenCalledTimes(1);
-    expect(mocks.push).toHaveBeenCalledTimes(1);
+    expect(mocks.push).toHaveBeenCalledTimes(2);
+    expect(mocks.push.mock.calls[1][0]).not.toHaveProperty("trigger");
     expect(mocks.runLineage).not.toHaveBeenCalled();
     expect(mocks.getTableExample).not.toHaveBeenCalled();
     const output = nb.cells.find((c) => c.id === "cell-2")!.output!;
@@ -1316,7 +1306,7 @@ describe("flow notebook run", () => {
     expect(imports.output).toBeNull();
     expect(flowCellSyncState(nb, imports)).toBe("synced");
     expect(flowCellKind(nb, "imports")).toBe("imports");
-    expect(mocks.planPush).not.toHaveBeenCalled();
+    expect(mocks.push).not.toHaveBeenCalled();
     expect(mocks.runLineage).not.toHaveBeenCalled();
     expect(mocks.getFlowSettings).not.toHaveBeenCalled();
 
@@ -1341,9 +1331,10 @@ describe("flow notebook run", () => {
       line: 2,
       kind: "needs_kernel",
     };
-    mocks.planPush.mockRejectedValue(httpError(422, detail));
+    mocks.push.mockRejectedValue(httpError(422, detail));
     expect(await store.runCell("parameters")).toBe(false);
-    expect(mocks.push).not.toHaveBeenCalled();
+    expect(mocks.push).toHaveBeenCalledTimes(1);
+    expect(hooks.pushed).not.toHaveBeenCalled();
     expect(mocks.getFlowSettings).not.toHaveBeenCalled();
     const failing = nb.cells.find((c) => c.id === "cell-2")!;
     expect(nb.syncError).toEqual({ ...detail, code: bad });
@@ -1363,7 +1354,7 @@ describe("flow notebook run", () => {
   it("clears the previous refusal when the next sync starts", async () => {
     const { store, nb } = await openFlow();
     store.setCellCode("cell-2", "print(1)");
-    mocks.planPush.mockRejectedValueOnce(
+    mocks.push.mockRejectedValueOnce(
       httpError(422, {
         message: "needs a kernel",
         cell_id: "cell-2",
@@ -1385,11 +1376,11 @@ describe("flow notebook run", () => {
     const refusal = (cellId: string, message: string) =>
       httpError(422, { message, cell_id: cellId, line: 1, kind: "needs_kernel" });
     store.setCellCode("cell-2", "print(1)");
-    mocks.planPush.mockRejectedValueOnce(refusal("cell-2", "print needs a kernel"));
+    mocks.push.mockRejectedValueOnce(refusal("cell-2", "print needs a kernel"));
     await store.runCell("cell-2");
     store.setCellCode("cell-2", "filtered_2 = source_1");
     store.setCellCode("cell-1", "import os");
-    mocks.planPush.mockRejectedValueOnce(refusal("cell-1", "import os needs a kernel"));
+    mocks.push.mockRejectedValueOnce(refusal("cell-1", "import os needs a kernel"));
     expect(await store.runCell("cell-2")).toBe(false);
     const byId = (id: string) => nb.cells.find((c) => c.id === id)!;
     expect(byId("cell-2").output).toBeNull();
@@ -1401,7 +1392,7 @@ describe("flow notebook run", () => {
   it("says so and does not run when a 422 names no cell", async () => {
     const { store, nb } = await openFlow();
     store.setCellCode("cell-2", "x = 1");
-    mocks.planPush.mockRejectedValue(
+    mocks.push.mockRejectedValue(
       httpError(422, {
         message: "The notebook is too large",
         cell_id: null,
@@ -1417,7 +1408,7 @@ describe("flow notebook run", () => {
   it("re-renders on a 409 and says the canvas changed", async () => {
     const { store, nb } = await openFlow();
     store.setCellCode("cell-2", "filtered_2 = source_1");
-    mocks.planPush.mockRejectedValue(
+    mocks.push.mockRejectedValue(
       httpError(409, {
         message: "The canvas changed since these cells were rendered.",
         code_fingerprint: "f9",
@@ -1429,14 +1420,15 @@ describe("flow notebook run", () => {
     expect(nb.fingerprint).toBe("f9");
     expect(nb.notice).toEqual({ tone: "warning", message: CANVAS_CHANGED });
     expect(nb.cells.find((c) => c.id === "cell-2")!.code).toBe("filtered_2 = source_1");
-    expect(mocks.push).not.toHaveBeenCalled();
+    expect(mocks.push).toHaveBeenCalledTimes(1);
+    expect(hooks.pushed).not.toHaveBeenCalled();
     expect(mocks.runLineage).not.toHaveBeenCalled();
   });
 
   it("flags a 403 as needing an admin and keeps the cells editable", async () => {
     const { store, nb } = await openFlow();
     store.setCellCode("cell-2", "filtered_2 = source_1");
-    mocks.planPush.mockRejectedValue(httpError(403, "Admin privileges required"));
+    mocks.push.mockRejectedValue(httpError(403, "Admin privileges required"));
     expect(await store.runCell("cell-2")).toBe(false);
     expect(nb.syncForbidden).toBe(true);
     expect(nb.notice).toEqual({ tone: "warning", message: SYNC_NEEDS_ADMIN });
@@ -1451,7 +1443,7 @@ describe("flow notebook run", () => {
   it("run all after a refused sync starts no run", async () => {
     const { store, nb } = await openFlow();
     store.setCellCode("cell-2", "filtered_2 = source_1");
-    mocks.planPush.mockRejectedValue(httpError(403, "Admin privileges required"));
+    mocks.push.mockRejectedValue(httpError(403, "Admin privileges required"));
     await store.runAll();
     expect(nb.syncForbidden).toBe(true);
     expect(mocks.runFlow).not.toHaveBeenCalled();
@@ -1523,33 +1515,47 @@ describe("flow notebook run", () => {
   it("the push button reviews warnings and reports the push", async () => {
     const { store, nb } = await openFlow();
     const warning = "Node 4 reads from a node its cell did not rebuild; that input is dropped.";
-    mocks.planPush.mockResolvedValue(plan({ warnings: [warning] }));
+    mocks.push.mockResolvedValueOnce(held({ warnings: [warning] }));
     expect(await store.syncFlowNotebook()).toBe("synced");
     expect(hooks.confirm).toHaveBeenCalledWith(
       expect.objectContaining({ warnings: [warning], deletions: [], parameter_changes: false }),
       "push",
     );
+    expect(mocks.push.mock.calls.map(([body]) => body.trigger)).toEqual(["push", undefined]);
+    expect(hooks.pushed).toHaveBeenCalledTimes(1);
     expect(nb.notice).toEqual({ tone: "success", message: "Pushed to the canvas" });
 
-    mocks.planPush.mockResolvedValue(plan({ parameter_changes: true }));
+    mocks.push
+      .mockResolvedValueOnce(held({ parameter_changes: true }))
+      .mockResolvedValueOnce(pushed({ parameter_changes: true }));
     expect(await store.syncFlowNotebook()).toBe("synced");
     expect(hooks.confirm).toHaveBeenLastCalledWith(
       expect.objectContaining({ parameter_changes: true }),
       "push",
     );
-    expect(mocks.push).toHaveBeenCalledTimes(2);
+    expect(mocks.push).toHaveBeenCalledTimes(4);
+  });
+
+  it("a push with nothing to review applies in one request", async () => {
+    const { store, nb } = await openFlow();
+    expect(await store.syncFlowNotebook()).toBe("synced");
+    expect(mocks.push).toHaveBeenCalledTimes(1);
+    expect(mocks.push.mock.calls[0][0].trigger).toBe("push");
+    expect(hooks.confirm).not.toHaveBeenCalled();
+    expect(hooks.pushed).toHaveBeenCalledTimes(1);
+    expect(nb.notice).toEqual({ tone: "success", message: "Pushed to the canvas" });
   });
 
   it("a cancelled push review pushes nothing", async () => {
     const { store, nb } = await openFlow();
-    mocks.planPush.mockResolvedValue(plan({ warnings: ["Changes the flow parameters"] }));
+    mocks.push.mockResolvedValue(held({ warnings: ["Changes the flow parameters"] }));
     hooks.confirm.mockResolvedValue(false);
     expect(await store.syncFlowNotebook()).toBe("cancelled");
     expect(hooks.confirm).toHaveBeenCalledWith(
       expect.objectContaining({ warnings: ["Changes the flow parameters"] }),
       "push",
     );
-    expect(mocks.push).not.toHaveBeenCalled();
+    expect(mocks.push).toHaveBeenCalledTimes(1);
     expect(hooks.pushed).not.toHaveBeenCalled();
     expect(nb.notice).toBeNull();
   });
@@ -1569,10 +1575,12 @@ describe("flow notebook run", () => {
     mocks.getRunStatus.mockResolvedValue(
       finishedRun({ node_step_result: [1, 4].map((node_id) => ({ node_id, success: true })) }),
     );
-    mocks.planPush.mockResolvedValue(plan({ parameter_changes: true }));
     mocks.push.mockImplementation(async () => {
       mocks.render.mockResolvedValue(rendered("f2", [importsCell, paramsCell, source, headCell]));
-      return pushed({ node_ids_by_cell: { [added.id]: [], [head.id]: [4] } });
+      return pushed({
+        parameter_changes: true,
+        node_ids_by_cell: { [added.id]: [], [head.id]: [4] },
+      });
     });
     expect(await store.runCell(head.id)).toBe(true);
     expect(mocks.runLineage).toHaveBeenCalledWith(FLOW, 4);
@@ -1600,6 +1608,19 @@ describe("flow notebook run", () => {
     expect(nb.notice).toBeNull();
   });
 
+  it("a re-render that fails after a parameter-changing push keeps the cells and warns", async () => {
+    const { store, nb } = await openFlow();
+    const codes = nb.cells.map((c) => c.code);
+    const failed = "The flow could not be rendered as code: boom";
+    mocks.push.mockImplementation(async () => {
+      mocks.render.mockRejectedValue(httpError(422, failed));
+      return pushed({ parameter_changes: true });
+    });
+    expect(await store.syncFlowNotebook()).toBe("synced");
+    expect(nb.cells.map((c) => c.code)).toEqual(codes);
+    expect(nb.notice).toEqual({ tone: "warning", message: failed });
+  });
+
   it("an edit made while a push is in flight stays edited", async () => {
     const { store, nb } = await openFlow();
     store.setCellCode("cell-2", "filtered_2 = source_1");
@@ -1620,14 +1641,13 @@ describe("flow notebook run", () => {
       mocks.render.mockResolvedValue(rendered("f1b"));
       return true;
     });
-    mocks.planPush.mockImplementation(async (body: { code_fingerprint: string }) => {
+    mocks.push.mockImplementation(async (body: { code_fingerprint: string }) => {
       if (body.code_fingerprint !== "f1b") throw httpError(409, { message: "canvas changed" });
-      return plan();
+      return pushed();
     });
     expect(await store.runCell("cell-2")).toBe(true);
-    expect(mocks.planPush).toHaveBeenCalledTimes(1);
-    expect(mocks.planPush.mock.calls[0][0].code_fingerprint).toBe("f1b");
     expect(mocks.push).toHaveBeenCalledTimes(1);
+    expect(mocks.push.mock.calls[0][0].code_fingerprint).toBe("f1b");
     expect(nb.notice).toBeNull();
     expect(nb.cells.find((c) => c.id === "cell-2")!.code).toBe(edited);
   });
@@ -1640,19 +1660,17 @@ describe("flow notebook run", () => {
     store.setCellCode("cell-2", original);
     expect(flowNeedsSync(nb)).toBe(false);
     expect(await store.runCell("cell-2")).toBe(true);
-    expect(mocks.planPush).not.toHaveBeenCalled();
     expect(mocks.push).not.toHaveBeenCalled();
     expect(mocks.runLineage).toHaveBeenCalledWith(FLOW, 3);
   });
 
   it("a blank cell appended after the last one needs no sync, even for a non-admin", async () => {
     const { store, nb } = await openFlow();
-    mocks.planPush.mockRejectedValue(httpError(403, "Admin privileges required"));
+    mocks.push.mockRejectedValue(httpError(403, "Admin privileges required"));
     const blank = store.addCell("python")!;
     expect(flowCellSyncState(nb, blank)).toBe("synced");
     expect(flowNeedsSync(nb)).toBe(false);
     expect(await store.runCell("cell-2")).toBe(true);
-    expect(mocks.planPush).not.toHaveBeenCalled();
     expect(mocks.push).not.toHaveBeenCalled();
     expect(mocks.runLineage).toHaveBeenCalledWith(FLOW, 3);
     expect(nb.syncForbidden).toBeFalsy();
@@ -1671,7 +1689,7 @@ describe("flow notebook run", () => {
 
     store.setCellCode("cell-2", "filtered_2 = source_1");
     expect(await store.runCell("cell-2")).toBe(true);
-    const body = mocks.planPush.mock.calls[0][0];
+    const body = mocks.push.mock.calls[0][0];
     expect(body.cells.map(([id]: [string, string]) => id)).not.toContain(note.id);
     expect(body.changed_cell_ids).toEqual(["cell-2"]);
   });

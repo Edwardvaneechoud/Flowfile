@@ -569,7 +569,7 @@ class TestRouteMiddleware:
 
 
 class TestNotebookRouteEvents:
-    """The canvas notebook's events: opened once per flow, pushed per push; cells run behind the kernel routes."""
+    """The canvas notebook's events: opened once per flow, pushed per applied push."""
 
     @staticmethod
     def _app() -> FastAPI:
@@ -580,10 +580,8 @@ class TestNotebookRouteEvents:
             return {"cells": []}
 
         @app.post("/editor/notebook/push/")
-        def _push(fail: bool = False):
-            if fail:
-                raise HTTPException(409, "canvas changed")
-            return {}
+        def _push():
+            return {"applied": False}
 
         app.add_middleware(glue.TelemetryMiddleware)
         return app
@@ -605,11 +603,12 @@ class TestNotebookRouteEvents:
         assert http.get("/notebook/render").status_code == 422
         assert names(sent) == []
 
-    def test_every_successful_push_emits(self, sent, http) -> None:
+    def test_a_push_emits_only_when_the_handler_publishes_it_applied(self, sent, subscribed, http) -> None:
+        """A push held for review answers 200 too, so the route itself emits nothing."""
         assert http.post("/editor/notebook/push/").status_code == 200
-        assert http.post("/editor/notebook/push/").status_code == 200
-        assert http.post("/editor/notebook/push/?fail=true").status_code == 409
-        assert names(sent) == ["notebook_pushed", "notebook_pushed"]
+        assert names(sent) == []
+        events.publish("notebook_pushed")
+        assert names(sent) == ["notebook_pushed"]
 
 
 def test_every_once_route_is_a_mapped_route() -> None:
@@ -628,7 +627,7 @@ class TestInstall:
 
         try:
             assert [m.cls for m in app.user_middleware] == [glue.TelemetryMiddleware]
-            assert [len(handlers) for handlers in events._handlers.values()] == [1, 1, 1, 1, 1, 1, 1]
+            assert [len(handlers) for handlers in events._handlers.values()] == [1, 1, 1, 1, 1, 1, 1, 1]
         finally:
             events._reset_for_tests()
             glue._subscribed = False
@@ -649,6 +648,7 @@ class TestInstall:
                 "app_started",
                 "alteryx_imported",
                 "alteryx_import_failed",
+                "notebook_pushed",
             }
             assert all(len(handlers) == 1 for handlers in events._handlers.values())
         finally:

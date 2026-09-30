@@ -6,7 +6,6 @@ import { NodeApi } from "../api/node.api";
 import { NotebookApi } from "../api/notebook.api";
 import type {
   NotebookCellWire,
-  NotebookPlan,
   NotebookPushBody,
   NotebookPushResult,
   NotebookRendering,
@@ -228,8 +227,8 @@ export interface FlowNotebookHooks {
   prepare(): Promise<boolean>;
   /** The designer's node id counter, so new nodes number above ids it handed out. */
   clientMaxNodeId(): number;
-  /** Ask before applying `plan`; only called when `planNeedsConfirmation` says so. */
-  confirm(plan: NotebookPlan, trigger: FlowSyncTrigger): Promise<boolean>;
+  /** Ask before applying a push core held back for review (`applied: false`); it lists `warnings`. */
+  confirm(held: NotebookPushResult, trigger: FlowSyncTrigger): Promise<boolean>;
   /** A push was applied (seed the node id counter, reload the canvas). */
   pushed(result: NotebookPushResult): void;
   /** Core accepted a canvas run's start; a refused start calls neither run hook. */
@@ -269,6 +268,7 @@ export const SYNC_NEEDS_ADMIN =
   "Syncing the notebook to the canvas needs an admin on this server; your edits stay in the notebook.";
 export const CANVAS_CHANGED =
   "The canvas changed since these cells were rendered, so they were refreshed; run again to sync your edits.";
+export const RERENDER_FAILED = "The notebook could not be re-rendered from the canvas.";
 export const PREVIEW_ROW_LIMIT = 100;
 export const notOnCanvasText = (nodeId: number): string => `Node #${nodeId} is not on the canvas.`;
 
@@ -372,12 +372,6 @@ export function syncErrorFor(nb: OpenNotebook, cell: NotebookCellModel): FlowSyn
 export function flowCellSyncState(nb: OpenNotebook, cell: NotebookCellModel): SyncState {
   if (syncErrorFor(nb, cell)) return "error";
   return isEdited(nb, cell) ? "edited" : "synced";
-}
-
-/** A confirmation lists `plan.warnings`, which already name every deletion and parameter change. */
-export function planNeedsConfirmation(plan: NotebookPlan, trigger: FlowSyncTrigger): boolean {
-  if (trigger === "run") return plan.deletions.length > 0;
-  return plan.deletions.length > 0 || plan.parameter_changes || plan.warnings.length > 0;
 }
 
 function isSyncErrorDetail(detail: unknown): detail is NotebookSyncErrorDetail {
@@ -1193,7 +1187,9 @@ export const useNotebookStore = defineStore("notebook", {
           // Only a rendering tells which cell now declares the parameters.
           nb.rerenderAfterAction = false;
           nb.fingerprint = undefined;
-          await this.refreshFlowNotebook(nb.flowId!).catch(() => undefined);
+          await this.refreshFlowNotebook(nb.flowId!).catch((e) => {
+            nb.notice = { tone: "warning", message: detailMessage(e, RERENDER_FAILED) };
+          });
         }
         endBatch(owner, batch);
       }
@@ -1210,7 +1206,7 @@ export const useNotebookStore = defineStore("notebook", {
       return status ?? "busy";
     },
 
-    /** Plan, confirm when needed, push; a refusal lands on its cell, the tab or the notice. */
+    /** Push; a push core holds for review is confirmed, then sent again. A refusal lands on its cell, tab or notice. */
     async _syncFlow(
       nb: OpenNotebook,
       trigger: FlowSyncTrigger,
@@ -1229,15 +1225,15 @@ export const useNotebookStore = defineStore("notebook", {
           hooks.clientMaxNodeId(),
         );
         cells = body.cells;
-        const plan = await NotebookApi.planPush(body);
-        if (planNeedsConfirmation(plan, trigger) && !(await hooks.confirm(plan, trigger))) {
-          return "cancelled";
+        let result = await NotebookApi.pushFlowNotebook({ ...body, trigger });
+        if (!result.applied) {
+          if (!(await hooks.confirm(result, trigger))) return "cancelled";
+          result = await NotebookApi.pushFlowNotebook(body);
         }
-        const result = await NotebookApi.pushFlowNotebook(body);
         this.markFlowPushed(nb, result, cells);
         nb.syncForbidden = false;
         hooks.pushed(result);
-        if (plan.parameter_changes) nb.rerenderAfterAction = true;
+        if (result.parameter_changes) nb.rerenderAfterAction = true;
         if (trigger === "push") nb.notice = { tone: "success", message: "Pushed to the canvas" };
         else if (result.warnings.length) {
           nb.notice = { tone: "warning", message: result.warnings.join("\n") };

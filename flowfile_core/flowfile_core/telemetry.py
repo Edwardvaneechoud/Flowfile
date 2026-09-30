@@ -120,7 +120,6 @@ ROUTE_EVENTS: dict[tuple[str, str], tuple[str, dict[str, Any] | None]] = {
     ("POST", "/ai/diff/{diff_id}/reject"): ("ai_diff_rejected", None),
     ("POST", "/catalog/schedules"): ("schedule_created", None),
     ("GET", "/notebook/render"): ("notebook_opened", None),
-    ("POST", "/editor/notebook/push/"): ("notebook_pushed", None),
 }
 
 # Routes that fire at most once: ``None`` per process, a query-parameter name once per distinct value of it.
@@ -313,6 +312,10 @@ def _on_app_started() -> None:
     emit("app_started")
 
 
+def _on_notebook_pushed() -> None:
+    emit("notebook_pushed")
+
+
 def _emit_for_route(scope: dict[str, Any], status: int) -> None:
     if status >= 300:
         return
@@ -383,6 +386,7 @@ def _subscribe() -> None:
     events.subscribe("app_started", _on_app_started)
     events.subscribe("alteryx_imported", _on_alteryx_imported)
     events.subscribe("alteryx_import_failed", _on_alteryx_import_failed)
+    events.subscribe("notebook_pushed", _on_notebook_pushed)
     _subscribed = True
 
 

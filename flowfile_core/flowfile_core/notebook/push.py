@@ -4,12 +4,14 @@
 were rendered from another state of the flow, runs the cells through the installed
 :class:`~flowfile_core.notebook.bridge.CleanRunner`, refuses with 422 what the canvas cannot hold, and
 reconciles. ``POST /notebook/plan`` returns the result; ``POST /editor/notebook/push/`` applies its operations
-as one ``apply_operations`` transaction.
+as one ``apply_operations`` transaction, unless its ``trigger`` names a sync whose plan
+:func:`needs_confirmation`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Literal
 
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
@@ -37,7 +39,11 @@ INLINE_SECRET_REFUSAL = (
 
 
 class NotebookPushRequest(BaseModel):
-    """Body of ``POST /editor/notebook/push/`` and ``POST /notebook/plan``."""
+    """Body of ``POST /editor/notebook/push/`` and ``POST /notebook/plan``.
+
+    ``trigger`` (push only) names the client action behind the sync; a plan that action must review first is
+    returned unapplied. ``None`` applies unconditionally.
+    """
 
     flow_id: int
     cells: list[tuple[str, str]]
@@ -45,6 +51,7 @@ class NotebookPushRequest(BaseModel):
     provenance: dict[str, list[tuple[str, int]]] = Field(default_factory=dict)
     code_fingerprint: str
     client_max_node_id: int = 0
+    trigger: Literal["push", "run"] | None = None
 
 
 class NotebookPlanResponse(BaseModel):
@@ -249,6 +256,14 @@ def plan_push(flow: FlowGraph, user, request: NotebookPushRequest) -> tuple[Reco
     plan.warnings.extend(result.warnings)
     plan.warnings.extend(kernel_warnings(result.flowfile_data, user.id))
     return plan, result
+
+
+def needs_confirmation(plan: ReconcilePlan, trigger: Literal["push", "run"]) -> bool:
+    """Whether the user reviews ``plan`` before it applies: a run's sync only for deletions, a push for any
+    deletion, parameter change or warning (the warnings already name every deletion and parameter change)."""
+    if trigger == "run":
+        return bool(plan.deletions)
+    return bool(plan.deletions or plan.parameter_changes or plan.warnings)
 
 
 def plan_response(plan: ReconcilePlan, result: CleanRunResult) -> NotebookPlanResponse:

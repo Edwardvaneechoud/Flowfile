@@ -6,14 +6,21 @@ The clean run goes through the production runner (``runner``) or, where a test s
 
 import re
 import sys
+from contextlib import contextmanager
 
 import pytest
 
 import flowfile as fl
+from flowfile_core import events
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.models import FlowRun
+from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.notebook import bridge
-from flowfile_core.notebook.push import refused_nodes
+from flowfile_core.notebook.push import needs_confirmation, refused_nodes
+from flowfile_core.notebook.reconcile import ReconcilePlan
 from flowfile_core.notebook.render import code_fingerprint, render
 from flowfile_core.notebook.runner import NotebookRunner
+from flowfile_core.routes import routes as editor_routes
 from flowfile_core.schemas import input_schema
 from tests.notebook.conftest import ExecRunner
 
@@ -100,6 +107,92 @@ def test_push_refuses_a_stale_fingerprint_with_the_live_one(runner, orders_flow,
     response = client_as(OWNER_ID).post("/editor/notebook/push/", json=body)
     assert response.status_code == 409
     assert response.json()["detail"]["code_fingerprint"] == code_fingerprint(orders_flow)
+
+
+def test_a_run_sync_that_deletes_is_held_until_pushed_without_a_trigger(runner, orders_flow, client_as):
+    client = client_as(OWNER_ID)
+    graph = orders_flow
+    formula = _node_of_type(graph, "formula").node_id
+    formula_cell = _cell_of(graph, formula)
+    fingerprint = code_fingerprint(graph)
+    undo_before = client.get("/editor/history_status/", params={"flow_id": graph.flow_id}).json()["undo_count"]
+    body = _body(graph, lambda cells: {k: v for k, v in cells.items() if k != formula_cell})
+
+    held = client.post("/editor/notebook/push/", json={**body, "trigger": "run"})
+    assert held.status_code == 200, held.text
+    assert held.json()["applied"] is False and formula in held.json()["deletions"]
+    assert any(f"Deletes node {formula}" in w for w in held.json()["warnings"])
+    assert held.json()["code_fingerprint"] == code_fingerprint(graph) == fingerprint
+    assert held.json()["history"]["undo_count"] == undo_before
+    assert graph.get_node(formula) is not None
+
+    applied = client.post("/editor/notebook/push/", json=body)
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["applied"] is True and formula in applied.json()["deletions"]
+    assert graph.get_node(formula) is None
+    assert applied.json()["code_fingerprint"] == code_fingerprint(graph) != fingerprint
+    assert applied.json()["history"]["undo_count"] == undo_before + 1
+
+
+def test_only_an_applied_push_publishes_notebook_pushed(runner, orders_flow, client_as, monkeypatch):
+    published = []
+    monkeypatch.setitem(events._handlers, "notebook_pushed", [lambda: published.append(1)])
+    client = client_as(OWNER_ID)
+    formula_cell = _cell_of(orders_flow, _node_of_type(orders_flow, "formula").node_id)
+    body = _body(orders_flow, lambda cells: {k: v for k, v in cells.items() if k != formula_cell})
+
+    assert client.post("/editor/notebook/push/", json={**body, "trigger": "run"}).json()["applied"] is False
+    assert published == []
+    assert client.post("/editor/notebook/push/", json=body).json()["applied"] is True
+    assert published == [1]
+
+
+def test_an_applied_push_answers_the_fingerprint_it_left_under_the_edit_lock(
+    runner, orders_flow, client_as, monkeypatch
+):
+    graph = orders_flow
+    body = _body(graph, _raise_threshold, changed=[_cell_of(graph, _node_of_type(graph, "filter").node_id)])
+    left_under_lock = []
+    edit_flow = editor_routes.edit_flow
+
+    @contextmanager
+    def another_tab_edits_after_the_lock(flow, description, *args, **kwargs):
+        with edit_flow(flow, description, *args, **kwargs) as txn:
+            yield txn
+        if description == "Push notebook":
+            left_under_lock.append(code_fingerprint(graph))
+            graph.flow_settings.parameters = [FlowParameter(name="other_tab", default_value="1")]
+
+    monkeypatch.setattr(editor_routes, "edit_flow", another_tab_edits_after_the_lock)
+    response = client_as(OWNER_ID).post("/editor/notebook/push/", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["code_fingerprint"] == left_under_lock[0] != code_fingerprint(graph)
+
+
+def test_a_push_with_nothing_to_review_applies_in_one_call(runner, orders_flow, client_as):
+    graph = orders_flow
+    filt = _node_of_type(graph, "filter")
+    body = {**_body(graph, _raise_threshold, changed=[_cell_of(graph, filt.node_id)]), "trigger": "push"}
+
+    response = client_as(OWNER_ID).post("/editor/notebook/push/", json=body)
+    assert response.status_code == 200, response.text
+    pushed = response.json()
+    assert (pushed["applied"], pushed["deletions"], pushed["parameter_changes"], pushed["warnings"]) == (
+        True,
+        [],
+        False,
+        [],
+    )
+    assert "20" in graph.get_node(filt.node_id).setting_input.filter_input.advanced_filter
+
+
+def test_a_run_reviews_only_deletions_and_a_push_anything_to_review():
+    warned = ReconcilePlan(warnings=["Changes the flow parameters; undo does not restore them."])
+    assert not needs_confirmation(warned, "run") and needs_confirmation(warned, "push")
+    assert needs_confirmation(ReconcilePlan(deletions=[1]), "run")
+    assert needs_confirmation(ReconcilePlan(parameter_changes=True), "push")
+    assert not needs_confirmation(ReconcilePlan(parameter_changes=True), "run")
+    assert not needs_confirmation(ReconcilePlan(), "push")
 
 
 def _with_cell(code, cell_id="node-99"):
@@ -407,6 +500,9 @@ def test_run_lineage_runs_only_the_ancestors(open_as, client_as):
         .json()["node_step_result"]
     }
     assert ran == {_node_of_type(graph, "manual_input").node_id, _node_of_type(graph, "filter").node_id}
+    with get_db_context() as db:
+        run = db.query(FlowRun).filter_by(flow_path=graph.flow_settings.path).one()
+        assert (run.success, run.nodes_completed, run.number_of_nodes) == (True, 2, 2)
 
 
 def test_set_flow_parameters_applies_outside_undo_and_rolls_back_with_the_batch(orders_flow, client_as):
