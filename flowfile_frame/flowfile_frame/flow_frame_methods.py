@@ -1073,6 +1073,7 @@ def scan_csv_from_cloud_storage(
     delimiter: str = ";",
     has_header: bool | None = True,
     encoding: CsvEncoding | None = "utf8",
+    description: str | None = None,
     output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
     node_id = generate_node_id()
@@ -1099,6 +1100,7 @@ def scan_csv_from_cloud_storage(
             file_format="csv",
         ),
         user_id=get_current_user_id(),
+        description=description,
         output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
@@ -1113,6 +1115,7 @@ def scan_delta(
     version: int = None,
     changes_since: int | str | datetime | None = None,
     include_change_preimage: bool = False,
+    description: str | None = None,
     output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
     """Scan a Delta table in cloud storage into a FlowFrame.
@@ -1129,6 +1132,7 @@ def scan_delta(
             ``_commit_version`` and ``_commit_timestamp`` columns.
         include_change_preimage: Keep ``update_preimage`` rows (the before-image of an
             update). Dropped by default.
+        description: Optional description for the node.
         output_field_config: Optional schema validation/transformation config.
 
     Returns:
@@ -1166,6 +1170,7 @@ def scan_delta(
             cdc_include_preimage=include_change_preimage,
         ),
         user_id=get_current_user_id(),
+        description=description,
         output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
@@ -1178,6 +1183,7 @@ def scan_json_from_cloud_storage(
     flow_graph: FlowGraph | None = None,
     connection_name: str | None = None,
     scan_mode: Literal["single_file", "directory", None] = None,
+    description: str | None = None,
     output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
     node_id = generate_node_id()
@@ -1198,6 +1204,7 @@ def scan_json_from_cloud_storage(
             resource_path=source, scan_mode=scan_mode, connection_name=connection_name, file_format="json"
         ),
         user_id=get_current_user_id(),
+        description=description,
         output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)

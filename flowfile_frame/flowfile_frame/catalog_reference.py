@@ -338,6 +338,7 @@ class SchemaReference:
         changes_consumer: str | None = None,
         changes_start: Literal["now", "beginning"] = "now",
         include_change_preimage: bool = False,
+        description: str | None = None,
         flow_graph: FlowGraph | None = None,
     ) -> FlowFrame:
         """Read a table from this schema as a :class:`FlowFrame`.
@@ -357,6 +358,7 @@ class SchemaReference:
             changes_consumer=changes_consumer,
             changes_start=changes_start,
             include_change_preimage=include_change_preimage,
+            description=description,
             flow_graph=flow_graph,
         )
 
@@ -371,6 +373,7 @@ class SchemaReference:
         changes_consumer: str | None = None,
         changes_start: Literal["now", "beginning"] = "now",
         include_change_preimage: bool = False,
+        description: str | None = None,
         flow_graph: FlowGraph | None = None,
     ) -> FlowFrame:
         """Read a table from this schema as a :class:`FlowFrame`; an alias of :meth:`read_table`.
@@ -387,6 +390,7 @@ class SchemaReference:
             changes_consumer=changes_consumer,
             changes_start=changes_start,
             include_change_preimage=include_change_preimage,
+            description=description,
             flow_graph=flow_graph,
         )
 

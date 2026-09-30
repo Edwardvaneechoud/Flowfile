@@ -651,19 +651,19 @@
     {
       "name": "read_api",
       "kind": "function",
-      "signature": "(url, *, method='GET', headers=None, params=None, json_body=None, auth=None, pagination=None, record_path='', timeout_seconds=30.0, max_retries=3, flow_graph=None)",
+      "signature": "(url, *, method='GET', headers=None, params=None, json_body=None, auth=None, pagination=None, record_path='', timeout_seconds=30.0, max_retries=3, description=None, flow_graph=None)",
       "doc_first_line": "Read JSON data from a REST API into a FlowFrame."
     },
     {
       "name": "read_catalog_sql",
       "kind": "function",
-      "signature": "(sql_query, *, flow_graph=None)",
+      "signature": "(sql_query, *, description=None, flow_graph=None)",
       "doc_first_line": "Execute a SQL query against all catalog Delta tables."
     },
     {
       "name": "read_catalog_table",
       "kind": "function",
-      "signature": "(table_name, *, schema=None, namespace_id=None, namespace_full_name=None, delta_version=None, scd2_view=None, scd2_as_of=None, changes_since=None, changes_consumer=None, changes_start='now', include_change_preimage=False, flow_graph=None)",
+      "signature": "(table_name, *, schema=None, namespace_id=None, namespace_full_name=None, delta_version=None, scd2_view=None, scd2_as_of=None, changes_since=None, changes_consumer=None, changes_start='now', include_change_preimage=False, description=None, flow_graph=None)",
       "doc_first_line": "Read a table from the Flowfile catalog."
     },
     {
@@ -675,7 +675,7 @@
     {
       "name": "read_database",
       "kind": "function",
-      "signature": "(connection_name, *, table_name=None, schema_name=None, query=None, flow_graph=None)",
+      "signature": "(connection_name, *, table_name=None, schema_name=None, query=None, description=None, flow_graph=None)",
       "doc_first_line": "Read data from a database using a stored connection."
     },
     {
@@ -687,13 +687,13 @@
     {
       "name": "read_from_cloud_storage",
       "kind": "function",
-      "signature": "(source, *, file_format='parquet', connection_name=None, scan_mode=None, delimiter=';', has_header=True, encoding='utf8', delta_version=None, changes_since=None, include_change_preimage=False, output_field_config=None)",
+      "signature": "(source, *, file_format='parquet', connection_name=None, scan_mode=None, delimiter=';', has_header=True, encoding='utf8', delta_version=None, changes_since=None, include_change_preimage=False, description=None, output_field_config=None)",
       "doc_first_line": "Read data from cloud storage."
     },
     {
       "name": "read_kafka",
       "kind": "function",
-      "signature": "(connection_name, *, topic_name, max_messages=100000, start_offset='latest', poll_timeout_seconds=30.0, value_format='json', flow_graph=None)",
+      "signature": "(connection_name, *, topic_name, max_messages=100000, start_offset='latest', poll_timeout_seconds=30.0, value_format='json', description=None, flow_graph=None)",
       "doc_first_line": "Read messages from a Kafka topic using a named Flowfile connection."
     },
     {
@@ -717,19 +717,19 @@
     {
       "name": "scan_csv_from_cloud_storage",
       "kind": "function",
-      "signature": "(source, *, flow_graph=None, connection_name=None, scan_mode=None, delimiter=';', has_header=True, encoding='utf8', output_field_config=None)",
+      "signature": "(source, *, flow_graph=None, connection_name=None, scan_mode=None, delimiter=';', has_header=True, encoding='utf8', description=None, output_field_config=None)",
       "doc_first_line": ""
     },
     {
       "name": "scan_delta",
       "kind": "function",
-      "signature": "(source, *, flow_graph=None, connection_name=None, version=None, changes_since=None, include_change_preimage=False, output_field_config=None)",
+      "signature": "(source, *, flow_graph=None, connection_name=None, version=None, changes_since=None, include_change_preimage=False, description=None, output_field_config=None)",
       "doc_first_line": "Scan a Delta table in cloud storage into a FlowFrame."
     },
     {
       "name": "scan_json_from_cloud_storage",
       "kind": "function",
-      "signature": "(source, *, flow_graph=None, connection_name=None, scan_mode=None, output_field_config=None)",
+      "signature": "(source, *, flow_graph=None, connection_name=None, scan_mode=None, description=None, output_field_config=None)",
       "doc_first_line": ""
     },
     {

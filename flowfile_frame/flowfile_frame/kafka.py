@@ -32,6 +32,7 @@ def add_kafka_source(
     start_offset: str = "latest",
     poll_timeout_seconds: float = 30.0,
     value_format: str = "json",
+    description: str | None = None,
 ) -> int:
     """Add a Kafka source node to the flow graph.
 
@@ -43,6 +44,7 @@ def add_kafka_source(
         start_offset: Where to start consuming ('earliest' or 'latest').
         poll_timeout_seconds: How long to poll for messages.
         value_format: Message value format ('json').
+        description: Optional description for the node.
 
     Returns:
         int: The node ID of the created Kafka source node.
@@ -57,6 +59,7 @@ def add_kafka_source(
         flow_id=flow_id,
         node_id=node_id,
         user_id=get_current_user_id(),
+        description=description,
         kafka_settings=KafkaSourceSettings(
             kafka_connection_name=connection_name,
             topic_name=topic_name,
@@ -79,6 +82,7 @@ def read_kafka(
     start_offset: str = "latest",
     poll_timeout_seconds: float = 30.0,
     value_format: str = "json",
+    description: str | None = None,
     flow_graph=None,
 ) -> FlowFrame:
     """Read messages from a Kafka topic using a named Flowfile connection.
@@ -93,6 +97,7 @@ def read_kafka(
         start_offset: Where to start consuming ('earliest' or 'latest').
         poll_timeout_seconds: How long to poll for messages.
         value_format: Message value format ('json').
+        description: Optional description for the node.
         flow_graph: Optional existing FlowGraph to add the node to.
 
     Returns:
@@ -115,6 +120,7 @@ def read_kafka(
         start_offset=start_offset,
         poll_timeout_seconds=poll_timeout_seconds,
         value_format=value_format,
+        description=description,
     )
 
     return source_frame(flow_graph, node_id)

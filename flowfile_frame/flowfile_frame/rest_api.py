@@ -123,6 +123,7 @@ def read_api(
     record_path: str = "",
     timeout_seconds: float = 30.0,
     max_retries: int = 3,
+    description: str | None = None,
     flow_graph=None,
 ) -> FlowFrame:
     """Read JSON data from a REST API into a FlowFrame.
@@ -146,6 +147,7 @@ def read_api(
             (e.g. ``"data.items"``). Empty uses the top-level response.
         timeout_seconds: Per-request timeout.
         max_retries: Max retries for transient failures.
+        description: Optional node description.
         flow_graph: Optional existing FlowGraph to add the node to.
 
     Returns:
@@ -169,6 +171,7 @@ def read_api(
         record_path=record_path,
         timeout_seconds=timeout_seconds,
         max_retries=max_retries,
+        description=description,
     )
 
     return source_frame(flow_graph, node_id)

@@ -643,3 +643,32 @@ def test_a_single_user_install_places_a_local_cloud_path_and_reads_nothing(monke
     assert [node["type"] for node in result["flowfile_data"]["nodes"]] == ["cloud_storage_reader"]
     assert held_ran == []
     assert calls.labels() <= {"collect"} and calls.named("collect") == []
+
+
+DESCRIBED = "description='Orders feed'"
+DESCRIBED_READERS = {
+    "catalog table": (f"fl.read_catalog_table('orders', namespace_id=1, {DESCRIBED})", "catalog_reader"),
+    "catalog sql": (f"fl.read_catalog_sql('SELECT * FROM orders', {DESCRIBED})", "catalog_reader"),
+    "database": (f"fl.read_database({DATABASE_CONNECTION!r}, table_name='orders', {DESCRIBED})", "database_reader"),
+    "rest api": (f"fl.read_api('http://127.0.0.1:1/rows', {DESCRIBED})", "rest_api_reader"),
+    "kafka": (f"fl.read_kafka({KAFKA_CONNECTION!r}, topic_name='orders', {DESCRIBED})", "kafka_source"),
+    **{
+        f"cloud {file_format}": (
+            f"fl.read_from_cloud_storage('/etc/hosts', file_format={file_format!r}, {DESCRIBED})",
+            "cloud_storage_reader",
+        )
+        for file_format in ("csv", "parquet", "json", "delta")
+    },
+}
+
+
+@pytest.mark.parametrize("case", sorted(DESCRIBED_READERS))
+def test_a_reader_call_the_export_describes_syncs_and_keeps_its_description(
+    case, database_connection, kafka_connection, monkeypatch
+):
+    monkeypatch.setenv("FLOWFILE_MODE", "electron")
+    call, node_type = DESCRIBED_READERS[case]
+    result = _sync([("imports", IMPORTS), ("rows", f"rows = {call}")])
+    assert result["ok"], (result.get("line"), result.get("message"))
+    [node] = [node for node in result["flowfile_data"]["nodes"] if node["type"] == node_type]
+    assert node["description"] == "Orders feed"

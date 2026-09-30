@@ -197,6 +197,7 @@ def read_catalog_table(
     changes_consumer: str | None = None,
     changes_start: Literal["now", "beginning"] = "now",
     include_change_preimage: bool = False,
+    description: str | None = None,
     flow_graph: FlowGraph | None = None,
 ) -> FlowFrame:
     """Read a table from the Flowfile catalog.
@@ -230,6 +231,7 @@ def read_catalog_table(
             (read nothing this run) or ``"beginning"`` (replay all tracked history).
         include_change_preimage: Keep ``update_preimage`` rows (the before-image of an
             update). Dropped by default.
+        description: Optional description for the node.
         flow_graph: Optional existing FlowGraph to add the node to.
 
     Returns:
@@ -255,6 +257,7 @@ def read_catalog_table(
         flow_id=flow_id,
         node_id=node_id,
         user_id=get_current_user_id(),
+        description=description,
         catalog_table_name=table_name,
         catalog_full_table_name=f"{namespace_full_name}.{table_name}" if namespace_full_name else None,
         catalog_namespace_id=resolved_namespace_id,
@@ -277,6 +280,7 @@ def read_catalog_table(
 def read_catalog_sql(
     sql_query: str,
     *,
+    description: str | None = None,
     flow_graph: FlowGraph | None = None,
 ) -> FlowFrame:
     """Execute a SQL query against all catalog Delta tables.
@@ -286,6 +290,7 @@ def read_catalog_sql(
 
     Args:
         sql_query: SQL query string to execute.
+        description: Optional description for the node.
         flow_graph: Optional existing FlowGraph to add the node to.
 
     Returns:
@@ -308,6 +313,7 @@ def read_catalog_sql(
         flow_id=flow_id,
         node_id=node_id,
         user_id=get_current_user_id(),
+        description=description,
         sql_query=sql_query,
     )
     flow_graph.add_catalog_reader(settings)

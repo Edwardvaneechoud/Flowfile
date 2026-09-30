@@ -113,7 +113,7 @@ Like `CatalogReference`, schema references are immutable, hashable, and picklabl
 
 Return tables registered in this schema.
 
-#### `read_table(name, *, delta_version=None, scd2_view=None, scd2_as_of=None, changes_since=None, changes_consumer=None, changes_start="now", include_change_preimage=False, flow_graph=None) -> FlowFrame`
+#### `read_table(name, *, delta_version=None, scd2_view=None, scd2_as_of=None, changes_since=None, changes_consumer=None, changes_start="now", include_change_preimage=False, description=None, flow_graph=None) -> FlowFrame`
 
 Convenience for [`ff.read_catalog_table(name, schema=self, ...)`](reading-data.md#catalog-reading).
 

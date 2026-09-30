@@ -321,6 +321,28 @@ def test_an_inline_file_database_syncs_without_the_password_it_does_not_use(
         assert detail["kind"] == "refused" and detail["message"].endswith("Password not found")
 
 
+def test_a_described_catalog_reader_renders_its_description_and_syncs_back_keeping_it(
+    runner, notebook_corpus, open_as, client_as
+):
+    demo = dict(notebook_corpus)["demo"]
+    sales = next(node.setting_input for node in demo.nodes if getattr(node.setting_input, "catalog_table_name", None))
+    frame = fl.read_catalog_table(
+        sales.catalog_table_name, namespace_id=sales.catalog_namespace_id, description="sales data"
+    )
+    graph = open_as(frame.flow_graph)
+    reader = _node_of_type(graph, "catalog_reader").node_id
+    cell_id = _cell_of(graph, reader)
+    assert 'description="sales data"' in next(cell.code for cell in render(graph).cells if cell.cell_id == cell_id)
+    client, body = client_as(OWNER_ID), _body(graph, changed=[cell_id])
+
+    plan = client.post("/notebook/plan", json=body)
+    assert plan.status_code == 200, plan.text
+    assert plan.json()["operations"] == []
+    response = client.post("/editor/notebook/push/", json=body)
+    assert response.status_code == 200, response.text
+    assert graph.get_node(reader).setting_input.description == "sales data"
+
+
 def test_user_2_cannot_push_plan_or_run_user_3s_flow(runner, open_as, client_as):
     graph = open_as(fl.from_dict({"a": [1, 2]}).filter(fl.col("a") > 1).flow_graph, user_id=3)
     fingerprint = code_fingerprint(graph)
