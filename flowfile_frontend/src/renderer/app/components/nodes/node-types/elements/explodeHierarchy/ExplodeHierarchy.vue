@@ -159,6 +159,7 @@
 
 <script lang="ts" setup>
 import { computed, ref } from "vue";
+import { ElMessage } from "element-plus";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/node-store";
 import { useNodeSettings } from "../../../../../composables/useNodeSettings";
@@ -173,6 +174,7 @@ import {
   MAX_HIERARCHY_DEPTH,
   createExplodeHierarchyInput,
   createExplodeHierarchyNode,
+  explodeHierarchyConfigError,
   hierarchyOutputColumns,
   hierarchyOutputOption,
   normalizeExplodeHierarchyInput,
@@ -205,10 +207,14 @@ const { saveSettings, pushNodeData, handleGenericSettingsUpdate } = useNodeSetti
   nodeRef: nodeExplodeHierarchy,
   onBeforeSave: () => {
     if (!nodeExplodeHierarchy.value) return false;
-    nodeExplodeHierarchy.value.explode_hierarchy_input = normalizeExplodeHierarchyInput(
+    const input = normalizeExplodeHierarchyInput(
       nodeExplodeHierarchy.value.explode_hierarchy_input,
     );
-    return true;
+    nodeExplodeHierarchy.value.explode_hierarchy_input = input;
+    const error = explodeHierarchyConfigError(input);
+    if (!error) return true;
+    ElMessage.warning({ message: error, showClose: true });
+    return false;
   },
 });
 

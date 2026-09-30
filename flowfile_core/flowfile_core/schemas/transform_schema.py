@@ -1278,6 +1278,20 @@ class ExplodeHierarchyInput(BaseModel):
     include_self: bool = False
     max_depth: int | None = Field(default=None, ge=0, le=MAX_HIERARCHY_DEPTH)
 
+    def check_edge_columns(self) -> None:
+        """Raise ``ValueError`` unless parent and child are two different, non-empty columns.
+
+        Not a model validator: a freshly dropped node is saved with empty columns and must
+        still load. Building the plan calls this, so a bad pair fails the explode node itself
+        instead of surfacing later as a one-node cycle.
+        """
+        if not self.parent_column or not self.child_column:
+            raise ValueError("Explode hierarchy needs both a parent column and a child column")
+        if self.parent_column == self.child_column:
+            raise ValueError(
+                f"Explode hierarchy needs two different columns for parent and child, got '{self.parent_column}' twice"
+            )
+
 
 RenameMode = Literal["prefix", "suffix", "formula", "first_row"]
 ColumnSelectionMode = Literal["all", "list", "data_type"]

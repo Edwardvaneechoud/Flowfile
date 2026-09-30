@@ -21,9 +21,11 @@ from flowfile_worker.funcs import (
     store,
 )
 from flowfile_worker.task_errors import (
+    WorkerEnvironmentError,
     describe_exception,
     record_task_failure,
     record_task_failure_text,
+    split_failure,
 )
 
 pytestmark = [pytest.mark.worker, pytest.mark.timeout(120)]
@@ -112,6 +114,21 @@ class TestRecording:
         assert len(_text(error_message)) == 256
         assert _recovered_class(_text(error_message)) == "ValueError"
 
+    def test_an_environment_failure_is_marked_and_described_by_its_original(self):
+        progress, error_message, _ = _shared()
+
+        record_task_failure(error_message, progress, WorkerEnvironmentError(ModuleNotFoundError("No module named 'x'")))
+
+        assert progress.value == -1
+        assert split_failure(_text(error_message)) == ("environment", "ModuleNotFoundError: No module named 'x'")
+
+    def test_an_ordinary_failure_is_a_task_failure(self):
+        progress, error_message, _ = _shared()
+
+        record_task_failure(error_message, progress, ValueError("bad value"))
+
+        assert split_failure(_text(error_message)) == ("task", "ValueError: bad value")
+
     def test_pre_formatted_text_is_recorded_verbatim(self):
         progress, error_message, _ = _shared()
 
@@ -137,6 +154,7 @@ class TestFuncsTargets:
         )
 
         assert progress.value == -1
+        assert split_failure(_text(error_message))[0] == "task", "a missing column is the plan's own mistake"
         assert _recovered_class(_text(error_message)) == "ColumnNotFoundError"
 
     def test_a_corrupt_plan_ships_its_class(self):
@@ -151,7 +169,9 @@ class TestFuncsTargets:
         )
 
         assert progress.value == -1
-        assert _recovered_class(_text(error_message)) == "ComputeError"
+        kind, description = split_failure(_text(error_message))
+        assert kind == "environment", "a plan this worker can't deserialize is not the data's fault"
+        assert _recovered_class(description) == "ComputeError"
 
     def test_a_connector_failure_ships_its_class(self, tmp_path):
         progress, error_message, queue = _shared()

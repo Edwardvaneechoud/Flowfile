@@ -2804,6 +2804,11 @@ class FlowFrame:
             Columns ``ancestor``, ``descendant``, ``level``, ``quantity`` and ``is_leaf``;
             ``"paths"`` adds ``parent``, ``quantity_per`` and ``path``. A cycle or a null
             quantity raises a ``ComputeError`` when the result is collected.
+
+        Raises
+        ------
+        ValueError
+            If ``parent`` or ``child`` is empty, or both name the same column.
         """
         hierarchy_input = transform_schema.ExplodeHierarchyInput(
             parent_column=parent,
@@ -2814,6 +2819,7 @@ class FlowFrame:
             include_self=include_self,
             max_depth=max_depth,
         )
+        hierarchy_input.check_edge_columns()
         new_node_id = generate_node_id()
         settings = input_schema.NodeExplodeHierarchy(
             flow_id=self.flow_graph.flow_id,

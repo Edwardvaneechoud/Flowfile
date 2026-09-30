@@ -141,8 +141,10 @@ def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
     remote we ship that collect to the worker (it materializes Arrow IPC; the core only
     reads it back), so the core process does no heavy compute. The row cap is pushed in
     first so the worker materializes only what's returned. Degrades to an in-core collect
-    when no worker is reachable (or the worker process was killed), so a request still
-    succeeds rather than 500-ing.
+    when no worker is reachable, or the worker reports an environment failure (error code
+    -1: child killed, plan not loadable, result not writable), so a request still succeeds
+    rather than 500-ing. A plan that fails on its data raises :class:`ApiExecutionError`
+    without re-running it in core.
     """
     if flow.flow_settings.execution_location == "local":
         return data.collect(n_records=max_rows)
@@ -156,20 +158,21 @@ def _materialize(data: Any, max_rows: int | None, flow: Any, api_node: Any):
             file_ref=f"__api_{api_node.hash}",
             flow_id=flow.flow_id,
             node_id=api_node.node_id,
-            wait_on_completion=True,
+            wait_on_completion=False,
         )
     except Exception as exc:  # noqa: BLE001 - worker unreachable; degrade to in-core
         logger.warning("API worker offload unavailable (%s); collecting response in core", exc)
         return data.collect(n_records=max_rows)
 
-    if fetcher.has_error:
-        # error_code -1 = the worker process died (e.g. OOM-killed): degrade rather than
-        # surface a 500. A genuine flow error carries a description and is raised.
+    try:
+        result = fetcher.get_result()
+    except Exception as exc:
+        # -1: the worker child died or its environment failed, not the plan on its data.
         if fetcher.error_code == -1:
-            logger.warning("API worker collect was killed; collecting response in core")
+            logger.warning("API worker collect failed in the worker environment; collecting response in core")
             return data.collect(n_records=max_rows)
-        raise ApiExecutionError(fetcher.error_description or "flow execution failed on worker")
-    return fetcher.get_result().collect()
+        raise ApiExecutionError(fetcher.error_description or str(exc) or "flow execution failed on worker") from exc
+    return result.collect()
 
 
 def _serialize(data: Any, settings: Any, flow: Any, api_node: Any) -> dict[str, Any]:

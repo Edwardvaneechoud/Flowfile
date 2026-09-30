@@ -147,6 +147,23 @@ def test_explode_hierarchy_rejects_invalid_settings(kwargs):
     assert len(source.flow_graph.nodes) == node_count
 
 
+@pytest.mark.parametrize(
+    "parent,child,message",
+    [
+        ("assembly", "assembly", "two different columns"),
+        ("", "component", "both a parent column and a child column"),
+        ("assembly", "", "both a parent column and a child column"),
+    ],
+    ids=["same_column", "empty_parent", "empty_child"],
+)
+def test_explode_hierarchy_rejects_bad_edge_columns(parent, child, message):
+    source = _bom()
+    node_count = len(source.flow_graph.nodes)
+    with pytest.raises(ValueError, match=message):
+        source.explode_hierarchy(parent, child)
+    assert len(source.flow_graph.nodes) == node_count
+
+
 def test_explode_hierarchy_cycle_raises_on_collect():
     cyclic = ff.from_dict({"parent": ["a", "b", "c", "c"], "child": ["b", "c", "a", "d"], "qty": [1.0] * 4})
     out = cyclic.explode_hierarchy("parent", "child", "qty")
