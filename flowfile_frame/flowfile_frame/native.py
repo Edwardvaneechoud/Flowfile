@@ -5,7 +5,7 @@ time (a subflow run, a kernel script, an external source, or a side-effect node 
 deferred frame). Such a node is seeded with typed zero-row outputs instead of being
 executed; only ``FlowGraph.run_graph()`` runs it for real. In a notebook sync (a mode entered
 with ``sync=True``) more nodes are held (:func:`held_in_sync`) and every held node is seeded by
-:func:`sync_seed_schemas`, which predicts nothing.
+:func:`sync_seed_schemas`, which runs nothing and reads only what the canvas reads to show a schema.
 
 This module must not import ``flowfile_frame.flow_frame`` at module level: ``flow_frame``
 imports from here.
@@ -260,7 +260,7 @@ def source_frame(flow_graph: FlowGraph, node_id: int) -> FlowFrame:
     """The frame of a source node just added to ``flow_graph``.
 
     In notebook mode a source that :func:`notebook_defers` names is seeded from its
-    schema callback and wrapped as a deferred frame, so building it never reads; otherwise the
+    schema callback and wrapped as a deferred frame, so building it never runs the read; otherwise the
     node's build-time result is wrapped.
     """
     from flowfile_frame.flow_frame import FlowFrame

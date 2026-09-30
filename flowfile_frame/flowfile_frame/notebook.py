@@ -6,8 +6,8 @@ without inputs) is the session graph and a merge with any other graph is refused
 build, register a node type or run a flow raise ``NativeNodeError``; ``get_kernel_manager()``
 raises, schema prefetches are blocked and every decorated ``add_*`` first passes the checks of
 ``flowfile_core.notebook.prechecks``. A *sync* (``sync=True``) also holds every node that would
-read, connect, walk, run code or need data to predict, and seeds it without predicting
-(``native.sync_seed_schemas``).
+read, connect, walk, run code or need data to predict, and seeds it without running anything
+(``native.sync_seed_schemas``); the one read left is what the canvas reads to show a schema.
 
 The mode is context-local (a ``ContextVar``): it holds for the context that entered it and for
 copies of that context (schema callbacks), never for other threads or requests. The node-id
