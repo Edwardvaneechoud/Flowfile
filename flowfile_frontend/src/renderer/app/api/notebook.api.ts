@@ -1,7 +1,9 @@
-// Catalog notebook CRUD plus a flow's canvas-notebook routes (render, plan, push, run lineage). Catalog cells execute via KernelApi, not here.
+// Catalog notebook CRUD plus a flow's canvas-notebook routes (render, plan, push, run lineage, kernel session). Catalog cells execute via KernelApi.
 import axios from "../services/axios.config";
 import type { HistoryState } from "../types/flow.types";
+import type { ExecuteResult } from "../types/kernel.types";
 import type { AccessInfo } from "../types/sharing.types";
+import { EMPTY_DATAFRAME_SCHEMAS, type LspDataframeSchemasResponse } from "./lsp.api";
 
 const API_BASE_URL = "/catalog/notebooks";
 
@@ -72,6 +74,20 @@ export interface NotebookPushBody {
   provenance: Record<string, [string, number][]>;
   code_fingerprint: string;
   client_max_node_id: number;
+  /** Set when a kernel is picked: the push runs the cells on that kernel. */
+  kernel_id?: string;
+}
+
+/** Identifies one canvas-notebook session: a flow's namespace on a kernel. */
+export interface NotebookSessionKey {
+  flow_id: number;
+  kernel_id: string;
+}
+
+export interface NotebookSessionExecute extends NotebookSessionKey {
+  cell_id: string;
+  code: string;
+  node_id: number;
 }
 
 export interface NotebookPlan {
@@ -105,6 +121,36 @@ export interface RunLineageResult {
 }
 
 export class NotebookApi {
+  /** `null` when the status request fails. */
+  static async flowStatus(): Promise<{ kernel_sessions: boolean } | null> {
+    return (await axios.get("/notebook/status").catch(() => null))?.data ?? null;
+  }
+
+  static async openSession(key: NotebookSessionKey): Promise<{ status: string }> {
+    return (await axios.post("/notebook/session/open", key)).data;
+  }
+
+  static async executeInSession(body: NotebookSessionExecute): Promise<ExecuteResult> {
+    return (await axios.post("/notebook/session/execute", body)).data;
+  }
+
+  static async resetSession(key: NotebookSessionKey): Promise<void> {
+    await axios.post("/notebook/session/reset", key);
+  }
+
+  /** Failure-safe like the kernel LSP call: errors resolve to the empty shape. */
+  static async sessionSchemas(key: NotebookSessionKey): Promise<LspDataframeSchemasResponse> {
+    try {
+      return (await axios.post("/notebook/session/schemas", key)).data ?? EMPTY_DATAFRAME_SCHEMAS;
+    } catch {
+      return EMPTY_DATAFRAME_SCHEMAS;
+    }
+  }
+
+  static async interruptSession(key: NotebookSessionKey): Promise<void> {
+    await axios.post("/notebook/session/interrupt", key);
+  }
+
   static async renderFlowNotebook(flowId: number): Promise<NotebookRendering> {
     return (await axios.get("/notebook/render", { params: { flow_id: flowId } })).data;
   }

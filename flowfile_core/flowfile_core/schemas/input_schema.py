@@ -1,5 +1,7 @@
 import os
 import re
+from collections.abc import Callable
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, get_args
@@ -36,6 +38,20 @@ from flowfile_core.schemas.yaml_types import (
 from flowfile_core.types import DataTypeStr
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
 from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_url
+
+keep_paths_as_written: ContextVar[bool] = ContextVar("keep_paths_as_written", default=False)
+"""While set in a context, ``set_absolute_filepath`` keeps a path as written: no ``~``, working directory or links.
+
+A canvas notebook session in a kernel sets it, since the kernel's filesystem is not the host's; core recomputes
+the absolute path on the host when it checks a push.
+"""
+
+kernel_file_path: ContextVar[Callable[[str], str | None] | None] = ContextVar("kernel_file_path", default=None)
+"""While set together with ``keep_paths_as_written``, where a path kept as written is opened (``abs_file_path``).
+
+A notebook kernel sets it to its mount-table translation, so ``C:\\data\\x.csv`` is read from ``/host/c/data/x.csv``;
+``path`` stays as written, and a path it does not cover (``None``) is kept as written.
+"""
 
 SecretRef = Annotated[
     str, StringConstraints(min_length=1, max_length=100), Field(description="An ID referencing an encrypted secret.")
@@ -288,6 +304,10 @@ class ReceivedTable(BaseModel):
         if is_url(self.path):
             self.abs_file_path = self.path
             return
+        if keep_paths_as_written.get():
+            translate = kernel_file_path.get()
+            self.abs_file_path = (translate(self.path) if translate is not None else None) or self.path
+            return
         base_path = Path(self.path).expanduser()
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path
@@ -451,6 +471,10 @@ class OutputSettings(BaseModel):
 
     def set_absolute_filepath(self):
         """Resolves the output directory and name into an absolute path."""
+        if keep_paths_as_written.get():
+            written = self.name and self.name not in Path(self.directory).name
+            self.abs_file_path = os.path.join(self.directory, self.name) if written else self.directory
+            return
         base_path = Path(self.directory)
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path

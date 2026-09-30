@@ -185,9 +185,12 @@ const closeDetails = () => {
   detailsKernelId.value = null;
 };
 
-const handleSavePackages = async (kernelId: string, packages: string[]): Promise<void> => {
+const handleSavePackages = async (
+  kernelId: string,
+  update: { packages: string[]; mounted_folders?: string[] },
+): Promise<void> => {
   // Re-throws so the modal can surface the error inline; parent doesn't toast.
-  await updateKernel(kernelId, { packages });
+  await updateKernel(kernelId, update);
 };
 
 // ---- stats derivations --------------------------------------------------

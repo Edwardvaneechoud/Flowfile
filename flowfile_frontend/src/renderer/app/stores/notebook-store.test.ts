@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   triggerNodeFetch: vi.fn(),
   getFlowSettings: vi.fn(),
   getTableExample: vi.fn(),
+  openSession: vi.fn(),
+  executeInSession: vi.fn(),
+  resetSession: vi.fn(),
 }));
 
 vi.mock("../api/kernel.api", () => ({
@@ -36,6 +39,9 @@ vi.mock("../api/notebook.api", () => ({
     planPush: mocks.planPush,
     pushFlowNotebook: mocks.push,
     runLineage: mocks.runLineage,
+    openSession: mocks.openSession,
+    executeInSession: mocks.executeInSession,
+    resetSession: mocks.resetSession,
   },
 }));
 vi.mock("../api/flow.api", () => ({
@@ -56,6 +62,7 @@ vi.mock("../features/ai/markdown", () => ({
 
 import {
   CANVAS_CHANGED,
+  PICK_KERNEL_HINT,
   SYNC_NEEDS_ADMIN,
   useNotebookStore,
   cellNodeId,
@@ -68,6 +75,7 @@ import {
   planNeedsConfirmation,
   registerFlowNotebookHooks,
   syncErrorFor,
+  cellErrorMark,
   type FlowNotebookHooks,
 } from "./notebook-store";
 import { TABLE_MIME } from "../components/nodes/node-types/elements/pythonScript/notebookDisplay";
@@ -1860,6 +1868,107 @@ describe("flow notebook run", () => {
         mime_type: "text/plain",
         data: "Node #3 has no result yet.",
       });
+    });
+  });
+
+  describe("with a kernel picked", () => {
+    const KERNEL = "nb-kernel";
+
+    beforeEach(() => {
+      for (const m of [mocks.openSession, mocks.executeInSession, mocks.resetSession]) {
+        m.mockReset();
+      }
+      mocks.openSession.mockResolvedValue({ status: "open" });
+      mocks.executeInSession.mockResolvedValue(okExecResult);
+      mocks.resetSession.mockResolvedValue(undefined);
+    });
+
+    async function openWithKernel() {
+      const opened = await openFlow();
+      opened.store.setKernel(KERNEL);
+      return opened;
+    }
+
+    it("without a kernel Run stays on the canvas path", async () => {
+      const { store } = await openFlow();
+      expect(await store.runCell("cell-2")).toBe(true);
+      expect(mocks.runLineage).toHaveBeenCalledWith(FLOW, 3);
+      expect(mocks.openSession).not.toHaveBeenCalled();
+      expect(mocks.executeInSession).not.toHaveBeenCalled();
+    });
+
+    it("runs the cell in the kernel session and never touches the canvas", async () => {
+      const { store, nb } = await openWithKernel();
+      expect(nb.dirty).toBe(false);
+      store.setCellCode("cell-2", "print(filtered_2.columns)");
+      expect(await store.runCell("cell-2")).toBe(true);
+      expect(mocks.openSession).toHaveBeenCalledTimes(1);
+      expect(mocks.openSession).toHaveBeenCalledWith({ flow_id: FLOW, kernel_id: KERNEL });
+      expect(mocks.executeInSession).toHaveBeenCalledWith({
+        flow_id: FLOW,
+        kernel_id: KERNEL,
+        cell_id: "cell-2",
+        code: "print(filtered_2.columns)",
+        node_id: cellNodeId("cell-2"),
+      });
+      expect(mocks.executeCell).not.toHaveBeenCalled();
+      expect(mocks.planPush).not.toHaveBeenCalled();
+      expect(mocks.runLineage).not.toHaveBeenCalled();
+      expect(nb.cells.find((c) => c.id === "cell-2")!.output!.stdout).toBe("hello");
+    });
+
+    it("marks the failing line of a session cell and shows its traceback", async () => {
+      const { store, nb } = await openWithKernel();
+      const traceback =
+        'Traceback (most recent call last):\n  File "<cell>", line 2\nZeroDivisionError: division by zero';
+      mocks.executeInSession.mockResolvedValue({
+        ...okExecResult,
+        success: false,
+        error: traceback,
+        line: 2,
+      });
+      store.setCellCode("cell-2", "x = 1\n1 / 0");
+      expect(await store.runCell("cell-2")).toBe(false);
+      const cell = nb.cells.find((c) => c.id === "cell-2")!;
+      expect(cell.output!.error).toBe(traceback);
+      expect(cellErrorMark(nb, cell)).toEqual({
+        line: 2,
+        message: "ZeroDivisionError: division by zero",
+      });
+    });
+
+    it("pushes with kernel_id and re-seeds the open session afterwards", async () => {
+      const { store } = await openWithKernel();
+      await store.runCell("cell-2");
+      expect(await store.syncFlowNotebook()).toBe("synced");
+      expect(mocks.planPush.mock.calls[0][0].kernel_id).toBe(KERNEL);
+      expect(mocks.push.mock.calls[0][0].kernel_id).toBe(KERNEL);
+      expect(mocks.resetSession).toHaveBeenCalledWith({ flow_id: FLOW, kernel_id: KERNEL });
+    });
+
+    it("resets through the session route, not the kernel namespace", async () => {
+      const { store } = await openWithKernel();
+      await store.runCell("cell-2");
+      await store.resetSession();
+      expect(mocks.resetSession).toHaveBeenCalledWith({ flow_id: FLOW, kernel_id: KERNEL });
+      expect(mocks.clearNamespace).not.toHaveBeenCalled();
+    });
+
+    it("points a needs_kernel refusal at the picker when no kernel is picked", async () => {
+      const { store, nb } = await openFlow();
+      store.flowStatus = { kernel_sessions: true };
+      store.setCellCode("cell-2", "import re");
+      mocks.planPush.mockRejectedValue(
+        httpError(422, {
+          message: "`import re` needs a kernel",
+          cell_id: "cell-2",
+          line: 1,
+          kind: "needs_kernel",
+        }),
+      );
+      expect(await store.runCell("cell-2")).toBe(false);
+      expect(mocks.planPush.mock.calls[0][0]).not.toHaveProperty("kernel_id");
+      expect(nb.cells.find((c) => c.id === "cell-2")!.output!.error).toContain(PICK_KERNEL_HINT);
     });
   });
 });

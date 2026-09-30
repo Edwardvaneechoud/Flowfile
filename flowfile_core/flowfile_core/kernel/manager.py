@@ -22,6 +22,7 @@ import httpx
 
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.events import publish
+from flowfile_core.kernel import notebook_db, notebook_mounts
 
 # Re-exported: the image tags moved to a docker-free module so matching.py can
 # read them, but manager stays their public home for existing callers/tests.
@@ -51,6 +52,7 @@ from flowfile_core.kernel.models import (
     RecoveryStatus,
     ResolvedPackage,
 )
+from flowfile_core.kernel.notebook_support import is_notebook_kernel_config
 from flowfile_core.kernel.urls import core_base_url
 from shared.run_completion import _pid_is_alive  # cross-platform; os.kill(pid, 0) kills on Windows
 from shared.storage_config import storage
@@ -404,6 +406,28 @@ def _rebase_to_posix(local_path: str, host_prefix: str, container_prefix: str) -
     return None
 
 
+def _notebook_env(kernel: KernelInfo, db_path: str) -> dict[str, str]:
+    """A notebook kernel's flowfile reads the mounted Flowfile folders and core's copy of the database
+    (``db_path``, kernel side), and never migrates, seeds or GCs anything."""
+    env: dict[str, str] = {}
+    if notebook_mounts.is_electron_mode() and is_notebook_kernel_config(kernel):
+        env.update(
+            {
+                "FLOWFILE_STORAGE_DIR": notebook_mounts.kernel_side(str(storage.base_directory)),
+                "FLOWFILE_DB_PATH": db_path,
+                "FLOWFILE_SKIP_STARTUP_MIGRATION": "1",
+                "FLOWFILE_SKIP_INIT_DB": "1",
+                "FLOWFILE_KERNEL_GC": "0",
+                "FLOWFILE_TELEMETRY": "0",
+                "FLOWFILE_OFFLOAD_TO_WORKER": "0",
+            }
+        )
+    table = notebook_mounts.build_mount_table(kernel)
+    if table:
+        env["FLOWFILE_NOTEBOOK_MOUNTS"] = json.dumps(table)
+    return env
+
+
 def ordered_input_files(names: Iterable[str]) -> list[str]:
     """Order kernel input file names (``{name}_{index}.parquet``) by their integer index.
 
@@ -419,6 +443,33 @@ def ordered_input_files(names: Iterable[str]) -> list[str]:
         return 1, 0, file_name
 
     return sorted(names, key=_key)
+
+
+_BUILD_NOISE = re.compile(
+    r"^(Step \d+/\d+|---> |Running in |Removing intermediate|Successfully (built|tagged)|Collecting |Downloading |"
+    r"Using cached |Requirement already satisfied|Obtaining |Installing build dependencies|Getting requirements|"
+    r"Preparing metadata|Installing backend dependencies|Building wheels? for|Created wheel|Stored in directory|"
+    r"\[notice\]|Looking in indexes)"
+)
+_SUMMARY_LINES = 15
+_SUMMARY_CHARS = 1500
+
+
+def bake_failure_summary(packages: list[str], log_lines: list[str]) -> str:
+    """A short account of a failed package bake: which packages, then the last meaningful lines of the build log.
+
+    Blank lines, progress bars and Docker/pip progress chatter are dropped; at most ``_SUMMARY_LINES`` lines and
+    ``_SUMMARY_CHARS`` characters are kept, from the end. The full log goes to core's log instead.
+    """
+    lines = []
+    for raw in log_lines:
+        for line in str(raw).splitlines():
+            text = line.strip()
+            if text and "━" not in text and not _BUILD_NOISE.match(text):
+                lines.append(line.rstrip())
+    tail = "\n".join(lines[-_SUMMARY_LINES:])[-_SUMMARY_CHARS:]
+    head = f"Installing {', '.join(packages)} into the kernel image failed."
+    return f"{head}\n{tail}" if tail else head
 
 
 class KernelManager:
@@ -615,7 +666,7 @@ class KernelManager:
             return f"http://flowfile-kernel-{kernel.id}:9999"
         return f"http://localhost:{kernel.port}"
 
-    def to_kernel_path(self, local_path: str) -> str:
+    def to_kernel_path(self, local_path: str, kernel_id: str | None = None) -> str:
         """Translate a local filesystem path to the path visible inside a kernel container.
 
         In Docker-in-Docker mode the volume is mounted at the same path in all
@@ -623,7 +674,8 @@ class KernelManager:
         bind-mounted at ``/shared`` and the host catalog_tables dir at
         ``/catalog_tables``; we swap whichever prefix matches, always producing
         a pure-POSIX path (Windows host paths contain backslashes the Linux
-        container would treat as literal filename characters).
+        container would treat as literal filename characters). With ``kernel_id``
+        the kernel's read-only mount table (``notebook_mounts``) is consulted next.
         """
         if self._kernel_volume:
             # Same volume, same mount point — no translation needed
@@ -636,6 +688,11 @@ class KernelManager:
             rebased = _rebase_to_posix(local_path, host_prefix, container_prefix)
             if rebased is not None:
                 return rebased
+        kernel = self._kernels.get(kernel_id) if kernel_id else None
+        if kernel is not None:
+            translated = notebook_mounts.translate(local_path, notebook_mounts.build_mount_table(kernel))
+            if translated is not None:
+                return translated
         return local_path
 
     def resolve_node_paths(self, request: "ExecuteRequest") -> None:
@@ -740,6 +797,16 @@ class KernelManager:
                 self._shared_volume: {"bind": "/shared", "mode": "rw"},
                 self._catalog_tables_dir: {"bind": "/catalog_tables", "mode": "rw"},
             }
+            # Separate Mount entries: a table folder may share a source with the binds above.
+            table = notebook_mounts.build_mount_table(kernel)
+            if table:
+                run_kwargs["mounts"] = [
+                    docker.types.Mount(target=target, source=source, type="bind", read_only=True)
+                    for source, target in table.items()
+                ]
+                masked = notebook_mounts.masked_paths(table)
+                if masked:
+                    run_kwargs["tmpfs"] = {path: "ro" for path in masked}
             run_kwargs["ports"] = {"9999/tcp": kernel.port}
             run_kwargs["extra_hosts"] = {"host.docker.internal": "host-gateway"}
 
@@ -778,6 +845,7 @@ class KernelManager:
                         gpu=config.gpu,
                         image_flavour=config.image_flavour,
                         custom_image=config.custom_image,
+                        mounted_folders=config.mounted_folders,
                     )
                     self._kernels[config.id] = kernel
                     self._kernel_owners[config.id] = user_id
@@ -868,6 +936,7 @@ class KernelManager:
                         gpu=config.gpu,
                         image_flavour=config.image_flavour,
                         custom_image=config.custom_image,
+                        mounted_folders=config.mounted_folders,
                     )
                     self._kernel_owners[kernel_id] = user_id
                 elif existing.state == KernelState.STOPPED and not self._has_active_flight(kernel_id):
@@ -879,6 +948,7 @@ class KernelManager:
                     existing.gpu = config.gpu
                     existing.image_flavour = config.image_flavour
                     existing.custom_image = config.custom_image
+                    existing.mounted_folders = config.mounted_folders
                     self._kernel_owners[kernel_id] = user_id
 
     def _persist_kernel(self, kernel: KernelInfo, user_id: int) -> None:
@@ -1300,13 +1370,13 @@ class KernelManager:
                     pull=False,
                 )
             except docker.errors.BuildError as exc:
-                # Surface the failing pip output so the user can see why
-                tail = "\n".join(
+                log = [
                     line.get("stream", "").rstrip()
                     for line in (exc.build_log or [])
                     if isinstance(line, dict) and line.get("stream")
-                )[-20000:]
-                raise RuntimeError(f"Failed to bake packages into kernel image: {exc}\n{tail}") from exc
+                ]
+                logger.error("Baking packages into '%s' failed: %s\n%s", derived_tag, exc, "\n".join(log))
+                raise RuntimeError(bake_failure_summary(kernel.packages, log)) from exc
         return derived_tag
 
     def _resolve_installed_versions(self, image_tag: str, package_specs: list[str]) -> list[ResolvedPackage]:
@@ -1521,6 +1591,9 @@ class KernelManager:
         env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
         env["PERSISTENCE_PATH"] = self.to_kernel_path(os.path.join(self._shared_volume, "artifacts"))
         env["RECOVERY_MODE"] = kernel.recovery_mode.value
+        if not self._kernel_volume:
+            db_copy = str(notebook_db.copy_path(self._shared_volume, kernel_id))
+            env.update(_notebook_env(kernel, self.to_kernel_path(db_copy)))
         return env
 
     async def create_kernel(self, config: KernelConfig, user_id: int) -> KernelInfo:
@@ -1529,6 +1602,9 @@ class KernelManager:
         try:
             _resolve_image(config.image_flavour, config.custom_image, self._docker)
             _validate_packages(config.packages)
+            config = config.model_copy(
+                update={"mounted_folders": notebook_mounts.validate_mounted_folders(config.mounted_folders)}
+            )
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
 
@@ -1553,6 +1629,7 @@ class KernelManager:
                 health_timeout=config.health_timeout,
                 image_flavour=config.image_flavour,
                 custom_image=config.custom_image,
+                mounted_folders=config.mounted_folders,
                 persistence_enabled=config.persistence_enabled,
                 recovery_mode=config.recovery_mode,
             )
@@ -1801,13 +1878,19 @@ class KernelManager:
         self._cleanup_container(kernel_id)
         kernel.state = KernelState.STOPPED
         kernel.container_id = None
+        from flowfile_core.notebook import kernel_runner  # lazy: kernel_runner imports this package
+
+        kernel_runner.forget_kernel(kernel_id, self._shared_volume)
         logger.info("Stopped kernel '%s'", kernel_id)
 
-    async def update_kernel(self, kernel_id: str, packages: list[str]) -> KernelInfo:
-        """Update a kernel's package list (the only field we currently allow editing).
+    async def update_kernel(
+        self, kernel_id: str, packages: list[str], mounted_folders: list[str] | None = None
+    ) -> KernelInfo:
+        """Update a kernel's package list and, when given, the folders it may read.
 
         The kernel must be stopped — package edits trigger a rebuild of the
         derived image and we don't want to surprise users with a hot restart.
+        New folders take effect on the next start, which creates a fresh container.
         """
         kernel = self._get_kernel_or_raise(kernel_id)
 
@@ -1823,10 +1906,23 @@ class KernelManager:
             )
 
         _validate_packages(packages)
+        folders = notebook_mounts.validate_mounted_folders(mounted_folders) if mounted_folders is not None else None
 
         old_packages = list(kernel.packages)
         old_resolved = list(kernel.resolved_packages)
+        old_folders = list(kernel.mounted_folders)
+        folders_changed = folders is not None and folders != kernel.mounted_folders
+        if folders_changed:
+            kernel.mounted_folders = folders
+            # A leftover container of the same image would be adopted with the old mounts.
+            await asyncio.to_thread(self._remove_container_by_id, f"flowfile-kernel-{kernel_id}")
+            kernel.container_id = None
         if packages == old_packages:
+            if folders_changed:
+                user_id = self._kernel_owners.get(kernel_id)
+                if user_id is not None:
+                    self._persist_kernel(kernel, user_id)
+                logger.info("Updated kernel '%s' folders → %s", kernel_id, folders)
             return kernel
 
         kernel.packages = packages
@@ -1844,6 +1940,7 @@ class KernelManager:
             except (RuntimeError, ValueError) as exc:
                 kernel.packages = old_packages
                 kernel.resolved_packages = old_resolved
+                kernel.mounted_folders = old_folders
                 # Rebuild the previous derived image so the kernel is startable.
                 if old_packages:
                     try:

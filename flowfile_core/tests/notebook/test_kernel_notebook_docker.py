@@ -1,0 +1,186 @@
+"""The canvas notebook on a real notebook kernel container (``make notebook_kernel_dev``).
+
+Run it on its own with a scratch storage folder, since the kernel mounts the Flowfile folders::
+
+    FLOWFILE_STORAGE_DIR=$(mktemp -d) poetry run pytest flowfile_core/tests/notebook/test_kernel_notebook_docker.py -m kernel
+
+Skipped without Docker, without the ``flowfile-kernel-notebook:dev`` image or without ``FLOWFILE_STORAGE_DIR``.
+"""
+
+from __future__ import annotations
+
+import ast
+import asyncio
+import json
+import os
+import shutil
+import socket
+import subprocess
+import tempfile
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+from flowfile_core.notebook.render import render
+from shared.notebook_display import TABLE_MIME
+from tests.notebook.conftest import NOTEBOOK_OWNER_ID, cell_provenance
+
+IMAGE = "flowfile-kernel-notebook:dev"
+KERNEL_ID = "nb-smoke"
+LOOPBACK = ("127.0.0.1", 50123)
+
+
+def _image_present() -> bool:
+    try:
+        return subprocess.run(["docker", "image", "inspect", IMAGE], capture_output=True).returncode == 0
+    except OSError:
+        return False
+
+
+pytestmark = [
+    pytest.mark.kernel,
+    pytest.mark.skipif(not os.environ.get("FLOWFILE_STORAGE_DIR"), reason="needs a scratch FLOWFILE_STORAGE_DIR"),
+    pytest.mark.skipif(not _image_present(), reason=f"{IMAGE} not built (make notebook_kernel_dev)"),
+]
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+@pytest.fixture
+def core_url(monkeypatch):
+    """Core served on a free port, reachable from a kernel container as ``host.docker.internal``."""
+    import uvicorn
+
+    from flowfile_core.main import app
+
+    port = _free_port()
+    server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 30
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.2)
+    monkeypatch.setenv("FLOWFILE_CORE_URL", f"http://host.docker.internal:{port}")
+    yield f"http://127.0.0.1:{port}"
+    server.should_exit = True
+    thread.join(timeout=10)
+
+
+@pytest.fixture
+def notebook_kernel(core_url, monkeypatch):
+    import flowfile_core.kernel as kernel_package
+    from flowfile_core.kernel.manager import KernelManager
+    from flowfile_core.kernel.models import ImageFlavour, KernelConfig
+    from flowfile_core.notebook import kernel_runner
+
+    monkeypatch.setenv("FLOWFILE_MODE", "electron")
+    shared = str(Path(tempfile.mkdtemp(prefix="nb_kernel_shared_")).resolve())
+    manager = KernelManager(shared_volume_path=shared)
+    monkeypatch.setattr(kernel_package, "get_kernel_manager", lambda: manager)
+    loop = asyncio.new_event_loop()
+    subprocess.run(["docker", "rm", "-f", f"flowfile-kernel-{KERNEL_ID}"], capture_output=True)
+    if manager.get_kernel_sync(KERNEL_ID) is not None:
+        loop.run_until_complete(manager.delete_kernel(KERNEL_ID))
+    config = KernelConfig(id=KERNEL_ID, name="Notebook smoke", image_flavour=ImageFlavour.CUSTOM, custom_image=IMAGE)
+    loop.run_until_complete(manager.create_kernel(config, user_id=NOTEBOOK_OWNER_ID))
+    try:
+        loop.run_until_complete(manager.start_kernel(KERNEL_ID))
+        yield manager
+    finally:
+        try:
+            loop.run_until_complete(manager.delete_kernel(KERNEL_ID))
+        finally:
+            loop.close()
+            subprocess.run(["docker", "rm", "-f", f"flowfile-kernel-{KERNEL_ID}"], capture_output=True)
+            shutil.rmtree(shared, ignore_errors=True)
+            kernel_runner._sessions.clear()
+            kernel_runner._verified.clear()
+
+
+@pytest.fixture
+def smoke_flow(open_as):
+    import flowfile as fl
+
+    orders = fl.from_dict({"id": [1, 2, 3, 4], "amount": [10, 20, 30, 40]})
+    return open_as(
+        orders.filter(fl.col("amount") > 10).polars_code("input_df.with_columns(pl.col('amount') * 10)").flow_graph
+    )
+
+
+def _node_id(flow, node_type: str) -> int:
+    return next(node.node_id for node in flow.nodes if node.node_type == node_type)
+
+
+def _bind(name: str, node_id: int) -> str:
+    frames = "(v for v in list(globals().values()) if type(v).__name__ == 'FlowFrame')"
+    return f"{name} = next(v for v in {frames} if v.node_id == {node_id})\n"
+
+
+def _table_rows(result: dict) -> list:
+    tables = [json.loads(out["data"]) for out in result["display_outputs"] if out["mime_type"] == TABLE_MIME]
+    assert tables, result
+    return tables[0]["data"]
+
+
+def test_a_notebook_session_on_a_real_kernel(smoke_flow, notebook_kernel, client_as):
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}
+    opened = client.post("/notebook/session/open", json=key)
+    assert opened.status_code == 200, opened.text
+
+    filter_id, coded_id = _node_id(smoke_flow, "filter"), _node_id(smoke_flow, "polars_code")
+    cell = _bind("filtered", filter_id) + (
+        "import math\n"
+        "frame = filtered\n"
+        "for power in range(2):\n"
+        "    frame = frame.with_columns((fl.col('amount') * math.pow(10, power)).alias(f'scaled_{power}'))\n"
+        "print('columns', frame.columns)\n"
+        "display(frame)\n"
+    )
+    executed = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-loop", "code": cell})
+    assert executed.status_code == 200, executed.text
+    result = executed.json()
+    assert result["success"], result
+    assert "columns" in result["stdout"] and "scaled_1" in result["stdout"]
+    assert len(_table_rows(result)) == 3
+
+    canvas = client.post(
+        "/notebook/session/execute",
+        json={**key, "cell_id": "cell-canvas", "code": _bind("coded", coded_id) + "display(coded)"},
+    )
+    assert canvas.status_code == 200, canvas.text
+    assert canvas.json()["success"], canvas.json()
+    assert len(_table_rows(canvas.json())) == 3
+
+    rendering = render(smoke_flow)
+    cells = [(c.cell_id, c.code) for c in rendering.cells]
+    body = {
+        "flow_id": smoke_flow.flow_id,
+        "cells": cells,
+        "provenance": cell_provenance(smoke_flow, rendering),
+        "code_fingerprint": rendering.code_fingerprint,
+        "client_max_node_id": max(n.node_id for n in smoke_flow.nodes),
+        "kernel_id": KERNEL_ID,
+    }
+    unedited = client.post("/notebook/plan", json=body)
+    assert unedited.status_code == 200, unedited.text
+    assert unedited.json()["operations"] == []
+
+    last = next(c for c in rendering.cells if coded_id in c.node_ids)
+    name = next(node.targets[0].id for node in ast.parse(last.code).body if isinstance(node, ast.Assign))
+    added = f"plus_one = {name}.with_columns((fl.col('amount') + 1).alias('plus_one'))"
+    before = {n.node_id for n in smoke_flow.nodes}
+    pushed = client.post(
+        "/editor/notebook/push/",
+        json={**body, "cells": [*cells, ("cell-new", added)], "changed_cell_ids": ["cell-new"]},
+    )
+    assert pushed.status_code == 200, pushed.text
+    new_nodes = [n for n in smoke_flow.nodes if n.node_id not in before]
+    assert [n.node_type for n in new_nodes] == ["formula"], [n.node_type for n in new_nodes]
+    assert (Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID / "flowfile_catalog.db").exists()

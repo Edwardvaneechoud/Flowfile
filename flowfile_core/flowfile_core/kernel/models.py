@@ -32,9 +32,10 @@ class ImageFlavour(str, Enum):
 
 
 class KernelUpdate(BaseModel):
-    """Mutable fields on an existing kernel (packages-only for now)."""
+    """Mutable fields on an existing kernel; ``mounted_folders=None`` keeps the current folders."""
 
     packages: list[str] = Field(default_factory=list)
+    mounted_folders: list[str] | None = None
 
 
 class KernelConfig(BaseModel):
@@ -48,6 +49,8 @@ class KernelConfig(BaseModel):
     # Image selection: which baked flavour to launch, or a custom URI
     image_flavour: ImageFlavour = ImageFlavour.BASE
     custom_image: str | None = None
+    # Host folders bind-mounted read-only at the kernel side of their path (electron mode only)
+    mounted_folders: list[str] = Field(default_factory=list)
     # Persistence configuration
     persistence_enabled: bool = True
     recovery_mode: RecoveryMode = RecoveryMode.LAZY
@@ -79,6 +82,7 @@ class KernelInfo(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_message: str | None = None
     kernel_version: str | None = None
+    mounted_folders: list[str] = Field(default_factory=list)
     # Persistence configuration
     persistence_enabled: bool = True
     recovery_mode: RecoveryMode = RecoveryMode.LAZY

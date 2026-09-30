@@ -1,3 +1,4 @@
+import os
 from collections.abc import Iterable
 from typing import Any
 
@@ -5,6 +6,7 @@ import polars as pl
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import schemas
+from flowfile_core.schemas.input_schema import keep_paths_as_written
 
 # Re-export for backwards compatibility — canonical home is callable_utils
 from flowfile_frame.callable_utils import (  # noqa: F401
@@ -13,6 +15,11 @@ from flowfile_frame.callable_utils import (  # noqa: F401
     _is_safely_representable,
 )
 from flowfile_frame.notebook import current
+
+
+def _expand_user(path: str) -> str:
+    """``os.path.expanduser(path)``, or ``path`` itself while paths are kept as written (a kernel notebook session)."""
+    return path if keep_paths_as_written.get() else os.path.expanduser(path)
 
 
 def _is_iterable(obj: Any) -> bool:

@@ -357,3 +357,36 @@ def test_core_never_names_the_exec_executor():
         assert executor is not None, path
         assert ast.unparse(executor) == "self.executor()", (path, ast.unparse(executor))
     assert NotebookRunner.executor is CellInterpreter
+
+
+EXEC_CELL_SITES = {
+    "flowfile_frame/flowfile_frame/notebook_cells.py",
+    "flowfile_frame/flowfile_frame/notebook_kernel.py",
+}
+
+
+def _names(tree: ast.AST) -> set[str]:
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, ast.alias):
+            names.add(node.name)
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            names.add(node.name)
+    return names
+
+
+def test_only_the_kernel_session_names_the_exec_executor():
+    """Outside tests, ``exec_cell`` is named only where it is defined and by the frame's kernel session module."""
+    naming = set()
+    for package in (*RATCHET, "flowfile/flowfile"):
+        base = REPO / package
+        for path in sorted(base.rglob("*.py")):
+            if {"tests", "__pycache__"} & set(path.relative_to(base).parts[:-1]):
+                continue
+            if "exec_cell" in _names(ast.parse(path.read_text(encoding="utf-8"), str(path))):
+                naming.add(str(path.relative_to(REPO)))
+    assert naming == EXEC_CELL_SITES, naming

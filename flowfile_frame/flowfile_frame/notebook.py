@@ -37,10 +37,13 @@ at import time, so every frame module can import :func:`current` at module level
 from __future__ import annotations
 
 import contextlib
+import json
 import linecache
 import logging
+import os
+import re
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextvars import ContextVar, Token
 from typing import Any, NoReturn
 
@@ -48,10 +51,13 @@ from flowfile_core.configs.flow_logger import FlowLogger, get_flow_log_file
 from flowfile_core.flowfile.flow_graph import FlowGraph, placement_check
 from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
 from flowfile_core.flowfile.utils import create_unique_id
+from flowfile_core.schemas.input_schema import keep_paths_as_written, kernel_file_path
 
 logger = logging.getLogger(__name__)
 
 KERNEL_REFUSAL = "kernel nodes run on the canvas: use Run on canvas"
+MOUNTS_ENV = "FLOWFILE_NOTEBOOK_MOUNTS"
+_WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
 
 RUN_LOCK = threading.Lock()
 """Serializes notebook runs (a seed plus a clean run) that share a process, such as a server's.
@@ -79,7 +85,10 @@ class NotebookMode:
     cell and the node ids it created so far (in creation order), ``claimed`` maps each of those
     nodes to the canvas id it took as its twin, ``column_less`` holds the nodes seeded without
     columns, and ``unchecked`` the nodes seeded without columns because their build failed below
-    one (node id -> ``(cell_id, node_type, error)``).
+    one (node id -> ``(cell_id, node_type, error)``). ``row_resolver`` (``None`` unless a notebook kernel
+    session sets it) is asked for the rows of a frame that has none in the session (deferred or below a
+    gate): it returns a ``LazyFrame``, ``None`` to keep the default refusal, or raises ``NativeNodeError``
+    with the message to show.
     """
 
     graph: FlowGraph
@@ -96,6 +105,7 @@ class NotebookMode:
     claimed: dict[int, int]
     column_less: set[int]
     unchecked: dict[int, tuple[str | None, str, str]]
+    row_resolver: Callable[[Any], Any] | None
 
     def __init__(
         self, graph: FlowGraph, user_id: int | None = None, *, owns_graph: bool = False, sync: bool = False
@@ -114,6 +124,7 @@ class NotebookMode:
         self.claimed: dict[int, int] = {}
         self.column_less: set[int] = set()
         self.unchecked: dict[int, tuple[str | None, str, str]] = {}
+        self.row_resolver: Callable[[Any], Any] | None = None
 
     def close(self) -> None:
         """Release what the mode's run left: the snapshot, the cells' ``linecache`` entries and an owned graph's logger.
@@ -316,3 +327,86 @@ def _notebook_mode(graph: FlowGraph | None, user_id: int | None, sync: bool) -> 
         yield mode
     finally:
         exit()
+
+
+def resumed(mode: NotebookMode) -> contextlib.AbstractContextManager[NotebookMode]:
+    """Context manager that makes an existing ``mode`` active in this context again and sets it aside on exit.
+
+    The mode is context-local, so a session whose calls each arrive in a fresh context (a kernel runs
+    every request on its own thread) keeps its mode between calls and resumes it around each one.
+    Leaving sets the mode aside without closing it (``exit()`` closes it). Modes do not nest.
+    """
+    return _resumed(mode)
+
+
+@contextlib.contextmanager
+def _resumed(mode: NotebookMode) -> Iterator[NotebookMode]:
+    _refuse_nesting()
+    _activate(mode)
+    try:
+        yield mode
+    finally:
+        if current() is mode:
+            _deactivate()
+
+
+def paths_as_written() -> contextlib.AbstractContextManager[None]:
+    """Context manager under which node settings keep file paths as written (no ``~``, working directory or links).
+
+    Sets ``flowfile_core.schemas.input_schema.keep_paths_as_written`` in this context: a file node's
+    ``abs_file_path`` is then its path as written (opened through :func:`kernel_path`), and the frame
+    readers and writers do not expand ``~``. A canvas notebook session in a kernel runs under it, since
+    the kernel's filesystem is not the host's; core recomputes the absolute paths on the host when it
+    checks a push. Off by default.
+    """
+    return _paths_as_written()
+
+
+@contextlib.contextmanager
+def _paths_as_written() -> Iterator[None]:
+    token = keep_paths_as_written.set(True)
+    translator = kernel_file_path.set(kernel_path)
+    try:
+        yield
+    finally:
+        kernel_file_path.reset(translator)
+        keep_paths_as_written.reset(token)
+
+
+def translate_path(path: str, table: dict[str, str]) -> str | None:
+    """The kernel-side path of host ``path`` under ``table`` (host folder -> kernel folder), or ``None``.
+
+    The longest covering host folder wins; a Windows folder (``C:\\...``) matches case-insensitively
+    and with either slash.
+    """
+    best: tuple[int, str] | None = None
+    written = path.replace("\\", "/").rstrip("/")
+    for host, target in table.items():
+        base = host.replace("\\", "/").rstrip("/")
+        folded = _WINDOWS_DRIVE.match(host) is not None
+        probe, prefix = (written.casefold(), base.casefold()) if folded else (written, base)
+        if probe == prefix:
+            rest = ""
+        elif prefix and probe.startswith(prefix + "/"):
+            rest = written[len(base) + 1 :]
+        else:
+            continue
+        if best is None or len(base) > best[0]:
+            best = (len(base), f"{target.rstrip('/')}/{rest}" if rest else target)
+    return best[1] if best else None
+
+
+def kernel_path(path: str) -> str | None:
+    """Where this process opens host ``path``: unchanged outside a notebook kernel.
+
+    In a notebook kernel (``FLOWFILE_NOTEBOOK_MOUNTS``, host folder -> kernel folder, is set) the path
+    is translated through that table; ``None`` means no folder mounted in the kernel covers it.
+    """
+    raw = os.environ.get(MOUNTS_ENV)
+    if raw is None:
+        return path
+    try:
+        table = json.loads(raw)
+    except ValueError:
+        table = {}
+    return translate_path(path, table if isinstance(table, dict) else {})

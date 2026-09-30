@@ -4,7 +4,7 @@ description: Read a flow as Python cells in the Code panel, edit them, and run a
 
 # The Canvas Notebook
 
-The canvas notebook shows the open flow as Python code, one cell per statement, in the **Notebook** mode of the Code panel. It uses the editor of a [catalog notebook](catalog/notebooks.md), with the same cells, shortcuts, undo, drag and completions, but it has no kernel: running a cell writes your edits onto the canvas and runs the cell's node where the flow runs. This page covers what the cells contain, what **Run** does for each kind of cell, what a sync refuses, and how the notebook behaves in each deployment.
+The canvas notebook shows the open flow as Python code, one cell per statement, in the **Notebook** mode of the Code panel. It uses the editor of a [catalog notebook](catalog/notebooks.md), with the same cells, shortcuts, undo, drag and completions. By default it has no kernel: running a cell writes your edits onto the canvas and runs the cell's node where the flow runs. In the desktop app you can also [run it on a kernel](#running-on-a-kernel), where cells run as real Python. This page covers what the cells contain, what **Run** does for each kind of cell, what a sync refuses, running on a kernel, and how the notebook behaves in each deployment.
 
 <!-- IMAGE-PLACEHOLDER-TO-CHANGE: a flow on the canvas with the Code panel open on the right in Notebook mode, a node cell showing its preview table, one placeholder cell with its reason comment -->
 
@@ -39,7 +39,7 @@ A Polars LazyFrame node (a frame passed in from Python) is **unsupported**: it c
 
 ## Running a cell
 
-Cell code never runs as Python on the server. The server reads the cells as a description of the flow, and data is only computed where the flow runs: the backend and worker, and a Python Script node on its [kernel](kernels.md).
+This section describes the notebook with **No kernel** picked. Cell code never runs as Python on the server. The server reads the cells as a description of the flow, and data is only computed where the flow runs: the backend and worker, and a Python Script node on its [kernel](kernels.md).
 
 **Run** (the cell's run button, **Shift+Enter** or **Cmd/Ctrl+Enter**) first syncs the cells to the canvas when the notebook no longer matches the canvas (a cell edited, added, removed or moved), then does what the cell's kind calls for:
 
@@ -96,9 +96,32 @@ A sync is refused, with the reason on the failing cell or in a message, when:
 
 **Push** asks for confirmation first, listing the reasons, when the sync deletes nodes, changes flow parameters (parameter changes are not undone by **Undo**), takes a node reference from another node, drops an input a cell did not rebuild, names a kernel you do not own, or places a node it could not check because a node above it has no known columns (the run checks it). **Run** and **Run all** ask only when the sync deletes nodes, and show the other reasons as a warning once the sync is applied.
 
+## Running on a kernel
+
+In the desktop app, and with `pip install flowfile` in the default mode, the notebook toolbar has a kernel picker. Pick a **notebook kernel**, a [kernel](kernels.md) with the `flowfile` package installed, and the cells run as real Python in a session on that kernel: loops, `print`, other imports and `display(...)` work, as in a script. When you have no such kernel, **Create notebook kernel…** in the picker opens the kernel form with `flowfile` of this app's version already in its packages. Pick **No kernel** to go back to running on the canvas.
+
+| Action | With a kernel picked |
+|---|---|
+| **Run** | Runs the cell as Python in the session. The canvas does not change. |
+| **Run all** | Runs every cell in the session. |
+| **Push** | Runs every cell again in a fresh session on the kernel, then applies what they build to the canvas as one step, with the same review as without a kernel. The session is then reseeded from the canvas. |
+| **Run and preview on canvas** (⋯) | Pushes an edited cell first, then runs the node on the canvas, as without a kernel. |
+| **Reset session** (⋯) | Drops the session's variables and binds one variable per canvas node again. |
+
+When the session opens, every canvas node is bound to its variable, so a cell can use `filtered_2` without running anything first. `display(frame)` shows rows. The kernel computes them itself when it can (manual input, catalog tables, files in a folder it may read, and transforms on those); for any other node that is on the canvas, such as a database reader or a Python Script node, the canvas runs the node and hands its rows to the kernel. A node that exists only in your cells and that the kernel cannot read shows its columns and asks you to push first.
+
+The kernel can read the Flowfile folders (saved flows, custom nodes, catalog tables) and a copy of the catalog database that the app refreshes before every call. Other files are visible only in the folders you add under **Folders this kernel can read** in the [kernel's settings](kernels.md#folders-this-kernel-can-read). Stored secrets cannot be decrypted in the kernel, so a cloud or database source shows rows only through the canvas.
+
+Limits:
+
+- Only in the desktop app and in a default `pip install flowfile` (`FLOWFILE_MODE` unset or `electron`), for a local connection, and with the default SQLite catalog database. Docker deployments keep the notebook without a kernel.
+- Not on Windows yet.
+- The kernel's `flowfile` must have the same version as the app; after an update, recreate the notebook kernel.
+- On Apple Silicon Macs (Linux arm64 containers), installing `flowfile` on the lite kernel currently fails, because `polars-grouper` publishes no aarch64 Linux wheel.
+
 ## Kernels, Docker and deployments
 
-The notebook starts no Python process and needs no [kernel](kernels.md) and no Docker; in flow mode it has no kernel picker. A Python Script node in the flow still runs on its kernel: its cell is an `fl.PythonScript` or `@fl.python_script` definition, and running that cell runs the node on its kernel, which needs Docker as it does on the canvas. Python that prints, displays or computes runs in a Python Script node or a [catalog notebook](catalog/notebooks.md), both on a kernel.
+With **No kernel** picked the notebook starts no Python process and needs no [kernel](kernels.md) and no Docker. A Python Script node in the flow still runs on its kernel: its cell is an `fl.PythonScript` or `@fl.python_script` definition, and running that cell runs the node on its kernel, which needs Docker as it does on the canvas. Python that prints, displays or computes runs in a Python Script node or a [catalog notebook](catalog/notebooks.md), both on a kernel.
 
 Viewing and editing the cells, and running them while the notebook matches the canvas, work for every user, for their own flows, in the desktop app, with `pip install flowfile` and in a Docker deployment. Syncing works for every user in the default `electron` mode: the desktop app, and `pip install flowfile` unless you set `FLOWFILE_MODE`. With any other `FLOWFILE_MODE` (`docker` in a Docker deployment, or `package`) syncing needs an admin account, because the catalog lookups a cell can reach do not check each user's access. Other users keep editable cells; **Run** and **Run all** when the notebook no longer matches the canvas, and **Push**, leave the edits in the notebook, and a banner says that syncing needs an admin. The notebook has no settings of its own.
 

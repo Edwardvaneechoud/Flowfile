@@ -50,7 +50,10 @@ export class KernelApi {
     }
   }
 
-  static async update(kernelId: string, update: { packages: string[] }): Promise<KernelInfo> {
+  static async update(
+    kernelId: string,
+    update: { packages?: string[]; mounted_folders?: string[] },
+  ): Promise<KernelInfo> {
     try {
       const response = await axios.patch<KernelInfo>(
         `${API_BASE_URL}/${encodeURIComponent(kernelId)}`,

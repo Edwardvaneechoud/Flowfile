@@ -76,7 +76,10 @@ export function useKernelManager() {
     }
   };
 
-  const updateKernel = async (kernelId: string, update: { packages: string[] }) => {
+  const updateKernel = async (
+    kernelId: string,
+    update: { packages: string[]; mounted_folders?: string[] },
+  ) => {
     actionInProgress.value[kernelId] = true;
     try {
       await KernelApi.update(kernelId, update);

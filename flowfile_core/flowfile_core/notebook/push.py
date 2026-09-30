@@ -45,6 +45,7 @@ class NotebookPushRequest(BaseModel):
     provenance: dict[str, list[tuple[str, int]]] = Field(default_factory=dict)
     code_fingerprint: str
     client_max_node_id: int = 0
+    kernel_id: str | None = None
 
 
 class NotebookPlanResponse(BaseModel):
@@ -202,6 +203,9 @@ def node_id_ceiling(flow: FlowGraph, client_max_node_id: int) -> int:
 def plan_push(flow: FlowGraph, user, request: NotebookPushRequest) -> tuple[ReconcilePlan, CleanRunResult]:
     """Everything a push does before it mutates the canvas; raises 409, 422 or 503 as ``HTTPException``.
 
+    With ``request.kernel_id`` the cells run as Python on that notebook kernel (``kernel_runner``) instead of
+    through the installed runner, and the result is checked (``validate``) before it is reconciled.
+
     A 422's detail is ``{message, cell_id, line, kind}``: a failing cell's message, cell, 1-based line and
     kind (``needs_kernel``, ``refused`` or ``error``), or, for nodes the canvas cannot hold, their joined
     messages with kind ``refused`` and the cell of the first refused node.
@@ -218,12 +222,17 @@ def plan_push(flow: FlowGraph, user, request: NotebookPushRequest) -> tuple[Reco
     snapshot = seed_snapshot(flow)
     live = snapshot["flowfile_data"]
     ceiling = node_id_ceiling(flow, request.client_max_node_id)
-    runner = get_clean_runner()
-    result = runner.clean_run(
-        user.id,
-        flow.flow_id,
-        CleanRunRequest(cells=request.cells, provenance=request.provenance, ceiling=ceiling, snapshot=snapshot),
+    clean_request = CleanRunRequest(
+        cells=request.cells, provenance=request.provenance, ceiling=ceiling, snapshot=snapshot
     )
+    if request.kernel_id is None:
+        result = get_clean_runner().clean_run(user.id, flow.flow_id, clean_request)
+    else:
+        from flowfile_core.notebook.kernel_runner import KernelCleanRunner
+        from flowfile_core.notebook.validate import validate_clean_run
+
+        result = KernelCleanRunner(request.kernel_id, user).clean_run(user.id, flow.flow_id, clean_request)
+        result = validate_clean_run(result, clean_request)
     if result.error is not None:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,

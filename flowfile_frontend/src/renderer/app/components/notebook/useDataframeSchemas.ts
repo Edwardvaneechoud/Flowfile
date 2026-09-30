@@ -1,5 +1,5 @@
 // Module state, not Pinia: the completion source reads this cache synchronously on keystroke.
-import { LspApi } from "@/api/lsp.api";
+import { LspApi, type LspDataframeSchemasResponse } from "@/api/lsp.api";
 import type {
   CatalogRefLiteral,
   FrameKind,
@@ -33,6 +33,8 @@ export interface DataframeSchemaContext {
   flowId: number;
   nodeId?: number | null;
   catalogRefs: () => CatalogRefLiteral[];
+  /** Replaces the kernel LSP call, e.g. a canvas notebook's session route. */
+  fetchSchemas?: (() => Promise<LspDataframeSchemasResponse>) | null;
 }
 
 export type DataframeSchemaContextGetter = () => DataframeSchemaContext;
@@ -178,15 +180,13 @@ async function doRefresh(ownerId: string, state: OwnerState, allowRetry: boolean
   const ctx = state.getCtx?.();
   const kernelId = ctx?.kernelId;
   if (!ctx || !kernelId) return;
-  const capabilities = await LspApi.capabilities();
-  if (!capabilities?.enabled) return;
+  if (!ctx.fetchSchemas && !(await LspApi.capabilities())?.enabled) return;
 
   const flowId = ctx.flowId;
   const seq = (state.refreshSeq += 1);
-  const response = await LspApi.dataframeSchemas(kernelId, {
-    flow_id: flowId,
-    node_id: ctx.nodeId ?? null,
-  });
+  const response = ctx.fetchSchemas
+    ? await ctx.fetchSchemas()
+    : await LspApi.dataframeSchemas(kernelId, { flow_id: flowId, node_id: ctx.nodeId ?? null });
 
   if (owners.get(ownerId) !== state) return;
   const now = state.getCtx?.();

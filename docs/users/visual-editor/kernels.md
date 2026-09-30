@@ -73,11 +73,18 @@ A kernel's flavour matters beyond notebooks: a [kernel-environment custom node](
 | **Memory (GB)** | Maximum memory the container can use (0.5–64 GB) | `4` |
 | **CPU Cores** | Number of CPU cores allocated (0.5–32) | `2` |
 | **GPU** | Enable GPU passthrough (requires NVIDIA Docker) | `false` |
+| **Folders this kernel can read** | Folders on this machine the kernel may read (desktop app only), see below | *(none)* |
 
 3. Click **Create Kernel** to save the configuration
 4. Click **Start** on the kernel card to launch the container
 
 Extra packages are resolved against the flavour's version constraints and baked into a per-kernel image when the kernel is created — not installed on every start. Editing a stopped kernel's package list rebuilds its image.
+
+### Folders this kernel can read
+
+In the desktop app, and with `pip install flowfile` in the default mode, a kernel can read folders on your machine. Each folder must be an absolute path to an existing directory, and is mounted read-only at the same path inside the container, so `pl.read_csv("/Users/me/data/sales.csv")` in a cell or Python Script node on that kernel reads the file you see on your machine. The kernel can never change files there. Flowfile's own key store is always hidden, even inside a folder you add. Edit the list on a stopped kernel in its details; the new folders take effect on the next start. Docker deployments refuse the setting.
+
+A kernel with the `flowfile` package installed can also run the [canvas notebook](notebook.md#running-on-a-kernel); it additionally reads Flowfile's saved flows, custom nodes and catalog tables. On Apple Silicon Macs, installing `flowfile` on the lite kernel currently fails, because `polars-grouper` publishes no aarch64 Linux wheel.
 
 ### Kernel Cards
 

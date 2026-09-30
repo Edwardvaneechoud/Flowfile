@@ -1,5 +1,7 @@
 """Notebook build mode: one session graph, nothing runs, writes or registers while a cell builds."""
 
+import json
+
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
@@ -380,3 +382,15 @@ def test_a_user_less_mode_checks_a_placement_as_the_user_its_settings_carry():
         reader = ff.Node("database_reader", settings=settings)
         assert reader.node.setting_input.user_id == 1 and mode.refusals == []
         assert reader.output._deferred and reader.output.collect_schema().names() == ["x"]
+
+
+def test_kernel_path_translates_through_the_notebook_mount_table(monkeypatch):
+    monkeypatch.delenv(notebook.MOUNTS_ENV, raising=False)
+    assert notebook.kernel_path(r"C:\data\sales.csv") == r"C:\data\sales.csv"
+
+    table = {r"C:\Users\me\.flowfile": "/host/c/Users/me/.flowfile", r"C:\Users\me": "/host/c/Users/me"}
+    monkeypatch.setenv(notebook.MOUNTS_ENV, json.dumps(table))
+    assert notebook.kernel_path(r"C:\Users\me\data\sales.csv") == "/host/c/Users/me/data/sales.csv"
+    assert notebook.kernel_path(r"c:\users\ME\.flowfile\flows\a.yaml") == "/host/c/Users/me/.flowfile/flows/a.yaml"
+    assert notebook.kernel_path(r"D:\data\sales.csv") is None
+    assert notebook.kernel_path(r"C:\Users\meadow\x.csv") is None

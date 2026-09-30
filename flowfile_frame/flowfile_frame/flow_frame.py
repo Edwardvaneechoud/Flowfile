@@ -50,6 +50,7 @@ from flowfile_frame.parameters import refuse_parameter_as_column, refuse_paramet
 from flowfile_frame.selectors import Selector
 from flowfile_frame.utils import (
     _check_if_convertible_to_code,
+    _expand_user,
     _implicit_graph,
     _parse_inputs_as_iterable,
     ensure_inputs_as_iterable,
@@ -2004,7 +2005,7 @@ class FlowFrame:
             file_str = path
             is_path_input = False
         if "~" in file_str:
-            file_str = os.path.expanduser(file_str)
+            file_str = _expand_user(file_str)
         file_name = file_str.split(os.sep)[-1]
         use_polars_code = bool(kwargs.items()) or not is_path_input
 
@@ -2086,7 +2087,7 @@ class FlowFrame:
         is_path_input = isinstance(path, str | os.PathLike)
         file_str = str(path)
         if "~" in file_str:
-            file_str = os.path.expanduser(file_str)
+            file_str = _expand_user(file_str)
         file_name = file_str.split(os.sep)[-1]
         use_polars_code = bool(kwargs.items()) or not is_path_input
 
@@ -2286,7 +2287,7 @@ class FlowFrame:
             file_str = file
             is_path_input = False
         if "~" in file_str:
-            file_str = os.path.expanduser(file_str)
+            file_str = _expand_user(file_str)
         file_name = file_str.split(os.sep)[-1] if is_path_input else "output.csv"
 
         use_polars_code = bool(kwargs) or not is_path_input
@@ -2379,7 +2380,7 @@ class FlowFrame:
             file_str = path
             is_path_input = False
         if "~" in file_str:
-            file_str = os.path.expanduser(file_str)
+            file_str = _expand_user(file_str)
         file_name = file_str.split(os.sep)[-1] if is_path_input else "output.xlsx"
 
         use_polars_code = bool(kwargs) or not is_path_input
@@ -2868,11 +2869,16 @@ class FlowFrame:
         below a failed node) and fails it too; a deliberately skipped node keeps a result. When a
         gate routed this frame away (the node was deliberately skipped, or this is a gate's dead
         exit) the zero-row typed frame is returned. A frame below a gate takes the same path,
-        because its build-time plan passes through both exits.
+        because its build-time plan passes through both exits. In notebook mode nothing runs: the
+        mode's ``row_resolver`` (a notebook kernel's canvas fallback) answers, else it raises.
         """
         if not (self._deferred or self._below_a_gate()):
             return self.data
-        if current() is not None:
+        mode = current()
+        if mode is not None:
+            resolved = mode.row_resolver(self) if mode.row_resolver is not None else None
+            if resolved is not None:
+                return resolved
             raise NativeNodeError(
                 f"Node {self.node_id} only has rows once the flow runs (it is deferred or below a gate), and a "
                 "notebook does not run the flow: use Run on canvas"

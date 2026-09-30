@@ -32,6 +32,7 @@ from flowfile_core.catalog import (
 )
 from flowfile_core.database.connection import get_db_context
 from flowfile_frame._identity import current_user_id
+from flowfile_frame.notebook import refuse
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -515,6 +516,7 @@ def _resolve_catalog(
             return existing
         if not auto_create:
             raise NamespaceNotFoundError(name=name)
+        refuse(f"Creating the catalog {name!r} (auto_create=True)", "writes to the catalog")
         try:
             return service.create_namespace(
                 name=name,
@@ -546,6 +548,7 @@ def _resolve_schema(
             return existing
         if not auto_create:
             raise NamespaceNotFoundError(name=f"{catalog.name}.{name}")
+        refuse(f"Creating the schema {catalog.name}.{name} (auto_create=True)", "writes to the catalog")
         try:
             return service.create_namespace(
                 name=name,

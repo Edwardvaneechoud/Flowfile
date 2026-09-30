@@ -26,7 +26,7 @@ import traceback
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from types import ModuleType
+from types import ModuleType, TracebackType
 from typing import Any, Literal, TypeAlias
 
 import polars as pl
@@ -536,8 +536,23 @@ def _lazy_safe(frame: FlowFrame) -> bool:
     return not frame._deferred and not frame._below_a_gate()
 
 
+def _resolved_rows(frame: FlowFrame, payload: dict[str, Any]) -> pl.LazyFrame | None:
+    """The rows the mode's ``row_resolver`` finds for a frame without rows here; its refusal becomes ``rows_hint``."""
+    mode = notebook.current()
+    if mode is None or mode.row_resolver is None:
+        return None
+    try:
+        return mode.row_resolver(frame)
+    except NativeNodeError as exc:
+        payload["rows_hint"] = str(exc)
+        return None
+
+
 def _frame_payload(frame: FlowFrame, max_rows: int | None) -> dict[str, Any]:
-    """The frame payload; ``max_rows=None`` keeps it to the schema and never executes the plan."""
+    """The frame payload; ``max_rows=None`` keeps it to the schema and never executes the plan.
+
+    A frame that is not lazy-safe shows rows only when the mode's ``row_resolver`` finds them.
+    """
     payload: dict[str, Any] = {
         "kind": "frame",
         "node_id": frame.node_id,
@@ -545,8 +560,11 @@ def _frame_payload(frame: FlowFrame, max_rows: int | None) -> dict[str, Any]:
         "schema": _schema_entries(frame),
         "lazy_safe": _lazy_safe(frame),
     }
-    if max_rows is not None and payload["lazy_safe"]:
-        data = frame.data.lazy() if isinstance(frame.data, pl.DataFrame) else frame.data
+    if max_rows is None:
+        return payload
+    data = frame.data if payload["lazy_safe"] else _resolved_rows(frame, payload)
+    if data is not None:
+        data = data.lazy() if isinstance(data, pl.DataFrame) else data
         head = data.head(max_rows + 1).collect()
         total = data.select(pl.len()).collect().item() if head.height > max_rows else head.height
         payload[TABLE_MIME] = build_table_payload(head, max_rows, total)
@@ -710,6 +728,14 @@ def _cell_line(exc: BaseException, filename: str) -> int | None:
     return lines[-1] if lines else None
 
 
+def _from_the_cell(tb: TracebackType | None, filename: str) -> TracebackType | None:
+    """``tb`` from the cell's first frame on (the executor's own frames dropped), else from the executor's callee."""
+    entry = tb
+    while entry is not None and entry.tb_frame.f_code.co_filename != filename:
+        entry = entry.tb_next
+    return entry or (tb.tb_next if tb is not None else None)
+
+
 def _exception_text(exc: BaseException) -> str:
     return "".join(traceback.format_exception_only(type(exc), exc))
 
@@ -760,7 +786,7 @@ def execute_cell(cell_id: str, code: str, namespace: dict[str, Any], *, executor
         result.error = result.message = _exception_text(exc)
         result.line, result.kind = _cell_line(exc, result.filename), "error"
     except BaseException as exc:
-        tb = exc.__traceback__.tb_next if exc.__traceback__ is not None else None
+        tb = _from_the_cell(exc.__traceback__, result.filename)
         result.error = result.traceback = "".join(traceback.format_exception(type(exc), exc, tb))
         result.message = _exception_text(exc)
         result.line, result.kind = _cell_line(exc, result.filename), _failure_kind(exc, mode)

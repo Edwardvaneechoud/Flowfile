@@ -64,16 +64,19 @@
         <div class="nb-toolbar-spacer"></div>
 
         <!-- Kernel selector (Python cells); state is polled live. The selected label
-             carries a state dot, and a stale/stopped selection turns the field amber. -->
+             carries a state dot, and a stale/stopped selection turns the field amber.
+             A flow tab lists only kernels that can run the notebook, plus "No kernel". -->
         <el-select
-          v-if="!flowId"
-          :model-value="store.active?.kernelId ?? null"
+          v-if="!flowId || store.kernelSessions"
+          ref="kernelSelectRef"
+          :model-value="store.active?.kernelId ?? (flowId ? NO_KERNEL : null)"
           placeholder="Select kernel"
           size="small"
           class="nb-kernel-select"
+          data-testid="nb-kernel-select"
           :class="{ 'nb-kernel-select--attention': needsAttention }"
-          clearable
-          @change="(v: string | null) => store.setKernel(v)"
+          :clearable="!flowId"
+          @change="onKernelChange"
         >
           <template #label>
             <span class="nb-kernel-label">
@@ -89,8 +92,14 @@
               <span class="nb-kernel-label__name">{{ selectedKernelLabel }}</span>
             </span>
           </template>
+          <el-option v-if="flowId" :value="NO_KERNEL" label="No kernel">
+            <span class="nb-kernel-option">
+              <span>No kernel</span>
+              <span class="nb-kernel-option__state">runs on the canvas</span>
+            </span>
+          </el-option>
           <el-option
-            v-for="k in kernels"
+            v-for="k in pickerKernels"
             :key="k.id"
             :label="`${k.name} (${k.state})`"
             :value="k.id"
@@ -102,6 +111,14 @@
             </span>
           </el-option>
           <template #footer>
+            <button
+              v-if="flowId && !pickerKernels.length"
+              type="button"
+              class="nb-kernel-footer-link nb-kernel-footer-create"
+              @click="openCreateKernel"
+            >
+              <i class="fa-solid fa-plus"></i> Create notebook kernel…
+            </button>
             <router-link :to="kernelsRoute" class="nb-kernel-footer-link">
               <i class="fa-solid fa-microchip"></i> Manage kernels
             </router-link>
@@ -155,9 +172,13 @@
                   <i class="fa-solid fa-eraser nb-menu-icon"></i> Clear outputs
                 </el-dropdown-item>
                 <el-dropdown-item
-                  v-if="!flowId"
+                  v-if="!flowId || store.active?.kernelId"
                   :disabled="batchBusy || resetPending"
-                  title="Clear this notebook's kernel variables; the kernel keeps running"
+                  :title="
+                    flowId
+                      ? 'Re-seed the session from the canvas as it is now'
+                      : 'Clear this notebook\'s kernel variables; the kernel keeps running'
+                  "
                   @click="onResetSession"
                 >
                   <i class="fa-solid fa-rotate-right nb-menu-icon"></i> Reset session
@@ -184,11 +205,7 @@
           type="button"
           class="nb-btn"
           data-testid="nb-push"
-          :title="
-            store.active?.syncForbidden
-              ? SYNC_NEEDS_ADMIN
-              : 'Sync the cells to the canvas without running them'
-          "
+          :title="pushTitle"
           :disabled="batchBusy || editorStore.isRunning"
           @click="onPush"
         >
@@ -313,8 +330,8 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           :runtime="runtimeFor(cell.id)"
           :busy="batchBusy"
           :type-in-menu="!!flowId"
-          :sync-state="flowId ? flowCellSyncState(store.active, cell) : null"
-          :sync-error="flowId ? syncErrorFor(store.active, cell) : null"
+          :sync-state="flowId ? cellSyncState(cell) : null"
+          :sync-error="flowId ? cellErrorMark(store.active, cell) : null"
           :active="cell.id === store.active.focusedCellId"
           :dragging="drag.draggingId.value === cell.id"
           @run="store.runCell(cell.id)"
@@ -397,12 +414,23 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
       </template>
     </el-dialog>
 
-    <NotebookHelp v-if="showHelp" :flow-mode="!!flowId" @close="showHelp = false" />
+    <NotebookHelp
+      v-if="showHelp"
+      :flow-mode="!!flowId"
+      :kernel-mode="!!flowId && !!store.active?.kernelId"
+      @close="showHelp = false"
+    />
+    <CreateKernelDialog
+      v-if="flowId"
+      v-model="createKernelVisible"
+      :suggestion="notebookKernelSuggestion"
+      @created="onKernelCreated"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from "vue";
+import { ref, computed, h, nextTick, onMounted, onBeforeUnmount, watch } from "vue";
 import debounce from "lodash/debounce";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
@@ -412,13 +440,14 @@ import {
   flowCellSyncState,
   planReview,
   registerFlowNotebookHooks,
-  syncErrorFor,
+  cellErrorMark,
   SYNC_NEEDS_ADMIN,
 } from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
 import { KernelApi } from "../../api/kernel.api";
+import { NotebookApi } from "../../api/notebook.api";
 import { useEditorStore } from "../../stores/editor-store";
 import { useNodeStore } from "../../stores/column-store";
 import { useDrawerStore } from "../../stores/drawer-store";
@@ -428,6 +457,7 @@ import { whenMutationsIdle } from "../../services/axios.config";
 import { flushPendingEdits } from "../../services/mutationChannel";
 import { currentNodeId, seedNodeId } from "../../composables/useDragAndDrop";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";
+import CreateKernelDialog from "../../components/kernel/CreateKernelDialog.vue";
 import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
 import { cellMoveAnnouncement } from "../../components/notebook/cellOperations";
 import { cellPresentation } from "../../components/notebook/cellPresentation";
@@ -447,9 +477,15 @@ import {
 } from "../../components/notebook/notebookKernelStatus";
 import type { CellOperation } from "../../components/notebook/cellOperations";
 import type { CellType, NotebookCellModel } from "../../components/notebook/types";
-import type { KernelInfo } from "../../types/kernel.types";
+import type { KernelInfo, KernelSuggestion } from "../../types/kernel.types";
 
 const KERNEL_POLL_MS = 5000;
+const NO_KERNEL = "__no_kernel__";
+
+/** A kernel can run the canvas notebook when it has flowfile installed or is a notebook image. */
+const runsNotebook = (k: KernelInfo): boolean =>
+  k.packages.some((p) => /^flowfile\s*($|[=<>!~[;@ ])/i.test(p.trim())) ||
+  (k.custom_image ?? "").includes("notebook");
 
 /** With `flowId` the panel is that flow's canvas notebook: one ephemeral tab rendered from the canvas. */
 const props = defineProps<{ flowId?: number }>();
@@ -497,8 +533,51 @@ const selectedKernelLabel = computed(() => {
   const s = kernelStatus.value;
   if (s.kind === "missing") return "Kernel not found";
   if ("kernel" in s) return s.kernel.name;
-  return store.active?.kernelId ?? "";
+  return store.active?.kernelId ?? (props.flowId ? "No kernel" : "");
 });
+
+const pickerKernels = computed(() =>
+  props.flowId ? kernels.value.filter(runsNotebook) : kernels.value,
+);
+
+function onKernelChange(value: string | null | undefined) {
+  store.setKernel(!value || value === NO_KERNEL ? null : value);
+}
+
+const createKernelVisible = ref(false);
+const kernelSelectRef = ref<{ blur: () => void } | null>(null);
+function openCreateKernel() {
+  // The footer lives inside the dropdown, so close it or it floats above the dialog.
+  kernelSelectRef.value?.blur();
+  createKernelVisible.value = true;
+}
+const notebookKernelSuggestion = computed<KernelSuggestion>(() => ({
+  config: {
+    id: "notebook",
+    name: "Notebook",
+    packages: [__APP_VERSION__ ? `flowfile==${__APP_VERSION__}` : "flowfile"],
+    cpu_cores: 2,
+    memory_gb: 4,
+    gpu: false,
+    image_flavour: "lite",
+    custom_image: null,
+    mounted_folders: [],
+  },
+  covered_by_flavour: [],
+  flavour_image_available: null,
+}));
+
+async function onKernelCreated(kernel: KernelInfo) {
+  store.setKernel(kernel.id);
+  await loadKernels();
+}
+
+/** A kernel session keeps the stale badges; the canvas sync state shows only when it failed. */
+function cellSyncState(cell: NotebookCellModel) {
+  const nb = store.active!;
+  const state = flowCellSyncState(nb, cell);
+  return nb.kernelId && state !== "error" ? null : state;
+}
 
 interface KernelBanner {
   tone: "info" | "warning" | "danger";
@@ -509,11 +588,10 @@ interface KernelBanner {
 // Only the "no kernel" nudge waits for Python cells; a bad selection is always worth saying.
 const banner = computed<KernelBanner | null>(() => {
   const s = kernelStatus.value;
-  if (props.flowId) {
-    return store.active?.syncForbidden
-      ? { tone: "warning", icon: "fa-solid fa-lock", text: SYNC_NEEDS_ADMIN }
-      : null;
+  if (props.flowId && store.active?.syncForbidden) {
+    return { tone: "warning", icon: "fa-solid fa-lock", text: SYNC_NEEDS_ADMIN };
   }
+  if (props.flowId && !store.active?.kernelId) return null;
   const name = "kernel" in s ? `"${s.kernel.name}"` : "";
   switch (s.kind) {
     case "docker-off":
@@ -570,9 +648,18 @@ const banner = computed<KernelBanner | null>(() => {
 
 const runAllTitle = computed(() => {
   if (!props.flowId) return undefined;
+  if (store.active?.kernelId)
+    return "Run every cell in the kernel session; the canvas is unchanged";
   return store.active?.syncForbidden
     ? SYNC_NEEDS_ADMIN
     : "Sync the cells, run the flow on the canvas and refresh every cell";
+});
+
+const pushTitle = computed(() => {
+  if (store.active?.syncForbidden) return SYNC_NEEDS_ADMIN;
+  return store.active?.kernelId
+    ? "Run the cells on the kernel and apply what they build to the canvas"
+    : "Sync the cells to the canvas without running them";
 });
 
 async function startKernel() {
@@ -662,11 +749,17 @@ watch(
         tabId,
         attachDataframeSchemas(ownerIdForNotebook(tabId), () => {
           const nb = store.openNotebooks.find((n) => n.tabId === tabId);
+          const flowId = nb?.flowId;
+          const kernelId = nb?.kernelId ?? null;
           return {
-            kernelId: nb?.kernelId ?? null,
+            kernelId,
             flowId: nb?.sessionFlowId ?? 0,
             nodeId: 0,
             catalogRefs: () => pythonCellsOf(tabId).flatMap((c) => scanCatalogRefs(c.code)),
+            fetchSchemas:
+              flowId != null && kernelId
+                ? () => NotebookApi.sessionSchemas({ flow_id: flowId, kernel_id: kernelId })
+                : null,
           };
         }),
       );
@@ -803,11 +896,13 @@ async function loadKernels() {
 
 onMounted(async () => {
   if (props.flowId) {
+    await store.loadFlowStatus();
     await openFlow();
-    return;
+    if (!store.kernelSessions) return;
+  } else {
+    store.ensureHydrated();
+    await store.loadList();
   }
-  store.ensureHydrated();
-  await store.loadList();
   try {
     dockerAvailable.value = (await KernelApi.getDockerStatus()).available;
   } catch {
@@ -857,7 +952,10 @@ async function openFlow() {
     clientMaxNodeId: currentNodeId,
     confirm: (plan, trigger) =>
       ElMessageBox.confirm(
-        planReview(plan).join("\n"),
+        h(
+          "div",
+          planReview(plan).map((line) => h("div", line)),
+        ),
         trigger === "push" ? "Push to the canvas?" : "Run deletes canvas nodes",
         {
           confirmButtonText: trigger === "push" ? "Push" : "Sync and run",
@@ -953,7 +1051,7 @@ async function onPush() {
 
 /** Run a node cell (syncing first when needed), then show its node in the canvas preview. */
 async function previewOnCanvas(cellId: string) {
-  if (!(await store.runCell(cellId))) return;
+  if (!(await store.runFlowCell(cellId))) return;
   const nodeId = store.active?.nodeIds?.[cellId]?.at(-1);
   // The run can report the node gone, and the preview's data route 500s on a missing node.
   if (nodeId == null || !useFlowStore().vueFlowInstance?.findNode?.(String(nodeId))) return;
@@ -1270,6 +1368,14 @@ async function onDelete() {
 }
 .nb-kernel-footer-link:hover {
   text-decoration: underline;
+}
+.nb-kernel-footer-create {
+  display: flex;
+  margin-bottom: var(--spacing-1-5);
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
 }
 
 /* Canvas-style Save split-button (mirrors HeaderButtons .action-btn-split):

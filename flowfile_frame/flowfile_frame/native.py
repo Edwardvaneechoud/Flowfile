@@ -14,10 +14,13 @@ imports from here.
 from __future__ import annotations
 
 import contextlib
+import glob
 import json
+import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
+import polars as pl
 from fastapi import HTTPException
 from pydantic import BaseModel, ValidationError
 
@@ -258,18 +261,106 @@ def source_frame(flow_graph: FlowGraph, node_id: int) -> FlowFrame:
     """The frame of a source node just added to ``flow_graph``.
 
     In notebook mode a source that :func:`notebook_defers` names is seeded from its
-    schema callback and wrapped as a deferred frame, so building it never reads; otherwise the
-    node's build-time result is wrapped.
+    schema callback and wrapped as a deferred frame, so building it never reads. So is a local file
+    source a notebook kernel cannot open (:func:`_kernel_hidden_path`), seeded from its canvas twin;
+    otherwise the node's build-time result is wrapped.
     """
     from flowfile_frame.flow_frame import FlowFrame
 
     node = flow_graph.get_node(node_id)
     if notebook_defers(node.node_type, node.setting_input):
         seed_from_predicted_schema(node)
-        return FlowFrame(
-            data=node.results.resulting_data.data_frame, flow_graph=flow_graph, node_id=node_id, deferred=True
-        )
-    return FlowFrame(data=node.get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id)
+    elif _kernel_hidden_path(node) is not None:
+        seed_deferred_node(node, _kernel_hidden_seed(node))
+        rows = _canvas_rows_at_build(flow_graph, node)
+        if rows is not None:
+            return FlowFrame(data=rows, flow_graph=flow_graph, node_id=node_id)
+    else:
+        return FlowFrame(data=node.get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id)
+    return FlowFrame(data=node.results.resulting_data.data_frame, flow_graph=flow_graph, node_id=node_id, deferred=True)
+
+
+def _canvas_rows_at_build(flow_graph: FlowGraph, node: FlowNode) -> pl.LazyFrame | None:
+    """The canvas twin's rows for a seeded source the kernel cannot open, through the mode's ``row_resolver``.
+
+    They replace the node's zero-row seed, so the frame and everything built on it compute in the kernel;
+    ``None`` (the seed stays) without a twin or when the canvas cannot answer now.
+    """
+    from flowfile_frame.flow_frame import FlowFrame
+
+    mode = current()
+    if mode is None or mode.row_resolver is None or _kernel_twin_id(node) is None:
+        return None
+    seeded = FlowFrame(
+        data=node.results.resulting_data.data_frame, flow_graph=flow_graph, node_id=node.node_id, deferred=True
+    )
+    try:
+        rows = mode.row_resolver(seeded)
+    except NativeNodeError:
+        return None
+    if rows is not None:
+        node.results.resulting_data = FlowDataEngine(rows)
+    return rows
+
+
+def _exists(path: str) -> bool:
+    while glob.has_magic(path):
+        path = os.path.dirname(path)
+    return os.path.exists(path)
+
+
+def _kernel_hidden_path(node: FlowNode) -> str | None:
+    """The path of a local ``read`` / ``list_files`` source a notebook kernel cannot open, else ``None``.
+
+    Only while paths are kept as written with a kernel translation (``notebook.paths_as_written``): the
+    source's path, opened through that translation, does not exist on this filesystem. URLs and paths
+    holding ``${`` are never judged.
+    """
+    translate = input_schema.kernel_file_path.get()
+    if not input_schema.keep_paths_as_written.get() or translate is None:
+        return None
+    settings = node.setting_input
+    if isinstance(settings, input_schema.NodeRead):
+        path = settings.received_file.path or ""
+    elif isinstance(settings, input_schema.NodeListFiles):
+        path = settings.path or ""
+    else:
+        return None
+    if not path or is_url(path) or "${" in path:
+        return None
+    return None if _exists(translate(path) or path) else path
+
+
+def _kernel_twin_id(node: FlowNode) -> int | None:
+    """The first seeded canvas node whose settings equal ``node``'s (file paths aside), by id; ``None`` when none does.
+
+    Nothing is claimed: every read of the same file, however often its cell runs, takes the same twin.
+    """
+    mode = current()
+    if mode is None or node.setting_input is None:
+        return None
+
+    def comparable(settings: BaseModel) -> Any:
+        dumped = _oracle_settings(settings, node.node_type)
+        if isinstance(dumped, dict) and isinstance(dumped.get("received_file"), dict):
+            dumped["received_file"].pop("abs_file_path", None)
+        return dumped
+
+    mine = comparable(node.setting_input)
+    for canvas_id, twin in mode.snapshot.items():
+        if twin.node_type == node.node_type and twin.setting_input is not None:
+            if comparable(twin.setting_input) == mine:
+                return canvas_id
+    return None
+
+
+def _kernel_hidden_seed(node: FlowNode) -> dict[str, list[FlowfileColumn]]:
+    """The seed of a source the kernel cannot open: its canvas twin's schemas, else what it declares, else none."""
+    canvas_id = _kernel_twin_id(node)
+    twin = current().snapshot.get(canvas_id) if canvas_id is not None else None
+    if twin is not None and any(twin.schemas.values()):
+        return _per_handle(twin.schemas, _handles(node))
+    return _per_handle(_declared_schemas(node) or {}, _handles(node))
 
 
 def _placeholder_schema(node: FlowNode) -> list[FlowfileColumn]:

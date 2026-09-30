@@ -1,8 +1,12 @@
 """Shared fixtures for the canvas-notebook tests: the corpus and its placeholder manifest, the production
-runner and its test-only ``exec`` twin, the corpus clean-run once per runner, and a per-user ``TestClient``
-factory."""
+runner and its test-only ``exec`` twin, the corpus clean-run once per runner, a per-user ``TestClient``
+factory, and the ``kernel-sim`` manager that runs a notebook kernel's calls in-process."""
 
+import contextlib
+import contextvars
 import copy
+import io
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -15,6 +19,7 @@ from flowfile_core.auth.jwt import get_current_active_user, get_current_user
 from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
+from flowfile_core.kernel.models import ExecuteResult, KernelInfo, KernelState
 from flowfile_core.notebook import bridge
 from flowfile_core.notebook.interpret import CellInterpreter
 from flowfile_core.notebook.push import seed_snapshot
@@ -272,12 +277,96 @@ def orders_flow(open_as):
 
 @pytest.fixture
 def client_as():
-    def _as(user_id: int) -> TestClient:
+    def _as(user_id: int, client: tuple[str, int] | None = None) -> TestClient:
         user = PydanticUser(username=f"nb_{user_id}", id=user_id, disabled=False, is_admin=user_id == NOTEBOOK_OWNER_ID)
         main.app.dependency_overrides[get_current_active_user] = lambda: user
         main.app.dependency_overrides[get_current_user] = lambda: user
-        return TestClient(main.app)
+        return TestClient(main.app) if client is None else TestClient(main.app, client=client)
 
     yield _as
     main.app.dependency_overrides.pop(get_current_active_user, None)
     main.app.dependency_overrides.pop(get_current_user, None)
+
+
+class KernelSimManager:
+    """The ``kernel-sim`` runner's stand-in ``KernelManager``: one notebook kernel, no Docker.
+
+    ``execute_sync`` runs the snippet core sends with real ``exec`` on a new thread, in a copy of the
+    calling context, with stdout and stderr captured, as the kernel runtime runs a call, and returns an
+    ``ExecuteResult``; so ``notebook.kernel_runner`` and the frame's ``notebook_kernel`` session run for real.
+    The shared folder is ``shared_volume_path`` and paths are the same on both sides. :meth:`node_result`
+    is the session's transport to core: ``kernel_runner.node_result`` in a fresh context, as the kernel's
+    owner, with its ``HTTPException`` detail raised as the kernel would see it.
+    """
+
+    def __init__(
+        self, kernel_id: str = "nb-kernel", owner_id: int = NOTEBOOK_OWNER_ID, shared: Path | None = None
+    ) -> None:
+        self.kernel = KernelInfo(id=kernel_id, name="Notebook", state=KernelState.IDLE, packages=["flowfile"])
+        self.owner_id = owner_id
+        self.requests = []
+        self.shared_volume_path = str(shared)
+        self.node_results: list[dict] = []
+
+    def to_kernel_path(self, local_path, kernel_id=None):
+        return local_path
+
+    def node_result(self, body: dict) -> dict:
+        from fastapi import HTTPException
+
+        from flowfile_core.notebook import kernel_runner
+        from flowfile_frame.native import NativeNodeError
+
+        self.node_results.append(body)
+        user = PydanticUser(username="nb_kernel_owner", id=self.owner_id, disabled=False)
+        args = (self.kernel.id, user, body["flow_id"], body["node_id"], body.get("output_handle"))
+        try:
+            return contextvars.Context().run(kernel_runner.node_result, *args)
+        except HTTPException as exc:
+            raise NativeNodeError(str(exc.detail)) from exc
+
+    def get_kernel_sync(self, kernel_id):
+        return self.kernel if kernel_id == self.kernel.id else None
+
+    def get_kernel_owner(self, kernel_id):
+        return self.owner_id if kernel_id == self.kernel.id else None
+
+    def interrupt_execution_sync(self, kernel_id, exec_token=None):
+        return False
+
+    def execute_sync(self, kernel_id, request, flow_logger=None, cancel_event=None):
+        self.requests.append(request)
+        stdout, stderr, failure = io.StringIO(), io.StringIO(), []
+
+        def run():
+            try:
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    exec(request.code, {"__name__": "__main__"})
+            except BaseException as exc:
+                failure.append(f"{type(exc).__name__}: {exc}")
+
+        thread = threading.Thread(target=contextvars.copy_context().run, args=(run,))
+        thread.start()
+        thread.join()
+        error = failure[0] if failure else None
+        return ExecuteResult(success=error is None, stdout=stdout.getvalue(), stderr=stderr.getvalue(), error=error)
+
+
+@pytest.fixture
+def kernel_sim(monkeypatch, tmp_path):
+    """A :class:`KernelSimManager` as ``get_kernel_manager()``, in electron mode; the sessions are closed afterwards."""
+    import flowfile_core.kernel as kernel_package
+    from flowfile_core.notebook import kernel_runner
+    from flowfile_frame import notebook_kernel
+
+    manager = KernelSimManager(shared=tmp_path / "shared")
+    monkeypatch.setenv("FLOWFILE_MODE", "electron")
+    monkeypatch.setattr(kernel_package, "get_kernel_manager", lambda: manager)
+    monkeypatch.setattr(notebook_kernel, "transport", manager.node_result)
+    yield manager
+    for flow_id in list(notebook_kernel._SESSIONS):
+        notebook_kernel._close(flow_id)
+    kernel_runner._sessions.clear()
+    kernel_runner._verified.clear()
+    kernel_runner._fingerprints.clear()
+    kernel_runner._results.clear()
