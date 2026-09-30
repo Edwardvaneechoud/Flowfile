@@ -14,7 +14,7 @@ from typing import Any, Literal, Protocol
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
 
-NO_RUNNER_DETAIL = "no notebook session runner"
+NO_RUNNER_DETAIL = "no notebook runner is installed"
 
 FailureKind = Literal["needs_kernel", "refused", "error"]
 
