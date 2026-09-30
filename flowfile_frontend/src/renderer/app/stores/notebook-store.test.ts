@@ -1017,6 +1017,43 @@ describe("flow notebook", () => {
     await store.refreshFlowNotebook(7);
     expect(nb.cells).toBe(before);
   });
+
+  it("a flow switch never shows the other flow's cells while the render is out", async () => {
+    const pending = () => {
+      let resolve!: (v: unknown) => void;
+      mocks.render.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+      return (v: unknown) => resolve(v);
+    };
+    mocks.render.mockResolvedValueOnce(rendering("a1", [cell(1, "a = 1")]));
+    const store = useNotebookStore();
+    const a = await store.openFlowNotebook(7, "flow 7");
+    store.setCellCode("node-1", "a = 2");
+
+    const renderB = pending();
+    const openB = store.openFlowNotebook(8, "flow 8");
+    expect(store.active!.flowId).toBe(8);
+    expect(store.active!.cells).toEqual([]);
+    renderB(rendering("b1", [cell(5, "b = 1")]));
+    const b = await openB;
+    expect(store.active!.cells.map((c) => c.code)).toEqual(["b = 1"]);
+
+    const renderA = pending();
+    const openA = store.openFlowNotebook(7, "flow 7");
+    expect(store.active!.tabId).toBe(a.tabId);
+    expect(store.active!.cells.map((c) => c.code)).toEqual(["a = 2"]);
+
+    const renderB2 = pending();
+    const openB2 = store.openFlowNotebook(8, "flow 8");
+    expect(store.active!.tabId).toBe(b.tabId);
+    renderA(rendering("a1", [cell(1, "a = 1")]));
+    await openA;
+    expect(store.active!.tabId).toBe(b.tabId);
+    expect(store.active!.cells.map((c) => c.code)).toEqual(["b = 1"]);
+    expect(a.cells.map((c) => c.code)).toEqual(["a = 2"]);
+    renderB2(rendering("b1", [cell(5, "b = 1")]));
+    await openB2;
+    expect(store.active!.tabId).toBe(b.tabId);
+  });
 });
 
 describe("flow notebook run", () => {

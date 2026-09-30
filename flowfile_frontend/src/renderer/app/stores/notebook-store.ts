@@ -736,7 +736,6 @@ export const useNotebookStore = defineStore("notebook", {
     /** Open (or reuse) the flow's notebook tab, rendered from the canvas, and activate it. */
     async openFlowNotebook(flowId: number, name: string) {
       this.ensureHydrated();
-      const rendering = await NotebookApi.renderFlowNotebook(flowId);
       let nb = this.openNotebooks.find((n) => n.flowId === flowId);
       if (!nb) {
         this.openNotebooks.push({
@@ -757,7 +756,9 @@ export const useNotebookStore = defineStore("notebook", {
         nb = this.openNotebooks[this.openNotebooks.length - 1];
         ensureOwner(ownerOf(nb));
       }
+      // Before the fetch: another tab must not show meanwhile, nor a late response re-activate this one.
       this.activeTabId = nb.tabId;
+      const rendering = await NotebookApi.renderFlowNotebook(flowId);
       if (nb.fingerprint !== rendering.code_fingerprint) applyRendering(nb, rendering);
       return nb;
     },
