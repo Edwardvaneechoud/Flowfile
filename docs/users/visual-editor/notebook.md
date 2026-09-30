@@ -46,25 +46,31 @@ A Polars LazyFrame node (a frame passed in from Python) is **unsupported**: it c
 
 Cell code does not run as Python on the server. **Run on canvas** runs the canvas as it is, not your edited cells.
 
-**Push** is not available in this version: the server has no notebook runner installed, so a push or its preview answers "no notebook session runner" and the canvas stays as it is. When it runs, a push keeps the id, position, description and cached results of every node the edit does not touch, and a lowercase variable name assigned in a cell becomes that node's reference.
+**Push** reads the cells on the server without running them. A cell may only describe the flow, with the calls the notebook itself renders: `fl` readers, transforms and writers, the native node classes, parameters and plain values. Anything else, such as `print(...)`, a loop, another import or a `lambda`, stops the push with an error on its line saying that it needs a kernel.
+
+A push runs no node and opens no connection. A source, or a node whose columns depend on its data (Polars code, pivot, custom nodes), keeps the columns the canvas shows while its settings are unchanged; a new or edited one takes the columns its cell declares, the header of the local file it reads or a catalog table's registered columns, and otherwise the push treats it as having no columns.
+
+A push keeps the id, position, description and cached results of every node the edit does not touch, and a lowercase variable name assigned in a cell becomes that node's reference.
 
 ## What a push refuses or warns about
 
 A push is refused, with the reason in a message, when:
 
 - the canvas changed since the cells were rendered (the panel refreshes the cells; push again);
-- the flow contains a Polars LazyFrame node, from the canvas or from a cell (`fl.FlowFrame(pl.LazyFrame(...))`);
-- a cell defines a custom node class instead of using an installed one;
+- a cell holds code outside the flow description (it needs a kernel); the error names the cell and the line;
+- the flow contains a Polars LazyFrame node (a cell cannot create one: `fl.FlowFrame(pl.LazyFrame(...))` needs a kernel);
+- a cell places a custom node that is not installed, or whose installed file fails to load;
 - a REST API reader carries an inline secret instead of a secret name;
+- a source or writer names a connection you cannot use, or, in a Docker deployment, a cloud reader or writer has a local path or no connection;
 - a cell calls a build-time write or runs a flow; [notebook mode](../python-api/reference/native-nodes.md#notebook-mode) lists the calls.
 
-It asks for confirmation first, listing the reasons, when it deletes nodes, changes flow parameters (parameter changes are not undone by **Undo**), takes a node reference from another node, drops an input a cell did not rebuild, or names a kernel you do not own.
+It asks for confirmation first, listing the reasons, when it deletes nodes, changes flow parameters (parameter changes are not undone by **Undo**), takes a node reference from another node, drops an input a cell did not rebuild, names a kernel you do not own, or places a node it could not check because a node above it has no known columns (the run checks it).
 
 ## Kernels, Docker and deployments
 
 The notebook starts no Python process and needs no [kernel](kernels.md) and no Docker. A Python Script node in the flow still runs on its kernel: its cell is an `fl.PythonScript` or `@fl.python_script` definition, and **Run on canvas** runs it on the kernel, which needs Docker as it does on the canvas.
 
-The code view and **Run on canvas** work for every user, for their own flows, in the desktop app, with `pip install flowfile` and in a Docker deployment. The notebook has no settings of its own.
+The code view and **Run on canvas** work for every user, for their own flows, in the desktop app, with `pip install flowfile` and in a Docker deployment. **Push** and its preview work for every user in the default `electron` mode: the desktop app, and `pip install flowfile` unless you set `FLOWFILE_MODE`. With any other `FLOWFILE_MODE` (`docker` in a Docker deployment, or `package`) they need an admin account, because the catalog lookups a cell can reach do not check each user's access. The notebook has no settings of its own.
 
 ## What is not saved with the flow
 
