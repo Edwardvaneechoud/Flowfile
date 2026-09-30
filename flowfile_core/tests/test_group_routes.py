@@ -25,7 +25,7 @@ def make_flow(flow_id: int) -> int:
     """Register a flow with two manual_input nodes (ids 1 and 2)."""
     if flow_file_handler.get_flow(flow_id) is not None:
         flow_file_handler.delete_flow(flow_id)
-    flow_file_handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name="grp", path="."))
+    flow_file_handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name="grp", path="."), user_id=1)
     graph = flow_file_handler.get_flow(flow_id)
     for node_id, value in ((1, 1), (2, 2)):
         graph.add_node_promise(

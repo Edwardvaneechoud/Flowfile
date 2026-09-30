@@ -687,7 +687,7 @@ def authed_client() -> Iterator[TestClient]:
 
 
 def test_route_404_on_missing_flow(authed_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(suggest_next_node_routes.flow_file_handler, "get_flow", lambda _id: None)
+    monkeypatch.setattr(suggest_next_node_routes.flow_file_handler, "get_flow", lambda _id, _user_id=None: None)
     response = authed_client.post(
         "/ai/suggest_next_node",
         json={"flow_id": 99, "upstream_node_id": "u1"},
@@ -709,7 +709,7 @@ def test_route_409_on_unconfigured_provider(authed_client: TestClient, monkeypat
     monkeypatch.setattr(
         suggest_next_node_routes.flow_file_handler,
         "get_flow",
-        lambda _id: object(),
+        lambda _id, _user_id=None: object(),
     )
 
     def _raise(*_a: Any, **_kw: Any):
@@ -753,7 +753,7 @@ def test_route_happy_path(authed_client: TestClient, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         suggest_next_node_routes.flow_file_handler,
         "get_flow",
-        lambda _id: graph,
+        lambda _id, _user_id=None: graph,
     )
     provider = _FakeProvider(
         content=_payload(

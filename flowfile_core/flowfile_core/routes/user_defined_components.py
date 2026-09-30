@@ -23,7 +23,7 @@ from flowfile_core.flowfile.user_defined.registry import (
     compute_node_key,
     registry,
 )
-from flowfile_core.routes.routes import edit_flow, keep_server_owned_layout
+from flowfile_core.routes.routes import edit_flow, get_flow_or_404, keep_server_owned_layout
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.history_schema import HistoryActionType, OperationResponse
 from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS
@@ -145,8 +145,9 @@ def _node_info_from_entry(entry: LoadedNode) -> CustomNodeInfo:
 @router.get("/custom-node-schema", summary="Get the UI schema for a custom node instance")
 def get_simple_custom_object(flow_id: int, node_id: int, current_user=Depends(get_current_active_user)):
     """Return the frontend schema (with current values) for a user-defined node in a flow."""
+    flow = get_flow_or_404(flow_id, current_user)
     try:
-        node = flow_file_handler.get_node(flow_id=flow_id, node_id=node_id)
+        node = flow_file_handler.get_node(flow_id=flow.flow_id, node_id=node_id)
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     user_defined_node = CUSTOM_NODE_STORE.get(node.node_type)
@@ -187,9 +188,7 @@ def update_user_defined_node(
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get("flow_id"))
     logger.info(f'Updating the data for flow: {flow_id}, node {input_data["node_id"]}')
-    flow = flow_file_handler.get_flow(flow_id)
-    if flow is None:
-        raise HTTPException(status_code=404, detail="could not find the flow")
+    flow = get_flow_or_404(flow_id, current_user)
     user_defined_model = CUSTOM_NODE_STORE.get(node_type)
     if not user_defined_model:
         entry = registry.get(node_type)

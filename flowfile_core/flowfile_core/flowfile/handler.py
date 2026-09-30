@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.utils import create_unique_id
@@ -74,6 +75,9 @@ class FlowfileHandler:
             return flow_id in self._flows
         return flow_id in self._user_sessions.get(user_id, set())
 
+    def _held_by_another_user(self, flow_id: int, user_id: int | None) -> bool:
+        return any(flow_id in flow_ids for uid, flow_ids in self._user_sessions.items() if uid != user_id)
+
     def __add__(self, other: FlowGraph) -> int:
         self._flows[other.flow_id] = other
         return other.flow_id
@@ -81,10 +85,19 @@ class FlowfileHandler:
     def import_flow(self, flow_path: Path | str, user_id: int | None = None, register_session: bool = True) -> int:
         """Load a flow into the registry. ``register_session=False`` loads it into ``_flows`` (still
         passing ``user_id`` to ``open_flow`` for connection resolution) without opening an editor
-        session, so project import doesn't auto-open every flow on the canvas."""
+        session, so project import doesn't auto-open every flow on the canvas.
+
+        The flow keeps the id stored in its file unless another user's session already holds that
+        id: then it gets a fresh one, so opening a shared file never replaces (or shares) someone
+        else's in-memory flow. Re-opening a file the caller already has open still reloads it in place.
+        """
         if isinstance(flow_path, str):
             flow_path = Path(flow_path)
         imported_flow = open_flow(flow_path, user_id=user_id)
+        if self._held_by_another_user(imported_flow.flow_id, user_id):
+            imported_flow.flow_id = create_unique_id()
+            # The setter keeps the per-id logger, which would share the other user's log file.
+            imported_flow.flow_logger = FlowLogger(imported_flow.flow_id)
         self._flows[imported_flow.flow_id] = imported_flow
         imported_flow.flow_settings = self.get_flow_info(imported_flow.flow_id)
         # The stored id is machine-local and a copied file carries the original's; callers
@@ -100,9 +113,12 @@ class FlowfileHandler:
         return imported_flow.flow_id
 
     def register_flow(self, flow_settings: FlowSettings, user_id: int | None = None) -> FlowGraph:
-        """Register a flow with the handler and associate it with a user session."""
+        """Register a flow with the handler and associate it with a user session.
+
+        Raises ``ValueError`` when the id is taken; the existing flow is left alone, since it may
+        belong to another user's session.
+        """
         if flow_settings.flow_id in self._flows:
-            self.delete_flow(flow_settings.flow_id)
             raise ValueError("Flow already registered")
         name = flow_settings.name if flow_settings.name else str(flow_settings.flow_id)
         self._flows[flow_settings.flow_id] = FlowGraph(name=name, flow_settings=flow_settings)
@@ -112,7 +128,7 @@ class FlowfileHandler:
     def get_flow(self, flow_id: int, user_id: int | None = None) -> FlowGraph | None:
         """Get a flow by ID, optionally checking user access."""
         flow = self._flows.get(flow_id, None)
-        if flow and user_id is not None:
+        if flow is not None and user_id is not None:
             if not self.user_has_flow(user_id, flow_id):
                 return None
         return flow

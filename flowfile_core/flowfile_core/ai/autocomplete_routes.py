@@ -81,8 +81,8 @@ def _ensure_known_provider(name: str | None) -> None:
         )
 
 
-def _resolve_flow(flow_id: int):
-    flow = flow_file_handler.get_flow(flow_id)
+def _resolve_flow(flow_id: int, user_id: int):
+    flow = flow_file_handler.get_flow(flow_id, user_id)
     if flow is None:
         raise HTTPException(status_code=404, detail=f"Flow {flow_id} not found")
     return flow
@@ -166,7 +166,7 @@ async def autocomplete_join_keys(
     upstream schemas.
     """
     _ensure_known_provider(body.provider)
-    flow = _resolve_flow(body.flow_id)
+    flow = _resolve_flow(body.flow_id, current_user.id)
     provider = _resolve_provider(db, current_user.id, body.provider, model=body.model)
     return await suggest_join_keys(
         flow,

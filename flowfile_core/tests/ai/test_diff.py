@@ -148,6 +148,7 @@ def registered_flow() -> Iterator[FlowGraph]:
     """Register a flow under ``flow_file_handler`` so route resolution works."""
     flow = _flow_with_orders()
     flow_file_handler._flows[flow.flow_id] = flow
+    flow_file_handler._register_user_session(1, flow.flow_id)
     try:
         yield flow
     finally:

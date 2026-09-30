@@ -600,7 +600,7 @@ def test_endpoint_response_shape():
     flow_id = 9871
     if flow_file_handler.get_flow(flow_id) is not None:
         flow_file_handler.delete_flow(flow_id)
-    flow_file_handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name="sv_endpoint", path="."))
+    flow_file_handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name="sv_endpoint", path="."), user_id=1)
     graph = flow_file_handler.get_flow(flow_id)
     add_manual_input(graph, BASE_DATA, node_id=1)
     add_promise(graph, "group_by", 2)
@@ -923,7 +923,7 @@ def test_endpoint_reports_the_cloud_path_issue():
     flow_id = 9872
     if flow_file_handler.get_flow(flow_id) is not None:
         flow_file_handler.delete_flow(flow_id)
-    flow_file_handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name="sv_cloud", path="."))
+    flow_file_handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name="sv_cloud", path="."), user_id=1)
     cloud_writer_graph(flow_file_handler.get_flow(flow_id))
     try:
         response = client.get("/flow/settings_validation", params={"flow_id": flow_id})
