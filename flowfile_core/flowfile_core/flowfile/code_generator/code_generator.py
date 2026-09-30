@@ -147,6 +147,18 @@ def _try_translate_to_ff_code(formula: str) -> str | None:
 
 
 @functools.lru_cache(maxsize=2048)
+def _interprets_without_a_kernel(fl_code: str) -> bool:
+    """Whether a notebook cell interprets a translated ``fl.`` snippet: every call and read is an allowlist entry.
+
+    A ``lambda`` (hashing), a clock read (``datetime.datetime.now()``) or a method the allowlist does
+    not name fails it. Memoised on the snippet text, the only input the verdict depends on.
+    """
+    from flowfile_core.notebook.interpret import interprets_expression
+
+    return interprets_expression(fl_code)
+
+
+@functools.lru_cache(maxsize=2048)
 def _try_translate_to_polars_code(formula: str) -> str | None:
     """Translate a flowfile formula into native ``pl.``-prefixed Polars expression code.
 
@@ -2204,6 +2216,11 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
     same node type back (``write_csv``, ``.polars_code``, ``with_row_index``, ...), with its user
     description as ``description=``. ``deterministic_names=True`` names an unnamed boundary
     ``<type_label>_<id>``, what a seeded notebook session binds.
+
+    The notebook render (``placeholders=True``) keeps every cell inside what a notebook interprets
+    without a kernel: a formula whose translation a cell does not interpret (a ``lambda`` for hashing,
+    a clock read for ``now()``, a method outside the allowlist) keeps its formula text, and a formula
+    entry kept as text always names its stored output type, so the frame never translates it again.
     """
 
     framework = "fl"
@@ -2370,6 +2387,8 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         ff_code = _try_translate_to_ff_code(strip_outer_parens(formula))
         if ff_code:
             ff_code = _polars_code_to_flowframe(ff_code, modules=("ff",))
+            if self.placeholders and not _interprets_without_a_kernel(ff_code):
+                return None
             self._register_expr_stdlib_imports(ff_code)
             if re.search(r"\bpl\.", ff_code):
                 self.imports.add("import polars as pl")
@@ -2614,7 +2633,7 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         formula = entry.function
         col_name = entry.field.name
         data_type = entry.field.data_type
-        if data_type not in (None, transform_schema.AUTO_DATA_TYPE):
+        if data_type not in (None, transform_schema.AUTO_DATA_TYPE) or self.placeholders:
             return (
                 f".with_columns(flowfile_formulas=[{repr(formula)}], output_column_names=[{repr(col_name)}], "
                 f"output_column_datatypes=[{repr(data_type)}])"
