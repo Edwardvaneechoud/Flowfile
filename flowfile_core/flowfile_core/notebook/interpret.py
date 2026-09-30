@@ -195,8 +195,8 @@ class CellInterpreter:
     """The notebook's cell executor in core: describes each cell through the allowlisted frame calls.
 
     Called as ``executor(filename, code, namespace)`` (see ``notebook_cells.CellExecutor``); one
-    instance serves one run, whose steps, literal elements and placed nodes it bounds
-    (``allowlist.BOUNDS``). ``used`` collects every ``(kind, attribute)`` allowlist entry the
+    instance serves one run, whose steps, literal elements, expression text and placed nodes it
+    bounds (``allowlist.BOUNDS``). ``used`` collects every ``(kind, attribute)`` allowlist entry the
     cells exercised. A failure is raised as ``notebook_cells.CellFailure`` with its 1-based line
     and kind: ``needs_kernel`` outside the dialect, ``refused`` for a bound, and, for a frame
     call that raised, the classification ``execute_cell`` gives that exception.
@@ -206,6 +206,7 @@ class CellInterpreter:
         self.used: set[tuple[str, str]] = set()
         self.steps = 0
         self.elements = 0
+        self.expression_chars = 0
         self._fl: types.ModuleType | None = None
 
     def fl(self) -> types.ModuleType:
@@ -752,10 +753,18 @@ class _Cell:
             self.check_data(item, node, depth + 1)
 
     def checked(self, value: Any, node: ast.AST, line: int | None) -> Any:
-        """A value a call or read produced: it must have a kind (containers: every element)."""
+        """A value a call or read produced: it must have a kind (containers: every element).
+
+        Every expression's generated text is charged to the run, so an operator or call repeated on
+        its own result (each doubling the text) is refused on its line before the text outgrows memory.
+        """
         kind = kind_of(value)
         if kind is None:
             raise _needs_kernel(f"{self.text(node)}, which gives a `{type(value).__name__}`,", line)
+        if kind == "Expr":
+            self.interpreter.expression_chars += len(value._repr_str)
+            if self.interpreter.expression_chars > allowlist.BOUNDS["expression_chars_per_request"]:
+                raise _Failure("The notebook builds expressions too long to read", line, "refused")
         if kind in ("list", "tuple", "dict"):
             self.check_data(value, node)
         return value

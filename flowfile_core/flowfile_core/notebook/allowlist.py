@@ -248,5 +248,6 @@ BOUNDS: dict[str, int] = {
     "literal_elements_per_request": 2_000_000,
     "steps_per_request": 5_000_000,
     "nodes_per_request": 10_000,
+    "expression_chars_per_request": 16_000_000,
 }
 """Size limits: the first four per request (the runner), the rest per cell or per run (the interpreter)."""

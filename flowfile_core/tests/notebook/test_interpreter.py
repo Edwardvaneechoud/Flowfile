@@ -97,6 +97,7 @@ def test_the_corpus_stays_far_below_every_bound(notebook_corpus, corpus_runs, mo
         interpreter = runs[name].interpreter
         assert interpreter.steps * 10 < bounds["steps_per_request"], name
         assert interpreter.elements * 10 < bounds["literal_elements_per_request"], name
+        assert interpreter.expression_chars * 10 < bounds["expression_chars_per_request"], name
         assert len(graph.nodes) * 10 < bounds["nodes_per_request"], name
 
 

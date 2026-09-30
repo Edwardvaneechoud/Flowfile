@@ -257,6 +257,13 @@ def test_a_cell_past_a_bound_is_refused(name, monkeypatch):
     assert result.line == 1
 
 
+def test_an_expression_doubled_line_by_line_is_refused_on_its_line_before_it_outgrows_memory():
+    result, placed = _interpret("e = fl.col('a')\n" + "e = e + e\n" * 22)
+    assert (result.cell_id, result.kind, placed) == (CELL_ID, "refused", 0)
+    assert 1 < result.line <= 23
+    assert "expressions too long" in result.message
+
+
 def test_a_missing_prelude_module_fails_as_its_import_does():
     code = "import not_a_module_anywhere\n\n\n@fl.python_script\ndef s(df):\n    return df"
     result, placed = _interpret(code)
