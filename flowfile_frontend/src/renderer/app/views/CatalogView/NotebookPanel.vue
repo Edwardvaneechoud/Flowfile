@@ -410,7 +410,6 @@ import {
   useNotebookStore,
   cellNodeId,
   flowCellSyncState,
-  planReview,
   registerFlowNotebookHooks,
   syncErrorFor,
   SYNC_NEEDS_ADMIN,
@@ -845,32 +844,36 @@ watch(
 
 async function openFlow() {
   const flowId = props.flowId!;
+  // A push or run can end after the user switched flows; the designer then shows another flow.
+  const onThisFlow = () => useFlowStore().flowId === flowId;
   unregisterFlowHooks = registerFlowNotebookHooks(flowId, {
     prepare: prepareFlowAction,
     clientMaxNodeId: currentNodeId,
     confirm: (plan, trigger) =>
       ElMessageBox.confirm(
-        planReview(plan).join("\n"),
+        plan.warnings.join("\n"),
         trigger === "push" ? "Push to the canvas?" : "Run deletes canvas nodes",
         {
           confirmButtonText: trigger === "push" ? "Push" : "Sync and run",
           cancelButtonText: "Cancel",
           type: "warning",
+          customClass: "nb-lines",
         },
       ).then(
         () => true,
         () => false,
       ),
     pushed: (result) => {
+      if (!onThisFlow()) return;
       seedNodeId(result.max_node_id);
       useFlowStore().requestReload();
     },
     runStarted: () => {
-      editorStore.isRunning = true;
+      if (onThisFlow()) editorStore.isRunning = true;
     },
     runEnded: (info) => {
-      editorStore.isRunning = false;
-      if (info) useResultsStore().insertRunResult(info);
+      if (onThisFlow()) editorStore.isRunning = false;
+      if (info) useResultsStore().insertRunResult(info, onThisFlow());
     },
   });
   try {
@@ -922,7 +925,7 @@ watch(
   () => store.active?.notice,
   (notice) => {
     if (!props.flowId || !notice) return;
-    ElMessage({ type: notice.tone, message: notice.message });
+    ElMessage({ type: notice.tone, message: notice.message, customClass: "nb-lines" });
   },
 );
 
@@ -947,6 +950,8 @@ async function onPush() {
 /** Run a node cell (syncing first when needed), then show its node in the canvas preview. */
 async function previewOnCanvas(cellId: string) {
   if (!(await store.runCell(cellId))) return;
+  // The user may have switched flows while the cell ran.
+  if (store.active?.flowId !== props.flowId || useFlowStore().flowId !== props.flowId) return;
   const nodeId = store.active?.nodeIds?.[cellId]?.at(-1);
   // The run can report the node gone, and the preview's data route 500s on a missing node.
   if (nodeId == null || !useFlowStore().vueFlowInstance?.findNode?.(String(nodeId))) return;
@@ -1604,5 +1609,13 @@ async function onDelete() {
 .nb-insert-zone--disabled {
   pointer-events: none;
   opacity: 0;
+}
+</style>
+
+<style>
+/* Sync confirmations and notices list one reason per line. */
+.nb-lines .el-message-box__message p,
+.nb-lines .el-message__content {
+  white-space: pre-line;
 }
 </style>

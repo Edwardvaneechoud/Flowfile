@@ -35,7 +35,10 @@
               </div>
               <div class="api-item">
                 <code>Run all</code>
-                <p>Syncs, runs the whole flow on the canvas, then refreshes every cell's output.</p>
+                <p>
+                  Syncs first when the notebook no longer matches the canvas, runs the whole flow on
+                  the canvas, then refreshes the output of the parameters cell and every node cell.
+                </p>
               </div>
               <div class="api-item">
                 <code>Push</code>
@@ -67,7 +70,12 @@
             </div>
             <div class="api-item">
               <code>⋯ Cell menu</code>
-              <p>
+              <p v-if="flowMode">
+                Insert above / Insert below, Duplicate, Collapse code / Collapse output, Convert to
+                Markdown / Convert to Python, Run and preview on canvas (node cells: runs the cell,
+                then opens the node's preview on the canvas), and Delete.
+              </p>
+              <p v-else>
                 Insert above / Insert below, Duplicate, Collapse code / Collapse output, and Delete.
               </p>
             </div>

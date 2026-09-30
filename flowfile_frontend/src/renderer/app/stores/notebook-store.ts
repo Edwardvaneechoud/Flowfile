@@ -185,6 +185,10 @@ export interface OpenNotebook {
   /** Per cell id, the rendered cell's kind; cells added in the notebook have none. */
   kinds?: Record<string, RenderedCell["kind"]>;
   fingerprint?: string;
+  /** The last rendering's warnings, told once until they change. */
+  renderWarnings?: string;
+  /** A sync changed the parameters: re-render once the action that synced is over. */
+  rerenderAfterAction?: boolean;
   /** Why the last sync was refused (the 422 detail); cleared when the next sync starts. */
   syncError?: FlowSyncError | null;
   /** Core answered a sync with 403: only admins may sync on this server. Cells stay editable. */
@@ -319,6 +323,11 @@ function applyRendering(nb: OpenNotebook, rendering: NotebookRendering): void {
   nb.fingerprint = rendering.code_fingerprint;
   nb.cells = ensureCells(next);
   nb.dirty = false;
+  const warnings = rendering.warnings.join("\n");
+  if (warnings && warnings !== nb.renderWarnings) {
+    nb.notice = { tone: "warning", message: warnings };
+  }
+  nb.renderWarnings = warnings;
 }
 
 /** The push body: Python cells, the edited ones marked, and their live nodes as `[type, id]`. */
@@ -365,17 +374,10 @@ export function flowCellSyncState(nb: OpenNotebook, cell: NotebookCellModel): Sy
   return isEdited(nb, cell) ? "edited" : "synced";
 }
 
-/** The lines a sync confirmation lists. */
-export function planReview(plan: NotebookPlan): string[] {
-  return [
-    ...plan.deletions.map((id) => `Delete node #${id}`),
-    ...(plan.parameter_changes ? ["Replace the flow parameters"] : []),
-    ...plan.warnings,
-  ];
-}
-
+/** A confirmation lists `plan.warnings`, which already name every deletion and parameter change. */
 export function planNeedsConfirmation(plan: NotebookPlan, trigger: FlowSyncTrigger): boolean {
-  return trigger === "run" ? plan.deletions.length > 0 : planReview(plan).length > 0;
+  if (trigger === "run") return plan.deletions.length > 0;
+  return plan.deletions.length > 0 || plan.parameter_changes || plan.warnings.length > 0;
 }
 
 function isSyncErrorDetail(detail: unknown): detail is NotebookSyncErrorDetail {
@@ -1187,6 +1189,12 @@ export const useNotebookStore = defineStore("notebook", {
       try {
         return await action();
       } finally {
+        if (nb.rerenderAfterAction) {
+          // Only a rendering tells which cell now declares the parameters.
+          nb.rerenderAfterAction = false;
+          nb.fingerprint = undefined;
+          await this.refreshFlowNotebook(nb.flowId!).catch(() => undefined);
+        }
         endBatch(owner, batch);
       }
     },
@@ -1229,6 +1237,7 @@ export const useNotebookStore = defineStore("notebook", {
         this.markFlowPushed(nb, result, cells);
         nb.syncForbidden = false;
         hooks.pushed(result);
+        if (plan.parameter_changes) nb.rerenderAfterAction = true;
         if (trigger === "push") nb.notice = { tone: "success", message: "Pushed to the canvas" };
         else if (result.warnings.length) {
           nb.notice = { tone: "warning", message: result.warnings.join("\n") };

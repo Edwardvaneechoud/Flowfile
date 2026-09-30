@@ -868,6 +868,7 @@ describe("flow notebook", () => {
   });
   const rendering = (fingerprint: string, cells: unknown[]) => ({
     cells,
+    warnings: [],
     code_fingerprint: fingerprint,
   });
 
@@ -1440,9 +1441,21 @@ describe("flow notebook run", () => {
     expect(nb.syncForbidden).toBe(true);
     expect(nb.notice).toEqual({ tone: "warning", message: SYNC_NEEDS_ADMIN });
     expect(mocks.runLineage).not.toHaveBeenCalled();
-    store.setCellCode("cell-2", "filtered_2 = source_1.head(1)");
-    expect(nb.cells.find((c) => c.id === "cell-2")!.code).toBe("filtered_2 = source_1.head(1)");
+    const cell = nb.cells.find((c) => c.id === "cell-2")!;
+    expect(batchProgress(ownerIdForNotebook(nb.tabId))).toBeNull();
+    expect(flowCellSyncState(nb, cell)).toBe("edited");
+    expect(cell.execState).toBe("idle");
     expect(await store.syncFlowNotebook()).toBe("forbidden");
+  });
+
+  it("run all after a refused sync starts no run", async () => {
+    const { store, nb } = await openFlow();
+    store.setCellCode("cell-2", "filtered_2 = source_1");
+    mocks.planPush.mockRejectedValue(httpError(403, "Admin privileges required"));
+    await store.runAll();
+    expect(nb.syncForbidden).toBe(true);
+    expect(mocks.runFlow).not.toHaveBeenCalled();
+    expect(hooks.runStarted).not.toHaveBeenCalled();
   });
 
   it("shows a failed lineage step instead of rows", async () => {
@@ -1538,6 +1551,52 @@ describe("flow notebook run", () => {
     );
     expect(mocks.push).not.toHaveBeenCalled();
     expect(hooks.pushed).not.toHaveBeenCalled();
+    expect(nb.notice).toBeNull();
+  });
+
+  it("re-renders once the run is over after a sync that changes the parameters", async () => {
+    const source = nodeCell([1], "source_1 = 1");
+    const headCell = nodeCell([4], "head_4 = source_1.head(5)");
+    mocks.render.mockResolvedValue(rendered("f1", [importsCell, source]));
+    const { store, nb } = await openFlow();
+    const added = store.addCell("python")!;
+    store.setCellCode(added.id, paramsCell.code);
+    const head = store.addCell("python")!;
+    store.setCellCode(head.id, headCell.code);
+    mocks.getFlowData.mockResolvedValue({
+      node_inputs: [1, 4].map((id) => ({ id, item: "filter" })),
+    });
+    mocks.getRunStatus.mockResolvedValue(
+      finishedRun({ node_step_result: [1, 4].map((node_id) => ({ node_id, success: true })) }),
+    );
+    mocks.planPush.mockResolvedValue(plan({ parameter_changes: true }));
+    mocks.push.mockImplementation(async () => {
+      mocks.render.mockResolvedValue(rendered("f2", [importsCell, paramsCell, source, headCell]));
+      return pushed({ node_ids_by_cell: { [added.id]: [], [head.id]: [4] } });
+    });
+    expect(await store.runCell(head.id)).toBe(true);
+    expect(mocks.runLineage).toHaveBeenCalledWith(FLOW, 4);
+    expect(mocks.runLineage.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.render.mock.invocationCallOrder.at(-1)!,
+    );
+    expect(nb.cells.some((c) => c.id === added.id)).toBe(false);
+    expect(flowCellKind(nb, "parameters")).toBe("parameters");
+    expect(await store.runCell("parameters")).toBe(true);
+    expect(tableOf(nb.cells.find((c) => c.id === "parameters")!.output!).columns).toEqual([
+      "name",
+      "type",
+      "default",
+    ]);
+  });
+
+  it("tells a rendering's warnings through the notice, once until they change", async () => {
+    const failed = "The flow could not be rendered as code: boom";
+    mocks.render.mockResolvedValue({ ...rendered("f1", [importsCell]), warnings: [failed] });
+    const { store, nb } = await openFlow();
+    expect(nb.notice).toEqual({ tone: "warning", message: failed });
+    nb.notice = null;
+    mocks.render.mockResolvedValue({ ...rendered("f2", [importsCell]), warnings: [failed] });
+    await store.refreshFlowNotebook(FLOW);
     expect(nb.notice).toBeNull();
   });
 
