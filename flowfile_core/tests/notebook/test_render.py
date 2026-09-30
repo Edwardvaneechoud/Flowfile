@@ -6,7 +6,7 @@ from flowfile_core.notebook.render import code_fingerprint, render
 from flowfile_core.schemas import input_schema
 from flowfile_frame import notebook
 from flowfile_frame.notebook_cells import clean_run
-from tests.notebook.conftest import NOTEBOOK_OWNER_ID
+from tests.notebook.conftest import NOTEBOOK_OWNER_ID, RUNNERS
 from tests.notebook.test_ledger import grade
 
 
@@ -47,13 +47,15 @@ def test_names_refs_and_descriptions_are_what_the_frame_stores_back():
     assert joined.defines == [f"joined_{joined.node_ids[-1]}"]
 
 
-def test_the_cells_rebuild_every_node_exactly():
+def test_the_cells_rebuild_every_node_exactly(runner_kind):
     graph = _pipeline()
     rendering = render(graph)
     provenance = {c.cell_id: [(graph.get_node(n).node_type, n) for n in c.node_ids] for c in rendering.cells}
     try:
         cells = [(c.cell_id, c.code) for c in rendering.cells]
-        result = clean_run(cells, max(n.node_id for n in graph.nodes), provenance, user_id=NOTEBOOK_OWNER_ID)
+        ceiling = max(n.node_id for n in graph.nodes)
+        executor = RUNNERS[runner_kind].executor()
+        result = clean_run(cells, ceiling, provenance, user_id=NOTEBOOK_OWNER_ID, executor=executor)
     finally:
         if notebook.current() is not None:
             notebook.exit()

@@ -1,13 +1,15 @@
 """The exactness ledger: render, clean run, relabel and compare over the corpus.
 
-For every corpus flow ``g``: ``R = render(g)`` raises nothing and its placeholders stay inside the manifest;
-the cells clean-run through the in-process runner seeded from the canvas (the push path's snapshot), which
-writes nothing and starts no kernel manager; every canvas node is looked up on the relabelled result and
-graded EXACT (same type, settings equal under :mod:`flowfile_core.notebook.compare`), DIFFER (same type,
-settings differ) or LOSSY (a different type, a missing node, or new nodes in its cell). Rows aggregate
-worst-case per node type into the committed ``ledger.json``, which is written when absent and may only
-improve afterwards (set ``FLOWFILE_UPDATE_NOTEBOOK_LEDGER=1`` to record an improvement). A flow whose rows
-are all EXACT must also render back to the same cell text.
+For every corpus flow ``g`` and each runner (the production interpreting runner and the test-only ``exec``
+one): ``R = render(g)`` raises nothing and its placeholders stay inside the manifest; the cells clean-run on a
+sync of the canvas (the push path's snapshot), which writes nothing and starts no kernel manager; every canvas
+node is looked up on the relabelled result and graded EXACT (same type, settings equal under
+:mod:`flowfile_core.notebook.compare`), DIFFER (same type, settings differ) or LOSSY (a different type, a
+missing node, or new nodes in its cell). Rows aggregate worst-case per node type into the committed
+``ledger.json``, which is written when absent and may only improve afterwards (set
+``FLOWFILE_UPDATE_NOTEBOOK_LEDGER=1`` to record an improvement). A flow whose rows are all EXACT must also
+render back to the same cell text. Each runner clean-runs the corpus once per session (``corpus_runs``), shared
+with the round trip.
 """
 
 from __future__ import annotations
@@ -20,32 +22,16 @@ from pathlib import Path
 import pytest
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.notebook.bridge import CleanRunRequest, CleanRunResult
+from flowfile_core.notebook.bridge import CleanRunResult
 from flowfile_core.notebook.compare import parameters_equal, settings_equal
 from flowfile_core.notebook.push import seed_snapshot
 from flowfile_core.notebook.render import NotebookRendering, render
 from flowfile_frame import notebook
 from flowfile_frame.notebook_cells import seed_session
-from test_utils.notebook_demo import storage_files
-from tests.notebook.conftest import NOTEBOOK_OWNER_ID, InProcessCleanRunner, no_kernel_manager
+from tests.notebook.conftest import NOTEBOOK_OWNER_ID
 
 LEDGER_FILE = Path(__file__).parent / "ledger.json"
 RANK = {"EXACT": 0, "DIFFER": 1, "LOSSY": 2}
-
-
-def _clean_run(graph: FlowGraph, rendering: NotebookRendering) -> CleanRunResult:
-    """Clean-run the rendered cells through the in-process runner, seeded from ``graph``."""
-    request = CleanRunRequest(
-        cells=[(cell.cell_id, cell.code) for cell in rendering.cells],
-        provenance={
-            cell.cell_id: [(graph.get_node(node_id).node_type, node_id) for node_id in cell.node_ids]
-            for cell in rendering.cells
-            if cell.node_ids
-        },
-        ceiling=max((node.node_id for node in graph.nodes), default=0),
-        snapshot=seed_snapshot(graph),
-    )
-    return InProcessCleanRunner().clean_run(NOTEBOOK_OWNER_ID, graph.flow_id, request)
 
 
 def _rerender(graph: FlowGraph, result: CleanRunResult) -> NotebookRendering:
@@ -94,19 +80,21 @@ def _worst(a: str | None, b: str) -> str:
     return b if a is None or RANK[b] > RANK[a] else a
 
 
-@pytest.fixture(scope="module")
-def ledger_rows(notebook_corpus, expected_placeholders):
-    """``{flow name: {node_id: (node_type, grade, detail)}}`` plus the rendering checks, computed once."""
-    before = storage_files()
+@pytest.fixture
+def ledger_rows(corpus_runs, runner_kind):
+    """``{flow name: {rendering, placeholders, result, graph}}`` of one runner's corpus pass, plus what it wrote."""
+    corpus_pass = corpus_runs[runner_kind]
     flows = {}
-    with no_kernel_manager() as kernel_calls:
-        for name, graph in notebook_corpus:
-            rendering = render(graph)
-            placeholders = sorted(n for cell in rendering.cells if cell.status != "code" for n in cell.node_ids)
-            result = _clean_run(graph, rendering)
-            flows[name] = {"rendering": rendering, "placeholders": placeholders, "result": result, "graph": graph}
-    flows["__files__"] = storage_files() - before
-    flows["__kernel_calls__"] = list(kernel_calls)
+    for name, run in corpus_pass.runs.items():
+        placeholders = sorted(n for cell in run.rendering.cells if cell.status != "code" for n in cell.node_ids)
+        flows[name] = {
+            "rendering": run.rendering,
+            "placeholders": placeholders,
+            "result": run.result,
+            "graph": run.graph,
+        }
+    flows["__files__"] = corpus_pass.files
+    flows["__kernel_calls__"] = corpus_pass.kernel_calls
     return flows
 
 
@@ -121,7 +109,7 @@ def test_placeholders_stay_inside_the_manifest(ledger_rows, expected_placeholder
 
 def test_every_flow_clean_runs(ledger_rows):
     flows = _flows(ledger_rows).items()
-    failed = {name: flow["result"].error for name, flow in flows if flow["result"].error}
+    failed = {name: flow["result"].traceback or flow["result"].error for name, flow in flows if flow["result"].error}
     assert not failed, json.dumps(failed, indent=1)
 
 
