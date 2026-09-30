@@ -9,6 +9,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from flowfile_core.notebook.render import code_fingerprint
+from shared.storage_config import storage
 from tests.notebook.conftest import NOTEBOOK_OWNER_ID
 from tests.notebook.test_push import _body, _cell_of, _node_of_type, _raise_threshold
 
@@ -17,11 +18,13 @@ SYNC_ROUTES = ("/notebook/plan", "/editor/notebook/push/")
 
 
 @pytest.fixture
-def flowfile_mode(monkeypatch):
+def flowfile_mode(monkeypatch, tmp_path):
     def _set(mode: str) -> None:
         monkeypatch.setenv("FLOWFILE_MODE", mode)
         monkeypatch.setenv("JWT_SECRET_KEY", "notebook-sync-gate-secret")
         monkeypatch.setenv("FLOWFILE_MASTER_KEY", Fernet.generate_key().decode())
+        # storage caches the user-data root on first read; a docker-mode root must not outlive the test
+        monkeypatch.setattr(storage, "_user_data_dir", tmp_path)
 
     return _set
 
