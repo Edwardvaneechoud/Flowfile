@@ -1,5 +1,6 @@
-// Catalog notebook CRUD plus a flow's canvas-notebook routes (render, plan, push, run lineage). Python cells execute via KernelApi, not here.
+// Catalog notebook CRUD plus a flow's canvas-notebook routes (render, plan, push, run lineage). Catalog cells execute via KernelApi, not here.
 import axios from "../services/axios.config";
+import type { HistoryState } from "../types/flow.types";
 import type { AccessInfo } from "../types/sharing.types";
 
 const API_BASE_URL = "/catalog/notebooks";
@@ -59,6 +60,8 @@ export interface RenderedCell {
 
 export interface NotebookRendering {
   cells: RenderedCell[];
+  warnings: string[];
+  var_by_node: Record<number, string>;
   code_fingerprint: string;
 }
 
@@ -72,23 +75,36 @@ export interface NotebookPushBody {
 }
 
 export interface NotebookPlan {
+  operations: Record<string, unknown>[];
   warnings: string[];
   deletions: number[];
   parameter_changes: boolean;
-}
-
-export interface NotebookPushResult {
-  code_fingerprint: string;
-  max_node_id: number;
   node_ids_by_cell: Record<string, number[]>;
 }
 
-export class NotebookApi {
-  /** `{sessions}` for the current user, `null` when the status request fails. */
-  static async flowStatus(): Promise<{ sessions: boolean } | null> {
-    return (await axios.get("/notebook/status").catch(() => null))?.data ?? null;
-  }
+export interface NotebookPushResult {
+  history: HistoryState;
+  code_fingerprint: string;
+  max_node_id: number;
+  node_ids_by_cell: Record<string, number[]>;
+  warnings: string[];
+}
 
+/** The 422 detail of plan and push: the failing cell and 1-based line (`null` when unknown). */
+export interface NotebookSyncErrorDetail {
+  message: string;
+  cell_id: string | null;
+  line: number | null;
+  kind: "needs_kernel" | "refused" | "error";
+}
+
+export interface RunLineageResult {
+  message: string;
+  flow_id: number;
+  node_ids: number[];
+}
+
+export class NotebookApi {
   static async renderFlowNotebook(flowId: number): Promise<NotebookRendering> {
     return (await axios.get("/notebook/render", { params: { flow_id: flowId } })).data;
   }
@@ -102,8 +118,9 @@ export class NotebookApi {
   }
 
   /** Runs `nodeId` and its ancestors on the canvas; poll `/flow/run_status/` afterwards. */
-  static async runLineage(flowId: number, nodeId: number): Promise<void> {
-    await axios.post("/editor/notebook/run_lineage/", { flow_id: flowId, node_id: nodeId });
+  static async runLineage(flowId: number, nodeId: number): Promise<RunLineageResult> {
+    return (await axios.post("/editor/notebook/run_lineage/", { flow_id: flowId, node_id: nodeId }))
+      .data;
   }
 
   static async list(): Promise<NotebookSummary[]> {

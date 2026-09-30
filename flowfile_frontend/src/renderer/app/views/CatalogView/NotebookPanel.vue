@@ -1,21 +1,10 @@
 <template>
   <div class="notebook-panel">
-    <!-- One header row: catalog tabs and "+" in catalog mode, the session pill in flow mode. -->
+    <!-- One header row: catalog tabs and "+" in catalog mode, then the tools. -->
     <div class="nb-header">
       <div class="nb-toolbar">
-        <span
-          v-if="flowId && sessionPill"
-          class="nb-session-pill"
-          :class="`nb-session-pill--${sessionPill.tone}`"
-          data-testid="nb-session-status"
-          :title="sessionPill.title"
-        >
-          <span v-if="sessionPill.tone === 'ready'" class="nb-session-dot"></span>
-          <i v-else :class="sessionPill.icon"></i>
-          <span class="nb-session-pill__text">{{ sessionPill.text }}</span>
-        </span>
         <el-tabs
-          v-else-if="catalogTabs.length"
+          v-if="!flowId && catalogTabs.length"
           :model-value="store.activeTabId ?? undefined"
           type="card"
           closable
@@ -166,6 +155,7 @@
                   <i class="fa-solid fa-eraser nb-menu-icon"></i> Clear outputs
                 </el-dropdown-item>
                 <el-dropdown-item
+                  v-if="!flowId"
                   :disabled="batchBusy || resetPending"
                   title="Clear this notebook's kernel variables; the kernel keeps running"
                   @click="onResetSession"
@@ -194,8 +184,12 @@
           type="button"
           class="nb-btn"
           data-testid="nb-push"
-          title="Write the edited cells onto the canvas"
-          :disabled="pushing || readOnly || editorStore.isRunning || batchBusy"
+          :title="
+            store.active?.syncForbidden
+              ? SYNC_NEEDS_ADMIN
+              : 'Sync the cells to the canvas without running them'
+          "
+          :disabled="batchBusy || editorStore.isRunning"
           @click="onPush"
         >
           <i :class="pushing ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-upload'"></i>
@@ -241,7 +235,9 @@
         <button
           type="button"
           class="nb-btn nb-btn--run nb-run-all"
-          :disabled="batchBusy || readOnly"
+          data-testid="nb-run-all"
+          :title="runAllTitle"
+          :disabled="batchBusy"
           @click="store.runAll()"
         >
           <i :class="batchBusy ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-forward'"></i>
@@ -250,7 +246,7 @@
       </div>
     </div>
 
-    <!-- Why Python cells won't run and what to do; flow mode shows only failures (the pill carries the rest). -->
+    <!-- Why Python cells won't run and what to do; in flow mode, why syncing is refused. -->
     <div v-if="banner" class="nb-banner" :class="`nb-banner--${banner.tone}`">
       <i :class="banner.icon"></i>
       <span class="nb-banner__text">{{ banner.text }}</span>
@@ -315,9 +311,10 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           :node-id="cellNodeId(cell.id)"
           :structural-disabled="structuralDisabled"
           :runtime="runtimeFor(cell.id)"
-          :busy="batchBusy || readOnly"
-          :read-only="readOnly"
+          :busy="batchBusy"
           :type-in-menu="!!flowId"
+          :sync-state="flowId ? flowCellSyncState(store.active, cell) : null"
+          :sync-error="flowId ? syncErrorFor(store.active, cell) : null"
           :active="cell.id === store.active.focusedCellId"
           :dragging="drag.draggingId.value === cell.id"
           @run="store.runCell(cell.id)"
@@ -338,10 +335,10 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           <template v-if="flowId && store.active.nodeIds?.[cell.id]?.length" #menu-extra>
             <el-dropdown-item
               data-action="run-on-canvas"
-              :disabled="editorStore.isRunning || canvasRunning"
-              @click="runOnCanvas(cell.id)"
+              :disabled="batchBusy || editorStore.isRunning"
+              @click="previewOnCanvas(cell.id)"
             >
-              <i class="fa-solid fa-diagram-project nb-menu-icon"></i> Run on canvas
+              <i class="fa-solid fa-diagram-project nb-menu-icon"></i> Run and preview on canvas
             </el-dropdown-item>
           </template>
         </CatalogNotebookCell>
@@ -400,7 +397,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
       </template>
     </el-dialog>
 
-    <NotebookHelp v-if="showHelp" @close="showHelp = false" />
+    <NotebookHelp v-if="showHelp" :flow-mode="!!flowId" @close="showHelp = false" />
   </div>
 </template>
 
@@ -409,13 +406,19 @@ import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from "vue"
 import debounce from "lodash/debounce";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
-import { useNotebookStore, cellNodeId, flowPushBody } from "../../stores/notebook-store";
+import {
+  useNotebookStore,
+  cellNodeId,
+  flowCellSyncState,
+  planReview,
+  registerFlowNotebookHooks,
+  syncErrorFor,
+  SYNC_NEEDS_ADMIN,
+} from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
 import { catalogSaveErrorMessage } from "../../composables/saveError";
 import { KernelApi } from "../../api/kernel.api";
-import { FlowApi } from "../../api/flow.api";
-import { NotebookApi } from "../../api/notebook.api";
 import { useEditorStore } from "../../stores/editor-store";
 import { useNodeStore } from "../../stores/column-store";
 import { useDrawerStore } from "../../stores/drawer-store";
@@ -448,13 +451,12 @@ import type { KernelInfo } from "../../types/kernel.types";
 
 const KERNEL_POLL_MS = 5000;
 
-/** With `flowId` the panel is that flow's canvas notebook: one ephemeral tab on its session. */
+/** With `flowId` the panel is that flow's canvas notebook: one ephemeral tab rendered from the canvas. */
 const props = defineProps<{ flowId?: number }>();
 
 const store = useNotebookStore();
 const editorStore = useEditorStore();
 const catalogTabs = computed(() => store.openNotebooks.filter((n) => n.flowId == null));
-const readOnly = computed(() => !!props.flowId && store.flowStatus?.sessions === false);
 const catalogStore = useCatalogStore();
 const router = useRouter();
 const kernelsRoute = { name: "compute", query: { tab: "kernels" } } as const;
@@ -480,6 +482,7 @@ const dockerAvailable = ref(true);
 const startingKernel = ref(false);
 const resetPending = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let unregisterFlowHooks: (() => void) | null = null;
 
 const kernelStatus = computed(() =>
   resolveNotebookKernelStatus({
@@ -507,21 +510,9 @@ interface KernelBanner {
 const banner = computed<KernelBanner | null>(() => {
   const s = kernelStatus.value;
   if (props.flowId) {
-    if (readOnly.value) {
-      return {
-        tone: "warning",
-        icon: "fa-solid fa-lock",
-        text: "Sessions are disabled on this server",
-      };
-    }
-    if (s.kind === "error") {
-      return {
-        tone: "danger",
-        icon: "fa-solid fa-circle-exclamation",
-        text: "Flow session failed",
-      };
-    }
-    return null;
+    return store.active?.syncForbidden
+      ? { tone: "warning", icon: "fa-solid fa-lock", text: SYNC_NEEDS_ADMIN }
+      : null;
   }
   const name = "kernel" in s ? `"${s.kernel.name}"` : "";
   switch (s.kind) {
@@ -577,48 +568,11 @@ const banner = computed<KernelBanner | null>(() => {
   }
 });
 
-interface SessionPill {
-  tone: "ready" | "starting" | "off" | "error";
-  icon: string;
-  text: string;
-  title: string;
-}
-
-// Flow mode's steady session states live in the toolbar pill; only failures get a banner.
-const sessionPill = computed<SessionPill | null>(() => {
-  if (!props.flowId) return null;
-  if (readOnly.value) {
-    return {
-      tone: "off",
-      icon: "fa-solid fa-lock",
-      text: "Sessions off",
-      title: "Sessions are disabled on this server",
-    };
-  }
-  const kind = kernelStatus.value.kind;
-  // Ready only once a session read says so; anything before that (no id yet, first poll) is starting.
-  if (kind !== "ready" && kind !== "error") {
-    return {
-      tone: "starting",
-      icon: "fa-solid fa-spinner fa-spin",
-      text: "Flow session starting…",
-      title: "The flow session is starting",
-    };
-  }
-  if (kind === "error") {
-    return {
-      tone: "error",
-      icon: "fa-solid fa-triangle-exclamation",
-      text: "Flow session failed",
-      title: "The flow session is in an error state",
-    };
-  }
-  return {
-    tone: "ready",
-    icon: "",
-    text: "Flow session ready",
-    title: "Cells run in this flow's Python session",
-  };
+const runAllTitle = computed(() => {
+  if (!props.flowId) return undefined;
+  return store.active?.syncForbidden
+    ? SYNC_NEEDS_ADMIN
+    : "Sync the cells, run the flow on the canvas and refresh every cell";
 });
 
 async function startKernel() {
@@ -736,7 +690,7 @@ const batchLabel = computed(() => {
   return `Running cell ${Math.min(progress.done + 1, progress.total)} of ${progress.total}`;
 });
 
-const structuralDisabled = computed(() => batchBusy.value || readOnly.value);
+const structuralDisabled = computed(() => batchBusy.value);
 
 function runtimeFor(cellId: string) {
   return activeOwnerId.value ? (cellRuntime(activeOwnerId.value, cellId) ?? null) : null;
@@ -840,8 +794,7 @@ function onRedoCellAction() {
 
 async function loadKernels() {
   try {
-    const flowKernel = props.flowId ? store.active?.kernelId : null;
-    kernels.value = flowKernel ? [await KernelApi.get(flowKernel)] : await KernelApi.getAll();
+    kernels.value = await KernelApi.getAll();
     kernelsLoaded.value = true;
   } catch {
     // Keep the last known list: a transient fetch failure must not flag every kernel as gone.
@@ -868,6 +821,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (pollTimer) clearInterval(pollTimer);
+  unregisterFlowHooks?.();
   for (const detach of schemaDetachers.values()) detach();
   schemaDetachers.clear();
   if (!props.flowId) store.closeAllSessions();
@@ -898,11 +852,36 @@ const errorText = (e: any, fallback: string): string => {
 
 async function openFlow() {
   const flowId = props.flowId!;
+  unregisterFlowHooks = registerFlowNotebookHooks(flowId, {
+    prepare: prepareFlowAction,
+    clientMaxNodeId: currentNodeId,
+    confirm: (plan, trigger) =>
+      ElMessageBox.confirm(
+        planReview(plan).join("\n"),
+        trigger === "push" ? "Push to the canvas?" : "Run deletes canvas nodes",
+        {
+          confirmButtonText: trigger === "push" ? "Push" : "Sync and run",
+          cancelButtonText: "Cancel",
+          type: "warning",
+        },
+      ).then(
+        () => true,
+        () => false,
+      ),
+    pushed: (result) => {
+      seedNodeId(result.max_node_id);
+      useFlowStore().requestReload();
+    },
+    runStarted: () => {
+      editorStore.isRunning = true;
+    },
+    runEnded: (info) => {
+      editorStore.isRunning = false;
+      if (info) useResultsStore().insertRunResult(info);
+    },
+  });
   try {
-    if (!store.flowStatus) await store.loadFlowStatus();
     await store.openFlowNotebook(flowId, `Flow ${flowId}`);
-    await loadKernels();
-    pollTimer = setInterval(loadKernels, KERNEL_POLL_MS);
   } catch (e) {
     ElMessage.error(errorText(e, "Could not render the notebook"));
   }
@@ -932,80 +911,53 @@ async function closeSettingsDrawer(): Promise<boolean> {
   return true;
 }
 
-async function onPush() {
-  const nb = store.active;
-  const flowId = props.flowId;
-  if (!nb || !flowId || pushing.value || editorStore.isRunning) return;
-  pushing.value = true;
-  try {
+/** Before a sync or canvas run: flush canvas edits and save the drawer; never during a run. */
+async function prepareFlowAction(): Promise<boolean> {
+  if (!editorStore.isRunning) {
     await flushPendingEdits();
     await whenMutationsIdle();
-    if (!(await closeSettingsDrawer())) return;
+    if (!(await closeSettingsDrawer())) return false;
     await whenMutationsIdle();
-    const nodes = (await FlowApi.getFlowData(flowId)).node_inputs;
-    const body = flowPushBody(nb, new Map(nodes.map((n) => [n.id, n.item])), currentNodeId());
-    const plan = await NotebookApi.planPush(body);
-    const review = [
-      ...plan.deletions.map((id) => `Delete node #${id}`),
-      ...(plan.parameter_changes ? ["Replace the flow parameters"] : []),
-      ...plan.warnings,
-    ];
-    if (review.length) {
-      const confirmed = await ElMessageBox.confirm(review.join("\n"), "Push to the canvas?", {
-        confirmButtonText: "Push",
-        cancelButtonText: "Cancel",
-        type: "warning",
-      }).catch(() => false);
-      if (!confirmed) return;
-    }
-    const result = await NotebookApi.pushFlowNotebook(body);
-    store.markFlowPushed(nb, result);
-    seedNodeId(result.max_node_id);
-    useFlowStore().requestReload();
-    ElMessage.success("Pushed to the canvas");
-  } catch (e: any) {
-    if (e?.response?.status === 409) {
-      ElMessage.error("The canvas changed since these cells were rendered; they were refreshed.");
-      await store.refreshFlowNotebook(flowId).catch(() => undefined);
-    } else {
-      ElMessage.error(errorText(e, "The push failed"));
-    }
+  }
+  if (!editorStore.isRunning) return true;
+  ElMessage.warning("The flow is running; try again when it finishes.");
+  return false;
+}
+
+// Flow actions report through the tab's notice; a refused sync also keeps the admin banner up.
+watch(
+  () => store.active?.notice,
+  (notice) => {
+    if (!props.flowId || !notice) return;
+    ElMessage({ type: notice.tone, message: notice.message });
+  },
+);
+
+// A refused sync can stop at a cell that is scrolled out of view.
+watch(
+  () => store.active?.syncError?.cell_id,
+  (cellId) => {
+    if (!props.flowId || !cellId) return;
+    hostRef.value?.querySelector(cellSelector(cellId))?.scrollIntoView({ block: "nearest" });
+  },
+);
+
+async function onPush() {
+  pushing.value = true;
+  try {
+    await store.syncFlowNotebook();
   } finally {
     pushing.value = false;
   }
 }
 
-const canvasRunning = ref(false);
-
-/** Run a cell's last node and its ancestors on the canvas, then show that node's preview. */
-async function runOnCanvas(cellId: string) {
-  const flowId = props.flowId;
+/** Run a node cell (syncing first when needed), then show its node in the canvas preview. */
+async function previewOnCanvas(cellId: string) {
+  if (!(await store.runCell(cellId))) return;
   const nodeId = store.active?.nodeIds?.[cellId]?.at(-1);
-  if (!flowId || nodeId == null || editorStore.isRunning || canvasRunning.value) return;
-  canvasRunning.value = true;
-  editorStore.isRunning = true;
-  try {
-    const before = (await FlowApi.getRunStatus(flowId)).start_time;
-    await NotebookApi.runLineage(flowId, nodeId);
-    const started = Date.now();
-    let seenRunning = false;
-    for (;;) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      const info = await FlowApi.getRunStatus(flowId);
-      seenRunning ||= info.is_running;
-      // The first polls can still report the previous (or the "init") run as idle.
-      const newer = info.run_type !== "init" && !!info.start_time && info.start_time !== before;
-      if (info.is_running || !(seenRunning || newer || Date.now() - started > 10_000)) continue;
-      useResultsStore().insertRunResult(info);
-      break;
-    }
-    useDrawerStore().selectNodeForPreview(nodeId);
-  } catch (e) {
-    ElMessage.error(errorText(e, "Run on canvas failed"));
-  } finally {
-    editorStore.isRunning = false;
-    canvasRunning.value = false;
-  }
+  // The run can report the node gone, and the preview's data route 500s on a missing node.
+  if (nodeId == null || !useFlowStore().vueFlowInstance?.findNode?.(String(nodeId))) return;
+  useDrawerStore().selectNodeForPreview(nodeId);
 }
 
 async function onResetSession() {
@@ -1167,51 +1119,6 @@ async function onDelete() {
   width: 16px;
   margin-right: 6px;
   text-align: center;
-}
-
-/* Flow-mode session state pill; failures still get the banner. */
-.nb-session-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  height: 22px;
-  padding: 0 10px 0 8px;
-  border-radius: var(--border-radius-full);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  white-space: nowrap;
-}
-.nb-session-pill > i {
-  flex: none;
-  font-size: 10px;
-}
-.nb-session-pill__text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.nb-session-pill--ready {
-  background: var(--color-success-light);
-  color: var(--color-success-dark);
-}
-.nb-session-pill--starting {
-  background: var(--color-info-light);
-  color: var(--color-info);
-}
-.nb-session-pill--off {
-  background: var(--color-background-tertiary);
-  color: var(--color-text-secondary);
-}
-.nb-session-pill--error {
-  background: var(--color-danger-light);
-  color: var(--color-danger-dark);
-}
-.nb-session-dot {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-success);
 }
 
 /* Ghost icon buttons for panel-local tools. */

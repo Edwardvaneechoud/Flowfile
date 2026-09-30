@@ -67,20 +67,4 @@ describe("resolveNotebookKernelStatus", () => {
       ),
     ).toBe(true);
   });
-
-  it("treats a flow session as ready without Docker, and reports it starting", () => {
-    const id = "flow-session:7";
-    const input = { kernelId: id, kernels: [], kernelsLoaded: true, dockerAvailable: false };
-    expect(resolveNotebookKernelStatus(input).kind).toBe("ready");
-    const starting = { ...input, kernels: [kernel(id, "starting")] };
-    expect(resolveNotebookKernelStatus(starting).kind).toBe("starting");
-  });
-
-  it("reports a flow session starting until its first read lands", () => {
-    const id = "flow-session:7";
-    const input = { kernelId: id, kernels: [], kernelsLoaded: false, dockerAvailable: false };
-    expect(resolveNotebookKernelStatus(input).kind).toBe("starting");
-    const idle = { ...input, kernels: [kernel(id, "idle")] };
-    expect(resolveNotebookKernelStatus(idle).kind).toBe("starting");
-  });
 });
