@@ -1,11 +1,12 @@
 import asyncio
+import functools
 import json
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import aiofiles
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from flowfile_core import ServerRun, flow_file_handler
@@ -32,7 +33,24 @@ async def format_sse_message(data: str) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
-@router.post("/raw_logs", tags=["flow_logging"], dependencies=[Depends(require_internal_token)])
+@functools.cache
+def _warn_unsigned_raw_log() -> None:
+    """Say once per process why kernel output is missing from a flow log; the 401 alone is silent."""
+    logger.warning(
+        "Rejected a /raw_logs post without a valid X-Internal-Token: check that FLOWFILE_INTERNAL_TOKEN is "
+        "set for core; a kernel image built before log posts were signed must be rebuilt."
+    )
+
+
+def _require_signed_raw_log(x_internal_token: str | None = Header(None, alias="X-Internal-Token")) -> None:
+    try:
+        require_internal_token(x_internal_token)
+    except HTTPException:
+        _warn_unsigned_raw_log()
+        raise
+
+
+@router.post("/raw_logs", tags=["flow_logging"], dependencies=[Depends(_require_signed_raw_log)])
 async def add_raw_log(raw_log_input: schemas.RawLogInput):
     """Adds a log message to the log file for a given flow_id.
 

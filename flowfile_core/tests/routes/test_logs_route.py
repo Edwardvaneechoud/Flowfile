@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.auth.jwt import get_internal_token
+from flowfile_core.routes import logs
 from flowfile_core.routes.routes import flow_file_handler
 
 LOG_LINE = "hello from the log stream"
@@ -96,6 +97,25 @@ def test_unsigned_raw_log_is_refused(own_flow, request_headers):
     response = client.post("/raw_logs", json=_raw_log(own_flow, "forged line"), headers=request_headers)
     assert response.status_code == 401
     assert "forged line" not in _flow_log_text(own_flow)
+
+
+@pytest.fixture()
+def fresh_unsigned_warning():
+    logs._warn_unsigned_raw_log.cache_clear()
+    yield
+    logs._warn_unsigned_raw_log.cache_clear()
+
+
+def test_unsigned_raw_log_warns_once_per_process(own_flow, fresh_unsigned_warning, monkeypatch):
+    warnings: list[str] = []
+    monkeypatch.setattr(logs.logger, "warning", lambda message, *args, **kwargs: warnings.append(message))
+    for _ in range(2):
+        response = client.post("/raw_logs", json=_raw_log(own_flow, "unsigned line"))
+        assert response.status_code == 401
+    assert "unsigned line" not in _flow_log_text(own_flow)
+    assert len(warnings) == 1
+    assert "/raw_logs" in warnings[0] and "must be rebuilt" in warnings[0]
+    assert "FLOWFILE_INTERNAL_TOKEN" in warnings[0]
 
 
 def test_raw_log_signed_with_the_internal_token_lands(own_flow):
