@@ -412,6 +412,9 @@ class NativeHandlersMixin(ConverterMixinBase):
     ) -> str | None:
         """The ``@fl.python_script`` form, when regenerating its cells reproduces the stored ones exactly.
 
+        The prelude's lines are independent statements, so a stored prelude in another order (one saved
+        when the frame ordered it by bytecode) still counts as reproduced.
+
         Pure text on the core side: prelude imports become stub modules (each must pass
         ``importlib.util.find_spec``) and constant assignments become literals, so nothing the script imports is loaded;
         only the ``def`` is compiled, then the frame's own ``_notebook_cells`` regenerates the cells.
@@ -473,7 +476,9 @@ class NativeHandlersMixin(ConverterMixinBase):
                     continue
                 finally:
                     linecache.cache.pop(filename, None)
-                if regenerated == cells:
+                if regenerated == cells or (
+                    prelude and regenerated[1:] == cells[1:] and sorted(regenerated[0].split("\n")) == sorted(prelude)
+                ):
                     self._script_prelude = {**known, **bound}
                     return self._decorated_text(
                         settings, var_name, prelude, source, function, option, inputs, schema_literals

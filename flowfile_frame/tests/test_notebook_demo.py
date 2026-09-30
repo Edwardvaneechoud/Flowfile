@@ -13,7 +13,7 @@ import flowfile_core.kernel as kernel_package
 from flowfile_frame import notebook
 from flowfile_frame.catalog_reference import SchemaReference
 from flowfile_frame.native import is_side_effect_node_type
-from flowfile_frame.notebook_cells import clean_run
+from flowfile_frame.notebook_cells import clean_run, exec_cell
 from test_utils.notebook_demo import DEMO_FILE, REGIONS, SALES, installed_mood_emoji, load_demo, storage_files
 
 WRITTEN_TABLES = {
@@ -76,7 +76,7 @@ def test_build_sales_analytics_builds_in_notebook_mode_without_writing(demo_cata
         + "\nclean_ref = schema.get_flow('Clean orders')"
         + "\nbuild_sales_analytics(schema, clean_ref)\n"
     )
-    result = clean_run([("demo", cell)], ceiling=0, user_id=1)
+    result = clean_run([("demo", cell)], ceiling=0, user_id=1, executor=exec_cell)
     assert result["ok"], result.get("error")
     assert sorted(n["type"] for n in result["flowfile_data"]["nodes"]) == types
     assert sorted(result["cells"]["demo"]) == sorted(n["id"] for n in result["flowfile_data"]["nodes"])

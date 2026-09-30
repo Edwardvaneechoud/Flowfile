@@ -18,10 +18,11 @@ from flowfile_core.configs import node_store
 from flowfile_core.configs.flow_logger import FlowLogger, get_flow_log_file
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
+from flowfile_core.schemas import input_schema
 from flowfile_frame import notebook
 from flowfile_frame._identity import current_user_id
 from flowfile_frame.native import NativeNodeError
-from flowfile_frame.notebook_cells import clean_run, new_namespace, seed_session
+from flowfile_frame.notebook_cells import clean_run, exec_cell, new_namespace, seed_session
 from shared.node_designer import CustomNodeBase
 from shared.storage_config import storage
 from test_utils.imports import unimportable
@@ -120,12 +121,44 @@ def test_a_schema_callback_runs_in_the_context_that_started_it():
     assert SingleExecutionFuture(probe)() == (None, 1)
 
 
+def _source_with_a_gated_callback(graph: FlowGraph, release: threading.Event):
+    def gated():
+        release.wait(timeout=60)
+        return []
+
+    settings = input_schema.NodeCatalogReader(flow_id=graph.flow_id, node_id=1, catalog_table_name="t")
+    return graph.add_node_step(
+        node_id=1, function=gated, input_columns=[], node_type="catalog_reader", setting_input=settings,
+        schema_callback=gated,
+    )  # fmt: skip
+
+
+def test_no_prefetch_starts_in_the_mode_and_other_threads_still_prefetch():
+    release = threading.Event()
+    elsewhere = {}
+
+    def place_outside_the_mode():
+        elsewhere["node"] = _source_with_a_gated_callback(ff.create_flow_graph(), release)
+
+    try:
+        with notebook.notebook_mode(user_id=1) as mode:
+            held = _source_with_a_gated_callback(mode.graph, release)
+            thread = threading.Thread(target=place_outside_the_mode)
+            thread.start()
+            thread.join(timeout=60)
+            assert held.is_start and not held.schema_callback._has_started
+            assert elsewhere["node"].schema_callback._has_started
+    finally:
+        release.set()
+    assert elsewhere["node"].schema_callback() == []
+
+
 def test_the_cell_namespace_is_the_fl_surface_without_importing_flowfile():
     expected = set(flowfile.__all__) - WEB_UI_NAMES
     assert len(expected) == len(flowfile.__all__) - len(WEB_UI_NAMES)
     with unimportable("flowfile") as attempts:
         fl = new_namespace()["fl"]
-        result = clean_run(CELLS, ceiling=0, user_id=1)
+        result = clean_run(CELLS, ceiling=0, user_id=1, executor=exec_cell)
     assert attempts == []
     assert result["ok"], result.get("error")
     assert {name for name in vars(fl) if not name.startswith("__")} == expected
@@ -134,12 +167,12 @@ def test_the_cell_namespace_is_the_fl_surface_without_importing_flowfile():
 
 def test_clean_run_needs_a_user():
     with pytest.raises(ValueError, match="needs the user it runs as"):
-        clean_run(CELLS, ceiling=0)
+        clean_run(CELLS, ceiling=0, executor=exec_cell)
     with notebook.notebook_mode():
         with pytest.raises(ValueError, match="needs the user it runs as"):
-            clean_run(CELLS, ceiling=0)
+            clean_run(CELLS, ceiling=0, executor=exec_cell)
     with notebook.notebook_mode(user_id=4):
-        assert clean_run(CELLS, ceiling=0)["ok"]
+        assert clean_run(CELLS, ceiling=0, executor=exec_cell)["ok"]
 
 
 def test_seed_session_needs_a_user():
@@ -163,7 +196,7 @@ def test_a_clean_run_in_a_copy_of_the_seeded_context_leaves_the_seeded_mode_acti
     def seeded_run():
         with notebook.notebook_mode(user_id=3) as seeded:
             tokens = notebook._TOKENS.get()
-            assert contextvars.copy_context().run(clean_run, CELLS, 0)["ok"]
+            assert contextvars.copy_context().run(clean_run, CELLS, 0, executor=exec_cell)["ok"]
             assert notebook._TOKENS.get() is tokens
             assert notebook.current() is seeded and "run_graph" in seeded.graph.__dict__
             with pytest.raises(NativeNodeError, match="use Run on canvas"):
@@ -187,7 +220,7 @@ def test_a_seed_and_clean_run_leave_no_logger_log_file_linecache_entry_or_snapsh
         try:
             seed_session(payload, [], {}, {}, user_id=1)
             seeded = notebook.current()
-            result = clean_run(cells, ceiling=100, provenance={"c": [("filter", big.node_id)]})
+            result = clean_run(cells, ceiling=100, provenance={"c": [("filter", big.node_id)]}, executor=exec_cell)
             assert notebook.current() is seeded and big.node_id in seeded.snapshot
         finally:
             notebook.exit()
@@ -206,7 +239,7 @@ def test_placing_an_uninstalled_class_in_the_mode_is_refused_and_registers_nothi
         with pytest.raises(NativeNodeError, match="is not installed"):
             ff.CustomNode(NotebookOnlyNode, ff.from_dict(DATA))
         assert len(mode.refusals) == 1
-    result = clean_run([("a", CELL_CLASS)], ceiling=0, user_id=1)
+    result = clean_run([("a", CELL_CLASS)], ceiling=0, user_id=1, executor=exec_cell)
     assert result["ok"] is False and "is not installed" in result["error"]
     assert len(result["refusals"]) == 1
     assert _node_store() == before

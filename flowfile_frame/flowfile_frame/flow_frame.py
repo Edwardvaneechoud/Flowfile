@@ -38,6 +38,7 @@ from flowfile_frame.native import (
     Node,
     add_connection_checked,
     ancestors,
+    columns_unknown,
     materialise,
     merge_frames,
     seed_from_predicted_schema,
@@ -57,14 +58,18 @@ from flowfile_frame.utils import (
 )
 
 
+class _PolarsCodeText(str):
+    """Polars Code node text already read from a ``def`` (:func:`_polars_code_text`), stored as it is."""
+
+
 def _polars_code_source(code: Any) -> str:
     """The Polars Code node text of ``code``: a string dedented and stripped, or a function's body.
 
     The function is read with ``inspect.getsource`` (a notebook cell's through ``linecache``) and
-    its ``def`` line dropped: a body that is one ``return <expr>`` stores ``<expr>``, a last
-    ``return output_df`` is dropped, and any other body is stored as written, with the comment
-    lines right above its first statement.
+    its body taken by :func:`_polars_code_text`. A :class:`_PolarsCodeText` is that text already.
     """
+    if isinstance(code, _PolarsCodeText):
+        return str(code)
     if isinstance(code, str):
         return textwrap.dedent(code).strip()
     if not inspect.isfunction(code) or code.__name__ == "<lambda>":
@@ -72,6 +77,16 @@ def _polars_code_source(code: Any) -> str:
     source, _ = _get_function_source(code)
     if source is None:
         raise NativeNodeError(f"The source of `{code.__name__}` cannot be read; pass the code as a string")
+    return _polars_code_text(source)
+
+
+def _polars_code_text(source: str) -> str:
+    """The Polars Code node text of the ``def`` in ``source`` (read from source text, never compiled).
+
+    Its ``def`` line is dropped: a body that is one ``return <expr>`` stores ``<expr>``, a last
+    ``return output_df`` is dropped, and any other body is stored as written, with the comment
+    lines right above its first statement.
+    """
     fn = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef))
     body = fn.body
     if len(body) == 1 and isinstance(body[0], ast.Return) and body[0].value is not None:
@@ -547,7 +562,9 @@ class FlowFrame:
             if node is not None:
                 node.results.resulting_data = FlowDataEngine(precomputed_result)
         node = self.flow_graph.get_node(new_node_id)
-        if node is not None and seeded_at_build(node.node_type, [self], inputs_deferred=deferred):
+        if node is not None and seeded_at_build(
+            node.node_type, [self], inputs_deferred=deferred, setting_input=node.setting_input
+        ):
             seed_from_predicted_schema(node)
             return FlowFrame(
                 data=node.results.resulting_data.data_frame,
@@ -1877,9 +1894,10 @@ class FlowFrame:
             A new FlowFrame with two columns: ``metric`` (String) and
             ``value`` (Float64).
         """
-        if actual_column not in self.columns:
+        known = not columns_unknown(self.flow_graph.get_node(self.node_id))
+        if known and actual_column not in self.columns:
             raise ValueError(f"evaluate_model: actual_column '{actual_column}' not in input columns {self.columns}.")
-        if predicted_column not in self.columns:
+        if known and predicted_column not in self.columns:
             raise ValueError(
                 f"evaluate_model: predicted_column '{predicted_column}' not in input columns {self.columns}."
             )

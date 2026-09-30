@@ -9,6 +9,7 @@ import pytest
 import flowfile as fl
 from flowfile_core.flowfile import schema_callbacks
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
+from flowfile_core.schemas import input_schema
 from flowfile_frame import callable_utils, notebook
 from flowfile_frame.native import NativeNodeError
 from flowfile_frame.notebook_cells import (
@@ -16,6 +17,7 @@ from flowfile_frame.notebook_cells import (
     canvas_node,
     clean_run,
     display_payload,
+    exec_cell,
     execute_cell,
     new_namespace,
     seed_session,
@@ -33,7 +35,7 @@ def session():
 
 
 def run(namespace, code, cell_id="c"):
-    result = execute_cell(cell_id, code, namespace)
+    result = execute_cell(cell_id, code, namespace, executor=exec_cell)
     assert result.ok, result.error
     return result
 
@@ -66,7 +68,7 @@ def test_provenance_records_each_created_node_once_per_cell(session):
 def test_failed_native_build_is_not_recorded(session):
     mode, ns = session
     run(ns, f"df = {DATA}")
-    result = execute_cell("bad", "fl.Gate(df, parameter='undeclared', value=1)", ns)
+    result = execute_cell("bad", "fl.Gate(df, parameter='undeclared', value=1)", ns, executor=exec_cell)
     assert not result.ok and "undeclared" in result.error
     assert result.created == []
     assert [c for c, _, _ in mode.provenance] == ["c"]
@@ -81,10 +83,10 @@ def test_cell_filename_is_unique_and_registered_in_linecache(session):
 
 def test_errors_come_back_with_the_cell_filename(session):
     _, ns = session
-    result = execute_cell("err", "x = 1\n1 / 0", ns)
+    result = execute_cell("err", "x = 1\n1 / 0", ns, executor=exec_cell)
     assert not result.ok
     assert f'File "{result.filename}", line 2' in result.error and "ZeroDivisionError" in result.error
-    syntax = execute_cell("syn", "def (", ns)
+    syntax = execute_cell("syn", "def (", ns, executor=exec_cell)
     assert "SyntaxError" in syntax.error and syntax.filename.startswith("<cell-syn-")
 
 
@@ -222,7 +224,7 @@ def test_a_native_node_captures_its_name(session):
 
 def test_a_failing_cell_captures_nothing(session):
     mode, ns = session
-    result = execute_cell("c", f"df = {DATA}\n1 / 0", ns)
+    result = execute_cell("c", f"df = {DATA}\n1 / 0", ns, executor=exec_cell)
     assert not result.ok and result.references == {}
     assert reference(mode, result.created[0][1]) is None
 
@@ -236,7 +238,7 @@ def test_a_bare_frame_shows_its_schema_without_executing_the_plan(session, tmp_p
     payload = run(ns, "src.group_by('g').agg(fl.col('a').sum())").display
     assert payload["schema"] == [{"name": "g", "data_type": "String"}, {"name": "a", "data_type": "Int64"}]
     assert payload["lazy_safe"] and TABLE_MIME not in payload
-    shown = execute_cell("c", "display(src.group_by('g').agg(fl.col('a').sum()))", ns)
+    shown = execute_cell("c", "display(src.group_by('g').agg(fl.col('a').sum()))", ns, executor=exec_cell)
     assert not shown.ok and "FileNotFoundError" in shown.error
 
 
@@ -375,7 +377,7 @@ def test_clean_run_still_refuses_a_duplicate_flow_input_name():
         ("a", "orders = fl.FlowInput('orders', schema={'amount': pl.Int64})"),
         ("b", "again = fl.FlowInput('orders')"),
     ]
-    result = clean_run(cells, ceiling=0, user_id=1)
+    result = clean_run(cells, ceiling=0, user_id=1, executor=exec_cell)
     assert result["ok"] is False and result["cell_id"] == "b"
     assert "flow_input name 'orders' is already used" in result["error"]
 
@@ -447,6 +449,33 @@ def test_seeding_never_predicts_a_pivot_and_writes_nothing_under_storage(monkeyp
     assert _storage_files() - before == set()
 
 
+def test_seeding_a_flow_whose_connection_is_unknown_seeds_it_and_a_cell_placing_it_is_refused():
+    """The canvas opens such a flow and resolves the connection at run; only a cell's placement is checked."""
+    graph = fl.create_flow_graph()
+    settings = input_schema.DatabaseSettings(
+        connection_mode="reference", database_connection_name="no_such_connection", table_name="orders"
+    )
+    graph.add_database_reader(
+        input_schema.NodeDatabaseReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            user_id=1,
+            database_settings=settings,
+            fields=[input_schema.MinimalFieldInfo(name="x", data_type="Int64")],
+        )
+    )
+    data = graph.get_flowfile_data().model_dump(mode="json")
+    try:
+        bound = seed_session(data, [], {1: "rows"}, {1: {"output-0": [{"name": "x", "data_type": "Int64"}]}}, user_id=1)
+        assert bound["rows"]._deferred and bound["rows"].columns == ["x"]
+        assert notebook.current().refusals == []
+        code = "more = fl.read_database('no_such_connection', table_name='orders')"
+        result = execute_cell("c", code, {**new_namespace(), **bound}, executor=exec_cell)
+        assert result.kind == "refused" and "'no_such_connection' not found" in result.message
+    finally:
+        notebook.exit()
+
+
 def test_canvas_node_refuses_an_unknown_id_and_outside_a_session():
     with pytest.raises(NativeNodeError, match="seeded from the canvas"):
         canvas_node(1)
@@ -469,7 +498,11 @@ def test_clean_run_prunes_relabels_and_restores_the_session(session):
         ("node-6", "big = df.filter(fl.col('a') > 1)\nbig.write_csv('/nonexistent/never.csv')"),
     ]
     result = clean_run(
-        cells, ceiling=40, provenance={"node-5": [("manual_input", 5)], "node-6": [("filter", 6)]}, user_id=1
+        cells,
+        ceiling=40,
+        provenance={"node-5": [("manual_input", 5)], "node-6": [("filter", 6)]},
+        user_id=1,
+        executor=exec_cell,
     )
     assert result["ok"], result.get("error")
     nodes = {n["id"]: n for n in result["flowfile_data"]["nodes"]}
@@ -483,14 +516,19 @@ def test_clean_run_prunes_relabels_and_restores_the_session(session):
 
 
 def test_clean_run_aborts_on_the_first_failing_cell():
-    result = clean_run([("a", f"df = {DATA}"), ("b", "raise ValueError('boom')"), ("c", "x = 1")], ceiling=0, user_id=1)
+    result = clean_run(
+        [("a", f"df = {DATA}"), ("b", "raise ValueError('boom')"), ("c", "x = 1")],
+        ceiling=0,
+        user_id=1,
+        executor=exec_cell,
+    )
     assert result["ok"] is False and result["cell_id"] == "b" and "boom" in result["error"]
     assert notebook.current() is None
 
 
 def test_clean_run_reports_a_caught_refusal():
     code = f"df = {DATA}\ntry:\n    fl.register_flow(df, name='x')\nexcept ValueError:\n    pass"
-    result = clean_run([("a", code)], ceiling=0, user_id=1)
+    result = clean_run([("a", code)], ceiling=0, user_id=1, executor=exec_cell)
     assert result["ok"] and len(result["refusals"]) == 1 and "run it from a script" in result["refusals"][0]
 
 
@@ -499,7 +537,13 @@ def test_clean_run_reproduces_a_canvas_node_placeholder():
     try:
         seed_session(data, [], {}, {}, user_id=1)
         cells = [("s", f"src = {DATA}"), (f"node-{big.node_id}", f"kept = fl.canvas_node({big.node_id}, src)")]
-        result = clean_run(cells, ceiling=100, provenance={f"node-{big.node_id}": [("filter", big.node_id)]}, user_id=1)
+        result = clean_run(
+            cells,
+            ceiling=100,
+            provenance={f"node-{big.node_id}": [("filter", big.node_id)]},
+            user_id=1,
+            executor=exec_cell,
+        )
         assert result["ok"], result.get("error")
         assert result["cells"][f"node-{big.node_id}"] == [big.node_id]
         [node] = [n for n in result["flowfile_data"]["nodes"] if n["id"] == big.node_id]

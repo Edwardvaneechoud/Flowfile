@@ -3,9 +3,12 @@
 Everything here runs inside notebook build mode (:mod:`flowfile_frame.notebook`). A session is
 seeded from the live flow (:func:`seed_session`): the flow is rebuilt on a local session graph,
 each node is bound to one variable, and the mode keeps a snapshot that :func:`canvas_node`
-adopts. Cells run through :func:`execute_cell`, which records which nodes each cell created
+adopts. A sync needs only the snapshot (:func:`enter_snapshot_session` parses it without
+rebuilding anything). Cells run through :func:`execute_cell`, which hands the cell text to an executor (a
+callable every caller names: :func:`exec_cell` runs it as Python, for kernels and tests; core
+passes an interpreter that never executes it), records which nodes each cell created
 (provenance), turns the variable names they bind into ``node_reference`` and shows the last
-expression (a frame by its schema only). :func:`clean_run` executes every cell on a fresh graph,
+expression (a frame by its schema only). :func:`clean_run` runs every cell on a fresh graph,
 as an explicit user, and returns the save-format payload relabelled onto the canvas ids. Per-run
 state lives on the mode or in context variables, never in module globals, and goes when the
 mode ends.
@@ -20,18 +23,18 @@ import keyword
 import linecache
 import re
 import traceback
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from types import ModuleType
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import polars as pl
 from pydantic import BaseModel
 
 from flowfile_core.flowfile.code_generator.code_generator import NODE_TYPE_VAR_LABEL, node_label
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.flowfile.flow_graph import FlowGraph, placement_check
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
 from flowfile_core.flowfile.manage.io_flowfile import (
@@ -71,19 +74,49 @@ _NOT_CAPTURED: frozenset[str] = frozenset(keyword.kwlist) | frozenset(dir(builti
 _CELL_RUNS = itertools.count(1)
 _CELL_OUTPUTS: ContextVar[list[dict[str, Any]] | None] = ContextVar("notebook_cell_outputs", default=None)
 
+FailureKind: TypeAlias = Literal["needs_kernel", "refused", "error"]
+CellExecutor: TypeAlias = Callable[[str, str, dict[str, Any]], Any]
+"""``executor(filename, code, namespace)`` runs one cell and returns its last expression's value (or ``None``)."""
+
+
+class CellFailure(Exception):
+    """A cell that failed on a line the executor names, with its message and kind.
+
+    ``kind`` is ``"needs_kernel"`` (outside what the executor runs), ``"refused"`` or ``"error"``;
+    ``None`` leaves it to :func:`execute_cell`, which classifies the chained ``__cause__`` the way
+    it classifies an exception :func:`exec_cell` lets through. ``line`` is 1-based within the cell.
+    """
+
+    def __init__(self, message: str, *, line: int | None, kind: FailureKind | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.line = line
+        self.kind = kind
+
 
 @dataclass
 class _SnapshotNode:
+    """A canvas node as data: what :func:`canvas_node` adopts and a sync seeds its unchanged twin from.
+
+    ``inputs`` lists ``(source canvas id, source output handle)`` per incoming edge.
+    """
+
     node_type: str
     setting_input: BaseModel | None
     schemas: dict[str, list[FlowfileColumn]]
     input_handles: list[str] | None
+    inputs: list[tuple[int, str]] = field(default_factory=list)
 
 
 @dataclass
 class CellResult:
-    """What one cell execution did; ``error`` holds the traceback text when it failed.
+    """What one cell execution did; ``error`` holds the text to show when it failed.
 
+    On a failure ``error`` is the traceback from the cell down when the cell ran as Python, else
+    the message; ``message`` is the exception text alone (``traceback.format_exception_only``),
+    ``line`` the failing line (1-based within the cell: the line of the method name for a
+    call, as Python reports it), ``kind`` ``"needs_kernel"``, ``"refused"`` (a notebook-mode
+    refusal) or ``"error"``, and ``traceback`` the full traceback of the underlying exception.
     ``created`` lists ``(node_type, node_id)`` for every node the cell created, ``names`` the
     variables it bound or rebound, ``references`` the ``node_reference`` each name capture set,
     ``display`` the payload of the last expression (schema only for a frame) and ``outputs`` the
@@ -93,6 +126,10 @@ class CellResult:
     cell_id: str
     filename: str
     error: str | None = None
+    message: str | None = None
+    line: int | None = None
+    kind: FailureKind | None = None
+    traceback: str | None = None
     display: dict[str, Any] | None = None
     outputs: list[dict[str, Any]] = field(default_factory=list)
     created: list[tuple[str, int]] = field(default_factory=list)
@@ -253,6 +290,50 @@ def _snapshot_input_handles(node_info: core_schemas.NodeInformation) -> list[str
     return [c.input_handle for c in connections] if connections else None
 
 
+def _snapshot_inputs(flow_info: core_schemas.FlowInformation) -> dict[int, list[tuple[int, str]]]:
+    """Per canvas node, ``(source id, source output handle)`` for every incoming edge, from the sources' outputs."""
+    inputs: dict[int, list[tuple[int, str]]] = {}
+    for source_id, info in flow_info.data.items():
+        handles = list(info.output_handles or [])
+        for index, target_id in enumerate(info.outputs or []):
+            handle = handles[index] if index < len(handles) else DEFAULT_OUTPUT_HANDLE
+            inputs.setdefault(target_id, []).append((source_id, handle))
+    return inputs
+
+
+def enter_snapshot_session(snapshot: Mapping[str, Any], *, user_id: int) -> notebook.NotebookMode:
+    """Enter a sync on a canvas snapshot, as ``user_id``: the canvas as data, never rebuilt.
+
+    ``snapshot`` is the push's seed payload (``flowfile_data`` and per-node ``schemas``, as
+    ``flowfile_core.notebook.push.seed_snapshot`` returns them). The payload is validated into
+    settings models and nothing else: no graph is populated, no node placed, no custom node
+    class loaded, nothing read. The mode (``sync=True``, on a fresh graph of its own) keeps each
+    node as the snapshot :func:`canvas_node` adopts and :func:`clean_run` seeds unchanged nodes
+    from. Any active mode is ended first. ``notebook.exit()`` ends the session.
+    """
+    if not isinstance(user_id, int) or isinstance(user_id, bool):
+        raise ValueError("enter_snapshot_session needs the user it runs as: pass user_id=<int>")
+    flow_info = _flowfile_data_to_flow_information(_flowfile_data_model(snapshot["flowfile_data"]))
+    given = {int(node_id): entries for node_id, entries in (snapshot.get("schemas") or {}).items()}
+    inputs = _snapshot_inputs(flow_info)
+    nodes = {
+        node_id: _SnapshotNode(
+            node_type=info.type,
+            setting_input=info.setting_input,
+            schemas={handle: _columns(entries) for handle, entries in (given.get(node_id) or {}).items()}
+            or {DEFAULT_OUTPUT_HANDLE: []},
+            input_handles=_snapshot_input_handles(info),
+            inputs=inputs.get(node_id, []),
+        )
+        for node_id, info in flow_info.data.items()
+    }
+    if notebook.current() is not None:
+        notebook.exit()
+    mode = notebook.enter(user_id=user_id, sync=True)
+    mode.snapshot.update(nodes)
+    return mode
+
+
 def seed_session(
     flowfile_data: dict[str, Any],
     parameters: list[Any],
@@ -297,13 +378,19 @@ def seed_session(
             if node is not None and info is not None and _deferred_source(info):
                 node.deferred_until_run = True
 
-        with graph.observe_nodes(hold), graph.rebuilding():
-            populate_graph_from_flow_information(graph, flow_info, owner_of=lambda _node_id: owner)
+        # The canvas opens a flow without checking connections; only cell placements are checked.
+        token = placement_check.set(None)
+        try:
+            with graph.observe_nodes(hold), graph.rebuilding():
+                populate_graph_from_flow_information(graph, flow_info, owner_of=lambda _node_id: owner)
+        finally:
+            placement_check.reset(token)
         graph.unique_subflow_port_names = False
         names = {int(k): v for k, v in names.items()}
         given = {int(k): v for k, v in schemas.items()}
         bound: dict[str, Any] = {"flow": graph}
         live: set[int] = set()
+        inputs = _snapshot_inputs(flow_info)
         for node in _topological(graph):
             bound[names.get(node.node_id) or node_label(node.node_type, node.node_id)] = _seed_node(
                 graph, node, live, given.get(node.node_id)
@@ -314,6 +401,7 @@ def seed_session(
                 setting_input=info.setting_input if info is not None else None,
                 schemas=_snapshot_schemas(node, given.get(node.node_id)),
                 input_handles=_snapshot_input_handles(info) if info is not None else None,
+                inputs=inputs.get(node.node_id, []),
             )
         mode.provenance.clear()
         return bound
@@ -400,6 +488,10 @@ class _CanvasNode(SeededNode):
         known = self._snapshot.schemas
         default = known.get(DEFAULT_OUTPUT_HANDLE) or []
         return {handle: list(known.get(handle) or default) for handle in handles}
+
+    def _declared_seed(self, node: FlowNode, frames: Sequence[FlowFrame], handles: list[str]) -> dict[str, list] | None:
+        """The snapshot's schemas; ``None`` when they hold no columns, so the sync's own fallbacks apply."""
+        return self._seed_schemas(node, frames, handles) if any(self._snapshot.schemas.values()) else None
 
 
 def canvas_node(node_id: int, *inputs: FlowFrame, output: str | FlowOutput | None = None) -> FlowFrame | SeededNode:
@@ -594,14 +686,44 @@ def _capture_names(
     return references
 
 
-def execute_cell(cell_id: str, code: str, namespace: dict[str, Any]) -> CellResult:
-    """Run one cell in ``namespace`` on the session graph; errors come back in the result, never raised.
+def exec_cell(filename: str, code: str, namespace: dict[str, Any]) -> Any:
+    """Compile ``code`` under ``filename`` and run it in ``namespace``; the value of its last expression, else ``None``.
 
-    The code is compiled under ``<cell-{cell_id}-{n}>`` (registered in ``linecache`` first, until
-    the mode ends, so ``inspect.getsource`` works for functions a cell defines and tracebacks name
-    the cell) with ``optimize=0``. A last-expression value is shown without computing anything: a
-    frame (or each output of a node) by its schema only, anything else by its repr; rows come from
-    an explicit ``display()`` call.
+    The executor that runs a cell as Python (every builtin, ``optimize=0``): for kernels and
+    tests. Core never passes it; its notebook runner interprets cells instead.
+    """
+    body, expression = _compile(filename, code)
+    exec(body, namespace)
+    return eval(expression, namespace) if expression is not None else None
+
+
+def _failure_kind(exc: BaseException | None, mode: notebook.NotebookMode) -> FailureKind:
+    """``"refused"`` for a notebook-mode refusal (a message :func:`notebook.refuse` recorded), else ``"error"``."""
+    return "refused" if isinstance(exc, NativeNodeError) and str(exc) in mode.refusals else "error"
+
+
+def _cell_line(exc: BaseException, filename: str) -> int | None:
+    """The cell line ``exc`` was raised on: a syntax error's own line, else the cell's last traceback entry."""
+    if isinstance(exc, SyntaxError) and exc.filename == filename:
+        return exc.lineno
+    lines = [frame.lineno for frame in traceback.extract_tb(exc.__traceback__) if frame.filename == filename]
+    return lines[-1] if lines else None
+
+
+def _exception_text(exc: BaseException) -> str:
+    return "".join(traceback.format_exception_only(type(exc), exc))
+
+
+def execute_cell(cell_id: str, code: str, namespace: dict[str, Any], *, executor: CellExecutor) -> CellResult:
+    """Run one cell in ``namespace`` on the session graph through ``executor``; errors come back in the result.
+
+    The cell's filename is ``<cell-{cell_id}-{n}>``, registered in ``linecache`` first (until the
+    mode ends, so ``inspect.getsource`` works for functions a cell defines and tracebacks name the
+    cell). ``executor`` has no default: :func:`exec_cell` runs the cell as Python, an interpreter
+    describes it without executing it. A failure is classified once, for any executor, into
+    ``message``, ``line`` and ``kind`` (a :class:`CellFailure` names its own line). A
+    last-expression value is shown without computing anything: a frame (or each output of a node)
+    by its schema only, anything else by its repr; rows come from an explicit ``display()`` call.
     Every node the cell created is recorded on the mode's ``provenance`` as ``(cell_id, node_type,
     node_id)``, and on success the names it bound become ``node_reference`` per the capture rules.
     """
@@ -621,20 +743,30 @@ def execute_cell(cell_id: str, code: str, namespace: dict[str, Any]) -> CellResu
             new_ids.append(node_id)
 
     outputs_token = _CELL_OUTPUTS.set(result.outputs)
+    mode.cell_id, mode.cell_nodes, mode.claimed = cell_id, new_ids, {}
     try:
-        body, expression = _compile(result.filename, code)
         with graph.observe_nodes(observe):
-            exec(body, namespace)
-            value = eval(expression, namespace) if expression is not None else None
+            value = executor(result.filename, code, namespace)
         if value is not None:
             result.display = _payload(value, None)
+    except CellFailure as failure:
+        cause = failure.__cause__
+        result.error = result.message = failure.message
+        result.line = failure.line
+        result.kind = failure.kind or _failure_kind(cause, mode)
+        if cause is not None:
+            result.traceback = "".join(traceback.format_exception(type(cause), cause, cause.__traceback__))
     except SyntaxError as exc:
-        result.error = "".join(traceback.format_exception_only(type(exc), exc))
+        result.error = result.message = _exception_text(exc)
+        result.line, result.kind = _cell_line(exc, result.filename), "error"
     except BaseException as exc:
         tb = exc.__traceback__.tb_next if exc.__traceback__ is not None else None
-        result.error = "".join(traceback.format_exception(type(exc), exc, tb))
+        result.error = result.traceback = "".join(traceback.format_exception(type(exc), exc, tb))
+        result.message = _exception_text(exc)
+        result.line, result.kind = _cell_line(exc, result.filename), _failure_kind(exc, mode)
     finally:
         _CELL_OUTPUTS.reset(outputs_token)
+        mode.cell_id, mode.cell_nodes, mode.claimed = None, [], {}
     for node_id in new_ids:
         node = graph.get_node(node_id)
         if node is not None:
@@ -678,20 +810,25 @@ def clean_run(
     provenance: Mapping[str, list[tuple[str, int]]] | None = None,
     *,
     user_id: int | None = None,
+    executor: CellExecutor,
 ) -> dict[str, Any]:
-    """Execute every cell, in order, on a fresh parameter-free session graph and return the push payload.
+    """Run every cell, in order, through ``executor`` on a fresh parameter-free session graph; return the push payload.
 
-    Runs as ``user_id``, else as the active (seeded) session's user; with neither it raises
+    ``executor`` has no default, so every caller names it (:func:`execute_cell`). Runs as
+    ``user_id``, else as the active (seeded) session's user; with neither it raises
     ``ValueError`` instead of running as anyone. Runs in a fresh namespace under its own notebook
-    mode, whose graph, flow logger and ``linecache`` entries are released when it returns; any
-    active session is set aside and activated again, and its snapshot is what :func:`canvas_node`
-    adopts. A failing cell aborts: the result is
-    ``{"ok": False, "cell_id", "error", "refusals"}``. Otherwise nodes not upstream of a bound
+    mode, a sync (``notebook.enter(sync=True)``), whose graph, flow logger and ``linecache``
+    entries are released when it returns; any active session is set aside and activated again,
+    and its snapshot is what :func:`canvas_node` adopts and what nodes the sync holds are seeded
+    from when unchanged (``provenance`` names each cell's canvas twins). A failing cell aborts:
+    the result is ``{"ok": False, "cell_id", "error", "message",
+    "line", "kind", "traceback", "refusals"}`` (see :class:`CellResult`). Otherwise nodes not upstream of a bound
     variable, a side-effect node or a native node are pruned and the result is ``{"ok": True,
-    "flowfile_data", "cells", "names", "refusals"}``: the save-format payload relabelled onto
+    "flowfile_data", "cells", "names", "refusals", "warnings"}``: the save-format payload relabelled onto
     ``provenance`` (``cell_id -> [(node_type, canvas_id)]``, matched by type in creation order)
-    with new nodes above ``ceiling``, ``{cell_id: [node ids]}``, ``{node id: node_reference}`` and
-    the refusal messages raised.
+    with new nodes above ``ceiling``, ``{cell_id: [node ids]}``, ``{node id: node_reference}``, the
+    refusal messages raised and ``warnings``: one per kept node whose build failed below a node
+    with no known columns, placed unchecked (``NotebookMode.unchecked``).
     """
     previous = notebook.current()
     if user_id is None and previous is not None:
@@ -703,18 +840,28 @@ def clean_run(
         )
     if previous is not None:
         notebook._deactivate()
+    known = {cell_id: [tuple(entry) for entry in entries] for cell_id, entries in (provenance or {}).items()}
     try:
-        with notebook.notebook_mode(user_id=user_id) as mode:
+        with notebook.notebook_mode(user_id=user_id, sync=True) as mode:
             if previous is not None:
                 mode.snapshot.update(previous.snapshot)
+            mode.expected = known
             namespace = new_namespace()
             for cell_id, code in cells:
-                result = execute_cell(cell_id, code, namespace)
+                result = execute_cell(cell_id, code, namespace, executor=executor)
                 if not result.ok:
-                    return {"ok": False, "cell_id": cell_id, "error": result.error, "refusals": list(mode.refusals)}
+                    return {
+                        "ok": False,
+                        "cell_id": cell_id,
+                        "error": result.error,
+                        "message": result.message,
+                        "line": result.line,
+                        "kind": result.kind,
+                        "traceback": result.traceback,
+                        "refusals": list(mode.refusals),
+                    }
             kept = _prune(mode.graph, namespace)
             created = [entry for entry in mode.provenance if entry[2] in kept]
-            known = {cell_id: [tuple(entry) for entry in entries] for cell_id, entries in (provenance or {}).items()}
             mapping = provenance_mapping(created, known, ceiling)
             payload = relabel(mode.graph.get_flowfile_data().model_dump(mode="json"), mapping)
             cell_nodes: dict[str, list[int]] = {cell_id: [] for cell_id, _ in cells}
@@ -725,12 +872,19 @@ def clean_run(
                 for node in mode.graph.nodes
                 if (reference := getattr(node.setting_input, "node_reference", None))
             }
+            warnings = [
+                f"Cell {cell}: node {mapping[node_id]} ({node_type}) was placed unchecked because a node above it "
+                f"has no known columns yet ({error}); the run checks it"
+                for node_id, (cell, node_type, error) in mode.unchecked.items()
+                if node_id in mapping
+            ]
             return {
                 "ok": True,
                 "flowfile_data": payload,
                 "cells": cell_nodes,
                 "names": names,
                 "refusals": list(mode.refusals),
+                "warnings": warnings,
             }
     finally:
         if previous is not None:
