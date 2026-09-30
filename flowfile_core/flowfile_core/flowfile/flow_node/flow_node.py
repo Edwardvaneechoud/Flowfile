@@ -1,6 +1,7 @@
 import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from time import sleep
 from typing import Any, Literal, Optional
 
@@ -53,6 +54,9 @@ from flowfile_core.flowfile.utils import HASH_EXCLUDED_KEYS, get_hash
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.output_model import FileColumn, NodeData, TableExample
 from flowfile_core.utils.arrow_reader import get_read_top_n
+
+schema_prefetch_blocked: ContextVar[bool] = ContextVar("schema_prefetch_blocked", default=False)
+"""Set while the calling context must start no schema prefetch (notebook build mode); other contexts still do."""
 
 
 class DeferredNodeError(RuntimeError):
@@ -1902,8 +1906,8 @@ class FlowNode:
         This also triggers a reset on all downstream nodes. A node placed deferred
         (``placed_deferred``) gets ``deferred_until_run`` back with its dropped result, so only a
         real run executes it again. A start node's eager schema prefetch is skipped while
-        ``deferred_until_run`` is set: without a declared schema callback that prefetch runs the
-        node function.
+        ``deferred_until_run`` is set (without a declared schema callback that prefetch runs the
+        node function) and while ``schema_prefetch_blocked`` is set in the calling context.
 
         Args:
             deep: If True, forces a reset even if the hash hasn't changed.
@@ -1938,7 +1942,8 @@ class FlowNode:
                 # masks I/O latency. Downstream nodes' callbacks read upstream
                 # node state, so eagerly starting them races with the cascade
                 # of resets that graph.reset() is currently performing.
-                if self.is_start and not self.deferred_until_run and self.schema_callback:
+                prefetch = self.is_start and not self.deferred_until_run and not schema_prefetch_blocked.get()
+                if prefetch and self.schema_callback:
                     logger.info(f"{self.node_id}: Resetting the schema callback")
                     self.schema_callback.start()
             self.evaluate_nodes()

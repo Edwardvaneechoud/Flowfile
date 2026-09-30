@@ -117,6 +117,19 @@ def validate_sql_query(query: str) -> None:
     _reject_table_functions(query)
 
 
+def uses_table_function(query: str) -> bool:
+    """Whether ``query`` uses a SQL table function, by the gate :func:`validate_sql_query` applies.
+
+    Comments are stripped first and table sources are read from the AST, so a ``read_csv(`` in a
+    comment or a CTE named ``scan_results(a)`` is not one.
+    """
+    try:
+        _reject_table_functions(query)
+    except UnsafeSQLError:
+        return True
+    return False
+
+
 def _reject_table_functions(query: str) -> None:
     """Reject any SQL table-valued function used as a table source.
 

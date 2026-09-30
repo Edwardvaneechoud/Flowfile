@@ -10,6 +10,7 @@ import threading
 from collections.abc import Callable, Collection, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
@@ -239,6 +240,13 @@ yaml.add_representer(list, represent_list_json)
 # How long a mutation waits for another in-flight mutation of the same flow before giving up.
 EDIT_LOCK_TIMEOUT_SECONDS = 30.0
 
+placement_check: ContextVar[Callable[[Any], None] | None] = ContextVar("placement_check", default=None)
+"""A check every decorated ``add_*`` runs on its settings before placing anything, in the context that set it.
+
+Notebook build mode sets it so a cell's source or writer is refused on its path and connection rules
+before a node exists; canvas requests and other threads never see it.
+"""
+
 
 def with_history_capture(action_type: "HistoryActionType", description_template: str = "Update {node_type} settings"):
     """Decorator that runs a FlowGraph mutator inside :meth:`FlowGraph.transaction`.
@@ -246,6 +254,7 @@ def with_history_capture(action_type: "HistoryActionType", description_template:
     Standalone calls record one undo step when the graph changed; inside an outer
     transaction (an editor route, an AI batch) or a restore the call records nothing
     itself. With ``flow_settings.track_history`` off the method runs as a plain call.
+    A :data:`placement_check` set in the calling context runs first, whatever the history setting.
 
     Args:
         action_type: The type of history action (e.g., HistoryActionType.UPDATE_SETTINGS).
@@ -262,6 +271,9 @@ def with_history_capture(action_type: "HistoryActionType", description_template:
         @functools.wraps(func)
         def wrapper(self: "FlowGraph", *args, **kwargs):
             settings_input = args[0] if args else next(iter(kwargs.values()), None)
+            check = placement_check.get()
+            if check is not None:
+                check(settings_input)
 
             # Remember the session owner so restore_from_snapshot can re-stamp
             # user_id even when the live graph holds no nodes.

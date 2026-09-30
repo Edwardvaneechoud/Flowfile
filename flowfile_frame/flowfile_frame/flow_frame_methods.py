@@ -15,6 +15,7 @@ from flowfile_frame.cloud_storage.secret_manager import get_current_user_id
 from flowfile_frame.config import logger
 from flowfile_frame.expr import col
 from flowfile_frame.flow_frame import FlowFrame
+from flowfile_frame.native import source_frame
 from flowfile_frame.utils import _implicit_graph, generate_node_id
 from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_glob_pattern, is_url
 
@@ -252,9 +253,7 @@ def read_csv(
         flow_graph.add_read(read_node)
         flow_graph.get_node(1)
 
-        result_frame = FlowFrame(
-            data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
-        )
+        result_frame = source_frame(flow_graph, node_id)
         flow_graph.get_node(1)
         return result_frame
     else:
@@ -312,11 +311,7 @@ def read_csv(
             description=polars_code_node_description,
         )
         flow_graph.add_polars_code(polars_code_settings)
-        return FlowFrame(
-            data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-            flow_graph=flow_graph,
-            node_id=node_id,
-        )
+        return source_frame(flow_graph, node_id)
 
 
 def _build_polars_code_args(
@@ -482,9 +477,7 @@ def read_parquet(
 
     flow_graph.add_read(read_node)
 
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
-    )
+    return source_frame(flow_graph, node_id)
 
 
 def _read_simple_file(
@@ -535,9 +528,7 @@ def _read_simple_file(
 
     flow_graph.add_read(read_node)
 
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
-    )
+    return source_frame(flow_graph, node_id)
 
 
 def read_ipc(
@@ -709,9 +700,7 @@ def read_excel(
 
     flow_graph.add_read(read_node)
 
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
-    )
+    return source_frame(flow_graph, node_id)
 
 
 def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) -> FlowFrame:
@@ -743,9 +732,7 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
 
     flow_graph.add_manual_input(input_node)
 
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
-    )
+    return source_frame(flow_graph, node_id)
 
 
 def from_raw_data(
@@ -777,9 +764,7 @@ def from_raw_data(
 
     flow_graph.add_manual_input(input_node)
 
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
-    )
+    return source_frame(flow_graph, node_id)
 
 
 def list_files(
@@ -840,9 +825,7 @@ def list_files(
 
     flow_graph.add_list_files(settings)
 
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
-    )
+    return source_frame(flow_graph, node_id)
 
 
 def concat(
@@ -1078,9 +1061,7 @@ def scan_parquet_from_cloud_storage(
         output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
-    )
+    return source_frame(flow_graph, node_id)
 
 
 def scan_csv_from_cloud_storage(
@@ -1121,9 +1102,7 @@ def scan_csv_from_cloud_storage(
         output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
-    )
+    return source_frame(flow_graph, node_id)
 
 
 def scan_delta(
@@ -1190,9 +1169,7 @@ def scan_delta(
         output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
-    )
+    return source_frame(flow_graph, node_id)
 
 
 def scan_json_from_cloud_storage(
@@ -1224,6 +1201,4 @@ def scan_json_from_cloud_storage(
         output_field_config=output_field_config,
     )
     flow_graph.add_cloud_storage_reader(settings)
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
-    )
+    return source_frame(flow_graph, node_id)

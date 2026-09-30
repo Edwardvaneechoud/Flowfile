@@ -335,6 +335,17 @@ class CustomNode(NativeNode):
                 seeded[handle] = list(self._declared[output_name])
         return seeded
 
+    def _declared_seed(
+        self, node: FlowNode, frames: Sequence[FlowFrame], handles: list[str]
+    ) -> dict[str, list[FlowfileColumn]] | None:
+        """Each handle's ``schemas=`` columns (``[]`` for an undeclared one); ``None`` without ``schemas=``."""
+        if not self._declared:
+            return None
+        return {
+            handle: list(self._declared.get(output_name) or [])
+            for output_name, handle in zip(self.output_names, handles, strict=True)
+        }
+
     def _build_error(self, node_type: str, exc: Exception) -> NativeNodeError:
         """The base error; a secret the build could not read also names ``deferred=True``."""
         error = super()._build_error(node_type, exc)

@@ -7,8 +7,10 @@ from polars.testing import assert_frame_equal
 import flowfile as fl
 import flowfile_core.kernel as kernel_package
 import flowfile_frame as ff
+from flowfile_core.configs import node_store
 from flowfile_core.configs.flow_logger import FlowLogger
-from flowfile_frame import catalog, catalog_reference, kafka, notebook, rest_api
+from flowfile_core.schemas import input_schema, transform_schema
+from flowfile_frame import catalog, catalog_reference, kafka, native, notebook, rest_api
 from flowfile_frame._identity import current_user_id
 from flowfile_frame.cloud_storage import secret_manager
 from flowfile_frame.database import connection_manager
@@ -267,3 +269,107 @@ def test_identity_hook():
         assert node.node.setting_input.user_id == 5
     assert current_user_id() == 1
     assert [hook() for hook in hooks] == [1] * len(hooks)
+
+
+BUILT_IN_A_SYNC = {
+    "cross_join", "data_cleansing", "dynamic_rename", "filter", "flow_input", "formula", "gate", "graph_solver",
+    "group_by", "join", "manual_input", "multi_field_formula", "record_count", "record_id", "sample", "select", "sort",
+    "sql_query", "text_to_rows", "union", "unique", "unpivot", "wait_for", "window_functions",
+}  # fmt: skip
+
+
+def test_every_built_in_node_type_is_held_or_built_in_a_sync():
+    built_in = {name for name, template in node_store.node_dict.items() if not template.custom_node}
+    with notebook.notebook_mode(user_id=1, sync=True):
+        built = {name for name in built_in if not native.notebook_defers(name)}
+    assert built == BUILT_IN_A_SYNC
+
+
+def test_a_sync_holds_what_reads_by_its_settings_and_a_plain_mode_does_not():
+    first_row = input_schema.NodeDynamicRename(
+        flow_id=1, node_id=1, dynamic_rename_input=transform_schema.DynamicRenameInput(rename_mode="first_row")
+    )
+    reads = input_schema.NodeSqlQuery(
+        flow_id=1, node_id=2, sql_query_input=transform_schema.SqlQueryInput(sql_code="SELECT * FROM read_csv('x.csv')")
+    )
+    plain = input_schema.NodeSqlQuery(
+        flow_id=1, node_id=3, sql_query_input=transform_schema.SqlQueryInput(sql_code="SELECT * FROM input_1")
+    )
+    with notebook.notebook_mode(user_id=1, sync=True):
+        assert native.notebook_defers("dynamic_rename", first_row)
+        assert native.notebook_defers("sql_query", reads)
+        assert not native.notebook_defers("sql_query", plain)
+    with notebook.notebook_mode(user_id=1):
+        assert not any(native.notebook_defers(t, s) for t, s in [("dynamic_rename", first_row), ("sql_query", reads)])
+        assert not native.notebook_defers("read") and not native.notebook_defers("fuzzy_match")
+
+
+def test_a_plain_mode_reads_a_local_file_and_a_sync_probes_its_header_only(tmp_path):
+    path = tmp_path / "rows.csv"
+    pl.DataFrame(DATA).write_csv(path)
+    with notebook.notebook_mode(user_id=1):
+        live = ff.read_csv(str(path))
+        assert not live._deferred and live.collect().height == 3
+    with notebook.notebook_mode(user_id=1, sync=True) as sync:
+        held = ff.read_csv(str(path))
+        listed = ff.list_files(str(tmp_path))
+        assert held._deferred and core_node(held).deferred_until_run
+        assert held.collect_schema().names() == ["a", "g"]
+        assert listed._deferred and "file_path" in listed.collect_schema().names()
+        assert held.data.collect().height == 0
+        assert sync.column_less == set()
+
+
+def test_a_read_csv_polars_fallback_is_a_polars_code_source_seeded_without_columns(tmp_path):
+    path = tmp_path / "rows.csv"
+    pl.DataFrame(DATA).write_csv(path)
+    for sync in (False, True):
+        with notebook.notebook_mode(user_id=1, sync=sync):
+            rows = ff.read_csv(str(path), n_rows=1)
+            assert core_node(rows).node_type == "polars_code"
+            assert rows._deferred and core_node(rows).deferred_until_run
+            assert rows.collect_schema().names() == []
+
+
+@pytest.mark.parametrize(
+    ("sql", "held"),
+    [
+        ("SELECT * FROM read_csv('x.csv')", True),
+        ("WITH scan_results(a) AS (SELECT a FROM input_1) SELECT * FROM scan_results", False),
+        ("SELECT * FROM input_1 -- was read_csv('x.csv')", False),
+        ("SELECT * FROM input_1 /* scan_parquet('y') */", False),
+    ],
+)
+def test_a_sync_holds_sql_by_the_canvas_table_function_gate(sql, held):
+    settings = input_schema.NodeSqlQuery(
+        flow_id=1, node_id=1, sql_query_input=transform_schema.SqlQueryInput(sql_code=sql)
+    )
+    with notebook.notebook_mode(user_id=1, sync=True):
+        assert native.notebook_defers("sql_query", settings) is held
+
+
+def test_a_native_node_is_held_by_its_settings_in_a_sync():
+    first_row = {"dynamic_rename_input": {"rename_mode": "first_row"}}
+    reads = {"sql_query_input": {"sql_code": "SELECT * FROM read_csv('x.csv')"}}
+    with notebook.notebook_mode(user_id=1, sync=True):
+        source = ff.from_dict(DATA)
+        renamed = ff.Node("dynamic_rename", source, settings=first_row)
+        assert renamed.output._deferred and core_node(renamed).deferred_until_run
+        with pytest.raises(NativeNodeError, match="SQL table functions are not allowed"):
+            ff.Node("sql_query", source, settings=reads)
+
+
+def test_a_user_less_mode_checks_a_placement_as_the_user_its_settings_carry():
+    ff.create_database_connection_if_not_exists("notebook_user_less", database_type="sqlite", database=":memory:")
+    settings = {
+        "database_settings": {
+            "connection_mode": "reference",
+            "database_connection_name": "notebook_user_less",
+            "table_name": "orders",
+        },
+        "fields": [{"name": "x", "data_type": "Int64"}],
+    }
+    with notebook.notebook_mode() as mode:
+        reader = ff.Node("database_reader", settings=settings)
+        assert reader.node.setting_input.user_id == 1 and mode.refusals == []
+        assert reader.output._deferred and reader.output.collect_schema().names() == ["x"]

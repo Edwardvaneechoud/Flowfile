@@ -9,6 +9,12 @@ active:
 - every node ``native.notebook_defers`` names is seeded from its predicted schema
   instead of executed at build (writers, subflows, kernel scripts, database / REST / Kafka
   sources, ``pivot``, ``polars_code``, virtual and SQL-mode catalog readers);
+- in a *sync* (``sync=True``: a clean run, or a session entered from a canvas snapshot) every
+  node that would read, connect, walk, run code or need data to predict is held too, and
+  seeded without predicting (``native.sync_seed_schemas``);
+- no start node begins a background schema prefetch (``FlowNode.reset``), and every
+  decorated ``add_*`` first passes the path and connection checks of
+  ``flowfile_core.notebook.prechecks`` (a refusal is recorded like :func:`refuse`);
 - calls that write YAML, DB rows or files at build, register a node type, or run a flow raise
   ``NativeNodeError`` (``register_flow``, ``RunFlow(<graph>, name=...)``,
   ``fl.custom_nodes.install``, placing a custom node class that is neither installed nor
@@ -39,7 +45,8 @@ from contextvars import ContextVar, Token
 from typing import Any, NoReturn
 
 from flowfile_core.configs.flow_logger import FlowLogger, get_flow_log_file
-from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.flowfile.flow_graph import FlowGraph, placement_check
+from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
 from flowfile_core.flowfile.utils import create_unique_id
 
 logger = logging.getLogger(__name__)
@@ -64,9 +71,15 @@ class NotebookMode:
     session graph; ``refusals`` every message raised through :func:`refuse`. Other notebook-mode
     errors (writer fallbacks, ``sink_*``, deferred ``collect()``, cross-graph merges, the refused
     ``run_graph`` and the kernel manager refusal) are raised directly and not recorded.
-    ``snapshot`` holds the canvas nodes ``fl.canvas_node`` adopts (``notebook_cells.seed_session``
-    fills it), ``cell_files`` the ``linecache`` names of the cells run in the mode. ``owns_graph``
-    is set when :func:`enter` created the session graph.
+    ``snapshot`` holds the canvas nodes ``fl.canvas_node`` adopts and a sync seeds from
+    (``notebook_cells.seed_session`` or ``enter_snapshot_session`` fills it), ``cell_files`` the
+    ``linecache`` names of the cells run in the mode. ``owns_graph`` is set when :func:`enter`
+    created the session graph. ``sync`` marks a sync; there ``expected`` maps a cell to the
+    ``(node_type, canvas_id)`` pairs it rendered, ``cell_id`` and ``cell_nodes`` name the running
+    cell and the node ids it created so far (in creation order), ``claimed`` maps each of those
+    nodes to the canvas id it took as its twin, ``column_less`` holds the nodes seeded without
+    columns, and ``unchecked`` the nodes seeded without columns because their build failed below
+    one (node id -> ``(cell_id, node_type, error)``).
     """
 
     graph: FlowGraph
@@ -76,8 +89,17 @@ class NotebookMode:
     snapshot: dict[int, Any]
     cell_files: list[str]
     owns_graph: bool
+    sync: bool
+    expected: dict[str, list[tuple[str, int]]]
+    cell_id: str | None
+    cell_nodes: list[int]
+    claimed: dict[int, int]
+    column_less: set[int]
+    unchecked: dict[int, tuple[str | None, str, str]]
 
-    def __init__(self, graph: FlowGraph, user_id: int | None = None, *, owns_graph: bool = False) -> None:
+    def __init__(
+        self, graph: FlowGraph, user_id: int | None = None, *, owns_graph: bool = False, sync: bool = False
+    ) -> None:
         self.graph = graph
         self.user_id = user_id
         self.refusals: list[str] = []
@@ -85,6 +107,13 @@ class NotebookMode:
         self.snapshot: dict[int, Any] = {}
         self.cell_files: list[str] = []
         self.owns_graph = owns_graph
+        self.sync = sync
+        self.expected: dict[str, list[tuple[str, int]]] = {}
+        self.cell_id: str | None = None
+        self.cell_nodes: list[int] = []
+        self.claimed: dict[int, int] = {}
+        self.column_less: set[int] = set()
+        self.unchecked: dict[int, tuple[str | None, str, str]] = {}
 
     def close(self) -> None:
         """Release what the mode's run left: the snapshot, the cells' ``linecache`` entries and an owned graph's logger.
@@ -107,7 +136,7 @@ class NotebookMode:
 
 
 _ACTIVE: ContextVar[NotebookMode | None] = ContextVar("notebook_mode", default=None)
-_TOKENS: ContextVar[tuple[Token, Token] | None] = ContextVar("notebook_mode_tokens", default=None)
+_TOKENS: ContextVar[tuple[tuple[ContextVar, Token], ...] | None] = ContextVar("notebook_mode_tokens", default=None)
 
 
 def current() -> NotebookMode | None:
@@ -129,6 +158,24 @@ def refuse(what: str, reason: str = "writes at build or runs a flow") -> None:
     message = f"{what} {reason}, so it is not available in a notebook: run it from a script"
     mode.refusals.append(message)
     raise NativeNodeError(message)
+
+
+def _check_placement(settings: Any) -> None:
+    """Refuse a placement the canvas's path or connection rules refuse (recorded), as the user the settings carry.
+
+    That is ``_identity.current_user_id()``: the mode's user, else 1, as every frame call stamps it.
+    """
+    from flowfile_core.notebook.prechecks import placement_refusal
+    from flowfile_frame._identity import current_user_id
+    from flowfile_frame.native import NativeNodeError
+
+    mode = current()
+    if mode is None:
+        return
+    message = placement_refusal(settings, current_user_id())
+    if message is not None:
+        mode.refusals.append(message)
+        raise NativeNodeError(message)
 
 
 def _refuse_kernel_manager() -> NoReturn:
@@ -162,25 +209,27 @@ def _scratch_graph() -> FlowGraph:
     return create_flow_graph(flow_id)
 
 
-def enter(graph: FlowGraph | None = None, user_id: int | None = None) -> NotebookMode:
+def enter(graph: FlowGraph | None = None, user_id: int | None = None, *, sync: bool = False) -> NotebookMode:
     """Activate notebook mode in this context on ``graph`` (a new local, history-off graph when omitted).
 
-    The session graph's ``run_graph`` is replaced on the instance and ``get_kernel_manager()``
-    refuses in this context; :func:`exit` undoes both. The node-id counter is moved past the
-    graph's ids so fluent sources never reuse a canvas node's id. Modes do not nest: the check
-    runs before a graph is created. The graph a mode creates is discarded when the mode ends (its
-    flow logger and log file are released); pass your own graph to keep using it afterwards.
+    The session graph's ``run_graph`` is replaced on the instance, ``get_kernel_manager()``
+    refuses, schema prefetches are blocked and placements are checked in this context;
+    :func:`exit` undoes all four. The node-id counter is moved past the graph's ids so fluent
+    sources never reuse a canvas node's id. ``sync`` makes the mode a sync (see the module
+    docstring). Modes do not nest: the check runs before a graph is created. The graph a mode
+    creates is discarded when the mode ends (its flow logger and log file are released); pass
+    your own graph to keep using it afterwards.
     """
     _refuse_nesting()
     if graph is None:
-        return _activate(NotebookMode(_scratch_graph(), user_id, owns_graph=True))
-    return _activate(NotebookMode(graph, user_id))
+        return _activate(NotebookMode(_scratch_graph(), user_id, owns_graph=True, sync=sync))
+    return _activate(NotebookMode(graph, user_id, sync=sync))
 
 
 def _activate(mode: NotebookMode) -> NotebookMode:
     """Make ``mode`` the active one in this context (a new mode, or one a clean run set aside) and return it.
 
-    The caller makes sure no mode is active. The tokens of both ``set`` calls are kept in this
+    The caller makes sure no mode is active. The tokens of every ``set`` call are kept in this
     context, so a copy of it that activates a mode of its own never replaces them.
     """
     import flowfile_core.kernel as kernel_package
@@ -188,7 +237,13 @@ def _activate(mode: NotebookMode) -> NotebookMode:
 
     data["c"] = max(data["c"], max((n.node_id for n in mode.graph.nodes), default=0))
     mode.graph.run_graph = _refused_run_graph
-    _TOKENS.set((_ACTIVE.set(mode), kernel_package.kernel_manager_refusal.set(_refuse_kernel_manager)))
+    settings = (
+        (_ACTIVE, mode),
+        (kernel_package.kernel_manager_refusal, _refuse_kernel_manager),
+        (schema_prefetch_blocked, True),
+        (placement_check, _check_placement),
+    )
+    _TOKENS.set(tuple((variable, variable.set(value)) for variable, value in settings))
     return mode
 
 
@@ -211,18 +266,23 @@ def _restore(variable: ContextVar, token: Token | None) -> None:
 def _deactivate() -> NotebookMode | None:
     """Leave the active mode without releasing what it holds, and return it (``None`` when none is active).
 
-    Restores the graph's ``run_graph`` and both context variables :func:`_activate` set. A clean
-    run sets a seeded mode aside this way and activates it again.
+    Restores the graph's ``run_graph`` and every context variable :func:`_activate` set, last set
+    first. A clean run sets a seeded mode aside this way and activates it again.
     """
     import flowfile_core.kernel as kernel_package
 
     mode = current()
     if mode is None:
         return None
-    active, refusal = _TOKENS.get() or (None, None)
+    tokens = _TOKENS.get()
     _TOKENS.set(None)
-    _restore(kernel_package.kernel_manager_refusal, refusal)
-    _restore(_ACTIVE, active)
+    if tokens is None:
+        tokens = tuple(
+            (variable, None)
+            for variable in (_ACTIVE, kernel_package.kernel_manager_refusal, schema_prefetch_blocked, placement_check)
+        )
+    for variable, token in reversed(tokens):
+        _restore(variable, token)
     mode.graph.__dict__.pop("run_graph", None)
     return mode
 
@@ -239,19 +299,19 @@ def exit() -> None:
 
 
 def notebook_mode(
-    graph: FlowGraph | None = None, user_id: int | None = None
+    graph: FlowGraph | None = None, user_id: int | None = None, *, sync: bool = False
 ) -> contextlib.AbstractContextManager[NotebookMode]:
     """Context manager around :func:`enter` / :func:`exit`; ``with notebook_mode() as mode: ...``.
 
     The graph a mode creates is discarded when the mode ends (its flow logger and log file are
     released); pass your own graph to keep using it afterwards.
     """
-    return _notebook_mode(graph, user_id)
+    return _notebook_mode(graph, user_id, sync)
 
 
 @contextlib.contextmanager
-def _notebook_mode(graph: FlowGraph | None, user_id: int | None) -> Iterator[NotebookMode]:
-    mode = enter(graph, user_id)
+def _notebook_mode(graph: FlowGraph | None, user_id: int | None, sync: bool) -> Iterator[NotebookMode]:
+    mode = enter(graph, user_id, sync=sync)
     try:
         yield mode
     finally:
