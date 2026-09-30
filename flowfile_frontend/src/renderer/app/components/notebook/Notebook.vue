@@ -101,7 +101,7 @@
  */
 import { ref, computed, nextTick } from "vue";
 import { ElMessage } from "element-plus";
-import type { CellOutput } from "../../types/node.types";
+import type { CellOutput, NotebookCell } from "../../types/node.types";
 import NotebookCellComponent from "../nodes/node-types/elements/pythonScript/NotebookCell.vue";
 import type { UpstreamColumn } from "../nodes/node-types/elements/pythonScript/useUpstreamColumns";
 import {
@@ -119,12 +119,10 @@ import {
 import { cellPresentation, disposeCellPresentation } from "./cellPresentation";
 import { cellSelector, focusCell } from "./editorViews";
 import {
-  isLockedCell,
   NO_LSP_CONTEXT,
   runNotebookCell,
   runtimeRefs,
   type NotebookExecutor,
-  type NotebookViewCell,
 } from "./notebookExecutor";
 import {
   batchProgress,
@@ -140,7 +138,7 @@ import { findScrollParent, useCellDrag } from "./useCellDrag";
 import { getCellHistory } from "./useCellHistory";
 
 interface Props {
-  cells: NotebookViewCell[];
+  cells: NotebookCell[];
   executor: NotebookExecutor;
   /** Namespace for undo, views and runtime state (`ownerIdForNode`). */
   ownerId: string;
@@ -153,7 +151,7 @@ const props = withDefaults(defineProps<Props>(), {
   upstreamColumns: () => [],
 });
 const emit = defineEmits<{
-  (e: "update:cells", cells: NotebookViewCell[]): void;
+  (e: "update:cells", cells: NotebookCell[]): void;
 }>();
 
 const executionCounter = ref(1);
@@ -170,8 +168,8 @@ const progressLabel = computed(() => {
   if (!progress || progress.total < 1) return "";
   return `Running cell ${Math.min(progress.done + 1, progress.total)} of ${progress.total}`;
 });
-const canUndo = computed(() => getCellHistory<NotebookViewCell>(props.ownerId).canUndo.value);
-const canRedo = computed(() => getCellHistory<NotebookViewCell>(props.ownerId).canRedo.value);
+const canUndo = computed(() => getCellHistory<NotebookCell>(props.ownerId).canUndo.value);
+const canRedo = computed(() => getCellHistory<NotebookCell>(props.ownerId).canRedo.value);
 
 interface MoveInfo {
   from: number;
@@ -179,23 +177,23 @@ interface MoveInfo {
   total: number;
 }
 
-const makeCell = (): NotebookViewCell => ({ id: newCellId(), code: "", output: null });
+const makeCell = (): NotebookCell => ({ id: newCellId(), code: "", output: null });
 
-const affectedIndex = (op: CellOperation<NotebookViewCell>): number =>
+const affectedIndex = (op: CellOperation<NotebookCell>): number =>
   op.kind === "move" ? Math.min(op.from, op.to) : op.index;
 
-const invalidateFromOp = (cells: NotebookViewCell[], op: CellOperation<NotebookViewCell>) => {
+const invalidateFromOp = (cells: NotebookCell[], op: CellOperation<NotebookCell>) => {
   invalidateFrom(props.ownerId, runtimeRefs(cells), affectedIndex(op), "upstream-changed");
 };
 
-const applyStructural = (result: OperationResult<NotebookViewCell>) => {
+const applyStructural = (result: OperationResult<NotebookCell>) => {
   emit("update:cells", result.cells);
   if (result.op.kind === "remove") disposeCellPresentation(props.ownerId, result.op.cell.id);
-  getCellHistory<NotebookViewCell>(props.ownerId).push({ op: result.op, inverse: result.inverse });
+  getCellHistory<NotebookCell>(props.ownerId).push({ op: result.op, inverse: result.inverse });
   invalidateFromOp(result.cells, result.op);
 };
 
-const applyMove = (result: OperationResult<NotebookViewCell> | null): MoveInfo | null => {
+const applyMove = (result: OperationResult<NotebookCell> | null): MoveInfo | null => {
   if (!result || result.op.kind !== "move") return null;
   applyStructural(result);
   return { from: result.op.from, to: result.op.to, total: result.cells.length };
@@ -218,7 +216,7 @@ const focusAfterTick = (cellId: string | null) => {
 
 const updateCellCode = (cellId: string, code: string) => {
   const index = props.cells.findIndex((c) => c.id === cellId);
-  if (index < 0 || isLockedCell(props.cells[index])) return;
+  if (index < 0) return;
   const cells = props.cells.map((c) => (c.id === cellId ? { ...c, code } : c));
   emit("update:cells", cells);
   bumpSourceRevision(props.ownerId, cellId);
@@ -270,7 +268,7 @@ const moveCellToIndex = (cellId: string, targetIndex: number): MoveInfo | null =
   applyMove(moveCellOp(props.cells, cellId, targetIndex));
 
 const replayHistory = (direction: "undo" | "redo") => {
-  const history = getCellHistory<NotebookViewCell>(props.ownerId);
+  const history = getCellHistory<NotebookCell>(props.ownerId);
   const entry = direction === "undo" ? history.undo() : history.redo();
   if (!entry) return;
   const result = applyOperation(props.cells, direction === "undo" ? entry.inverse : entry.op);
@@ -337,8 +335,7 @@ const stillPresent = (cellId: string) => props.cells.some((c) => c.id === cellId
 
 /** A single run is a batch of one, so one busy flag covers every execution path. */
 const runCell = async (cellId: string): Promise<boolean> => {
-  const cell = props.cells.find((c) => c.id === cellId);
-  if (!cell || isLockedCell(cell)) return false;
+  if (!stillPresent(cellId)) return false;
   let ok = false;
   const started = await runExecutionBatch({
     ownerId: props.ownerId,

@@ -417,10 +417,10 @@ import {
 } from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
-import { catalogSaveErrorMessage } from "../../composables/saveError";
+import { catalogSaveErrorMessage, detailMessage } from "../../composables/saveError";
 import { KernelApi } from "../../api/kernel.api";
 import { useEditorStore } from "../../stores/editor-store";
-import { useNodeStore } from "../../stores/column-store";
+import { useNodeStore } from "../../stores/node-store";
 import { useDrawerStore } from "../../stores/drawer-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useResultsStore } from "../../stores/results-store";
@@ -843,13 +843,6 @@ watch(
   { immediate: true },
 );
 
-const errorText = (e: any, fallback: string): string => {
-  const detail = e?.response?.data?.detail;
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) return detail.map((d) => d?.msg ?? String(d)).join("\n");
-  return detail?.message ?? e?.message ?? fallback;
-};
-
 async function openFlow() {
   const flowId = props.flowId!;
   unregisterFlowHooks = registerFlowNotebookHooks(flowId, {
@@ -883,7 +876,7 @@ async function openFlow() {
   try {
     await store.openFlowNotebook(flowId, `Flow ${flowId}`);
   } catch (e) {
-    ElMessage.error(errorText(e, "Could not render the notebook"));
+    ElMessage.error(detailMessage(e, "Could not render the notebook"));
   }
 }
 

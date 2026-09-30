@@ -117,7 +117,7 @@ export function staleTitle(reason: StaleReason): string {
   return STALE_TITLES[reason];
 }
 
-/** A flow notebook cell against the canvas; flow cells carry this instead of a stale reason. */
+/** A flow notebook cell's sync state against the canvas, carried instead of a stale reason. */
 export type SyncState = "edited" | "synced" | "error";
 
 const SYNC_LABELS: Record<SyncState, string> = {

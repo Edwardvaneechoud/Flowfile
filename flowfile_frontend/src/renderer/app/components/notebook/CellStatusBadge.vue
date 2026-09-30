@@ -29,7 +29,7 @@ const props = withDefaults(
   defineProps<{
     runtime?: CellRuntime | null;
     hasOutput: boolean;
-    /** A canvas notebook cell against the canvas; shown instead of the kernel staleness. */
+    /** A canvas notebook cell's sync state; shown instead of the kernel staleness. */
     syncState?: SyncState | null;
   }>(),
   { runtime: null, syncState: null },
