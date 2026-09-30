@@ -121,6 +121,7 @@ from flowfile_core.routes._connection_sharing import (
     changed_target_fields,
     require_credentials_on_target_change,
 )
+from flowfile_core.routes.notebook import require_notebook_sync
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, output_model, schemas, transform_schema
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
@@ -1076,7 +1077,7 @@ def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_u
     tags=["editor"],
     response_model=NotebookPushResponse,
 )
-def push_notebook(request: NotebookPushRequest, current_user=Depends(get_current_active_user)) -> NotebookPushResponse:
+def push_notebook(request: NotebookPushRequest, current_user=Depends(require_notebook_sync)) -> NotebookPushResponse:
     """Push notebook cells onto the canvas: clean run, reconcile, and apply the ops as one transaction.
 
     The clean run happens outside the edit lock; the fingerprint is checked again under it, so a
