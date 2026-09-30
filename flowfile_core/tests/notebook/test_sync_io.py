@@ -572,11 +572,12 @@ def test_a_sync_of_every_data_dependent_hold_offloads_decrypts_profiles_and_read
     assert held <= {node["type"] for node in result["flowfile_data"]["nodes"]}
 
 
-def test_a_sql_table_function_fails_the_canvas_check_on_its_line_and_reads_nothing(tmp_path, monkeypatch):
+@pytest.mark.parametrize("function", ["read_csv", "`read_csv`"])
+def test_a_sql_table_function_fails_the_canvas_check_on_its_line_and_reads_nothing(function, tmp_path, monkeypatch):
     pl.DataFrame({"a": [1]}).write_csv(tmp_path / "a.csv")
     calls = _Calls()
     held_ran = _record_io(monkeypatch, calls)
-    query = f"SELECT * FROM read_csv('{(tmp_path / 'a.csv').as_posix()}')"
+    query = f"SELECT * FROM {function}('{(tmp_path / 'a.csv').as_posix()}')"
     cell = f"kept = 1\nrows = fl.sql({query!r})"
     result = _sync([("imports", IMPORTS), ("reads", cell)])
     assert (result["ok"], result["cell_id"], result["line"]) == (False, "reads", 2)
@@ -668,7 +669,11 @@ def test_a_reader_call_the_export_describes_syncs_and_keeps_its_description(
 ):
     monkeypatch.setenv("FLOWFILE_MODE", "electron")
     call, node_type = DESCRIBED_READERS[case]
+    calls = _Calls()
+    held_ran = _record_io(monkeypatch, calls)
     result = _sync([("imports", IMPORTS), ("rows", f"rows = {call}")])
     assert result["ok"], (result.get("line"), result.get("message"))
     [node] = [node for node in result["flowfile_data"]["nodes"] if node["type"] == node_type]
     assert node["description"] == "Orders feed"
+    assert held_ran == []
+    assert calls.labels() <= {"collect"} and calls.named("collect") == []

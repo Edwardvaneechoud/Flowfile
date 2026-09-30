@@ -122,7 +122,8 @@ def held_in_sync(node_type: str, setting_input: Any = None) -> bool:
     ``SYNC_HELD_NODE_TYPES``, a first-row ``dynamic_rename`` (it reads a row), a ``data_cleansing``
     that removes null columns (it counts every column's nulls, on the worker) and a ``sql_query``
     that uses a table function (``read_*`` / ``scan_*`` read files), by the canvas's own gate
-    (``shared.sql_validation.uses_table_function``).
+    (``shared.sql_validation.uses_table_function``), or holds a ``${name}`` reference (a parameter
+    can resolve to one when the node runs).
     """
     template = node_store.node_dict.get(node_type)
     if template is None or template.custom_node or node_type in SYNC_HELD_NODE_TYPES:
@@ -136,7 +137,8 @@ def held_in_sync(node_type: str, setting_input: Any = None) -> bool:
     if node_type == "data_cleansing":
         return setting_input.cleansing_input.remove_null_columns
     if node_type == "sql_query":
-        return uses_table_function(setting_input.sql_query_input.sql_code or "")
+        sql = setting_input.sql_query_input.sql_code or ""
+        return "${" in sql or uses_table_function(sql)
     return False
 
 
@@ -370,13 +372,14 @@ def _snapshot_twin(node: FlowNode) -> Any | None:
     if node.node_id not in mode.cell_nodes:
         return None
     taken = {canvas_id for node_id, canvas_id in mode.claimed.items() if node_id != node.node_id}
+    own = _twin_settings(node.setting_input, node.node_type)
     for node_type, canvas_id in mode.expected.get(mode.cell_id, ()):
         if node_type != node.node_type or canvas_id in taken:
             continue
         twin = mode.snapshot.get(canvas_id)
         if twin is None or twin.node_type != node.node_type or twin.setting_input is None:
             continue
-        if _twin_settings(twin.setting_input, node.node_type) != _twin_settings(node.setting_input, node.node_type):
+        if _twin_settings(twin.setting_input, node.node_type) != own:
             continue
         if node.node_type == "polars_code" and _input_columns(node) != _canvas_input_columns(twin, mode.snapshot):
             continue
