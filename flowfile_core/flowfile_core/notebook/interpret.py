@@ -762,7 +762,7 @@ class _Cell:
         from flowfile_frame import notebook
 
         mode = notebook.current()
-        if mode is not None and len(mode.graph.nodes) > allowlist.BOUNDS["nodes_per_request"]:
+        if mode is not None and len(mode.graph._node_db) > allowlist.BOUNDS["nodes_per_request"]:
             raise _Failure("The notebook places too many nodes", node.lineno, "refused")
 
 
