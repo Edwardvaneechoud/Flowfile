@@ -221,6 +221,15 @@ def test_a_malformed_cell_id_is_refused_without_echoing_it(monkeypatch, cell_id)
     assert result.error == "A cell id is 1 to 128 letters, digits or the characters _ . : -"
 
 
+def test_a_cell_id_listed_twice_is_refused_before_any_cell_is_read(monkeypatch):
+    _refuse_any_run(monkeypatch)
+
+    cells = [("a", "x = 1"), ("b", "y = 2"), ("a", "z = 3")]
+    result = NotebookRunner().clean_run(NOTEBOOK_OWNER_ID, 1, bridge.CleanRunRequest(cells=cells))
+    assert (result.kind, result.cell_id, result.line) == ("refused", None, None)
+    assert result.error == "The notebook lists a cell id twice"
+
+
 @pytest.mark.parametrize(
     "cell_id", ["imports", "parameters", "cell-12", "node-99", "3f2a9c1e-7b1d-4e7a-9c55-0b5c6d7e8f90"]
 )
