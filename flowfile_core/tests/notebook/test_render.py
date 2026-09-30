@@ -1,6 +1,9 @@
 """The notebook rendering: the FlowFrame export split into cells, each carrying the node ids of its statement."""
 
+import pytest
+
 import flowfile_frame as ff
+from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.notebook.render import code_fingerprint, render
 from flowfile_core.schemas import input_schema
@@ -107,3 +110,28 @@ def test_fingerprint_ignores_moves_and_flow_id_and_tracks_settings_and_parameter
     assert code_fingerprint(graph) == render(graph).code_fingerprint == original
     graph.flow_settings.parameters[0].default_value = "3"
     assert code_fingerprint(graph) != original
+
+
+def test_an_edit_during_the_export_leaves_the_pre_edit_fingerprint(monkeypatch):
+    graph = _pipeline()
+    before = code_fingerprint(graph)
+    convert = FlowGraphToFlowFrameConverter.convert
+
+    def convert_then_edit(self):
+        code = convert(self)
+        graph.flow_settings.parameters[0].default_value = "3"
+        return code
+
+    monkeypatch.setattr(FlowGraphToFlowFrameConverter, "convert", convert_then_edit)
+    assert render(graph).code_fingerprint == before != code_fingerprint(graph)
+
+
+def test_an_export_failure_raises_instead_of_rendering_no_node_cells(monkeypatch):
+    graph = _pipeline()
+
+    def fail(self):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(FlowGraphToFlowFrameConverter, "convert", fail)
+    with pytest.raises(RuntimeError, match="boom"):
+        render(graph)

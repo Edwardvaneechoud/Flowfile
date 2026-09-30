@@ -412,6 +412,7 @@ import {
   flowCellSyncState,
   registerFlowNotebookHooks,
   syncErrorFor,
+  RERENDER_FAILED,
   SYNC_NEEDS_ADMIN,
 } from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
@@ -885,7 +886,9 @@ async function openFlow() {
 
 const refreshSoon = debounce(async () => {
   await whenMutationsIdle();
-  await store.refreshFlowNotebook(props.flowId!).catch(() => undefined);
+  await store.refreshFlowNotebook(props.flowId!).catch((e) => {
+    ElMessage.warning(detailMessage(e, RERENDER_FAILED));
+  });
 }, 400);
 
 // Canvas edits re-render the cells once the edit queue settles; layout moves keep the fingerprint.
