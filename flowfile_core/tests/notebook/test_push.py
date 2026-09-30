@@ -5,12 +5,13 @@ The clean run goes through the production runner (``runner``) or, where a test s
 """
 
 import re
+import sys
 
 import pytest
 
 import flowfile as fl
 from flowfile_core.notebook import bridge
-from flowfile_core.notebook.push import push_refusals
+from flowfile_core.notebook.push import refused_nodes
 from flowfile_core.notebook.render import code_fingerprint, render
 from flowfile_core.notebook.runner import NotebookRunner
 from flowfile_core.schemas import input_schema
@@ -162,11 +163,17 @@ out = (
     extra.filter(fl.col('a') > 1)
     .join(extra, on='nope')
 )"""
+# 3.10 reports a method call with keywords on the call's first line, 3.11+ on the method name's line
+FAILING_CHAIN_LINE = 4 if sys.version_info >= (3, 11) else 3
 
 
 @pytest.mark.parametrize(
     "code, line",
-    [(FAILING_CHAIN, 4), ("extra = missing_frame.filter(fl.col('a') > 1)", 1), ("threshold = 8\nx = (", 2)],
+    [
+        (FAILING_CHAIN, FAILING_CHAIN_LINE),
+        ("extra = missing_frame.filter(fl.col('a') > 1)", 1),
+        ("threshold = 8\nx = (", 2),
+    ],
     ids=["frame_error_in_a_chain", "undefined_name", "syntax_error"],
 )
 def test_a_failing_call_reports_its_cell_line_and_message_like_exec(orders_flow, client_as, code, line):
@@ -219,12 +226,12 @@ def test_refusals_name_custom_classes_inline_rest_secrets_and_lazy_frames():
             },
         ]
     }
-    refusals = push_refusals(live, session, installed=lambda node_type: False)
+    refusals = [m for m, _ in refused_nodes(live, session, installed=lambda node_type: False)]
     assert len(refusals) == 3
     assert "Node 1" in refusals[0] and "LazyFrame" in refusals[0]
     assert "cell_node" in refusals[1] and "fl.custom_nodes.install" in refusals[1]
     assert "Node 3" in refusals[2] and "secret_name" in refusals[2]
-    assert push_refusals(live, session, installed=lambda node_type: True)[1:] == refusals[2:]
+    assert [m for m, _ in refused_nodes(live, session, installed=lambda node_type: True)][1:] == refusals[2:]
 
 
 def test_refusals_accept_a_custom_node_file_written_after_the_scan(tmp_path, monkeypatch):
@@ -243,7 +250,7 @@ def test_refusals_accept_a_custom_node_file_written_after_the_scan(tmp_path, mon
     )
     session = {"nodes": [{"id": 5, "type": "late_push_node", "setting_input": {"is_user_defined": True}}]}
 
-    assert push_refusals({"nodes": []}, session) == []
+    assert refused_nodes({"nodes": []}, session) == []
 
 
 BROKEN_NODE_FILES = {
@@ -280,7 +287,7 @@ def test_a_custom_node_file_that_does_not_load_counts_as_not_installed(tmp_path,
         assert entry.error
     session = {"nodes": [{"id": 5, "type": node_type, "setting_input": {"is_user_defined": True}}]}
 
-    refusals = push_refusals({"nodes": []}, session)
+    refusals = [m for m, _ in refused_nodes({"nodes": []}, session)]
     assert len(refusals) == 1 and "Node 5" in refusals[0] and node_type in refusals[0]
 
 

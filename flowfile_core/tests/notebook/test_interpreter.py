@@ -75,11 +75,11 @@ def test_every_rendered_corpus_cell_interprets(corpus_runs):
 
 
 def test_every_allowed_entry_is_used_by_the_corpus_or_emitted_outside_it(corpus_runs):
-    from tests.notebook.test_allowlist import _allowed_entries
+    from tests.notebook.test_allowlist import EMITTED_OUTSIDE_THE_CORPUS, _allowed_entries
 
     used = set().union(*(run.interpreter.used for run in _interpreting(corpus_runs).values()))
     assert used <= _allowed_entries()
-    dead = _allowed_entries() - used - set(allowlist.EMITTED_OUTSIDE_THE_CORPUS)
+    dead = _allowed_entries() - used - set(EMITTED_OUTSIDE_THE_CORPUS)
     assert not dead, sorted(dead)
 
 
@@ -242,6 +242,7 @@ ERRORS = {
     ),
     "method_name_above_its_arguments": "out = (df\n    .filter(fl.col('a') > 1)\n    .join(\n        df, on='nope'))",
     "polars_error": "out = df.unpivot(on=['nope'])",
+    "python_script_decorator": "x = 1\n@fl.python_script(\n    kernel='k')\ndef s(df):\n    return helper(df)",
     "invalid_settings": "out = df.to_flow_output('')",
     "notebook_refusal": "fl.RunFlow(df)",
     "missing_custom_node": "x = fl.custom_nodes.nope_nope",

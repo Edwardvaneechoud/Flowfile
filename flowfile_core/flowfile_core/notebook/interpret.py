@@ -1,22 +1,10 @@
 """Interpret notebook cells in core: read each cell as a description of the flow and never execute it.
 
-:class:`CellInterpreter` is the cell executor core hands to ``notebook_cells.execute_cell`` /
-``clean_run``. It parses a cell with ``ast.parse`` (and checks it with ``symtable``, which reports
-the scope errors ``compile`` would) and walks a small statement and expression subset, calling only
-the frame functions :mod:`flowfile_core.notebook.allowlist` names for the value's *kind*, the exact
-type of the object an attribute, call or subscript applies to. Nothing a cell contains reaches
-``exec``, ``eval`` or ``compile``: a Polars Code ``def`` becomes its node's code text through the
-frame's text entry point, and a ``@fl.python_script`` ``def`` becomes its notebook cells through
-``PythonScriptFunction._from_source``, which derives from the AST and ``symtable`` what the
-decorated function would. Anything outside the dialect fails on its line with "this needs a
-kernel"; a frame call that raises fails on the line Python would report for it (the line of the
-method name in a chain).
-
-Bindings: ``import flowfile as fl`` binds the cell namespace's ``fl`` (``new_namespace()["fl"]``),
-``import polars as pl`` the polars module, ``import datetime`` a stand-in whose ``date`` and
-``datetime`` take literal integers, ``from flowfile_frame import <reader>`` that reader, and any
-other import in a cell holding a ``@fl.python_script`` def an inert module only the script's
-prelude can name. ``flow`` is the session graph, accepted only where the allowlist says.
+:class:`CellInterpreter` is the cell executor core hands to ``notebook_cells.clean_run``. Nothing a cell
+contains reaches ``exec``, ``eval`` or ``compile``: a cell is read with ``ast.parse`` and ``symtable``, and
+only the frame calls :mod:`flowfile_core.notebook.allowlist` names for a value's *kind* (its exact type) run;
+anything else fails on its line with "this needs a kernel". The statement subset, the ``def`` shapes and
+the failure lines are documented with the notebook package in ``flowfile_core/CLAUDE.md``.
 """
 
 from __future__ import annotations
@@ -197,9 +185,7 @@ class CellInterpreter:
     Called as ``executor(filename, code, namespace)`` (see ``notebook_cells.CellExecutor``); one
     instance serves one run, whose steps, literal elements, expression text and placed nodes it
     bounds (``allowlist.BOUNDS``). ``used`` collects every ``(kind, attribute)`` allowlist entry the
-    cells exercised. A failure is raised as ``notebook_cells.CellFailure`` with its 1-based line
-    and kind: ``needs_kernel`` outside the dialect, ``refused`` for a bound, and, for a frame
-    call that raised, the classification ``execute_cell`` gives that exception.
+    cells exercised. A failure is raised as ``notebook_cells.CellFailure``.
     """
 
     def __init__(self) -> None:
@@ -467,7 +453,8 @@ class _Cell:
         try:
             script = PythonScriptFunction._from_source(self.code, decorator.lineno, view, **keywords)
         except Exception as exc:
-            raise _error(exc, decorator.lineno) from exc
+            # 3.10 reports a failing decorator application on the `def` line
+            raise _error(exc, node.lineno if sys.version_info < (3, 11) else decorator.lineno) from exc
         self.namespace[node.name] = script
 
     def name(self, node: ast.Name) -> Any:
@@ -656,10 +643,12 @@ class _Cell:
         kind, attr, usage = self.entry(receiver, node.attr, line)
         if usage == allowlist.DECORATOR:
             raise _needs_kernel(f"Calling `fl.{attr}` outside a decorator", line)
+        # 3.10 compiles a method call with keywords as a plain call, reported on the call's first line
+        call_line = call.lineno if sys.version_info < (3, 11) and call.keywords else line
         if usage in (allowlist.CALL, allowlist.BOTH):
             function = self.attribute(receiver, kind, attr, line)
-            return self.invoke(function, (kind, attr), call, line)
-        return self.call_value(self.checked(self.attribute(receiver, kind, attr, line), node, line), call, line)
+            return self.invoke(function, (kind, attr), call, call_line)
+        return self.call_value(self.checked(self.attribute(receiver, kind, attr, line), node, line), call, call_line)
 
     def call_value(self, callee: Any, call: ast.Call, line: int | None = None) -> Any:
         """Calling a value by its kind's ``__call__`` entry (a helper, a reader, a script, a custom node)."""
