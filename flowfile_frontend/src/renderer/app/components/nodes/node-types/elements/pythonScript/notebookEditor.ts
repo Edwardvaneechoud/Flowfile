@@ -50,6 +50,8 @@ export interface NotebookEditorOptions {
   getNodeId?: () => number;
   // Takes precedence over the three getters above: the notebook's executor supplies it whole.
   getLspContext?: () => LspContext;
+  // False where no kernel can be attached, so the "attach a kernel" hint never shows.
+  kernelHint?: boolean;
 }
 
 const MONO = "var(--font-family-mono)";
@@ -201,7 +203,7 @@ export function buildNotebookEditorExtensions(opts: NotebookEditorOptions): Exte
     createLspHover(getLspCtx),
     createLspSignature(getLspCtx),
     createLspDiagnostics(getLspCtx),
-    createNoKernelHint(getLspCtx),
+    opts.kernelHint === false ? [] : createNoKernelHint(getLspCtx),
     flowfileEditorTheme(),
     cellEditorTheme,
     EditorView.lineWrapping,

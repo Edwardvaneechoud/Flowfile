@@ -83,7 +83,7 @@
           :disabled="structuralDisabled"
           :code-collapsed="pres.codeCollapsed"
           :output-collapsed="pres.outputCollapsed"
-          :has-output="cell.cellType === 'python' && !!cell.output"
+          :has-output="!!cell.output"
           :can-delete="cellCount > 1"
           @insert-above="emit('insert-above')"
           @insert-below="emit('insert-below')"
@@ -95,7 +95,6 @@
           <el-dropdown-item
             v-if="typeInMenu"
             data-action="toggle-type"
-            :disabled="readOnly"
             @click="emit('update:type', cell.cellType === 'python' ? 'markdown' : 'python')"
           >
             <i
@@ -141,7 +140,6 @@
         <codemirror
           v-else
           :model-value="cell.code"
-          :disabled="readOnly"
           placeholder="# Python — Cmd/Ctrl+Enter to run"
           :indent-with-tab="false"
           :tab-size="4"
@@ -163,11 +161,12 @@
         <CellStatusBadge
           :runtime="runtime"
           :has-output="cell.cellType === 'python' && !!cell.output"
+          :sync-state="syncState"
         />
       </div>
 
       <!-- Output -->
-      <template v-if="cell.cellType === 'python' && cell.output">
+      <template v-if="cell.output">
         <CellOutput v-show="!pres.outputCollapsed" :output="cell.output" />
         <button
           v-if="pres.outputCollapsed"
@@ -187,10 +186,11 @@ import { computed, onBeforeUnmount, watch } from "vue";
 import { Codemirror } from "vue-codemirror";
 import { EditorView } from "@codemirror/view";
 import { registerCellView, unregisterCellView } from "./editorViews";
+import { setSyncErrorMark, syncErrorLineField, type SyncErrorMark } from "./syncErrorLine";
 import { cellPresentation, toggleCodeCollapsed, toggleOutputCollapsed } from "./cellPresentation";
 import CellActionMenu from "./CellActionMenu.vue";
 import CellStatusBadge from "./CellStatusBadge.vue";
-import type { CellRuntime } from "./notebookRuntimeState";
+import type { CellRuntime, SyncState } from "./notebookRuntimeState";
 import CellOutput from "../nodes/node-types/elements/pythonScript/CellOutput.vue";
 import { buildNotebookEditorExtensions } from "../nodes/node-types/elements/pythonScript/notebookEditor";
 import { formatExecutionTime } from "../nodes/node-types/elements/pythonScript/notebookDisplay";
@@ -220,9 +220,11 @@ const props = defineProps<{
   kernelId?: string | null;
   flowId?: number;
   nodeId?: number;
-  readOnly?: boolean;
   /** Hide the type select; the cell menu switches between Python and Markdown instead. */
   typeInMenu?: boolean;
+  /** Canvas notebook only: the cell against the canvas, and the line a refused sync names. */
+  syncState?: SyncState | null;
+  syncError?: SyncErrorMark | null;
 }>();
 
 const emit = defineEmits<{
@@ -284,6 +286,8 @@ const extensions = [
     getKernelId: () => props.kernelId ?? null,
     getFlowId: () => props.flowId ?? 0,
     getNodeId: () => props.nodeId ?? 0,
+    // A canvas notebook cell (it carries a sync state) has no kernel to attach.
+    kernelHint: props.syncState == null,
   }),
   // Report caret moves so the store knows where "insert at cursor" should land.
   EditorView.updateListener.of((update) => {
@@ -291,6 +295,7 @@ const extensions = [
       emit("cursor", update.state.selection.main.head);
     }
   }),
+  syncErrorLineField,
 ];
 
 let view: EditorView | null = null;
@@ -300,7 +305,13 @@ function onReady(payload: { view: EditorView }) {
   view = payload.view;
   viewOwnerId = props.ownerId;
   registerCellView(viewOwnerId, props.cell.id, view);
+  if (props.syncError) view.dispatch({ effects: setSyncErrorMark.of(props.syncError) });
 }
+
+watch(
+  () => props.syncError,
+  (mark) => view?.dispatch({ effects: setSyncErrorMark.of(mark ?? null) }),
+);
 
 // A reused instance has to take its registered view to the new owner.
 watch(
@@ -517,6 +528,10 @@ onBeforeUnmount(() => {
 .nb-cell-editor :deep(.cm-gutter-lint:not(:has(.cm-lint-marker))) {
   width: 0;
   overflow: hidden;
+}
+.nb-cell-editor :deep(.nb-sync-error-line) {
+  background: var(--color-danger-light);
+  box-shadow: inset 2px 0 0 var(--color-danger);
 }
 .nb-cell-editor :deep(.el-textarea__inner) {
   font-family: var(--font-family-mono);

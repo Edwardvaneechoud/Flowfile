@@ -117,6 +117,29 @@ export function staleTitle(reason: StaleReason): string {
   return STALE_TITLES[reason];
 }
 
+/** A flow notebook cell against the canvas; flow cells carry this instead of a stale reason. */
+export type SyncState = "edited" | "synced" | "error";
+
+const SYNC_LABELS: Record<SyncState, string> = {
+  edited: "Edited",
+  synced: "Synced",
+  error: "Sync failed",
+};
+
+const SYNC_TITLES: Record<SyncState, string> = {
+  edited: "This cell changed since the canvas last matched it; Run or Push syncs it.",
+  synced: "The canvas holds this cell's code.",
+  error: "The last sync stopped at this cell; fix it and run again.",
+};
+
+export function syncLabel(state: SyncState): string {
+  return SYNC_LABELS[state];
+}
+
+export function syncTitle(state: SyncState): string {
+  return SYNC_TITLES[state];
+}
+
 /** A marker never downgrades: previous-session > code-changed > upstream-changed. */
 function applyStale(rt: CellRuntime, reason: StaleReason): void {
   rt.staleAt = nextSeq();
