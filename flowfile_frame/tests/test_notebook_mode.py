@@ -295,12 +295,19 @@ def test_a_sync_holds_what_reads_by_its_settings_and_a_plain_mode_does_not():
     plain = input_schema.NodeSqlQuery(
         flow_id=1, node_id=3, sql_query_input=transform_schema.SqlQueryInput(sql_code="SELECT * FROM input_1")
     )
+    counts_nulls = input_schema.NodeDataCleansing(
+        flow_id=1, node_id=4, cleansing_input=transform_schema.DataCleansingInput(remove_null_columns=True)
+    )
+    trims = input_schema.NodeDataCleansing(
+        flow_id=1, node_id=5, cleansing_input=transform_schema.DataCleansingInput(trim_whitespace=True)
+    )
+    reading = [("dynamic_rename", first_row), ("sql_query", reads), ("data_cleansing", counts_nulls)]
     with notebook.notebook_mode(user_id=1, sync=True):
-        assert native.notebook_defers("dynamic_rename", first_row)
-        assert native.notebook_defers("sql_query", reads)
+        assert all(native.notebook_defers(t, s) for t, s in reading)
         assert not native.notebook_defers("sql_query", plain)
+        assert not native.notebook_defers("data_cleansing", trims)
     with notebook.notebook_mode(user_id=1):
-        assert not any(native.notebook_defers(t, s) for t, s in [("dynamic_rename", first_row), ("sql_query", reads)])
+        assert not any(native.notebook_defers(t, s) for t, s in reading)
         assert not native.notebook_defers("read") and not native.notebook_defers("fuzzy_match")
 
 

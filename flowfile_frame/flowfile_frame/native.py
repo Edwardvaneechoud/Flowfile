@@ -119,7 +119,8 @@ def held_in_sync(node_type: str, setting_input: Any = None) -> bool:
 
     Held: every source except ``LITERAL_SOURCE_TYPES`` (reads, catalog and cloud readers,
     ``list_files``, network sources), every custom node and unknown type, the
-    ``SYNC_HELD_NODE_TYPES``, a first-row ``dynamic_rename`` (it reads a row) and a ``sql_query``
+    ``SYNC_HELD_NODE_TYPES``, a first-row ``dynamic_rename`` (it reads a row), a ``data_cleansing``
+    that removes null columns (it counts every column's nulls, on the worker) and a ``sql_query``
     that uses a table function (``read_*`` / ``scan_*`` read files), by the canvas's own gate
     (``shared.sql_validation.uses_table_function``).
     """
@@ -132,6 +133,8 @@ def held_in_sync(node_type: str, setting_input: Any = None) -> bool:
         return False
     if node_type == "dynamic_rename":
         return setting_input.dynamic_rename_input.rename_mode == "first_row"
+    if node_type == "data_cleansing":
+        return setting_input.cleansing_input.remove_null_columns
     if node_type == "sql_query":
         return uses_table_function(setting_input.sql_query_input.sql_code or "")
     return False

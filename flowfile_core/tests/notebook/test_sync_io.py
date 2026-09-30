@@ -22,6 +22,7 @@ import polars as pl
 import pytest
 from cryptography.fernet import Fernet
 
+from flowfile_core.auth import jwt as jwt_module
 from flowfile_core.configs.flow_logger import FlowLogger, get_flow_log_file
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile import flow_graph as flow_graph_module
@@ -33,9 +34,11 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import PolarsCodeParser
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import streaming, subprocess_operations
 from flowfile_core.flowfile.flow_graph import FlowGraph, list_files_schema
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
+from flowfile_core.flowfile.manage import io_flowfile
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
 from flowfile_core.notebook.bridge import CleanRunRequest
 from flowfile_core.notebook.interpret import CellInterpreter
@@ -134,7 +137,10 @@ class _Calls:
 
 
 def _record_io(monkeypatch, calls: _Calls) -> list[str]:
-    """Record every read, connection, walk, decrypt, polars-code run and callback start; return held nodes that ran."""
+    """Record every read, connection, worker offload, walk, decrypt, flow-file load, polars-code run and callback start.
+
+    Returns the held nodes that ran.
+    """
     for reader in READERS:
         calls.record(monkeypatch, pl, reader, label=f"pl.{reader}")
     calls.record(monkeypatch, pl.LazyFrame, "collect", label="collect")
@@ -149,6 +155,13 @@ def _record_io(monkeypatch, calls: _Calls) -> list[str]:
     calls.record(monkeypatch, FlowDataEngine, "from_cloud_storage_obj")
     calls.record(monkeypatch, Fernet, "decrypt")
     calls.record(monkeypatch, socket.socket, "connect")
+    calls.record(monkeypatch, subprocess_operations.BaseFetcher, "__init__", label="worker offload")
+    for module in (streaming, subprocess_operations):
+        calls.record(monkeypatch, module, "streaming_start")
+    for module in (jwt_module, streaming, subprocess_operations):
+        calls.record(monkeypatch, module, "get_internal_token")
+    calls.record(monkeypatch, FlowDataEngine, "_fetch_null_profile")
+    calls.record(monkeypatch, io_flowfile, "_load_flow_storage")
     calls.record(monkeypatch, SingleExecutionFuture, "start")
     for module, name in ((os, "scandir"), (os, "walk"), (os, "listdir"), (glob, "glob"), (glob, "iglob")):
         calls.record(monkeypatch, module, name, ours_only=True)
@@ -445,6 +458,7 @@ NEW_HELD_NODES = {
         "mood_emoji",
     ),
     "polars code source": ("rows = fl.polars_code('output_df = pl.LazyFrame({\"a\": [1]})')", "polars_code"),
+    "null column cleansing": (f"{SOURCE}\nrows = src.data_cleansing(remove_null_columns=True)", "data_cleansing"),
 }
 
 
@@ -476,6 +490,86 @@ def test_a_new_held_node_is_placed_and_seeded_without_reading_connecting_or_runn
     assert node_type in {node["type"] for node in result["flowfile_data"]["nodes"]}
     assert held_ran == []
     assert calls.labels() <= {"collect"} and _collects_beyond(calls, set(LITERAL_COLLECTS)) == []
+
+
+CLEANSING_ROWS = {
+    "columns": [
+        {"name": "a", "data_type": "Integer"},
+        {"name": "empty", "data_type": "String"},
+        {"name": "text", "data_type": "String"},
+    ],
+    "data": [[1, 2], [None, None], [" x", "y "]],
+}
+
+
+def test_a_null_column_cleansing_keeps_its_canvas_schema_and_a_whitespace_one_still_builds(monkeypatch):
+    """Dropping all-null columns counts every column's nulls, which the canvas does only when the node runs."""
+    import flowfile_frame as ff
+
+    graph = ff.create_flow_graph()
+    rows = ff.from_raw_data(CLEANSING_ROWS, flow_graph=graph)
+    nulls = rows.data_cleansing(remove_null_columns=True).node_id
+    trimmed = rows.data_cleansing(["text"]).node_id
+    cells, provenance, _, snapshot = _rendered(graph)
+    names = render(graph).var_by_node
+    calls = _Calls()
+    held_ran = _record_io(monkeypatch, calls)
+    with _snapshot_session(snapshot, provenance) as (mode, namespace):
+        for cell_id, code in cells:
+            _run(namespace, cell_id, code)
+        assert namespace[names[nulls]]._deferred and not namespace[names[trimmed]]._deferred
+        assert _names(namespace[names[nulls]]) == ["a", "text"]
+        assert _names(namespace[names[trimmed]]) == ["a", "empty", "text"]
+        assert mode.column_less == set()
+    assert held_ran == []
+    assert calls.labels() <= {"collect"} and _collects_beyond(calls, set(LITERAL_COLLECTS)) == []
+
+
+DATA_DEPENDENT_HOLDS = {"data_cleansing", "dynamic_rename", "fuzzy_match", "pivot", "random_split"}
+HELD_ROWS = {
+    "columns": [
+        {"name": "k", "data_type": "Integer"},
+        {"name": "name", "data_type": "String"},
+        {"name": "v", "data_type": "Integer"},
+        {"name": "empty", "data_type": "String"},
+    ],
+    "data": [[1, 1, 2], ["ann", "bob", "ann"], [10, 20, 30], [None, None, None]],
+}
+
+
+@pytest.fixture
+def every_data_dependent_hold() -> FlowGraph:
+    """A canvas placing, over literal rows, every transform a sync holds because building it reads the rows."""
+    import flowfile_frame as ff
+
+    graph = ff.create_flow_graph()
+    rows = ff.from_raw_data(HELD_ROWS, flow_graph=graph)
+    people = ff.from_raw_data(
+        {"columns": [{"name": "name", "data_type": "String"}], "data": [["ann"]]}, flow_graph=graph
+    )
+    rows.data_cleansing(remove_null_columns=True)
+    rows.dynamic_rename("first_row", columns=["name"])
+    rows.fuzzy_join(people, [ff.FuzzyMapping("name", threshold_score=40)])
+    rows.random_split({"train": 50, "test": 50}, seed=1)
+    rows.pivot("name", index="k", values="v", aggregate_function="sum")
+    return graph
+
+
+@pytest.mark.parametrize("twins", [True, False], ids=["canvas twins", "no canvas twins"])
+def test_a_sync_of_every_data_dependent_hold_offloads_decrypts_profiles_and_reads_nothing(
+    twins, every_data_dependent_hold, monkeypatch
+):
+    graph = every_data_dependent_hold
+    cells, provenance, ceiling, snapshot = _rendered(graph)
+    calls = _Calls()
+    held_ran = _record_io(monkeypatch, calls)
+    result = _sync(cells, snapshot, provenance if twins else {}, ceiling)
+    assert result["ok"], (result.get("cell_id"), result.get("line"), result.get("message"))
+    assert held_ran == []
+    assert calls.labels() <= {"collect"} and _collects_beyond(calls, set(LITERAL_COLLECTS)) == []
+    held = {node.node_type for node in graph.nodes if native.held_in_sync(node.node_type, node.setting_input)}
+    assert held == DATA_DEPENDENT_HOLDS and native.SYNC_HELD_NODE_TYPES <= held
+    assert held <= {node["type"] for node in result["flowfile_data"]["nodes"]}
 
 
 def test_a_sql_table_function_fails_the_canvas_check_on_its_line_and_reads_nothing(tmp_path, monkeypatch):
