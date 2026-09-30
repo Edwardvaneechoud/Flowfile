@@ -21,7 +21,7 @@ from flowfile_core.flowfile.code_generator.connector_handlers import ConnectorHa
 from flowfile_core.flowfile.code_generator.custom_node_handlers import CustomNodeHandlersMixin
 from flowfile_core.flowfile.code_generator.expression_helpers import ExpressionHelpersMixin
 from flowfile_core.flowfile.code_generator.join_handlers import JoinHandlersMixin
-from flowfile_core.flowfile.code_generator.native_handlers import FLOW_VAR, NativeHandlersMixin, user_description
+from flowfile_core.flowfile.code_generator.native_handlers import FLOW_VAR, NativeHandlersMixin
 from flowfile_core.flowfile.code_generator.param_codegen import (
     _SENTINEL_RE,
     SENTINEL_PREFIX,
@@ -39,6 +39,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.param_types import coerce_param_value
 from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
+from flowfile_core.flowfile.share.transform import _user_description
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
 from flowfile_core.flowfile.util.skip_rules import classify_graph, is_error_ish, uses_any_rule
 from flowfile_core.notebook.compare import strip_outer_parens
@@ -324,12 +325,12 @@ FF_VALIDATION_NAMES: tuple[str, ...] = (
 
 @functools.lru_cache(maxsize=1)
 def _ff_validation_namespace() -> types.SimpleNamespace:
-    """Stand-in for ``import flowfile as ff`` built from flowfile_frame alone.
+    """Stand-in for ``import flowfile as ff`` (or ``as fl``) built from flowfile_frame alone.
 
     Importing the top-level ``flowfile`` package mutates ``os.environ`` (single-file
     worker mode) and pulls in the web UI, so export validation must not do it. The
     namespace holds exactly ``FF_VALIDATION_NAMES`` — never more than ``flowfile``
-    exports, so a snippet that validates here also runs under ``import flowfile as ff``.
+    exports, so a snippet that validates here also runs under ``import flowfile``.
     Lazy import: flowfile_frame imports flowfile_core, so a module-level import is circular.
     """
     import flowfile_frame
@@ -2266,7 +2267,7 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
 
     def _description(self, node: FlowNode) -> str:
         """The user description a frame call carries; the native classes spell their own."""
-        return "" if node.node_type in _NATIVE_TYPES else user_description(node.setting_input)
+        return "" if node.node_type in _NATIVE_TYPES else _user_description(node.setting_input)
 
     def _ends_statement(self, node: FlowNode) -> bool:
         """A flow output or a described node ends its statement, so ``description=`` lands on its own call."""

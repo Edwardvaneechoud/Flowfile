@@ -12,9 +12,9 @@ ids already agree (the session's were relabelled onto provenance ids). :func:`re
   custom node) only when its settings differ under :func:`compare.settings_equal`, its user description
   differs, or its ``node_reference`` changes; an unchanged node never gets an op, since ``update_node``
   swaps its function and resets its cache even for an equal hash;
-* new ids become ``add_node`` next to their most recent input (the ``_resolve_insertion_position`` rule),
-  then their inputs are connected, then their settings are sent; a type change under the same id is
-  ``delete_node`` + ``add_node`` at the live position + every edge re-connected;
+* new ids become ``add_node`` next to their most recent input (:func:`_insertion_position`, the AI executor's
+  ``_resolve_insertion_position`` rule), then their inputs are connected, then their settings are sent; a type
+  change under the same id is ``delete_node`` + ``add_node`` at the live position + every edge re-connected;
 * edges are diffed per target handle: ``input-0`` as an ordered list (a union's or multi-input Polars
   code's order matters and ``connect`` appends, so a changed order re-adds every input), ``input-1`` /
   ``input-2`` as single slots and keyed inputs as sets, each with its source handle (``output-0..9``);

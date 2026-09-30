@@ -45,7 +45,7 @@ def _flow_order(outgoing: list[list[tuple[int, str]]]) -> list[int]:
             waiting[target] -= 1
             if waiting[target] == 0:
                 heapq.heappush(ready, (bool(outgoing[target]), target))
-    return order + [i for i in range(len(outgoing)) if i not in set(order)]
+    return order + sorted(set(range(len(outgoing))) - set(order))
 
 
 def _connector(lanes: list[Lane], col: int, joined: list[int], corner: str) -> str:

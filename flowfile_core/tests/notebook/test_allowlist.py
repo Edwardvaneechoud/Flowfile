@@ -42,7 +42,7 @@ WEB_UI_NAMES = {"open_graph_in_editor", "start_web_ui"}
 
 
 def test_every_fl_name_has_a_verdict():
-    completions = {entry["name"] for entry in json.loads(COMPLETIONS.read_text())["fl"]}
+    completions = {entry["name"] for entry in json.loads(COMPLETIONS.read_text(encoding="utf-8"))["fl"]}
     assert set(allowlist.FL_VERDICTS) == completions == set(_fl_namespace.__all__) | WEB_UI_NAMES
     allowed = {name for name, (verdict, _) in allowlist.FL_VERDICTS.items() if verdict == allowlist.ALLOW}
     assert allowed <= set(_fl_namespace.__all__)
@@ -113,9 +113,65 @@ def _allowed_entries() -> set[tuple[str, str]]:
     return entries | {("helper", name) for name in allowlist.HELPERS}
 
 
+_CG = "flowfile_core.flowfile.code_generator"
+_FF = f"{_CG}.code_generator:FlowGraphToFlowFrameConverter"
+_BASE = f"{_CG}.code_generator:FlowGraphCodeConverter"
+_CONNECTORS = f"{_CG}.connector_handlers:ConnectorHandlersMixin"
+_NATIVE = f"{_CG}.native_handlers:NativeHandlersMixin"
+_FILTER = f"{_CG}.expression_helpers:ExpressionHelpersMixin._create_basic_filter_expr"
+_WINDOWS = f"{_CG}.transform_handlers:TransformHandlersMixin._build_window_expr_code"
+_FORMULA = f"{_FF}._translate_to_ff_code"
+
+EMITTED_OUTSIDE_THE_CORPUS: dict[tuple[str, str], str] = {
+    **{
+        ("fl", name): f"{_CG}.native_handlers:_dtype_expr"
+        for name in allowlist._DTYPES
+        if name not in ("Boolean", "Float64", "Int32", "Int64", "Utf8")
+    },
+    ("fl", "when"): _WINDOWS,
+    ("fl", "read_csv"): f"{_BASE}._handle_csv_read_non_utf8",
+    ("fl", "list_files"): f"{_CONNECTORS}._handle_list_files",
+    ("fl", "read_database"): f"{_CONNECTORS}._handle_database_reader",
+    ("fl", "read_kafka"): f"{_FF}._handle_kafka_source",
+    ("fl", "read_api"): f"{_CONNECTORS}._handle_rest_api_reader",
+    ("fl", "read_from_cloud_storage"): f"{_FF}._handle_cloud_storage_reader",
+    ("fl", "read_catalog_sql"): f"{_CONNECTORS}._handle_catalog_sql_reader",
+    ("fl", "write_database"): f"{_CONNECTORS}._handle_database_writer",
+    ("fl", "write_to_cloud_storage"): f"{_FF}._handle_cloud_storage_writer",
+    ("datetime", "date"): f"{_CG}.expression_helpers:_temporal_literal",
+    ("datetime", "datetime"): f"{_CG}.expression_helpers:_temporal_literal",
+    ("FlowFrame", "drop"): f"{_BASE}._handle_select",
+    ("FlowFrame", "rename"): f"{_CG}.join_handlers:JoinHandlersMixin._apply_pre_join_transformations",
+    ("FlowFrame", "head"): f"{_FF}._handle_sample",
+    ("FlowFrame", "write_excel"): f"{_BASE}._handle_output_excel",
+    ("Expr", "median"): f"{_CG}.expression_helpers:ExpressionHelpersMixin._get_agg_function",
+    ("StringNS", "join"): f"{_CG}.expression_helpers:ExpressionHelpersMixin._get_agg_function",
+    **{("Expr", name): _FILTER for name in ("is_in", "is_null", "is_not_null", "not_", "str")},
+    **{("StringNS", name): _FILTER for name in ("contains", "starts_with", "ends_with")},
+    **{
+        ("Expr", name): _WINDOWS
+        for name in (*allowlist._WINDOW, *allowlist._CUMULATIVE, "rank", "fill_null", "then", "otherwise")
+    },
+    **{("Expr", name): _FORMULA for name in (*allowlist._FORMULA_EXPR, "dt")},
+    **{("StringNS", name): _FORMULA for name in allowlist._FORMULA_STR},
+    **{("DateTimeNS", name): _FORMULA for name in allowlist._FORMULA_DT},
+    ("NodeOutputs", "[]"): f"{_NATIVE}._bind_outputs",
+    ("CustomNodes", "[]"): f"{_NATIVE}._handle_user_defined",
+    ("CustomNodeFactory", "node"): f"{_NATIVE}._handle_user_defined",
+    ("ScriptFunction", "node"): f"{_NATIVE}._decorated_text",
+    ("reader", "__call__"): f"{_FF}._frame_reader",
+    ("helper", "_flowfile_expr_literal"): f"{_BASE}._gate_formula_arg",
+    ("import", "datetime"): f"{_CG}.expression_helpers:ExpressionHelpersMixin._create_basic_filter_expr",
+    ("import", "hashlib"): f"{_CG}.base:ConverterMixinBase._register_expr_stdlib_imports",
+    ("import", "json"): f"{_BASE}._mark_expr_literal_needed",
+    **{("from flowfile_frame", name): f"{_FF}._frame_reader" for name in allowlist._READERS},
+}
+"""Allowed entries no rendered corpus cell uses, each with the exporter handler (``module:qualname``) emitting it."""
+
+
 def test_every_entry_outside_the_corpus_names_a_real_exporter_handler():
-    assert set(allowlist.EMITTED_OUTSIDE_THE_CORPUS) <= _allowed_entries()
-    assert all(callable(_resolve(handler)) for handler in allowlist.EMITTED_OUTSIDE_THE_CORPUS.values())
+    assert set(EMITTED_OUTSIDE_THE_CORPUS) <= _allowed_entries()
+    assert all(callable(_resolve(handler)) for handler in EMITTED_OUTSIDE_THE_CORPUS.values())
 
 
 def test_argument_rules_name_allowed_entries_and_known_kinds():

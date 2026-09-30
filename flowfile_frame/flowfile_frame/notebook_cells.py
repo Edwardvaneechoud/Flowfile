@@ -114,9 +114,9 @@ class CellResult:
 
     On a failure ``error`` is the traceback from the cell down when the cell ran as Python, else
     the message; ``message`` is the exception text alone (``traceback.format_exception_only``),
-    ``line`` the failing line (1-based within the cell: the line of the method name for a
-    call, as Python reports it), ``kind`` ``"needs_kernel"``, ``"refused"`` (a notebook-mode
-    refusal) or ``"error"``, and ``traceback`` the full traceback of the underlying exception.
+    ``line`` the failing line (1-based within the cell, as Python reports it), ``kind``
+    ``"needs_kernel"``, ``"refused"`` (a notebook-mode refusal) or ``"error"``, and
+    ``traceback`` the full traceback of the underlying exception.
     ``created`` lists ``(node_type, node_id)`` for every node the cell created, ``names`` the
     variables it bound or rebound, ``references`` the ``node_reference`` each name capture set,
     ``display`` the payload of the last expression (schema only for a frame) and ``outputs`` the

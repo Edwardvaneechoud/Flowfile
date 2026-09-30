@@ -1,11 +1,8 @@
 """The notebook's clean runner in core: every push and plan interprets the cells and executes none of them.
 
-:class:`NotebookRunner` is the production :class:`~flowfile_core.notebook.bridge.CleanRunner`. ``main.py``
-installs it once, at import, through :func:`install_notebook_runner`, the function tests call too; no
-setting or environment variable switches it. A clean run is one call on the calling thread, as the
-requesting user, holding ``notebook.RUN_LOCK``: it enters a sync on the canvas snapshot, runs every cell
-through a fresh executor and ends the mode. A request over a size bound (``allowlist.BOUNDS``) or naming a
-malformed cell id is refused before any cell is parsed. ``flowfile_frame`` is imported on the first run.
+:class:`NotebookRunner` is the production :class:`~flowfile_core.notebook.bridge.CleanRunner`, installed at
+import by ``main.py`` through :func:`install_notebook_runner` (tests call it too); no setting or environment
+variable switches it. :meth:`NotebookRunner.clean_run` documents a run.
 """
 
 from __future__ import annotations

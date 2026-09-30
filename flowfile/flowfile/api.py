@@ -15,7 +15,7 @@ from collections import deque
 from pathlib import Path
 from subprocess import Popen
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import IO, Any
 
 import requests
 
@@ -94,7 +94,7 @@ def stop_flowfile_server_process() -> None:
             logger.warning("Server may still be running after termination attempt")
 
 
-def _drain_server_stderr(stream) -> None:
+def _drain_server_stderr(stream: IO[bytes]) -> None:
     """Read the server's stderr for its whole life: core logs there, and an unread pipe fills up and blocks it."""
     for line in stream:
         _server_stderr_tail.append(line.decode(errors="ignore").rstrip())

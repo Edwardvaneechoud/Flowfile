@@ -9,15 +9,20 @@ rebuilt graph holds the same node types. A node a native form cannot express is 
 
 import ast
 import builtins
+import importlib.util
+import inspect
 import json
 import keyword
+import linecache
 import re
+import types
 
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
 from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
+from flowfile_core.flowfile.share.transform import _user_description
 from flowfile_core.schemas import input_schema
 
 FLOW_PARAMETER_HELPER = '''\
@@ -165,13 +170,6 @@ def _decorator_parts(cells: list[str]) -> tuple | None:
     return prelude, [match["name"] for match in reads], candidates, named["name"] if named else None
 
 
-def user_description(settings) -> str:
-    """The description the user typed (not the auto-generated one), or ""."""
-    from flowfile_core.flowfile.share.transform import _user_description
-
-    return _user_description(settings)
-
-
 class NativeHandlersMixin(ConverterMixinBase):
     """``fl.*`` native-class handlers; composed into the FlowFrame converter ahead of the shared handlers."""
 
@@ -185,7 +183,7 @@ class NativeHandlersMixin(ConverterMixinBase):
         self._add_code("")
 
     def _description_args(self, settings) -> list[str]:
-        description = user_description(settings)
+        description = _user_description(settings)
         return [f"description={self._py_str(description)}"] if description else []
 
     def _bind_outputs(self, node_id: int, var: str, accessors: list[str]) -> None:
@@ -322,7 +320,7 @@ class NativeHandlersMixin(ConverterMixinBase):
             schema = schema_literal([(column.name, column.data_type) for column in raw.columns])
             if schema is None:
                 return self._refuse(settings.node_id, "flow_input", "a sample column has a dtype with no fl.* form")
-            if not raw.data or not any(raw.data[0] if raw.data else []):
+            if not raw.data or not any(raw.data[0]):
                 args.append(f"schema={schema}")
             else:
                 columns = []
@@ -415,14 +413,10 @@ class NativeHandlersMixin(ConverterMixinBase):
         The prelude's lines are independent statements, so a stored prelude in another order (one saved
         when the frame ordered it by bytecode) still counts as reproduced.
 
-        Pure text on the core side: prelude imports become stub modules (each must pass
-        ``importlib.util.find_spec``) and constant assignments become literals, so nothing the script imports is loaded;
-        only the ``def`` is compiled, then the frame's own ``_notebook_cells`` regenerates the cells.
+        Prelude imports become stub modules (each must pass ``importlib.util.find_spec``) and constant
+        assignments become literals, so nothing the script imports is loaded; the ``def`` is compiled and
+        executed to bind the function (its body never runs), then the frame's ``_notebook_cells`` regenerates the cells.
         """
-        import importlib.util
-        import linecache
-        import types
-
         from flowfile_frame.python_script import _notebook_cells
 
         cells = [cell.code for cell in settings.python_script_input.cells]
@@ -505,8 +499,6 @@ class NativeHandlersMixin(ConverterMixinBase):
 
     def _handle_user_defined(self, node: FlowNode, var_name: str, input_vars: dict[str, str]) -> None:
         """``fl.custom_nodes.<key>(frame, <component>=value, ..., kernel=...)``; settings drift is refused."""
-        import inspect
-
         from flowfile_frame.custom_node import CustomNodeFactory
         from flowfile_frame.custom_nodes import CustomNodes
 

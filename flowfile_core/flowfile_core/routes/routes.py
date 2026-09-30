@@ -397,7 +397,7 @@ def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
 
 
 def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
-    """Wrapper that runs a flow and persists the run record to the database.
+    """Wrapper that runs a flow (only ``node_ids`` when given) and persists the run record to the database.
 
     Uses a two-phase pattern:
     1. Create a run record BEFORE execution (makes run visible as "active")

@@ -2182,7 +2182,7 @@ class FlowGraph:
         # live graph is empty at undo time (snapshots intentionally omit user_id).
         self._owner_user_id: int | None = None
         self._node_observers: list[NodeObserver] = []
-        # Off only on a notebook session's scratch graph, where cells re-place the seeded ports.
+        # Off only on a graph `notebook_cells.seed_session` seeded, where cells re-place the seeded ports.
         self.unique_subflow_port_names = True
 
         from flowfile_core.flowfile.history_manager import HistoryManager

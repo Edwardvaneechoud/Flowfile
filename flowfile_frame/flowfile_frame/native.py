@@ -72,7 +72,7 @@ PROBED_FILE_TYPES: frozenset[str] = frozenset({"csv", "json", "parquet", "ipc", 
 """File types whose canvas read node predicts its schema from the file's header or footer."""
 
 _FORMULA_RULE_TYPES: frozenset[str] = frozenset({"formula", "filter", "gate"})
-"""Types whose settings normalisation translates formulas; the oracle compares them structurally instead."""
+"""Types whose settings normalisation translates formulas; :func:`_twin_settings` compares them structurally."""
 
 
 def is_side_effect_node_type(node_type: str) -> bool:
@@ -300,20 +300,10 @@ def sync_seed_schemas(
 ) -> dict[str, list[FlowfileColumn]]:
     """Per-handle schemas a sync seeds the held ``node`` with, predicted without running anything.
 
-    The first that applies:
-
-    1. the snapshot twin's schemas, when they hold columns: the canvas node the cell rendered it
-       from (:func:`_snapshot_twin`), when its settings are unchanged (compared without ids and
-       normalised as a push compares them) and, for ``polars_code``, its inputs still carry the same
-       column names;
-    2. what the cell declares: ``declared`` (a Python script's ``returns=``, a custom node's
-       ``schemas=``), else the settings' own (a source's ``fields``, a read's saved fields, the
-       fixed ``list_files`` schema, a Python script's ``output_schemas`` with its first input's
-       columns for the rest, a subflow without outputs' run summary);
-    3. what the canvas reads to show a schema: a local single-file read's header or footer
-       (``FlowDataEngine.create_from_path(received_file).schema``, the read node's own schema
-       callback) and a catalog table's registered schema;
-    4. no columns; the node is recorded on the mode's ``column_less``.
+    The first that applies: (1) the schemas of :func:`_snapshot_twin`, when they hold columns;
+    (2) what the cell declares, ``declared`` (a script's ``returns=``, a custom node's ``schemas=``),
+    else what the settings declare (:func:`_declared_schemas`); (3) what the canvas reads to show a
+    schema (:func:`_canvas_probe`); (4) no columns, and the node is recorded on the mode's ``column_less``.
 
     Never a node function, a schema callback, a custom-node hook, a child flow, polars code, a
     directory glob, an eager reader, a connection or a decrypt.
@@ -351,8 +341,8 @@ def _without_ids(value: Any) -> Any:
     return value
 
 
-def _oracle_settings(settings: BaseModel, node_type: str) -> Any:
-    """``settings`` as the oracle compares them: without ids, and normalised like a push compares them.
+def _twin_settings(settings: BaseModel, node_type: str) -> Any:
+    """``settings`` as :func:`_snapshot_twin` compares them: without ids, and normalised like a push compares them.
 
     The push's per-type normalisation (``flowfile_core.notebook.compare.normalise``: layout,
     labels, the node user, a read's display name, a script's cell ids) applies, except for the
@@ -369,9 +359,10 @@ def _snapshot_twin(node: FlowNode) -> Any | None:
     """The unchanged canvas node the running cell rendered ``node`` from, else ``None`` (:func:`sync_seed_schemas`).
 
     The first canvas id of ``node``'s type the cell rendered, in render order, that no other node of
-    the cell has claimed and whose settings equal ``node``'s; it is then claimed (``mode.claimed``).
-    Without edits this is the relabel rule (the k-th node of a type takes the k-th canvas id), and
-    a node the cell creates but does not keep (an unbound line) shifts nothing.
+    the cell has claimed and whose settings equal ``node``'s (a ``polars_code`` twin also needs the
+    same input column names); it is then claimed (``mode.claimed``). Without edits this is the
+    relabel rule (the k-th node of a type takes the k-th canvas id), and a node the cell creates but
+    does not keep (an unbound line) shifts nothing.
     """
     mode = current()
     if mode is None or not mode.sync or mode.cell_id is None or node.setting_input is None:
@@ -385,7 +376,7 @@ def _snapshot_twin(node: FlowNode) -> Any | None:
         twin = mode.snapshot.get(canvas_id)
         if twin is None or twin.node_type != node.node_type or twin.setting_input is None:
             continue
-        if _oracle_settings(twin.setting_input, node.node_type) != _oracle_settings(node.setting_input, node.node_type):
+        if _twin_settings(twin.setting_input, node.node_type) != _twin_settings(node.setting_input, node.node_type):
             continue
         if node.node_type == "polars_code" and _input_columns(node) != _canvas_input_columns(twin, mode.snapshot):
             continue

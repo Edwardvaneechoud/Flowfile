@@ -111,7 +111,8 @@ def _installed_custom_node(node_type: str) -> bool:
 def refused_nodes(
     live: dict, session: dict, installed: Callable[[str], bool] = _installed_custom_node
 ) -> list[tuple[str, int]]:
-    """``(message, node id)`` for every node the canvas cannot hold (see :func:`push_refusals`), in order."""
+    """``(message, node id)``, in order, for every node the canvas cannot hold: in-memory LazyFrames, custom node
+    classes that are not installed or do not load, inline REST secrets."""
     refused = []
     live_types = {node["type"] for node in live.get("nodes") or []}
     for payload in (live, session):
@@ -132,12 +133,6 @@ def refused_nodes(
             if inline:
                 refused.append((INLINE_SECRET_REFUSAL.format(node_id=node["id"]), node["id"]))
     return refused
-
-
-def push_refusals(live: dict, session: dict, installed: Callable[[str], bool] = _installed_custom_node) -> list[str]:
-    """What the canvas cannot hold: in-memory LazyFrames, custom node classes that are not installed or do not
-    load, inline REST secrets."""
-    return list(dict.fromkeys(message for message, _ in refused_nodes(live, session, installed)))
 
 
 def _owned_kernel_ids(user_id: int) -> set[str] | None:

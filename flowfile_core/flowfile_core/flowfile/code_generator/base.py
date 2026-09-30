@@ -1,12 +1,12 @@
 """Shared converter surface for the code-generator handler mixins.
 
 The node-type handlers are split across mixins (joins, transforms, connectors,
-custom nodes, expressions) that all run as part of the composed
-``FlowGraphCodeConverter``. Each handler reads converter state and calls a few
-shared primitives that the composed class provides. This base only *declares*
-that surface (under ``TYPE_CHECKING``) so cross-class ``self.*`` references in the
-mixins resolve for static analysis; the real state and methods live on
-``FlowGraphCodeConverter`` and win at runtime via the MRO.
+custom nodes, expressions) composed into ``FlowGraphCodeConverter``; the native
+mixin composes into ``FlowGraphToFlowFrameConverter`` only. Each handler reads
+converter state and calls a few shared primitives the composed class provides.
+This base only *declares* that surface (under ``TYPE_CHECKING``) so cross-class
+``self.*`` references in the mixins resolve for static analysis; the real state
+and methods live on ``FlowGraphCodeConverter`` and win at runtime via the MRO.
 """
 
 import json
