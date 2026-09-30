@@ -151,6 +151,9 @@ def _own_strings(table: Mapping[str, Any]) -> dict[str, str]:
 
 
 _TABLE_STRINGS: dict[str, dict[str, str]] = {kind: _own_strings(table) for kind, table in allowlist.ALLOWLIST.items()}
+_INPUT_ONLY_STRINGS: dict[str, dict[str, str]] = {
+    kind: _own_strings(table) for kind, table in allowlist.INPUT_ONLY.items()
+}
 _FL_STRINGS: dict[str, str] = _own_strings(allowlist.FL_VERDICTS)
 
 
@@ -185,11 +188,14 @@ class CellInterpreter:
     Called as ``executor(filename, code, namespace)`` (see ``notebook_cells.CellExecutor``); one
     instance serves one run, whose steps, literal elements, expression text and placed nodes it
     bounds (``allowlist.BOUNDS``). ``used`` collects every ``(kind, attribute)`` allowlist entry the
-    cells exercised. A failure is raised as ``notebook_cells.CellFailure``.
+    cells exercised, ``used_input_only`` every ``allowlist.INPUT_ONLY`` one; with ``emitted_only``
+    only what the render writes is accepted. A failure is raised as ``notebook_cells.CellFailure``.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, emitted_only: bool = False) -> None:
+        self.emitted_only = emitted_only
         self.used: set[tuple[str, str]] = set()
+        self.used_input_only: set[tuple[str, str]] = set()
         self.steps = 0
         self.elements = 0
         self.expression_chars = 0
@@ -221,7 +227,7 @@ def interprets_expression(code: str) -> bool:
     The notebook render asks this of each translated formula, so a translation outside the dialect
     keeps its formula text instead of rendering a cell that needs a kernel.
     """
-    interpreter = CellInterpreter()
+    interpreter = CellInterpreter(emitted_only=True)
     namespace = {"fl": interpreter.fl(), "pl": pl, "datetime": _Datetime("datetime")}
     try:
         _Cell(interpreter, code, namespace).expr(ast.parse(code, mode="eval").body)
@@ -618,6 +624,10 @@ class _Cell:
         if attr in table:
             self.interpreter.used.add((kind, attr))
             return kind, _TABLE_STRINGS[kind][attr], table[attr]
+        input_only = {} if self.interpreter.emitted_only else allowlist.INPUT_ONLY.get(kind or "", {})
+        if attr in input_only:
+            self.interpreter.used_input_only.add((kind, attr))
+            return kind, _INPUT_ONLY_STRINGS[kind][attr], input_only[attr]
         if "*" in table and not hasattr(type(receiver), attr):
             self.interpreter.used.add((kind, "*"))
             return kind, attr, table["*"]
@@ -727,7 +737,11 @@ class _Cell:
         raise _needs_kernel(f"Passing {_kind_label(kind) or 'this value'} as {self.text(node)}", node.lineno)
 
     def check_data(self, value: Any, node: ast.AST, depth: int = 0) -> None:
-        """Every element of a container argument is data too (a bounded walk)."""
+        """Every element of a container argument is data too.
+
+        Each element visited is a step, so a list holding one list many times cannot multiply the walk
+        past the step budget. The literal budget is left alone: a literal was charged when it was built.
+        """
         if depth > allowlist.BOUNDS["depth"]:
             raise _Failure("A value in the cell nests too deeply to read", node.lineno, "refused")
         if isinstance(value, list | tuple):
@@ -737,6 +751,7 @@ class _Cell:
         else:
             return
         for item in items:
+            self.step(node)
             if kind_of(item) not in _DATA_KINDS:
                 raise _needs_kernel(f"A {_kind_label(kind_of(item)) or 'value'} inside {self.text(node)}", node.lineno)
             self.check_data(item, node, depth + 1)

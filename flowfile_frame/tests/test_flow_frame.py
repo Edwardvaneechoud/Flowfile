@@ -381,6 +381,12 @@ def test_explode():
     assert result["id"].to_list() == [1, 1, 2, 2, 2]
 
 
+def test_explode_a_column_whose_name_holds_a_backslash_or_a_newline():
+    df = FlowFrame({"a\\b": [[1, 2]], "c\nd": [[3, 4]]})
+    assert df.explode("a\\b").collect()["a\\b"].to_list() == [1, 2]
+    assert df.explode(["a\\b", "c\nd"]).collect().to_dict(as_series=False) == {"a\\b": [1, 2], "c\nd": [3, 4]}
+
+
 def test_unique():
     """Test getting unique rows from a FlowFrame."""
     data = {

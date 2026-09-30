@@ -1,7 +1,8 @@
 """No cell reaches ``exec``, ``eval`` or ``compile`` in core, and the call sites of those builtins do not grow.
 
 Every corpus flow is rendered, then planned with every cell edited (fingerprint, snapshot, the installed
-runner's clean run, refusals, reconcile: what ``POST /notebook/plan`` does) twice: a warm-up that loads every
+runner's clean run, refusals, reconcile: what ``POST /notebook/plan`` does), one of them with a cell added that
+calls the input-only frame methods, twice: a warm-up that loads every
 lazy import and cache, then again with ``builtins.exec``, ``eval`` and ``compile`` replaced by recorders that
 delegate to the originals. Parsing (``compile`` with ``ast.PyCF_ONLY_AST``, which is how ``ast.parse`` reads a
 cell) is allowed; any other call on the planning thread must come from a pinned site, none may come from the
@@ -33,6 +34,7 @@ from flowfile_core.notebook.push import NotebookPushRequest, plan_push, plan_res
 from flowfile_core.notebook.render import render
 from flowfile_core.notebook.runner import NotebookRunner, install_notebook_runner
 from tests.notebook.conftest import NOTEBOOK_OWNER_ID, cell_provenance, masked_payload
+from tests.notebook.test_input_only import EDITED, SOURCE, edited_cell
 
 REPO = Path(__file__).resolve().parents[3]
 BUILTINS = ("exec", "eval", "compile")
@@ -157,11 +159,15 @@ def _from_a_cell(call: Call, lines: set[str]) -> bool:
 
 
 def _requests(notebook_corpus) -> list[tuple[str, Any, NotebookPushRequest]]:
-    """Every corpus flow's rendered cells as a plan request with every cell edited (rendering is not the sync)."""
+    """Every corpus flow's rendered cells as a plan request with every cell edited (rendering is not the sync);
+    the first flow's again with a cell added that calls every input-only frame method needing no connection."""
     requests = []
-    for name, graph in notebook_corpus:
+    added = ("cell-input-only", f"{SOURCE}\n{edited_cell(name for name in EDITED if name != 'write_database')}")
+    targets = [(name, graph, []) for name, graph in notebook_corpus]
+    targets.append((f"{notebook_corpus[0][0]}+input_only", notebook_corpus[0][1], [added]))
+    for name, graph, extra in targets:
         rendering = render(graph)
-        cells = [(cell.cell_id, cell.code) for cell in rendering.cells]
+        cells = [(cell.cell_id, cell.code) for cell in rendering.cells] + extra
         request = NotebookPushRequest(
             flow_id=graph.flow_id,
             cells=cells,

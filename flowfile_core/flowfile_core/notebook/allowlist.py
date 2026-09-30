@@ -2,8 +2,10 @@
 
 Pure string-keyed data, so nothing here imports the frame. :mod:`flowfile_core.notebook.interpret` looks
 every attribute read, call and subscript up by ``(kind, attribute)``, a kind being a value's exact type;
-anything not listed needs a kernel. The list is positive and no larger than the FlowFrame exporter's output:
-``tests/notebook`` ties every entry to a rendered corpus cell or to the exporter handler that emits it.
+anything not listed needs a kernel. The lists are positive. :data:`ALLOWLIST` is no larger than the FlowFrame
+exporter's output: ``tests/notebook`` ties every entry to a rendered corpus cell or to the exporter handler that
+emits it. :data:`INPUT_ONLY` names what a cell may also call that the render never writes, pinned to the frame's
+own pure transforms and node builders.
 
 Usages: ``call`` (called as ``x.attr(...)``), ``read`` (read as ``x.attr``), ``both``,
 ``decorator`` (only as ``@fl.attr`` or ``@fl.attr(...)``). The attribute ``__call__`` makes a
@@ -124,6 +126,25 @@ ALLOWLIST: dict[str, dict[str, str]] = {
     "reader": {"__call__": CALL},
 }
 """Receiver kind -> attribute -> usage. ``fl`` is looked up in :data:`FL_VERDICTS` instead."""
+
+_FRAME_PURE_TRANSFORMS = (
+    "bottom_k", "cast", "count", "drop_nans", "drop_nulls", "explode", "fill_nan", "fill_null", "first",
+    "gather_every", "interpolate", "last", "limit", "max", "mean", "median", "melt", "min", "null_count", "quantile",
+    "reverse", "shift", "slice", "std", "sum", "tail", "top_k", "unnest", "var",
+)  # fmt: skip
+_FRAME_NODE_BUILDERS = (
+    "sink_csv", "sink_ipc", "sink_ndjson", "sql", "write_avro", "write_catalog_table", "write_csv_to_cloud_storage",
+    "write_database", "write_delta", "write_ipc", "write_json_to_cloud_storage", "write_ndjson",
+    "write_parquet_to_cloud_storage",
+)  # fmt: skip
+
+INPUT_ONLY: dict[str, dict[str, str]] = {
+    "FlowFrame": {name: CALL for name in (*_FRAME_PURE_TRANSFORMS, *_FRAME_NODE_BUILDERS)},
+}
+"""Receiver kind -> attribute -> usage a cell may call although the render never writes it, looked up after
+:data:`ALLOWLIST`: the frame's pure transforms (one Polars Code node each, or the node the frame builds, as
+``limit`` a Sample) and its own node builders (a SQL Query, Output or writer node). The render's check
+(``interpret.interprets_expression``) never consults it."""
 
 IMPORTS: dict[tuple[str, str | None], str] = {
     ("flowfile", "fl"): "fl",

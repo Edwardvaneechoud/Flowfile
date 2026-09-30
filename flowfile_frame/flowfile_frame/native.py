@@ -238,17 +238,18 @@ def predicted_schema_without_running(node: FlowNode) -> list[FlowfileColumn]:
         return []
 
 
-def seed_from_predicted_schema(node: FlowNode) -> None:
+def seed_from_predicted_schema(node: FlowNode, declared: Mapping[str, list[FlowfileColumn]] | None = None) -> None:
     """Seed ``node`` on output-0 with its own predicted schema, never executing it.
 
     A ``polars_code`` transform (seeded only in notebook mode) has no schema callback, so it
     predicts lazily over its inputs the way the canvas does; the frame's own writer fallbacks, the
     only fluent code that writes, are refused in notebook mode. A ``polars_code`` source would
     read to predict, so it gets the callback-only (empty) schema like any other source. In a sync
-    nothing is predicted: every handle takes :func:`sync_seed_schemas`.
+    nothing is predicted: every handle takes :func:`sync_seed_schemas` with ``declared`` (the
+    columns a frame method's own lazy plan gives, ``FlowFrame._planned_seed``).
     """
     if _in_sync():
-        seed_deferred_node(node, sync_seed_schemas(node, _handles(node)))
+        seed_deferred_node(node, sync_seed_schemas(node, _handles(node), declared))
         return
     if node.node_type == "polars_code" and node.all_inputs:
         seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: _placeholder_schema(node)})
@@ -303,9 +304,10 @@ def sync_seed_schemas(
     """Per-handle schemas a sync seeds the held ``node`` with, predicted without running anything.
 
     The first that applies: (1) the schemas of :func:`_snapshot_twin`, when they hold columns;
-    (2) what the cell declares, ``declared`` (a script's ``returns=``, a custom node's ``schemas=``),
-    else what the settings declare (:func:`_declared_schemas`); (3) what the canvas reads to show a
-    schema (:func:`_canvas_probe`); (4) no columns, and the node is recorded on the mode's ``column_less``.
+    (2) what the cell declares, ``declared`` (a script's ``returns=``, a custom node's ``schemas=``,
+    the columns Polars' planner gives a frame method built as Polars code), else what the settings
+    declare (:func:`_declared_schemas`); (3) what the canvas reads to show a schema
+    (:func:`_canvas_probe`); (4) no columns, and the node is recorded on the mode's ``column_less``.
 
     Never a node function, a schema callback, a custom-node hook, a child flow, polars code, a
     directory glob, an eager reader, a connection or a decrypt.

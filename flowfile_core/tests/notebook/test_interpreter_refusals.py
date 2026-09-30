@@ -139,8 +139,14 @@ NEEDS_KERNEL = {
     "cache": ("x = df.cache()", 1),
     "pipe": ("x = df.pipe(fl.col)", 1),
     "map_batches": ("x = df.map_batches(fl.col)", 1),
-    "sink_csv": ("df.sink_csv('x.csv')", 1),
-    "tail": ("x = df.tail(2)", 1),
+    "show": ("df.show()", 1),
+    "set_sorted": ("x = df.set_sorted('a')", 1),
+    "sink_parquet": ("df.sink_parquet('x.parquet')", 1),
+    "deserialize": ("x = df.deserialize('x.bin')", 1),
+    "remote": ("x = df.remote()", 1),
+    "select_seq": ("x = df.select_seq('a')", 1),
+    "join_asof": ("x = df.join_asof(df, on='a')", 1),
+    "input_only_read": ("x = df.tail", 1),
     "lazy": ("x = df.lazy()", 1),
     "concat_method": ("x = df.concat(df)", 1),
     "map_elements": ("x = fl.col('a').map_elements(fl.col)", 1),
@@ -152,6 +158,7 @@ NEEDS_KERNEL = {
     "expr_attribute": ("x = fl.col('a').expr", 1),
     "str_namespace_other": ("x = fl.col('a').str.json_decode()", 1),
     "group_by_shortcut": ("x = df.group_by('a').sum()", 1),
+    "group_by_head": ("x = df.group_by('a').head()", 1),
     "gate_is_open": ("fl.add_flow_parameter(flow, p)\ng = fl.Gate(df, parameter='p', value=1)\nx = g.is_open", 3, 1),
     "parameter_ref": ("x = p.ref", 1),
     "parameter_to_expr": ("x = p.to_expr()", 1),
@@ -262,6 +269,27 @@ def test_an_expression_doubled_line_by_line_is_refused_on_its_line_before_it_out
     assert (result.cell_id, result.kind, placed) == (CELL_ID, "refused", 0)
     assert 1 < result.line <= 23
     assert "expressions too long" in result.message
+
+
+def test_a_list_holding_one_list_twice_line_by_line_is_refused_before_its_walk_outgrows_the_budget(monkeypatch):
+    monkeypatch.setitem(allowlist.BOUNDS, "steps_per_request", 1_000)
+    result, placed = _interpret("x = [0, 0]\n" + "x = [x, x]\n" * 12 + "y = df.select(x)")
+    assert (result.cell_id, result.kind, result.line, placed) == (CELL_ID, "refused", 14, 0)
+    assert "too many steps" in result.message
+
+
+def test_a_literal_passed_as_an_argument_is_charged_to_the_literal_budget_once(monkeypatch):
+    size = 1_000
+    with notebook.notebook_mode(user_id=1):
+        namespace = new_namespace()
+        interpreter = CellInterpreter()
+        assert execute_cell("setup", SETUP, namespace, executor=interpreter).ok
+        interpreter.elements = 0
+        monkeypatch.setitem(allowlist.BOUNDS, "literal_elements_per_request", size * 3 // 2)
+        code = f"x = fl.col('a').is_in({list(range(size))})"
+        result = execute_cell(CELL_ID, code, namespace, executor=interpreter)
+    assert result.ok, result.error
+    assert interpreter.elements == size
 
 
 def test_a_missing_prelude_module_fails_as_its_import_does():

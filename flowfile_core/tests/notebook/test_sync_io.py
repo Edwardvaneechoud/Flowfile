@@ -2,10 +2,12 @@
 
 A sync is the clean run a push makes: every cell interpreted on a fresh session graph, entered on the canvas
 snapshot as data (``enter_snapshot_session``). Nodes that would read, connect or run code are held and seeded
-from their unchanged canvas twin, else from what the cell declares, else from the canvas's own header probe
-of a local file or a catalog table's registered schema, else with no columns; the cells below a column-less
-node still build. In multi-user mode a cell placing a cloud, database or Kafka node that the canvas would
-refuse fails on its own line before the node exists.
+from their unchanged canvas twin, else from what the cell declares (for a Polars Code node from the frame's
+wrapper or the with_columns, select, filter or sort fallback, the columns Polars' planner gives over the
+in-memory seeds), else from the canvas's own header probe of a local file or a catalog table's registered
+schema, else with no columns; the cells below a column-less node still build. In multi-user mode a cell
+placing a cloud, database or Kafka node that the canvas would refuse fails on its own line before the node
+exists.
 """
 
 from __future__ import annotations
@@ -400,6 +402,50 @@ def test_polars_code_keeps_its_twin_schema_only_while_its_code_and_input_columns
 def _is_code(frame) -> bool:
     node = frame.flow_graph.get_node(frame.node_id)
     return node is not None and node.node_type == "polars_code"
+
+
+ROWS_DATA = {
+    "columns": [{"name": "a", "data_type": "Integer"}, {"name": "b", "data_type": "String"}],
+    "data": [[1, 2, 3], ["x", "y", "z"]],
+}
+ROWS = f"src = fl.from_raw_data({ROWS_DATA!r})"
+PLANNED = {
+    "with_columns": ("src.with_columns(fl.col('a').cum_sum().alias('c'))", ["a", "b", "c"]),
+    "select": ("src.select(fl.col('a').rank().alias('r'), 'b')", ["r", "b"]),
+    "filter": ("src.filter(fl.col('a').cum_sum() > 1)", ["a", "b"]),
+    "sort": ("src.sort(fl.col('a') * -1)", ["a", "b"]),
+    "plan refused": ("src.with_columns(fl.col('missing').cum_sum())", []),
+}
+
+
+@pytest.mark.parametrize("case", sorted(PLANNED))
+def test_a_call_built_as_polars_code_takes_the_columns_polars_plans_else_none(case, monkeypatch):
+    call, names = PLANNED[case]
+    calls = _Calls()
+    held_ran = _record_io(monkeypatch, calls)
+    with _snapshot_session({"flowfile_data": _empty_flow(), "schemas": {}}, {}) as (mode, namespace):
+        _run(namespace, "cell-0", f"{IMPORTS}\n{ROWS}\nout = {call}")
+        out = namespace["out"]
+        assert _is_code(out) and _names(out) == names
+        assert (out.node_id in mode.column_less) == (names == [])
+    assert held_ran == []
+    assert calls.labels() <= {"collect"} and _collects_beyond(calls, set(LITERAL_COLLECTS)) == []
+
+
+def test_an_unchanged_polars_code_twin_wins_over_the_plan():
+    import flowfile_frame as ff
+
+    graph = ff.create_flow_graph()
+    canvas_id = ff.from_raw_data(ROWS_DATA, flow_graph=graph).tail(2).node_id
+    snapshot = seed_snapshot(graph)
+    snapshot["schemas"][canvas_id] = {"output-0": [{"name": "from_canvas", "data_type": "Int64"}]}
+    seeded = {}
+    for call in ("src.tail(2)", "src.tail(1)"):
+        with _snapshot_session(snapshot, {"tail": [("polars_code", canvas_id)]}) as (_, namespace):
+            _run(namespace, "rows", f"{IMPORTS}\n{ROWS}")
+            _run(namespace, "tail", f"out = {call}")
+            seeded[call] = _names(namespace["out"])
+    assert seeded == {"src.tail(2)": ["from_canvas"], "src.tail(1)": ["a", "b"]}
 
 
 @pytest.fixture

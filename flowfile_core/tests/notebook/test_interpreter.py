@@ -6,7 +6,7 @@ Shape tests pin the forms the exporter emits that the corpus covers only once or
 built by both executors into the same payload up to what a run mints (the session graph's identity
 and fresh Python Script cell ids); the error tests pin that both executors report a failure with the
 same kind, line and message; and the allowlist tests pin that the corpus uses every entry not tied to
-an exporter handler and stays far below every bound.
+an exporter handler and no input-only one, and stays far below every bound.
 """
 
 from __future__ import annotations
@@ -79,6 +79,7 @@ def test_every_allowed_entry_is_used_by_the_corpus_or_emitted_outside_it(corpus_
 
     used = set().union(*(run.interpreter.used for run in _interpreting(corpus_runs).values()))
     assert used <= _allowed_entries()
+    assert not set().union(*(run.interpreter.used_input_only for run in _interpreting(corpus_runs).values()))
     dead = _allowed_entries() - used - set(EMITTED_OUTSIDE_THE_CORPUS)
     assert not dead, sorted(dead)
 

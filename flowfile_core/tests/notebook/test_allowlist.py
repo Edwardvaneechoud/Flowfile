@@ -1,11 +1,13 @@
 """The allowlist is complete and exact: every ``fl`` name has a verdict, every entry exists on its receiver,
 no entry runs code or reaches data, every entry outside the corpus names a real exporter handler, and
-everything the exporter can emit is allowed or kept as formula text."""
+everything the exporter can emit is allowed or kept as formula text. The input-only table is exactly the
+frame's own pure transforms and node builders the render does not write, none of them a hazard."""
 
 from __future__ import annotations
 
 import ast
 import importlib
+import inspect
 import json
 import re
 import typing
@@ -30,7 +32,7 @@ from flowfile_frame.expr import DateTimeMethods, StringMethods
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.gate import Gate
 from flowfile_frame.group_frame import _NATIVE_AGG_FUNCS, GroupByFrame
-from flowfile_frame.lazy_methods import PASSTHROUGH_METHODS
+from flowfile_frame.lazy_methods import PASSTHROUGH_METHODS, PURE_TRANSFORMS
 from flowfile_frame.notebook_cells import _CanvasNode
 from flowfile_frame.python_script import PythonScript, PythonScriptFunction
 from flowfile_frame.run_flow import RunFlow
@@ -95,6 +97,54 @@ def test_no_entry_runs_code_reaches_data_or_leaves_the_graph():
     assert set(allowlist.ALLOWLIST["pl"]) == {"DataFrame"}
     names = {name for entries in allowlist.ALLOWLIST.values() for name in entries}
     assert {name for name in names if name.startswith("_")} == {"__call__"}
+
+
+FRAME_NODE_BUILDERS = frozenset(
+    {
+        "sink_csv", "sink_ipc", "sink_ndjson", "sql", "write_avro", "write_catalog_table", "write_csv_to_cloud_storage",
+        "write_database", "write_delta", "write_ipc", "write_json_to_cloud_storage", "write_ndjson",
+        "write_parquet_to_cloud_storage",
+    }
+)  # fmt: skip
+"""FlowFrame's own methods that place one wired SQL Query, Output or writer node and read nothing at build."""
+FRAME_OWN_TRANSFORMS = frozenset({"explode", "limit"})
+"""The input-only pure transforms FlowFrame writes itself instead of taking them from ``pl.LazyFrame``."""
+
+
+def _wrapped_polars_methods(names) -> set[str]:
+    """The ``names`` FlowFrame takes from ``pl.LazyFrame`` through the ``lazy_methods`` wrapper."""
+    return {
+        name
+        for name in names
+        if hasattr(pl.LazyFrame, name)
+        and getattr(getattr(FlowFrame, name, None), "__wrapped__", None) is getattr(pl.LazyFrame, name)
+    }
+
+
+def test_input_only_entries_are_the_frames_pure_transforms_and_node_builders():
+    frame = allowlist.INPUT_ONLY["FlowFrame"]
+    assert set(allowlist.INPUT_ONLY) == {"FlowFrame"} and set(frame.values()) == {allowlist.CALL}
+    assert set(frame) == (PURE_TRANSFORMS - set(allowlist.ALLOWLIST["FlowFrame"])) | FRAME_NODE_BUILDERS
+    wrapped = _wrapped_polars_methods(frame)
+    assert set(frame) - wrapped == FRAME_NODE_BUILDERS | FRAME_OWN_TRANSFORMS
+    assert FRAME_NODE_BUILDERS | FRAME_OWN_TRANSFORMS <= set(vars(FlowFrame))
+    for name in wrapped:
+        assert inspect.signature(getattr(pl.LazyFrame, name)).return_annotation in ("LazyFrame", pl.LazyFrame), name
+
+
+def test_no_input_only_entry_runs_code_reaches_data_or_leaves_the_graph():
+    frame = set(allowlist.INPUT_ONLY["FlowFrame"])
+    assert not frame & set(allowlist.ALLOWLIST["FlowFrame"])
+    assert not frame & set(PASSTHROUGH_METHODS)
+    hazards = {
+        "show", "collect_batches", "execute", "remote", "serialize", "deserialize", "sink_parquet", "sink_delta",
+        "sink_iceberg", "sink_batches", "inspect", "save_graph", "to_graph", "cache", "set_group", "group",
+        "get_node_settings", "pipe", "pipe_with_schema", "map_batches", "lazy", "clone", "set_sorted", "concat",
+        "join_asof", "join_where", "merge_sorted", "update", "with_context", "group_by_dynamic", "rolling",
+    }  # fmt: skip
+    assert not frame & hazards
+    assert not {name for name in frame if name.startswith(("collect", "_"))}
+    assert not _wrapped_polars_methods(name for name in frame if name.startswith("sink_"))
 
 
 def _resolve(handler: str):
