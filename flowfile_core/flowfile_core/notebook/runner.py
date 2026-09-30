@@ -30,7 +30,8 @@ def request_refusal(request: CleanRunRequest) -> CleanRunResult | None:
     """A ``refused`` result when ``request`` is over a size bound or names a malformed cell id, else ``None``.
 
     Cell ids end up in cell filenames and error details, so they are letters, digits and ``_ . : -``,
-    at most ``cell_id_length`` long; a malformed id is not echoed back.
+    at most ``cell_id_length`` long; a malformed id is not echoed back. The provenance is bounded too,
+    and lists each canvas node at most once, under a well-formed cell id, as a rendering does.
     """
     if len(request.cells) > BOUNDS["cells_per_request"]:
         return _refused(f"The notebook has more than {BOUNDS['cells_per_request']} cells")
@@ -47,6 +48,11 @@ def request_refusal(request: CleanRunRequest) -> CleanRunResult | None:
         total += size
     if total > BOUNDS["bytes_per_request"]:
         return _refused(f"The notebook is larger than {BOUNDS['bytes_per_request']} bytes")
+    canvas_ids = [canvas_id for entries in request.provenance.values() for _, canvas_id in entries]
+    if len(canvas_ids) > BOUNDS["provenance_entries_per_request"]:
+        return _refused(f"The notebook lists more than {BOUNDS['provenance_entries_per_request']} canvas nodes")
+    if len(set(canvas_ids)) < len(canvas_ids) or not all(map(_CELL_ID.fullmatch, request.provenance)):
+        return _refused("The notebook lists a canvas node twice or under a malformed cell id")
     return None
 
 

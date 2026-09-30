@@ -187,6 +187,7 @@ BOUNDS: dict[str, int] = {
     "bytes_per_cell": 4 * 1024 * 1024,
     "bytes_per_request": 16 * 1024 * 1024,
     "cell_id_length": 128,
+    "provenance_entries_per_request": 10_000,
     "ast_nodes_per_cell": 500_000,
     "statements_per_cell": 2_000,
     "depth": 100,
@@ -196,4 +197,8 @@ BOUNDS: dict[str, int] = {
     "nodes_per_request": 10_000,
     "expression_chars_per_request": 16_000_000,
 }
-"""Size limits: the first four per request (the runner), the rest per cell or per run (the interpreter)."""
+"""Size limits: the first five per request (the runner), the rest per cell or per run (the interpreter).
+
+``provenance_entries_per_request`` matches ``nodes_per_request``: provenance lists each canvas node a cell
+renders once, and a canvas with more nodes than a sync may build cannot sync anyway.
+"""

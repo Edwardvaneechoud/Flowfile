@@ -157,6 +157,26 @@ def test_a_request_over_a_bound_is_refused_before_any_cell_is_read(monkeypatch, 
     assert str(value) in result.error
 
 
+@pytest.mark.parametrize(
+    "provenance, message",
+    [
+        ({"a": [("read", 1), ("read", 2)], "b": [("filter", 3)]}, "more than 2 canvas nodes"),
+        ({"a": [("read", 1)], "b": [("read", 1)]}, "a canvas node twice"),
+        ({"a b": [("read", 1)]}, "a malformed cell id"),
+    ],
+)
+def test_a_provenance_over_its_bound_or_repeating_a_node_is_refused_before_any_cell_is_read(
+    monkeypatch, provenance, message
+):
+    _refuse_any_run(monkeypatch)
+    monkeypatch.setitem(allowlist.BOUNDS, "provenance_entries_per_request", 2)
+
+    request = bridge.CleanRunRequest(cells=[("a", "x = 1"), ("b", "y = 2")], provenance=provenance)
+    result = NotebookRunner().clean_run(NOTEBOOK_OWNER_ID, 1, request)
+    assert (result.kind, result.cell_id, result.line) == ("refused", None, None)
+    assert message in result.error
+
+
 def test_a_cell_that_is_not_valid_unicode_is_refused_with_its_id(monkeypatch):
     _refuse_any_run(monkeypatch)
 
