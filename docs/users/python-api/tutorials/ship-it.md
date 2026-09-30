@@ -32,7 +32,7 @@ The script ends by opening the graph in the Designer, starting the Flowfile serv
 
 ## Export code
 
-In the Designer's **Generated code** panel, select **FlowFrame**, then **Export Code**. This report uses Run Flow and Catalog Writer nodes, which require FlowFrame export; the Polars exporter cannot export the complete graph.
+In the Designer's [Code panel](../../visual-editor/tutorials/code-generator.md) (**Code** in the header), select **FlowFrame**, then **Export Code**. This report uses Run Flow and Catalog Writer nodes, which require FlowFrame export; the Polars exporter cannot export the complete graph.
 
 ## Schedule the registered report
 
@@ -77,7 +77,7 @@ flowfile/flowfile/__init__.py: open_graph_in_editor export; flowfile/flowfile/ap
 flowfile_core/flowfile_core/flowfile/flow_graph.py: save_flow;
 flowfile_core/flowfile_core/flowfile/code_generator/code_generator.py: export_flow_to_flowframe, UnsupportedNodeError;
 flowfile/flowfile/__main__.py: main, run_flow (CLI --param);
-flowfile_frontend/src/renderer/app/views/DesignerView/CodeGenerator/CodeGenerator.vue (Generated code, FlowFrame, Export Code);
+flowfile_frontend/src/renderer/app/views/DesignerView/CodeGenerator/CodeGenerator.vue (FlowFrame, Export Code) and components/layout/Header/RightActionCluster.vue (Code);
 flowfile_frontend/src/renderer/app/views/CatalogView/FlowDetailPanel.vue, CreateScheduleModal.vue;
 flowfile_scheduler/flowfile_scheduler/ for schedule execution.
 Displayed output: docs/examples/output/tutorial_10.txt, compared with the script's stdout by

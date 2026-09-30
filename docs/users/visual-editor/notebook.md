@@ -78,7 +78,7 @@ These markers take the place of the catalog notebook's **Code changed — rerun*
 
 **Run**, **Run all** and **Push** sync the same way. The server reads every cell top to bottom on a fresh copy of the flow, so a name a cell defines is available to the cells below it; no variable is kept from one sync to the next. A cell may only describe the flow, with the calls the notebook itself renders: `fl` readers, transforms and writers, the native node classes, parameters and plain values. The result is applied to the canvas as one step that **Undo** reverts.
 
-A sync runs no node and opens no connection. A source, or a node whose columns depend on its data (Polars code, pivot, custom nodes), keeps the columns the canvas shows while its settings are unchanged; a new or edited one takes the columns its cell declares, the header of the local file it reads or a catalog table's registered columns, and otherwise the sync treats it as having no columns.
+A sync runs no node and opens no connection. A source, or a node whose columns depend on its data (Polars code, pivot, custom nodes, a data cleansing that removes null columns), keeps the columns the canvas shows while its settings are unchanged; a new or edited one takes the columns its cell declares, the header of the local file it reads or a catalog table's registered columns, and otherwise the sync treats it as having no columns.
 
 A sync keeps the id, position, description and cached results of every node the edit does not touch, and a lowercase variable name assigned in a cell becomes that node's reference.
 
@@ -94,7 +94,7 @@ A sync is refused, with the reason on the failing cell or in a message, when:
 - a source or writer names a connection you cannot use, or, in a Docker deployment, a cloud reader or writer has a local path or no connection;
 - a cell calls a build-time write or runs a flow; [notebook mode](../python-api/reference/native-nodes.md#notebook-mode) lists the calls.
 
-**Push** asks for confirmation first, listing the reasons, when the sync deletes nodes, changes flow parameters (parameter changes are not undone by **Undo**), takes a node reference from another node, drops an input a cell did not rebuild, names a kernel you do not own, or places a node it could not check because a node above it has no known columns (the run checks it). **Run** and **Run all** ask only when the sync deletes nodes, and show the other reasons as a warning once the sync is applied.
+**Push** asks for confirmation first, listing the reasons, when the sync deletes nodes, changes a node's type, changes flow parameters (parameter changes are not undone by **Undo**), takes a node reference from another node, drops an input a cell did not rebuild, changes the names a Python Script node reads its inputs by, names a kernel you do not own, or places a node it could not check because a node above it has no known columns (the run checks it). **Run** and **Run all** ask only when the sync deletes nodes, and show the other reasons as a warning once the sync is applied.
 
 ## Kernels, Docker and deployments
 

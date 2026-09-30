@@ -234,7 +234,7 @@ my_flow/
 
 Key points:
 
-* **Notebook nodes get their own modules** (the Polars export refuses them; the FlowFrame export inlines them as `fl.PythonScript`). Each one becomes its own module exposing a `run()` function that the pipeline calls with the node's input frames; the notebook code is preserved verbatim inside it (cell structure kept via `# %%` markers), and the bundled `flowfile_ctx.py` shim makes `read_input()` / `publish_output()` / artifacts / logging work standalone — inputs and outputs are exchanged in memory as Polars LazyFrames.
+* **Notebook nodes get their own modules** (the Polars export refuses them; the FlowFrame export inlines them as `@fl.python_script` when their cells regenerate byte for byte, else as `fl.PythonScript(cells=...)`). Each one becomes its own module exposing a `run()` function that the pipeline calls with the node's input frames; the notebook code is preserved verbatim inside it (cell structure kept via `# %%` markers), and the bundled `flowfile_ctx.py` shim makes `read_input()` / `publish_output()` / artifacts / logging work standalone — inputs and outputs are exchanged in memory as Polars LazyFrames.
 * **Custom nodes get their own modules** under `custom_nodes/` instead of being inlined into the script.
 * The pipeline itself uses the **FlowFrame API** (`import flowfile as fl`), written like the FlowFrame export.
 * **Gates land in `pipeline.py` as `fl.Gate` nodes** read through `.then` / `.otherwise`, exactly like the FlowFrame export.
