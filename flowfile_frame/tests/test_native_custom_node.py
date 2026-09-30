@@ -24,19 +24,7 @@ from .native_helpers import results_by_id, round_trip
 
 DATA = {"name": [" ann ", "bob ", " cy"], "amount": [1, 2, 3]}
 
-
-@pytest.fixture(autouse=True)
-def store_snapshot():
-    """Session-registered classes and their templates are process-global; restore them per test."""
-    saved_overrides = dict(node_store.CUSTOM_NODE_STORE._overrides)
-    saved_dict = dict(node_store.node_dict)
-    saved_list = list(node_store.nodes_list)
-    yield
-    node_store.CUSTOM_NODE_STORE.clear()
-    node_store.CUSTOM_NODE_STORE.update(saved_overrides)
-    node_store.node_dict.clear()
-    node_store.node_dict.update(saved_dict)
-    node_store.nodes_list[:] = saved_list
+pytestmark = pytest.mark.usefixtures("store_snapshot")
 
 
 class NativeCleaner(CustomNodeBase):

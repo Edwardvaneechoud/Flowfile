@@ -256,8 +256,7 @@ class TestCustomNodeInputOrder:
 class TestCustomNodeCodeGeneration:
     """Integration tests for generating code with custom nodes."""
 
-    @pytest.mark.parametrize("export_func", [export_flow_to_polars], ids=["polars"])
-    def test_generated_code_includes_custom_node_imports(self, AddColumnNode, export_func):
+    def test_generated_code_includes_custom_node_imports(self, AddColumnNode):
         """The Polars export inlines the node's source with its imports (the FlowFrame export calls fl.custom_nodes)."""
         add_to_custom_node_store(AddColumnNode)
 
@@ -268,7 +267,7 @@ class TestCustomNodeCodeGeneration:
         add_custom_node_to_graph(graph, AddColumnNode, node_id=2, settings=settings)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-        code = export_func(graph)
+        code = export_flow_to_polars(graph)
 
         # Canonical re-added imports: nd alias plus the public node_designer SDK
         # symbols. Neither the internal shared.* nor core.node_designer spelling

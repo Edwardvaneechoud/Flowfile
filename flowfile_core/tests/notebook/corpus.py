@@ -65,6 +65,7 @@ CODEGEN_TESTS = (
     "test_window_functions_partition_aggregate",
 )
 
+
 class _Captured(Exception):
     def __init__(self, flow: FlowGraph):
         self.flow = flow

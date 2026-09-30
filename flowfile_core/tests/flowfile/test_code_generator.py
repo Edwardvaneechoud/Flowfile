@@ -7687,8 +7687,7 @@ def test_fusion_keeps_named_boundaries_at_join(export_func):
     assert_frame_equal(result, expected, check_row_order=False)
 
 
-@pytest.mark.parametrize("export_func", [export_flow_to_polars], ids=["polars"])
-def test_fusion_grouped_record_id_self_reference_preserved(export_func):
+def test_fusion_grouped_record_id_self_reference_preserved():
     """Grouped record_id reads its input's .columns, so that input must stay named."""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)  # node 1 (has 'city')
@@ -7710,7 +7709,7 @@ def test_fusion_grouped_record_id_self_reference_preserved(export_func):
     ))
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4))
 
-    code = export_func(flow)
+    code = export_flow_to_polars(flow)
     # Frame-equality would NameError if the .columns self-reference's target were fused away.
     assert _count_pipeline_assignments(code) >= 2
     assert "+ 1 - 1" not in code

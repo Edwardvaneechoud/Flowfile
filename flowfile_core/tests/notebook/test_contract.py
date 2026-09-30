@@ -7,9 +7,8 @@ delegate to the originals. Parsing (``compile`` with ``ast.PyCF_ONLY_AST``, whic
 cell) is allowed; any other call on the planning thread must come from a pinned site, none may come from the
 notebook package or the frame's ``exec`` executor, untyped formula or function-object Python Script paths, and
 no call on any thread may receive cell text (a line of a cell, an AST unparsing to one, or a code object
-compiled from a cell). The static tests pin
-that the notebook package calls none of those builtins and never names the ``exec`` executor, and count every
-``exec``/``eval``/``compile`` call site in core, the frame and ``shared``.
+compiled from a cell). The static tests pin that the notebook package calls none of those builtins and never names
+the ``exec`` executor, and count every ``exec``/``eval``/``compile`` call site in core, the frame and ``shared``.
 """
 
 import ast

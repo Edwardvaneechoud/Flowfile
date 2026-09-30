@@ -3,7 +3,6 @@
 import json
 import socket
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -60,13 +59,10 @@ def live_core():
     """Core's app on a real loopback port, so the worker's own HTTP log shipping is what runs."""
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
+    sock.listen()  # a request made before uvicorn serves waits in the backlog
     server = uvicorn.Server(uvicorn.Config(main.app, lifespan="off", log_level="warning"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
-    deadline = time.monotonic() + 10
-    while not server.started:
-        assert time.monotonic() < deadline, "uvicorn did not start"
-        time.sleep(0.05)
     yield f"http://127.0.0.1:{sock.getsockname()[1]}"
     server.should_exit = True
     thread.join(timeout=10)

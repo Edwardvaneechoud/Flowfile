@@ -7,16 +7,14 @@ import sys
 
 import pytest
 
-from .utils import console_namespace
-
 from flowfile_frame import _console_source
 from flowfile_frame._console_source import (
     console_class_source,
     console_function_source,
     console_import_for,
-    install_hook,
 )
 
+from .utils import console_namespace
 
 _console = console_namespace  # the ``code`` module's REPL compiles under <console>
 

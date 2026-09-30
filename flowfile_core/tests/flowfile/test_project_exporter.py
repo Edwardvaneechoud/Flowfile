@@ -1272,13 +1272,14 @@ class TestRunFlowProjectExport:
         from flowfile_core.flowfile.code_generator.code_generator import (
             FlowGraphToFlowFrameConverter,
             FlowGraphToPolarsConverter,
+            UnsupportedNodeError,
         )
 
         sub = _build_head_subflow(tmp_path)
         flow = create_basic_flow(flow_id=47, name="plain_export")
         flow.add_run_flow(_run_flow_settings(flow, sub["registration_id"]))
         converter = FlowGraphToPolarsConverter(flow)
-        with pytest.raises(Exception):
+        with pytest.raises(UnsupportedNodeError):
             converter.convert()
         assert any(node_type == "run_flow" for _, node_type, _ in converter.unsupported_nodes)
         code = FlowGraphToFlowFrameConverter(flow).convert()
