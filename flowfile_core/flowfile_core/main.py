@@ -36,6 +36,7 @@ from flowfile_core.kernel import router as kernel_router
 from flowfile_core.lsp.admin_routes import router as lsp_admin_router
 from flowfile_core.lsp.routes import router as lsp_router
 from flowfile_core.ml import router as ml_router
+from flowfile_core.notebook.runner import install_notebook_runner
 from flowfile_core.routes.api_consumers import router as api_consumers_router
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.catalog import router as catalog_router
@@ -248,6 +249,7 @@ app.include_router(file_manager_router, prefix="/file_manager", tags=["file_mana
 app.include_router(converters_router, prefix="/converters", tags=["converters"])
 app.include_router(node_requests_router, prefix="/node_requests", tags=["node_requests"])
 app.include_router(notebook_router, prefix="/notebook", tags=["notebook"])
+install_notebook_runner()
 app.include_router(telemetry_router)
 app.include_router(ai_router, prefix="/ai", tags=["ai"])
 # Feature-flag admin endpoints. Mounted on /system (NOT /ai or /lsp) so admins can flip

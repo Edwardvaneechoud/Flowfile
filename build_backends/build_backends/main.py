@@ -27,7 +27,7 @@ def merge_directories(directories: list[str], target_dir: str, cleanup_after_mer
                 shutil.rmtree(directory)
 
 
-# The canvas notebook loads frame modules lazily inside core, so collect them all.
+# The in-core notebook runner imports frame modules lazily, so collect them all.
 NOTEBOOK_COLLECTED_PACKAGES = ["flowfile_frame"]
 
 

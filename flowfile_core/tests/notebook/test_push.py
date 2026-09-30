@@ -1,45 +1,22 @@
 """``POST /editor/notebook/push/``, ``POST /notebook/plan`` and ``POST /editor/notebook/run_lineage/``.
 
-The clean run goes through the test-only in-process runner (``InProcessCleanRunner``), installed per test.
+The clean run goes through the production runner (``runner``) or, where a test says so, its test-only
+``exec`` twin (``exec_runner``), installed per test.
 """
+
+import re
 
 import pytest
 
 import flowfile as fl
-from flowfile_core import flow_file_handler
-from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.notebook import bridge
 from flowfile_core.notebook.push import push_refusals
 from flowfile_core.notebook.render import code_fingerprint, render
+from flowfile_core.notebook.runner import NotebookRunner
+from flowfile_core.schemas import input_schema
+from tests.notebook.conftest import ExecRunner
 
 OWNER_ID = 1
-
-
-@pytest.fixture
-def open_as(tmp_path):
-    """Open a frame-built flow the way the editor does (save, then ``open_flow``, history on) for ``user_id``."""
-    opened = []
-
-    def _open(graph, user_id=OWNER_ID):
-        path = tmp_path / f"flow_{len(opened)}.yaml"
-        graph.save_flow(str(path))
-        graph = open_flow(path)
-        flow_file_handler._flows[graph.flow_id] = graph
-        flow_file_handler._register_user_session(user_id, graph.flow_id)
-        opened.append((graph.flow_id, user_id))
-        return graph
-
-    yield _open
-    for flow_id, user_id in opened:
-        flow_file_handler._unregister_user_session(user_id, flow_id)
-        flow_file_handler.delete_flow(flow_id)
-
-
-@pytest.fixture
-def orders_flow(open_as):
-    orders = fl.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
-    result = orders.filter(fl.col("amount") > 10).with_columns((fl.col("amount") * 2).alias("double"))
-    return open_as(result.flow_graph)
 
 
 def _body(graph, edit=None, changed=()):
@@ -124,24 +101,108 @@ def test_push_refuses_a_stale_fingerprint_with_the_live_one(runner, orders_flow,
     assert response.json()["detail"]["code_fingerprint"] == code_fingerprint(orders_flow)
 
 
-def test_push_refuses_a_failing_cell_and_leaves_the_canvas(runner, orders_flow, client_as):
+def _with_cell(code, cell_id="node-99"):
+    def edit(cells):
+        return {**cells, cell_id: code}
+
+    return edit
+
+
+def _push(client, graph, code, cell_id="node-99"):
+    return client.post("/editor/notebook/push/", json=_body(graph, _with_cell(code, cell_id), [cell_id]))
+
+
+def test_push_refuses_a_failing_cell_and_leaves_the_canvas(exec_runner, orders_flow, client_as):
     fingerprint = code_fingerprint(orders_flow)
 
-    def broken(cells):
-        return {**cells, "node-99": "raise ValueError('boom')"}
-
-    response = client_as(OWNER_ID).post("/editor/notebook/push/", json=_body(orders_flow, broken, ["node-99"]))
-    assert response.status_code == 422 and "boom" in response.json()["detail"]
+    response = _push(client_as(OWNER_ID), orders_flow, "raise ValueError('boom')")
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == {
+        "message": "ValueError: boom",
+        "cell_id": "node-99",
+        "line": 1,
+        "kind": "error",
+    }
     assert code_fingerprint(orders_flow) == fingerprint
 
 
-def test_push_refuses_an_in_memory_lazy_frame(runner, orders_flow, client_as):
-    def lazy(cells):
-        return {**cells, "node-99": "import polars as pl\nextra = fl.FlowFrame(pl.LazyFrame({'x': [1]}))"}
+def test_push_refuses_a_cell_outside_the_dialect_and_leaves_the_canvas(runner, orders_flow, client_as):
+    fingerprint = code_fingerprint(orders_flow)
 
-    response = client_as(OWNER_ID).post("/editor/notebook/push/", json=_body(orders_flow, lazy, ["node-99"]))
+    response = _push(client_as(OWNER_ID), orders_flow, "threshold = 8\nraise ValueError('boom')")
     assert response.status_code == 422, response.text
-    assert "LazyFrame" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert (detail["cell_id"], detail["line"], detail["kind"]) == ("node-99", 2, "needs_kernel")
+    assert detail["message"] == "A `Raise` statement is not part of the notebook's flow code; this needs a kernel"
+    assert code_fingerprint(orders_flow) == fingerprint
+
+
+def test_push_refuses_an_in_memory_lazy_frame(exec_runner, orders_flow, client_as):
+    code = "import polars as pl\nextra = fl.FlowFrame(pl.LazyFrame({'x': [1]}))"
+
+    response = _push(client_as(OWNER_ID), orders_flow, code)
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert (detail["cell_id"], detail["line"], detail["kind"]) == ("node-99", None, "refused")
+    assert "LazyFrame" in detail["message"]
+
+
+def test_an_in_memory_lazy_frame_needs_a_kernel_in_core(runner, orders_flow, client_as):
+    code = "import polars as pl\nextra = fl.FlowFrame(pl.LazyFrame({'x': [1]}))"
+
+    response = _push(client_as(OWNER_ID), orders_flow, code)
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert (detail["cell_id"], detail["line"], detail["kind"]) == ("node-99", 2, "needs_kernel")
+    assert "needs a kernel" in detail["message"]
+
+
+FAILING_CHAIN = """extra = fl.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1]]})
+out = (
+    extra.filter(fl.col('a') > 1)
+    .join(extra, on='nope')
+)"""
+
+
+@pytest.mark.parametrize(
+    "code, line",
+    [(FAILING_CHAIN, 4), ("extra = missing_frame.filter(fl.col('a') > 1)", 1), ("threshold = 8\nx = (", 2)],
+    ids=["frame_error_in_a_chain", "undefined_name", "syntax_error"],
+)
+def test_a_failing_call_reports_its_cell_line_and_message_like_exec(orders_flow, client_as, code, line):
+    details = []
+    for runner_class in (ExecRunner, NotebookRunner):
+        before = bridge._runner
+        bridge.set_clean_runner(runner_class())
+        try:
+            for route in ("/notebook/plan", "/editor/notebook/push/"):
+                response = client_as(OWNER_ID).post(route, json=_body(orders_flow, _with_cell(code), ["node-99"]))
+                assert response.status_code == 422, response.text
+                details.append(response.json()["detail"])
+        finally:
+            bridge.set_clean_runner(before)
+    assert details[0]["message"] and "Traceback" not in details[0]["message"]
+    assert (details[0]["cell_id"], details[0]["line"], details[0]["kind"]) == ("node-99", line, "error")
+    masked = [re.sub(r"<cell-node-99-\d+>", "<cell>", str(detail)) for detail in details]
+    assert masked == [masked[0]] * 4
+
+
+def test_a_request_over_a_bound_is_refused_with_the_cell_that_breaks_it(runner, orders_flow, client_as, monkeypatch):
+    from flowfile_core.notebook import allowlist
+
+    fingerprint = code_fingerprint(orders_flow)
+    limit = max(len(cell.code.encode("utf-8")) for cell in render(orders_flow).cells)
+    monkeypatch.setitem(allowlist.BOUNDS, "bytes_per_cell", limit)
+    response = _push(client_as(OWNER_ID), orders_flow, "threshold = " + "1" * limit)
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert (detail["cell_id"], detail["line"], detail["kind"]) == ("node-99", None, "refused")
+    assert f"larger than {limit} bytes" in detail["message"]
+    assert code_fingerprint(orders_flow) == fingerprint
+
+    response = _push(client_as(OWNER_ID), orders_flow, "threshold = 8", cell_id="cell/../x")
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["kind"] == "refused" and response.json()["detail"]["cell_id"] is None
 
 
 def test_refusals_name_custom_classes_inline_rest_secrets_and_lazy_frames():
@@ -185,6 +246,44 @@ def test_refusals_accept_a_custom_node_file_written_after_the_scan(tmp_path, mon
     assert push_refusals({"nodes": []}, session) == []
 
 
+BROKEN_NODE_FILES = {
+    "does_not_parse": ("broken_push_node", "class BrokenPushNode(:\n    pass\n"),
+    "fails_when_placed": (
+        "exec_broken_push_node",
+        "from flowfile import node_designer as nd\n\n"
+        "raise RuntimeError('this node file fails when it is executed')\n\n\n"
+        "class ExecBrokenPushNode(nd.CustomNodeBase):\n"
+        '    node_name: str = "Exec Broken Push Node"\n\n'
+        "    def process(self, *inputs):\n"
+        "        return inputs[0]\n",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(BROKEN_NODE_FILES))
+def test_a_custom_node_file_that_does_not_load_counts_as_not_installed(tmp_path, monkeypatch, case):
+    from flowfile_core.flowfile.user_defined.registry import registry
+
+    monkeypatch.setattr(registry, "_directory", tmp_path)
+    monkeypatch.setattr(registry, "_entries", {})
+    monkeypatch.setattr(registry, "_stamps", None)
+    monkeypatch.setattr(registry, "on_registered", None)
+    monkeypatch.setattr(registry, "on_unregistered", None)
+    node_type, source = BROKEN_NODE_FILES[case]
+    (tmp_path / f"{node_type}.py").write_text(source)
+    registry.refresh()
+    entry = registry.get(node_type)
+    assert entry is not None
+    if case == "fails_when_placed":
+        assert entry.error is None and registry.get_class(node_type) is None and entry.exec_error
+    else:
+        assert entry.error
+    session = {"nodes": [{"id": 5, "type": node_type, "setting_input": {"is_user_defined": True}}]}
+
+    refusals = push_refusals({"nodes": []}, session)
+    assert len(refusals) == 1 and "Node 5" in refusals[0] and node_type in refusals[0]
+
+
 def test_push_is_503_without_a_runner(orders_flow, client_as):
     before = bridge._runner
     bridge.set_clean_runner(None)
@@ -193,6 +292,33 @@ def test_push_is_503_without_a_runner(orders_flow, client_as):
         assert response.status_code == 503 and response.json()["detail"] == bridge.NO_RUNNER_DETAIL
     finally:
         bridge.set_clean_runner(before)
+
+
+@pytest.mark.parametrize("database_type, status", [("sqlite", 200), ("postgresql", 422)])
+def test_an_inline_file_database_syncs_without_the_password_it_does_not_use(
+    runner, open_as, client_as, tmp_path, database_type, status
+):
+    graph = fl.create_flow_graph()
+    connection = input_schema.DatabaseConnection(
+        database_type=database_type, database=str(tmp_path / "orders.db"), password_ref="gone"
+    )
+    settings = input_schema.DatabaseSettings(connection_mode="inline", database_connection=connection, table_name="t")
+    graph.add_database_reader(
+        input_schema.NodeDatabaseReader(
+            flow_id=graph.flow_id,
+            node_id=1,
+            user_id=OWNER_ID,
+            database_settings=settings,
+            fields=[input_schema.MinimalFieldInfo(name="x", data_type="Int64")],
+        )
+    )
+    graph = open_as(graph)
+
+    response = client_as(OWNER_ID).post("/notebook/plan", json=_body(graph))
+    assert response.status_code == status, response.text
+    if status == 422:
+        detail = response.json()["detail"]
+        assert detail["kind"] == "refused" and detail["message"].endswith("Password not found")
 
 
 def test_user_2_cannot_push_plan_or_run_user_3s_flow(runner, open_as, client_as):

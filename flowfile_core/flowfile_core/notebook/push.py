@@ -98,20 +98,25 @@ def seed_snapshot(flow: FlowGraph) -> dict:
 
 
 def _installed_custom_node(node_type: str) -> bool:
+    """Whether ``node_type`` is an installed custom node that loads; a file with a scan or placement error is not."""
     from flowfile_core.flowfile.user_defined.registry import registry
 
-    if registry.get(node_type) is None:
+    entry = registry.get(node_type)
+    if entry is None or entry.load_error is not None:
         registry.refresh()
-    return registry.get(node_type) is not None
+        entry = registry.get(node_type)
+    return entry is not None and entry.load_error is None
 
 
-def push_refusals(live: dict, session: dict, installed: Callable[[str], bool] = _installed_custom_node) -> list[str]:
-    """What the canvas cannot hold: in-memory LazyFrames, custom node classes a cell defined, inline REST secrets."""
-    refusals = []
+def refused_nodes(
+    live: dict, session: dict, installed: Callable[[str], bool] = _installed_custom_node
+) -> list[tuple[str, int]]:
+    """``(message, node id)`` for every node the canvas cannot hold (see :func:`push_refusals`), in order."""
+    refused = []
     live_types = {node["type"] for node in live.get("nodes") or []}
     for payload in (live, session):
-        refusals.extend(
-            LAZY_FRAME_REFUSAL.format(node_id=node["id"])
+        refused.extend(
+            (LAZY_FRAME_REFUSAL.format(node_id=node["id"]), node["id"])
             for node in payload.get("nodes") or []
             if node["type"] == "polars_lazy_frame"
         )
@@ -120,13 +125,19 @@ def push_refusals(live: dict, session: dict, installed: Callable[[str], bool] = 
         if not isinstance(settings, dict):
             continue
         if settings.get("is_user_defined") and node["type"] not in live_types and not installed(node["type"]):
-            refusals.append(CUSTOM_CLASS_REFUSAL.format(node_id=node["id"], node_type=node["type"]))
+            refused.append((CUSTOM_CLASS_REFUSAL.format(node_id=node["id"], node_type=node["type"]), node["id"]))
         if node["type"] == "rest_api_reader":
             auth = (settings.get("rest_api_settings") or {}).get("auth") or {}
             inline = auth.get("secret") or (auth.get("auth_type", "none") != "none" and not auth.get("secret_name"))
             if inline:
-                refusals.append(INLINE_SECRET_REFUSAL.format(node_id=node["id"]))
-    return list(dict.fromkeys(refusals))
+                refused.append((INLINE_SECRET_REFUSAL.format(node_id=node["id"]), node["id"]))
+    return refused
+
+
+def push_refusals(live: dict, session: dict, installed: Callable[[str], bool] = _installed_custom_node) -> list[str]:
+    """What the canvas cannot hold: in-memory LazyFrames, custom node classes that are not installed or do not
+    load, inline REST secrets."""
+    return list(dict.fromkeys(message for message, _ in refused_nodes(live, session, installed)))
 
 
 def _owned_kernel_ids(user_id: int) -> set[str] | None:
@@ -168,13 +179,33 @@ def live_cells(provenance: dict[str, list[tuple[str, int]]]) -> dict[int, str]:
     return {int(node_id): cell_id for cell_id, entries in provenance.items() for _, node_id in entries}
 
 
+def _refusing_cell(
+    refused: list[tuple[str, int | None]],
+    node_ids_by_cell: dict[str, list[int]],
+    provenance: dict[str, list[tuple[str, int]]],
+) -> str | None:
+    """The cell of the first refused node: the cell that built it in this run, else the cell it renders in."""
+    built = {node_id: cell_id for cell_id, node_ids in node_ids_by_cell.items() for node_id in node_ids}
+    rendered = live_cells(provenance)
+    for _, node_id in refused:
+        cell_id = built.get(node_id) or rendered.get(node_id)
+        if cell_id is not None:
+            return cell_id
+    return None
+
+
 def node_id_ceiling(flow: FlowGraph, client_max_node_id: int) -> int:
     """The highest node id either the canvas or the client has seen; new nodes number above it."""
     return max([client_max_node_id, *(node.node_id for node in flow.nodes)], default=0)
 
 
 def plan_push(flow: FlowGraph, user, request: NotebookPushRequest) -> tuple[ReconcilePlan, CleanRunResult]:
-    """Everything a push does before it mutates the canvas; raises 409, 422 or 503 as ``HTTPException``."""
+    """Everything a push does before it mutates the canvas; raises 409, 422 or 503 as ``HTTPException``.
+
+    A 422's detail is ``{message, cell_id, line, kind}``: a failing cell's message, cell, 1-based line and
+    kind (``needs_kernel``, ``refused`` or ``error``), or, for nodes the canvas cannot hold, their joined
+    messages with kind ``refused`` and the cell of the first refused node.
+    """
     live_fingerprint = code_fingerprint(flow)
     if request.code_fingerprint != live_fingerprint:
         raise HTTPException(
@@ -194,10 +225,21 @@ def plan_push(flow: FlowGraph, user, request: NotebookPushRequest) -> tuple[Reco
         CleanRunRequest(cells=request.cells, provenance=request.provenance, ceiling=ceiling, snapshot=snapshot),
     )
     if result.error is not None:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=result.error)
-    refusals = list(result.refusals) + push_refusals(live, result.flowfile_data)
-    if refusals:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="\n".join(dict.fromkeys(refusals)))
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": result.error, "cell_id": result.cell_id, "line": result.line, "kind": result.kind},
+        )
+    refused = [(message, None) for message in result.refusals] + refused_nodes(live, result.flowfile_data)
+    if refused:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "\n".join(dict.fromkeys(message for message, _ in refused)),
+                "cell_id": _refusing_cell(refused, result.node_ids_by_cell, request.provenance),
+                "line": None,
+                "kind": "refused",
+            },
+        )
     plan = reconcile(
         live,
         result.flowfile_data,
