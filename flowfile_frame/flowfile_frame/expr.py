@@ -445,7 +445,7 @@ class DateTimeMethods:
             def wrapper(*args, **kwargs):
                 result = pl_attr(*args, **kwargs)
                 # Assume generic getattr methods don't change aggregation status
-                return self._create_next_expr(name, result, *args, **kwargs)
+                return self._create_next_expr(name, result, self.convertable_to_code, *args, **kwargs)
 
             return wrapper
         else:

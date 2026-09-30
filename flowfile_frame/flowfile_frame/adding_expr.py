@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
 ExprT = TypeVar("ExprT", bound="Expr")
 PASSTHROUGH_METHODS = {"map_elements", "map_batches"}
+_BUILD_KEYWORDS = frozenset({"convertable_to_code", "ff_repr", "_repr_override"})
+"""Keywords of ``Expr._create_next_expr`` that no Polars method takes; a caller must not set them."""
 
 
 def refuse_parameter_argument(
@@ -52,6 +54,9 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
         if self.expr is None:
             raise ValueError(f"Cannot call '{method_name}' on Expr with no underlying polars expression.")
         refuse_parameter_argument(method_name, args, kwargs)
+        internal = sorted(_BUILD_KEYWORDS & kwargs.keys())
+        if internal:
+            raise TypeError(f"{method_name}() got an unexpected keyword argument {internal[0]!r}")
 
         processed = process_callable_args(args, kwargs)
 
