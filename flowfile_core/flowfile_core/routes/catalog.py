@@ -537,7 +537,7 @@ def get_run_log(
     if log_path is None:
         raise HTTPException(404, "Log file not found")
 
-    return {"log": Path(log_path).read_text(errors="replace")}
+    return {"log": Path(log_path).read_text(encoding="utf-8", errors="replace")}
 
 
 # Open Run Snapshot in Designer

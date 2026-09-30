@@ -110,7 +110,7 @@ def test_core_example_runs(example_path: Path, monkeypatch, tmp_path, tmp_path_f
         set_node_id(0)  # printed node ids then match a fresh `python <example>.py`
     runpy.run_path(str(example_path), run_name="__main__")
     if expected_output.exists():
-        assert capsys.readouterr().out == expected_output.read_text()
+        assert capsys.readouterr().out == expected_output.read_text(encoding="utf-8")
 
 
 def _postgres_available() -> bool:

@@ -42,7 +42,7 @@ def _small_graph():
 
 
 def test_main_installs_the_notebook_runner_once_right_after_the_notebook_router():
-    tree = ast.parse(Path(main.__file__).read_text())
+    tree = ast.parse(Path(main.__file__).read_text(encoding="utf-8"))
     calls = [
         index
         for index, statement in enumerate(tree.body)
