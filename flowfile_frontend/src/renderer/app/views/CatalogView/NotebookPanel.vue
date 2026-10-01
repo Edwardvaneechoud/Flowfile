@@ -1218,6 +1218,11 @@ async function onDelete() {
   margin-right: 6px;
   text-align: center;
 }
+/* Items this panel adds to a cell's ⋯ menu line up with the menu's own. */
+.nb-cell-menu-popper .nb-menu-icon {
+  width: 18px;
+  margin-right: 0;
+}
 
 /* Ghost icon buttons for panel-local tools. */
 .nb-tool-group {

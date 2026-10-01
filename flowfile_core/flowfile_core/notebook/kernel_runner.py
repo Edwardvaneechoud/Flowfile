@@ -2,8 +2,9 @@
 
 A notebook kernel is one of the user's kernels with ``flowfile`` installed
 (``kernel.notebook_support.is_notebook_kernel_config``). Core never runs the cells: it sends the kernel one
-constant snippet through ``KernelManager.execute_sync`` (a flow id of ``-flow_id``, so the call never
-shares a namespace with the flow's Python Script nodes), and the frame's ``notebook_kernel`` module in
+constant snippet through ``KernelManager.execute_sync`` (a flow id of ``-flow_id``, :func:`kernel_flow_id`, so
+the call never shares a namespace with the flow's Python Script nodes; the session keeps its variables in
+that namespace, where the editor's code intelligence reads them), and the frame's ``notebook_kernel`` module in
 the kernel runs the op and prints its JSON result on a line starting with
 ``shared.notebook_display.KERNEL_RESULT_MARKER``, which is cut from the call's stdout here. Results
 come back in the kernel routes' own shapes (``ExecuteResult``, plus a failed cell's ``line``, and the
@@ -35,7 +36,7 @@ from flowfile_core.notebook.gate import DISABLED_DETAIL, kernel_sessions_allowed
 from flowfile_core.notebook.push import seed_snapshot
 from shared.notebook_display import KERNEL_RESULT_MARKER
 
-SNIPPET = "from flowfile_frame import notebook_kernel as _nb\n_nb.handle({request!r})\n"
+SNIPPET = "from flowfile_frame import notebook_kernel as _nb\n_nb.handle({request!r}, globals())\n"
 
 _lock = threading.Lock()
 _running: dict[tuple[str, int], str] = {}
@@ -67,11 +68,17 @@ def _schema_revision() -> str | None:
         return None
 
 
+def kernel_flow_id(flow_id: int) -> int:
+    """The flow id a flow's session runs under in the kernel: its namespace there, which the editor's code
+    intelligence reads too (the notebook store's ``sessionFlowId`` for a flow tab)."""
+    return -flow_id
+
+
 def _call(manager, kernel_id: str, flow_id: int, op: str, **fields: Any) -> tuple[dict | None, ExecuteResult]:
     """Run one op in the kernel; its result (``None`` when none came back) and the call with that line cut out."""
     request = ExecuteRequest(
         node_id=0,
-        flow_id=-flow_id,
+        flow_id=kernel_flow_id(flow_id),
         code=SNIPPET.format(request=json.dumps({"op": op, "flow_id": flow_id, **fields}, default=str)),
         exec_token=uuid4().hex,
     )

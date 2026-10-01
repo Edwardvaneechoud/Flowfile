@@ -184,3 +184,27 @@ def test_a_notebook_session_on_a_real_kernel(smoke_flow, notebook_kernel, client
     new_nodes = [n for n in smoke_flow.nodes if n.node_id not in before]
     assert [n.node_type for n in new_nodes] == ["formula"], [n.node_type for n in new_nodes]
     assert (Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID / "flowfile_catalog.db").exists()
+
+
+def test_kernel_completions_see_the_session(smoke_flow, notebook_kernel, client_as):
+    """The editor's Jedi completions, sent under the session's kernel flow id, read the session's variables."""
+    from flowfile_core.notebook import kernel_runner
+
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}
+    assert client.post("/notebook/session/open", json=key).status_code == 200
+    cell = _bind("orders", _node_id(smoke_flow, "filter")) + "priced = orders.with_columns(fl.col('amount') * 2)\n"
+    executed = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-priced", "code": cell})
+    assert executed.status_code == 200 and executed.json()["success"], executed.text
+
+    def labels(code: str) -> set[str]:
+        flow_id = kernel_runner.kernel_flow_id(smoke_flow.flow_id)
+        body = {"code": code, "line": 1, "column": len(code), "flow_id": flow_id}
+        response = client.post(f"/kernels/{KERNEL_ID}/lsp/complete", json=body)
+        assert response.status_code == 200, response.text
+        return {item["label"] for item in response.json()["items"]}
+
+    assert "filter" in labels("priced.fil")
+    assert "col" in labels("fl.co")
+    assert client.post("/notebook/session/reset", json=key).status_code == 200
+    assert "priced" not in labels("pri")

@@ -80,15 +80,26 @@ def test_a_reset_session_reuses_the_canvas_file(coded_flow, client, kernel_sim):
     assert after == files
 
 
-def test_an_unpushed_frame_on_a_deferred_node_says_push_first(coded_flow, client, kernel_sim):
+def test_a_new_frame_on_a_deferred_canvas_node_computes_here_on_the_canvas_rows(coded_flow, client, kernel_sim):
     node_id = _coded_id(coded_flow)
     cell = _bind(node_id) + "big = coded.filter(fl.col('amount') > 100)\ndisplay(big)"
+    shown = _execute(client, coded_flow, kernel_sim, cell)
+    assert shown["success"], shown
+    assert len(_rows(shown)) == 2 and len(kernel_sim.node_results) == 1, shown["display_outputs"]
+    later = _execute(client, coded_flow, kernel_sim, "print(big.with_columns(x=fl.lit(1)).collect().height)")
+    assert later["success"] and later["stdout"].strip() == "2", later
+    assert len(kernel_sim.node_results) == 1
+
+
+def test_new_deferred_work_says_push_first(coded_flow, client, kernel_sim):
+    node_id = _coded_id(coded_flow)
+    cell = _bind(node_id) + "new = coded.polars_code('input_df.head(1)')\ndisplay(new)"
     shown = _execute(client, coded_flow, kernel_sim, cell)
     assert shown["success"], shown
     text = [out["data"] for out in shown["display_outputs"] if out["mime_type"] == "text/plain"]
     assert any("Push, then it runs on the canvas" in t for t in text), shown["display_outputs"]
 
-    collected = _execute(client, coded_flow, kernel_sim, "big.collect()")
+    collected = _execute(client, coded_flow, kernel_sim, "new.collect()")
     assert not collected["success"] and "Push, then it runs on the canvas" in collected["error"]
     assert not kernel_sim.node_results
 
@@ -204,6 +215,64 @@ def test_run_all_of_a_flow_on_a_file_the_kernel_cannot_see_shows_the_canvas_rows
     assert len(_rows(_execute(client, flow, kernel_sim, f"display({name})"))) == 2
 
 
+@pytest.fixture
+def editor_built_flow(open_as, tmp_path, monkeypatch):
+    """CSV read -> basic filter ``quantity >= 8``, built from settings as the editor's API saves them."""
+    from flowfile_core.flowfile import flow_graph as graph_module
+    from flowfile_core.schemas import input_schema, transform_schema
+    from flowfile_frame.utils import create_flow_graph
+
+    folder = tmp_path / "host_data"
+    folder.mkdir()
+    path = folder / "orders.csv"
+    path.write_text("id,quantity\n" + "".join(f"{i},{i % 12}\n" for i in range(1, 21)))
+    graph = create_flow_graph()
+    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=1, node_type="read"))
+    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=2, node_type="filter"))
+    graph.add_read(
+        input_schema.NodeRead(
+            flow_id=graph.flow_id,
+            node_id=1,
+            received_file=input_schema.ReceivedTable(
+                name=path.name,
+                path=str(path),
+                directory=str(folder),
+                file_type="csv",
+                table_settings=input_schema.InputCsvTable(delimiter=",", has_headers=True),
+            ),
+        )
+    )
+    graph_module.add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    basic = transform_schema.BasicFilter(field="quantity", operator=">=", value="8")
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=graph.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(mode="basic", basic_filter=basic),
+        )
+    )
+    monkeypatch.setenv("FLOWFILE_NOTEBOOK_MOUNTS", json.dumps({str(folder): str(tmp_path / "not_mounted")}))
+    return open_as(graph)
+
+
+def test_run_all_of_an_editor_built_read_and_filter_the_kernel_cannot_see(editor_built_flow, client, kernel_sim):
+    from flowfile_core.notebook.render import render
+
+    flow = editor_built_flow
+    cells = [cell for cell in render(flow).cells if cell.kind in ("imports", "node")]
+    body = {"flow_id": flow.flow_id, "kernel_id": kernel_sim.kernel.id}
+    assert client.post("/notebook/session/reset", json=body).status_code == 200
+    for cell in cells:
+        result = _execute(client, flow, kernel_sim, cell.code)
+        assert result["success"], (cell.code, result)
+    name = cells[-1].code.split("=", 1)[0].strip()
+    cell = f"priced = {name}.with_columns(fl.col('quantity') * 2)\ndisplay(priced)"
+    priced = _execute(client, flow, kernel_sim, cell)
+    assert priced["success"], priced
+    assert len(_rows(priced)) == 5, _table(priced)
+
+
 def test_two_reads_of_files_the_kernel_cannot_see_each_take_their_own_canvas_rows(
     open_as, tmp_path, monkeypatch, client, kernel_sim
 ):
@@ -222,3 +291,64 @@ def test_two_reads_of_files_the_kernel_cannot_see_each_take_their_own_canvas_row
     assert _execute(client, flow, kernel_sim, cell)["success"]
     assert _table(_execute(client, flow, kernel_sim, "display(a)"))["columns"] == ["x"]
     assert len(_rows(_execute(client, flow, kernel_sim, "display(b)"))) == 2
+
+
+LOOP_CELL = """import re
+
+priced = filtered_2
+for name in priced.columns:
+    if re.search(r"quantity$", name):
+        priced = priced.with_columns((fl.col(name) * 2).alias(f"{name}_doubled"))
+print(priced.columns)
+display(priced)
+"""
+
+
+def _plan(flow, kernel_sim, *extra: str, rendered: bool = True):
+    from flowfile_core.auth.models import User as PydanticUser
+    from flowfile_core.notebook.push import NotebookPushRequest, plan_push
+    from flowfile_core.notebook.render import render
+    from tests.notebook.conftest import cell_provenance
+
+    owner = PydanticUser(username="nb_kernel", id=NOTEBOOK_OWNER_ID, disabled=False, is_admin=True)
+    rendering = render(flow)
+    cells = [(cell.cell_id, cell.code) for cell in rendering.cells if rendered or cell.kind == "imports"]
+    request = NotebookPushRequest(
+        flow_id=flow.flow_id,
+        cells=cells + [(f"extra-{i}", code) for i, code in enumerate(extra)],
+        provenance=cell_provenance(flow, rendering),
+        code_fingerprint=rendering.code_fingerprint,
+        client_max_node_id=max(node.node_id for node in flow.nodes),
+        kernel_id=kernel_sim.kernel.id,
+    )
+    plan, _ = plan_push(flow, owner, request)
+    return plan
+
+
+def test_run_and_push_see_the_same_seeded_names(editor_built_flow, client, kernel_sim):
+    shown = _execute(client, editor_built_flow, kernel_sim, "display(source_1)")
+    assert shown["success"] and len(_rows(shown)) == 20, shown
+
+    unedited = _plan(editor_built_flow, kernel_sim)
+    assert not unedited.operations and not unedited.warnings, unedited
+    referencing = _plan(editor_built_flow, kernel_sim, "display(source_1)")
+    assert not referencing.operations and not referencing.warnings, referencing
+
+
+def test_pushing_a_loop_cell_on_a_file_the_kernel_cannot_see_adds_its_node(editor_built_flow, client, kernel_sim):
+    ran = _execute(client, editor_built_flow, kernel_sim, LOOP_CELL)
+    assert ran["success"] and "quantity_doubled" in ran["stdout"] and len(_rows(ran)) == 5, ran
+
+    plan = _plan(editor_built_flow, kernel_sim, LOOP_CELL)
+    assert not plan.warnings, plan.warnings
+    added = [op for op in plan.operations if op.op == "add_node"]
+    assert [op.node_type for op in added] == ["formula"], [op.model_dump(mode="json") for op in plan.operations]
+
+
+def test_a_seeded_name_no_cell_builds_adopts_its_canvas_node(editor_built_flow, kernel_sim):
+    plan = _plan(editor_built_flow, kernel_sim, "big = source_1.filter(fl.col('quantity') > 10)", rendered=False)
+    added = [op.model_dump(mode="json") for op in plan.operations if op.op == "add_node"]
+    assert [op["node_type"] for op in added] == ["filter"], added
+    assert added[0]["node_id"] > 2 and plan.deletions == [2], plan
+    connects = [op.connection.output_connection.node_id for op in plan.operations if op.op == "connect"]
+    assert connects == [1], plan

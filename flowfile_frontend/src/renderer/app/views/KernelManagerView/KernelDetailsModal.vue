@@ -577,6 +577,9 @@ const save = async () => {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
 }
+.kernel-folders {
+  margin-top: var(--spacing-3);
+}
 
 .form-error {
   margin: 0;

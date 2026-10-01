@@ -110,7 +110,10 @@ export function createIdentifierCompletionSource(
         };
         if (inflight) inflight.abort();
         inflight = new AbortController();
-        const res = await LspApi.complete(ctx.kernelId, payload, inflight.signal);
+        // A failed request still leaves the curated and scope entries.
+        const res = await LspApi.complete(ctx.kernelId, payload, inflight.signal).catch(() => ({
+          items: [],
+        }));
         if (context.aborted) return null;
         for (const it of res.items) {
           if (merged.has(it.label)) continue; // Jedi can emit a name twice (parse + live namespace)

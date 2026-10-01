@@ -204,8 +204,9 @@ def _output(settings: dict) -> None:
 
 
 def _read(settings: dict) -> None:
-    """A read node's ``name`` is a display label (the file is ``abs_file_path``); UTF-8 spellings are one encoding."""
+    """A read's ``name`` and ``directory`` are labels (the file is ``abs_file_path``); UTF-8 spellings are equal."""
     received = settings.get("received_file") or {}
+    received.pop("directory", None)
     if received.get("abs_file_path"):
         received.pop("name", None)
     table = received.get("table_settings") or {}

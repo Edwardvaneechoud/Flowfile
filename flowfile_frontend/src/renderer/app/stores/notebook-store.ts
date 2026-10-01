@@ -269,6 +269,7 @@ export const SYNC_NEEDS_ADMIN =
 export const CANVAS_CHANGED =
   "The canvas changed since these cells were rendered, so they were refreshed; run again to sync your edits.";
 export const PICK_KERNEL_HINT = "Pick a notebook kernel in the toolbar to run this cell as Python.";
+export const NOTHING_TO_PUSH = "Nothing to push: the canvas already matches these cells.";
 export const SESSION_NOT_RESEEDED =
   "Pushed to the canvas, but the kernel session still holds the old frames; use Reset session.";
 export const PREVIEW_ROW_LIMIT = 100;
@@ -817,7 +818,8 @@ export const useNotebookStore = defineStore("notebook", {
         this.openNotebooks.push({
           tabId: uid("tab"),
           persistedId: null,
-          sessionFlowId: flowId,
+          // The kernel namespace a flow's session runs in (core's kernel_runner.kernel_flow_id).
+          sessionFlowId: -flowId,
           name,
           description: null,
           namespaceId: null,
@@ -847,7 +849,12 @@ export const useNotebookStore = defineStore("notebook", {
     },
 
     /** The canvas now holds the pushed `cells`: they count as unedited until the next rendering. */
-    markFlowPushed(nb: OpenNotebook, result: NotebookPushResult, cells: [string, string][]) {
+    markFlowPushed(
+      nb: OpenNotebook,
+      result: Pick<NotebookPushResult, "node_ids_by_cell" | "code_fingerprint"> &
+        Partial<NotebookPushResult>,
+      cells: [string, string][],
+    ) {
       nb.generated = Object.fromEntries(cells);
       nb.nodeIds = { ...nb.nodeIds, ...result.node_ids_by_cell };
       nb.fingerprint = result.code_fingerprint;
@@ -1209,7 +1216,7 @@ export const useNotebookStore = defineStore("notebook", {
           stdout: "",
           stderr: "",
           display_outputs: [],
-          error: e?.message ?? "Cell execution failed",
+          error: detailMessage(e, "Cell execution failed"),
           execution_time_ms: 0,
           execution_count: nb.executionCount,
         };
@@ -1321,6 +1328,17 @@ export const useNotebookStore = defineStore("notebook", {
         );
         cells = body.cells;
         const plan = await NotebookApi.planPush(body);
+        if (!plan.operations.length) {
+          this.markFlowPushed(nb, { ...plan, code_fingerprint: body.code_fingerprint }, cells);
+          nb.syncForbidden = false;
+          const warned = plan.warnings.join("\n");
+          if (trigger === "push") {
+            nb.notice = warned
+              ? { tone: "warning", message: `${NOTHING_TO_PUSH}\n${warned}` }
+              : { tone: "success", message: NOTHING_TO_PUSH };
+          } else if (warned) nb.notice = { tone: "warning", message: warned };
+          return "synced";
+        }
         if (planNeedsConfirmation(plan, trigger) && !(await hooks.confirm(plan, trigger))) {
           return "cancelled";
         }

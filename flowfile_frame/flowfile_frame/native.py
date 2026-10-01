@@ -339,17 +339,10 @@ def _kernel_twin_id(node: FlowNode) -> int | None:
     mode = current()
     if mode is None or node.setting_input is None:
         return None
-
-    def comparable(settings: BaseModel) -> Any:
-        dumped = _oracle_settings(settings, node.node_type)
-        if isinstance(dumped, dict) and isinstance(dumped.get("received_file"), dict):
-            dumped["received_file"].pop("abs_file_path", None)
-        return dumped
-
-    mine = comparable(node.setting_input)
+    mine = _oracle_settings(node.setting_input, node.node_type)
     for canvas_id, twin in mode.snapshot.items():
         if twin.node_type == node.node_type and twin.setting_input is not None:
-            if comparable(twin.setting_input) == mine:
+            if _oracle_settings(twin.setting_input, node.node_type) == mine:
                 return canvas_id
     return None
 
@@ -448,12 +441,16 @@ def _oracle_settings(settings: BaseModel, node_type: str) -> Any:
     The push's per-type normalisation (``flowfile_core.notebook.compare.normalise``: layout,
     labels, the node user, a read's display name, a script's cell ids) applies, except for the
     types whose rules translate formulas; those drop the same top-level fields and compare the
-    rest as is, so the seed never evaluates anything.
+    rest as is, so the seed never evaluates anything. A read's ``abs_file_path`` is dropped too:
+    it is derived from the path, and a notebook kernel resolves it through its own folders.
     """
     dumped = _without_ids(settings.model_dump(mode="json"))
     if node_type in _FORMULA_RULE_TYPES:
         return {key: value for key, value in dumped.items() if key not in DROPPED_FIELDS}
-    return normalise(dumped, node_type)
+    normalised = normalise(dumped, node_type)
+    if isinstance(normalised, dict) and isinstance(normalised.get("received_file"), dict):
+        normalised["received_file"].pop("abs_file_path", None)
+    return normalised
 
 
 def _snapshot_twin(node: FlowNode) -> Any | None:

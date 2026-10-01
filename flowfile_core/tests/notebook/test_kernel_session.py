@@ -70,10 +70,15 @@ def test_execute_opens_the_session_and_reports_a_failing_line(orders_flow, clien
 
 
 def test_reset_drops_the_sessions_variables(orders_flow, client, kernel_sim):
+    from flowfile_core.notebook.kernel_runner import kernel_flow_id
+
     assert _execute(client, orders_flow, kernel_sim, "x = 41")["success"]
     assert _execute(client, orders_flow, kernel_sim, "print(x + 1)")["stdout"].strip() == "42"
+    kernel_namespace = kernel_sim.namespaces[kernel_flow_id(orders_flow.flow_id)]
+    assert kernel_namespace["x"] == 41
     reset = client.post("/notebook/session/reset", json=_body(orders_flow, kernel_sim))
     assert reset.status_code == 200 and reset.json() == {"status": "cleared"}
+    assert "x" not in kernel_namespace and "fl" in kernel_namespace
     result = _execute(client, orders_flow, kernel_sim, "x")
     assert not result["success"] and "NameError" in result["error"]
 
@@ -130,3 +135,25 @@ def test_stopping_the_kernel_forgets_its_sessions_and_database_copy(orders_flow,
     kernel_runner.forget_kernel(kernel_sim.kernel.id, kernel_sim.shared_volume_path)
     assert orders_flow.flow_id not in kernel_runner._sessions
     assert not copy.parent.exists()
+
+
+def test_an_unconfigured_node_on_the_canvas_keeps_the_session_usable(open_as, client, kernel_sim):
+    from flowfile_core.flowfile import flow_graph as graph_module
+    from flowfile_core.schemas import input_schema
+
+    import flowfile as fl
+
+    source = fl.from_dict({"id": [1, 2, 3]})
+    graph = source.flow_graph
+    graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=90, node_type="filter"))
+    graph_module.add_connection(graph, input_schema.NodeConnection.create_from_simple_input(source.node_id, 90))
+    flow = open_as(graph)
+
+    for route in ("open", "reset"):
+        response = client.post(f"/notebook/session/{route}", json=_body(flow, kernel_sim))
+        assert response.status_code == 200, response.text
+    cells = [cell for cell in render(flow).cells if cell.kind in ("imports", "node")]
+    for cell in cells:
+        assert _execute(client, flow, kernel_sim, cell.code)["success"], cell.code
+    result = _execute(client, flow, kernel_sim, "print(filtered_90.columns)")
+    assert result["success"] and result["stdout"].strip() == "[]", result

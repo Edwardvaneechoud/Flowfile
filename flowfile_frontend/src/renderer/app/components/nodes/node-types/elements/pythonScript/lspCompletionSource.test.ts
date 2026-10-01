@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EditorState } from "@codemirror/state";
-import { CompletionContext } from "@codemirror/autocomplete";
+import { CompletionContext, type CompletionSource } from "@codemirror/autocomplete";
 
 vi.mock("@/api/lsp.api", () => ({
   LspApi: {
@@ -155,6 +155,22 @@ describe("createIdentifierCompletionSource (merged prior-cell scope)", () => {
     mockComplete.mockResolvedValue({ items: [] });
     const result = await source({}, ["foo = 1"])(ctxFor("fo", 2));
     expect(result!.options.map((o) => o.label)).toEqual(["foo"]);
+  });
+
+  it("keeps the curated and scope entries when the LSP request fails", async () => {
+    mockComplete.mockRejectedValue(new Error("422"));
+    const curated: CompletionSource = (context) =>
+      context.matchBefore(/\w*$/)?.text === "fo"
+        ? { from: context.pos - 2, options: [{ label: "fold" }] }
+        : null;
+    const withCurated = createIdentifierCompletionSource(
+      () => ({ kernelId: "k1", flowId: -42 }),
+      () => ["foo = 1"],
+      [curated],
+    );
+    const result = await withCurated(ctxFor("fo", 2));
+    expect(mockComplete).toHaveBeenCalled();
+    expect(result!.options.map((o) => o.label)).toEqual(["fold", "foo"]);
   });
 
   it("excludes scope symbols in attribute position", async () => {

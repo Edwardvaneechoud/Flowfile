@@ -3,12 +3,13 @@
 Core drives it through the kernel's ``/execute`` with one constant snippet::
 
     from flowfile_frame import notebook_kernel as _nb
-    _nb.handle('<request json>')
+    _nb.handle('<request json>', globals())
 
 :func:`handle` runs the request's op and prints its JSON result on one stdout line that starts with
 ``shared.notebook_display.KERNEL_RESULT_MARKER``; core strips that line, so whatever the cell printed
-stays the call's stdout. One session per flow id lives in this module, not in the kernel's per-flow
-namespace (Python Script nodes use that). Every kernel call runs in a fresh context and notebook mode
+stays the call's stdout. One session per flow id lives in this module; its variables live in the kernel's
+namespace for the call's flow id (the snippet's ``globals()``), so the kernel's code intelligence (Jedi)
+reads them. Every kernel call runs in a fresh context and notebook mode
 is context-local, so each op resumes the session's mode (``notebook.resumed``) and runs with file
 paths kept as written (``notebook.paths_as_written``); core recomputes them on the host.
 
@@ -38,9 +39,18 @@ from uuid import uuid4
 
 import polars as pl
 
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_frame import notebook
 from flowfile_frame.flow_frame import FlowFrame
-from flowfile_frame.native import NativeNode, NativeNodeError, _kernel_hidden_path, _kernel_twin_id
+from flowfile_frame.native import (
+    NativeNode,
+    NativeNodeError,
+    _kernel_hidden_path,
+    _kernel_twin_id,
+    ancestors,
+    materialise,
+)
 from flowfile_frame.notebook_cells import (
     _schema_entries,
     display,
@@ -111,21 +121,28 @@ class _Session:
         return {"namespace_generation": self.generation, "revision": self.revision}
 
     def canvas_rows(self, frame: FlowFrame) -> pl.LazyFrame | None:
-        """The canvas's rows for a frame without rows here: a seeded node no cell replaced, or the canvas
-        twin of a file read this kernel cannot open (``native._kernel_twin_id``)."""
+        """The canvas's rows for a frame without rows here: a seeded node no cell replaced, the canvas twin of
+        a file read this kernel cannot open (``native._kernel_twin_id``), or a new frame computed here on those."""
         if frame.flow_graph is not self.mode.graph:
             return None
-        node_id = frame.node_id
+        node_id, hidden = frame.node_id, False
         created = {entry[2] for entry in self.mode.provenance}
         if node_id not in self.seeded or node_id in created:
             node = self.mode.graph.get_node(node_id)
             hidden = node is not None and _kernel_hidden_path(node) is not None
             node_id = _kernel_twin_id(node) if hidden else None
+        if node_id is None and not hidden:
+            computed = self._computed_here(frame, created)
+            if computed is not None:
+                return computed
         if node_id not in self.seeded:
             raise NativeNodeError(_new_node_message(frame))
-        key = (node_id, frame.output_handle)
+        return self._fetch(node_id, frame.output_handle)
+
+    def _fetch(self, node_id: int, handle: str) -> pl.LazyFrame:
+        key = (node_id, handle)
         if key not in self.rows:
-            body = {"flow_id": self.flow_id, "node_id": node_id, "output_handle": frame.output_handle}
+            body = {"flow_id": self.flow_id, "node_id": node_id, "output_handle": handle}
             try:
                 answer = self.fetch(body)
                 self.rows[key] = answer["path"]
@@ -136,6 +153,39 @@ class _Session:
             if answer.get("canvas_changed"):
                 print(CANVAS_CHANGED)
         return pl.scan_parquet(self.rows[key])
+
+    def _computed_here(self, frame: FlowFrame, created: set[int]) -> pl.LazyFrame | None:
+        """A new frame's rows computed here on its canvas ancestors' rows; ``None`` when another node above has none.
+
+        Each canvas ancestor (a seeded node no cell replaced, or a read of a file this kernel cannot see)
+        then holds its canvas rows and the nodes below it compute again, so later frames compute here too.
+        """
+        lineage = ancestors(self.mode.graph.get_node(frame.node_id))
+        canvas: dict[int, int] = {}
+        for node_id, node in lineage.items():
+            if node_id in self.seeded and node_id not in created:
+                if node.deferred_until_run:
+                    canvas[node_id] = node_id
+            elif _kernel_hidden_path(node) is not None and _kernel_twin_id(node) in self.seeded:
+                canvas[node_id] = _kernel_twin_id(node)
+            elif node.deferred_until_run:
+                return None
+        if not canvas:
+            return None
+        edges = {(source.node_id, handle) for node in lineage.values() for source, handle in node._incoming_edges()}
+        for source_id, handle in edges:
+            if source_id in canvas:
+                engine = FlowDataEngine(self._fetch(canvas[source_id], handle))
+                if handle == DEFAULT_OUTPUT_HANDLE:
+                    lineage[source_id].results.resulting_data = engine
+                else:
+                    lineage[source_id]._named_outputs[handle] = engine
+        for node_id, node in lineage.items():
+            if node_id not in canvas and not (node_id in self.seeded and node_id not in created):
+                node.results.resulting_data, node.results.errors, node._named_outputs = None, None, {}
+        handle = frame.output_handle
+        data = materialise(lineage[frame.node_id], None if handle == DEFAULT_OUTPUT_HANDLE else handle).data_frame
+        return data.lazy() if isinstance(data, pl.DataFrame) else data
 
 
 def _new_node_message(frame: FlowFrame) -> str:
@@ -209,11 +259,22 @@ def _display(value: Any) -> Any:
 def _close(flow_id: int) -> None:
     session = _SESSIONS.pop(flow_id, None)
     if session is not None:
+        session.namespace.clear()
         session.mode.close()
 
 
-def _open(flow_id: int, request: dict[str, Any]) -> dict[str, Any]:
-    """Seed the flow's session from the canvas snapshot (closing any previous one) and bind one variable per node."""
+def _adopt(session: _Session, namespace: dict[str, Any] | None) -> None:
+    """Keep the session's variables in the kernel's namespace for this call, moved over when it is a new one."""
+    if namespace is not None and namespace is not session.namespace:
+        namespace.update(session.namespace)
+        session.namespace = namespace
+
+
+def _open(flow_id: int, request: dict[str, Any], kernel_namespace: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Seed the flow's session from the canvas snapshot (closing any previous one) and bind one variable per node.
+
+    The session's namespace is ``kernel_namespace`` (emptied first) when given, else a new dict.
+    """
     path = _database_path()
     if path is not None and not path.exists():
         raise RuntimeError(f"The Flowfile database {path} is missing in this kernel; recreate the notebook kernel")
@@ -233,7 +294,9 @@ def _open(flow_id: int, request: dict[str, Any]) -> dict[str, Any]:
             notebook.enter(user_id=user_id).graph.unique_subflow_port_names = False
             bound = {}
         try:
-            namespace = new_namespace()
+            namespace = {} if kernel_namespace is None else kernel_namespace
+            namespace.clear()
+            namespace.update(new_namespace())
             namespace.update(bound)
             namespace["display"] = _display
         finally:
@@ -306,13 +369,13 @@ def _schemas(session: _Session) -> dict[str, Any]:
     return {"ok": True, "frames": frames, **session.stamp()}
 
 
-def _dispatch(request: dict[str, Any]) -> dict[str, Any]:
+def _dispatch(request: dict[str, Any], namespace: dict[str, Any] | None = None) -> dict[str, Any]:
     op = request.get("op")
     if op == "hello":
         return _hello(request)
     flow_id = int(request["flow_id"])
     if op in ("open", "reset"):
-        return _open(flow_id, request)
+        return _open(flow_id, request, namespace)
     if op == "clean_run":
         return _clean_run(flow_id, request)
     if op == "close":
@@ -323,14 +386,18 @@ def _dispatch(request: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"Unknown notebook op {op!r}")
     if session is None:
         return {"ok": False, "no_session": True, "error": "No notebook session is open for this flow"}
+    _adopt(session, namespace)
     return _execute(session, request) if op == "execute" else _schemas(session)
 
 
-def handle(request_json: str) -> None:
-    """Run one notebook op and print its JSON result on the marker line; a failure is a result too."""
+def handle(request_json: str, namespace: dict[str, Any] | None = None) -> None:
+    """Run one notebook op and print its JSON result on the marker line; a failure is a result too.
+
+    ``namespace`` is the kernel's namespace the call runs in, where the flow's session keeps its variables.
+    """
     try:
         _release_database()
-        result = _dispatch(json.loads(request_json))
+        result = _dispatch(json.loads(request_json), namespace)
     except BaseException as exc:
         text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         result = {"ok": False, "error": _error_line(text), "traceback": text}

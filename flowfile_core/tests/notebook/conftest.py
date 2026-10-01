@@ -292,7 +292,8 @@ class KernelSimManager:
     """The ``kernel-sim`` runner's stand-in ``KernelManager``: one notebook kernel, no Docker.
 
     ``execute_sync`` runs the snippet core sends with real ``exec`` on a new thread, in a copy of the
-    calling context, with stdout and stderr captured, as the kernel runtime runs a call, and returns an
+    calling context and in ``namespaces[request.flow_id]`` (the kernel's per-flow namespace), with stdout and
+    stderr captured, as the kernel runtime runs a call, and returns an
     ``ExecuteResult``; so ``notebook.kernel_runner`` and the frame's ``notebook_kernel`` session run for real.
     The shared folder is ``shared_volume_path`` and paths are the same on both sides. :meth:`node_result`
     is the session's transport to core: ``kernel_runner.node_result`` in a fresh context, as the kernel's
@@ -307,6 +308,7 @@ class KernelSimManager:
         self.requests = []
         self.shared_volume_path = str(shared)
         self.node_results: list[dict] = []
+        self.namespaces: dict[int, dict] = {}
 
     def to_kernel_path(self, local_path, kernel_id=None):
         return local_path
@@ -341,7 +343,9 @@ class KernelSimManager:
         def run():
             try:
                 with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                    exec(request.code, {"__name__": "__main__"})
+                    namespace = self.namespaces.setdefault(request.flow_id, {})
+                    namespace["__name__"] = "__main__"
+                    exec(request.code, namespace)
             except BaseException as exc:
                 failure.append(f"{type(exc).__name__}: {exc}")
 

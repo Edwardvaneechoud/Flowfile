@@ -33,6 +33,7 @@ import polars as pl
 from pydantic import BaseModel
 
 from flowfile_core.flowfile.code_generator.code_generator import NODE_TYPE_VAR_LABEL, node_label
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_graph import FlowGraph, placement_check
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -437,7 +438,8 @@ def _seed_node(graph: FlowGraph, node: FlowNode, live: set[int], given: Mapping[
             is_live = False
             node.deferred_until_run = True
     if not is_live:
-        seed_deferred_node(node, _handle_schemas(given, handles, node))
+        schemas = _handle_schemas(given, handles, node) if node.is_setup else {h: [] for h in handles}
+        seed_deferred_node(node, schemas)
         frames = {h: _frame(graph, node, h, deferred=True) for h in handles}
     if _binds_seeded_node(node.node_type, node.setting_input):
         return SeededNode(graph, node.node_id, node.node_type, output_names, frames)
@@ -445,7 +447,12 @@ def _seed_node(graph: FlowGraph, node: FlowNode, live: set[int], given: Mapping[
 
 
 def _frame(graph: FlowGraph, node: FlowNode, handle: str, *, deferred: bool) -> FlowFrame:
-    data = materialise(node, handle if handle != DEFAULT_OUTPUT_HANDLE else None).data_frame
+    """The frame of one output; an unconfigured node reads as ``None``, so a deferred one is its column-less seed."""
+    if deferred and not node.is_setup:
+        engine = FlowDataEngine.create_from_schema(list(node._named_schemas.get(handle) or []))
+    else:
+        engine = materialise(node, handle if handle != DEFAULT_OUTPUT_HANDLE else None)
+    data = engine.data_frame
     return FlowFrame(data=data, flow_graph=graph, node_id=node.node_id, output_handle=handle, deferred=deferred)
 
 
@@ -830,6 +837,69 @@ def _prune(graph: FlowGraph, namespace: dict[str, Any]) -> set[int]:
     return keep
 
 
+class _SeededNames(dict):
+    """A clean run's namespace, which also resolves the names a session seeds from the canvas (:func:`seed_session`).
+
+    A seeded name no cell has bound is the node a cell already rebuilt for that canvas node (the relabel
+    rule), else that canvas node adopted as :func:`canvas_node` does, with its input resolved the same way;
+    ``adopted`` maps each adopted node to its canvas id. Only Python name lookups reach it (``exec``).
+    """
+
+    def __init__(self, namespace: dict[str, Any], mode: notebook.NotebookMode) -> None:
+        super().__init__(namespace)
+        self._mode = mode
+        self._canvas_ids = {
+            getattr(twin.setting_input, "node_reference", None) or node_label(twin.node_type, canvas_id): canvas_id
+            for canvas_id, twin in mode.snapshot.items()
+        }
+        self.adopted: dict[int, int] = {}
+
+    def __missing__(self, name: str) -> Any:
+        if name not in self._canvas_ids:
+            raise KeyError(name)
+        return self._binding(self._canvas_ids[name])
+
+    def _rebuilt(self, canvas_id: int) -> FlowNode | None:
+        mode, graph = self._mode, self._mode.graph
+        running = [(mode.cell_id, graph.get_node(n).node_type, n) for n in mode.cell_nodes if graph.get_node(n)]
+        created = [entry for entry in (*mode.provenance, *running) if entry[2] not in self.adopted]
+        mapping = provenance_mapping(created, mode.expected, max(mode.snapshot, default=0))
+        matches = [n for n, c in (*mapping.items(), *self.adopted.items()) if c == canvas_id and graph.get_node(n)]
+        return graph.get_node(matches[-1]) if matches else None
+
+    def _binding(self, canvas_id: int) -> FlowFrame | SeededNode:
+        graph = self._mode.graph
+        node = self._rebuilt(canvas_id)
+        if node is not None:
+            names = output_names_of(node.setting_input)
+            frames = {
+                output_handle(i): FlowFrame(
+                    data=materialise(node, None if i == 0 else output_handle(i)).data_frame,
+                    flow_graph=graph,
+                    node_id=node.node_id,
+                    output_handle=output_handle(i),
+                    deferred=True,
+                )
+                for i in range(len(names))
+            }
+            if _binds_seeded_node(node.node_type, node.setting_input):
+                return SeededNode(graph, node.node_id, node.node_type, names, frames)
+            return frames[DEFAULT_OUTPUT_HANDLE]
+        twin = self._mode.snapshot[canvas_id]
+        if len(twin.inputs) > 1:
+            raise NativeNodeError(
+                f"Canvas node {canvas_id} has several inputs and no cell builds it; "
+                f"build it in a cell, or with fl.canvas_node({canvas_id}, ...)"
+            )
+        inputs = []
+        for source_id, handle in twin.inputs:
+            source = self._binding(source_id)
+            inputs.append(source[handle] if isinstance(source, SeededNode) else source)
+        bound = canvas_node(canvas_id, *inputs)
+        self.adopted[bound.node_id] = canvas_id
+        return bound
+
+
 def clean_run(
     cells: list[tuple[str, str]],
     ceiling: int,
@@ -872,7 +942,7 @@ def clean_run(
             if previous is not None:
                 mode.snapshot.update(previous.snapshot)
             mode.expected = known
-            namespace = new_namespace()
+            namespace = _SeededNames(new_namespace(), mode)
             for cell_id, code in cells:
                 result = execute_cell(cell_id, code, namespace, executor=executor)
                 if not result.ok:
@@ -887,8 +957,9 @@ def clean_run(
                         "refusals": list(mode.refusals),
                     }
             kept = _prune(mode.graph, namespace)
-            created = [entry for entry in mode.provenance if entry[2] in kept]
-            mapping = provenance_mapping(created, known, ceiling)
+            created = [entry for entry in mode.provenance if entry[2] in kept and entry[2] not in namespace.adopted]
+            adopted = {node_id: canvas_id for node_id, canvas_id in namespace.adopted.items() if node_id in kept}
+            mapping = {**provenance_mapping(created, known, ceiling), **adopted}
             payload = relabel(mode.graph.get_flowfile_data().model_dump(mode="json"), mapping)
             cell_nodes: dict[str, list[int]] = {cell_id: [] for cell_id, _ in cells}
             for cell_id, _, node_id in created:

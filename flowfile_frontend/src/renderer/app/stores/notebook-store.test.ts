@@ -62,6 +62,7 @@ vi.mock("../features/ai/markdown", () => ({
 
 import {
   CANVAS_CHANGED,
+  NOTHING_TO_PUSH,
   PICK_KERNEL_HINT,
   SYNC_NEEDS_ADMIN,
   useNotebookStore,
@@ -901,7 +902,7 @@ describe("flow notebook", () => {
     const store = useNotebookStore();
     const nb = await store.openFlowNotebook(7, "flow");
     expect(nb.kernelId).toBeNull();
-    expect(nb.sessionFlowId).toBe(7);
+    expect(nb.sessionFlowId).toBe(-7);
     expect(nb.cells.map((c) => [c.id, c.code])).toEqual([
       ["node-1", "# Not configured\na = fl.canvas_node(1)"],
       ["node-2", "b = a.filter(x)"],
@@ -1103,7 +1104,7 @@ describe("flow notebook run", () => {
     nodeCell([2, 3], "filtered_2 = source_1.filter(fl.col('q') >= n).head(5)"),
   ];
   const plan = (extra = {}) => ({
-    operations: [],
+    operations: [{ op: "update_settings" }],
     warnings: [],
     deletions: [],
     parameter_changes: false,
@@ -1533,6 +1534,23 @@ describe("flow notebook run", () => {
       "push",
     );
     expect(mocks.push).toHaveBeenCalledTimes(2);
+  });
+
+  it("a push whose plan changes nothing sends no push and says so", async () => {
+    const { store, nb } = await openFlow();
+    store.setCellCode(
+      "cell-2",
+      "filtered_2 = source_1.filter(fl.col('q') >= n).head(5)\ndisplay(source_1)",
+    );
+    mocks.planPush.mockResolvedValue(
+      plan({ operations: [], node_ids_by_cell: { "cell-2": [2, 3] } }),
+    );
+    expect(await store.syncFlowNotebook()).toBe("synced");
+    expect(mocks.push).not.toHaveBeenCalled();
+    expect(hooks.confirm).not.toHaveBeenCalled();
+    expect(hooks.pushed).not.toHaveBeenCalled();
+    expect(nb.notice).toEqual({ tone: "success", message: NOTHING_TO_PUSH });
+    expect(flowCellSyncState(nb, nb.cells.find((c) => c.id === "cell-2")!)).toBe("synced");
   });
 
   it("a cancelled push review pushes nothing", async () => {
