@@ -3803,13 +3803,13 @@ plot = ["altair (>=5.4.0)", "graphviz (>=0.20)", "great-tables (>=0.9)", "vegafu
 
 [[package]]
 name = "polars-expr-transformer"
-version = "0.6.3"
+version = "0.6.4"
 description = "Transform string-based expressions into Polars DataFrame operations"
 optional = false
 python-versions = ">=3.10"
 files = [
-    {file = "polars_expr_transformer-0.6.3-py3-none-any.whl", hash = "sha256:1bb0c91d7e820efedefa489c6e040c99e199d3aa946e9abb542f1b08299017a9"},
-    {file = "polars_expr_transformer-0.6.3.tar.gz", hash = "sha256:8e572c6a1d4de3567e49a8503d5aab0222c9def19bebfaba11d22dc3919cbd56"},
+    {file = "polars_expr_transformer-0.6.4-py3-none-any.whl", hash = "sha256:bad573a400733a6a6b8205f4a882df9a538a9730f7db8327c73f5b4e3701bfb9"},
+    {file = "polars_expr_transformer-0.6.4.tar.gz", hash = "sha256:c71809876a14e535ef0c1d54ed9dc173b5e5cab6ad00cdbc4a8e55fae00feeb5"},
 ]
 
 [package.dependencies]
@@ -6446,4 +6446,4 @@ yxdb = ["yxdb"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.14"
-content-hash = "962a8e4de0e45e141106db30ad1f71abc2040f128ea091436ae6df09154fb086"
+content-hash = "7b7f36e827dbca221e161a219ffb95e54b0d50f23e3391cd5d81b0e78ecd0e9f"
