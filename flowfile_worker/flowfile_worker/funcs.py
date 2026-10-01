@@ -42,33 +42,33 @@ if TYPE_CHECKING:
     from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
 
 
-_PLAN_SCHEMA_ERRORS = (
-    pl.exceptions.ColumnNotFoundError,
-    pl.exceptions.DuplicateError,
-    pl.exceptions.InvalidOperationError,
-    pl.exceptions.SchemaError,
-    pl.exceptions.SchemaFieldNotFoundError,
-    pl.exceptions.ShapeError,
-    pl.exceptions.StructFieldNotFoundError,
-)
+_PLUGIN_LOAD_ERROR = "error loading dynamic library"
+
+
+def _is_load_failure(exc: Exception) -> bool:
+    """Whether resolving a plan's schema failed because this worker cannot import a UDF's module or load a plugin."""
+    if isinstance(exc, ImportError):
+        return True
+    return isinstance(exc, pl.exceptions.ComputeError) and str(exc).startswith(_PLUGIN_LOAD_ERROR)
 
 
 def _load_plan(source: bytes | io.BytesIO) -> pl.LazyFrame:
     """Deserialize a shipped plan and resolve its schema, which loads its UDFs and plugin libraries.
 
-    A plan this worker cannot deserialize, or whose UDF module or plugin library it cannot
-    load, is recorded as an environment failure. Schema errors that are the plan's own
-    mistake (``_PLAN_SCHEMA_ERRORS``, e.g. a missing column) stay task failures. Polars
-    caches the resolved schema, so the later collect does not resolve it again.
+    Only a plan this worker cannot deserialize, or whose UDF module or plugin library it cannot
+    load (``_is_load_failure``), is recorded as an environment failure. Every other schema error
+    is the plan's own (a missing column or source file, a plugin rejecting its inputs) and stays
+    a task failure, so the node fails instead of degrading. Polars caches the resolved schema,
+    so the later collect does not resolve it again.
     """
     with environment_failures():
         lf = pl.LazyFrame.deserialize(io.BytesIO(source) if isinstance(source, bytes) else source)
     try:
         lf.collect_schema()
-    except _PLAN_SCHEMA_ERRORS:
-        raise
     except Exception as e:
-        raise WorkerEnvironmentError(e) from e
+        if _is_load_failure(e):
+            raise WorkerEnvironmentError(e) from e
+        raise
     return lf
 
 
