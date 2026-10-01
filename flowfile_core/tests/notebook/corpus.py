@@ -37,6 +37,7 @@ CODEGEN_TESTS = (
     "test_data_type_conversions",
     "test_dynamic_rename_formula_round_trip",
     "test_excel_read",
+    "test_explode_hierarchy_flowframe_export_calls_the_native_method",
     "test_filter_split_mode_pass_and_fail",
     "test_flow_with_disconnected_nodes",
     "test_formula_node",

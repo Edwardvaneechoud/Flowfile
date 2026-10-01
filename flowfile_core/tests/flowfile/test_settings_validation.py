@@ -462,6 +462,14 @@ def _tolerance_cases():
             flow_id=fid, node_id=3,
             function=transform_schema.FunctionInput(
                 field=transform_schema.FieldInput(name="out"), function="[a] + 1"))),
+        ("explode_hierarchy", "add_explode_hierarchy", "a", lambda fid: input_schema.NodeExplodeHierarchy(
+            flow_id=fid, node_id=3,
+            explode_hierarchy_input=transform_schema.ExplodeHierarchyInput(
+                parent_column="a", child_column="s", quantity_column="b"))),
+        ("explode_hierarchy", "add_explode_hierarchy", "b", lambda fid: input_schema.NodeExplodeHierarchy(
+            flow_id=fid, node_id=3,
+            explode_hierarchy_input=transform_schema.ExplodeHierarchyInput(
+                parent_column="a", child_column="s", quantity_column="b"))),
         # Entry 2 reads entry 1's output; dropping `a` breaks entry 1, so the node fails.
         ("formula", "add_formula", "a", lambda fid: input_schema.NodeFormula(
             flow_id=fid, node_id=3,
@@ -547,6 +555,11 @@ def _single_input_node_cases():
          input_schema.NodeRecordId(flow_id=1, node_id=2,
                                    record_id_input=transform_schema.RecordIdInput(group_by=True,
                                                                                   group_by_columns=["zzz"]))),
+        ("explode_hierarchy", "add_explode_hierarchy",
+         input_schema.NodeExplodeHierarchy(
+             flow_id=1, node_id=2,
+             explode_hierarchy_input=transform_schema.ExplodeHierarchyInput(parent_column="zzz",
+                                                                            child_column="a"))),
     ]
 
 

@@ -83,11 +83,11 @@ describe("NODE_DOC_PAGES", () => {
     expect(new Set(targets).size).toBe(targets.length);
   });
 
-  // 50 node templates ship in flowfile_core/configs/node_store/nodes.py; two are not in
+  // 51 node templates ship in flowfile_core/configs/node_store/nodes.py; two are not in
   // the palette and have no docs section - external_source (prod_ready: false) and
   // polars_lazy_frame (dict-only). Every other node type is documented.
   it("covers every palette node type", () => {
-    expect(entries).toHaveLength(48);
+    expect(entries).toHaveLength(49);
   });
 });
 

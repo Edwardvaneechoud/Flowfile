@@ -37,7 +37,7 @@ from flowfile_worker.spawner import (
     process_manager,
     unpack_result,
 )
-from flowfile_worker.task_errors import describe_exception
+from flowfile_worker.task_errors import FailureKind, describe_exception, split_failure
 
 streaming_router = APIRouter()
 
@@ -160,17 +160,23 @@ def _spawn_subprocess(ctx: _TaskContext, polars_bytes: bytes) -> tuple[Process, 
     return p, progress, error_message, queue, None
 
 
-def _read_error_message(error_message) -> str:
-    """Extract error string from shared ctypes array."""
+def _read_error_message(error_message) -> tuple[FailureKind, str]:
+    """Extract the failure kind and error string from the shared ctypes array."""
     with error_message.get_lock():
-        return error_message.value.decode().rstrip("\x00")
+        return split_failure(error_message.value.decode().rstrip("\x00"))
 
 
-def _set_error_status(task_id: str, msg: str) -> None:
+def _set_error_status(task_id: str, msg: str, kind: FailureKind) -> None:
     """Update status_dict to reflect an error."""
     with status_dict_lock:
         status_dict[task_id].status = "Error"
         status_dict[task_id].error_message = msg
+        status_dict[task_id].error_kind = kind
+
+
+def _task_error_frame(msg: str, kind: FailureKind) -> dict:
+    """Error frame for a task the worker ran; *kind* tells core whether to fail the node or degrade."""
+    return {"type": "error", "error_message": msg, "status": "Error", "error_kind": kind}
 
 
 # Progress monitoring
@@ -199,9 +205,9 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
             last_sent = monotonic()
 
         if current == -1:
-            msg = _read_error_message(error_message)
-            _set_error_status(task_id, msg)
-            await websocket.send_json({"type": "error", "error_message": msg})
+            kind, msg = _read_error_message(error_message)
+            _set_error_status(task_id, msg, kind)
+            await websocket.send_json(_task_error_frame(msg, kind))
             return True
 
         # A child that put() a large result blocks in its feeder thread and never
@@ -213,8 +219,8 @@ async def _monitor_progress(websocket: WebSocket, p: Process, progress, error_me
         if deadline is not None and monotonic() > deadline:
             p.terminate()
             msg = f"Task exceeded the {_TASK_TIMEOUT:.0f}s time limit and was terminated"
-            _set_error_status(task_id, msg)
-            await websocket.send_json({"type": "error", "error_message": msg})
+            _set_error_status(task_id, msg, "environment")
+            await websocket.send_json(_task_error_frame(msg, "environment"))
             return True
 
         await asyncio.sleep(delay)
@@ -281,9 +287,9 @@ async def _send_final_error(websocket: WebSocket, task_id: str, progress, error_
         final = progress.value
 
     if final == -1:
-        msg = _read_error_message(error_message)
-        _set_error_status(task_id, msg)
-        await websocket.send_json({"type": "error", "error_message": msg})
+        kind, msg = _read_error_message(error_message)
+        _set_error_status(task_id, msg, kind)
+        await websocket.send_json(_task_error_frame(msg, kind))
     else:
         with status_dict_lock:
             status_dict[task_id].status = "Unknown Error"
@@ -346,7 +352,9 @@ async def ws_submit(websocket: WebSocket):
         - JSON: {"type": "complete", "result_type": "polars"|"other", "file_ref": "...", "has_result": bool}
         - Binary: raw result bytes (only if has_result=True and result_type="polars")
         - JSON: {"type": "result_data", "data": ...} (only if has_result=True and result_type="other")
-        - JSON: {"type": "error", "error_message": "..."}
+        - JSON: {"type": "error", "error_message": "...", "status": "Error"?, "error_kind": "task"|"environment"?}
+          (status and error_kind only when the task ran and failed; "environment" = the worker
+          could not load the plan, write the result or finish in time, so core degrades)
     """
     if not websocket_authorized(websocket):
         await websocket.close(code=1008)

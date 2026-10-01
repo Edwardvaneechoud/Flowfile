@@ -99,10 +99,11 @@ _FORMULA_DT = (
 )  # fmt: skip
 
 _FRAME_METHODS = (
-    "apply_model", "data_cleansing", "drop", "dynamic_rename", "evaluate_model", "filter", "filter_split", "fuzzy_join",
-    "group_by", "head", "join", "multi_field_formula", "pivot", "polars_code", "random_split", "rename", "sample",
-    "select", "solve_graph", "sort", "text_to_rows", "to_flow_output", "train_model", "unique", "unpivot", "wait_for",
-    "with_columns", "with_row_index", "write_csv", "write_excel", "write_parquet",
+    "apply_model", "data_cleansing", "drop", "dynamic_rename", "evaluate_model", "explode_hierarchy", "filter",
+    "filter_split", "fuzzy_join", "group_by", "head", "join", "multi_field_formula", "pivot", "polars_code",
+    "random_split", "rename", "sample", "select", "solve_graph", "sort", "text_to_rows", "to_flow_output",
+    "train_model", "unique", "unpivot", "wait_for", "with_columns", "with_row_index", "write_csv", "write_excel",
+    "write_parquet",
 )  # fmt: skip
 _EXPR_METHODS = (
     "alias", "cast", "count", "first", "last", "max", "mean", "median", "min", "n_unique", "std", "sum", "var", "over",

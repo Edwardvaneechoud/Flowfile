@@ -49,6 +49,31 @@ class WorkerStreamStalled(WorkerStreamInterrupted):
     """The worker went silent past the inactivity timeout (presumed wedged)."""
 
 
+class WorkerTaskError(Exception):
+    """The worker ran the task and reported it failed.
+
+    ``kind`` is the worker's ``error_kind``: ``"environment"`` means the worker
+    could not load the plan, write the result or finish in time, which degrades
+    like a dead child (error code -1). Anything else, including a worker that
+    sends no kind, is the plan failing on its data (e.g. a collect-time polars
+    error) and is a real node error (code 1), matching the REST path's "Error".
+    Either way the task already ran, so it is never re-submitted.
+    """
+
+    def __init__(self, message: str, kind: str | None = None):
+        super().__init__(message)
+        self.kind = kind
+
+    @property
+    def error_code(self) -> int:
+        return error_code_for_kind(self.kind)
+
+
+def error_code_for_kind(kind: str | None) -> int:
+    """Fetcher error code for a worker "Error" of *kind*: -1 degrades, 1 fails the node."""
+    return -1 if kind == "environment" else 1
+
+
 def _get_ws_url() -> str:
     """Convert HTTP worker URL to WebSocket URL."""
     return WORKER_URL.replace("http://", "ws://").replace("https://", "wss://")
@@ -169,7 +194,10 @@ def _receive_raw_result(
             break
 
         if msg_type == "error":
-            raise Exception(data.get("error_message", "Unknown worker error"))
+            message = data.get("error_message", "Unknown worker error")
+            if data.get("status") == "Error":
+                raise WorkerTaskError(message, data.get("error_kind"))
+            raise Exception(message)
 
     return raw_result, status
 
