@@ -65,10 +65,10 @@ df = (
 ### Filtering
 
 ```python
-# Polars expression predicate
+# Polars expression predicate (renders as a Filter node with an advanced expression)
 df.filter(ff.col("age") > 21)
 
-# Flowfile formula (renders as an editable Filter node)
+# Flowfile formula string (renders as a Filter node)
 df.filter(flowfile_formula="[age] > 21 and [status] = 'active'")
 ```
 

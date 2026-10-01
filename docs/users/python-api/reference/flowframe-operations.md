@@ -32,7 +32,7 @@ df = df.filter(flowfile_formula="[price] > 15 and [qty] > 0")
 ```
 
 !!! note "Which node the filter becomes"
-    `filter(flowfile_formula=...)` emits an editable Filter node. A plain `filter(ff.col(...) > x)` predicate emits a `polars_code` node instead — the result is identical, but only the formula form is editable in the visual editor.
+    Both `filter(flowfile_formula=...)` and a plain `filter(ff.col(...) > x)` predicate emit an editable Filter node. A predicate with no formula form, such as a lambda, falls back to a `polars_code` node; see [which operations become which node](../concepts/design-concepts.md#which-operations-become-which-node).
 
 ## Selecting columns
 
