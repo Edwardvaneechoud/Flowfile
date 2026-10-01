@@ -6,7 +6,14 @@ description: Read a flow as Python cells in the Code panel, edit them, and run a
 
 The canvas notebook shows the open flow as Python code, one cell per statement, in the **Notebook** mode of the Code panel. It uses the editor of a [catalog notebook](catalog/notebooks.md), with the same cells, shortcuts, undo, drag and completions. By default it has no kernel: running a cell writes your edits onto the canvas and runs the cell's node where the flow runs. In the desktop app you can also [run it on a kernel](#running-on-a-kernel), where cells run as real Python. This page covers what the cells contain, what **Run** does for each kind of cell, what a sync refuses, running on a kernel, and how the notebook behaves in each deployment.
 
-<!-- IMAGE-PLACEHOLDER-TO-CHANGE: a flow on the canvas with the Code panel open on the right in Notebook mode, a node cell showing its preview table, one placeholder cell with its reason comment -->
+<!-- IMAGE-PLACEHOLDER-TO-CHANGE: GIF, about 15 s. A flow on the canvas, Ctrl/Cmd+G, pick Notebook; edit a node cell (change a filter value) and Run: the cell turns Synced, the node updates on the canvas and the cell shows its preview rows; add a cell that builds a new node and Push: the node appears on the canvas. Save as canvas-notebook-in-action.gif and point the link below at it instead of the .svg placeholder. -->
+
+<details markdown="1" open>
+<summary>See it: editing and running a canvas notebook cell</summary>
+
+![The canvas notebook beside a flow: a cell is edited and run, the canvas follows and the cell shows its node's rows](../../assets/images/guides/notebooks/canvas-notebook-in-action.svg)
+
+</details>
 
 ## Opening it
 
