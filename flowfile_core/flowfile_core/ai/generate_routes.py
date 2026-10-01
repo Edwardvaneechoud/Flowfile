@@ -76,7 +76,7 @@ async def generate_flow_route(
             detail=f"Unknown provider {body.provider!r}; supported: {resolvable_provider_names()}",
         )
 
-    flow = flow_file_handler.get_flow(body.flow_id)
+    flow = flow_file_handler.get_flow(body.flow_id, current_user.id)
     if flow is None:
         raise HTTPException(status_code=422, detail=f"Flow {body.flow_id} not found")
 

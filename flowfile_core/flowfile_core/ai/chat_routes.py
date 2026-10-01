@@ -205,7 +205,7 @@ async def chat_stream(
     # Otherwise fall back to the identity-only prompt so the contract
     # stays backwards-compatible for callers without a flow.
     if body.flow_id is not None:
-        flow = flow_file_handler.get_flow(body.flow_id)
+        flow = flow_file_handler.get_flow(body.flow_id, current_user.id)
         if flow is None:
             raise HTTPException(status_code=422, detail=f"Flow {body.flow_id} not found")
         # If the client passed parsed mentions, forward them as a
@@ -327,7 +327,7 @@ async def chat_preview(
     prompt_surface = _resolve_prompt_surface(body.surface)
 
     if body.flow_id is not None:
-        flow = flow_file_handler.get_flow(body.flow_id)
+        flow = flow_file_handler.get_flow(body.flow_id, current_user.id)
         if flow is None:
             raise HTTPException(status_code=422, detail=f"Flow {body.flow_id} not found")
         mention_text: str

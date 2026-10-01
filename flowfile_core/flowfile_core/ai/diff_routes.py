@@ -122,8 +122,8 @@ class RejectDiffResponse(BaseModel):
 # Helpers
 
 
-def _resolve_flow(flow_id: int):
-    flow = flow_file_handler.get_flow(flow_id)
+def _resolve_flow(flow_id: int, user_id: int):
+    flow = flow_file_handler.get_flow(flow_id, user_id)
     if flow is None:
         raise HTTPException(status_code=404, detail=f"Flow {flow_id} not found")
     return flow
@@ -180,7 +180,7 @@ def _flip_audit_actions(audit_ids: list[int], action: audit.DiffAction) -> list[
 @router.post("/diff/stage", response_model=StageDiffResponse, tags=["ai"])
 async def stage_diff(
     body: StageDiffRequest,
-    current_user=Depends(get_current_active_user),  # noqa: ARG001 — auth gate only
+    current_user=Depends(get_current_active_user),
 ) -> StageDiffResponse:
     """Register a :class:`GraphDiff` from a list of staged tool results.
 
@@ -191,9 +191,11 @@ async def stage_diff(
 
     Errors:
 
+    * ``404`` — ``flow_id`` is not open in the caller's session.
     * ``422`` — unsupported tool name / bad payload shape.
     * ``503`` — ``FEATURE_FLAG_AI`` off.
     """
+    _resolve_flow(body.flow_id, current_user.id)
     bundled = _bin_staged_results(body.staged_results)
     graph_diff = diff.GraphDiff(
         session_id=body.session_id,
@@ -222,15 +224,15 @@ async def stage_diff(
 async def accept_diff(
     diff_id: str,
     body: AcceptDiffRequest,
-    current_user=Depends(get_current_active_user),  # noqa: ARG001 — auth gate only
+    current_user=Depends(get_current_active_user),
     db: Session = Depends(get_db),  # noqa: ARG001 — surfaces 503 + ensures session import path
 ) -> AcceptDiffResponse:
     """Apply ``diff_id`` atomically and flip every audit row to ``"accepted"``.
 
     Errors:
 
-    * ``404`` — unknown ``diff_id``; or stored ``flow_id`` no longer
-      resolves via ``flow_file_handler``.
+    * ``404`` — unknown ``diff_id``; or stored ``flow_id`` is not open
+      in the caller's session.
     * ``409`` — drift (one or more referenced node ids missing). Diff
       stays in the store so the user can fix the underlying graph and
       retry.
@@ -251,7 +253,7 @@ async def accept_diff(
             detail=(f"flow_id mismatch: body says {body.flow_id}, " f"diff was staged for {graph_diff.flow_id}"),
         )
 
-    flow = _resolve_flow(graph_diff.flow_id)
+    flow = _resolve_flow(graph_diff.flow_id, current_user.id)
 
     try:
         # Synchronous graph work under the flow's edit lock, which must never be taken on the event loop.

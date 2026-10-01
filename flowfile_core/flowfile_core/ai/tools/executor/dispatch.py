@@ -54,7 +54,7 @@ def execute_tool_call(
     """Validate, predict, and dispatch a single LLM tool call.
 
     ``flow`` is optional — if not provided, looked up via
-    ``flow_file_handler.get_flow(flow_id)``. Tests can pass an explicit flow
+    ``flow_file_handler.get_flow(flow_id, user_id)``. Tests can pass an explicit flow
     to avoid touching the global handler.
 
     ``dry_run_cache`` is the per-session :class:`DryRunCache`. If ``None``, a
@@ -115,7 +115,7 @@ def execute_tool_call(
     domain, op = match.group(1), match.group(2)
 
     if flow is None:
-        flow = _resolve_flow(flow_id)
+        flow = _resolve_flow(flow_id, user_id)
         if flow is None:
             return _reject_and_audit(
                 tool_name=tool_name,

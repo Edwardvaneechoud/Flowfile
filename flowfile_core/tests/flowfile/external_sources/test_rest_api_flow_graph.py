@@ -389,7 +389,7 @@ def _register_rest_node_in_global_handler(flow_id: int, node_id: int, url: str, 
     if flow_file_handler.get_flow(flow_id):
         flow_file_handler.delete_flow(flow_id)
     flow_file_handler.register_flow(
-        schemas.FlowSettings(flow_id=flow_id, name="rest_sample", path=".", execution_location="remote")
+        schemas.FlowSettings(flow_id=flow_id, name="rest_sample", path=".", execution_location="remote"), user_id=1
     )
     flow = flow_file_handler.get_flow(flow_id)
     node = input_schema.NodeRestApiReader(

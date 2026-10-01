@@ -272,10 +272,10 @@ def _reject_and_audit(
     )
 
 
-def _resolve_flow(flow_id: int):
-    """Look up a ``FlowGraph`` via the global handler. Lazy import to keep the
-    executor's module-level imports light (the handler pulls in DB session
+def _resolve_flow(flow_id: int, user_id: int):
+    """Look up ``user_id``'s open ``FlowGraph`` via the global handler. Lazy import to keep
+    the executor's module-level imports light (the handler pulls in DB session
     machinery which other AI tests don't need)."""
-    from flowfile_core.flowfile.handler import flow_file_handler
+    from flowfile_core import flow_file_handler
 
-    return flow_file_handler.get_flow(flow_id)
+    return flow_file_handler.get_flow(flow_id, user_id)

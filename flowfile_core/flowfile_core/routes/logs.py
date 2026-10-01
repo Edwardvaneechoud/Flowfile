@@ -115,7 +115,7 @@ async def stream_logs(flow_id: int, idle_timeout: int = 300, current_user=Depend
     """
     logger.info(f"Starting log stream for flow_id: {flow_id} by user: {current_user.username}")
     await asyncio.sleep(0.3)
-    flow = flow_file_handler.get_flow(flow_id)
+    flow = flow_file_handler.get_flow(flow_id, current_user.id)
     logger.info("Streaming logs")
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
