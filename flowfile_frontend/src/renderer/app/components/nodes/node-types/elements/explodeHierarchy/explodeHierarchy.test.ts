@@ -5,6 +5,7 @@ import {
   HIERARCHY_OUTPUT_OPTIONS,
   createExplodeHierarchyInput,
   createExplodeHierarchyNode,
+  explodeHierarchyConfigError,
   hierarchyOutputColumns,
   hierarchyOutputOption,
   MAX_HIERARCHY_DEPTH,
@@ -34,6 +35,34 @@ describe("createExplodeHierarchyInput", () => {
     a.explode_hierarchy_input.parent_column = "assembly";
     expect(b.explode_hierarchy_input.parent_column).toBe("");
     expect(a).toMatchObject({ flow_id: 1, node_id: 2, cache_results: false });
+  });
+
+  it("starts unconfigured so the backend default never marks a fresh node as set up", () => {
+    expect(createExplodeHierarchyNode(1, 2).is_setup).toBe(false);
+  });
+});
+
+describe("explodeHierarchyConfigError", () => {
+  const withColumns = (parent_column: string, child_column: string) =>
+    explodeHierarchyConfigError({ ...createExplodeHierarchyInput(), parent_column, child_column });
+
+  it("refuses the untouched defaults", () => {
+    expect(explodeHierarchyConfigError(createExplodeHierarchyInput())).toBe(
+      "Explode hierarchy still needs a parent column and a child column.",
+    );
+  });
+
+  it("names the one column still missing", () => {
+    expect(withColumns("assembly", "")).toBe("Explode hierarchy still needs a child column.");
+    expect(withColumns("", "component")).toBe("Explode hierarchy still needs a parent column.");
+  });
+
+  it("refuses the same column as parent and child", () => {
+    expect(withColumns("part", "part")).toBe("Parent and child must be different columns.");
+  });
+
+  it("accepts two different columns", () => {
+    expect(withColumns("assembly", "component")).toBeNull();
   });
 });
 

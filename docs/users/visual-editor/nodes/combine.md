@@ -128,7 +128,7 @@ The result is a new table with fixed columns. The input's other columns are not 
 | `quantity_per` | Paths only: the quantity on the last step of the route. |
 | `path` | Paths only: every item on the route as a list, from the ancestor to the descendant. |
 
-`level` is a whole number and both quantities are decimals. The item columns (`ancestor`, `descendant`, `parent` and the entries of `path`) keep the ids' type when the parent and child columns are both text or both the same 32- or 64-bit integer type, so integer account numbers stay integers; 8- and 16-bit integers are widened to Int64 first. Any other combination comes out as text.
+`level` is a whole number and both quantities are decimals. The item columns (`ancestor`, `descendant`, `parent` and the entries of `path`) keep the ids' type when the parent and child columns are both text or both integers, so integer account numbers stay integers. Two integer columns of different types are cast to one integer type that holds both, and 8- and 16-bit ids are widened to at least 32 bits. The one integer exception is UInt64 paired with a signed column, which no integer type holds, so it comes out as text like any other combination.
 
 ### Example: how many screws go into a bike
 

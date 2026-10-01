@@ -31,10 +31,11 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import Flowfi
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.hierarchy import (
     HIERARCHY_OUTPUT_ALIAS,
+    INTEGER_NODE_ID_BITS,
     KEPT_NODE_ID_TYPES,
     WIDENED_NODE_ID_TYPES,
     hierarchy_function_name,
-    hierarchy_node_id_cast,
+    hierarchy_node_id_casts,
 )
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -80,16 +81,34 @@ def _render_dtype_tuple(dtypes) -> str:
     return ", ".join(sorted(f"pl.{d.__name__}" for d in dtypes))
 
 
-# Exported-code twin of hierarchy.hierarchy_node_id_cast, for id dtypes unknown at export time.
+def _render_integer_bits(bits) -> str:
+    return ", ".join(f"pl.{d.__name__}: ({signed}, {width})" for d, (signed, width) in bits.items())
+
+
+# Exported-code twin of hierarchy.hierarchy_node_id_casts, for id dtypes unknown at export time.
 _HIERARCHY_ID_HELPER = f'''\
-def _flowfile_hierarchy_id(frame, name):
-    """Cast a parent/child id column the way Flowfile does before polars_grouper sees it."""
-    dtype = frame.collect_schema().get(name)
-    if dtype is None or dtype.base_type() in ({_render_dtype_tuple(KEPT_NODE_ID_TYPES)}):
-        return pl.col(name)
-    if dtype.base_type() in ({_render_dtype_tuple(WIDENED_NODE_ID_TYPES)}):
-        return pl.col(name).cast(pl.Int64)
-    return pl.col(name).cast(pl.String)'''
+def _flowfile_hierarchy_ids(frame, parent, child):
+    """Cast the parent/child id columns the way Flowfile does before polars_grouper sees them."""
+    schema = frame.collect_schema()
+    dtypes = [schema.get(parent), schema.get(child)]
+    integer_bits = {{{_render_integer_bits(INTEGER_NODE_ID_BITS)}}}
+    kinds = [None if d is None else integer_bits.get(d.base_type()) for d in dtypes]
+    if None not in kinds:
+        signed = kinds[0][0] or kinds[1][0]
+        bits = max(width if is_signed == signed else 2 * width for is_signed, width in kinds)
+        if bits <= 64:
+            common = pl.Int64 if bits < 32 else getattr(pl, ("Int" if signed else "UInt") + str(bits))
+            names = (parent, child)
+            return [pl.col(n) if d.base_type() == common else pl.col(n).cast(common) for n, d in zip(names, dtypes)]
+    exprs = []
+    for name, dtype in zip((parent, child), dtypes):
+        if dtype is None or dtype.base_type() in ({_render_dtype_tuple(KEPT_NODE_ID_TYPES)}):
+            exprs.append(pl.col(name))
+        elif dtype.base_type() in ({_render_dtype_tuple(WIDENED_NODE_ID_TYPES)}):
+            exprs.append(pl.col(name).cast(pl.Int64))
+        else:
+            exprs.append(pl.col(name).cast(pl.String))
+    return exprs'''
 
 
 class UnsupportedNodeError(Exception):
@@ -1216,10 +1235,7 @@ class FlowGraphCodeConverter(
         h = settings.explode_hierarchy_input
         function_name = hierarchy_function_name(h.output_detail)
         input_types = self._input_column_types(settings.node_id) or {}
-        args = [
-            self._hierarchy_node_id_arg(h.parent_column, input_types, input_df),
-            self._hierarchy_node_id_arg(h.child_column, input_types, input_df),
-        ]
+        args = self._hierarchy_node_id_args(h.parent_column, h.child_column, input_types, input_df)
         if h.quantity_column:
             args.append(f"pl.col({self._py_str(h.quantity_column)}).cast(pl.Float64)")
         if h.top_level_only:
@@ -1234,43 +1250,44 @@ class FlowGraphCodeConverter(
         self._add_code("")
         self.imports.add(f"from polars_grouper import {function_name}")
 
-    def _hierarchy_node_id_arg(self, column: str, input_types: dict[str, str], input_df: str) -> str:
-        """``pl.col(column)``, cast exactly as ``hierarchy_node_id_cast`` casts it in the engine.
+    def _hierarchy_node_id_args(self, parent: str, child: str, input_types: dict[str, str], input_df: str) -> list[str]:
+        """The parent and child ``pl.col`` args, cast exactly as ``hierarchy_node_id_casts`` casts them in the engine.
 
-        When the dtype is not known at export time (an unpredictable input schema, or a
-        ``${param}`` column name), the exported code decides the cast at run time instead.
+        When either dtype is not known at export time (an unpredictable input schema, or a
+        ``${param}`` column name), the exported code decides the casts at run time instead.
         """
-        expr = f"pl.col({self._py_str(column)})"
-        if column not in input_types:
+        if parent not in input_types or child not in input_types:
             if _HIERARCHY_ID_HELPER not in self._module_helpers:
                 self._module_helpers.append(_HIERARCHY_ID_HELPER)
-            return f"_flowfile_hierarchy_id({input_df}, {self._py_str(column)})"
-        cast = hierarchy_node_id_cast(cast_str_to_polars_type(input_types[column]))
-        return expr if cast is None else f"{expr}.cast({_render_polars_dtype(cast)})"
+            return [f"*_flowfile_hierarchy_ids({input_df}, {self._py_str(parent)}, {self._py_str(child)})"]
+        casts = hierarchy_node_id_casts(
+            cast_str_to_polars_type(input_types[parent]), cast_str_to_polars_type(input_types[child])
+        )
+        return [
+            f"pl.col({self._py_str(name)})" + ("" if cast is None else f".cast({_render_polars_dtype(cast)})")
+            for name, cast in zip((parent, child), casts, strict=True)
+        ]
+
+    def _single_main_input_schema(self, node_id: int) -> list[FlowfileColumn] | None:
+        """Predicted schema of the single main input of ``node_id``; None when missing, empty or unpredictable."""
+        try:
+            node = self.flow_graph.get_node(node_id)
+            inputs = node.node_inputs.main_inputs or []
+            if len(inputs) != 1:
+                return None
+            return inputs[0].get_predicted_schema() or None
+        except Exception:
+            return None
 
     def _input_column_types(self, node_id: int) -> dict[str, str] | None:
         """Column name -> dtype string on the single main input of ``node_id``, or None when unavailable."""
-        try:
-            node = self.flow_graph.get_node(node_id)
-            inputs = node.node_inputs.main_inputs or []
-            if len(inputs) != 1:
-                return None
-            schema = inputs[0].get_predicted_schema()
-        except Exception:
-            return None
-        return {c.column_name: c.data_type for c in schema} if schema else None
+        schema = self._single_main_input_schema(node_id)
+        return None if schema is None else {c.column_name: c.data_type for c in schema}
 
     def _input_column_names(self, node_id: int) -> list[str] | None:
         """Column names on the single main input of ``node_id``, or None when unavailable."""
-        try:
-            node = self.flow_graph.get_node(node_id)
-            inputs = node.node_inputs.main_inputs or []
-            if len(inputs) != 1:
-                return None
-            schema = inputs[0].get_predicted_schema()
-        except Exception:
-            return None
-        return [c.column_name for c in schema] if schema else None
+        schema = self._single_main_input_schema(node_id)
+        return None if schema is None else [c.column_name for c in schema]
 
     def _drop_shaped_select(self, settings: input_schema.NodeSelect) -> list[str] | None:
         """Columns to drop when a select node only unchecks columns — no rename, cast or

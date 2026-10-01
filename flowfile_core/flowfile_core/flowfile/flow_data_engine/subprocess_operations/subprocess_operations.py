@@ -27,6 +27,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import (
     WorkerStreamInterrupted,
     WorkerTaskError,
+    error_code_for_kind,
     streaming_receive,
     streaming_start,
 )
@@ -871,7 +872,7 @@ class BaseFetcher:
                             self._handle_completion(status)
                             return
                         elif status.status == "Error":
-                            self._handle_error(1, status.error_message)
+                            self._handle_error(error_code_for_kind(status.error_kind), status.error_message)
                             return
                         elif status.status == "Unknown Error":
                             self._handle_error(
@@ -1074,7 +1075,7 @@ class BaseFetcher:
             try:
                 result, status = streaming_receive(ws, self.file_ref, should_abort=self._stop_event.is_set)
             except WorkerTaskError as e:
-                self._record_task_failure(str(e))
+                self._record_task_failure(str(e), e.error_code)
                 return
             except Exception:
                 # Reset to pristine: the caller's REST fallback (generic errors
@@ -1110,12 +1111,12 @@ class BaseFetcher:
                 )
                 self._thread.start()
 
-    def _record_task_failure(self, description: str) -> None:
-        """Record a task the worker ran and reported failed; error code 1 matches the REST path's "Error" status."""
+    def _record_task_failure(self, description: str, error_code: int) -> None:
+        """Record a task the worker ran and reported failed, with the code the REST path would give it."""
         with self._lock:
             self._ws = None
             self._running = False
-            self._error_code = 1
+            self._error_code = error_code
             self._error_description = description
 
     def _raise_recorded_failure(self) -> None:
@@ -1134,7 +1135,10 @@ class BaseFetcher:
                 self.status = status
                 self._condition.notify_all()
         except Exception as e:
-            logger.exception("Error in WebSocket receive thread")
+            if isinstance(e, WorkerTaskError):
+                logger.warning("Worker task %s failed (%s): %s", self.file_ref, e.kind or "task", e)
+            else:
+                logger.exception("Error in WebSocket receive thread")
             with self._condition:
                 # -1 means "worker child died" and lets the node degrade
                 # gracefully; -2 means stalled-or-canceled and makes the node
@@ -1146,7 +1150,7 @@ class BaseFetcher:
                 if interrupted:
                     self._error_code = -2
                 else:
-                    self._error_code = 1 if isinstance(e, WorkerTaskError) else -1
+                    self._error_code = e.error_code if isinstance(e, WorkerTaskError) else -1
                 self._error_description = str(e)
                 self._running = False
                 self._ws = None
@@ -1237,7 +1241,7 @@ class ExternalSampler(BaseFetcher):
 
         # REST fallback (original behavior)
         r = trigger_sample_operation(
-            lf=lf, file_ref=file_ref, sample_size=sample_size, node_id=node_id, flow_id=flow_id
+            lf=lf, file_ref=self.file_ref, sample_size=sample_size, node_id=node_id, flow_id=flow_id
         )
         self.running = r.status == "Processing"
         if wait_on_completion:

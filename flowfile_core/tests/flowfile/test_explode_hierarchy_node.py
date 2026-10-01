@@ -20,6 +20,7 @@ from flowfile_core.flowfile.flow_data_engine.hierarchy import (
     explode_hierarchy_frame,
     hierarchy_function_name,
     hierarchy_node_id_cast,
+    hierarchy_node_id_casts,
 )
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
@@ -423,19 +424,33 @@ def test_without_quantity_every_edge_counts_once(execution_location):
     assert sorted(screws.rows()) == [("bike", 3.0), ("ebike", 4.0)]
 
 
-def test_general_ledger_roll_up_keeps_integer_accounts(execution_location):
+@pytest.mark.parametrize(
+    "parent_dtype,account_dtype,id_dtype",
+    [
+        ("Int64", "Int64", "Int64"),
+        ("Int64", "Int32", "Int64"),
+        ("Int32", "Int16", "Int32"),
+        ("UInt32", "Int32", "Int64"),
+        ("UInt16", "UInt64", "UInt64"),
+    ],
+)
+def test_general_ledger_roll_up_keeps_integer_accounts(execution_location, parent_dtype, account_dtype, id_dtype):
+    """Integer account columns of different widths still give integer ids that join back to the journal."""
     chart = make_raw_data(
-        {"parent_account": "Int64", "account": "Int64"},
+        {"parent_account": parent_dtype, "account": account_dtype},
         {"parent_account": [1000, 1000, 1100, 1100, 1200], "account": [1100, 1200, 1110, 1120, 1210]},
     )
-    closure = run_and_collect(
-        build_graph(
-            chart, execution_location, parent_column="parent_account", child_column="account", include_self=True
-        )
+    graph = build_graph(
+        chart, execution_location, parent_column="parent_account", child_column="account", include_self=True
     )
-    assert closure.schema["ancestor"] == pl.Int64
-    assert closure.schema["descendant"] == pl.Int64
-    journal = pl.DataFrame({"account": [1110, 1110, 1120, 1210], "amount": [100, 50, 30, 500]})
+    assert predicted(graph)[:2] == [("ancestor", id_dtype), ("descendant", id_dtype)]
+    closure = run_and_collect(graph)
+    assert closure.schema["ancestor"] == getattr(pl, id_dtype)
+    assert closure.schema["descendant"] == getattr(pl, id_dtype)
+    journal = pl.DataFrame(
+        {"account": [1110, 1110, 1120, 1210], "amount": [100, 50, 30, 500]},
+        schema={"account": getattr(pl, account_dtype), "amount": pl.Int64},
+    )
     balances = (
         closure.join(journal, left_on="descendant", right_on="account")
         .group_by(account="ancestor")
@@ -528,6 +543,44 @@ def test_missing_column_fails_the_node():
     assert 'unable to find column "zzz"' in failed[0].error
 
 
+BAD_EDGE_COLUMNS = [
+    ({"parent_column": "parent", "child_column": "parent"}, "two different columns"),
+    ({"parent_column": "", "child_column": ""}, "both a parent column and a child column"),
+    ({"parent_column": "parent", "child_column": ""}, "both a parent column and a child column"),
+]
+
+
+@pytest.mark.parametrize("execution_mode", ["Development", "Performance"])
+@pytest.mark.parametrize("columns,message", BAD_EDGE_COLUMNS)
+def test_bad_edge_columns_fail_the_explode_node(columns, message, execution_mode):
+    """Identical columns used to pass the node and fail downstream as a 1 -> 1 cycle."""
+    graph = build_graph(edges_raw_data([1, 2], [2, 3], dtype="Int64"), **columns)
+    graph.flow_settings.execution_mode = execution_mode
+    run_info = graph.run_graph()
+    assert run_info.success is False
+    failed = [step for step in run_info.node_step_result if not step.success]
+    assert [step.node_id for step in failed] == [2]
+    assert message in failed[0].error
+    assert "cycle" not in failed[0].error
+
+
+def test_unconfigured_node_saves_and_reopens(tmp_path):
+    """A freshly dropped node carries empty columns; it must survive a save/open round trip."""
+    graph = build_graph(edges_raw_data(["a"], ["b"]), parent_column="", child_column="")
+    yaml_path = tmp_path / "unconfigured.yaml"
+    graph.save_flow(str(yaml_path))
+
+    loaded_input = open_flow(yaml_path).get_node(2).setting_input.explode_hierarchy_input
+    assert (loaded_input.parent_column, loaded_input.child_column) == ("", "")
+
+
+@pytest.mark.parametrize("columns,message", BAD_EDGE_COLUMNS)
+def test_bad_edge_columns_raise_before_building_the_plan(columns, message):
+    settings = transform_schema.ExplodeHierarchyInput(**columns)
+    with pytest.raises(ValueError, match=message):
+        explode_hierarchy_frame(pl.LazyFrame({"parent": [1], "child": [2]}), settings)
+
+
 def test_function_table_covers_every_output_detail():
     assert set(HIERARCHY_FUNCTIONS) == {"totals", "levels", "paths"}
     assert [hierarchy_function_name(d) for d in ("totals", "levels", "paths")] == [
@@ -610,15 +663,65 @@ def _mixed(parent: pl.DataType, child: pl.DataType) -> pl.LazyFrame:
         _edges(pl.Date),
         _edges(pl.Datetime("us")),
         _mixed(pl.Int64, pl.String),
-        _mixed(pl.Int32, pl.Int64),
+        _mixed(pl.UInt64, pl.Int64),
+        _mixed(pl.Int32, pl.UInt64),
     ],
-    ids=["Float64", "Boolean", "Date", "Datetime", "Int64-String", "Int32-Int64"],
+    ids=["Float64", "Boolean", "Date", "Datetime", "Int64-String", "UInt64-Int64", "Int32-UInt64"],
 )
 def test_cast_matches_the_plugin_where_it_already_stringifies(lf, function):
     settings = SETTINGS.model_copy(update={"output_detail": "paths" if function is hierarchy_paths else "totals"})
     plugin = lf.select(function("p", "c", "q").alias("h")).unnest("h").collect()
     assert plugin.schema["ancestor"] == pl.String
     assert_frame_equal(explode_hierarchy_frame(lf, settings).collect(), plugin)
+
+
+@pytest.mark.parametrize(
+    "parent,child,expected",
+    [
+        (pl.Int64, pl.Int32, (None, pl.Int64)),
+        (pl.Int32, pl.Int16, (None, pl.Int32)),
+        (pl.Int16, pl.Int8, (pl.Int64, pl.Int64)),
+        (pl.UInt32, pl.Int32, (pl.Int64, pl.Int64)),
+        (pl.Int16, pl.UInt16, (pl.Int32, pl.Int32)),
+        (pl.UInt8, pl.UInt64, (pl.UInt64, None)),
+        (pl.UInt32, pl.UInt32, (None, None)),
+        (pl.UInt64, pl.Int64, (None, None)),
+        (pl.Int8, pl.UInt64, (pl.Int64, None)),
+        (pl.Int32, pl.String, (None, None)),
+        (pl.Int16, pl.Float64, (pl.Int64, pl.String)),
+        (pl.Int128, pl.Int64, (pl.String, None)),
+        (None, pl.Int16, (None, pl.Int64)),
+    ],
+)
+def test_node_id_casts_share_an_integer_type(parent, child, expected):
+    assert hierarchy_node_id_casts(parent, child) == expected
+
+
+ID_DTYPES = [
+    pl.Int8,
+    pl.Int16,
+    pl.Int32,
+    pl.Int64,
+    pl.UInt8,
+    pl.UInt16,
+    pl.UInt32,
+    pl.UInt64,
+    pl.Int128,
+    pl.String,
+    pl.Float64,
+]
+
+
+@pytest.mark.parametrize("child", ID_DTYPES, ids=str)
+@pytest.mark.parametrize("parent", ID_DTYPES, ids=str)
+def test_mixed_id_dtypes_predict_the_real_schema(parent, child):
+    """Every dtype pair predicts the schema it produces; integer pairs stay integers unless UInt64 meets a sign."""
+    result = explode_hierarchy_frame(_mixed(parent, child), PATH_SETTINGS)
+    assert dict(result.collect_schema()) == dict(result.collect().schema)
+    signed, unsigned = {pl.Int8, pl.Int16, pl.Int32, pl.Int64}, {pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64}
+    pair = {parent, child}
+    lossless = pair <= signed | unsigned and not (pl.UInt64 in pair and pair & signed)
+    assert result.collect_schema()["ancestor"].is_integer() == lossless
 
 
 def test_timezone_aware_ids_work_as_strings():

@@ -158,7 +158,7 @@ def test_status_404s_when_the_result_file_is_gone(create_grouper_data):
     assert client.get(f'/status/{task_id}').status_code == 404
 
 
-def _store_and_wait(lf: pl.LazyFrame) -> models.Status:
+def _store_and_wait(lf: pl.LazyFrame | bytes) -> models.Status:
     """Submit a serialized plan as a store job and poll until it leaves the in-flight states."""
     headers = {
         "Content-Type": "application/octet-stream",
@@ -166,7 +166,8 @@ def _store_and_wait(lf: pl.LazyFrame) -> models.Status:
         "X-Flow-Id": "1",
         "X-Node-Id": "-1",
     }
-    v = client.post('/submit_query/', content=lf.serialize(), headers=headers)
+    content = lf if isinstance(lf, bytes) else lf.serialize()
+    v = client.post('/submit_query/', content=content, headers=headers)
     assert v.status_code == 200, v.text
     task_id = models.Status.model_validate(v.json()).background_task_id
     for _ in range(100):
@@ -205,6 +206,14 @@ def test_hierarchy_cycle_reports_the_cycle_from_the_worker():
     status = _store_and_wait(lf)
     assert status.status == 'Error'
     assert "a -> b -> c -> a" in status.error_message
+    assert status.error_kind == 'task'
+
+
+def test_plan_the_worker_cannot_load_is_an_environment_failure_over_rest(unloadable_plan):
+    status = _store_and_wait(unloadable_plan)
+    assert status.status == 'Error'
+    assert status.error_kind == 'environment'
+    assert status.error_message.startswith('ModuleNotFoundError:'), status.error_message
 
 
 def test_add_fuzzy_join(create_fuzzy_data):

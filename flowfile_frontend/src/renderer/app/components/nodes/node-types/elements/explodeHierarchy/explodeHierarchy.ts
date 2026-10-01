@@ -117,6 +117,19 @@ export const normalizeExplodeHierarchyInput = (
   };
 };
 
+/** Why the settings can't run yet, or null when parent and child are two chosen columns. */
+export const explodeHierarchyConfigError = (input: ExplodeHierarchyInput): string | null => {
+  const missing = [
+    !input.parent_column && "a parent column",
+    !input.child_column && "a child column",
+  ].filter(Boolean);
+  if (missing.length) return `Explode hierarchy still needs ${missing.join(" and ")}.`;
+  if (input.parent_column === input.child_column) {
+    return "Parent and child must be different columns.";
+  }
+  return null;
+};
+
 export const createExplodeHierarchyNode = (
   flowId = -1,
   nodeId = -1,
@@ -128,5 +141,6 @@ export const createExplodeHierarchyNode = (
   pos_x,
   pos_y,
   cache_results: false,
+  is_setup: false,
   explode_hierarchy_input: createExplodeHierarchyInput(),
 });

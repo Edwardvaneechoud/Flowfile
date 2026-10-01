@@ -6446,4 +6446,4 @@ yxdb = ["yxdb"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.14"
-content-hash = "1a9d6a2a39fd4067093d002898e55c43e2bda794daf02fb1ce13b5ef8f6bc394"
+content-hash = "962a8e4de0e45e141106db30ad1f71abc2040f128ea091436ae6df09154fb086"
