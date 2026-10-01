@@ -65,3 +65,23 @@ def postgres_db():
         if not db_info:
             pytest.fail("PostgreSQL container could not be started")
         yield db_info
+
+
+@pytest.fixture
+def unloadable_plan(tmp_path, monkeypatch) -> bytes:
+    """A serialized plan whose UDF module is gone before the worker loads it, as with a core-only package."""
+    import importlib
+    import shutil
+
+    import polars as pl
+
+    module_name = f"core_only_udf_{tmp_path.name.replace('-', '_')}"
+    (tmp_path / f"{module_name}.py").write_text("def plus_one(s):\n    return s + 1\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    module = importlib.import_module(module_name)
+    plan = pl.LazyFrame({"a": [1, 2]}).select(pl.col("a").map_batches(module.plus_one, return_dtype=pl.Int64))
+    payload = plan.serialize()
+    (tmp_path / f"{module_name}.py").unlink()
+    shutil.rmtree(tmp_path / "__pycache__", ignore_errors=True)
+    sys.modules.pop(module_name, None)
+    return payload

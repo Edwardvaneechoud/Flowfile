@@ -75,7 +75,7 @@ Every node type has a fixed laziness classification, defined in `flowfile_core/c
 
 | Classification | Nodes | Behavior |
 |---|---|---|
-| **Lazy** | Manual Input, Select data, Rename columns, Filter data, Formula, Join, Cross join, Group by, Window functions, Sort data, Add record Id, Take Sample, Random Split, Unpivot data, Union data, Drop duplicates, Graph solver, Count records, Text to rows, SQL Query, Read from Catalog, Flow Input, LazyFrame node | Operations are deferred — computation happens only when results are collected, so they keep the plan optimizable. |
+| **Lazy** | Manual Input, Select data, Rename columns, Filter data, Formula, Join, Cross join, Group by, Window functions, Sort data, Add record Id, Take Sample, Random Split, Unpivot data, Union data, Drop duplicates, Graph solver, Explode hierarchy, Count records, Text to rows, SQL Query, Read from Catalog, Flow Input, LazyFrame node | Operations are deferred — computation happens only when results are collected, so they keep the plan optimizable. |
 | **Eager** | External source, Write data, API response, Fuzzy match, Explore data, Pivot data, Python Script, Read from Database, Write to Database, Write to Catalog, Write to cloud provider, Kafka Source, Google Analytics, REST API, Train Model, Apply Model, Evaluate Model, Wait For, Flow Output, Run Flow | Forces execution of upstream data — breaks the lazy plan, so the virtual table falls back to standard resolution. |
 | **Conditional** | Read data, Polars code, Read from cloud provider | Lazy or eager depending on configuration (e.g. the file type read, or whether the custom Polars code stays lazy). Treated as a blocker unless the check can prove it stays lazy. |
 

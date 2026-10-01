@@ -246,7 +246,7 @@ All of these persist through `flowfile_core`'s storage layer (the shared SQLite 
 | `rename` | implemented via `select(..., _keep_missing=True)` | — |
 | everything else on `pl.LazyFrame` (`tail`, `slice`, `shift`, `reverse`, `fill_null`, `quantile`, …) | injected generic wrapper → polars-code | passthroughs (§5) add no node at all |
 
-**Flowfile-only extensions with no Polars equivalent:** `filter_split` (→ `(pass, fail)` frames on output handles 0/1), `random_split(splits, seed)` (→ N frames), the ML verbs `train_model`/`apply_model`/`evaluate_model`/`wait_for`, `fuzzy_join`, `text_to_rows`, `solve_graph` (graph connected-components), `dynamic_rename` (prefix/suffix/formula/first-row renaming), the visual-grouping context manager `with df.group("name"):` + `set_group` (organizational only, no data effect), `write_catalog_table`, the cloud/DB writers, `to_graph`/`save_graph`.
+**Flowfile-only extensions with no Polars equivalent:** `filter_split` (→ `(pass, fail)` frames on output handles 0/1), `random_split(splits, seed)` (→ N frames), the ML verbs `train_model`/`apply_model`/`evaluate_model`/`wait_for`, `fuzzy_join`, `text_to_rows`, `solve_graph` (graph connected-components), `explode_hierarchy` (parent→child transitive closure via `polars_grouper`'s `hierarchy_*` functions → `NodeExplodeHierarchy`; the result is a new table, not the input plus columns), `dynamic_rename` (prefix/suffix/formula/first-row renaming), the visual-grouping context manager `with df.group("name"):` + `set_group` (organizational only, no data effect), `write_catalog_table`, the cloud/DB writers, `to_graph`/`save_graph`.
 
 **Known parity deviations, not bugs:**
 - `GroupByFrame.sum/mean/median` aggregate `cs.numeric()` columns only (Polars aggregates everything it can).

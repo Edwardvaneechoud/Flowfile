@@ -41,6 +41,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import (
 )
 from flowfile_core.flowfile.flow_data_engine.formula_entries import FormulaEntry, apply_formula_entries
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
+from flowfile_core.flowfile.flow_data_engine.hierarchy import explode_hierarchy_frame
 from flowfile_core.flowfile.flow_data_engine.join import (
     get_col_name_to_delete,
     get_join_map_problems,
@@ -2153,6 +2154,21 @@ class FlowDataEngine:
             )
         )
         return FlowDataEngine(lf)
+
+    def explode_hierarchy(self, settings: transform_schemas.ExplodeHierarchyInput) -> FlowDataEngine:
+        """Explodes a parent -> child edge list into its transitive closure.
+
+        The result is a new table (see `ExplodeHierarchyInput`); input columns are not carried
+        through. The plan stays lazy, so a cycle or null quantity only raises on collect.
+
+        Args:
+            settings: The edge columns, output detail and explosion options.
+
+        Returns:
+            A new, lazy `FlowDataEngine` with an unknown row count.
+        """
+        lf = explode_hierarchy_frame(self.data_frame.lazy(), settings)
+        return FlowDataEngine(lf, number_of_records=-1)
 
     def add_new_values(self, values: Iterable, col_name: str = None) -> FlowDataEngine:
         """Adds a new column with the provided values.

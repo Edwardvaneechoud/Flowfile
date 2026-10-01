@@ -59,6 +59,7 @@ class NodeType(str, Enum):
     UNPIVOT = "unpivot"
     TEXT_TO_ROWS = "text_to_rows"
     GRAPH_SOLVER = "graph_solver"
+    EXPLODE_HIERARCHY = "explode_hierarchy"
     PYTHON_SCRIPT = "python_script"
     POLARS_CODE = "polars_code"
     SQL_QUERY = "sql_query"
@@ -111,6 +112,7 @@ NodeTypeLiteral: TypeAlias = Literal[
     "unpivot",
     "text_to_rows",
     "graph_solver",
+    "explode_hierarchy",
     "python_script",
     "polars_code",
     "sql_query",

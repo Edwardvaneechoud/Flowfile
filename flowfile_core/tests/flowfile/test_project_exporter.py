@@ -1538,3 +1538,43 @@ def test_project_export_runs_a_multi_field_formula():
     result = _run_pipeline_module(pipeline)
     assert result.columns == ["id", "age", "dbl_id", "dbl_age"]
     assert result["dbl_age"].to_list() == [50, 60, 70]
+
+
+def test_project_export_runs_an_explode_hierarchy():
+    """The project exporter inherits the native FlowFrame call, so the node survives a project run."""
+    from polars.testing import assert_frame_equal
+
+    lines = [("bike", "frame", 1.0), ("bike", "wheel", 2.0), ("frame", "screw", 6.0), ("wheel", "screw", 2.0)]
+    flow = create_basic_flow(name="explode_hierarchy_project")
+    flow.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=flow.flow_id,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist(
+                [{"assembly": a, "component": c, "qty": q} for a, c, q in lines]
+            ),
+        )
+    )
+    flow.add_explode_hierarchy(
+        input_schema.NodeExplodeHierarchy(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            explode_hierarchy_input=transform_schema.ExplodeHierarchyInput(
+                parent_column="assembly", child_column="component", quantity_column="qty", top_level_only=True
+            ),
+        )
+    )
+    _connect(flow, 1, 2)
+
+    manifest = export_flow_to_project(flow)
+    pipeline = get_file(manifest, "pipeline.py")
+    assert '.explode_hierarchy("assembly", "component", quantity="qty", top_level_only=True)' in pipeline
+    assert "polars_grouper" not in pipeline
+    ast.parse(pipeline)
+
+    result = _run_pipeline_module(pipeline)
+    expected = flow.get_node(2).get_resulting_data().data_frame.collect()
+    assert_frame_equal(result, expected)
+    screws = result.filter(pl.col("descendant") == "screw")
+    assert screws.select("ancestor", "quantity").rows() == [("bike", 10.0)]

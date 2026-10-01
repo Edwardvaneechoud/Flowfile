@@ -211,6 +211,54 @@ def test_serialize_falls_back_to_local_when_worker_unreachable(monkeypatch):
     assert out == {"data": [{"region": "EU", "v": 1}], "row_count": 1, "orientation": "records"}
 
 
+def _remote_serialize_args(lf, local_collect):
+    data = SimpleNamespace(data_frame=lf, collect=local_collect)
+    flow = SimpleNamespace(flow_settings=SimpleNamespace(execution_location="remote"), flow_id=1)
+    api_node = SimpleNamespace(hash=uuid4().hex, node_id=3)
+    settings = SimpleNamespace(orientation="records", max_rows=None)
+    return data, settings, flow, api_node
+
+
+def test_serialize_surfaces_worker_task_failure_without_in_core_rerun():
+    """A plan that fails on its data on the (real) worker is an API error; core must not re-run it."""
+    lf = pl.LazyFrame({"s": ["1", "not-a-number"]}).select(pl.col("s").cast(pl.Int64, strict=True))
+    reran = {}
+
+    def _local_collect(n_records=None):
+        reran["local"] = True
+        return lf.collect()
+
+    with pytest.raises(api_runner.ApiExecutionError, match="not-a-number"):
+        api_runner._serialize(*_remote_serialize_args(lf, _local_collect))
+    assert reran.get("local") is None
+
+
+def test_serialize_degrades_to_core_on_worker_environment_failure(monkeypatch):
+    """Error code -1 (dead child / environment failure) still falls back to an in-core collect."""
+    df = pl.DataFrame({"region": ["EU"], "v": [1]})
+
+    class _EnvFailedFetcher:
+        error_code = -1
+        error_description = "worker could not load the plan"
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def get_result(self):
+            raise RuntimeError(self.error_description)
+
+    monkeypatch.setattr(api_runner, "ExternalDfFetcher", _EnvFailedFetcher)
+    captured = {}
+
+    def _local_collect(n_records=None):
+        captured["local"] = True
+        return df
+
+    out = api_runner._serialize(*_remote_serialize_args(df.lazy(), _local_collect))
+    assert captured.get("local") is True
+    assert out == {"data": [{"region": "EU", "v": 1}], "row_count": 1, "orientation": "records"}
+
+
 # Typed parameter validation
 
 

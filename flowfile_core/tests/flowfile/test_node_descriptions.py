@@ -548,6 +548,28 @@ class TestNodeGraphSolverDescription:
         assert node.get_default_description() == "source -> target as 'component_id'"
 
 
+# NodeExplodeHierarchy
+
+class TestNodeExplodeHierarchyDescription:
+    def test_with_quantity(self):
+        node = input_schema.NodeExplodeHierarchy(
+            **BASE_KWARGS,
+            explode_hierarchy_input=transform_schema.ExplodeHierarchyInput(
+                parent_column="assembly", child_column="component", quantity_column="qty"
+            ),
+        )
+        assert node.get_default_description() == "assembly -> component (totals, qty)"
+
+    def test_without_quantity(self):
+        node = input_schema.NodeExplodeHierarchy(
+            **BASE_KWARGS,
+            explode_hierarchy_input=transform_schema.ExplodeHierarchyInput(
+                parent_column="parent_account", child_column="account", output_detail="levels"
+            ),
+        )
+        assert node.get_default_description() == "parent_account -> account (levels)"
+
+
 # NodeRecordId
 
 class TestNodeRecordIdDescription:

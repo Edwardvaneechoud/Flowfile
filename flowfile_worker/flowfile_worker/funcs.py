@@ -24,7 +24,12 @@ import polars as pl
 
 from flowfile_worker import mp_context
 from flowfile_worker.flow_logger import get_worker_logger
-from flowfile_worker.task_errors import record_task_failure, record_task_failure_text
+from flowfile_worker.task_errors import (
+    WorkerEnvironmentError,
+    environment_failures,
+    record_task_failure,
+    record_task_failure_text,
+)
 from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get_streaming_info
 from shared.storage_config import storage
 
@@ -35,6 +40,36 @@ if TYPE_CHECKING:
     from flowfile_worker import models
     from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
     from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
+
+
+_PLUGIN_LOAD_ERROR = "error loading dynamic library"
+
+
+def _is_load_failure(exc: Exception) -> bool:
+    """Whether resolving a plan's schema failed because this worker cannot import a UDF's module or load a plugin."""
+    if isinstance(exc, ImportError):
+        return True
+    return isinstance(exc, pl.exceptions.ComputeError) and str(exc).startswith(_PLUGIN_LOAD_ERROR)
+
+
+def _load_plan(source: bytes | io.BytesIO) -> pl.LazyFrame:
+    """Deserialize a shipped plan and resolve its schema, which loads its UDFs and plugin libraries.
+
+    Only a plan this worker cannot deserialize, or whose UDF module or plugin library it cannot
+    load (``_is_load_failure``), is recorded as an environment failure. Every other schema error
+    is the plan's own (a missing column or source file, a plugin rejecting its inputs) and stays
+    a task failure, so the node fails instead of degrading. Polars caches the resolved schema,
+    so the later collect does not resolve it again.
+    """
+    with environment_failures():
+        lf = pl.LazyFrame.deserialize(io.BytesIO(source) if isinstance(source, bytes) else source)
+    try:
+        lf.collect_schema()
+    except Exception as e:
+        if _is_load_failure(e):
+            raise WorkerEnvironmentError(e) from e
+        raise
+    return lf
 
 
 def _validate_catalog_path(table_name: str) -> Path:
@@ -246,9 +281,10 @@ def process_and_cache(
     putting the result on the queue (#564 put-before-100 discipline).
     """
     try:
-        lf = pl.LazyFrame.deserialize(polars_serializable_object)
+        lf = _load_plan(polars_serializable_object)
         df = collect_lazy_frame(lf)
-        df.write_ipc(file_path)
+        with environment_failures():
+            df.write_ipc(file_path)
         flowfile_logger.info("Process operation completed successfully")
         return df.height
     except BaseException as e:
@@ -272,8 +308,10 @@ def store_sample(
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info("Starting store sample operation")
     try:
-        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
-        collect_lazy_frame(lf.limit(sample_size)).write_ipc(file_path)
+        lf = _load_plan(polars_serializable_object)
+        df = collect_lazy_frame(lf.limit(sample_size))
+        with environment_failures():
+            df.write_ipc(file_path)
         flowfile_logger.info("Store sample operation completed successfully")
         with progress.get_lock():
             progress.value = 100
@@ -374,7 +412,7 @@ def calculate_schema(
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     flowfile_logger.info("Starting schema calculation")
     try:
-        lf = pl.LazyFrame.deserialize(polars_serializable_object_io)
+        lf = _load_plan(polars_serializable_object_io)
         schema_stats = calculate_schema_logic(lf, flowfile_logger=flowfile_logger)
         flowfile_logger.info("schema_stats", schema_stats)
         queue.put(schema_stats)
@@ -401,7 +439,7 @@ def calculate_number_of_records(
     flowfile_logger.info("Starting number of records calculation")
     polars_serializable_object_io = io.BytesIO(polars_serializable_object)
     try:
-        lf = pl.LazyFrame.deserialize(polars_serializable_object_io)
+        lf = _load_plan(polars_serializable_object_io)
         n_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
         queue.put(n_records)
         flowfile_logger.debug("Number of records calculation completed successfully")

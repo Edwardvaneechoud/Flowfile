@@ -429,12 +429,13 @@ browser — **no backend, no axios; nothing in §1-§9 above applies here.**
   trigger an `execute_*` Python bridge call — regression-tested by
   `tests/unit/no-auto-run.test.ts`. Adding a new node-touching affordance?
   Ask "does this run data?" before wiring its handler.
-- **Node count:** root `CLAUDE.md`'s "lightweight, 16 nodes" is **stale** —
-  as of 2026-07-03 (v0.12.7) there are 23 runnable node types across 6
-  palette categories (Machine Learning exists but every node in it is
-  locked/greyed-out), plus 15 locked placeholder types visible only via
-  search. `flowfile_wasm`'s own `CLAUDE.md` still says "5 categories" —
-  also stale; re-verify both before quoting a number.
+- **Node count:** `flowfile_wasm/src/config/nodeCatalog.ts` is the source
+  of truth (the `counts` in core's generated `wasm_node_support.json` mirror
+  it) — re-verify before quoting a number. As of 2026-09 there are 24
+  runnable node types across 6 palette categories (Machine Learning exists
+  but every node in it is locked/greyed-out), plus 17 locked teaser types
+  (`available: false`) hidden from the default browse view and shown on
+  search or via the "Show full-app nodes" toggle.
 - **Pyodide is pinned to v0.27.7** (CDN script, not an npm dependency) —
   the last release shipping a Polars wheel. Bumping it breaks
   `loadPackage(['polars', 'pydantic'])`.

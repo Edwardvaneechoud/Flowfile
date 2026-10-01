@@ -9,7 +9,7 @@ from flowfile_core.schemas import transform_schema
 
 GateOperatorLiteral: TypeAlias = transform_schema.GateOperator
 ParamTypeLiteral: TypeAlias = param_types.ParamType
-NodeTypeLiteral: TypeAlias = Literal['manual_input', 'filter', 'formula', 'multi_field_formula', 'dynamic_rename', 'data_cleansing', 'select', 'sort', 'record_id', 'sample', 'random_split', 'unique', 'group_by', 'window_functions', 'pivot', 'unpivot', 'text_to_rows', 'graph_solver', 'python_script', 'polars_code', 'sql_query', 'join', 'cross_join', 'fuzzy_match', 'record_count', 'explore_data', 'union', 'gate', 'output', 'api_response', 'read', 'list_files', 'database_reader', 'database_writer', 'cloud_storage_reader', 'cloud_storage_writer', 'catalog_reader', 'catalog_writer', 'kafka_source', 'google_analytics_reader', 'rest_api_reader', 'external_source', 'train_model', 'apply_model', 'evaluate_model', 'wait_for', 'flow_input', 'flow_output', 'run_flow']
+NodeTypeLiteral: TypeAlias = Literal['manual_input', 'filter', 'formula', 'multi_field_formula', 'dynamic_rename', 'data_cleansing', 'select', 'sort', 'record_id', 'sample', 'random_split', 'unique', 'group_by', 'window_functions', 'pivot', 'unpivot', 'text_to_rows', 'graph_solver', 'explode_hierarchy', 'python_script', 'polars_code', 'sql_query', 'join', 'cross_join', 'fuzzy_match', 'record_count', 'explore_data', 'union', 'gate', 'output', 'api_response', 'read', 'list_files', 'database_reader', 'database_writer', 'cloud_storage_reader', 'cloud_storage_writer', 'catalog_reader', 'catalog_writer', 'kafka_source', 'google_analytics_reader', 'rest_api_reader', 'external_source', 'train_model', 'apply_model', 'evaluate_model', 'wait_for', 'flow_input', 'flow_output', 'run_flow']
 
 class GateOperator(str, Enum):
     EQUALS = 'equals'
@@ -46,6 +46,7 @@ class NodeType(str, Enum):
     UNPIVOT = 'unpivot'
     TEXT_TO_ROWS = 'text_to_rows'
     GRAPH_SOLVER = 'graph_solver'
+    EXPLODE_HIERARCHY = 'explode_hierarchy'
     PYTHON_SCRIPT = 'python_script'
     POLARS_CODE = 'polars_code'
     SQL_QUERY = 'sql_query'
