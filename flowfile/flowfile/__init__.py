@@ -23,11 +23,8 @@ from flowfile.api import open_graph_in_editor as _open_graph_in_editor
 from flowfile.web import start_server as start_web_ui
 from flowfile_frame import _fl_namespace
 from flowfile_frame._fl_namespace import *  # noqa: F403
-from flowfile_frame._fl_namespace import FlowFrame, node_designer
+from flowfile_frame._fl_namespace import node_designer
 from flowfile_frame.notebook import refuse
-
-LazyFrame = FlowFrame
-DataFrame = FlowFrame
 
 
 @functools.wraps(_open_graph_in_editor)

@@ -37,6 +37,12 @@
       "doc_first_line": "A user-defined (custom) node, placed from its class, an instance of it, or its node type name."
     },
     {
+      "name": "DataFrame",
+      "kind": "class",
+      "signature": "(data=None, schema=None, *, schema_overrides=None, strict=True, orient=None, infer_schema_length=100, nan_to_null=False, flow_graph=None, node_id=None, parent_node_id=None, output_handle='output-0', deferred=False, **kwargs)",
+      "doc_first_line": "Main class that wraps FlowDataEngine and maintains the ETL graph."
+    },
+    {
       "name": "DataType",
       "kind": "class",
       "signature": "()",
@@ -215,6 +221,12 @@
       "kind": "class",
       "signature": "()",
       "doc_first_line": "8-bit signed integer type."
+    },
+    {
+      "name": "LazyFrame",
+      "kind": "class",
+      "signature": "(data=None, schema=None, *, schema_overrides=None, strict=True, orient=None, infer_schema_length=100, nan_to_null=False, flow_graph=None, node_id=None, parent_node_id=None, output_handle='output-0', deferred=False, **kwargs)",
+      "doc_first_line": "Main class that wraps FlowDataEngine and maintains the ETL graph."
     },
     {
       "name": "List",

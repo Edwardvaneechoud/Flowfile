@@ -207,6 +207,26 @@ NEEDS_KERNEL = {
     "polars_code_annotation": ("def _polars_code_4(input_df: pl.LazyFrame):\n    return input_df", 1),
     "polars_code_default": ("def _polars_code_4(input_df=None):\n    return input_df", 1),
     "multi_line_chain": ("x = (\n    df\n    .filter(fl.col('a') > 1)\n    .collect()\n)", 4, 1),
+    "frame_from_data_read": ("x = fl.LazyFrame", 1),
+    "frame_from_data_unknown_keyword": ("x = fl.LazyFrame([1], nope=1)", 1),
+    "frame_from_data_keyword_the_frame_drops": ("x = fl.DataFrame([1], height=1)", 1),
+    "frame_from_data_flow_graph": ("x = fl.LazyFrame([1], flow_graph=flow)", 1),
+    "frame_from_data_node_id": ("x = fl.DataFrame([1], node_id=1)", 1),
+    "frame_from_data_parent_node_id": ("x = fl.LazyFrame([1], parent_node_id=1)", 1),
+    "frame_from_data_output_handle": ("x = fl.LazyFrame([1], output_handle='output-1')", 1),
+    "frame_from_data_deferred": ("x = fl.DataFrame([1], deferred=True)", 1),
+    "frame_from_data_keyword_line": ("x = fl.LazyFrame(\n    [1],\n    node_id=1,\n)", 3),
+    "frame_from_data_frame": ("x = fl.LazyFrame(df)", 1),
+    "frame_from_data_frame_keyword": ("x = fl.DataFrame(data=df)", 1),
+    "frame_from_data_frame_in_a_list": ("x = fl.LazyFrame({'a': [df]})", 1),
+    "frame_from_data_expression": ("x = fl.LazyFrame({'a': fl.col('a')})", 1),
+    "frame_from_data_expression_in_a_list": ("x = fl.DataFrame({'a': [fl.lit(1)]})", 1),
+    "frame_from_data_expression_in_the_schema": ("x = fl.LazyFrame({'a': [1]}, schema={'a': fl.col('a')})", 1),
+    "frame_from_data_expression_line": ("x = fl.DataFrame(\n    [1],\n    [fl.col('a')],\n)", 3),
+    "frame_from_data_parameter": ("x = fl.LazyFrame({'a': [p]})", 1),
+    "frame_from_data_polars_frame": ("x = fl.LazyFrame(pl.DataFrame({'a': [1]}))", 1),
+    "frame_from_a_string": ("x = fl.LazyFrame('abc')", 1),
+    "frame_from_a_string_keyword": ("x = fl.DataFrame(data='abc')", 1),
 }
 
 
@@ -290,6 +310,27 @@ def test_a_literal_passed_as_an_argument_is_charged_to_the_literal_budget_once(m
         result = execute_cell(CELL_ID, code, namespace, executor=interpreter)
     assert result.ok, result.error
     assert interpreter.elements == size
+
+
+def test_a_frames_data_is_charged_to_the_literal_budget_once_and_refused_past_it(monkeypatch):
+    size = 1_000
+    code = f"x = fl.LazyFrame({{'a': {list(range(size))}}})"
+    with notebook.notebook_mode(user_id=1) as mode:
+        namespace = new_namespace()
+        interpreter = CellInterpreter()
+        assert execute_cell("setup", SETUP, namespace, executor=interpreter).ok
+        before = len(mode.graph.nodes)
+        interpreter.elements = 0
+        monkeypatch.setitem(allowlist.BOUNDS, "literal_elements_per_request", size * 3 // 2)
+        built = execute_cell(CELL_ID, code, namespace, executor=interpreter)
+        assert built.ok, built.error
+        assert interpreter.elements == size + 1
+        interpreter.elements = 0
+        monkeypatch.setitem(allowlist.BOUNDS, "literal_elements_per_request", size)
+        refused = execute_cell(CELL_ID, code, namespace, executor=interpreter)
+        placed = len(mode.graph.nodes) - before
+    assert (refused.cell_id, refused.line, refused.kind, placed) == (CELL_ID, 1, "refused", 1)
+    assert "too many elements" in refused.message
 
 
 def test_a_missing_prelude_module_fails_as_its_import_does():

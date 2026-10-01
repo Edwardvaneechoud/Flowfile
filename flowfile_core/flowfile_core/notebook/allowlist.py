@@ -5,7 +5,7 @@ every attribute read, call and subscript up by ``(kind, attribute)``, a kind bei
 anything not listed needs a kernel. The lists are positive. :data:`ALLOWLIST` is no larger than the FlowFrame
 exporter's output: ``tests/notebook`` ties every entry to a rendered corpus cell or to the exporter handler that
 emits it. :data:`INPUT_ONLY` names what a cell may also call that the render never writes, pinned to the frame's
-own pure transforms and node builders.
+own pure transforms and node builders and to ``fl.LazyFrame`` / ``fl.DataFrame``.
 
 Usages: ``call`` (called as ``x.attr(...)``), ``read`` (read as ``x.attr``), ``both``,
 ``decorator`` (only as ``@fl.attr`` or ``@fl.attr(...)``). The attribute ``__call__`` makes a
@@ -50,11 +50,12 @@ _CORE_CLASSES = (
     "FlowGraph", "FlowDataEngine", "FlowNode", "FlowSettings", "FlowInformation", "FlowfileColumn",
     "FullCloudStorageConnection", "FlowFrame", "GroupByFrame", "DataType", "DataTypeClass",
 )  # fmt: skip
+_FRAME_CONSTRUCTORS = ("LazyFrame", "DataFrame")
 _NOT_EMITTED = (
     "Node", "NodeType", "CustomNode", "custom_node", "FlowOutput", "FlowRef", "ParamType", "GateOperator",
     "set_flow_parameter", "NativeNodeError", "from_dict", "read_parquet", "scan_delta", "scan_csv_from_cloud_storage",
     "scan_parquet_from_cloud_storage", "scan_json_from_cloud_storage", "column", "count", "cum_count", "sum", "min",
-    "max", "mean",
+    "max", "mean", *_FRAME_CONSTRUCTORS,
 )  # fmt: skip
 
 FL_VERDICTS: dict[str, tuple[str, str]] = {
@@ -140,11 +141,13 @@ _FRAME_NODE_BUILDERS = (
 
 INPUT_ONLY: dict[str, dict[str, str]] = {
     "FlowFrame": {name: CALL for name in (*_FRAME_PURE_TRANSFORMS, *_FRAME_NODE_BUILDERS)},
+    "fl": {name: CALL for name in _FRAME_CONSTRUCTORS},
 }
 """Receiver kind -> attribute -> usage a cell may call although the render never writes it, looked up after
-:data:`ALLOWLIST`: the frame's pure transforms (one Polars Code node each, or the node the frame builds, as
-``limit`` a Sample) and its own node builders (a SQL Query, Output or writer node). The render's check
-(``interpret.interprets_expression``) never consults it."""
+:data:`ALLOWLIST` (for ``fl``, after a refusing :data:`FL_VERDICTS` verdict): the frame's pure transforms (one
+Polars Code node each, or the node the frame builds, as ``limit`` a Sample), its own node builders (a SQL Query,
+Output or writer node) and ``fl.LazyFrame`` / ``fl.DataFrame`` (a Manual Input node, rendered back as
+``fl.from_raw_data``). The render's check (``interpret.interprets_expression``) never consults it."""
 
 IMPORTS: dict[tuple[str, str | None], str] = {
     ("flowfile", "fl"): "fl",
@@ -189,6 +192,16 @@ input's sample frame, or a Polars Code ``def``."""
 REFUSED_KEYWORDS: dict[tuple[str, str], frozenset[str]] = {
     ("fl", "RunFlow"): frozenset({"name", "schema", "overwrite"}),
 }
+
+DATA_ARGUMENTS: dict[tuple[str, str], frozenset[str]] = {
+    ("fl", name): frozenset(
+        {"data", "schema", "schema_overrides", "strict", "orient", "infer_schema_length", "nan_to_null"}
+    )
+    for name in _FRAME_CONSTRUCTORS
+}
+"""Calls that take only these keywords, Polars' frame constructor arguments (never the frame's ``flow_graph``,
+``node_id`` or other wrapping ones), only literal data and dtypes in any argument (no frame or expression), and
+``data`` that is not a string."""
 
 KEYWORD_REQUIRES: dict[tuple[str, str], tuple[str, str]] = {
     ("FlowFrame", "with_columns"): ("flowfile_formulas", "output_column_datatypes"),

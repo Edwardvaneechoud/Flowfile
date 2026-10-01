@@ -35,6 +35,7 @@ _DATA_KINDS = frozenset(
     }
 )  # fmt: skip
 _LITERAL_KINDS = frozenset({"none", "bool", "int", "float", "str"})
+_LITERAL_DATA_KINDS = frozenset({*_LITERAL_KINDS, "list", "tuple", "dict", "date", "datetime_value", "dtype"})
 _OPERAND_KINDS = frozenset({"Expr", "int", "float", "str", "bool", "none", "Parameter", "date", "datetime_value"})
 _MODULE_KINDS = frozenset({"fl", "pl", "datetime", "inert", "reader", "helper", "polars_code_def"})
 _DISPLAYED_KINDS = frozenset({"FlowFrame", "Gate", "NodeOutputs"})
@@ -609,22 +610,24 @@ class _Cell:
         """``(kind, attribute, usage)`` for ``receiver.attr``, recorded as used; else a refusal on ``line``.
 
         The attribute string handed to ``getattr`` is the allowlist's own; only a custom node key
-        (the ``*`` entry of ``fl.custom_nodes``, never one of its class's attributes) is data.
+        (the ``*`` entry of ``fl.custom_nodes``, never one of its class's attributes) is data. An ``fl``
+        name the render refuses is still an input-only entry when ``allowlist.INPUT_ONLY`` names it.
         """
         kind = kind_of(receiver)
         if attr.startswith("_"):
             raise _needs_kernel(f"The attribute `.{attr}`", line)
+        input_only = {} if self.interpreter.emitted_only else allowlist.INPUT_ONLY.get(kind or "", {})
         if kind == "fl":
             verdict, detail = allowlist.FL_VERDICTS.get(attr, (allowlist.REFUSE, "is not a flowfile name"))
-            if verdict != allowlist.ALLOW:
+            if verdict == allowlist.ALLOW:
+                self.interpreter.used.add((kind, attr))
+                return kind, _FL_STRINGS[attr], detail
+            if attr not in input_only:
                 raise _needs_kernel(f"`fl.{attr}` {detail}; it", line)
-            self.interpreter.used.add((kind, attr))
-            return kind, _FL_STRINGS[attr], detail
         table = allowlist.ALLOWLIST.get(kind or "", {})
         if attr in table:
             self.interpreter.used.add((kind, attr))
             return kind, _TABLE_STRINGS[kind][attr], table[attr]
-        input_only = {} if self.interpreter.emitted_only else allowlist.INPUT_ONLY.get(kind or "", {})
         if attr in input_only:
             self.interpreter.used_input_only.add((kind, attr))
             return kind, _INPUT_ONLY_STRINGS[kind][attr], input_only[attr]
@@ -689,6 +692,7 @@ class _Cell:
         if shape is not None:
             _check_literal_shape(shape, call, self)
         refused = allowlist.REFUSED_KEYWORDS.get(key, frozenset())
+        accepted = allowlist.DATA_ARGUMENTS.get(key)
         present = {keyword.arg for keyword in call.keywords}
         needs = allowlist.KEYWORD_REQUIRES.get(key)
         if needs is not None and needs[0] in present and needs[1] not in present:
@@ -702,11 +706,15 @@ class _Cell:
         for keyword in call.keywords:
             if keyword.arg is None:
                 raise _needs_kernel(f"Unpacking keyword arguments in {self.text(call)}", keyword.value.lineno)
-            if keyword.arg.startswith("_") or keyword.arg in refused:
+            unaccepted = accepted is not None and keyword.arg not in accepted
+            if keyword.arg.startswith("_") or keyword.arg in refused or unaccepted:
                 raise _needs_kernel(f"The argument `{keyword.arg}=`", keyword.value.lineno)
             kwargs[keyword.arg] = self.argument(keyword.value, key, keyword.arg)
         if needs is not None and needs[0] in kwargs and kwargs[needs[1]] is None:
             raise _needs_kernel(f"`{key[1]}({needs[0]}=...)` without `{needs[1]}=`", call.lineno)
+        # Polars makes a row of each character of a string, which no literal budget charges
+        if accepted is not None and isinstance(args[0] if args else kwargs.get("data"), str):
+            raise _needs_kernel(f"`fl.{key[1]}` with a string as data", line)
         try:
             result = function(*args, **kwargs)
         except Exception as exc:
@@ -715,11 +723,13 @@ class _Cell:
         return self.checked(result, call, line)
 
     def argument(self, node: ast.expr, key: tuple[str, str] | None, slot: int | str) -> Any:
-        """An argument value: data, or the one non-data kind the allowlist accepts in this slot."""
+        """An argument value: data (literal data only for a ``DATA_ARGUMENTS`` call), or the one non-data kind
+        the allowlist accepts in this slot."""
         value = self.expr(node)
         kind = kind_of(value)
-        if kind in _DATA_KINDS:
-            self.check_data(value, node)
+        kinds = _LITERAL_DATA_KINDS if key in allowlist.DATA_ARGUMENTS else _DATA_KINDS
+        if kind in kinds:
+            self.check_data(value, node, kinds)
             return value
         special = allowlist.ARGUMENT_KINDS.get(key, {}).get(slot) if key is not None else None
         if kind is not None and kind == special:
@@ -736,8 +746,8 @@ class _Cell:
             return value
         raise _needs_kernel(f"Passing {_kind_label(kind) or 'this value'} as {self.text(node)}", node.lineno)
 
-    def check_data(self, value: Any, node: ast.AST, depth: int = 0) -> None:
-        """Every element of a container argument is data too.
+    def check_data(self, value: Any, node: ast.AST, kinds: frozenset[str] = _DATA_KINDS, depth: int = 0) -> None:
+        """Every element of a container argument is data too (of ``kinds``).
 
         Each element visited is a step, so a list holding one list many times cannot multiply the walk
         past the step budget. The literal budget is left alone: a literal was charged when it was built.
@@ -752,9 +762,9 @@ class _Cell:
             return
         for item in items:
             self.step(node)
-            if kind_of(item) not in _DATA_KINDS:
+            if kind_of(item) not in kinds:
                 raise _needs_kernel(f"A {_kind_label(kind_of(item)) or 'value'} inside {self.text(node)}", node.lineno)
-            self.check_data(item, node, depth + 1)
+            self.check_data(item, node, kinds, depth + 1)
 
     def checked(self, value: Any, node: ast.AST, line: int | None) -> Any:
         """A value a call or read produced: it must have a kind (containers: every element).

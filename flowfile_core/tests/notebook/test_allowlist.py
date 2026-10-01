@@ -1,7 +1,8 @@
 """The allowlist is complete and exact: every ``fl`` name has a verdict, every entry exists on its receiver,
 no entry runs code or reaches data, every entry outside the corpus names a real exporter handler, and
 everything the exporter can emit is allowed or kept as formula text. The input-only table is exactly the
-frame's own pure transforms and node builders the render does not write, none of them a hazard."""
+frame's own pure transforms and node builders the render does not write, none of them a hazard, plus
+``fl.LazyFrame`` / ``fl.DataFrame``, which take Polars' constructor arguments only."""
 
 from __future__ import annotations
 
@@ -123,13 +124,27 @@ def _wrapped_polars_methods(names) -> set[str]:
 
 def test_input_only_entries_are_the_frames_pure_transforms_and_node_builders():
     frame = allowlist.INPUT_ONLY["FlowFrame"]
-    assert set(allowlist.INPUT_ONLY) == {"FlowFrame"} and set(frame.values()) == {allowlist.CALL}
+    assert set(allowlist.INPUT_ONLY) == {"FlowFrame", "fl"} and set(frame.values()) == {allowlist.CALL}
     assert set(frame) == (PURE_TRANSFORMS - set(allowlist.ALLOWLIST["FlowFrame"])) | FRAME_NODE_BUILDERS
     wrapped = _wrapped_polars_methods(frame)
     assert set(frame) - wrapped == FRAME_NODE_BUILDERS | FRAME_OWN_TRANSFORMS
     assert FRAME_NODE_BUILDERS | FRAME_OWN_TRANSFORMS <= set(vars(FlowFrame))
     for name in wrapped:
         assert inspect.signature(getattr(pl.LazyFrame, name)).return_annotation in ("LazyFrame", pl.LazyFrame), name
+
+
+def test_the_input_only_fl_names_are_the_frame_aliases_taking_polars_constructor_arguments():
+    names = allowlist.INPUT_ONLY["fl"]
+    assert names == {"LazyFrame": allowlist.CALL, "DataFrame": allowlist.CALL}
+    assert all(getattr(_fl_namespace, name) is FlowFrame for name in names)
+    assert all(allowlist.FL_VERDICTS[name][0] == allowlist.REFUSE for name in names)
+    assert set(allowlist.DATA_ARGUMENTS) == {("fl", name) for name in names}
+    polars = set(inspect.signature(pl.DataFrame).parameters)
+    assert polars == set(inspect.signature(pl.LazyFrame).parameters)
+    frame = set(inspect.signature(FlowFrame.__new__).parameters)
+    for accepted in allowlist.DATA_ARGUMENTS.values():
+        assert accepted == polars & frame
+        assert accepted.isdisjoint({"flow_graph", "node_id", "parent_node_id", "output_handle", "deferred"})
 
 
 def test_no_input_only_entry_runs_code_reaches_data_or_leaves_the_graph():

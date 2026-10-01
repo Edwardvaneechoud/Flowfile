@@ -132,9 +132,14 @@ from flowfile_frame.selectors import (
 from flowfile_frame.sql_query import sql
 from flowfile_frame.utils import create_flow_graph
 
+LazyFrame = FlowFrame
+DataFrame = FlowFrame
+
 __all__ = [
     # Core FlowFrame classes
     "FlowFrame",
+    "LazyFrame",
+    "DataFrame",
     "GroupByFrame",
     "FullCloudStorageConnection",
     # Main creation functions

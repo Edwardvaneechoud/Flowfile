@@ -1,10 +1,11 @@
-"""Frame methods a cell may call although the render never writes them (``allowlist.INPUT_ONLY``).
+"""Frame methods and ``fl`` names a cell may call although the render never writes them (``allowlist.INPUT_ONLY``).
 
 Each builds the node the frame builds for it, through the interpreter exactly as through ``exec``, and the
 edited cells together use every input-only entry. A sync of them reads and runs nothing beyond a literal
 source's own rows, a call the frame cannot hold as code fails on its line as ``exec`` reports it, and the
 render's own check accepts none of them. In a sync the Polars Code node the frame's ``lazy_methods`` wrapper
 builds for such a call takes the columns Polars plans for it, so the calls below it build checked.
+``fl.LazyFrame(data)`` and ``fl.DataFrame(data)`` place one Manual Input node holding the data.
 """
 
 from __future__ import annotations
@@ -209,3 +210,72 @@ def test_the_render_check_accepts_no_input_only_call():
     source = "fl.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1]]})"
     assert interprets_expression(f"{source}.head(1)")
     assert not interprets_expression(f"{source}.limit(1)")
+
+
+FRAMES: dict[str, tuple[str, list[tuple[str, str]], list[list]]] = {
+    "lazyframe_list": ("fl.LazyFrame([1, 2, 3])", [("column_0", "Int64")], [[1, 2, 3]]),
+    "dataframe_dict": (
+        "fl.DataFrame({'a': [1, 2], 'b': ['x', 'y']})",
+        [("a", "Int64"), ("b", "String")],
+        [[1, 2], ["x", "y"]],
+    ),
+    "dict_with_schema": ("fl.LazyFrame({'a': [1, 2]}, schema={'a': fl.Float64})", [("a", "Float64")], [[1.0, 2.0]]),
+    "rows": (
+        "fl.DataFrame(data=[[1, None], [2, 'y']], schema=['a', 'b'], orient='row', strict=False)",
+        [("a", "Int64"), ("b", "String")],
+        [[1, 2], [None, "y"]],
+    ),
+}
+"""A frame built from data -> its Manual Input node's columns ``(name, data type)`` and column-wise rows."""
+
+
+def test_every_input_only_fl_name_has_a_frame():
+    called = {call.split("(")[0].removeprefix("fl.") for call, _, _ in FRAMES.values()}
+    assert called == set(allowlist.INPUT_ONLY["fl"])
+
+
+@pytest.mark.parametrize("name", sorted(FRAMES))
+def test_a_frame_built_from_data_is_one_manual_input_node_as_exec_builds_it(name):
+    call, columns, data = FRAMES[name]
+    interpreter = CellInterpreter()
+    interpreted, executed = _both([IMPORTS, f"df = {call}"], interpreter)
+    assert executed["ok"], executed.get("message")
+    assert interpreted["ok"], (interpreted.get("line"), interpreted.get("message"))
+    assert masked_payload(interpreted) == masked_payload(executed)
+    [node] = interpreted["flowfile_data"]["nodes"]
+    raw = node["setting_input"]["raw_data_format"]
+    assert node["type"] == "manual_input"
+    assert [(column["name"], column["data_type"]) for column in raw["columns"]] == columns
+    assert raw["data"] == data
+    assert interpreter.used_input_only == {("fl", call.split("(")[0].removeprefix("fl."))}
+
+
+def test_a_frame_built_from_data_feeds_the_calls_below_it_as_exec_does():
+    cell = "df = fl.LazyFrame({'a': [1, 2, 3]})\nkept = df.filter(fl.col('a') > 1).tail(1)"
+    interpreted, executed = _both([IMPORTS, cell])
+    assert interpreted["ok"] and executed["ok"], (interpreted.get("message"), executed.get("message"))
+    assert masked_payload(interpreted) == masked_payload(executed)
+    assert _types(interpreted) == ["manual_input", "filter", "polars_code"]
+    assert interpreted["warnings"] == executed["warnings"] == []
+
+
+FRAME_FROM_DATA = {"__new__": "a frame built from a cell's literal data, converted to its Manual Input rows"}
+
+
+def test_a_sync_of_frames_built_from_data_reads_connects_and_runs_nothing(monkeypatch):
+    calls = _Calls()
+    held_ran = _record_io(monkeypatch, calls)
+    cell = "\n".join(f"df_{name} = {call}" for name, (call, _, _) in FRAMES.items())
+    result = _run([IMPORTS, cell], CellInterpreter())
+    assert result["ok"], (result.get("line"), result.get("message"))
+    assert _types(result) == ["manual_input"] * len(FRAMES)
+    assert held_ran == []
+    assert _collects_beyond(calls, set(LITERAL_COLLECTS) | set(FRAME_FROM_DATA)) == []
+    assert calls.labels() <= {"collect"}, sorted(calls.labels())
+
+
+def test_the_render_check_accepts_no_frame_built_from_data():
+    assert interprets_expression("fl.from_raw_data({'columns': [], 'data': []})")
+    for name in allowlist.INPUT_ONLY["fl"]:
+        assert not interprets_expression(f"fl.{name}([1, 2, 3])")
+        assert not interprets_expression(f"fl.{name}")

@@ -251,6 +251,19 @@ def test_an_in_memory_lazy_frame_needs_a_kernel_in_core(runner, orders_flow, cli
     assert "needs a kernel" in detail["message"]
 
 
+@pytest.mark.parametrize("code", ["extra = fl.LazyFrame()", "extra = fl.DataFrame(schema={'x': fl.Int64})"])
+def test_a_frame_without_data_is_refused_as_an_in_memory_lazy_frame(runner_kind, request, orders_flow, client_as, code):
+    request.getfixturevalue("runner" if runner_kind == "interpreting" else "exec_runner")
+    fingerprint = code_fingerprint(orders_flow)
+
+    response = _push(client_as(OWNER_ID), orders_flow, code)
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert (detail["cell_id"], detail["line"], detail["kind"]) == ("node-99", None, "refused")
+    assert "LazyFrame" in detail["message"]
+    assert code_fingerprint(orders_flow) == fingerprint
+
+
 FAILING_CHAIN = """extra = fl.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1]]})
 out = (
     extra.filter(fl.col('a') > 1)
