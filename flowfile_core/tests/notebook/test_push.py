@@ -521,15 +521,19 @@ def test_run_lineage_runs_only_the_ancestors(open_as, client_as):
 def test_set_flow_parameters_applies_outside_undo_and_rolls_back_with_the_batch(orders_flow, client_as):
     client = client_as(OWNER_ID)
     graph = orders_flow
+    graph.flow_settings.parameters = [FlowParameter(name="limit", default_value="1")]
+    fingerprint = code_fingerprint(graph)
     undo_before = client.get("/editor/history_status/", params={"flow_id": graph.flow_id}).json()["undo_count"]
     set_params = {"op": "set_flow_parameters", "parameters": [{"name": "limit", "default_value": "5"}]}
+    add_node = {"op": "add_node", "node_id": 99, "node_type": "sample"}
 
-    failing = [set_params, {"op": "delete_connection", "connection": _missing_connection()}]
+    failing = [set_params, add_node, {"op": "delete_connection", "connection": _missing_connection()}]
     response = client.post(
         "/editor/apply_operations/", json={"flow_id": graph.flow_id, "label": "x", "operations": failing}
     )
     assert response.status_code == 422, response.text
-    assert graph.flow_settings.parameters == []
+    assert [(p.name, p.default_value) for p in graph.flow_settings.parameters] == [("limit", "1")]
+    assert graph.get_node(99) is None and code_fingerprint(graph) == fingerprint
 
     response = client.post(
         "/editor/apply_operations/", json={"flow_id": graph.flow_id, "label": "x", "operations": [set_params]}
