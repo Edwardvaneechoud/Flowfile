@@ -510,7 +510,12 @@ class _Cell:
             if isinstance(node.op, ast.USub | ast.UAdd) and isinstance(operand, ast.Constant):
                 if type(operand.value) in (int, float):
                     return -operand.value if isinstance(node.op, ast.USub) else operand.value
+            if isinstance(node.op, ast.Not):
+                raise _needs_kernel(f"{self.text(node)} (negate an expression with `.not_()`, not `not`)", node.lineno)
             raise _needs_kernel(f"The operator in {self.text(node)}", node.lineno)
+        if isinstance(node, ast.BoolOp):
+            hint = "combine expressions with `&` / `|`, not `and` / `or`"
+            raise _needs_kernel(f"{self.text(node)} ({hint})", node.lineno)
         if isinstance(node, ast.JoinedStr):
             return self.joined_str(node)
         raise _needs_kernel(f"{self.text(node)}", node.lineno)
