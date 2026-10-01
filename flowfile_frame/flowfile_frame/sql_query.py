@@ -1,4 +1,4 @@
-"""``fl.sql``: a SQL Query node over any number of frames, returned as its output frame."""
+"""``ff.sql``: a SQL Query node over any number of frames, returned as its output frame."""
 
 from __future__ import annotations
 
@@ -125,7 +125,7 @@ def _sql_frame(
     for frame in frames:
         if not isinstance(frame, FlowFrame):
             raise NativeNodeError(
-                f"fl.sql takes FlowFrames, got {type(frame).__name__}; wrap a Polars frame with fl.FlowFrame(...)"
+                f"ff.sql takes FlowFrames, got {type(frame).__name__}; wrap a Polars frame with ff.FlowFrame(...)"
             )
     aliases = dict(enumerate(named, start=len(positional) + 1))
     for slot, name in aliases.items():
@@ -155,7 +155,7 @@ def sql(query: str, /, *frames: FlowFrame, description: str | None = None, **tab
 
     Example::
 
-        fl.sql("SELECT o.id, c.name FROM orders o JOIN customers c ON o.customer_id = c.id",
+        ff.sql("SELECT o.id, c.name FROM orders o JOIN customers c ON o.customer_id = c.id",
                orders=orders, customers=customers)
     """
     return _sql_frame(query, frames, tables, description)

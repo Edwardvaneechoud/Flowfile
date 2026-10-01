@@ -13,9 +13,46 @@ Stdlib-only by contract: ``funcs``, ``custom_node_runner`` and every pool member
 import this module, and each spawn pays for what it imports.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from multiprocessing import Array, Value
+from typing import Literal
 
 DEFAULT_ERROR_LIMIT = 1024
+
+FailureKind = Literal["task", "environment"]
+
+# Leads a recorded description when the worker's environment, not the plan's data, failed.
+_ENVIRONMENT_MARKER = "\x01"
+
+
+class WorkerEnvironmentError(Exception):
+    """A failure of the worker's environment rather than of the plan evaluating its data.
+
+    Raised around loading the plan (deserializing it and resolving its schema, which loads
+    UDFs and plugin libraries) and writing the result file. Core degrades on these instead
+    of failing the node, because the same plan can still run where it was built.
+    """
+
+    def __init__(self, original: Exception):
+        super().__init__(str(original))
+        self.original = original
+
+
+@contextmanager
+def environment_failures() -> Iterator[None]:
+    """Re-raise any ``Exception`` from the block as a :class:`WorkerEnvironmentError`."""
+    try:
+        yield
+    except Exception as e:
+        raise WorkerEnvironmentError(e) from e
+
+
+def split_failure(raw: str) -> tuple[FailureKind, str]:
+    """Split a recorded description into its failure kind and the user-facing text."""
+    if raw.startswith(_ENVIRONMENT_MARKER):
+        return "environment", raw[len(_ENVIRONMENT_MARKER) :]
+    return "task", raw
 
 
 def describe_exception(exc: BaseException) -> str:
@@ -51,8 +88,14 @@ def record_task_failure(
     buffer the moment it observes ``-1``. Callers catch ``BaseException`` so a pyo3
     ``PanicException`` is described too, and immediately re-raise anything that is not an
     ``Exception`` — the child then dies exactly as it does today, only no longer silently.
+    A :class:`WorkerEnvironmentError` is described by its original exception and marked so
+    :func:`split_failure` reports it as an environment failure.
     """
-    payload = _write(error_message, describe_exception(exc), limit)
+    if isinstance(exc, WorkerEnvironmentError):
+        description = _ENVIRONMENT_MARKER + describe_exception(exc.original)
+    else:
+        description = describe_exception(exc)
+    payload = _write(error_message, description, limit)
     with progress.get_lock():
         progress.value = -1
     return payload

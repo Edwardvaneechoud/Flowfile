@@ -6,6 +6,7 @@
   "data_cleansing": "EXACT",
   "dynamic_rename": "EXACT",
   "evaluate_model": "EXACT",
+  "explode_hierarchy": "EXACT",
   "explore_data": "EXACT",
   "filter": "EXACT",
   "flow_input": "EXACT",

@@ -1,4 +1,4 @@
-"""Notebook cells: provenance, the cell compiler, name capture, seeding, fl.canvas_node, display and the clean run."""
+"""Notebook cells: provenance, the cell compiler, name capture, seeding, ff.canvas_node, display and the clean run."""
 
 import linecache
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-import flowfile as fl
+import flowfile as ff
 from flowfile_core.flowfile import schema_callbacks
 from flowfile_core.flowfile.flow_node.multi_output import output_handle
 from flowfile_core.schemas import input_schema
@@ -25,7 +25,7 @@ from flowfile_frame.notebook_cells import (
 from shared.notebook_display import TABLE_MIME
 from shared.storage_config import storage
 
-DATA = "fl.from_dict({'a': [1, 2, 3], 'g': ['x', 'x', 'y']})"
+DATA = "ff.from_dict({'a': [1, 2, 3], 'g': ['x', 'x', 'y']})"
 
 
 @pytest.fixture
@@ -46,18 +46,18 @@ def reference(mode, node_id):
 
 def canvas_payload():
     """A small canvas flow: source -> filter -> parameter gate (then/else) -> sort on the else side."""
-    graph = fl.create_flow_graph()
-    fl.add_flow_parameter(graph, fl.Parameter("mode", default="full"))
-    source = fl.from_dict({"a": [1, 2, 3], "g": ["x", "x", "y"]}, flow_graph=graph)
-    big = source.filter(fl.col("a") > 1)
-    gate = fl.Gate(big, parameter="mode", value="full")
+    graph = ff.create_flow_graph()
+    ff.add_flow_parameter(graph, ff.Parameter("mode", default="full"))
+    source = ff.from_dict({"a": [1, 2, 3], "g": ["x", "x", "y"]}, flow_graph=graph)
+    big = source.filter(ff.col("a") > 1)
+    gate = ff.Gate(big, parameter="mode", value="full")
     gate.otherwise.sort("a")
     return graph.get_flowfile_data().model_dump(mode="json"), graph, source, big, gate
 
 
 def test_provenance_records_each_created_node_once_per_cell(session):
     mode, ns = session
-    first = run(ns, f"df = {DATA}\nbig = df.filter(fl.col('a') > 1)", "one")
+    first = run(ns, f"df = {DATA}\nbig = df.filter(ff.col('a') > 1)", "one")
     second = run(ns, "ordered = big.sort('a')", "two")
     assert [t for t, _ in first.created] == ["manual_input", "filter"]
     assert [t for t, _ in second.created] == ["sort"]
@@ -68,7 +68,7 @@ def test_provenance_records_each_created_node_once_per_cell(session):
 def test_failed_native_build_is_not_recorded(session):
     mode, ns = session
     run(ns, f"df = {DATA}")
-    result = execute_cell("bad", "fl.Gate(df, parameter='undeclared', value=1)", ns, executor=exec_cell)
+    result = execute_cell("bad", "ff.Gate(df, parameter='undeclared', value=1)", ns, executor=exec_cell)
     assert not result.ok and "undeclared" in result.error
     assert result.created == []
     assert [c for c, _, _ in mode.provenance] == ["c"]
@@ -98,7 +98,7 @@ def test_inspect_getsource_works_for_a_function_defined_in_a_cell(session):
 
 def test_polars_code_reads_a_function_defined_in_a_cell(session):
     mode, ns = session
-    code = f"df = {DATA}\ndef top(input_df: fl.FlowFrame): output_df = input_df.head(2)\nout = df.polars_code(top)"
+    code = f"df = {DATA}\ndef top(input_df: ff.FlowFrame): output_df = input_df.head(2)\nout = df.polars_code(top)"
     run(ns, code)
     assert reference(mode, ns["out"].node_id) == "out"
     settings = mode.graph.get_node(ns["out"].node_id).setting_input
@@ -113,7 +113,7 @@ def test_python_script_in_a_cell_needs_no_console_hook(session, monkeypatch):
     mode, ns = session
     run(
         ns,
-        f"df = {DATA}\n\n@fl.python_script(kernel='lite')\ndef doubled(frame):\n"
+        f"df = {DATA}\n\n@ff.python_script(kernel='lite')\ndef doubled(frame):\n"
         "    return frame.with_columns(b=frame['a'] * 2)\n\nout = doubled(df)",
     )
     node = mode.graph.get_node(ns["out"].node_id)
@@ -130,13 +130,13 @@ def test_names_bound_are_reported(session):
 
 def test_a_name_bound_to_a_node_created_in_the_cell_becomes_its_reference(session):
     mode, ns = session
-    result = run(ns, f"orders = {DATA}\nbig_orders = orders.filter(fl.col('a') > 1)")
+    result = run(ns, f"orders = {DATA}\nbig_orders = orders.filter(ff.col('a') > 1)")
     orders, big = ns["orders"].node_id, ns["big_orders"].node_id
     assert result.references == {orders: "orders", big: "big_orders"}
     assert reference(mode, orders) == "orders" and reference(mode, big) == "big_orders"
 
 
-@pytest.mark.parametrize("name", ["Upper", "MODE", "2x", "_private", "list", "print", "fl", "pl", "main", "source_7"])
+@pytest.mark.parametrize("name", ["Upper", "MODE", "2x", "_private", "list", "print", "ff", "pl", "main", "source_7"])
 def test_names_outside_the_rules_are_not_captured(session, name):
     mode, ns = session
     result = run(ns, f"{name} = {DATA}" if name.isidentifier() else f"globals()[{name!r}] = {DATA}")
@@ -152,14 +152,14 @@ def test_keyword_is_never_a_reference(session):
 
 def test_generated_label_is_not_captured(session):
     mode, ns = session
-    result = run(ns, f"src = {DATA}\nfiltered_99 = src.filter(fl.col('a') > 1)")
+    result = run(ns, f"src = {DATA}\nfiltered_99 = src.filter(ff.col('a') > 1)")
     assert result.references == {ns["src"].node_id: "src"}
 
 
 @pytest.mark.parametrize(
     "code",
     [
-        "filtered_{n}_pass, filtered_{n}_fail = src.filter_split(fl.col('a') > 1)",
+        "filtered_{n}_pass, filtered_{n}_fail = src.filter_split(ff.col('a') > 1)",
         "random_split_{n}_train, random_split_{n}_test = src.random_split({{'train': 50, 'test': 50}}, seed=1)",
     ],
 )
@@ -184,7 +184,7 @@ def test_rebinding_moves_the_reference_and_clears_the_earlier_one(session):
     mode, ns = session
     run(ns, f"df = {DATA}")
     first = ns["df"].node_id
-    run(ns, "df = df.filter(fl.col('a') > 1)")
+    run(ns, "df = df.filter(ff.col('a') > 1)")
     assert reference(mode, first) is None
     assert reference(mode, ns["df"].node_id) == "df"
 
@@ -217,8 +217,8 @@ def test_a_reference_held_elsewhere_moves_to_the_new_binding(session):
 
 def test_a_native_node_captures_its_name(session):
     mode, ns = session
-    fl.add_flow_parameter(mode.graph, fl.Parameter("mode", default="full"))
-    run(ns, f"df = {DATA}\nrouter = fl.Gate(df, parameter='mode', value='full')")
+    ff.add_flow_parameter(mode.graph, ff.Parameter("mode", default="full"))
+    run(ns, f"df = {DATA}\nrouter = ff.Gate(df, parameter='mode', value='full')")
     assert reference(mode, ns["router"].node_id) == "router"
 
 
@@ -233,18 +233,18 @@ def test_a_bare_frame_shows_its_schema_without_executing_the_plan(session, tmp_p
     _, ns = session
     source = tmp_path / "gone.parquet"
     pl.DataFrame({"a": [1, 2, 3], "g": ["x", "x", "y"]}).write_parquet(source)
-    run(ns, f"src = fl.read_parquet({str(source)!r})")
+    run(ns, f"src = ff.read_parquet({str(source)!r})")
     source.unlink()
-    payload = run(ns, "src.group_by('g').agg(fl.col('a').sum())").display
+    payload = run(ns, "src.group_by('g').agg(ff.col('a').sum())").display
     assert payload["schema"] == [{"name": "g", "data_type": "String"}, {"name": "a", "data_type": "Int64"}]
     assert payload["lazy_safe"] and TABLE_MIME not in payload
-    shown = execute_cell("c", "display(src.group_by('g').agg(fl.col('a').sum()))", ns, executor=exec_cell)
+    shown = execute_cell("c", "display(src.group_by('g').agg(ff.col('a').sum()))", ns, executor=exec_cell)
     assert not shown.ok and "FileNotFoundError" in shown.error
 
 
 def test_explicit_display_shows_rows(session):
     _, ns = session
-    result = run(ns, "display(fl.from_dict({'a': list(range(150))}))")
+    result = run(ns, "display(ff.from_dict({'a': list(range(150))}))")
     [payload] = result.outputs
     assert payload["schema"] == [{"name": "a", "data_type": "Int64"}] and payload["lazy_safe"]
     table = payload[TABLE_MIME]
@@ -253,7 +253,7 @@ def test_explicit_display_shows_rows(session):
 
 def test_explicit_display_caps_at_2000_rows(session):
     _, ns = session
-    result = run(ns, "display(fl.from_dict({'a': list(range(2500))}))\nNone")
+    result = run(ns, "display(ff.from_dict({'a': list(range(2500))}))\nNone")
     assert result.display is None
     [payload] = result.outputs
     assert payload[TABLE_MIME]["loaded_rows"] == 2000 and payload[TABLE_MIME]["total_rows"] == 2500
@@ -268,22 +268,22 @@ def test_a_deferred_frame_shows_only_its_schema(session, tmp_path):
 
 def test_a_frame_below_a_gate_shows_only_its_schema(session):
     mode, ns = session
-    fl.add_flow_parameter(mode.graph, fl.Parameter("mode", default="full"))
-    [payload] = run(ns, f"display(fl.Gate({DATA}, parameter='mode', value='full').then.sort('a'))").outputs
+    ff.add_flow_parameter(mode.graph, ff.Parameter("mode", default="full"))
+    [payload] = run(ns, f"display(ff.Gate({DATA}, parameter='mode', value='full').then.sort('a'))").outputs
     assert not payload["lazy_safe"] and TABLE_MIME not in payload
 
 
 def test_display_of_a_node_and_of_a_plain_value(session):
     mode, ns = session
-    fl.add_flow_parameter(mode.graph, fl.Parameter("mode", default="full"))
-    gate = run(ns, f"fl.Gate({DATA}, parameter='mode', value='full')").display
+    ff.add_flow_parameter(mode.graph, ff.Parameter("mode", default="full"))
+    gate = run(ns, f"ff.Gate({DATA}, parameter='mode', value='full')").display
     assert gate["kind"] == "node" and set(gate["outputs"]) == {"then", "else"}
     assert run(ns, "1 + 1").display == {"kind": "text", "text/plain": "2"}
     assert run(ns, "x = 1").display is None
 
 
 def test_display_outside_a_cell_returns_the_payload(session):
-    payload = display_payload(fl.from_dict({"a": [1, 2]}))
+    payload = display_payload(ff.from_dict({"a": [1, 2]}))
     assert payload[TABLE_MIME]["data"] == [{"a": 1}, {"a": 2}]
 
 
@@ -327,7 +327,7 @@ def test_seeded_node_handles_match_the_native_classes():
 
 
 def test_a_single_output_seeded_node_forwards_frame_methods():
-    frame = fl.from_dict({"a": [1]})
+    frame = ff.from_dict({"a": [1]})
     node = SeededNode(frame.flow_graph, frame.node_id, "python_script", ["main"], {"output-0": frame})
     assert node.columns == ["a"] and node.output is frame
 
@@ -340,21 +340,21 @@ def test_a_cell_builds_on_seeded_variables_without_renumbering():
         before = {n.node_id: n.node_type for n in mode.graph.nodes}
         ns = {**new_namespace(), **bound}
         filtered = next(k for k in bound if k.startswith("filtered"))
-        run(ns, f"joined = fl.from_dict({{'a': [2, 3], 'z': [1, 2]}}).join({filtered}, on='a')")
+        run(ns, f"joined = ff.from_dict({{'a': [2, 3], 'z': [1, 2]}}).join({filtered}, on='a')")
         after = {n.node_id: n.node_type for n in mode.graph.nodes}
         assert {k: after[k] for k in before} == before
     finally:
         notebook.exit()
 
 
-FLOW_INPUT_CELL = "orders = fl.FlowInput('orders', sample={'amount': [5, 15]}, flow_graph=flow)"
-FLOW_OUTPUT_CELL = "orders.filter(fl.col('amount') > 10).to_flow_output('big_orders')"
+FLOW_INPUT_CELL = "orders = ff.FlowInput('orders', sample={'amount': [5, 15]}, flow_graph=flow)"
+FLOW_OUTPUT_CELL = "orders.filter(ff.col('amount') > 10).to_flow_output('big_orders')"
 
 
 def test_a_seeded_subflow_re_runs_its_port_cells():
-    graph = fl.create_flow_graph()
-    orders = fl.FlowInput("orders", sample={"amount": [5, 15]}, flow_graph=graph)
-    orders.filter(fl.col("amount") > 10).to_flow_output("big_orders")
+    graph = ff.create_flow_graph()
+    orders = ff.FlowInput("orders", sample={"amount": [5, 15]}, flow_graph=graph)
+    orders.filter(ff.col("amount") > 10).to_flow_output("big_orders")
     input_id = orders.node_id
     try:
         bound = seed_session(graph.get_flowfile_data().model_dump(mode="json"), [], {}, {}, user_id=1)
@@ -374,8 +374,8 @@ def test_a_seeded_subflow_re_runs_its_port_cells():
 
 def test_clean_run_still_refuses_a_duplicate_flow_input_name():
     cells = [
-        ("a", "orders = fl.FlowInput('orders', schema={'amount': pl.Int64})"),
-        ("b", "again = fl.FlowInput('orders')"),
+        ("a", "orders = ff.FlowInput('orders', schema={'amount': pl.Int64})"),
+        ("b", "again = ff.FlowInput('orders')"),
     ]
     result = clean_run(cells, ceiling=0, user_id=1, executor=exec_cell)
     assert result["ok"] is False and result["cell_id"] == "b"
@@ -403,9 +403,9 @@ def test_canvas_node_adopts_settings_wires_inputs_and_seeds_outputs():
 
 
 def test_canvas_node_of_a_split_filter_exposes_pass_and_fail():
-    graph = fl.create_flow_graph()
-    source = fl.from_dict({"a": [1, 2, 3]}, flow_graph=graph)
-    passed, _ = source.filter_split(fl.col("a") > 1)
+    graph = ff.create_flow_graph()
+    source = ff.from_dict({"a": [1, 2, 3]}, flow_graph=graph)
+    passed, _ = source.filter_split(ff.col("a") > 1)
     data = graph.get_flowfile_data().model_dump(mode="json")
     try:
         bound = seed_session(data, [], {source.node_id: "src"}, {}, user_id=1)
@@ -429,11 +429,11 @@ def _storage_files() -> set:
 
 def test_seeding_never_predicts_a_pivot_and_writes_nothing_under_storage(monkeypatch):
     """A pivot predicts by collecting its pivot values, through the worker's cache when one is up."""
-    graph = fl.create_flow_graph()
-    source = fl.from_dict({"g": ["a", "a", "b"], "k": ["x", "y", "x"], "v": [1, 2, 3]}, flow_graph=graph)
+    graph = ff.create_flow_graph()
+    source = ff.from_dict({"g": ["a", "a", "b"], "k": ["x", "y", "x"], "v": [1, 2, 3]}, flow_graph=graph)
     pivoted = source.pivot(on="k", index="g", values="v", aggregate_function="sum")
     pivoted.select("g", "x").sort("g")
-    source.unpivot(["v"], index="g").group_by("g").agg(fl.col("value").std())
+    source.unpivot(["v"], index="g").group_by("g").agg(ff.col("value").std())
     data = graph.get_flowfile_data().model_dump(mode="json")
     predicted = []
     monkeypatch.setattr(schema_callbacks, "fetch_unique_values", lambda lf: predicted.append(lf) or ["x", "y"])
@@ -451,7 +451,7 @@ def test_seeding_never_predicts_a_pivot_and_writes_nothing_under_storage(monkeyp
 
 def test_seeding_a_flow_whose_connection_is_unknown_seeds_it_and_a_cell_placing_it_is_refused():
     """The canvas opens such a flow and resolves the connection at run; only a cell's placement is checked."""
-    graph = fl.create_flow_graph()
+    graph = ff.create_flow_graph()
     settings = input_schema.DatabaseSettings(
         connection_mode="reference", database_connection_name="no_such_connection", table_name="orders"
     )
@@ -469,7 +469,7 @@ def test_seeding_a_flow_whose_connection_is_unknown_seeds_it_and_a_cell_placing_
         bound = seed_session(data, [], {1: "rows"}, {1: {"output-0": [{"name": "x", "data_type": "Int64"}]}}, user_id=1)
         assert bound["rows"]._deferred and bound["rows"].columns == ["x"]
         assert notebook.current().refusals == []
-        code = "more = fl.read_database('no_such_connection', table_name='orders')"
+        code = "more = ff.read_database('no_such_connection', table_name='orders')"
         result = execute_cell("c", code, {**new_namespace(), **bound}, executor=exec_cell)
         assert result.kind == "refused" and "'no_such_connection' not found" in result.message
     finally:
@@ -492,10 +492,10 @@ def test_canvas_node_refuses_an_unknown_id_and_outside_a_session():
 
 def test_clean_run_prunes_relabels_and_restores_the_session(session):
     mode, ns = session
-    fl.add_flow_parameter(mode.graph, fl.Parameter("interactive_only", default=1))
+    ff.add_flow_parameter(mode.graph, ff.Parameter("interactive_only", default=1))
     cells = [
-        ("node-5", f"df = {DATA}\nfl.from_dict({{'dropped': [1]}}).sort('dropped')"),
-        ("node-6", "big = df.filter(fl.col('a') > 1)\nbig.write_csv('/nonexistent/never.csv')"),
+        ("node-5", f"df = {DATA}\nff.from_dict({{'dropped': [1]}}).sort('dropped')"),
+        ("node-6", "big = df.filter(ff.col('a') > 1)\nbig.write_csv('/nonexistent/never.csv')"),
     ]
     result = clean_run(
         cells,
@@ -527,7 +527,7 @@ def test_clean_run_aborts_on_the_first_failing_cell():
 
 
 def test_clean_run_reports_a_caught_refusal():
-    code = f"df = {DATA}\ntry:\n    fl.register_flow(df, name='x')\nexcept ValueError:\n    pass"
+    code = f"df = {DATA}\ntry:\n    ff.register_flow(df, name='x')\nexcept ValueError:\n    pass"
     result = clean_run([("a", code)], ceiling=0, user_id=1, executor=exec_cell)
     assert result["ok"] and len(result["refusals"]) == 1 and "run it from a script" in result["refusals"][0]
 
@@ -536,7 +536,7 @@ def test_clean_run_reproduces_a_canvas_node_placeholder():
     data, graph, source, big, gate = canvas_payload()
     try:
         seed_session(data, [], {}, {}, user_id=1)
-        cells = [("s", f"src = {DATA}"), (f"node-{big.node_id}", f"kept = fl.canvas_node({big.node_id}, src)")]
+        cells = [("s", f"src = {DATA}"), (f"node-{big.node_id}", f"kept = ff.canvas_node({big.node_id}, src)")]
         result = clean_run(
             cells,
             ceiling=100,

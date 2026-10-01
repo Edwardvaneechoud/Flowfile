@@ -1,5 +1,6 @@
 """Syncing notebook cells to the canvas (``POST /notebook/plan``, ``POST /editor/notebook/push/``) is admin-only in
-the multi-user modes, before the flow lookup; rendering stays open to every user and electron is never gated.
+the multi-user modes, before the flow lookup; rendering and running a cell's lineage stay open to every user and
+electron is never gated.
 
 The mode is flipped per test with ``monkeypatch.setenv``, as the sharing tests do: every gate reads
 ``FLOWFILE_MODE`` per call.
@@ -30,10 +31,10 @@ def flowfile_mode(monkeypatch, tmp_path):
 
 
 def _orders(open_as, user_id):
-    import flowfile as fl
+    import flowfile as ff
 
-    orders = fl.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
-    return open_as(orders.filter(fl.col("amount") > 10).flow_graph, user_id=user_id)
+    orders = ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
+    return open_as(orders.filter(ff.col("amount") > 10).flow_graph, user_id=user_id)
 
 
 def _edit_body(graph):
@@ -57,6 +58,9 @@ def test_a_member_cannot_sync_in_a_multi_user_mode(runner, open_as, client_as, f
 
     rendered = member.get("/notebook/render", params={"flow_id": graph.flow_id})
     assert rendered.status_code == 200, rendered.text
+    lineage = {"flow_id": graph.flow_id, "node_id": _node_of_type(graph, "filter").node_id}
+    ran = member.post("/editor/notebook/run_lineage/", json=lineage)
+    assert ran.status_code == 200, ran.text
 
 
 @pytest.mark.parametrize("mode", ["docker", "package"])

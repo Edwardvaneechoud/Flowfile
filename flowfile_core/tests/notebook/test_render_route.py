@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 import flowfile_frame as ff
 from flowfile_core import flow_file_handler, main
+from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 from flowfile_core.notebook.render import render
 
 OWNER_ID = 1
@@ -36,6 +37,16 @@ def test_render_route_returns_the_owner_rendering(open_flow, client_as):
     assert all(cell["status"] == "code" for cell in node_cells)
     for cell in body["cells"]:
         compile(cell["code"], cell["cell_id"], "exec")
+
+
+def test_render_route_answers_422_when_the_export_fails(open_flow, client_as, monkeypatch):
+    def fail(self):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(FlowGraphToFlowFrameConverter, "convert", fail)
+    response = client_as(OWNER_ID).get("/notebook/render", params={"flow_id": open_flow.flow_id})
+    assert response.status_code == 422
+    assert response.json() == {"detail": "The flow could not be rendered as code: boom"}
 
 
 def test_render_route_404_for_another_users_flow(open_flow, client_as):

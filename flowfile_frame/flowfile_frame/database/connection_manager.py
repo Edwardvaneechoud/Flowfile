@@ -63,7 +63,7 @@ def create_database_connection(
         ValueError: If a connection with this name already exists, or the
             database_type is not a supported dialect.
     """
-    refuse("fl.create_database_connection")
+    refuse("ff.create_database_connection")
     if database_type.lower() not in KNOWN_DIALECT_NAMES:
         raise ValueError(
             f"Unsupported database type '{database_type}'. Supported types: {', '.join(KNOWN_DIALECT_NAMES)}"
@@ -125,7 +125,7 @@ def create_database_connection_if_not_exists(
     Returns:
         FullDatabaseConnection: The existing or newly created connection.
     """
-    refuse("fl.create_database_connection_if_not_exists")
+    refuse("ff.create_database_connection_if_not_exists")
     get_current_user_id()
 
     existing = get_database_connection_by_name(connection_name)
@@ -194,7 +194,7 @@ def del_database_connection(connection_name: str) -> bool:
     Returns:
         True if the connection was deleted, False if it didn't exist.
     """
-    refuse("fl.del_database_connection")
+    refuse("ff.del_database_connection")
     from flowfile_core.database.models import Secret
 
     user_id = get_current_user_id()

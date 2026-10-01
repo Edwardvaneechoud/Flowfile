@@ -23,22 +23,19 @@ from flowfile.api import open_graph_in_editor as _open_graph_in_editor
 from flowfile.web import start_server as _start_web_ui
 from flowfile_frame import _fl_namespace
 from flowfile_frame._fl_namespace import *  # noqa: F403
-from flowfile_frame._fl_namespace import FlowFrame, node_designer
+from flowfile_frame._fl_namespace import node_designer
 from flowfile_frame.notebook import refuse
-
-LazyFrame = FlowFrame
-DataFrame = FlowFrame
 
 
 @functools.wraps(_open_graph_in_editor)
 def open_graph_in_editor(*args, **kwargs):
-    refuse("fl.open_graph_in_editor")
+    refuse("ff.open_graph_in_editor")
     return _open_graph_in_editor(*args, **kwargs)
 
 
 @functools.wraps(_start_web_ui)
 def start_web_ui(*args, **kwargs):
-    refuse("fl.start_web_ui", "starts a server")
+    refuse("ff.start_web_ui", "starts a server")
     return _start_web_ui(*args, **kwargs)
 
 

@@ -233,7 +233,7 @@ test.describe("Canvas notebook", () => {
     await expect(filter.locator(".display-table-footer")).not.toContainText("showing");
     await expect(syncState(filter)).toHaveAttribute("data-sync-state", "synced");
     expect(called("/editor/notebook/run_lineage/")).toBe(true);
-    expect(called("/notebook/plan") || called("/editor/notebook/push/")).toBe(false);
+    expect(called("/editor/notebook/push/")).toBe(false);
     await shot(page, "02-ran-unedited");
   });
 
@@ -366,15 +366,15 @@ test.describe("Canvas notebook", () => {
     const added = panel.locator(`[data-cell-id="${await last.getAttribute("data-cell-id")}"]`);
     await added.locator(".cm-content").click();
     await page.keyboard.insertText("threshold = 8\nprint(threshold)");
-    const plan = responseTo(page, "/notebook/plan");
+    const refused = responseTo(page, "/editor/notebook/push/");
     await added.locator(".nb-run").click();
-    expect((await plan).status()).toBe(422);
+    expect((await refused).status()).toBe(422);
     await expect(syncState(added)).toHaveAttribute("data-sync-state", "error");
     await expect(added.locator(".cm-line.nb-sync-error-line")).toHaveText("print(threshold)");
     await expect(added.locator(".output-error")).toContainText("Line 2:");
     await expect(added.locator(".output-error")).toContainText("this needs a kernel");
     await expect(syncState(filter)).toHaveAttribute("data-sync-state", "edited");
-    expect(called("/editor/notebook/push/")).toBe(false);
+    expect(apiCalls.filter((u) => u.includes("/editor/notebook/push/"))).toHaveLength(1);
     expect(await filterSettings(request)).not.toContain("80000");
     await shot(page, "06-refused");
 
@@ -432,7 +432,7 @@ test.describe("Canvas notebook", () => {
       "Flow parameters",
     );
     await expect(cellAt(cellOfKind(cells, "imports")).locator(".cell-output")).toHaveCount(0);
-    expect(called("/notebook/plan", runAllStart)).toBe(false);
+    expect(called("/editor/notebook/push/", runAllStart)).toBe(false);
     await shot(page, "09-run-all");
   });
 

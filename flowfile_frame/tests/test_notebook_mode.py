@@ -6,7 +6,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-import flowfile as fl
+import flowfile
 import flowfile_core.kernel as kernel_package
 import flowfile_frame as ff
 from flowfile_core.configs import node_store
@@ -108,7 +108,7 @@ def test_sink_refuses_in_the_mode(mode, tmp_path):
         lambda g: ff.create_cloud_storage_connection(None),
         lambda g: ff.create_cloud_storage_connection_if_not_exists(None),
         lambda g: ff.del_cloud_storage_connection("nb"),
-        lambda g: fl.open_graph_in_editor(g),
+        lambda g: flowfile.open_graph_in_editor(g),
     ],
     ids=[
         "register_flow",
@@ -206,12 +206,76 @@ def test_polars_code_is_seeded_with_its_predicted_schema(mode):
     assert frame.collect_schema().names() == ["a", "g", "running"]
 
 
+def test_a_sync_seeds_a_polars_code_method_from_the_frames_own_plan(monkeypatch):
+    from flowfile_core.flowfile.flow_data_engine.polars_code_parser import PolarsCodeParser
+
+    monkeypatch.setattr(PolarsCodeParser, "get_executable", lambda *_: pytest.fail("polars code ran"))
+    with notebook.notebook_mode(user_id=1, sync=True) as sync:
+        source = ff.from_dict(DATA)
+        running = source.with_columns(ff.col("a").cum_sum().alias("running"))
+        last = source.tail(1)
+        unplanned = source.select(ff.numeric())
+        assert [core_node(f).node_type for f in (running, last, unplanned)] == ["polars_code"] * 3
+        assert running.collect_schema().names() == ["a", "g", "running"]
+        assert last.collect_schema().names() == ["a", "g"]
+        assert unplanned.collect_schema().names() == []
+        assert sync.column_less == {unplanned.node_id}
+
+
 def test_fluent_polars_code_is_seeded_not_run_in_the_mode(mode):
     frame = ff.from_dict(DATA).polars_code("input_df.with_columns(pl.col('a').cum_sum().alias('running'))")
     node = core_node(frame)
     assert node.node_type == "polars_code" and node.deferred_until_run is True
     assert frame._deferred is True
     assert frame.collect_schema().names() == ["a", "g", "running"]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda f: f.tail(f),
+        lambda f: f.shift(1, fill_value=f),
+        lambda f: f.drop_nulls(subset=["a", f]),
+        lambda f: f.cast({"a": f}),
+        lambda f: f.explode(f),
+        lambda f: f.explode("a", f),
+    ],
+    ids=["positional", "keyword", "in_a_list", "in_a_dict", "explode", "explode_more_columns"],
+)
+def test_a_polars_code_method_takes_no_frame_argument_in_the_mode(mode, call):
+    frame = ff.from_dict(DATA)
+    node_count = len(mode.graph.nodes)
+    with pytest.raises(NativeNodeError, match="takes no frame as an argument"):
+        call(frame)
+    assert len(mode.graph.nodes) == node_count
+
+
+def test_a_polars_code_method_binds_its_arguments_to_polars_in_the_mode(mode):
+    frame = ff.from_dict(DATA)
+    node_count = len(mode.graph.nodes)
+    with pytest.raises(TypeError, match=r"tail\(\) got an unexpected keyword argument 'nope'"):
+        frame.tail(nope=1)
+    with pytest.raises(TypeError, match=r"slice\(\) missing a required argument: 'offset'"):
+        frame.slice()
+    assert len(mode.graph.nodes) == node_count
+    assert core_node(frame.tail(2, description="Last two")).setting_input.description == "Last two"
+
+
+def test_an_argument_without_a_code_form_is_refused_in_the_mode(mode):
+    frame = ff.from_dict(DATA)
+    node_count = len(mode.graph.nodes)
+    expr = ff.col("a") * 2
+    expr.convertable_to_code = False
+    with pytest.raises(NativeNodeError, match="no code form"):
+        frame.fill_null(expr)
+    assert len(mode.graph.nodes) == node_count
+
+
+def test_text_that_reads_like_a_lambda_stays_code_in_the_mode(mode):
+    filled = ff.from_dict(DATA).fill_null("<lambda> at 0x0")
+    node = core_node(filled)
+    assert node.node_type == "polars_code"
+    assert node.setting_input.polars_code_input.polars_code == "output_df = input_df.fill_null('<lambda> at 0x0')"
 
 
 def test_fluent_native_nodes_stay_lazy_safe_in_the_mode(mode):
@@ -274,9 +338,9 @@ def test_identity_hook():
 
 
 BUILT_IN_A_SYNC = {
-    "cross_join", "data_cleansing", "dynamic_rename", "filter", "flow_input", "formula", "gate", "graph_solver",
-    "group_by", "join", "manual_input", "multi_field_formula", "record_count", "record_id", "sample", "select", "sort",
-    "sql_query", "text_to_rows", "union", "unique", "unpivot", "wait_for", "window_functions",
+    "cross_join", "data_cleansing", "dynamic_rename", "explode_hierarchy", "filter", "flow_input", "formula", "gate",
+    "graph_solver", "group_by", "join", "manual_input", "multi_field_formula", "record_count", "record_id", "sample",
+    "select", "sort", "sql_query", "text_to_rows", "union", "unique", "unpivot", "wait_for", "window_functions",
 }  # fmt: skip
 
 
@@ -347,6 +411,20 @@ def test_a_read_csv_polars_fallback_is_a_polars_code_source_seeded_without_colum
         ("WITH scan_results(a) AS (SELECT a FROM input_1) SELECT * FROM scan_results", False),
         ("SELECT * FROM input_1 -- was read_csv('x.csv')", False),
         ("SELECT * FROM input_1 /* scan_parquet('y') */", False),
+        ("SELECT * FROM input_1 /* a /* read_csv('x.csv') */ b */", False),
+        ("SELECT * FROM `read_csv`('x.csv')", True),
+        ("SELECT * FROM `READ_PARQUET`('x.parquet')", True),
+        ('SELECT * FROM "Read_Json"(\'x.json\')', True),
+        ("SELECT * FROM read_ipc\n  ('x.arrow')", True),
+        ("SELECT * FROM read_csv -- c\n('x.csv')", True),
+        ("SELECT * FROM read_csv/* a /* b */ c */('x.csv')", True),
+        ("SELECT * FROM `read_csv`.`x`('x.csv')", True),
+        ("SELECT '--' AS z, * FROM read_csv('x.csv')", True),
+        ("SELECT \"/*\".* FROM read_csv('x.csv') AS \"/*\" -- */", True),
+        ("SELECT $$--$$ AS z, * FROM read_csv('x.csv')", True),
+        ("SELECT E'\\'--' AS z, * FROM read_csv('x.csv')", True),
+        ("SELECT * FROM `read_csv('x.csv')", True),
+        ("SELECT * FROM ${source}", True),
     ],
 )
 def test_a_sync_holds_sql_by_the_canvas_table_function_gate(sql, held):

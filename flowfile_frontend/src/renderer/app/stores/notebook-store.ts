@@ -6,7 +6,6 @@ import { NodeApi } from "../api/node.api";
 import { NotebookApi } from "../api/notebook.api";
 import type {
   NotebookCellWire,
-  NotebookPlan,
   NotebookPushBody,
   NotebookPushResult,
   NotebookRendering,
@@ -188,6 +187,10 @@ export interface OpenNotebook {
   /** Per cell id, the rendered cell's kind; cells added in the notebook have none. */
   kinds?: Record<string, RenderedCell["kind"]>;
   fingerprint?: string;
+  /** The last rendering's warnings, told once until they change. */
+  renderWarnings?: string;
+  /** A sync changed the parameters: re-render once the action that synced is over. */
+  rerenderAfterAction?: boolean;
   /** Why the last sync was refused (the 422 detail); cleared when the next sync starts. */
   syncError?: FlowSyncError | null;
   /** Core answered a sync with 403: only admins may sync on this server. Cells stay editable. */
@@ -227,8 +230,8 @@ export interface FlowNotebookHooks {
   prepare(): Promise<boolean>;
   /** The designer's node id counter, so new nodes number above ids it handed out. */
   clientMaxNodeId(): number;
-  /** Ask before applying `plan`; only called when `planNeedsConfirmation` says so. */
-  confirm(plan: NotebookPlan, trigger: FlowSyncTrigger): Promise<boolean>;
+  /** Ask before applying a push core held back for review (`applied: false`); it lists `warnings`. */
+  confirm(held: NotebookPushResult, trigger: FlowSyncTrigger): Promise<boolean>;
   /** A push was applied (seed the node id counter, reload the canvas). */
   pushed(result: NotebookPushResult): void;
   /** Core accepted a canvas run's start; a refused start calls neither run hook. */
@@ -268,6 +271,7 @@ export const SYNC_NEEDS_ADMIN =
   "Syncing the notebook to the canvas needs an admin on this server; your edits stay in the notebook.";
 export const CANVAS_CHANGED =
   "The canvas changed since these cells were rendered, so they were refreshed; run again to sync your edits.";
+export const RERENDER_FAILED = "The notebook could not be re-rendered from the canvas.";
 export const PICK_KERNEL_HINT = "Pick a notebook kernel in the toolbar to run this cell as Python.";
 export const NOTHING_TO_PUSH = "Nothing to push: the canvas already matches these cells.";
 export const SESSION_NOT_RESEEDED =
@@ -326,7 +330,7 @@ function ensureFlowSession(nb: OpenNotebook): Promise<unknown> {
 }
 export const notOnCanvasText = (nodeId: number): string => `Node #${nodeId} is not on the canvas.`;
 
-/** A placeholder keeps its `fl.canvas_node(...)` text under its reason as a comment. */
+/** A placeholder keeps its `ff.canvas_node(...)` text under its reason as a comment. */
 function renderedCode(cell: RenderedCell): string {
   return cell.status !== "code" && cell.reason
     ? `# ${cell.reason.replace(/\n/g, " ")}\n${cell.code}`
@@ -377,6 +381,11 @@ function applyRendering(nb: OpenNotebook, rendering: NotebookRendering): void {
   nb.fingerprint = rendering.code_fingerprint;
   nb.cells = ensureCells(next);
   nb.dirty = false;
+  const warnings = rendering.warnings.join("\n");
+  if (warnings && warnings !== nb.renderWarnings) {
+    nb.notice = { tone: "warning", message: warnings };
+  }
+  nb.renderWarnings = warnings;
 }
 
 /** The push body: Python cells, the edited ones marked, and their live nodes as `[type, id]`. */
@@ -432,16 +441,6 @@ export function cellErrorMark(nb: OpenNotebook, cell: NotebookCellModel): SyncEr
 export function flowCellSyncState(nb: OpenNotebook, cell: NotebookCellModel): SyncState {
   if (syncErrorFor(nb, cell)) return "error";
   return isEdited(nb, cell) ? "edited" : "synced";
-}
-
-/** The lines a sync confirmation lists. */
-export function planReview(plan: NotebookPlan): string[] {
-  // Core's reconcile already adds a "Deletes node N (type)." warning per deletion.
-  return [...(plan.parameter_changes ? ["Replace the flow parameters"] : []), ...plan.warnings];
-}
-
-export function planNeedsConfirmation(plan: NotebookPlan, trigger: FlowSyncTrigger): boolean {
-  return trigger === "run" ? plan.deletions.length > 0 : planReview(plan).length > 0;
 }
 
 function isSyncErrorDetail(detail: unknown): detail is NotebookSyncErrorDetail {
@@ -1293,6 +1292,14 @@ export const useNotebookStore = defineStore("notebook", {
       try {
         return await action();
       } finally {
+        if (nb.rerenderAfterAction) {
+          // Only a rendering tells which cell now declares the parameters.
+          nb.rerenderAfterAction = false;
+          nb.fingerprint = undefined;
+          await this.refreshFlowNotebook(nb.flowId!).catch((e) => {
+            nb.notice = { tone: "warning", message: detailMessage(e, RERENDER_FAILED) };
+          });
+        }
         endBatch(owner, batch);
       }
     },
@@ -1308,7 +1315,7 @@ export const useNotebookStore = defineStore("notebook", {
       return status ?? "busy";
     },
 
-    /** Plan, confirm when needed, push; a refusal lands on its cell, the tab or the notice. */
+    /** Push; a push core holds for review is confirmed, then sent again. A refusal lands on its cell, tab or notice. */
     async _syncFlow(
       nb: OpenNotebook,
       trigger: FlowSyncTrigger,
@@ -1327,30 +1334,26 @@ export const useNotebookStore = defineStore("notebook", {
           hooks.clientMaxNodeId(),
         );
         cells = body.cells;
-        const plan = await NotebookApi.planPush(body);
-        if (!plan.operations.length) {
-          this.markFlowPushed(nb, { ...plan, code_fingerprint: body.code_fingerprint }, cells);
-          nb.syncForbidden = false;
-          const warned = plan.warnings.join("\n");
-          if (trigger === "push") {
-            nb.notice = warned
-              ? { tone: "warning", message: `${NOTHING_TO_PUSH}\n${warned}` }
-              : { tone: "success", message: NOTHING_TO_PUSH };
-          } else if (warned) nb.notice = { tone: "warning", message: warned };
-          return "synced";
+        let result = await NotebookApi.pushFlowNotebook({ ...body, trigger });
+        if (!result.applied) {
+          if (!(await hooks.confirm(result, trigger))) return "cancelled";
+          result = await NotebookApi.pushFlowNotebook(body);
         }
-        if (planNeedsConfirmation(plan, trigger) && !(await hooks.confirm(plan, trigger))) {
-          return "cancelled";
-        }
-        const result = await NotebookApi.pushFlowNotebook(body);
         this.markFlowPushed(nb, result, cells);
         nb.syncForbidden = false;
-        hooks.pushed(result);
-        if (trigger === "push") nb.notice = { tone: "success", message: "Pushed to the canvas" };
-        else if (result.warnings.length) {
-          nb.notice = { tone: "warning", message: result.warnings.join("\n") };
-        }
-        if (body.kernel_id) await this._reseedFlowSession(nb);
+        // The fingerprint covers settings, edges and parameters: unmoved, the push changed nothing.
+        const changed = result.code_fingerprint !== body.code_fingerprint;
+        if (changed) hooks.pushed(result);
+        if (result.parameter_changes) nb.rerenderAfterAction = true;
+        const warned = result.warnings.join("\n");
+        if (trigger === "push" && changed) {
+          nb.notice = { tone: "success", message: "Pushed to the canvas" };
+        } else if (trigger === "push") {
+          nb.notice = warned
+            ? { tone: "warning", message: `${NOTHING_TO_PUSH}\n${warned}` }
+            : { tone: "success", message: NOTHING_TO_PUSH };
+        } else if (warned) nb.notice = { tone: "warning", message: warned };
+        if (changed && body.kernel_id) await this._reseedFlowSession(nb);
         return "synced";
       } catch (e) {
         return this._syncFailed(nb, e, cells);

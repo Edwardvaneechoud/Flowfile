@@ -1,4 +1,4 @@
-"""``fl.kernels``: the kernels you created in the Designer, by id, to pass as ``kernel=``."""
+"""``ff.kernels``: the kernels you created in the Designer, by id, to pass as ``kernel=``."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from flowfile_frame.native import NativeNodeError
 
 
 class KernelLookupError(NativeNodeError, KeyError):
-    """An ``fl.kernels[id]`` lookup of an id the current user has no kernel for; also a ``KeyError``."""
+    """An ``ff.kernels[id]`` lookup of an id the current user has no kernel for; also a ``KeyError``."""
 
     def __str__(self) -> str:
         # KeyError.__str__ would wrap the message in quotes.
@@ -43,9 +43,9 @@ def _unknown_kernel_message(kernel_id: object, known: builtins.list[str]) -> str
 
 
 class Kernels:
-    """The kernels you created in the Designer (``fl.kernels``): saved definitions by id, not running state.
+    """The kernels you created in the Designer (``ff.kernels``): saved definitions by id, not running state.
 
-    Look one up with ``fl.kernels["ml-kernel"]``; there is no attribute access because kernel ids
+    Look one up with ``ff.kernels["ml-kernel"]``; there is no attribute access because kernel ids
     can contain hyphens. Every call reads the catalog DB, so a kernel created after import is
     listed and Docker need not run. A :class:`KernelInfo` works as any ``kernel=`` argument.
     """
@@ -74,7 +74,7 @@ class Kernels:
         return len(self.list())
 
     def __repr__(self) -> str:
-        return f"fl.kernels({builtins.list(self)})"
+        return f"ff.kernels({builtins.list(self)})"
 
 
 kernels: Kernels = Kernels()

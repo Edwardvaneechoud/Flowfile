@@ -154,7 +154,7 @@ def test_no_lossy_row_for_a_node_type_the_demo_uses(ledger_rows):
     """The corpus-wide row of every node type the demo uses is at least DIFFER.
 
     A canvas join that keeps its right keys rebuilds through ``join(..., keep_right_keys=True)`` and
-    a Polars-code node with no input through ``fl.polars_code(fn)``.
+    a Polars-code node with no input through ``ff.polars_code(fn)``.
     """
     grades = _grades(ledger_rows)
     demo_types = {node_type for node_type, _ in grades["demo"].values()}

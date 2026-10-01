@@ -8,6 +8,7 @@
   "data_type_conversions": [],
   "dynamic_rename_formula_round_trip": [],
   "excel_read": [],
+  "explode_hierarchy_flowframe_export_calls_the_native_method": [],
   "filter_split_mode_pass_and_fail": [],
   "flow_with_disconnected_nodes": [],
   "formula_node": [],

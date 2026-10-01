@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
-import type { CellOutput } from "../../types/node.types";
+import type { CellOutput, NotebookCell } from "../../types/node.types";
 
 vi.mock("../../api/kernel.api", () => ({
   KernelApi: { executeCell: vi.fn(), clearNamespace: vi.fn() },
@@ -9,12 +9,9 @@ vi.mock("../../api/kernel.api", () => ({
 import { KernelApi } from "../../api/kernel.api";
 import {
   createKernelExecutor,
-  isLockedCell,
   runNotebookCell,
-  runtimeRefs,
   type CellRunResult,
   type NotebookExecutor,
-  type NotebookViewCell,
 } from "./notebookExecutor";
 import { bumpSessionEpoch, cellRuntime, ensureOwner } from "./notebookRuntimeState";
 
@@ -47,18 +44,9 @@ function fakeExecutor(run: NotebookExecutor["run"], canRun = true): NotebookExec
   };
 }
 
-const cell = (
-  id: string,
-  code: string,
-  extra: Partial<NotebookViewCell> = {},
-): NotebookViewCell => ({
-  id,
-  code,
-  output: null,
-  ...extra,
-});
+const cell = (id: string, code: string): NotebookCell => ({ id, code, output: null });
 
-function harness(executor: NotebookExecutor, cells: NotebookViewCell[], cellId: string) {
+function harness(executor: NotebookExecutor, cells: NotebookCell[], cellId: string) {
   const outputs: Record<string, CellOutput> = {};
   let count = 1;
   const ownerId = newOwner();
@@ -174,14 +162,9 @@ describe("runNotebookCell", () => {
     expect(executor.run).not.toHaveBeenCalled();
   });
 
-  it("skips empty and locked cells as done without running them", async () => {
+  it("skips an empty cell as done without running it", async () => {
     const executor = fakeExecutor(async () => okResult());
-    const cells = [
-      cell("blank", "   "),
-      cell("lock", "df = ...", { status: "placeholder", reason: "reads a database" }),
-    ];
-    expect(await harness(executor, cells, "blank").run()).toBe(true);
-    expect(await harness(executor, cells, "lock").run()).toBe(true);
+    expect(await harness(executor, [cell("blank", "   ")], "blank").run()).toBe(true);
     expect(executor.run).not.toHaveBeenCalled();
   });
 
@@ -195,22 +178,5 @@ describe("runNotebookCell", () => {
     release?.(okResult());
     expect(await pending).toBe(true);
     expect(h.outputs.a).toBeUndefined();
-  });
-});
-
-describe("locked cells", () => {
-  it("treats only a non-code status as locked", () => {
-    expect(isLockedCell(cell("a", ""))).toBe(false);
-    expect(isLockedCell(cell("a", "", { status: "code" }))).toBe(false);
-    expect(isLockedCell(cell("a", "", { status: "placeholder" }))).toBe(true);
-    expect(isLockedCell(cell("a", "", { status: "unsupported" }))).toBe(true);
-  });
-
-  it("keeps locked cells out of the python runtime membership", () => {
-    const refs = runtimeRefs([cell("a", "x"), cell("b", "y", { status: "unsupported" })]);
-    expect(refs).toEqual([
-      { id: "a", isPython: true },
-      { id: "b", isPython: false },
-    ]);
   });
 });

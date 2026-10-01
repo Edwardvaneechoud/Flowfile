@@ -26,6 +26,8 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import (
     WorkerStreamInterrupted,
+    WorkerTaskError,
+    error_code_for_kind,
     streaming_receive,
     streaming_start,
 )
@@ -870,7 +872,7 @@ class BaseFetcher:
                             self._handle_completion(status)
                             return
                         elif status.status == "Error":
-                            self._handle_error(1, status.error_message)
+                            self._handle_error(error_code_for_kind(status.error_kind), status.error_message)
                             return
                         elif status.status == "Unknown Error":
                             self._handle_error(
@@ -1072,6 +1074,9 @@ class BaseFetcher:
                 self._started = True
             try:
                 result, status = streaming_receive(ws, self.file_ref, should_abort=self._stop_event.is_set)
+            except WorkerTaskError as e:
+                self._record_task_failure(str(e), e.error_code)
+                return
             except Exception:
                 # Reset to pristine: the caller's REST fallback (generic errors
                 # only) relies on `running = True` auto-starting its poll thread,
@@ -1106,6 +1111,19 @@ class BaseFetcher:
                 )
                 self._thread.start()
 
+    def _record_task_failure(self, description: str, error_code: int) -> None:
+        """Record a task the worker ran and reported failed, with the code the REST path would give it."""
+        with self._lock:
+            self._ws = None
+            self._running = False
+            self._error_code = error_code
+            self._error_description = description
+
+    def _raise_recorded_failure(self) -> None:
+        """Raise a recorded failure the way the REST path's blocking ``get_result()`` does."""
+        if self.has_error:
+            self.get_result()
+
     def _ws_receive_thread(self, ws) -> None:
         """Background thread that receives results over an open WebSocket."""
         try:
@@ -1117,7 +1135,10 @@ class BaseFetcher:
                 self.status = status
                 self._condition.notify_all()
         except Exception as e:
-            logger.exception("Error in WebSocket receive thread")
+            if isinstance(e, WorkerTaskError):
+                logger.warning("Worker task %s failed (%s): %s", self.file_ref, e.kind or "task", e)
+            else:
+                logger.exception("Error in WebSocket receive thread")
             with self._condition:
                 # -1 means "worker child died" and lets the node degrade
                 # gracefully; -2 means stalled-or-canceled and makes the node
@@ -1126,7 +1147,10 @@ class BaseFetcher:
                 # _stop_event disjunct catches cancel-time teardown exceptions
                 # that surface as types other than WorkerStreamInterrupted.
                 interrupted = isinstance(e, WorkerStreamInterrupted) or self._stop_event.is_set()
-                self._error_code = -2 if interrupted else -1
+                if interrupted:
+                    self._error_code = -2
+                else:
+                    self._error_code = e.error_code if isinstance(e, WorkerTaskError) else -1
                 self._error_description = str(e)
                 self._running = False
                 self._ws = None
@@ -1157,13 +1181,16 @@ class ExternalDfFetcher(BaseFetcher):
                 kwargs=kwargs,
                 blocking=wait_on_completion,
             )
-            return
         except WorkerStreamInterrupted:
             # The task already reached the worker; re-submitting via REST would
             # duplicate work against a wedged worker or a cancelled run.
             raise
         except Exception as e:
             logger.debug(f"WebSocket streaming unavailable ({e}), falling back to REST")
+        else:
+            if wait_on_completion:
+                self._raise_recorded_failure()
+            return
 
         # REST fallback (original behavior)
         r = trigger_df_operation(
@@ -1202,16 +1229,19 @@ class ExternalSampler(BaseFetcher):
                 kwargs={"sample_size": sample_size},
                 blocking=wait_on_completion,
             )
-            return
         except WorkerStreamInterrupted:
             # See ExternalDfFetcher: never re-submit after a successful submit.
             raise
         except Exception as e:
             logger.debug(f"WebSocket streaming unavailable ({e}), falling back to REST")
+        else:
+            if wait_on_completion:
+                self._raise_recorded_failure()
+            return
 
         # REST fallback (original behavior)
         r = trigger_sample_operation(
-            lf=lf, file_ref=file_ref, sample_size=sample_size, node_id=node_id, flow_id=flow_id
+            lf=lf, file_ref=self.file_ref, sample_size=sample_size, node_id=node_id, flow_id=flow_id
         )
         self.running = r.status == "Processing"
         if wait_on_completion:

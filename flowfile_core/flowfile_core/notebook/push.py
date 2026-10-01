@@ -4,12 +4,14 @@
 were rendered from another state of the flow, runs the cells through the installed
 :class:`~flowfile_core.notebook.bridge.CleanRunner`, refuses with 422 what the canvas cannot hold, and
 reconciles. ``POST /notebook/plan`` returns the result; ``POST /editor/notebook/push/`` applies its operations
-as one ``apply_operations`` transaction.
+as one ``apply_operations`` transaction, unless its ``trigger`` names a sync whose plan
+:func:`needs_confirmation`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Literal
 
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
@@ -28,7 +30,7 @@ LAZY_FRAME_REFUSAL = (
 )
 CUSTOM_CLASS_REFUSAL = (
     "Node {node_id} uses the custom node class {node_type!r}, defined in a cell and not installed; "
-    "install it from a script with fl.custom_nodes.install(...) and push again."
+    "install it from a script with ff.custom_nodes.install(...) and push again."
 )
 INLINE_SECRET_REFUSAL = (
     "Node {node_id} (REST API reader) carries an inline secret, which is never stored on the canvas; "
@@ -37,7 +39,11 @@ INLINE_SECRET_REFUSAL = (
 
 
 class NotebookPushRequest(BaseModel):
-    """Body of ``POST /editor/notebook/push/`` and ``POST /notebook/plan``."""
+    """Body of ``POST /editor/notebook/push/`` and ``POST /notebook/plan``.
+
+    ``trigger`` (push only) names the client action behind the sync; a plan that action must review first is
+    returned unapplied. ``None`` applies unconditionally. ``kernel_id`` runs the cells on that notebook kernel.
+    """
 
     flow_id: int
     cells: list[tuple[str, str]]
@@ -45,6 +51,7 @@ class NotebookPushRequest(BaseModel):
     provenance: dict[str, list[tuple[str, int]]] = Field(default_factory=dict)
     code_fingerprint: str
     client_max_node_id: int = 0
+    trigger: Literal["push", "run"] | None = None
     kernel_id: str | None = None
 
 
@@ -112,7 +119,8 @@ def _installed_custom_node(node_type: str) -> bool:
 def refused_nodes(
     live: dict, session: dict, installed: Callable[[str], bool] = _installed_custom_node
 ) -> list[tuple[str, int]]:
-    """``(message, node id)`` for every node the canvas cannot hold (see :func:`push_refusals`), in order."""
+    """``(message, node id)``, in order, for every node the canvas cannot hold: in-memory LazyFrames, custom node
+    classes that are not installed or do not load, inline REST secrets."""
     refused = []
     live_types = {node["type"] for node in live.get("nodes") or []}
     for payload in (live, session):
@@ -133,12 +141,6 @@ def refused_nodes(
             if inline:
                 refused.append((INLINE_SECRET_REFUSAL.format(node_id=node["id"]), node["id"]))
     return refused
-
-
-def push_refusals(live: dict, session: dict, installed: Callable[[str], bool] = _installed_custom_node) -> list[str]:
-    """What the canvas cannot hold: in-memory LazyFrames, custom node classes that are not installed or do not
-    load, inline REST secrets."""
-    return list(dict.fromkeys(message for message, _ in refused_nodes(live, session, installed)))
 
 
 def _owned_kernel_ids(user_id: int) -> set[str] | None:
@@ -263,6 +265,14 @@ def plan_push(flow: FlowGraph, user, request: NotebookPushRequest) -> tuple[Reco
     plan.warnings.extend(result.warnings)
     plan.warnings.extend(kernel_warnings(result.flowfile_data, user.id))
     return plan, result
+
+
+def needs_confirmation(plan: ReconcilePlan, trigger: Literal["push", "run"]) -> bool:
+    """Whether the user reviews ``plan`` before it applies: a run's sync only for deletions, a push for any
+    deletion, parameter change or warning (the warnings already name every deletion and parameter change)."""
+    if trigger == "run":
+        return bool(plan.deletions)
+    return bool(plan.deletions or plan.parameter_changes or plan.warnings)
 
 
 def plan_response(plan: ReconcilePlan, result: CleanRunResult) -> NotebookPlanResponse:

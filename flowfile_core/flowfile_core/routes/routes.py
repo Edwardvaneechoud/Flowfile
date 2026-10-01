@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from flowfile_core import flow_file_handler
+from flowfile_core import events, flow_file_handler
 
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
@@ -116,7 +116,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
 from flowfile_core.notebook.gate import require_kernel_sessions
 from flowfile_core.notebook.kernel_runner import close_flow_sessions
-from flowfile_core.notebook.push import NotebookPushRequest, node_id_ceiling, plan_push
+from flowfile_core.notebook.push import NotebookPushRequest, needs_confirmation, node_id_ceiling, plan_push
 from flowfile_core.notebook.render import code_fingerprint
 from flowfile_core.routes._connection_sharing import (
     authorize_connection_mutation,
@@ -399,7 +399,7 @@ def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
 
 
 def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
-    """Wrapper that runs a flow and persists the run record to the database.
+    """Wrapper that runs a flow (only ``node_ids`` when given) and persists the run record to the database.
 
     Uses a two-phase pattern:
     1. Create a run record BEFORE execution (makes run visible as "active")
@@ -447,7 +447,7 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
                 flow_name=flow_name,
                 flow_path=flow_path,
                 user_id=user_id if user_id is not None else 0,
-                number_of_nodes=len(flow.nodes),
+                number_of_nodes=len(node_ids) if node_ids is not None else len(flow.nodes),
                 run_type="in_designer_run",
                 flow_snapshot=snapshot_yaml,
             )
@@ -989,13 +989,20 @@ def delete_comment(flow_id: int, comment_id: int) -> OperationResponse:
 
 
 class NotebookPushResponse(BaseModel):
-    """``POST /editor/notebook/push/``: the new history, fingerprint and max node id, and each cell's node ids."""
+    """``POST /editor/notebook/push/``: the new history, fingerprint and max node id, and each cell's node ids.
+
+    ``applied`` is false when the request's ``trigger`` needs the plan confirmed first; history and fingerprint
+    are then the current ones and ``warnings``, ``deletions`` and ``parameter_changes`` are what to review.
+    """
 
     history: HistoryState
     code_fingerprint: str
     max_node_id: int
     node_ids_by_cell: dict[str, list[int]]
     warnings: list[str] = Field(default_factory=list)
+    applied: bool = True
+    deletions: list[int]
+    parameter_changes: bool
 
 
 @router.post("/editor/apply_operations/", tags=["editor"], response_model=OperationResponse)
@@ -1085,8 +1092,9 @@ def push_notebook(
     """Push notebook cells onto the canvas: clean run, reconcile, and apply the ops as one transaction.
 
     The clean run happens outside the edit lock; the fingerprint is checked again under it, so a
-    canvas edit that lands meanwhile is a 409 instead of being overwritten. With ``kernel_id`` the
-    cells run on that notebook kernel.
+    canvas edit that lands meanwhile is a 409 instead of being overwritten. A ``trigger`` whose plan
+    needs confirmation applies nothing and answers ``applied=False``. With ``kernel_id`` the cells run
+    on that notebook kernel.
     """
     if request.kernel_id is not None:
         require_kernel_sessions(http, current_user)
@@ -1094,23 +1102,31 @@ def push_notebook(
     if flow is None:
         raise HTTPException(404, "Flow not found")
     plan, result = plan_push(flow, current_user, request)
-    if plan.operations:
+    applied = request.trigger is None or not needs_confirmation(plan, request.trigger)
+    fingerprint = request.code_fingerprint
+    if applied and plan.operations:
         with edit_flow(flow, "Push notebook", HistoryActionType.BATCH) as txn:
             live_fingerprint = code_fingerprint(flow)
             if live_fingerprint != request.code_fingerprint:
                 detail = {"message": "The canvas changed during the push.", "code_fingerprint": live_fingerprint}
                 raise HTTPException(409, detail)
             _run_operations(flow, request.flow_id, plan.operations, current_user)
+            fingerprint = code_fingerprint(flow)
         history = txn.history
     else:
         history = flow.get_history_state()
+    if applied:
+        events.publish("notebook_pushed")
     max_node_id = node_id_ceiling(flow, request.client_max_node_id)
     return NotebookPushResponse(
         history=history,
-        code_fingerprint=code_fingerprint(flow),
+        code_fingerprint=fingerprint,
         max_node_id=max_node_id,
         node_ids_by_cell=result.node_ids_by_cell,
         warnings=plan.warnings,
+        applied=applied,
+        deletions=plan.deletions,
+        parameter_changes=plan.parameter_changes,
     )
 
 

@@ -34,20 +34,8 @@ export interface NotebookExecutor {
   lspContext?: () => LspContext;
 }
 
-/** Rendered cells carry a status; anything but `code` is a locked placeholder with a reason. */
-export type NotebookCellStatus = "code" | "placeholder" | "unsupported";
-
-export interface NotebookViewCell extends NotebookCell {
-  status?: NotebookCellStatus;
-  reason?: string | null;
-}
-
-export const isLockedCell = (cell: NotebookViewCell): boolean =>
-  !!cell.status && cell.status !== "code";
-
-/** Locked cells never run, so they join the runtime as non-python members the batch skips. */
-export const runtimeRefs = (cells: NotebookViewCell[]): RuntimeCellRef[] =>
-  cells.map((c) => ({ id: c.id, isPython: !isLockedCell(c) }));
+export const runtimeRefs = (cells: NotebookCell[]): RuntimeCellRef[] =>
+  cells.map((c) => ({ id: c.id, isPython: true }));
 
 export interface KernelExecutorOptions {
   getKernelId: () => string | null;
@@ -108,7 +96,7 @@ export interface RunNotebookCellArgs {
   ownerId: string;
   executor: NotebookExecutor;
   /** The cell list at submission. */
-  cells: NotebookViewCell[];
+  cells: NotebookCell[];
   cellId: string;
   nextExecutionCount: () => number;
   onOutput: (cellId: string, output: CellOutput) => void;
@@ -116,15 +104,15 @@ export interface RunNotebookCellArgs {
 
 /**
  * Runs one cell through the executor and reports its output, unless a newer run or a session
- * reset superseded it in the meantime. Resolves whether the cell succeeded; an empty, missing or
- * locked cell counts as done so a batch carries on past it.
+ * reset superseded it in the meantime. Resolves whether the cell succeeded; an empty or missing
+ * cell counts as done so a batch carries on past it.
  */
 export async function runNotebookCell(args: RunNotebookCellArgs): Promise<boolean> {
   const { ownerId, executor, cellId } = args;
   if (!executor.canRun.value) return false;
   // Captured at start so an edit during the run cannot change what was sent.
   const cell = args.cells.find((c) => c.id === cellId);
-  if (!cell || isLockedCell(cell)) return true;
+  if (!cell) return true;
   const code = cell.code;
   if (!code.trim()) return true;
 

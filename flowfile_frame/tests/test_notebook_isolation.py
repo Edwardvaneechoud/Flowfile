@@ -1,6 +1,6 @@
 """Notebook build mode is local to the context that entered it, and a run leaves nothing behind.
 
-Another thread never sees the mode, its user or its kernel refusal; the cell namespace's ``fl``
+Another thread never sees the mode, its user or its kernel refusal; the cell namespace's ``ff``
 is built without importing ``flowfile``; and a seed plus a clean run leave no flow logger, log
 file, ``linecache`` entry, snapshot or node-store entry behind.
 """
@@ -28,14 +28,14 @@ from shared.storage_config import storage
 from test_utils.imports import unimportable
 
 DATA = {"a": [1, 2, 3], "g": ["x", "x", "y"]}
-CELLS = [("a", "df = fl.from_dict({'a': [1, 2, 3]})"), ("b", "big = df.filter(fl.col('a') > 1)")]
+CELLS = [("a", "df = ff.from_dict({'a': [1, 2, 3]})"), ("b", "big = df.filter(ff.col('a') > 1)")]
 WEB_UI_NAMES = {"open_graph_in_editor", "start_web_ui"}
 CELL_CLASS = (
-    "class CellNode(fl.node_designer.CustomNodeBase):\n"
+    "class CellNode(ff.node_designer.CustomNodeBase):\n"
     "    node_name: str = 'Notebook Cell Node'\n"
     "    def process(self, *inputs):\n"
     "        return inputs[0]\n"
-    "placed = fl.CustomNode(CellNode, fl.from_dict({'a': [1]}))\n"
+    "placed = ff.CustomNode(CellNode, ff.from_dict({'a': [1]}))\n"
 )
 
 
@@ -157,12 +157,12 @@ def test_the_cell_namespace_is_the_fl_surface_without_importing_flowfile():
     expected = set(flowfile.__all__) - WEB_UI_NAMES
     assert len(expected) == len(flowfile.__all__) - len(WEB_UI_NAMES)
     with unimportable("flowfile") as attempts:
-        fl = new_namespace()["fl"]
+        ff = new_namespace()["ff"]
         result = clean_run(CELLS, ceiling=0, user_id=1, executor=exec_cell)
     assert attempts == []
     assert result["ok"], result.get("error")
-    assert {name for name in vars(fl) if not name.startswith("__")} == expected
-    assert all(getattr(fl, name) is getattr(flowfile, name) for name in expected)
+    assert {name for name in vars(ff) if not name.startswith("__")} == expected
+    assert all(getattr(ff, name) is getattr(flowfile, name) for name in expected)
 
 
 def test_clean_run_needs_a_user():
@@ -215,7 +215,7 @@ def test_a_seed_and_clean_run_leave_no_logger_log_file_linecache_entry_or_snapsh
     big = source.filter(ff.col("a") > 1)
     payload = canvas.get_flowfile_data().model_dump(mode="json")
     loggers, logs, cell_files = set(FlowLogger._instances), _flow_logs(), _cell_files()
-    cells = [("s", f"src = fl.from_dict({DATA})"), ("c", f"kept = fl.canvas_node({big.node_id}, src)")]
+    cells = [("s", f"src = ff.from_dict({DATA})"), ("c", f"kept = ff.canvas_node({big.node_id}, src)")]
     with notebook.RUN_LOCK:
         try:
             seed_session(payload, [], {}, {}, user_id=1)

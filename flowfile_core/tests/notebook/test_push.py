@@ -5,14 +5,22 @@ The clean run goes through the production runner (``runner``) or, where a test s
 """
 
 import re
+import sys
+from contextlib import contextmanager
 
 import pytest
 
-import flowfile as fl
+import flowfile as ff
+from flowfile_core import events
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.models import FlowRun
+from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.notebook import bridge
-from flowfile_core.notebook.push import push_refusals
+from flowfile_core.notebook.push import needs_confirmation, refused_nodes
+from flowfile_core.notebook.reconcile import ReconcilePlan
 from flowfile_core.notebook.render import code_fingerprint, render
 from flowfile_core.notebook.runner import NotebookRunner
+from flowfile_core.routes import routes as editor_routes
 from flowfile_core.schemas import input_schema
 from tests.notebook.conftest import ExecRunner
 
@@ -101,6 +109,92 @@ def test_push_refuses_a_stale_fingerprint_with_the_live_one(runner, orders_flow,
     assert response.json()["detail"]["code_fingerprint"] == code_fingerprint(orders_flow)
 
 
+def test_a_run_sync_that_deletes_is_held_until_pushed_without_a_trigger(runner, orders_flow, client_as):
+    client = client_as(OWNER_ID)
+    graph = orders_flow
+    formula = _node_of_type(graph, "formula").node_id
+    formula_cell = _cell_of(graph, formula)
+    fingerprint = code_fingerprint(graph)
+    undo_before = client.get("/editor/history_status/", params={"flow_id": graph.flow_id}).json()["undo_count"]
+    body = _body(graph, lambda cells: {k: v for k, v in cells.items() if k != formula_cell})
+
+    held = client.post("/editor/notebook/push/", json={**body, "trigger": "run"})
+    assert held.status_code == 200, held.text
+    assert held.json()["applied"] is False and formula in held.json()["deletions"]
+    assert any(f"Deletes node {formula}" in w for w in held.json()["warnings"])
+    assert held.json()["code_fingerprint"] == code_fingerprint(graph) == fingerprint
+    assert held.json()["history"]["undo_count"] == undo_before
+    assert graph.get_node(formula) is not None
+
+    applied = client.post("/editor/notebook/push/", json=body)
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["applied"] is True and formula in applied.json()["deletions"]
+    assert graph.get_node(formula) is None
+    assert applied.json()["code_fingerprint"] == code_fingerprint(graph) != fingerprint
+    assert applied.json()["history"]["undo_count"] == undo_before + 1
+
+
+def test_only_an_applied_push_publishes_notebook_pushed(runner, orders_flow, client_as, monkeypatch):
+    published = []
+    monkeypatch.setitem(events._handlers, "notebook_pushed", [lambda: published.append(1)])
+    client = client_as(OWNER_ID)
+    formula_cell = _cell_of(orders_flow, _node_of_type(orders_flow, "formula").node_id)
+    body = _body(orders_flow, lambda cells: {k: v for k, v in cells.items() if k != formula_cell})
+
+    assert client.post("/editor/notebook/push/", json={**body, "trigger": "run"}).json()["applied"] is False
+    assert published == []
+    assert client.post("/editor/notebook/push/", json=body).json()["applied"] is True
+    assert published == [1]
+
+
+def test_an_applied_push_answers_the_fingerprint_it_left_under_the_edit_lock(
+    runner, orders_flow, client_as, monkeypatch
+):
+    graph = orders_flow
+    body = _body(graph, _raise_threshold, changed=[_cell_of(graph, _node_of_type(graph, "filter").node_id)])
+    left_under_lock = []
+    edit_flow = editor_routes.edit_flow
+
+    @contextmanager
+    def another_tab_edits_after_the_lock(flow, description, *args, **kwargs):
+        with edit_flow(flow, description, *args, **kwargs) as txn:
+            yield txn
+        if description == "Push notebook":
+            left_under_lock.append(code_fingerprint(graph))
+            graph.flow_settings.parameters = [FlowParameter(name="other_tab", default_value="1")]
+
+    monkeypatch.setattr(editor_routes, "edit_flow", another_tab_edits_after_the_lock)
+    response = client_as(OWNER_ID).post("/editor/notebook/push/", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["code_fingerprint"] == left_under_lock[0] != code_fingerprint(graph)
+
+
+def test_a_push_with_nothing_to_review_applies_in_one_call(runner, orders_flow, client_as):
+    graph = orders_flow
+    filt = _node_of_type(graph, "filter")
+    body = {**_body(graph, _raise_threshold, changed=[_cell_of(graph, filt.node_id)]), "trigger": "push"}
+
+    response = client_as(OWNER_ID).post("/editor/notebook/push/", json=body)
+    assert response.status_code == 200, response.text
+    pushed = response.json()
+    assert (pushed["applied"], pushed["deletions"], pushed["parameter_changes"], pushed["warnings"]) == (
+        True,
+        [],
+        False,
+        [],
+    )
+    assert "20" in graph.get_node(filt.node_id).setting_input.filter_input.advanced_filter
+
+
+def test_a_run_reviews_only_deletions_and_a_push_anything_to_review():
+    warned = ReconcilePlan(warnings=["Changes the flow parameters; undo does not restore them."])
+    assert not needs_confirmation(warned, "run") and needs_confirmation(warned, "push")
+    assert needs_confirmation(ReconcilePlan(deletions=[1]), "run")
+    assert needs_confirmation(ReconcilePlan(parameter_changes=True), "push")
+    assert not needs_confirmation(ReconcilePlan(parameter_changes=True), "run")
+    assert not needs_confirmation(ReconcilePlan(), "push")
+
+
 def _with_cell(code, cell_id="node-99"):
     def edit(cells):
         return {**cells, cell_id: code}
@@ -138,7 +232,7 @@ def test_push_refuses_a_cell_outside_the_dialect_and_leaves_the_canvas(runner, o
 
 
 def test_push_refuses_an_in_memory_lazy_frame(exec_runner, orders_flow, client_as):
-    code = "import polars as pl\nextra = fl.FlowFrame(pl.LazyFrame({'x': [1]}))"
+    code = "import polars as pl\nextra = ff.FlowFrame(pl.LazyFrame({'x': [1]}))"
 
     response = _push(client_as(OWNER_ID), orders_flow, code)
     assert response.status_code == 422, response.text
@@ -148,7 +242,7 @@ def test_push_refuses_an_in_memory_lazy_frame(exec_runner, orders_flow, client_a
 
 
 def test_an_in_memory_lazy_frame_needs_a_kernel_in_core(runner, orders_flow, client_as):
-    code = "import polars as pl\nextra = fl.FlowFrame(pl.LazyFrame({'x': [1]}))"
+    code = "import polars as pl\nextra = ff.FlowFrame(pl.LazyFrame({'x': [1]}))"
 
     response = _push(client_as(OWNER_ID), orders_flow, code)
     assert response.status_code == 422, response.text
@@ -157,16 +251,35 @@ def test_an_in_memory_lazy_frame_needs_a_kernel_in_core(runner, orders_flow, cli
     assert "needs a kernel" in detail["message"]
 
 
-FAILING_CHAIN = """extra = fl.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1]]})
+@pytest.mark.parametrize("code", ["extra = ff.LazyFrame()", "extra = ff.DataFrame(schema={'x': ff.Int64})"])
+def test_a_frame_without_data_is_refused_as_an_in_memory_lazy_frame(runner_kind, request, orders_flow, client_as, code):
+    request.getfixturevalue("runner" if runner_kind == "interpreting" else "exec_runner")
+    fingerprint = code_fingerprint(orders_flow)
+
+    response = _push(client_as(OWNER_ID), orders_flow, code)
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert (detail["cell_id"], detail["line"], detail["kind"]) == ("node-99", None, "refused")
+    assert "LazyFrame" in detail["message"]
+    assert code_fingerprint(orders_flow) == fingerprint
+
+
+FAILING_CHAIN = """extra = ff.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1]]})
 out = (
-    extra.filter(fl.col('a') > 1)
+    extra.filter(ff.col('a') > 1)
     .join(extra, on='nope')
 )"""
+# 3.10 reports a method call with keywords on the call's first line, 3.11+ on the method name's line
+FAILING_CHAIN_LINE = 4 if sys.version_info >= (3, 11) else 3
 
 
 @pytest.mark.parametrize(
     "code, line",
-    [(FAILING_CHAIN, 4), ("extra = missing_frame.filter(fl.col('a') > 1)", 1), ("threshold = 8\nx = (", 2)],
+    [
+        (FAILING_CHAIN, FAILING_CHAIN_LINE),
+        ("extra = missing_frame.filter(ff.col('a') > 1)", 1),
+        ("threshold = 8\nx = (", 2),
+    ],
     ids=["frame_error_in_a_chain", "undefined_name", "syntax_error"],
 )
 def test_a_failing_call_reports_its_cell_line_and_message_like_exec(orders_flow, client_as, code, line):
@@ -219,12 +332,12 @@ def test_refusals_name_custom_classes_inline_rest_secrets_and_lazy_frames():
             },
         ]
     }
-    refusals = push_refusals(live, session, installed=lambda node_type: False)
+    refusals = [m for m, _ in refused_nodes(live, session, installed=lambda node_type: False)]
     assert len(refusals) == 3
     assert "Node 1" in refusals[0] and "LazyFrame" in refusals[0]
-    assert "cell_node" in refusals[1] and "fl.custom_nodes.install" in refusals[1]
+    assert "cell_node" in refusals[1] and "ff.custom_nodes.install" in refusals[1]
     assert "Node 3" in refusals[2] and "secret_name" in refusals[2]
-    assert push_refusals(live, session, installed=lambda node_type: True)[1:] == refusals[2:]
+    assert [m for m, _ in refused_nodes(live, session, installed=lambda node_type: True)][1:] == refusals[2:]
 
 
 def test_refusals_accept_a_custom_node_file_written_after_the_scan(tmp_path, monkeypatch):
@@ -243,7 +356,7 @@ def test_refusals_accept_a_custom_node_file_written_after_the_scan(tmp_path, mon
     )
     session = {"nodes": [{"id": 5, "type": "late_push_node", "setting_input": {"is_user_defined": True}}]}
 
-    assert push_refusals({"nodes": []}, session) == []
+    assert refused_nodes({"nodes": []}, session) == []
 
 
 BROKEN_NODE_FILES = {
@@ -280,7 +393,7 @@ def test_a_custom_node_file_that_does_not_load_counts_as_not_installed(tmp_path,
         assert entry.error
     session = {"nodes": [{"id": 5, "type": node_type, "setting_input": {"is_user_defined": True}}]}
 
-    refusals = push_refusals({"nodes": []}, session)
+    refusals = [m for m, _ in refused_nodes({"nodes": []}, session)]
     assert len(refusals) == 1 and "Node 5" in refusals[0] and node_type in refusals[0]
 
 
@@ -298,7 +411,7 @@ def test_push_is_503_without_a_runner(orders_flow, client_as):
 def test_an_inline_file_database_syncs_without_the_password_it_does_not_use(
     runner, open_as, client_as, tmp_path, database_type, status
 ):
-    graph = fl.create_flow_graph()
+    graph = ff.create_flow_graph()
     connection = input_schema.DatabaseConnection(
         database_type=database_type, database=str(tmp_path / "orders.db"), password_ref="gone"
     )
@@ -326,7 +439,7 @@ def test_a_described_catalog_reader_renders_its_description_and_syncs_back_keepi
 ):
     demo = dict(notebook_corpus)["demo"]
     sales = next(node.setting_input for node in demo.nodes if getattr(node.setting_input, "catalog_table_name", None))
-    frame = fl.read_catalog_table(
+    frame = ff.read_catalog_table(
         sales.catalog_table_name, namespace_id=sales.catalog_namespace_id, description="sales data"
     )
     graph = open_as(frame.flow_graph)
@@ -344,7 +457,7 @@ def test_a_described_catalog_reader_renders_its_description_and_syncs_back_keepi
 
 
 def test_user_2_cannot_push_plan_or_run_user_3s_flow(runner, open_as, client_as):
-    graph = open_as(fl.from_dict({"a": [1, 2]}).filter(fl.col("a") > 1).flow_graph, user_id=3)
+    graph = open_as(ff.from_dict({"a": [1, 2]}).filter(ff.col("a") > 1).flow_graph, user_id=3)
     fingerprint = code_fingerprint(graph)
     body = _body(graph, _raise_threshold)
     intruder = client_as(2)
@@ -358,10 +471,10 @@ def test_user_2_cannot_push_plan_or_run_user_3s_flow(runner, open_as, client_as)
 
 
 def _gated_writer(tmp_path, default):
-    mode = fl.Parameter("mode", default=default, type="enum", enum_values=["full", "quick"])
-    source = fl.from_dict({"region": ["N", "S"], "amount": [1.0, 2.0]})
-    fl.add_flow_parameter(source, mode)
-    gate = fl.Gate(source, parameter=mode, value="full")
+    mode = ff.Parameter("mode", default=default, type="enum", enum_values=["full", "quick"])
+    source = ff.from_dict({"region": ["N", "S"], "amount": [1.0, 2.0]})
+    ff.add_flow_parameter(source, mode)
+    gate = ff.Gate(source, parameter=mode, value="full")
     target = tmp_path / f"written_{default}.csv"
     gate.then.write_csv(str(target))
     return gate.then.flow_graph, target
@@ -384,8 +497,8 @@ def test_run_lineage_honours_a_closed_gate(open_as, client_as, tmp_path, default
 
 
 def test_run_lineage_runs_only_the_ancestors(open_as, client_as):
-    source = fl.from_dict({"a": [1, 2, 3]})
-    kept = source.filter(fl.col("a") > 1)
+    source = ff.from_dict({"a": [1, 2, 3]})
+    kept = source.filter(ff.col("a") > 1)
     source.sort("a")
     graph = open_as(kept.flow_graph)
     response = client_as(OWNER_ID).post(
@@ -400,20 +513,27 @@ def test_run_lineage_runs_only_the_ancestors(open_as, client_as):
         .json()["node_step_result"]
     }
     assert ran == {_node_of_type(graph, "manual_input").node_id, _node_of_type(graph, "filter").node_id}
+    with get_db_context() as db:
+        run = db.query(FlowRun).filter_by(flow_path=graph.flow_settings.path).one()
+        assert (run.success, run.nodes_completed, run.number_of_nodes) == (True, 2, 2)
 
 
 def test_set_flow_parameters_applies_outside_undo_and_rolls_back_with_the_batch(orders_flow, client_as):
     client = client_as(OWNER_ID)
     graph = orders_flow
+    graph.flow_settings.parameters = [FlowParameter(name="limit", default_value="1")]
+    fingerprint = code_fingerprint(graph)
     undo_before = client.get("/editor/history_status/", params={"flow_id": graph.flow_id}).json()["undo_count"]
     set_params = {"op": "set_flow_parameters", "parameters": [{"name": "limit", "default_value": "5"}]}
+    add_node = {"op": "add_node", "node_id": 99, "node_type": "sample"}
 
-    failing = [set_params, {"op": "delete_connection", "connection": _missing_connection()}]
+    failing = [set_params, add_node, {"op": "delete_connection", "connection": _missing_connection()}]
     response = client.post(
         "/editor/apply_operations/", json={"flow_id": graph.flow_id, "label": "x", "operations": failing}
     )
     assert response.status_code == 422, response.text
-    assert graph.flow_settings.parameters == []
+    assert [(p.name, p.default_value) for p in graph.flow_settings.parameters] == [("limit", "1")]
+    assert graph.get_node(99) is None and code_fingerprint(graph) == fingerprint
 
     response = client.post(
         "/editor/apply_operations/", json={"flow_id": graph.flow_id, "label": "x", "operations": [set_params]}

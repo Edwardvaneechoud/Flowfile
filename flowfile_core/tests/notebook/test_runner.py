@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-import flowfile as fl
+import flowfile as ff
 from flowfile_core import main
 from flowfile_core.notebook import allowlist, bridge
 from flowfile_core.notebook import runner as runner_module
@@ -38,11 +38,11 @@ def _request(graph, cells=None) -> bridge.CleanRunRequest:
 
 
 def _small_graph():
-    return fl.from_dict({"a": [1, 2, 3]}).filter(fl.col("a") > 1).flow_graph
+    return ff.from_dict({"a": [1, 2, 3]}).filter(ff.col("a") > 1).flow_graph
 
 
 def test_main_installs_the_notebook_runner_once_right_after_the_notebook_router():
-    tree = ast.parse(Path(main.__file__).read_text())
+    tree = ast.parse(Path(main.__file__).read_text(encoding="utf-8"))
     calls = [
         index
         for index, statement in enumerate(tree.body)
@@ -119,7 +119,7 @@ def test_the_runner_syncs_as_the_requesting_user_under_the_lock_on_one_thread(op
 @pytest.mark.parametrize("user_id", [0, -3, None, True, "1", 1.0])
 def test_the_runner_needs_the_requesting_users_id(user_id):
     with pytest.raises(TypeError, match="positive int"):
-        NotebookRunner().clean_run(user_id, 1, bridge.CleanRunRequest(cells=[("imports", "import flowfile as fl")]))
+        NotebookRunner().clean_run(user_id, 1, bridge.CleanRunRequest(cells=[("imports", "import flowfile as ff")]))
 
 
 def test_a_run_leaves_the_callers_snapshot_alone():
@@ -155,6 +155,26 @@ def test_a_request_over_a_bound_is_refused_before_any_cell_is_read(monkeypatch, 
     result = NotebookRunner().clean_run(NOTEBOOK_OWNER_ID, 1, bridge.CleanRunRequest(cells=cells))
     assert (result.kind, result.cell_id, result.line) == ("refused", cell_id, None)
     assert str(value) in result.error
+
+
+@pytest.mark.parametrize(
+    "provenance, message",
+    [
+        ({"a": [("read", 1), ("read", 2)], "b": [("filter", 3)]}, "more than 2 canvas nodes"),
+        ({"a": [("read", 1)], "b": [("read", 1)]}, "a canvas node twice"),
+        ({"a b": [("read", 1)]}, "a malformed cell id"),
+    ],
+)
+def test_a_provenance_over_its_bound_or_repeating_a_node_is_refused_before_any_cell_is_read(
+    monkeypatch, provenance, message
+):
+    _refuse_any_run(monkeypatch)
+    monkeypatch.setitem(allowlist.BOUNDS, "provenance_entries_per_request", 2)
+
+    request = bridge.CleanRunRequest(cells=[("a", "x = 1"), ("b", "y = 2")], provenance=provenance)
+    result = NotebookRunner().clean_run(NOTEBOOK_OWNER_ID, 1, request)
+    assert (result.kind, result.cell_id, result.line) == ("refused", None, None)
+    assert message in result.error
 
 
 def test_a_cell_that_is_not_valid_unicode_is_refused_with_its_id(monkeypatch):
@@ -199,6 +219,15 @@ def test_a_malformed_cell_id_is_refused_without_echoing_it(monkeypatch, cell_id)
     result = NotebookRunner().clean_run(NOTEBOOK_OWNER_ID, 1, bridge.CleanRunRequest(cells=[(cell_id, "x = 1")]))
     assert (result.kind, result.cell_id) == ("refused", None)
     assert result.error == "A cell id is 1 to 128 letters, digits or the characters _ . : -"
+
+
+def test_a_cell_id_listed_twice_is_refused_before_any_cell_is_read(monkeypatch):
+    _refuse_any_run(monkeypatch)
+
+    cells = [("a", "x = 1"), ("b", "y = 2"), ("a", "z = 3")]
+    result = NotebookRunner().clean_run(NOTEBOOK_OWNER_ID, 1, bridge.CleanRunRequest(cells=cells))
+    assert (result.kind, result.cell_id, result.line) == ("refused", None, None)
+    assert result.error == "The notebook lists a cell id twice"
 
 
 @pytest.mark.parametrize(

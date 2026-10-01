@@ -202,16 +202,16 @@ const POLARS_METHOD_ENTRIES: Completion[] = [
 
 // ─── Scoped completion sources ────────────────────────────────────────────────
 
-const FL_ENTRIES: Completion[] = flCompletions.fl.map((e) => ({
+const FL_ENTRIES: Completion[] = flCompletions.ff.map((e) => ({
   label: e.name,
   type: e.kind,
   detail: e.signature,
   info: e.doc_first_line,
 }));
 
-/** `fl.<name>` from the generated `flowfile.__all__` listing (`make fl_completions`). */
+/** `ff.<name>` from the generated `flowfile.__all__` listing (`make fl_completions`). */
 export const flModuleCompletions: CompletionSource = (context) => {
-  const match = context.matchBefore(/\bfl\.\w*$/);
+  const match = context.matchBefore(/\bff\.\w*$/);
   return match ? { from: match.from + 3, options: FL_ENTRIES, validFor: /^\w*$/ } : null;
 };
 

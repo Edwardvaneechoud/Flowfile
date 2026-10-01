@@ -1,5 +1,5 @@
-"""Docker-mode security regressions: dtype strings are data, editor routes are scoped to the
-caller's flow session, and authoring custom-node source is admin-only.
+"""Docker-mode security regressions: dtype strings are data, editor routes still look flows up without the
+caller's session (strict xfails), and authoring custom-node source is admin-only.
 
 The dtype probe is ``pl.Config.set_tbl_rows(7)``: harmless, but evaluating it writes
 ``POLARS_FMT_MAX_ROWS``, so an evaluated call is observable without running anything risky.
@@ -78,9 +78,6 @@ def _manual_input(client, flow_id: int, columns: list[dict], data: list[list]):
     )
 
 
-# ---------- 1. dtype strings are parsed, never evaluated ----------
-
-
 @pytest.mark.parametrize(
     "dtype",
     [
@@ -127,8 +124,8 @@ def test_codegen_dtype_expr_does_not_evaluate_calls(probe_env):
 
 
 def test_codegen_dtype_expr_keeps_emittable_forms():
-    assert _dtype_expr("Int64") == "fl.Int64"
-    assert _dtype_expr("Datetime(time_unit='us', time_zone=None)") == "fl.Datetime(time_unit='us', time_zone=None)"
+    assert _dtype_expr("Int64") == "ff.Int64"
+    assert _dtype_expr("Datetime(time_unit='us', time_zone=None)") == "ff.Datetime(time_unit='us', time_zone=None)"
     assert _dtype_expr("List(Int64)") is None
 
 
@@ -140,11 +137,7 @@ def test_dtype_string_via_update_settings_is_not_evaluated(users, client_for, ow
     assert _PROBE_ENV not in os.environ, "a non-admin's node settings evaluated a dtype string as code in core"
 
 
-# ---------- 2. editor routes scoped to the caller's flow session ----------
-
-_UNSCOPED = pytest.mark.xfail(
-    strict=True, reason="editor routes look flows up by id without the caller's session; fixed separately"
-)
+_UNSCOPED = pytest.mark.xfail(strict=True, reason="editor routes look flows up by id without the caller's session")
 
 
 @_UNSCOPED
@@ -176,8 +169,6 @@ def test_update_settings_not_writable_by_other_user(users, client_for, own_flow)
     )
     assert resp.status_code == 404, f"bob edited alice's flow: {resp.status_code} {resp.text[:200]}"
 
-
-# ---------- 3. custom-node authoring is admin-only ----------
 
 _MARKER_NODE = f'''
 import os

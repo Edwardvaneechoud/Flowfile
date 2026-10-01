@@ -1,37 +1,19 @@
 """Notebook build mode: the frame builds onto one session graph and never runs, writes or registers.
 
-A canvas notebook builds its cells against one graph (the *session graph*). While the mode is
-active:
+While the mode is active every implicit graph (a source without ``flow_graph=``, ``ff.Node``
+without inputs) is the session graph and a merge with any other graph is refused; every node
+``native.notebook_defers`` names is seeded instead of executed at build; calls that write at
+build, register a node type or run a flow raise ``NativeNodeError``; ``get_kernel_manager()``
+raises, schema prefetches are blocked and every decorated ``add_*`` first passes the checks of
+``flowfile_core.notebook.prechecks``. A *sync* (``sync=True``) also holds every node that would
+read, connect, walk, run code or need data to predict, and seeds it without running anything
+(``native.sync_seed_schemas``); the one read left is what the canvas reads to show a schema.
 
-- every implicit graph (a source without ``flow_graph=``, ``fl.Node`` without inputs) is the
-  session graph, so new sources never renumber canvas nodes, and a merge with any other graph
-  is refused;
-- every node ``native.notebook_defers`` names is seeded from its predicted schema
-  instead of executed at build (writers, subflows, kernel scripts, database / REST / Kafka
-  sources, ``pivot``, ``polars_code``, virtual and SQL-mode catalog readers);
-- in a *sync* (``sync=True``: a clean run, or a session entered from a canvas snapshot) every
-  node that would read, connect, walk, run code or need data to predict is held too, and
-  seeded without predicting (``native.sync_seed_schemas``);
-- no start node begins a background schema prefetch (``FlowNode.reset``), and every
-  decorated ``add_*`` first passes the path and connection checks of
-  ``flowfile_core.notebook.prechecks`` (a refusal is recorded like :func:`refuse`);
-- calls that write YAML, DB rows or files at build, register a node type, or run a flow raise
-  ``NativeNodeError`` (``register_flow``, ``RunFlow(<graph>, name=...)``,
-  ``fl.custom_nodes.install``, placing a custom node class that is neither installed nor
-  already registered in this process, the connection helpers, ``fl.open_graph_in_editor``, the
-  session graph's ``run_graph`` and ``collect()`` on a deferred frame);
-- ``flowfile_core.kernel.get_kernel_manager()`` raises, so nothing in the session reaches Docker;
-- ``add_flow_parameter`` on the session graph upserts.
-
-The mode is context-local (a ``ContextVar``): it holds for the thread or task that entered it,
-and for work that context starts in a copy of itself (schema callbacks), never for other
-threads or requests, which keep running as scripts. The node-id counter is the one process-wide
-piece; :data:`RUN_LOCK` serializes whole runs in a shared process. A mode owns what its run
-leaves behind (the canvas snapshot, its cells' ``linecache`` entries and, for a session graph
-it created, that graph's flow logger) and releases it in :func:`exit`.
-
-Scripts outside the mode are unchanged. This module imports no other ``flowfile_frame`` module
-at import time, so every frame module can import :func:`current` at module level.
+The mode is context-local (a ``ContextVar``): it holds for the context that entered it and for
+copies of that context (schema callbacks), never for other threads or requests. The node-id
+counter is the one process-wide piece; :data:`RUN_LOCK` serializes whole runs in a shared
+process. Scripts outside the mode are unchanged. This module imports no other ``flowfile_frame``
+module at import time, so every frame module can import :func:`current` at module level.
 """
 
 from __future__ import annotations
@@ -77,7 +59,7 @@ class NotebookMode:
     session graph; ``refusals`` every message raised through :func:`refuse`. Other notebook-mode
     errors (writer fallbacks, ``sink_*``, deferred ``collect()``, cross-graph merges, the refused
     ``run_graph`` and the kernel manager refusal) are raised directly and not recorded.
-    ``snapshot`` holds the canvas nodes ``fl.canvas_node`` adopts and a sync seeds from
+    ``snapshot`` holds the canvas nodes ``ff.canvas_node`` adopts and a sync seeds from
     (``notebook_cells.seed_session`` or ``enter_snapshot_session`` fills it), ``cell_files`` the
     ``linecache`` names of the cells run in the mode. ``owns_graph`` is set when :func:`enter`
     created the session graph. ``sync`` marks a sync; there ``expected`` maps a cell to the
@@ -112,19 +94,19 @@ class NotebookMode:
     ) -> None:
         self.graph = graph
         self.user_id = user_id
-        self.refusals: list[str] = []
-        self.provenance: list[tuple[str, str, int]] = []
-        self.snapshot: dict[int, Any] = {}
-        self.cell_files: list[str] = []
+        self.refusals = []
+        self.provenance = []
+        self.snapshot = {}
+        self.cell_files = []
         self.owns_graph = owns_graph
         self.sync = sync
-        self.expected: dict[str, list[tuple[str, int]]] = {}
-        self.cell_id: str | None = None
-        self.cell_nodes: list[int] = []
-        self.claimed: dict[int, int] = {}
-        self.column_less: set[int] = set()
-        self.unchecked: dict[int, tuple[str | None, str, str]] = {}
-        self.row_resolver: Callable[[Any], Any] | None = None
+        self.expected = {}
+        self.cell_id = None
+        self.cell_nodes = []
+        self.claimed = {}
+        self.column_less = set()
+        self.unchecked = {}
+        self.row_resolver = None
 
     def close(self) -> None:
         """Release what the mode's run left: the snapshot, the cells' ``linecache`` entries and an owned graph's logger.

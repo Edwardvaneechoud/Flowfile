@@ -25,7 +25,7 @@ class CleanRunRequest(BaseModel):
     ``cells`` are ``(cell_id, code)`` in notebook order; ``provenance`` maps a cell to the
     ``(node_type, canvas_id)`` pairs it rendered; ``ceiling`` is the id above which new nodes are
     numbered; ``snapshot`` is the seed payload ``{flowfile_data, parameters, names, schemas}``
-    that ``fl.canvas_node`` adopts from.
+    that ``ff.canvas_node`` adopts from.
     """
 
     cells: list[tuple[str, str]]

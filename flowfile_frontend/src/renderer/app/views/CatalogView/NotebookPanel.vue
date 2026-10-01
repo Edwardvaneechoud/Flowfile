@@ -430,7 +430,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, h, nextTick, onMounted, onBeforeUnmount, watch } from "vue";
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from "vue";
 import debounce from "lodash/debounce";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
@@ -438,18 +438,18 @@ import {
   useNotebookStore,
   cellNodeId,
   flowCellSyncState,
-  planReview,
   registerFlowNotebookHooks,
   cellErrorMark,
+  RERENDER_FAILED,
   SYNC_NEEDS_ADMIN,
 } from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
-import { catalogSaveErrorMessage } from "../../composables/saveError";
+import { catalogSaveErrorMessage, detailMessage } from "../../composables/saveError";
 import { KernelApi } from "../../api/kernel.api";
 import { NotebookApi } from "../../api/notebook.api";
 import { useEditorStore } from "../../stores/editor-store";
-import { useNodeStore } from "../../stores/column-store";
+import { useNodeStore } from "../../stores/node-store";
 import { useDrawerStore } from "../../stores/drawer-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useResultsStore } from "../../stores/results-store";
@@ -938,56 +938,52 @@ watch(
   { immediate: true },
 );
 
-const errorText = (e: any, fallback: string): string => {
-  const detail = e?.response?.data?.detail;
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) return detail.map((d) => d?.msg ?? String(d)).join("\n");
-  return detail?.message ?? e?.message ?? fallback;
-};
-
 async function openFlow() {
   const flowId = props.flowId!;
+  // A push or run can end after the user switched flows; the designer then shows another flow.
+  const onThisFlow = () => useFlowStore().flowId === flowId;
   unregisterFlowHooks = registerFlowNotebookHooks(flowId, {
     prepare: prepareFlowAction,
     clientMaxNodeId: currentNodeId,
     confirm: (plan, trigger) =>
       ElMessageBox.confirm(
-        h(
-          "div",
-          planReview(plan).map((line) => h("div", line)),
-        ),
+        plan.warnings.join("\n"),
         trigger === "push" ? "Push to the canvas?" : "Run deletes canvas nodes",
         {
           confirmButtonText: trigger === "push" ? "Push" : "Sync and run",
           cancelButtonText: "Cancel",
           type: "warning",
+          customClass: "nb-lines",
         },
       ).then(
         () => true,
         () => false,
       ),
     pushed: (result) => {
+      if (!onThisFlow()) return;
       seedNodeId(result.max_node_id);
       useFlowStore().requestReload();
     },
     runStarted: () => {
-      editorStore.isRunning = true;
+      if (onThisFlow()) editorStore.isRunning = true;
     },
     runEnded: (info) => {
-      editorStore.isRunning = false;
-      if (info) useResultsStore().insertRunResult(info);
+      if (onThisFlow()) editorStore.isRunning = false;
+      if (info) useResultsStore().insertRunResult(info, onThisFlow());
     },
   });
   try {
     await store.openFlowNotebook(flowId, `Flow ${flowId}`);
   } catch (e) {
-    ElMessage.error(errorText(e, "Could not render the notebook"));
+    ElMessage.error(detailMessage(e, "Could not render the notebook"));
   }
 }
 
 const refreshSoon = debounce(async () => {
   await whenMutationsIdle();
-  await store.refreshFlowNotebook(props.flowId!).catch(() => undefined);
+  await store.refreshFlowNotebook(props.flowId!).catch((e) => {
+    ElMessage.warning(detailMessage(e, RERENDER_FAILED));
+  });
 }, 400);
 
 // Canvas edits re-render the cells once the edit queue settles; layout moves keep the fingerprint.
@@ -1027,7 +1023,7 @@ watch(
   () => store.active?.notice,
   (notice) => {
     if (!props.flowId || !notice) return;
-    ElMessage({ type: notice.tone, message: notice.message });
+    ElMessage({ type: notice.tone, message: notice.message, customClass: "nb-lines" });
   },
 );
 
@@ -1052,6 +1048,8 @@ async function onPush() {
 /** Run a node cell (syncing first when needed), then show its node in the canvas preview. */
 async function previewOnCanvas(cellId: string) {
   if (!(await store.runFlowCell(cellId))) return;
+  // The user may have switched flows while the cell ran.
+  if (store.active?.flowId !== props.flowId || useFlowStore().flowId !== props.flowId) return;
   const nodeId = store.active?.nodeIds?.[cellId]?.at(-1);
   // The run can report the node gone, and the preview's data route 500s on a missing node.
   if (nodeId == null || !useFlowStore().vueFlowInstance?.findNode?.(String(nodeId))) return;
@@ -1722,5 +1720,13 @@ async function onDelete() {
 .nb-insert-zone--disabled {
   pointer-events: none;
   opacity: 0;
+}
+</style>
+
+<style>
+/* Sync confirmations and notices list one reason per line. */
+.nb-lines .el-message-box__message p,
+.nb-lines .el-message__content {
+  white-space: pre-line;
 }
 </style>

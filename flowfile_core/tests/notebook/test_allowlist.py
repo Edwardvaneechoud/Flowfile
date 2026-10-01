@@ -1,11 +1,14 @@
-"""The allowlist is complete and exact: every ``fl`` name has a verdict, every entry exists on its receiver,
+"""The allowlist is complete and exact: every ``ff`` name has a verdict, every entry exists on its receiver,
 no entry runs code or reaches data, every entry outside the corpus names a real exporter handler, and
-everything the exporter can emit is allowed or kept as formula text."""
+everything the exporter can emit is allowed or kept as formula text. The input-only table is exactly the
+frame's own pure transforms and node builders the render does not write, none of them a hazard, plus
+``ff.LazyFrame`` / ``ff.DataFrame``, which take Polars' constructor arguments only."""
 
 from __future__ import annotations
 
 import ast
 import importlib
+import inspect
 import json
 import re
 import typing
@@ -30,7 +33,7 @@ from flowfile_frame.expr import DateTimeMethods, StringMethods
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.gate import Gate
 from flowfile_frame.group_frame import _NATIVE_AGG_FUNCS, GroupByFrame
-from flowfile_frame.lazy_methods import PASSTHROUGH_METHODS
+from flowfile_frame.lazy_methods import PASSTHROUGH_METHODS, PURE_TRANSFORMS
 from flowfile_frame.notebook_cells import _CanvasNode
 from flowfile_frame.python_script import PythonScript, PythonScriptFunction
 from flowfile_frame.run_flow import RunFlow
@@ -42,7 +45,7 @@ WEB_UI_NAMES = {"open_graph_in_editor", "start_web_ui"}
 
 
 def test_every_fl_name_has_a_verdict():
-    completions = {entry["name"] for entry in json.loads(COMPLETIONS.read_text())["fl"]}
+    completions = {entry["name"] for entry in json.loads(COMPLETIONS.read_text(encoding="utf-8"))["ff"]}
     assert set(allowlist.FL_VERDICTS) == completions == set(_fl_namespace.__all__) | WEB_UI_NAMES
     allowed = {name for name, (verdict, _) in allowlist.FL_VERDICTS.items() if verdict == allowlist.ALLOW}
     assert allowed <= set(_fl_namespace.__all__)
@@ -97,6 +100,68 @@ def test_no_entry_runs_code_reaches_data_or_leaves_the_graph():
     assert {name for name in names if name.startswith("_")} == {"__call__"}
 
 
+FRAME_NODE_BUILDERS = frozenset(
+    {
+        "sink_csv", "sink_ipc", "sink_ndjson", "sql", "write_avro", "write_catalog_table", "write_csv_to_cloud_storage",
+        "write_database", "write_delta", "write_ipc", "write_json_to_cloud_storage", "write_ndjson",
+        "write_parquet_to_cloud_storage",
+    }
+)  # fmt: skip
+"""FlowFrame's own methods that place one wired SQL Query, Output or writer node and read nothing at build."""
+FRAME_OWN_TRANSFORMS = frozenset({"explode", "limit"})
+"""The input-only pure transforms FlowFrame writes itself instead of taking them from ``pl.LazyFrame``."""
+
+
+def _wrapped_polars_methods(names) -> set[str]:
+    """The ``names`` FlowFrame takes from ``pl.LazyFrame`` through the ``lazy_methods`` wrapper."""
+    return {
+        name
+        for name in names
+        if hasattr(pl.LazyFrame, name)
+        and getattr(getattr(FlowFrame, name, None), "__wrapped__", None) is getattr(pl.LazyFrame, name)
+    }
+
+
+def test_input_only_entries_are_the_frames_pure_transforms_and_node_builders():
+    frame = allowlist.INPUT_ONLY["FlowFrame"]
+    assert set(allowlist.INPUT_ONLY) == {"FlowFrame", "ff"} and set(frame.values()) == {allowlist.CALL}
+    assert set(frame) == (PURE_TRANSFORMS - set(allowlist.ALLOWLIST["FlowFrame"])) | FRAME_NODE_BUILDERS
+    wrapped = _wrapped_polars_methods(frame)
+    assert set(frame) - wrapped == FRAME_NODE_BUILDERS | FRAME_OWN_TRANSFORMS
+    assert FRAME_NODE_BUILDERS | FRAME_OWN_TRANSFORMS <= set(vars(FlowFrame))
+    for name in wrapped:
+        assert inspect.signature(getattr(pl.LazyFrame, name)).return_annotation in ("LazyFrame", pl.LazyFrame), name
+
+
+def test_the_input_only_fl_names_are_the_frame_aliases_taking_polars_constructor_arguments():
+    names = allowlist.INPUT_ONLY["ff"]
+    assert names == {"LazyFrame": allowlist.CALL, "DataFrame": allowlist.CALL}
+    assert all(getattr(_fl_namespace, name) is FlowFrame for name in names)
+    assert all(allowlist.FL_VERDICTS[name][0] == allowlist.REFUSE for name in names)
+    assert set(allowlist.DATA_ARGUMENTS) == {("ff", name) for name in names}
+    polars = set(inspect.signature(pl.DataFrame).parameters)
+    assert polars == set(inspect.signature(pl.LazyFrame).parameters)
+    frame = set(inspect.signature(FlowFrame.__new__).parameters)
+    for accepted in allowlist.DATA_ARGUMENTS.values():
+        assert accepted == polars & frame
+        assert accepted.isdisjoint({"flow_graph", "node_id", "parent_node_id", "output_handle", "deferred"})
+
+
+def test_no_input_only_entry_runs_code_reaches_data_or_leaves_the_graph():
+    frame = set(allowlist.INPUT_ONLY["FlowFrame"])
+    assert not frame & set(allowlist.ALLOWLIST["FlowFrame"])
+    assert not frame & set(PASSTHROUGH_METHODS)
+    hazards = {
+        "show", "collect_batches", "execute", "remote", "serialize", "deserialize", "sink_parquet", "sink_delta",
+        "sink_iceberg", "sink_batches", "inspect", "save_graph", "to_graph", "cache", "set_group", "group",
+        "get_node_settings", "pipe", "pipe_with_schema", "map_batches", "lazy", "clone", "set_sorted", "concat",
+        "join_asof", "join_where", "merge_sorted", "update", "with_context", "group_by_dynamic", "rolling",
+    }  # fmt: skip
+    assert not frame & hazards
+    assert not {name for name in frame if name.startswith(("collect", "_"))}
+    assert not _wrapped_polars_methods(name for name in frame if name.startswith("sink_"))
+
+
 def _resolve(handler: str):
     module_name, _, qualname = handler.partition(":")
     target = importlib.import_module(module_name)
@@ -106,16 +171,72 @@ def _resolve(handler: str):
 
 
 def _allowed_entries() -> set[tuple[str, str]]:
-    entries = {("fl", name) for name, (verdict, _) in allowlist.FL_VERDICTS.items() if verdict == allowlist.ALLOW}
+    entries = {("ff", name) for name, (verdict, _) in allowlist.FL_VERDICTS.items() if verdict == allowlist.ALLOW}
     entries |= {(kind, attr) for kind, table in allowlist.ALLOWLIST.items() for attr in table}
     entries |= {("import", module) for module, _ in allowlist.IMPORTS}
     entries |= {(f"from {module}", name) for module, names in allowlist.FROM_IMPORTS.items() for name in names}
     return entries | {("helper", name) for name in allowlist.HELPERS}
 
 
+_CG = "flowfile_core.flowfile.code_generator"
+_FF = f"{_CG}.code_generator:FlowGraphToFlowFrameConverter"
+_BASE = f"{_CG}.code_generator:FlowGraphCodeConverter"
+_CONNECTORS = f"{_CG}.connector_handlers:ConnectorHandlersMixin"
+_NATIVE = f"{_CG}.native_handlers:NativeHandlersMixin"
+_FILTER = f"{_CG}.expression_helpers:ExpressionHelpersMixin._create_basic_filter_expr"
+_WINDOWS = f"{_CG}.transform_handlers:TransformHandlersMixin._build_window_expr_code"
+_FORMULA = f"{_FF}._translate_to_ff_code"
+
+EMITTED_OUTSIDE_THE_CORPUS: dict[tuple[str, str], str] = {
+    **{
+        ("ff", name): f"{_CG}.native_handlers:_dtype_expr"
+        for name in allowlist._DTYPES
+        if name not in ("Boolean", "Float64", "Int32", "Int64", "Utf8")
+    },
+    ("ff", "when"): _WINDOWS,
+    ("ff", "read_csv"): f"{_BASE}._handle_csv_read_non_utf8",
+    ("ff", "list_files"): f"{_CONNECTORS}._handle_list_files",
+    ("ff", "read_database"): f"{_CONNECTORS}._handle_database_reader",
+    ("ff", "read_kafka"): f"{_FF}._handle_kafka_source",
+    ("ff", "read_api"): f"{_CONNECTORS}._handle_rest_api_reader",
+    ("ff", "read_from_cloud_storage"): f"{_FF}._handle_cloud_storage_reader",
+    ("ff", "read_catalog_sql"): f"{_CONNECTORS}._handle_catalog_sql_reader",
+    ("ff", "write_database"): f"{_CONNECTORS}._handle_database_writer",
+    ("ff", "write_to_cloud_storage"): f"{_FF}._handle_cloud_storage_writer",
+    ("datetime", "date"): f"{_CG}.expression_helpers:_temporal_literal",
+    ("datetime", "datetime"): f"{_CG}.expression_helpers:_temporal_literal",
+    ("FlowFrame", "drop"): f"{_BASE}._handle_select",
+    ("FlowFrame", "rename"): f"{_CG}.join_handlers:JoinHandlersMixin._apply_pre_join_transformations",
+    ("FlowFrame", "head"): f"{_FF}._handle_sample",
+    ("FlowFrame", "write_excel"): f"{_BASE}._handle_output_excel",
+    ("Expr", "median"): f"{_CG}.expression_helpers:ExpressionHelpersMixin._get_agg_function",
+    ("StringNS", "join"): f"{_CG}.expression_helpers:ExpressionHelpersMixin._get_agg_function",
+    **{("Expr", name): _FILTER for name in ("is_in", "is_null", "is_not_null", "not_", "str")},
+    **{("StringNS", name): _FILTER for name in ("contains", "starts_with", "ends_with")},
+    **{
+        ("Expr", name): _WINDOWS
+        for name in (*allowlist._WINDOW, *allowlist._CUMULATIVE, "rank", "fill_null", "then", "otherwise")
+    },
+    **{("Expr", name): _FORMULA for name in (*allowlist._FORMULA_EXPR, "dt")},
+    **{("StringNS", name): _FORMULA for name in allowlist._FORMULA_STR},
+    **{("DateTimeNS", name): _FORMULA for name in allowlist._FORMULA_DT},
+    ("NodeOutputs", "[]"): f"{_NATIVE}._bind_outputs",
+    ("CustomNodes", "[]"): f"{_NATIVE}._handle_user_defined",
+    ("CustomNodeFactory", "node"): f"{_NATIVE}._handle_user_defined",
+    ("ScriptFunction", "node"): f"{_NATIVE}._decorated_text",
+    ("reader", "__call__"): f"{_FF}._frame_reader",
+    ("helper", "_flowfile_expr_literal"): f"{_BASE}._gate_formula_arg",
+    ("import", "datetime"): f"{_CG}.expression_helpers:ExpressionHelpersMixin._create_basic_filter_expr",
+    ("import", "hashlib"): f"{_CG}.base:ConverterMixinBase._register_expr_stdlib_imports",
+    ("import", "json"): f"{_BASE}._mark_expr_literal_needed",
+    **{("from flowfile_frame", name): f"{_FF}._frame_reader" for name in allowlist._READERS},
+}
+"""Allowed entries no rendered corpus cell uses, each with the exporter handler (``module:qualname``) emitting it."""
+
+
 def test_every_entry_outside_the_corpus_names_a_real_exporter_handler():
-    assert set(allowlist.EMITTED_OUTSIDE_THE_CORPUS) <= _allowed_entries()
-    assert all(callable(_resolve(handler)) for handler in allowlist.EMITTED_OUTSIDE_THE_CORPUS.values())
+    assert set(EMITTED_OUTSIDE_THE_CORPUS) <= _allowed_entries()
+    assert all(callable(_resolve(handler)) for handler in EMITTED_OUTSIDE_THE_CORPUS.values())
 
 
 def test_argument_rules_name_allowed_entries_and_known_kinds():
@@ -152,17 +273,17 @@ KEPT_AS_FORMULA_TEXT = frozenset(
         ("DateTimeNS", "offset_by"),
         *(("StringNS", name) for name in ("count_matches", "find", "pad_end", "pad_start", "replace_many")),
         *(("StringNS", name) for name in ("slice", "split")),
-        *(("fl", name) for name in ("coalesce", "concat_list", "concat_str", "duration", "int_range")),
-        *(("fl", name) for name in ("max_horizontal", "min_horizontal")),
+        *(("ff", name) for name in ("coalesce", "concat_list", "concat_str", "duration", "int_range")),
+        *(("ff", name) for name in ("max_horizontal", "min_horizontal")),
     }
 )
 """What the formula translator emits outside the allowlist: hashing's ``lambda``, clock reads, ``elseif``
 chains and the rest; the notebook render keeps a formula using any of them as its formula text."""
-_MODULES = {"fl", "pl", "datetime", "hashlib"}
+_MODULES = {"ff", "pl", "datetime", "hashlib"}
 
 
 def _emitted(code: str) -> set[tuple[str, str]]:
-    """The ``(kind, attribute)`` of every attribute an ``fl`` snippet reads or calls outside a ``lambda``."""
+    """The ``(kind, attribute)`` of every attribute an ``ff`` snippet reads or calls outside a ``lambda``."""
 
     def receiver(node: ast.expr) -> str:
         if isinstance(node, ast.Name):
@@ -190,8 +311,8 @@ def _emitted(code: str) -> set[tuple[str, str]]:
 def _translations() -> dict[str, str]:
     """Every function the formula translator maps, applied to a column and literals, plus its conditional
     and membership forms, as the render writes them."""
-    arguments = ['fl.col("a")', "fl.lit(1)", "fl.lit(2)"]
-    snippets = {name: generate(arguments, prefix="fl") for name, generate in FUNCTION_CODE_GEN.items()}
+    arguments = ['ff.col("a")', "ff.lit(1)", "ff.lit(2)"]
+    snippets = {name: generate(arguments, prefix="ff") for name, generate in FUNCTION_CODE_GEN.items()}
     for formula in ("if [a] > 1 then 1 elseif [a] > 0 then 2 else 3 endif", "[a] in ([b], 1)", "[a] in (1, 2)"):
         snippets[formula] = _polars_code_to_flowframe(to_flowframe_code(formula), modules=("ff",))
     return snippets
@@ -202,7 +323,7 @@ def _handler_expressions() -> list[str]:
     converter = FlowGraphToFlowFrameConverter.__new__(FlowGraphToFlowFrameConverter)
     converter.imports = set()
     aggregations = set(re.findall(r'value: "(\w+)"', AGGREGATIONS.read_text())) | set(_NATIVE_AGG_FUNCS)
-    expressions = [f'fl.col("a").{converter._get_agg_function(agg)}' for agg in sorted(aggregations)]
+    expressions = [f'ff.col("a").{converter._get_agg_function(agg)}' for agg in sorted(aggregations)]
     for function in typing.get_args(transform_schema.WindowFunctionName):
         window = transform_schema.WindowFunctionInput(
             column="a", function=function, new_column_name="b", window_size=2, number_of_groups=2

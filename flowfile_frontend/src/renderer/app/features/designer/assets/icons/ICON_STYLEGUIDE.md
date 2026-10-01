@@ -137,7 +137,8 @@ white→transparent.)
 - **aggregate (indigo):** group_by=rows→1 · pivot=grid+rotate · unpivot=cols→stack ·
   record_count=brace+# · window_functions=bars in a window frame
 - **combine (violet):** join=venn · cross_join=3×3 dot grid · union=stacks merge ·
-  fuzzy_match=two nodes + ≈ · graph_solver=node graph · wait_for=hourglass
+  fuzzy_match=two nodes + ≈ · graph_solver=node graph · wait_for=hourglass ·
+  explode_hierarchy=indented tree (root box, elbow branches to nested boxes)
 - **output (navy):** output=tray+↓ · cloud_storage_writer=cloud+↑ · explore_data=bars+magnifier ·
   api_response={ }+→ · database_writer=cylinder+↑ · catalog_writer=book+write
 - **ml (amber):** train_model=graduation cap · apply_model=model box→row · evaluate_model=gauge ·

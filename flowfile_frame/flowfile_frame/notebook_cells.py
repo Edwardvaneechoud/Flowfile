@@ -71,7 +71,7 @@ SEEDED_NODE_TYPES: frozenset[str] = frozenset({"gate", "run_flow", "python_scrip
 KEPT_NODE_TYPES: frozenset[str] = frozenset({"gate", "run_flow", "python_script", "flow_input", "flow_output"})
 
 _REFERENCE = re.compile(r"^[a-z][a-z0-9_]*$")
-_NOT_CAPTURED: frozenset[str] = frozenset(keyword.kwlist) | frozenset(dir(builtins)) | {"fl", "pl", "main"}
+_NOT_CAPTURED: frozenset[str] = frozenset(keyword.kwlist) | frozenset(dir(builtins)) | {"ff", "pl", "main"}
 _CELL_RUNS = itertools.count(1)
 _CELL_OUTPUTS: ContextVar[list[dict[str, Any]] | None] = ContextVar("notebook_cell_outputs", default=None)
 
@@ -115,9 +115,9 @@ class CellResult:
 
     On a failure ``error`` is the traceback from the cell down when the cell ran as Python, else
     the message; ``message`` is the exception text alone (``traceback.format_exception_only``),
-    ``line`` the failing line (1-based within the cell: the line of the method name for a
-    call, as Python reports it), ``kind`` ``"needs_kernel"``, ``"refused"`` (a notebook-mode
-    refusal) or ``"error"``, and ``traceback`` the full traceback of the underlying exception.
+    ``line`` the failing line (1-based within the cell, as Python reports it), ``kind``
+    ``"needs_kernel"``, ``"refused"`` (a notebook-mode refusal) or ``"error"``, and
+    ``traceback`` the full traceback of the underlying exception.
     ``created`` lists ``(node_type, node_id)`` for every node the cell created, ``names`` the
     variables it bound or rebound, ``references`` the ``node_reference`` each name capture set,
     ``display`` the payload of the last expression (schema only for a frame) and ``outputs`` the
@@ -513,14 +513,14 @@ def canvas_node(node_id: int, *inputs: FlowFrame, output: str | FlowOutput | Non
     mode = notebook.current()
     if mode is None or not mode.snapshot:
         raise NativeNodeError(
-            "fl.canvas_node only works in a notebook session seeded from the canvas; "
-            "build the node with its fl.* call instead"
+            "ff.canvas_node only works in a notebook session seeded from the canvas; "
+            "build the node with its ff.* call instead"
         )
     snapshot = mode.snapshot.get(node_id)
     if snapshot is None:
         raise NativeNodeError(
             f"Canvas node {node_id} is not in this session's snapshot; reset the session to reseed it "
-            "from the canvas, or build the node with its fl.* call"
+            "from the canvas, or build the node with its ff.* call"
         )
     node = _CanvasNode(snapshot, inputs)
     if output is not None:
@@ -616,21 +616,21 @@ def display(value: Any) -> dict[str, Any] | None:
 
 
 def new_namespace() -> dict[str, Any]:
-    """A fresh cell namespace: ``fl``, ``pl``, ``display`` and ``flow`` (the session graph, when a mode is active).
+    """A fresh cell namespace: ``ff``, ``pl``, ``display`` and ``flow`` (the session graph, when a mode is active).
 
-    ``fl`` is a new module holding the names of ``flowfile.__all__`` except ``open_graph_in_editor``
+    ``ff`` is a new module holding the names of ``flowfile.__all__`` except ``open_graph_in_editor``
     and ``start_web_ui``, the same objects, taken from ``flowfile_frame`` so that ``flowfile``
     itself (whose import writes the process environment) is never imported.
     """
     from flowfile_frame import _fl_namespace
 
-    fl = ModuleType("flowfile", "The flowfile API of a notebook cell (``import flowfile as fl``).")
-    fl.__dict__.update({name: getattr(_fl_namespace, name) for name in _fl_namespace.__all__})
+    ff = ModuleType("flowfile", "The flowfile API of a notebook cell (``import flowfile as ff``).")
+    ff.__dict__.update({name: getattr(_fl_namespace, name) for name in _fl_namespace.__all__})
     mode = notebook.current()
     return {
         "__name__": "__main__",
         "__builtins__": builtins,
-        "fl": fl,
+        "ff": ff,
         "pl": pl,
         "display": display,
         "flow": mode.graph if mode is not None else None,
@@ -889,7 +889,7 @@ class _SeededNames(dict):
         if len(twin.inputs) > 1:
             raise NativeNodeError(
                 f"Canvas node {canvas_id} has several inputs and no cell builds it; "
-                f"build it in a cell, or with fl.canvas_node({canvas_id}, ...)"
+                f"build it in a cell, or with ff.canvas_node({canvas_id}, ...)"
             )
         inputs = []
         for source_id, handle in twin.inputs:

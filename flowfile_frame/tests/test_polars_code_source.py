@@ -1,4 +1,4 @@
-"""``fl.polars_code``: a Polars Code node over zero or more frames; with none it is a source node."""
+"""``ff.polars_code``: a Polars Code node over zero or more frames; with none it is a source node."""
 
 import polars as pl
 import pytest

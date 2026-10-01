@@ -38,13 +38,13 @@ from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.output_model import ProjectExportFile, ProjectExportManifest
 from flowfile_core.utils.utils import camel_case_to_snake_case
 
-# ParamType -> fl dtype for run-metadata casts; mirrors subflow._PARAM_TYPE_TO_PL.
-_PARAM_TYPE_TO_FL_EXPR = {
-    "string": "fl.String",
-    "enum": "fl.String",
-    "integer": "fl.Int64",
-    "float": "fl.Float64",
-    "boolean": "fl.Boolean",
+# ParamType -> ff dtype for run-metadata casts; mirrors subflow._PARAM_TYPE_TO_PL.
+_PARAM_TYPE_TO_FF_EXPR = {
+    "string": "ff.String",
+    "enum": "ff.String",
+    "integer": "ff.Int64",
+    "float": "ff.Float64",
+    "boolean": "ff.Boolean",
 }
 
 # ParamType -> Python annotation for generated function signatures.
@@ -247,7 +247,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         self._add_code(f"{outputs_var} = {module_stem}.run({call_args})")
         for index, name in enumerate(output_names):
             out_var = var_name if index == 0 else f"{var_name}_{name}"
-            self._add_code(f'{out_var} = fl.FlowFrame({outputs_var}["{name}"])')
+            self._add_code(f'{out_var} = ff.FlowFrame({outputs_var}["{name}"])')
             self.node_handle_var_mapping[(settings.node_id, f"output-{index}")] = out_var
         self._add_code("")
 
@@ -467,7 +467,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             exprs = self._metadata_exprs(
                 metadata_bindings, specs_by_name, lambda b: self._constant_literal(b, specs_by_name)
             )
-            exprs.append('fl.lit(1).cast(fl.UInt32).alias("run_index")')
+            exprs.append('ff.lit(1).cast(ff.UInt32).alias("run_index")')
             metadata_suffix = f".with_columns([{', '.join(exprs)}])"
         for index, name in enumerate(settings.output_slots):
             out_var = var_name if index == 0 else f"{var_name}_{name}"
@@ -513,7 +513,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
                 return self._constant_literal(binding, specs_by_name)
 
             exprs = self._metadata_exprs(metadata_bindings, specs_by_name, value_expr)
-            exprs.append(f'fl.lit({index_var}).cast(fl.UInt32).alias("run_index")')
+            exprs.append(f'ff.lit({index_var}).cast(ff.UInt32).alias("run_index")')
             item_template = f'{out_var_ref}["{{name}}"].with_columns([{", ".join(exprs)}])'
             iterator = (
                 f"for {index_var}, ({row_var}, {out_var_ref}) in "
@@ -526,7 +526,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         for index, name in enumerate(settings.output_slots):
             out_var = var_name if index == 0 else f"{var_name}_{name}"
             item = item_template.format(name=name)
-            self._add_code(f"{out_var} = fl.concat([")
+            self._add_code(f"{out_var} = ff.concat([")
             self._add_code(f"    {item}")
             self._add_code(f"    {iterator}")
             self._add_code('], how="diagonal_relaxed")')
@@ -539,9 +539,9 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         exprs = []
         for binding in bindings:
             spec = specs_by_name.get(binding.parameter_name)
-            dtype = _PARAM_TYPE_TO_FL_EXPR.get(spec.type if spec else "string", "fl.String")
+            dtype = _PARAM_TYPE_TO_FF_EXPR.get(spec.type if spec else "string", "ff.String")
             exprs.append(
-                f'fl.lit({value_expr(binding)}).cast({dtype}).alias("param_{binding.parameter_name}")'
+                f'ff.lit({value_expr(binding)}).cast({dtype}).alias("param_{binding.parameter_name}")'
             )
         return exprs
 
@@ -824,7 +824,7 @@ class SubflowModuleConverter(FlowGraphToProjectConverter):
         self._flow_output_names: dict[int, str] = {}
         self._input_args: dict[str, str] = {}
         used = {p.name for p in codegen_parameters(flow_graph.flow_settings.parameters)}
-        used |= {"fl", "pl"}
+        used |= {"ff", "pl"}
         for node in sorted(flow_graph.nodes, key=lambda n: n.node_id):
             if node.node_type != "flow_input" or not isinstance(node.setting_input, input_schema.NodeFlowInput):
                 continue
@@ -836,13 +836,13 @@ class SubflowModuleConverter(FlowGraphToProjectConverter):
                 self._input_args[name] = name
 
     def _function_def_line(self) -> str:
-        input_args = [f"{arg}: fl.FlowFrame | None = None" for arg in self._input_args.values()]
+        input_args = [f"{arg}: ff.FlowFrame | None = None" for arg in self._input_args.values()]
         param_args = [_param_arg(p) for p in self._codegen_params]
         if param_args:
             signature = ", ".join([*input_args, "*", *param_args])
         else:
             signature = ", ".join(input_args)
-        return f"def {self.function_name}({signature}) -> dict[str, fl.FlowFrame]:"
+        return f"def {self.function_name}({signature}) -> dict[str, ff.FlowFrame]:"
 
     def _append_module_epilogue(self, lines: list[str]) -> None:
         lines.append("")
@@ -861,8 +861,8 @@ class SubflowModuleConverter(FlowGraphToProjectConverter):
     def _sample_expression(self, settings: input_schema.NodeFlowInput) -> str:
         if settings.raw_data_format is not None and settings.raw_data_format.columns:
             # Public API only: from_raw_data coerces the dict into RawData via pydantic.
-            return f"fl.from_raw_data({settings.raw_data_format.model_dump()})"
-        return "fl.LazyFrame()"
+            return f"ff.from_raw_data({settings.raw_data_format.model_dump()})"
+        return "ff.LazyFrame()"
 
     def _handle_flow_output(
         self, settings: input_schema.NodeFlowOutput, var_name: str, input_vars: dict[str, str]

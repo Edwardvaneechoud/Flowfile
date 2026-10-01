@@ -21,9 +21,9 @@ def client(client_as, kernel_sim):
 @pytest.fixture
 def coded_flow(open_as):
     """A flow whose last node is a Polars Code node: always deferred in a session, so its rows need the canvas."""
-    import flowfile as fl
+    import flowfile as ff
 
-    orders = fl.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
+    orders = ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
     return open_as(orders.polars_code("input_df.with_columns(pl.col('amount') * 10)").flow_graph)
 
 
@@ -82,11 +82,11 @@ def test_a_reset_session_reuses_the_canvas_file(coded_flow, client, kernel_sim):
 
 def test_a_new_frame_on_a_deferred_canvas_node_computes_here_on_the_canvas_rows(coded_flow, client, kernel_sim):
     node_id = _coded_id(coded_flow)
-    cell = _bind(node_id) + "big = coded.filter(fl.col('amount') > 100)\ndisplay(big)"
+    cell = _bind(node_id) + "big = coded.filter(ff.col('amount') > 100)\ndisplay(big)"
     shown = _execute(client, coded_flow, kernel_sim, cell)
     assert shown["success"], shown
     assert len(_rows(shown)) == 2 and len(kernel_sim.node_results) == 1, shown["display_outputs"]
-    later = _execute(client, coded_flow, kernel_sim, "print(big.with_columns(x=fl.lit(1)).collect().height)")
+    later = _execute(client, coded_flow, kernel_sim, "print(big.with_columns(x=ff.lit(1)).collect().height)")
     assert later["success"] and later["stdout"].strip() == "2", later
     assert len(kernel_sim.node_results) == 1
 
@@ -118,14 +118,14 @@ def test_a_running_flow_is_refused_with_a_message(coded_flow, client, kernel_sim
 @pytest.fixture
 def hidden_csv(open_as, tmp_path, monkeypatch):
     """Opens a flow built on a CSV the kernel cannot see: its folder maps to a kernel folder that does not exist."""
-    import flowfile as fl
+    import flowfile as ff
 
     folder = tmp_path / "host_data"
     folder.mkdir()
     path = folder / "orders.csv"
     path.write_text("id,amount\n1,10\n2,20\n3,30\n")
     monkeypatch.setenv("FLOWFILE_NOTEBOOK_MOUNTS", json.dumps({str(folder): str(tmp_path / "not_mounted")}))
-    return lambda build: open_as(build(fl.read_csv(str(path))).flow_graph)
+    return lambda build: open_as(build(ff.read_csv(str(path))).flow_graph)
 
 
 @pytest.fixture
@@ -151,7 +151,7 @@ def test_a_new_read_of_a_file_the_kernel_cannot_see_has_no_columns_and_names_the
 ):
     other = tmp_path / "host_data" / "other.csv"
     other.write_text("a\n1\n")
-    result = _execute(client, hidden_csv_flow, kernel_sim, f"new = fl.read_csv({str(other)!r})\ndisplay(new)")
+    result = _execute(client, hidden_csv_flow, kernel_sim, f"new = ff.read_csv({str(other)!r})\ndisplay(new)")
     assert result["success"], result
     text = next(out["data"] for out in result["display_outputs"] if out["mime_type"] == "text/plain")
     assert "Folders this kernel can read" in text and "push, then it runs on the canvas" in text, text
@@ -165,9 +165,9 @@ def test_an_unedited_push_through_the_kernel_of_a_file_it_cannot_see_changes_not
     from flowfile_core.notebook.render import render
     from tests.notebook.conftest import cell_provenance
 
-    import flowfile as fl
+    import flowfile as ff
 
-    hidden_csv_flow = hidden_csv(lambda source: source.filter(fl.col("amount") > 10))
+    hidden_csv_flow = hidden_csv(lambda source: source.filter(ff.col("amount") > 10))
     owner = PydanticUser(username="nb_kernel", id=NOTEBOOK_OWNER_ID, disabled=False, is_admin=True)
     rendering = render(hidden_csv_flow)
     request = NotebookPushRequest(
@@ -188,14 +188,14 @@ def _rows(result: dict) -> list:
 
 
 def test_rerunning_the_read_of_a_file_the_kernel_cannot_see_keeps_the_canvas_rows(hidden_csv, client, kernel_sim):
-    import flowfile as fl
+    import flowfile as ff
 
-    flow = hidden_csv(lambda source: source.filter(fl.col("amount") > 10))
+    flow = hidden_csv(lambda source: source.filter(ff.col("amount") > 10))
     path = next(node.setting_input.received_file.path for node in flow.nodes if node.node_type == "read")
-    source = f"src = fl.read_csv({path!r})"
+    source = f"src = ff.read_csv({path!r})"
     assert _execute(client, flow, kernel_sim, source)["success"]
     assert _execute(client, flow, kernel_sim, source)["success"]
-    filtered = _execute(client, flow, kernel_sim, "big = src.filter(fl.col('amount') > 10)")
+    filtered = _execute(client, flow, kernel_sim, "big = src.filter(ff.col('amount') > 10)")
     assert filtered["success"], filtered
     assert len(_rows(_execute(client, flow, kernel_sim, "display(src)"))) == 3
     assert len(_rows(_execute(client, flow, kernel_sim, "display(big)"))) == 2
@@ -204,9 +204,9 @@ def test_rerunning_the_read_of_a_file_the_kernel_cannot_see_keeps_the_canvas_row
 def test_run_all_of_a_flow_on_a_file_the_kernel_cannot_see_shows_the_canvas_rows(hidden_csv, client, kernel_sim):
     from flowfile_core.notebook.render import render
 
-    import flowfile as fl
+    import flowfile as ff
 
-    flow = hidden_csv(lambda source: source.filter(fl.col("amount") > 10))
+    flow = hidden_csv(lambda source: source.filter(ff.col("amount") > 10))
     cells = [cell for cell in render(flow).cells if cell.kind in ("imports", "node")]
     for cell in cells:
         result = _execute(client, flow, kernel_sim, cell.code)
@@ -267,7 +267,7 @@ def test_run_all_of_an_editor_built_read_and_filter_the_kernel_cannot_see(editor
         result = _execute(client, flow, kernel_sim, cell.code)
         assert result["success"], (cell.code, result)
     name = cells[-1].code.split("=", 1)[0].strip()
-    cell = f"priced = {name}.with_columns(fl.col('quantity') * 2)\ndisplay(priced)"
+    cell = f"priced = {name}.with_columns(ff.col('quantity') * 2)\ndisplay(priced)"
     priced = _execute(client, flow, kernel_sim, cell)
     assert priced["success"], priced
     assert len(_rows(priced)) == 5, _table(priced)
@@ -276,18 +276,18 @@ def test_run_all_of_an_editor_built_read_and_filter_the_kernel_cannot_see(editor
 def test_two_reads_of_files_the_kernel_cannot_see_each_take_their_own_canvas_rows(
     open_as, tmp_path, monkeypatch, client, kernel_sim
 ):
-    import flowfile as fl
+    import flowfile as ff
 
     folder = tmp_path / "host_data"
     folder.mkdir()
     first, second = folder / "a.csv", folder / "b.csv"
     first.write_text("x\n1\n")
     second.write_text("y\n2\n3\n")
-    source = fl.read_csv(str(first))
-    fl.read_csv(str(second), flow_graph=source.flow_graph)
+    source = ff.read_csv(str(first))
+    ff.read_csv(str(second), flow_graph=source.flow_graph)
     flow = open_as(source.flow_graph)
     monkeypatch.setenv("FLOWFILE_NOTEBOOK_MOUNTS", json.dumps({str(folder): str(tmp_path / "not_mounted")}))
-    cell = f"a = fl.read_csv({str(first)!r})\nb = fl.read_csv({str(second)!r})"
+    cell = f"a = ff.read_csv({str(first)!r})\nb = ff.read_csv({str(second)!r})"
     assert _execute(client, flow, kernel_sim, cell)["success"]
     assert _table(_execute(client, flow, kernel_sim, "display(a)"))["columns"] == ["x"]
     assert len(_rows(_execute(client, flow, kernel_sim, "display(b)"))) == 2
@@ -298,7 +298,7 @@ LOOP_CELL = """import re
 priced = filtered_2
 for name in priced.columns:
     if re.search(r"quantity$", name):
-        priced = priced.with_columns((fl.col(name) * 2).alias(f"{name}_doubled"))
+        priced = priced.with_columns((ff.col(name) * 2).alias(f"{name}_doubled"))
 print(priced.columns)
 display(priced)
 """
@@ -346,7 +346,7 @@ def test_pushing_a_loop_cell_on_a_file_the_kernel_cannot_see_adds_its_node(edito
 
 
 def test_a_seeded_name_no_cell_builds_adopts_its_canvas_node(editor_built_flow, kernel_sim):
-    plan = _plan(editor_built_flow, kernel_sim, "big = source_1.filter(fl.col('quantity') > 10)", rendered=False)
+    plan = _plan(editor_built_flow, kernel_sim, "big = source_1.filter(ff.col('quantity') > 10)", rendered=False)
     added = [op.model_dump(mode="json") for op in plan.operations if op.op == "add_node"]
     assert [op["node_type"] for op in added] == ["filter"], added
     assert added[0]["node_id"] > 2 and plan.deletions == [2], plan

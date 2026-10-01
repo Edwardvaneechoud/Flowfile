@@ -276,7 +276,7 @@ class TransformHandlersMixin(ConverterMixinBase):
         Mirrors ``FlowDataEngine.random_sample``: the random methods filter on a
         shuffled row rank rather than calling ``sample``, which only exists on
         eager DataFrames, so the generated script stays lazy like the flow does.
-        The FlowFrame (``fl``) converter overrides this with native ``.sample()`` calls.
+        The FlowFrame (``ff``) converter overrides this with native ``.sample()`` calls.
         """
         input_df = input_vars.get("main", "df")
         if settings.sample_method == "first":

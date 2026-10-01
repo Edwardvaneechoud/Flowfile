@@ -144,7 +144,7 @@ Non-env port facts: Tauri scans a free `(core, worker)` port pair starting at 63
 
 ### 3.8 Canvas notebook (core side)
 
-None. Core runs no notebook process, and push's clean-run runner is installed in code (`notebook/bridge.py::set_clean_runner`), never switched by an env var; with none installed, push and plan answer 503.
+None. Core runs no notebook process, and `main.py` installs the one clean-run runner at import (`notebook/runner.py::install_notebook_runner`); no env var switches it.
 
 ### 3.9 Kernel-container contract vars (set by core in `_build_kernel_env`, `manager.py:1200-1258`; read inside `kernel_runtime`)
 

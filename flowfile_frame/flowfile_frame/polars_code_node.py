@@ -1,4 +1,4 @@
-"""``fl.polars_code``: one Polars Code node over zero or more frames, returned as its output frame."""
+"""``ff.polars_code``: one Polars Code node over zero or more frames, returned as its output frame."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def polars_code(
     is read). With inputs this is ``inputs[0].polars_code(code, *inputs[1:])``. Without, the code
     builds its own frame (``output_df = pl.LazyFrame(...)``) and the node lands on ``flow_graph``,
     else the implicit graph (the notebook session's in notebook mode, a new one otherwise), the way
-    ``fl.from_dict`` places a source.
+    ``ff.from_dict`` places a source.
     """
     from flowfile_frame.flow_frame import FlowFrame, _polars_code_source
 

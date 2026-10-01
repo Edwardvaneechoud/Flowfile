@@ -202,6 +202,15 @@ def _graph_solver(settings: input_schema.NodeGraphSolver) -> ColumnReferences:
     return ColumnReferences(main=[g.col_from, g.col_to])
 
 
+@_extractor("explode_hierarchy")
+def _explode_hierarchy(settings: input_schema.NodeExplodeHierarchy) -> ColumnReferences:
+    h = settings.explode_hierarchy_input
+    refs = [h.parent_column, h.child_column]
+    if h.quantity_column:
+        refs.append(h.quantity_column)
+    return ColumnReferences(main=refs)
+
+
 @_extractor("pivot")
 def _pivot(settings: input_schema.NodePivot) -> ColumnReferences | None:
     p = settings.pivot_input

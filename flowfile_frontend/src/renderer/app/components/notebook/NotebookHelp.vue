@@ -12,12 +12,12 @@
           <section class="api-section">
             <h4>Getting started</h4>
             <p v-if="kernelMode" class="section-description">
-              This notebook is the open flow written as <code>fl</code> code, running as real Python
+              This notebook is the open flow written as <code>ff</code> code, running as real Python
               in a session on the kernel you picked. The session starts from the canvas, so every
               node's frame is already bound. Run never changes the canvas; Push does.
             </p>
             <p v-else-if="flowMode" class="section-description">
-              This notebook is the open flow written as <code>fl</code> code. Cells are read as a
+              This notebook is the open flow written as <code>ff</code> code. Cells are read as a
               description of the flow, never executed: rows are only computed when the flow runs on
               the canvas. <code>print()</code>, <code>display()</code>, loops and other imports need
               a kernel: pick one in the toolbar (when offered) to run cells as Python.
@@ -72,7 +72,10 @@
               </div>
               <div class="api-item">
                 <code>Run all</code>
-                <p>Syncs, runs the whole flow on the canvas, then refreshes every cell's output.</p>
+                <p>
+                  Syncs first when the notebook no longer matches the canvas, runs the whole flow on
+                  the canvas, then refreshes the output of the parameters cell and every node cell.
+                </p>
               </div>
               <div class="api-item">
                 <code>Push</code>
@@ -104,7 +107,12 @@
             </div>
             <div class="api-item">
               <code>⋯ Cell menu</code>
-              <p>
+              <p v-if="flowMode">
+                Insert above / Insert below, Duplicate, Collapse code / Collapse output, Convert to
+                Markdown / Convert to Python, Run and preview on canvas (node cells: runs the cell,
+                then opens the node's preview on the canvas), and Delete.
+              </p>
+              <p v-else>
                 Insert above / Insert below, Duplicate, Collapse code / Collapse output, and Delete.
               </p>
             </div>

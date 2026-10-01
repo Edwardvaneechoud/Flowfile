@@ -1,32 +1,37 @@
-"""Native ``fl.*`` class emission for the FlowFrame export: gates, subflows, Python Scripts, flow ports, custom nodes.
+"""Native ``ff.*`` class emission for the FlowFrame export: gates, subflows, Python Scripts, flow ports, custom nodes.
 
 These node types have no fluent frame method; the frame places them with its native classes
-(``fl.Gate``, ``fl.RunFlow``, ``fl.PythonScript`` / ``@fl.python_script``, ``fl.FlowInput``,
-``.to_flow_output``, ``fl.custom_nodes.<key>``), so the export spells them the same way and the
+(``ff.Gate``, ``ff.RunFlow``, ``ff.PythonScript`` / ``@ff.python_script``, ``ff.FlowInput``,
+``.to_flow_output``, ``ff.custom_nodes.<key>``), so the export spells them the same way and the
 rebuilt graph holds the same node types. A node a native form cannot express is recorded in
 ``unsupported_nodes`` with the reason, like every other handler.
 """
 
 import ast
 import builtins
+import importlib.util
+import inspect
 import json
 import keyword
+import linecache
 import re
+import types
 
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
 from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
+from flowfile_core.flowfile.share.transform import _user_description
 from flowfile_core.schemas import input_schema
 
 FLOW_PARAMETER_HELPER = '''\
 def _flowfile_flow_parameter(frame, name, value, **declaration):
     """Declare flow parameter ``name`` with this run's value on ``frame``'s graph; returns ``name``."""
     if any(p.name == name for p in frame.flow_graph.flow_settings.parameters):
-        fl.set_flow_parameter(frame, name, value)
+        ff.set_flow_parameter(frame, name, value)
     else:
-        fl.add_flow_parameter(frame, fl.Parameter(name, default=value, **declaration))
+        ff.add_flow_parameter(frame, ff.Parameter(name, default=value, **declaration))
     return name'''
 
 FLOW_VAR = "flow"
@@ -67,16 +72,16 @@ def call(func: str, args: list[str]) -> str:
 
 
 def _dtype_expr(data_type: str) -> str | None:
-    """``fl.<dtype>`` for a stored dtype string, when it parses to a Polars dtype."""
+    """``ff.<dtype>`` for a stored dtype string, when it parses to a Polars dtype."""
     try:
         safe_eval_pl_type(f"pl.{data_type}", bare_names=False)
     except ValueError:
         return None
-    return "fl." + data_type
+    return "ff." + data_type
 
 
 def schema_literal(columns: list[tuple[str, str]]) -> str | None:
-    """``{"col": fl.Int64, ...}`` for ``(name, dtype string)`` pairs, or None when a dtype has no form."""
+    """``{"col": ff.Int64, ...}`` for ``(name, dtype string)`` pairs, or None when a dtype has no form."""
     entries = []
     for name, data_type in columns:
         dtype = _dtype_expr(data_type)
@@ -165,15 +170,8 @@ def _decorator_parts(cells: list[str]) -> tuple | None:
     return prelude, [match["name"] for match in reads], candidates, named["name"] if named else None
 
 
-def user_description(settings) -> str:
-    """The description the user typed (not the auto-generated one), or ""."""
-    from flowfile_core.flowfile.share.transform import _user_description
-
-    return _user_description(settings)
-
-
 class NativeHandlersMixin(ConverterMixinBase):
-    """``fl.*`` native-class handlers; composed into the FlowFrame converter ahead of the shared handlers."""
+    """``ff.*`` native-class handlers; composed into the FlowFrame converter ahead of the shared handlers."""
 
     def _refuse(self, node_id: int, node_type: str, reason: str) -> None:
         self.unsupported_nodes.append((node_id, node_type, reason))
@@ -185,7 +183,7 @@ class NativeHandlersMixin(ConverterMixinBase):
         self._add_code("")
 
     def _description_args(self, settings) -> list[str]:
-        description = user_description(settings)
+        description = _user_description(settings)
         return [f"description={self._py_str(description)}"] if description else []
 
     def _bind_outputs(self, node_id: int, var: str, accessors: list[str]) -> None:
@@ -194,7 +192,7 @@ class NativeHandlersMixin(ConverterMixinBase):
             self.node_handle_var_mapping[(node_id, f"output-{index}")] = f"{var}{accessor}"
 
     def _handle_gate(self, settings: input_schema.NodeGate, var_name: str, input_vars: dict[str, str]) -> None:
-        """``fl.Gate(frame, formula | parameter=, operator=, value=, control=, else_output=<stored>)``."""
+        """``ff.Gate(frame, formula | parameter=, operator=, value=, control=, else_output=<stored>)``."""
         gate = settings.gate_input
         data, control = input_vars.get("main"), input_vars.get("right")
         if data is None:
@@ -210,7 +208,7 @@ class NativeHandlersMixin(ConverterMixinBase):
                 args.append(f"control={control}")
         else:
             if control is not None:
-                reason = "a parameter gate with a control input has no fl.Gate form"
+                reason = "a parameter gate with a control input has no ff.Gate form"
                 return self._refuse(settings.node_id, "gate", reason)
             parameters = {p.name: p for p in self.flow_graph.flow_settings.parameters}
             names = {p.name for p in self._codegen_params}
@@ -231,7 +229,7 @@ class NativeHandlersMixin(ConverterMixinBase):
         args.append(f"else_output={settings.else_output}")
         args += self._description_args(settings)
         self._bind_outputs(settings.node_id, var_name, [".then", ".otherwise"] if settings.else_output else [".then"])
-        self._add_statement(f"{var_name} = {call('fl.Gate', args)}")
+        self._add_statement(f"{var_name} = {call('ff.Gate', args)}")
 
     def _keyed_vars(self, node: FlowNode) -> dict[str, str]:
         """Target handle -> the variable feeding it, for keyed-input nodes."""
@@ -261,7 +259,7 @@ class NativeHandlersMixin(ConverterMixinBase):
         return json.dumps(value, ensure_ascii=False)
 
     def _handle_run_flow(self, settings: input_schema.NodeRunFlow, var_name: str, input_vars: dict[str, str]) -> None:
-        """``fl.RunFlow(fl.flow_ref(uuid=...), <slot>=frame, params={...})``; an unresolvable child is refused."""
+        """``ff.RunFlow(ff.flow_ref(uuid=...), <slot>=frame, params={...})``; an unresolvable child is refused."""
         from flowfile_core.flowfile.subflow import resolve_subflow_path
         from flowfile_frame.run_flow import _RUN_FLOW_KEYWORDS
 
@@ -271,9 +269,9 @@ class NativeHandlersMixin(ConverterMixinBase):
         except Exception as exc:
             return self._refuse(settings.node_id, "run_flow", f"the child flow does not resolve: {exc}")
         if ref.flow_uuid:
-            target = f"fl.flow_ref(uuid={json.dumps(ref.flow_uuid)})"
+            target = f"ff.flow_ref(uuid={json.dumps(ref.flow_uuid)})"
         elif ref.registration_id is not None:
-            target = f"fl.flow_ref(registration_id={ref.registration_id})"
+            target = f"ff.flow_ref(registration_id={ref.registration_id})"
         else:
             return self._refuse(settings.node_id, "run_flow", "the node names no registered flow")
         keyed = self._keyed_vars(self.flow_graph.get_node(settings.node_id))
@@ -295,7 +293,7 @@ class NativeHandlersMixin(ConverterMixinBase):
             if binding.source == "constant":
                 params.append(f"{name}: {self._binding_literal(binding, specs)}")
             elif binding.source == "column":
-                params.append(f"{name}: fl.col({self._py_str(binding.column_name)})")
+                params.append(f"{name}: ff.col({self._py_str(binding.column_name)})")
         if params:
             args.append("params={" + ", ".join(params) + "}")
         if keyed.get("input-0") is not None:
@@ -310,19 +308,19 @@ class NativeHandlersMixin(ConverterMixinBase):
             self._bind_outputs(settings.node_id, var_name, [f"[{self._py_str(n)}]" for n in outputs])
         else:
             self._bind_outputs(settings.node_id, var_name, [".output"])
-        self._add_statement(f"{var_name} = {call('fl.RunFlow', args)}")
+        self._add_statement(f"{var_name} = {call('ff.RunFlow', args)}")
 
     def _handle_flow_input(
         self, settings: input_schema.NodeFlowInput, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """``fl.FlowInput(name, schema= | sample=pl.DataFrame(...), flow_graph=flow)``."""
+        """``ff.FlowInput(name, schema= | sample=pl.DataFrame(...), flow_graph=flow)``."""
         raw = settings.raw_data_format
         args = [self._py_str(settings.input_name)]
         if raw is not None and raw.columns:
             schema = schema_literal([(column.name, column.data_type) for column in raw.columns])
             if schema is None:
-                return self._refuse(settings.node_id, "flow_input", "a sample column has a dtype with no fl.* form")
-            if not raw.data or not any(raw.data[0] if raw.data else []):
+                return self._refuse(settings.node_id, "flow_input", "a sample column has a dtype with no ff.* form")
+            if not raw.data or not any(raw.data[0]):
                 args.append(f"schema={schema}")
             else:
                 columns = []
@@ -336,7 +334,7 @@ class NativeHandlersMixin(ConverterMixinBase):
                 args.append(f"sample=pl.DataFrame({{{', '.join(columns)}}}, schema={schema}, strict=False)")
         args.append(f"flow_graph={FLOW_VAR}")
         args += self._description_args(settings)
-        self._add_statement(f"{var_name} = {call('fl.FlowInput', args)}")
+        self._add_statement(f"{var_name} = {call('ff.FlowInput', args)}")
 
     def _handle_flow_output(
         self, settings: input_schema.NodeFlowOutput, var_name: str, input_vars: dict[str, str]
@@ -370,7 +368,7 @@ class NativeHandlersMixin(ConverterMixinBase):
     def _handle_python_script(
         self, settings: input_schema.NodePythonScript, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """``@fl.python_script`` when the cells regenerate byte for byte, else ``fl.PythonScript(cells=...)``."""
+        """``@ff.python_script`` when the cells regenerate byte for byte, else ``ff.PythonScript(cells=...)``."""
         script = settings.python_script_input
         if not script.cells:
             reason = "a code-only Python Script has no cells to render; open it in the drawer to give it cells"
@@ -382,7 +380,7 @@ class NativeHandlersMixin(ConverterMixinBase):
         for name, columns in (schemas or {}).items():
             literal = schema_literal(columns)
             if literal is None:
-                reason = f"output {name!r} has a column dtype with no fl.* form"
+                reason = f"output {name!r} has a column dtype with no ff.* form"
                 return self._refuse(settings.node_id, "python_script", reason)
             schema_literals[name] = literal
         code = self._decorated_script(settings, var_name, inputs, outputs, schema_literals)
@@ -396,7 +394,7 @@ class NativeHandlersMixin(ConverterMixinBase):
             if schema_literals:
                 args.append(f"schemas={_nested_literal(schema_literals)}")
             args += self._description_args(settings)
-            code = call("fl.PythonScript", args)
+            code = call("ff.PythonScript", args)
             code = f"{var_name} = {code}.output" if len(outputs) == 1 else f"{var_name} = {code}"
         if len(outputs) > 1:
             self._bind_outputs(settings.node_id, var_name, [f"[{json.dumps(name)}]" for name in outputs])
@@ -410,19 +408,15 @@ class NativeHandlersMixin(ConverterMixinBase):
         outputs: list[str],
         schema_literals: dict[str, str],
     ) -> str | None:
-        """The ``@fl.python_script`` form, when regenerating its cells reproduces the stored ones exactly.
+        """The ``@ff.python_script`` form, when regenerating its cells reproduces the stored ones exactly.
 
         The prelude's lines are independent statements, so a stored prelude in another order (one saved
         when the frame ordered it by bytecode) still counts as reproduced.
 
-        Pure text on the core side: prelude imports become stub modules (each must pass
-        ``importlib.util.find_spec``) and constant assignments become literals, so nothing the script imports is loaded;
-        only the ``def`` is compiled, then the frame's own ``_notebook_cells`` regenerates the cells.
+        Prelude imports become stub modules (each must pass ``importlib.util.find_spec``) and constant
+        assignments become literals, so nothing the script imports is loaded; the ``def`` is compiled and
+        executed to bind the function (its body never runs), then the frame's ``_notebook_cells`` regenerates the cells.
         """
-        import importlib.util
-        import linecache
-        import types
-
         from flowfile_frame.python_script import _notebook_cells
 
         cells = [cell.code for cell in settings.python_script_input.cells]
@@ -486,7 +480,7 @@ class NativeHandlersMixin(ConverterMixinBase):
         return None
 
     def _decorated_text(self, settings, var_name, prelude, source, function, option, inputs, schema_literals) -> str:
-        """Prelude, ``@fl.python_script(...)``, the ``def`` and the call."""
+        """Prelude, ``@ff.python_script(...)``, the ``def`` and the call."""
         kwargs = []
         if settings.python_script_input.kernel_id:
             kwargs.append(f"kernel={json.dumps(settings.python_script_input.kernel_id)}")
@@ -501,12 +495,10 @@ class NativeHandlersMixin(ConverterMixinBase):
         single = len(settings.output_names or ["main"]) == 1
         invocation = f"{var_name} = {function}{'' if single else '.node'}({', '.join(inputs)})"
         head = "\n".join(prelude) + "\n\n\n" if prelude else ""
-        return f"{head}{call('@fl.python_script', kwargs)}\n{source}\n\n\n{invocation}"
+        return f"{head}{call('@ff.python_script', kwargs)}\n{source}\n\n\n{invocation}"
 
     def _handle_user_defined(self, node: FlowNode, var_name: str, input_vars: dict[str, str]) -> None:
-        """``fl.custom_nodes.<key>(frame, <component>=value, ..., kernel=...)``; settings drift is refused."""
-        import inspect
-
+        """``ff.custom_nodes.<key>(frame, <component>=value, ..., kernel=...)``; settings drift is refused."""
         from flowfile_frame.custom_node import CustomNodeFactory
         from flowfile_frame.custom_nodes import CustomNodes
 
@@ -538,7 +530,7 @@ class NativeHandlersMixin(ConverterMixinBase):
             kwargs.append(f"kernel={json.dumps(settings.kernel_id)}")
         kwargs += self._description_args(settings)
         attribute = key.isidentifier() and not keyword.iskeyword(key) and not key.startswith("_")
-        func = f"fl.custom_nodes.{key}" if attribute and not hasattr(CustomNodes, key) else f"fl.custom_nodes[{key!r}]"
+        func = f"ff.custom_nodes.{key}" if attribute and not hasattr(CustomNodes, key) else f"ff.custom_nodes[{key!r}]"
         inputs = list(input_vars.values())
         if len(factory.output_names) == 1:
             self._add_statement(f"{var_name} = {call(func, inputs + kwargs)}")

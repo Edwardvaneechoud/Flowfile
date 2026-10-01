@@ -229,7 +229,7 @@ For details on building custom nodes, see [Node Designer](node-designer.md#how-k
 
 ## Current limitations
 
-- **Flow-to-code export** — the Polars export refuses Python Script nodes; the FlowFrame export writes them as `fl.PythonScript` / `@fl.python_script` and the Project export as their own modules (see [Export to Python](tutorials/code-generator.md)).
+- **Flow-to-code export** — the Polars export refuses Python Script nodes; the FlowFrame export writes them as `ff.PythonScript` / `@ff.python_script` and the Project export as their own modules (see [Export to Python](tutorials/code-generator.md)).
 - **Artifact state visibility** — There is no UI to browse or inspect the contents of stored artifacts. You can list artifacts via `flowfile_ctx.list_artifacts()` in code, but there is no visual artifact explorer.
 
 ---

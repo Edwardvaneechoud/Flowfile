@@ -42,5 +42,4 @@ def test_render_p95_under_budget():
     assert sum(len(cell.node_ids) for cell in rendering.cells) == len(graph.nodes)
     ordered = sorted(timings)
     p95 = ordered[int(0.95 * len(ordered)) - 1]
-    print(f"render p50={statistics.median(timings):.1f}ms p95={p95:.1f}ms over {len(graph.nodes)} nodes")
-    assert p95 < P95_BUDGET_MS
+    assert p95 < P95_BUDGET_MS, f"render p50={statistics.median(timings):.1f}ms p95={p95:.1f}ms"

@@ -2182,7 +2182,7 @@ class FlowGraph:
         # live graph is empty at undo time (snapshots intentionally omit user_id).
         self._owner_user_id: int | None = None
         self._node_observers: list[NodeObserver] = []
-        # Off only on a notebook session's scratch graph, where cells re-place the seeded ports.
+        # Off only on a graph `notebook_cells.seed_session` seeded, where cells re-place the seeded ports.
         self.unique_subflow_port_names = True
 
         from flowfile_core.flowfile.history_manager import HistoryManager
@@ -3953,6 +3953,34 @@ class FlowGraph:
             setting_input=graph_solver_settings,
             input_node_ids=[graph_solver_settings.depending_on_id],
         )
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_explode_hierarchy(self, settings: input_schema.NodeExplodeHierarchy) -> "FlowGraph":
+        """Adds a node that explodes a parent -> child hierarchy into its transitive closure.
+
+        The output is a new table (ancestor, descendant, level, quantity, ...) rather than the
+        input with extra columns. No schema callback is registered: prediction runs the lazy
+        plugin expression against a schema-only frame, which resolves the output columns and
+        their dtypes without reading data.
+
+        Args:
+            settings: The explode-hierarchy node configuration.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
+            return fl.explode_hierarchy(settings.explode_hierarchy_input)
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            node_type="explode_hierarchy",
+            setting_input=settings,
+            input_node_ids=[settings.depending_on_id],
+        )
+        return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_formula(self, function_settings: input_schema.NodeFormula):

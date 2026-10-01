@@ -24,7 +24,7 @@ def create_cloud_storage_connection(connection: FullCloudStorageConnection) -> N
     Returns:
         None
     """
-    refuse("fl.create_cloud_storage_connection")
+    refuse("ff.create_cloud_storage_connection")
     with get_db_context() as db:
         store_cloud_connection(db, connection, current_user_id())
 
@@ -39,7 +39,7 @@ def create_cloud_storage_connection_if_not_exists(connection: FullCloudStorageCo
     Returns:
         None
     """
-    refuse("fl.create_cloud_storage_connection_if_not_exists")
+    refuse("ff.create_cloud_storage_connection_if_not_exists")
     all_connections = get_all_available_cloud_storage_connections()
     if not any(conn.connection_name == connection.connection_name for conn in all_connections):
         create_cloud_storage_connection(connection)
@@ -52,7 +52,7 @@ def get_all_available_cloud_storage_connections() -> list[FullCloudStorageConnec
 
 
 def del_cloud_storage_connection(connection_name: str) -> None:
-    refuse("fl.del_cloud_storage_connection")
+    refuse("ff.del_cloud_storage_connection")
     with get_db_context() as db:
         user_id = current_user_id()
         delete_cloud_connection(db, connection_name, user_id)

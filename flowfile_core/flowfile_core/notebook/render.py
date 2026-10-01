@@ -2,7 +2,7 @@
 
 The FlowFrame exporter (``placeholders=True``) is the one code path. Its imports and module helpers
 make the first cell, the flow parameters the second, then every fused statement it emits becomes a
-cell carrying the node ids of its span; a node the exporter cannot express is a ``fl.canvas_node``
+cell carrying the node ids of its span; a node the exporter cannot express is a ``ff.canvas_node``
 placeholder cell. Cells therefore need not align one per node.
 """
 
@@ -15,7 +15,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from flowfile_core.configs import logger
 from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 from flowfile_core.flowfile.code_generator.native_handlers import FLOW_VAR
 from flowfile_core.flowfile.code_generator.param_codegen import codegen_parameters
@@ -38,7 +37,7 @@ _NOTEBOOK_HELPERS = {
     "_flowfile_expr_literal": (
         "def _flowfile_expr_literal(value):\n"
         '    """A parameter inside a formula stays its ``${name}`` reference."""\n'
-        "    return value.ref if isinstance(value, fl.Parameter) else value"
+        "    return value.ref if isinstance(value, ff.Parameter) else value"
     ),
 }
 
@@ -97,7 +96,7 @@ def code_fingerprint(flow_graph: FlowGraph) -> str:
 
 
 def _parameter_line(param: FlowParameter, bind: bool) -> str:
-    """``name = fl.add_flow_parameter(flow, fl.Parameter(...))``; the default is typed when it stringifies back."""
+    """``name = ff.add_flow_parameter(flow, ff.Parameter(...))``; the default is typed when it stringifies back."""
     args = [json.dumps(param.name, ensure_ascii=False)]
     if param.default_value != "":
         default = param.default_value
@@ -114,7 +113,7 @@ def _parameter_line(param: FlowParameter, bind: bool) -> str:
         args.append(f"description={json.dumps(param.description, ensure_ascii=False)}")
     if param.enum_values:
         args.append(f"enum_values={json.dumps(list(param.enum_values), ensure_ascii=False)}")
-    line = f"fl.add_flow_parameter({FLOW_VAR}, fl.Parameter({', '.join(args)}))"
+    line = f"ff.add_flow_parameter({FLOW_VAR}, ff.Parameter({', '.join(args)}))"
     return f"{param.name} = {line}" if bind else line
 
 
@@ -145,16 +144,19 @@ def _fill_names(cells: list[EmittedCell]) -> None:
 
 
 def render(flow_graph: FlowGraph) -> NotebookRendering:
-    """Render ``flow_graph`` as notebook cells; never raises (an export failure is a warning and no node cells)."""
+    """Render ``flow_graph`` as notebook cells; an export failure propagates.
+
+    A rendering without its node cells would read as a flow with no nodes, and pushing it back would
+    plan deleting every canvas node, so a failed export is never turned into a partial rendering.
+
+    The fingerprint is taken before the export, so an edit landing mid-render leaves an older fingerprint
+    and the next refresh renders again instead of keeping cells for the pre-edit graph.
+    """
+    fingerprint = code_fingerprint(flow_graph)
     converter = FlowGraphToFlowFrameConverter(flow_graph, placeholders=True, deterministic_names=True)
-    warnings: list[str] = []
-    try:
-        converter.convert()
-        emissions = converter.emissions(verbatim_refs=True)
-    except Exception as exc:
-        logger.warning("Notebook render of flow %s failed: %s", flow_graph.flow_id, exc)
-        emissions, warnings = [], [f"The flow could not be rendered as code: {exc}"]
-    imports = ["import flowfile as fl", *(line for line in converter.import_lines() if line != "import flowfile as fl")]
+    converter.convert()
+    emissions = converter.emissions(verbatim_refs=True)
+    imports = ["import flowfile as ff", *(line for line in converter.import_lines() if line != "import flowfile as ff")]
     helpers = [_NOTEBOOK_HELPERS.get(h.split("(")[0].removeprefix("def "), h) for h in converter.helpers()]
     cells = [EmittedCell(cell_id=IMPORTS_CELL_ID, kind="imports", code="\n\n\n".join(["\n".join(imports), *helpers]))]
     parameters = list(flow_graph.flow_settings.parameters)
@@ -178,7 +180,7 @@ def render(flow_graph: FlowGraph) -> NotebookRendering:
     _fill_names(cells)
     return NotebookRendering(
         cells=cells,
-        warnings=warnings + converter.warnings,
+        warnings=converter.warnings,
         var_by_node={em.node_id: em.var_name for em in emissions},
-        code_fingerprint=code_fingerprint(flow_graph),
+        code_fingerprint=fingerprint,
     )

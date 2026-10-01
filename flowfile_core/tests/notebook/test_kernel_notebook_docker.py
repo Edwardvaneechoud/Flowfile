@@ -105,11 +105,11 @@ def notebook_kernel(core_url, monkeypatch):
 
 @pytest.fixture
 def smoke_flow(open_as):
-    import flowfile as fl
+    import flowfile as ff
 
-    orders = fl.from_dict({"id": [1, 2, 3, 4], "amount": [10, 20, 30, 40]})
+    orders = ff.from_dict({"id": [1, 2, 3, 4], "amount": [10, 20, 30, 40]})
     return open_as(
-        orders.filter(fl.col("amount") > 10).polars_code("input_df.with_columns(pl.col('amount') * 10)").flow_graph
+        orders.filter(ff.col("amount") > 10).polars_code("input_df.with_columns(pl.col('amount') * 10)").flow_graph
     )
 
 
@@ -139,7 +139,7 @@ def test_a_notebook_session_on_a_real_kernel(smoke_flow, notebook_kernel, client
         "import math\n"
         "frame = filtered\n"
         "for power in range(2):\n"
-        "    frame = frame.with_columns((fl.col('amount') * math.pow(10, power)).alias(f'scaled_{power}'))\n"
+        "    frame = frame.with_columns((ff.col('amount') * math.pow(10, power)).alias(f'scaled_{power}'))\n"
         "print('columns', frame.columns)\n"
         "display(frame)\n"
     )
@@ -174,7 +174,7 @@ def test_a_notebook_session_on_a_real_kernel(smoke_flow, notebook_kernel, client
 
     last = next(c for c in rendering.cells if coded_id in c.node_ids)
     name = next(node.targets[0].id for node in ast.parse(last.code).body if isinstance(node, ast.Assign))
-    added = f"plus_one = {name}.with_columns((fl.col('amount') + 1).alias('plus_one'))"
+    added = f"plus_one = {name}.with_columns((ff.col('amount') + 1).alias('plus_one'))"
     before = {n.node_id for n in smoke_flow.nodes}
     pushed = client.post(
         "/editor/notebook/push/",
@@ -193,7 +193,7 @@ def test_kernel_completions_see_the_session(smoke_flow, notebook_kernel, client_
     client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
     key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}
     assert client.post("/notebook/session/open", json=key).status_code == 200
-    cell = _bind("orders", _node_id(smoke_flow, "filter")) + "priced = orders.with_columns(fl.col('amount') * 2)\n"
+    cell = _bind("orders", _node_id(smoke_flow, "filter")) + "priced = orders.with_columns(ff.col('amount') * 2)\n"
     executed = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-priced", "code": cell})
     assert executed.status_code == 200 and executed.json()["success"], executed.text
 
@@ -205,6 +205,6 @@ def test_kernel_completions_see_the_session(smoke_flow, notebook_kernel, client_
         return {item["label"] for item in response.json()["items"]}
 
     assert "filter" in labels("priced.fil")
-    assert "col" in labels("fl.co")
+    assert "col" in labels("ff.co")
     assert client.post("/notebook/session/reset", json=key).status_code == 200
     assert "priced" not in labels("pri")

@@ -439,7 +439,7 @@ test.describe("Notebook on a kernel, visual inspection", () => {
         `priced = ${filterVar || "filtered_2"}`,
         "for name in priced.columns:",
         '    if re.search(r"amount$", name):',
-        '        priced = priced.with_columns((fl.col(name) * 1.21).alias(f"{name}_incl_vat"))',
+        '        priced = priced.with_columns((ff.col(name) * 1.21).alias(f"{name}_incl_vat"))',
         "print(priced.columns)",
         "display(priced)",
       ].join("\n");
@@ -450,7 +450,7 @@ test.describe("Notebook on a kernel, visual inspection", () => {
         `priced = ${filterVar}`,
         "for name in priced.columns:",
         '    if re.search(r"amount$", name):',
-        '        priced = priced.with_columns((fl.col(name) * 1.21).alias(f"{name}_incl_vat"))',
+        '        priced = priced.with_columns((ff.col(name) * 1.21).alias(f"{name}_incl_vat"))',
         "print(priced.columns)",
         "display(priced)",
       ].join("\n");
@@ -517,7 +517,8 @@ test.describe("Notebook on a kernel, visual inspection", () => {
       const filterBefore = JSON.stringify(
         (await readNodeSettings(request, token, flowId, "2"))?.filter_input,
       );
-      const plan = page.waitForResponse((r) => r.url().includes("/notebook/plan"), {
+      // The first push carries `trigger: "push"`; core answers `applied: false` when it needs review.
+      const firstPush = page.waitForResponse((r) => r.url().includes("/editor/notebook/push"), {
         timeout: 120_000,
       });
       await page.evaluate(() => {
@@ -533,8 +534,8 @@ test.describe("Notebook on a kernel, visual inspection", () => {
         w.__obs.observe(document.body, { childList: true, subtree: true });
       });
       await panel.getByTestId("nb-push").click();
-      const planResponse = await plan;
-      const planBody = await planResponse.json().catch(() => ({}));
+      const pushResponse = await firstPush;
+      const pushBody = await pushResponse.json().catch(() => ({}));
       const dialog = page.locator(".el-message-box:visible");
       const toast = page.locator(".el-message", {
         hasText: /Pushed to the canvas|Nothing to push/,
@@ -564,8 +565,8 @@ test.describe("Notebook on a kernel, visual inspection", () => {
       );
       return {
         shots,
-        planBody,
-        planStatus: planResponse.status(),
+        pushBody,
+        pushStatus: pushResponse.status(),
         dialogShown,
         filterBefore,
         filterAfter,
@@ -641,8 +642,8 @@ test.describe("Notebook on a kernel, visual inspection", () => {
       },
     );
 
-    await check(page, "11", 'Column completions for fl.col("', async () => {
-      const cell = await addCell(page, `${filterVar || "filtered_2"}.select(fl.col(`);
+    await check(page, "11", 'Column completions for ff.col("', async () => {
+      const cell = await addCell(page, `${filterVar || "filtered_2"}.select(ff.col(`);
       await page.keyboard.type('"', { delay: 50 });
       const popup0 = page.locator(".cm-tooltip-autocomplete");
       if (!(await popup0.isVisible().catch(() => false))) {
@@ -673,7 +674,7 @@ test.describe("Notebook on a kernel, visual inspection", () => {
       "Push (file invisible): review, new node below the filter, source unchanged",
       async () => {
         const r = await push("08a-push-review-dialog", "08b-after-push");
-        expect(r.planStatus, JSON.stringify(r.planBody).slice(0, 400)).toBe(200);
+        expect(r.pushStatus, JSON.stringify(r.pushBody).slice(0, 400)).toBe(200);
         await expect.poll(nodeCount, { timeout: 30_000 }).toBe(3);
         const byType = await nodeIdsByType(request, token, flowId);
         const edges = await flowEdges(request, token, flowId);
@@ -692,7 +693,7 @@ test.describe("Notebook on a kernel, visual inspection", () => {
           .find((id) => id !== "1" && id !== "2");
         expect(edges).toContain(`2->${newId}`);
         return {
-          note: `dialog ${r.dialogShown}; plan warnings ${JSON.stringify(r.planBody.warnings ?? [])}; messages ${JSON.stringify(r.messages)}; nodes ${JSON.stringify(byType)}; edges ${edges.join(", ")}; filter unchanged ${r.filterBefore === r.filterAfter}; source path unchanged`,
+          note: `dialog ${r.dialogShown}; push warnings ${JSON.stringify(r.pushBody.warnings ?? [])}; messages ${JSON.stringify(r.messages)}; nodes ${JSON.stringify(byType)}; edges ${edges.join(", ")}; filter unchanged ${r.filterBefore === r.filterAfter}; source path unchanged`,
           shots: r.shots,
         };
       },
@@ -714,7 +715,7 @@ test.describe("Notebook on a kernel, visual inspection", () => {
       const r = await push("09b-unedited-push-dialog", "09b-unedited-push");
       expect(r.messages.join(" ")).toMatch(/^Nothing to push/);
       return {
-        note: `after undo ${await nodeCount()} nodes, ${cellsLeft} cells (loop cell kept: ${loopKept > 0}), filter ${filterUndone}; next Push plan ${JSON.stringify(r.planBody).slice(0, 200)}; messages ${JSON.stringify(r.messages)}`,
+        note: `after undo ${await nodeCount()} nodes, ${cellsLeft} cells (loop cell kept: ${loopKept > 0}), filter ${filterUndone}; next Push ${JSON.stringify(r.pushBody).slice(0, 200)}; messages ${JSON.stringify(r.messages)}`,
         shots: [...shots, ...r.shots],
       };
     });
@@ -722,14 +723,14 @@ test.describe("Notebook on a kernel, visual inspection", () => {
     await check(page, "17", "Push of the loop cell with the file invisible", async () => {
       if (!(await pricedCell().count())) await addCell(page, PRICED_CODE());
       const r = await push("17a-push-review-dialog", "17b-after-push");
-      expect(r.planStatus, JSON.stringify(r.planBody).slice(0, 400)).toBe(200);
+      expect(r.pushStatus, JSON.stringify(r.pushBody).slice(0, 400)).toBe(200);
       await expect.poll(nodeCount, { timeout: 30_000 }).toBe(3);
       await page.mouse.click(150, 600);
       await page.waitForTimeout(1200);
       r.shots.push(await shot(page, "17c-canvas-new-node"));
       const edges = await flowEdges(request, token, flowId);
       return {
-        note: `dialog ${r.dialogShown}; warnings ${JSON.stringify(r.planBody.warnings ?? [])}; operations ${(r.planBody.operations ?? []).map((o: { op: string }) => o.op).join(",")}; messages ${JSON.stringify(r.messages)}; edges ${edges.join(", ")}`,
+        note: `dialog ${r.dialogShown}; warnings ${JSON.stringify(r.pushBody.warnings ?? [])}; applied first ${r.pushBody.applied}; messages ${JSON.stringify(r.messages)}; edges ${edges.join(", ")}`,
         shots: r.shots,
       };
     });
@@ -741,7 +742,7 @@ test.describe("Notebook on a kernel, visual inspection", () => {
       expect(r.messages.join(" ")).toMatch(/^Nothing to push/);
       expect(nodes).toBe(3);
       return {
-        note: `plan ${JSON.stringify(r.planBody).slice(0, 200)}; messages ${JSON.stringify(r.messages)}; ${nodes} nodes`,
+        note: `push ${JSON.stringify(r.pushBody).slice(0, 200)}; messages ${JSON.stringify(r.messages)}; ${nodes} nodes`,
         shots: r.shots,
       };
     });
@@ -778,8 +779,8 @@ test.describe("Notebook on a kernel, visual inspection", () => {
         await openNotebook(page);
         await expect(page.getByTestId("nb-kernel-select")).toContainText(KERNEL_NAME);
         const code = [
-          `fresh = fl.read_csv(${JSON.stringify(CSV_PATH)})`,
-          'big = fresh.filter(fl.col("amount") > 60)',
+          `fresh = ff.read_csv(${JSON.stringify(CSV_PATH)})`,
+          'big = fresh.filter(ff.col("amount") > 60)',
           "display(big)",
         ].join("\n");
         const cell = await addCell(page, code);

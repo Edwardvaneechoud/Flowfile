@@ -1,5 +1,7 @@
+import inspect
 from collections.abc import Callable
 from functools import wraps
+from typing import Any
 
 import polars as pl
 
@@ -32,10 +34,63 @@ PASSTHROUGH_METHODS = {
 # Passthroughs that read data: on a deferred frame they run the flow first, like collect.
 MATERIALISING_PASSTHROUGH_METHODS = {"collect_async", "profile", "describe", "fetch"}
 
+PURE_TRANSFORMS = frozenset(
+    {
+        "drop", "select", "with_columns", "sort", "filter", "join", "head", "tail", "limit", "drop_nulls",
+        "fill_null", "with_row_index", "group_by", "explode", "unique", "slice", "shift", "reverse", "max", "min",
+        "sum", "mean", "median", "std", "var", "drop_nans", "fill_nan", "interpolate", "null_count", "quantile",
+        "unpivot", "melt", "first", "last", "cast", "count", "unnest", "gather_every", "top_k", "bottom_k",
+    }
+)  # fmt: skip
+"""LazyFrame methods that only describe a lazy transform: each returns a frame and reads, writes and runs nothing."""
+
 
 def _has_build_time_effect(method_name: str) -> bool:
     """Whether the method's Polars-code node acts when it is built: sinks write, ``inspect`` prints."""
     return method_name.startswith("sink_") or method_name == "inspect"
+
+
+def _holds_a_frame(value: Any) -> bool:
+    """Whether ``value`` is a FlowFrame, or a list, tuple or dict holding one at any depth."""
+    from flowfile_frame.flow_frame import FlowFrame
+
+    if isinstance(value, FlowFrame):
+        return True
+    if isinstance(value, dict):
+        return any(_holds_a_frame(item) for item in (*value.keys(), *value.values()))
+    if isinstance(value, list | tuple):
+        return any(_holds_a_frame(item) for item in value)
+    return False
+
+
+def _refuse_frame_argument(method_name: str, *values: Any) -> None:
+    """In notebook mode, refuse a FlowFrame among ``values``: a Polars-code node would hold its plan as text."""
+    if current() is not None and _holds_a_frame(values):
+        raise NativeNodeError(
+            f"{method_name} takes no frame as an argument in a notebook: the frame would be written into the "
+            "node's code as text, not connected to it"
+        )
+
+
+def _check_notebook_arguments(
+    method_name: str, original_method: Callable, frame: Any, args: tuple, kwargs: dict
+) -> None:
+    """In notebook mode, the arguments must bind to the Polars method and each must have a code form.
+
+    The Polars-code node only holds the call as text: a wrong keyword would fail only when the flow
+    runs, a frame argument would be written in as its plan text instead of being connected, and an
+    argument without a code form would evaluate the method now into a node detached from the flow.
+    """
+    try:
+        inspect.signature(original_method).bind(frame.data, *args, **kwargs)
+    except TypeError as exc:
+        raise TypeError(f"{method_name}() {exc}") from None
+    _refuse_frame_argument(method_name, args, kwargs)
+    if not all(getattr(value, "convertable_to_code", True) for value in (*args, *kwargs.values())):
+        raise NativeNodeError(
+            f"{method_name} with an expression that has no code form would be evaluated now into a node detached "
+            "from the flow, which a notebook never does"
+        )
 
 
 def create_lazyframe_method_wrapper(method_name: str, original_method: Callable) -> Callable:
@@ -54,43 +109,6 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
     Callable
         A wrapper method appropriate for FlowFrame.
     """
-    lazyframe_returning_methods = {
-        "drop",
-        "select",
-        "with_columns",
-        "sort",
-        "filter",
-        "join",
-        "head",
-        "tail",
-        "limit",
-        "drop_nulls",
-        "fill_null",
-        "with_row_index",
-        "group_by",
-        "explode",
-        "unique",
-        "slice",
-        "shift",
-        "reverse",
-        "max",
-        "min",
-        "sum",
-        "mean",
-        "median",
-        "std",
-        "var",
-        "drop_nans",
-        "fill_nan",
-        "interpolate",
-        "null_count",
-        "quantile",
-        "unpivot",
-        "melt",
-        "first",
-        "last",
-    }
-
     non_lazyframe_methods = {
         "collect",
         "collect_schema",
@@ -105,7 +123,7 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
         "show_graph",
     }
 
-    returns_lazyframe = method_name in lazyframe_returning_methods or (
+    returns_lazyframe = method_name in PURE_TRANSFORMS or (
         method_name not in non_lazyframe_methods and not method_name.startswith("_")
     )
 
@@ -115,7 +133,7 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
         from flowfile_frame.flow_frame import generate_node_id
 
         refuse_parameter_argument(
-            method_name, args, kwargs, hint="pass a plain value, or an expression such as fl.lit(parameter)"
+            method_name, args, kwargs, hint="pass a plain value, or an expression such as ff.lit(parameter)"
         )
         if _has_build_time_effect(method_name) and current() is not None:
             raise NativeNodeError(
@@ -132,6 +150,8 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
                 f"{method_name} runs when it is built, but {reason}. Use a write_* method (a native Output node "
                 "that waits for the run) or collect the frame first."
             )
+        if current() is not None:
+            _check_notebook_arguments(method_name, original_method, self, args, kwargs)
         new_node_id = generate_node_id()
 
         if not all([True if not hasattr(arg, "convertable_to_code") else arg.convertable_to_code for arg in args]):
@@ -160,7 +180,7 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
         self._add_polars_code(new_node_id, code, description)
 
         if returns_lazyframe:
-            return self._create_child_frame(new_node_id)
+            return self._create_child_frame(new_node_id, declared=self._planned_seed(method_name, args, kwargs))
         else:
             return getattr(self.data, method_name)(*args, **kwargs)
 

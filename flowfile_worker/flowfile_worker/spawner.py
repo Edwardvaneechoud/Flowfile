@@ -11,6 +11,7 @@ from typing import Any
 from flowfile_worker import funcs, models, mp_context, pool, status_dict, status_dict_lock
 from flowfile_worker.pool import PoolMember
 from flowfile_worker.process_manager import ProcessManager
+from flowfile_worker.task_errors import split_failure
 
 process_manager = ProcessManager()
 
@@ -128,7 +129,9 @@ def handle_task(
                 with status_dict_lock:
                     status_dict[task_id].status = "Error"
                     with error_message.get_lock():
-                        status_dict[task_id].error_message = error_message.value.decode().rstrip("\x00")
+                        kind, msg = split_failure(error_message.value.decode().rstrip("\x00"))
+                    status_dict[task_id].error_message = msg
+                    status_dict[task_id].error_kind = kind
                 break
 
             # A child that put() a large result blocks in its feeder thread and never
@@ -186,6 +189,7 @@ def handle_task(
                 elif timed_out:
                     status.status = "Error"
                     status.error_message = f"Task exceeded the {_TASK_TIMEOUT:.0f}s time limit and was terminated"
+                    status.error_kind = "environment"
                 elif final_progress == -1:
                     # The child signalled an error but the monitor loop may not have observed
                     # it (a child can die before we read progress == -1). Surface a terminal
@@ -194,6 +198,7 @@ def handle_task(
                     if not status.error_message:
                         with error_message.get_lock():
                             decoded = error_message.value.decode(errors="replace").rstrip("\x00")
+                        status.error_kind, decoded = split_failure(decoded)
                         status.error_message = decoded or "Task failed"
                 else:
                     status.status = "Unknown Error"

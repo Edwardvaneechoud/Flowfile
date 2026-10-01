@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from flowfile_core import flow_file_handler
 from flowfile_core.auth import sharing
 from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service
+from flowfile_core.configs import logger
 from flowfile_core.notebook import kernel_runner
 from flowfile_core.notebook.gate import kernel_sessions_allowed, require_kernel_sessions
 from flowfile_core.notebook.push import NotebookPlanResponse, NotebookPushRequest, plan_push, plan_response
@@ -38,12 +39,17 @@ def render_notebook(flow_id: int = Query(...), current_user=Depends(get_current_
     """Render an open flow as notebook cells.
 
     Open to every authenticated user for flows in their own editor session, in every mode; a flow that is
-    not open, or open only by another user, is a 404.
+    not open, or open only by another user, is a 404. A flow the exporter fails on is a 422, never a
+    rendering without node cells, so a client cannot sync an empty notebook over the canvas.
     """
     flow = flow_file_handler.get_flow(flow_id, current_user.id)
     if flow is None:
         raise HTTPException(status_code=404, detail="Flow not found")
-    return render(flow)
+    try:
+        return render(flow)
+    except Exception as exc:
+        logger.warning("Notebook render of flow %s failed: %s", flow_id, exc)
+        raise HTTPException(status_code=422, detail=f"The flow could not be rendered as code: {exc}") from exc
 
 
 @router.post("/plan", response_model=NotebookPlanResponse)

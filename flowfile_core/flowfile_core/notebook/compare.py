@@ -1,10 +1,9 @@
 """Per-type settings normalisation: which differences between a canvas node and its rebuilt twin are cosmetic.
 
 A notebook push rebuilds every node from its cell and must not re-send a node whose settings only
-differ in ways that never change what it computes. :func:`normalise`
-maps a node's ``setting_input`` dict (``model_dump(mode="json")`` or the save format) onto a
-canonical form; :func:`settings_equal` compares two of them. The rules are a small table keyed by
-node type, on top of the fields every node drops.
+differ in ways that never change what it computes. :func:`normalise` maps a node's ``setting_input``
+dict (``model_dump(mode="json")`` or the save format) onto a canonical form; :func:`settings_equal`
+compares two of them. The rules are a small table keyed by node type, on top of the fields every node drops.
 """
 
 from __future__ import annotations
@@ -100,7 +99,7 @@ def strip_outer_parens(formula: str) -> str:
 def param_comparison_filter(formula: str | None) -> dict | None:
     """The basic ``filter_input`` an advanced ``[col] <op> ${name}`` (or a between of two refs) spells, or None.
 
-    The frame stores ``fl.col("x") > PARAM`` as ``([x] > ${param})``; a canvas basic filter whose value
+    The frame stores ``ff.col("x") > PARAM`` as ``([x] > ${param})``; a canvas basic filter whose value
     is the whole-field ``${param}`` is the same comparison, since both substitute before they run.
     """
     text = strip_outer_parens(formula or "")

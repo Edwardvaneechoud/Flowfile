@@ -600,6 +600,258 @@ def test_graph_solver(export_func):
     assert_frame_equal(result, expected_result)
 
 
+BIKE_BOM_LINES = [
+    ("bike", "frame", 1.0), ("bike", "wheel", 2.0), ("bike", "screw", 10.0), ("bike", "handlebar", 1.0),
+    ("ebike", "frame", 1.0), ("ebike", "wheel", 2.0), ("ebike", "battery", 1.0), ("ebike", "motor", 1.0),
+    ("ebike", "screw", 12.0), ("frame", "steel_tube", 3.5), ("frame", "screw", 6.0), ("wheel", "rim", 1.0),
+    ("wheel", "spoke", 32.0), ("wheel", "tyre", 1.0), ("wheel", "screw", 2.0), ("rim", "aluminium", 0.75),
+    ("handlebar", "steel_tube", 0.5), ("handlebar", "grip", 2.0), ("motor", "copper_wire", 12.0),
+    ("motor", "screw", 4.0),
+]
+
+
+INTEGER_ID_SOURCES = {
+    "int16_ids": ("Int16", "Int16"),
+    "int64_int32_ids": ("Int64", "Int32"),
+    "int32_int16_ids": ("Int32", "Int16"),
+    "uint64_int64_ids": ("UInt64", "Int64"),
+}
+
+
+def bike_bom_source(source: str) -> tuple[dict[str, str], dict[str, list], tuple[str, str, str]]:
+    """(dtypes, columns, (parent, child, quantity) names) for one variant of the bike-factory BOM."""
+    assemblies, components, quantities = (list(c) for c in zip(*BIKE_BOM_LINES))
+    names = ("assembly", "component", "qty")
+    id_dtype, qty_dtype = "String", "Float64"
+    child_dtype = None
+    if source == "int32_qty":
+        quantities, qty_dtype = [max(1, int(q)) for q in quantities], "Int32"
+    elif source in INTEGER_ID_SOURCES:
+        codes = {item: i for i, item in enumerate(sorted(set(assemblies) | set(components)), start=1)}
+        assemblies, components = [codes[a] for a in assemblies], [codes[c] for c in components]
+        id_dtype, child_dtype = INTEGER_ID_SOURCES[source]
+    elif source == "quoted":
+        names = ('assembly "top"', "component's", 'qty "per" \\ unit')
+    elif source != "bom":
+        raise ValueError(source)
+    dtypes = dict(zip(names, (id_dtype, child_dtype or id_dtype, qty_dtype)))
+    columns = dict(zip(names, (assemblies, components, quantities)))
+    return dtypes, columns, names
+
+
+def create_explode_hierarchy_flow(source: str = "bom", **settings) -> FlowGraph:
+    """manual_input(bike BOM variant) -> explode_hierarchy, quantity column on unless overridden."""
+    dtypes, columns, (parent, child, qty) = bike_bom_source(source)
+    flow = create_basic_flow()
+    flow.add_manual_input(input_schema.NodeManualInput(
+        flow_id=1, node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name=n, data_type=t) for n, t in dtypes.items()],
+            data=[columns[n] for n in dtypes],
+        ),
+    ))
+    hierarchy_input = transform_schema.ExplodeHierarchyInput(
+        **{"parent_column": parent, "child_column": child, "quantity_column": qty, **settings}
+    )
+    flow.add_explode_hierarchy(input_schema.NodeExplodeHierarchy(
+        flow_id=1, node_id=2, depending_on_id=1, explode_hierarchy_input=hierarchy_input,
+    ))
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+    return flow
+
+
+EXPLODE_HIERARCHY_CASES = [
+    ("totals_with_quantity", "bom", {}),
+    ("no_quantity", "bom", {"quantity_column": None}),
+    ("levels", "bom", {"output_detail": "levels"}),
+    ("paths", "bom", {"output_detail": "paths"}),
+    ("top_level_only", "bom", {"top_level_only": True}),
+    ("include_self", "bom", {"include_self": True, "output_detail": "paths"}),
+    ("max_depth", "bom", {"max_depth": 1, "output_detail": "levels"}),
+    ("max_depth_zero", "bom", {"max_depth": 0, "include_self": True}),
+    ("int32_quantity", "int32_qty", {}),
+    ("int16_ids", "int16_ids", {"output_detail": "paths", "top_level_only": True}),
+    ("int64_int32_ids", "int64_int32_ids", {"output_detail": "paths"}),
+    ("int32_int16_ids", "int32_int16_ids", {}),
+    ("uint64_int64_ids", "uint64_int64_ids", {"output_detail": "levels"}),
+    ("quoted_column_names", "quoted", {"output_detail": "levels"}),
+]
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+@pytest.mark.parametrize("source,settings", [c[1:] for c in EXPLODE_HIERARCHY_CASES],
+                         ids=[c[0] for c in EXPLODE_HIERARCHY_CASES])
+def test_explode_hierarchy(source, settings, export_func):
+    """The exported code must produce exactly what the flow produces, casts and all."""
+    flow = create_explode_hierarchy_flow(source, **settings)
+    code = export_func(flow)
+
+    if export_func is export_flow_to_polars:
+        function_name = f"hierarchy_{settings.get('output_detail', 'totals')}"
+        verify_code_contains(code, f"from polars_grouper import {function_name}", '.unnest("hierarchy")')
+    else:
+        verify_code_contains(code, ".explode_hierarchy(")
+        assert "polars_grouper" not in code
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = flow.get_node(2).get_resulting_data().data_frame.collect()
+    assert expected.height > 0
+    assert_frame_equal(result, expected)
+
+
+def test_explode_hierarchy_polars_export_emits_engine_casts_and_only_non_default_kwargs():
+    flow = create_explode_hierarchy_flow("bom", top_level_only=True)
+    verify_code_contains(
+        export_flow_to_polars(flow),
+        '.select(hierarchy_totals(pl.col("assembly"), pl.col("component"), pl.col("qty").cast(pl.Float64), '
+        'top_level_only=True).alias("hierarchy")).unnest("hierarchy")',
+    )
+
+    code = export_flow_to_polars(create_explode_hierarchy_flow("int16_ids", quantity_column=None))
+    verify_code_contains(
+        code, 'hierarchy_totals(pl.col("assembly").cast(pl.Int64), pl.col("component").cast(pl.Int64)).alias("hierarchy")'
+    )
+    assert "include_self" not in code and "max_depth" not in code
+
+    code = export_flow_to_polars(create_explode_hierarchy_flow("int64_int32_ids", quantity_column=None))
+    verify_code_contains(
+        code, 'hierarchy_totals(pl.col("assembly"), pl.col("component").cast(pl.Int64)).alias("hierarchy")'
+    )
+
+
+@pytest.mark.parametrize(
+    "source,id_dtype",
+    [("int64_int32_ids", pl.Int64), ("int32_int16_ids", pl.Int32), ("uint64_int64_ids", pl.String)],
+)
+def test_explode_hierarchy_mixed_integer_ids_share_one_type(source, id_dtype):
+    """Integer ids of different widths come out as their common integer type, predicted and run alike."""
+    node = create_explode_hierarchy_flow(source, output_detail="paths").get_node(2)
+    predicted = {c.column_name: c.data_type for c in node.get_predicted_schema()}
+    result = node.get_resulting_data().data_frame.collect()
+    assert predicted["ancestor"] == predicted["descendant"] == str(id_dtype)
+    assert result.schema["ancestor"] == result.schema["descendant"] == id_dtype
+    assert result.schema["path"] == pl.List(id_dtype)
+
+
+HIERARCHY_ID_DTYPES = [
+    pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
+    pl.Int128, pl.String, pl.Float64, pl.Boolean,
+]
+
+
+@pytest.mark.parametrize("child", HIERARCHY_ID_DTYPES, ids=str)
+@pytest.mark.parametrize("parent", HIERARCHY_ID_DTYPES, ids=str)
+def test_explode_hierarchy_run_time_id_helper_matches_the_engine(parent, child):
+    """The exported run-time cast helper casts every dtype pair exactly as ``hierarchy_node_id_casts`` does."""
+    from flowfile_core.flowfile.code_generator.code_generator import _HIERARCHY_ID_HELPER
+    from flowfile_core.flowfile.flow_data_engine.hierarchy import hierarchy_node_id_casts
+
+    namespace = {"pl": pl}
+    exec(_HIERARCHY_ID_HELPER, namespace)
+    lf = pl.LazyFrame(schema={"p": parent, "c": child})
+    exported = lf.select(*namespace["_flowfile_hierarchy_ids"](lf, "p", "c")).collect_schema()
+    casts = hierarchy_node_id_casts(parent, child)
+    assert list(exported.values()) == [cast or dtype for cast, dtype in zip(casts, (parent, child))]
+
+
+def test_explode_hierarchy_flowframe_export_calls_the_native_method():
+    flow = create_explode_hierarchy_flow(
+        "bom", output_detail="levels", top_level_only=True, include_self=True, max_depth=3
+    )
+    verify_code_contains(
+        export_flow_to_flowframe(flow),
+        '.explode_hierarchy("assembly", "component", quantity="qty", output_detail="levels", '
+        "top_level_only=True, include_self=True, max_depth=3)",
+    )
+
+    code = export_flow_to_flowframe(create_explode_hierarchy_flow("bom", quantity_column=None))
+    verify_code_contains(code, '.explode_hierarchy("assembly", "component")')
+
+
+def test_explode_hierarchy_flowframe_export_rebuilds_the_native_node():
+    code = export_flow_to_flowframe(create_explode_hierarchy_flow("bom", output_detail="paths"))
+    result = get_result_from_generated_code(code)
+    assert isinstance(result, FlowFrame)
+    node_types = [node.node_type for node in result.flow_graph.nodes]
+    assert node_types.count("explode_hierarchy") == 1
+    assert "polars_code" not in node_types
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_explode_hierarchy_column_names_from_flow_parameters(export_func):
+    """``${param}`` column names become function arguments that default to the parameter's value."""
+    flow = create_explode_hierarchy_flow("bom", parent_column="${parent}", child_column="${child}")
+    flow.flow_settings.parameters = [
+        FlowParameter(name="parent", default_value="assembly"),
+        FlowParameter(name="child", default_value="component"),
+    ]
+    code = export_func(flow)
+
+    assert "${" not in code and "__FF_PARAM_" not in code
+    if export_func is export_flow_to_polars:
+        verify_code_contains(
+            code, "hierarchy_totals(*_flowfile_hierarchy_ids(source, parent, child),"
+        )
+    else:
+        verify_code_contains(code, '.explode_hierarchy(parent, child, quantity="qty")')
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = create_explode_hierarchy_flow("bom").get_node(2).get_resulting_data().data_frame.collect()
+    assert_frame_equal(result, expected)
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_explode_hierarchy_parameterised_small_int_ids_are_cast_at_run_time(export_func):
+    """With a ``${param}`` name the dtype is unknown at export time, so the cast must happen when the code runs."""
+    flow = create_explode_hierarchy_flow("int16_ids", parent_column="${parent}", output_detail="paths")
+    flow.flow_settings.parameters = [FlowParameter(name="parent", default_value="assembly")]
+    code = export_func(flow)
+
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    unparameterised = create_explode_hierarchy_flow("int16_ids", output_detail="paths")
+    expected = unparameterised.get_node(2).get_resulting_data().data_frame.collect()
+    assert expected["ancestor"].dtype == pl.Int64
+    assert_frame_equal(result, expected)
+
+
+@pytest.mark.parametrize("source", ["int16_ids", "int64_int32_ids", "int32_int16_ids", "uint64_int64_ids"])
+def test_explode_hierarchy_unpredictable_input_schema_casts_at_run_time(monkeypatch, source):
+    """Without a predicted input schema the Polars export still casts ids like the engine does."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    monkeypatch.setattr(FlowGraphToPolarsConverter, "_input_column_types", lambda self, node_id: None)
+    flow = create_explode_hierarchy_flow(source, output_detail="paths")
+    code = export_flow_to_polars(flow)
+
+    verify_code_contains(
+        code,
+        "def _flowfile_hierarchy_ids(frame, parent, child):",
+        '_flowfile_hierarchy_ids(source, "assembly", "component")',
+    )
+    result = normalize_result(get_result_from_generated_code(code))
+    assert_frame_equal(result, flow.get_node(2).get_resulting_data().data_frame.collect())
+
+
+def test_input_column_lookups_share_one_main_input_schema(monkeypatch):
+    """Names and dtypes come from the same single-main-input lookup and fail to None together."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+    from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+
+    converter = FlowGraphToPolarsConverter(create_explode_hierarchy_flow("int64_int32_ids"))
+    types = converter._input_column_types(2)
+    assert types is not None and types["assembly"] == "Int64"
+    assert converter._input_column_names(2) == list(types)
+
+    for missing in (1, 99):
+        assert converter._input_column_types(missing) is None
+        assert converter._input_column_names(missing) is None
+
+    for predicted in (lambda self, force=False: [], lambda self, force=False: 1 / 0):
+        monkeypatch.setattr(FlowNode, "get_predicted_schema", predicted)
+        assert converter._input_column_types(2) is None
+        assert converter._input_column_names(2) is None
+
+
 @pytest.mark.parametrize("export_func", [
     export_flow_to_polars,
     export_flow_to_flowframe,
@@ -1388,7 +1640,7 @@ def test_formula_node(export_func):
 
 
 def test_flowframe_formula_native_expression():
-    """FlowFrame export prefers native fl expressions over the flowfile_formulas parameter."""
+    """FlowFrame export prefers native ff expressions over the flowfile_formulas parameter."""
     flow = create_basic_flow()
     flow = create_sales_dataframe_node(flow)
     formula_node = input_schema.NodeFormula(
@@ -1404,7 +1656,7 @@ def test_flowframe_formula_native_expression():
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     code = export_flow_to_flowframe(flow)
-    verify_code_contains(code, 'fl.col("price")', 'fl.col("quantity")', 'alias("total")')
+    verify_code_contains(code, 'ff.col("price")', 'ff.col("quantity")', 'alias("total")')
     assert "flowfile_formulas" not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
@@ -1504,7 +1756,7 @@ def test_independent_formula_entries_still_chain_one_call_each(export_func):
     else:
         verify_code_contains(
             code,
-            '.with_columns((fl.col("price") * fl.col("quantity")).alias("total"))',
+            '.with_columns((ff.col("price") * ff.col("quantity")).alias("total"))',
             ".with_columns(flowfile_formulas=['uppercase([region])'], output_column_names=['region_upper'], "
             "output_column_datatypes=['String'])",
         )
@@ -1548,7 +1800,7 @@ def test_entries_mixing_native_and_fallback_chain_with_the_fallback_alone(export
     else:
         verify_code_contains(
             code,
-            '.with_columns((fl.col("price") * fl.col("quantity")).alias("total"))',
+            '.with_columns((ff.col("price") * ff.col("quantity")).alias("total"))',
             ".with_columns(flowfile_formulas=[\"string_similarity([region], 'Noorden')\"], "
             "output_column_names=['sim'], output_column_datatypes=['Double'])",
         )
@@ -1579,7 +1831,7 @@ def test_flowframe_formula_fallback_untranslatable():
 
     code = export_flow_to_flowframe(flow)
     verify_code_contains(code, "flowfile_formulas=")
-    assert 'fl.col("region")' not in code
+    assert 'ff.col("region")' not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
@@ -1587,7 +1839,7 @@ def test_flowframe_formula_fallback_untranslatable():
 
 
 def test_flowframe_filter_advanced_native():
-    """FlowFrame export translates advanced filters to native fl predicates."""
+    """FlowFrame export translates advanced filters to native ff predicates."""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)
     filter_node = input_schema.NodeFilter(
@@ -1603,7 +1855,7 @@ def test_flowframe_filter_advanced_native():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     code = export_flow_to_flowframe(flow)
-    verify_code_contains(code, '.filter((fl.col("age")', 'fl.col("salary")')
+    verify_code_contains(code, '.filter((ff.col("age")', 'ff.col("salary")')
     assert "flowfile_formula=" not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
@@ -1629,7 +1881,7 @@ def test_flowframe_filter_advanced_fallback():
 
     code = export_flow_to_flowframe(flow)
     verify_code_contains(code, "flowfile_formula=")
-    assert 'fl.col("name")' not in code
+    assert 'ff.col("name")' not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
@@ -1657,7 +1909,7 @@ def test_flowframe_filter_split_native_and_fallback():
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, output_handle="output-1"))
 
     code = export_flow_to_flowframe(flow)
-    verify_code_contains(code, 'filter_split(fl.col("age")', "split_pass", "split_fail", "counted = split_fail.select(")
+    verify_code_contains(code, 'filter_split(ff.col("age")', "split_pass", "split_fail", "counted = split_fail.select(")
     assert "flowfile_formula=" not in code
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
@@ -1689,7 +1941,7 @@ def test_translate_registers_snippet_imports(monkeypatch):
     """Validated snippets referencing datetime/pl must register those imports for the script.
 
     The validation namespace includes pl and datetime, so the transpiler may
-    emit references to them (e.g. today() -> fl.lit(datetime.datetime.today()));
+    emit references to them (e.g. today() -> ff.lit(datetime.datetime.today()));
     without the imports the exported script raises NameError.
     """
     from flowfile_core.flowfile.code_generator import code_generator as cg
@@ -2123,7 +2375,7 @@ def test_sql_query_single_input(export_func):
             code, "df = pl.SQLContext(input_1=source).execute(", '"SELECT a * 2 AS doubled FROM input_1 WHERE a > 1"'
         )
     else:
-        verify_code_contains(code, "df = fl.sql(", '"SELECT a * 2 AS doubled FROM input_1 WHERE a > 1",', "source,")
+        verify_code_contains(code, "df = ff.sql(", '"SELECT a * 2 AS doubled FROM input_1 WHERE a > 1",', "source,")
     _assert_sql_query_parity(flow, code)
 
 
@@ -2140,7 +2392,7 @@ def test_sql_query_multiple_inputs_keep_their_order(export_func):
     if export_func is export_flow_to_polars:
         verify_code_contains(code, "pl.SQLContext(input_1=source_1, input_2=source_2).execute(")
     else:
-        verify_code_ordering(code, "fl.sql(", "source_1,", "source_2,")
+        verify_code_ordering(code, "ff.sql(", "source_1,", "source_2,")
     verify_code_ordering(code, '"WITH left_side AS (SELECT * FROM input_1),\\n"', '"     right_side AS', '"SELECT l.a')
     _assert_sql_query_parity(flow, code)
 
@@ -4101,7 +4353,7 @@ def test_rest_api_reader_flowframe_has_no_data_suffix():
     converter._handle_rest_api_reader(reader, "df_1", {})
 
     code = "\n".join(converter.code_lines)
-    verify_code_contains(code, "fl.read_api(")
+    verify_code_contains(code, "ff.read_api(")
     assert ").data" not in code
     ast.parse(code)
 
@@ -5171,7 +5423,7 @@ def test_fuzzy_match_with_multiple_columns(export_func):
             "fuzzy_match_dfs("
         )
     elif export_func is export_flow_to_flowframe:
-        verify_code_contains(code, ".fuzzy_join(", "fl.FuzzyMapping(")
+        verify_code_contains(code, ".fuzzy_join(", "ff.FuzzyMapping(")
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
@@ -5324,7 +5576,7 @@ def test_fuzzy_match_jaro_winkler(export_func):
         verify_code_contains(code, "fuzzy_type='jaro_winkler'")
         verify_code_contains(code, "threshold_score=0.8")
     elif export_func is export_flow_to_flowframe:
-        verify_code_contains(code, ".fuzzy_join(", "fl.FuzzyMapping(")
+        verify_code_contains(code, ".fuzzy_join(", "ff.FuzzyMapping(")
     verify_if_execute(code)
 
 
@@ -5688,8 +5940,8 @@ def test_catalog_reader_by_table_name():
     converter._handle_catalog_reader(catalog_reader, "df_1", {})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "fl.read_catalog_table(", '"my_table"')
-    assert "import flowfile as fl" in converter.imports
+    verify_code_contains(code_output, "ff.read_catalog_table(", '"my_table"')
+    assert "import flowfile as ff" in converter.imports
 
 
 def test_catalog_reader_with_namespace_and_version():
@@ -5713,7 +5965,7 @@ def test_catalog_reader_with_namespace_and_version():
 
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
-        code_output, "fl.read_catalog_table(", '"versioned_table"', "namespace_id=987654", "delta_version=3"
+        code_output, "ff.read_catalog_table(", '"versioned_table"', "namespace_id=987654", "delta_version=3"
     )
 
 
@@ -5739,7 +5991,7 @@ def test_catalog_reader_scd2_view():
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
         code_output,
-        "fl.read_catalog_table(",
+        "ff.read_catalog_table(",
         '"dim_customer"',
         'scd2_view="active_at"',
         'scd2_as_of="2024-01-01T00:00:00+00:00"',
@@ -5768,7 +6020,7 @@ def test_catalog_reader_changes_since_last_run():
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
         code_output,
-        "fl.read_catalog_table(",
+        "ff.read_catalog_table(",
         'changes_since="last_run"',
         'changes_consumer="nightly"',
         'changes_start="beginning"',
@@ -5866,7 +6118,7 @@ def test_catalog_writer_track_changes_is_emitted():
     converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "fl.write_catalog_table(", "track_changes=True")
+    verify_code_contains(code_output, "ff.write_catalog_table(", "track_changes=True")
 
 
 def test_catalog_reader_missing_table_name_adds_to_unsupported():
@@ -5913,10 +6165,10 @@ def test_catalog_writer_overwrite_mode():
 
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
-        code_output, "fl.write_catalog_table(", "df_1,", '"output_table"',
+        code_output, "ff.write_catalog_table(", "df_1,", '"output_table"',
         'write_mode="overwrite"',
     )
-    assert "import flowfile as fl" in converter.imports
+    assert "import flowfile as ff" in converter.imports
 
 
 def test_catalog_writer_upsert_with_merge_keys():
@@ -5945,7 +6197,7 @@ def test_catalog_writer_upsert_with_merge_keys():
 
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
-        code_output, "fl.write_catalog_table(", '"target_table"', "namespace_id=987654",
+        code_output, "ff.write_catalog_table(", '"target_table"', "namespace_id=987654",
         'write_mode="upsert"', "merge_keys=[", 'description="My upsert table"',
     )
 
@@ -5973,7 +6225,7 @@ def test_catalog_writer_partition_by_is_emitted():
     converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "fl.write_catalog_table(", "partition_by=[")
+    verify_code_contains(code_output, "ff.write_catalog_table(", "partition_by=[")
 
 
 def test_catalog_writer_scd2_emits_all_settings():
@@ -6010,7 +6262,7 @@ def test_catalog_writer_scd2_emits_all_settings():
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
         code_output,
-        "fl.write_catalog_table(",
+        "ff.write_catalog_table(",
         '"dim_customer"',
         'namespace_full_name="catalog.schema"',
         'write_mode="scd2"',
@@ -6109,7 +6361,7 @@ def test_catalog_writer_scd2_output_mode_is_emitted_when_not_default():
 
     code_output = _scd2_writer_code(FlowGraphToFlowFrameConverter, output_mode="changed")
 
-    verify_code_contains(code_output, "fl.write_catalog_table(", 'scd2_output_mode="changed"')
+    verify_code_contains(code_output, "ff.write_catalog_table(", 'scd2_output_mode="changed"')
 
 
 def test_catalog_writer_scd2_binds_the_call_result():
@@ -6118,7 +6370,7 @@ def test_catalog_writer_scd2_binds_the_call_result():
 
     code_output = _scd2_writer_code(FlowGraphToFlowFrameConverter)
 
-    assert "df_2 = fl.write_catalog_table(" in code_output
+    assert "df_2 = ff.write_catalog_table(" in code_output
     # The passthrough assignment is exactly what the bound call replaces.
     assert "df_2 = df_1" not in code_output
 
@@ -6143,8 +6395,8 @@ def test_catalog_writer_non_scd2_keeps_the_passthrough_assignment():
     converter._handle_catalog_writer(catalog_writer, "df_2", {"main": "df_1"})
 
     code_output = "\n".join(converter.code_lines)
-    assert "\nfl.write_catalog_table(" in f"\n{code_output}"
-    assert "df_2 = fl.write_catalog_table(" not in code_output
+    assert "\nff.write_catalog_table(" in f"\n{code_output}"
+    assert "df_2 = ff.write_catalog_table(" not in code_output
     assert "df_2 = df_1" in code_output
 
 
@@ -6478,8 +6730,8 @@ def test_kafka_source_with_connection_name():
     converter._handle_kafka_source(kafka_source, "df_1", {})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "fl.read_kafka(", '"my_kafka"', 'topic_name="events"')
-    assert "import flowfile as fl" in converter.imports
+    verify_code_contains(code_output, "ff.read_kafka(", '"my_kafka"', 'topic_name="events"')
+    assert "import flowfile as ff" in converter.imports
 
 
 def test_kafka_source_with_all_parameters():
@@ -6506,7 +6758,7 @@ def test_kafka_source_with_all_parameters():
     converter._handle_kafka_source(kafka_source, "df_1", {})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "fl.read_kafka(", "max_messages=50000", 'start_offset="earliest"', "poll_timeout_seconds=60.0")
+    verify_code_contains(code_output, "ff.read_kafka(", "max_messages=50000", 'start_offset="earliest"', "poll_timeout_seconds=60.0")
 
 
 def test_kafka_source_default_parameters_omitted():
@@ -6602,8 +6854,8 @@ def test_cloud_storage_reader_handler_unified():
     converter._handle_cloud_storage_reader(settings, "df_1", {})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "fl.read_from_cloud_storage(", "s3://bucket/data.parquet", "my_conn")
-    assert "import flowfile as fl" in converter.imports
+    verify_code_contains(code_output, "ff.read_from_cloud_storage(", "s3://bucket/data.parquet", "my_conn")
+    assert "import flowfile as ff" in converter.imports
     assert "scan_parquet_from_cloud_storage" not in code_output
     assert "scan_csv_from_cloud_storage" not in code_output
 
@@ -6678,9 +6930,9 @@ def test_cloud_storage_writer_handler_unified():
     converter._handle_cloud_storage_writer(settings, "df_2", {"main": "df_1"})
 
     code_output = "\n".join(converter.code_lines)
-    verify_code_contains(code_output, "fl.write_to_cloud_storage(", "s3://bucket/output.parquet", "my_conn")
-    assert "import flowfile as fl" in converter.imports
-    assert "fl.FlowFrame(" not in code_output
+    verify_code_contains(code_output, "ff.write_to_cloud_storage(", "s3://bucket/output.parquet", "my_conn")
+    assert "import flowfile as ff" in converter.imports
+    assert "ff.FlowFrame(" not in code_output
 
 
 def test_cloud_storage_writer_handler_delta_partition_by():
@@ -6709,7 +6961,7 @@ def test_cloud_storage_writer_handler_delta_partition_by():
     code_output = "\n".join(converter.code_lines)
     verify_code_contains(
         code_output,
-        "fl.write_to_cloud_storage(",
+        "ff.write_to_cloud_storage(",
         'write_mode="append"',
         "partition_by=['region', 'year']",
     )
@@ -6740,7 +6992,7 @@ def test_cloud_storage_writer_handler_delta_merge_and_track_changes():
 
     verify_code_contains(
         "\n".join(converter.code_lines),
-        "fl.write_to_cloud_storage(",
+        "ff.write_to_cloud_storage(",
         'write_mode="upsert"',
         "merge_keys=['order_id']",
         "track_changes=True",
@@ -6893,7 +7145,7 @@ def test_kafka_source_code_executes():
         flow.add_kafka_source(node_kafka)
 
         code = export_flow_to_flowframe(flow)
-        assert "fl.read_kafka(" in code
+        assert "ff.read_kafka(" in code
         assert "test-codegen-kafka" in code
         assert topic_name in code
 
@@ -7687,8 +7939,7 @@ def test_fusion_keeps_named_boundaries_at_join(export_func):
     assert_frame_equal(result, expected, check_row_order=False)
 
 
-@pytest.mark.parametrize("export_func", [export_flow_to_polars], ids=["polars"])
-def test_fusion_grouped_record_id_self_reference_preserved(export_func):
+def test_fusion_grouped_record_id_self_reference_preserved():
     """Grouped record_id reads its input's .columns, so that input must stay named."""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)  # node 1 (has 'city')
@@ -7710,7 +7961,7 @@ def test_fusion_grouped_record_id_self_reference_preserved(export_func):
     ))
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4))
 
-    code = export_func(flow)
+    code = export_flow_to_polars(flow)
     # Frame-equality would NameError if the .columns self-reference's target were fused away.
     assert _count_pipeline_assignments(code) >= 2
     assert "+ 1 - 1" not in code
@@ -7813,7 +8064,7 @@ def test_fusion_node_reference_pins_variable():
 
 
 def test_catalog_reader_id_only_is_unsupported():
-    """An ID-only catalog reader cannot map to fl.read_catalog_table (needs a name)."""
+    """An ID-only catalog reader cannot map to ff.read_catalog_table (needs a name)."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 
     flow = create_basic_flow()
@@ -7844,7 +8095,7 @@ def test_catalog_sql_reader_flowframe_emits_valid_call():
     ff_conv = FlowGraphToFlowFrameConverter(flow)
     ff_conv._handle_catalog_reader(catalog_reader, "df_1", {})
     ff_code = "\n".join(ff_conv.code_lines)
-    assert "fl.read_catalog_sql(" in ff_code
+    assert "ff.read_catalog_sql(" in ff_code
     assert ".data" not in ff_code
     ast.parse(ff_code)
 

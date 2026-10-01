@@ -550,22 +550,22 @@ An API Response node, which has no fluent method, with its settings as a dict:
 
 ## Notebook mode
 
-**Notebook build mode** is how `flowfile_frame` builds the [canvas notebook](../../visual-editor/notebook.md)'s cells, which use `import flowfile as fl`, the same package as `ff`. The server runs no notebook process and never executes a cell: **Push** interprets the cells, calling only the functions a flow description needs, and builds them in this mode. While the mode is active:
+**Notebook build mode** is how `flowfile_frame` builds the [canvas notebook](../../visual-editor/notebook.md)'s cells, which use `import flowfile as ff`. The server runs no notebook process and never executes a cell: a sync (the notebook's **Run**, **Run all** or **Push**) interprets the cells, calling only the functions a flow description needs, and builds them in this mode. While the mode is active:
 
 - Every source without `flow_graph=` lands on the session graph, the flow seeded from the canvas; a merge with any other graph is refused.
-- Nodes are built, never run. Writers, subflows, kernel scripts, database, REST and Kafka sources, `pivot`, `polars_code` and virtual or SQL-mode catalog readers get their predicted schema instead of executing, and `collect()` on a [deferred](#deferred-frames) frame raises `NativeNodeError` pointing at **Run on canvas**.
-- A push builds its cells as a *sync*, which holds more: every source except literal data (`from_dict`, `from_raw_data`, `FlowInput`), every custom node, `fuzzy_join`, `random_split`, `pivot`, a first-row `dynamic_rename` and SQL that calls a file-reading table function. A held node takes the columns of the canvas node its cell rendered while its settings are unchanged and the canvas knows them, else the columns it declares, a local file's header or a catalog table's registered columns, else none; it never runs and opens no connection.
+- Nodes are built, never run. Writers and other output nodes, model nodes, subflows, kernel scripts, database, REST, Kafka, Google Analytics and external sources, `pivot`, `polars_code` and virtual or SQL-mode catalog readers get their predicted schema instead of executing, and `collect()` on a [deferred](#deferred-frames) frame raises `NativeNodeError`: the notebook's **Run** runs a cell's node on the canvas instead.
+- A sync holds more: every source except literal data (`from_dict`, `from_raw_data`, `FlowInput`), every custom node, `fuzzy_join`, `random_split`, `pivot`, a first-row `dynamic_rename`, `data_cleansing(remove_null_columns=True)` and SQL that calls a file-reading table function. A held node takes the columns of the canvas node its cell rendered while its settings are unchanged and the canvas knows them, else the columns it declares, a local file's header or a catalog table's registered columns, else none; it never runs and opens no connection.
 - No placed source starts a background schema read, and a source or writer first passes the canvas's path and connection checks (cloud paths; cloud, database and Kafka connections); a refusal raises `NativeNodeError`.
 - Calls that write at build time or run a flow raise `NativeNodeError`: `register_flow`, `RunFlow(<graph>, name=...)`, `custom_nodes.install`, the connection helpers, `open_graph_in_editor` and `run_graph` on the session graph. Placing a custom node class that is neither installed nor already registered in this process raises too, since it would add a node type for the whole process. Getting a kernel manager raises as well, so nothing in a cell reaches Docker.
 - `add_flow_parameter` on the session graph updates an existing parameter instead of failing.
 - `FlowInput` and `to_flow_output` on the session graph accept a port name already in use, so a cell that places the canvas's own subflow ports can run again. Push runs the cells on a fresh graph, where a duplicate name still raises.
-- A lowercase name a cell binds to a frame or node it created becomes that node's `node_reference` (the rule above; reserved names such as `fl`, `pl` and `main` are skipped).
+- A lowercase name a cell binds to a frame or node it created becomes that node's `node_reference` (the rule above; reserved names such as `ff`, `pl` and `main` are skipped).
 
 Scripts outside notebook mode are unaffected.
 
 ### `canvas_node`
 
-`fl.canvas_node(node_id, *inputs, output=None)` is how the notebook renders a node it has no code form for. It adopts canvas node `node_id` from the session's seed with its current settings, wires it to `inputs` in handle order, and returns a deferred frame with the node's predicted columns. `output` (an output name, `output-<n>` or an `ff.FlowOutput`) selects one handle; without it a single-output node returns its frame and a multi-output node an object with `.output`, `.then` / `.otherwise`, `node[name]` and `get_output(name)`, as the native classes have. It only works inside a notebook session; elsewhere, and for an id the seed does not hold, it raises `NativeNodeError`.
+`ff.canvas_node(node_id, *inputs, output=None)` is how the notebook renders a node it has no code form for. It adopts canvas node `node_id` from the session's seed with its current settings, wires it to `inputs` in handle order, and returns a deferred frame with the node's predicted columns. `output` (an output name, `output-<n>` or an `ff.FlowOutput`) selects one handle; without it a single-output node returns its frame and a multi-output node an object with `.output`, `.then` / `.otherwise`, `node[name]` and `get_output(name)`, as the native classes have. It only works in notebook mode on a flow seeded from the canvas; elsewhere, and for an id the seed does not hold, it raises `NativeNodeError`.
 
 ### Join keys
 
@@ -592,7 +592,7 @@ Every build or materialisation failure raises `ff.NativeNodeError`, a subclass o
 - **`@ff.python_script` needs the function's source.** Files, notebook cells and PyCharm's Python console provide it; in the console, a definition run before flowfile was imported has to be run again. The plain `python` prompt before Python 3.13 keeps none.
 - **Notebook variables are shared across a flow's scripts.** The body runs at the top level of the kernel's namespace for the flow, so a name it assigns (even one that shadows a builtin, such as `max`) is visible to the flow's other Python Script nodes.
 - **An upstream node referenced as `main` fails a script's run.** `read_inputs()["main"]` holds every input in wiring order, so running the script refuses an input of that name. Give the node another reference.
-- **The FlowFrame export writes these classes back.** A gate becomes `fl.Gate(...)`, a SQL Query node `fl.sql(...)`, a custom node `fl.custom_nodes.<key>(...)`, and a Python Script node `@fl.python_script` when its cells regenerate byte for byte, else `fl.PythonScript(cells=...)`. The Polars export still writes gates as `if` blocks.
+- **The FlowFrame export writes these classes back.** A gate becomes `ff.Gate(...)`, a SQL Query node `ff.sql(...)`, a custom node `ff.custom_nodes.<key>(...)`, and a Python Script node `@ff.python_script` when its cells regenerate byte for byte, else `ff.PythonScript(cells=...)`. The Polars export still writes gates as `if` blocks.
 - **No typed class per built-in node.** Node types without a dedicated class above are placed with `ff.Node` and a settings dict or model.
 
 ---

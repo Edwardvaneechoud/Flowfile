@@ -19,8 +19,10 @@ if TYPE_CHECKING:
     from flowfile_frame.run_flow import FlowOutput
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.flowfile.formula_dependencies import entries_are_independent
 from flowfile_core.flowfile.param_types import ParamValue, typed_parameter_values
 from flowfile_core.flowfile.parameter_resolver import resolve_expression_parameters
@@ -32,7 +34,7 @@ from flowfile_frame.config import logger
 from flowfile_frame.expr import Column, Expr, col, lit
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.join import _create_join_mappings, _normalize_columns_to_list
-from flowfile_frame.lazy_methods import add_lazyframe_methods
+from flowfile_frame.lazy_methods import PURE_TRANSFORMS, _refuse_frame_argument, add_lazyframe_methods
 from flowfile_frame.native import (
     NativeNodeError,
     Node,
@@ -134,6 +136,22 @@ def can_be_expr(param: inspect.Parameter) -> bool:
 
 def _contains_lambda_pattern(text: str) -> bool:
     return "<lambda> at" in text
+
+
+def _polars_argument(value: Any) -> Any:
+    """``value`` with every frame expression in it, at any depth, replaced by its Polars expression.
+
+    Raises ``TypeError`` for a selector or an expression without a Polars expression.
+    """
+    if isinstance(value, Expr) and value.expr is not None:
+        return value.expr
+    if isinstance(value, Expr | Selector):
+        raise TypeError("an argument has no Polars expression")
+    if isinstance(value, list | tuple):
+        return type(value)(_polars_argument(item) for item in value)
+    if isinstance(value, dict):
+        return {key: _polars_argument(item) for key, item in value.items()}
+    return value
 
 
 def _formula_parses(formula: str, params: dict[str, ParamValue] | None = None) -> bool:
@@ -544,13 +562,22 @@ class FlowFrame:
         )
         add_connection_checked(self.flow_graph, connection)
 
-    def _create_child_frame(self, new_node_id, *, precomputed_result=None, deferred: bool | None = None):
+    def _create_child_frame(
+        self,
+        new_node_id,
+        *,
+        precomputed_result=None,
+        deferred: bool | None = None,
+        declared: Mapping[str, list[FlowfileColumn]] | None = None,
+    ):
         """Helper method to create a new FlowFrame that's a child of this one.
 
         ``deferred`` overrides the inherited flag for nodes with more inputs than this frame.
         A node that :func:`~flowfile_frame.native.seeded_at_build` (a side-effect node on a
         deferred frame or below a gate) is seeded from its own predicted schema instead of
         executed, and its frame is deferred: only the run writes, on the live side only.
+        ``declared`` is what a sync seeds such a node with when it has no unchanged canvas twin
+        (:meth:`_planned_seed`).
         """
         deferred = self._deferred if deferred is None else deferred
         self._add_connection(self.node_id, new_node_id, output_handle=getattr(self, "output_handle", "output-0"))
@@ -566,7 +593,7 @@ class FlowFrame:
         if node is not None and seeded_at_build(
             node.node_type, [self], inputs_deferred=deferred, setting_input=node.setting_input
         ):
-            seed_from_predicted_schema(node)
+            seed_from_predicted_schema(node, declared)
             return FlowFrame(
                 data=node.results.resulting_data.data_frame,
                 flow_graph=self.flow_graph,
@@ -584,6 +611,30 @@ class FlowFrame:
             )
         except AttributeError:
             raise ValueError("Could not execute the function") from None
+
+    def _planned_seed(
+        self, method_name: str, args: Iterable[Any], kwargs: Mapping[str, Any] | None = None
+    ) -> dict[str, list[FlowfileColumn]] | None:
+        """In a sync, the columns Polars plans for ``self.data.<method_name>(*args, **kwargs)``, else ``None``.
+
+        The Polars Code node a ``PURE_TRANSFORMS`` method builds holds this call as text; no other
+        method is planned. Polars' planner (``collect_schema``) runs over the in-memory seeds the
+        sync built: no text is compiled and nothing is read. An argument without a Polars
+        expression (a selector) or a plan Polars refuses gives ``None``, so the node is seeded
+        without columns.
+        """
+        mode = current()
+        if mode is None or not mode.sync or method_name not in PURE_TRANSFORMS:
+            return None
+        try:
+            planned = getattr(self.data.lazy(), method_name)(
+                *_polars_argument(list(args)), **_polars_argument(dict(kwargs or {}))
+            )
+            schema = planned.collect_schema()
+        except Exception:
+            return None
+        columns = [FlowfileColumn.create_from_polars_dtype(name, dtype) for name, dtype in schema.items()]
+        return {DEFAULT_OUTPUT_HANDLE: columns}
 
     @staticmethod
     def _generate_sort_polars_code(
@@ -732,6 +783,8 @@ class FlowFrame:
                 polars_expr=pl_expressions_for_fallback,
                 kwargs_expr=kwargs_for_fallback,
             )
+            planned = self._planned_seed("sort", [all_processed_expr_objects], kwargs_for_fallback)
+            return self._create_child_frame(new_node_id, precomputed_result=precomputed, declared=planned)
         else:
             precomputed = None
             sort_inputs_for_node = []
@@ -770,7 +823,8 @@ class FlowFrame:
         """Returns a precomputed result if serialization fell back, otherwise None."""
         polars_code_for_node: str
         precomputed = None
-        if not convertable_to_code or _contains_lambda_pattern(code):
+        # a notebook never evaluates a method at build, so text that reads like a lambda stays code there
+        if not convertable_to_code or (current() is None and _contains_lambda_pattern(code)):
             if self._deferred:
                 raise NativeNodeError(
                     "This operation has no code form (e.g. a lambda without retrievable source), so it would be "
@@ -1332,6 +1386,8 @@ class FlowFrame:
                 convertable_to_code=_check_if_convertible_to_code(all_input_expr_objects),
                 polars_expr=pl_expressions_for_fallback,
             )
+            planned = self._planned_seed("select", [all_input_expr_objects])
+            return self._create_child_frame(new_node_id, precomputed_result=precomputed, declared=planned)
 
         return self._create_child_frame(new_node_id, precomputed_result=precomputed)
 
@@ -1446,6 +1502,8 @@ class FlowFrame:
                 convertable_to_code=convertable_to_code,
                 polars_expr=pl_expressions_for_fallback,
             )
+            planned = self._planned_seed("filter", all_input_expr_objects)
+            return self._create_child_frame(new_node_id, precomputed_result=precomputed, declared=planned)
         elif flowfile_formula:
             precomputed = None
             self._add_native_filter(new_node_id, flowfile_formula, description)
@@ -2801,7 +2859,7 @@ class FlowFrame:
     def to_flow_output(self, name: str | FlowOutput, *, description: str | None = None) -> FlowFrame:
         """Mark this frame as the flow output ``name`` (a ``flow_output`` node) and return it unchanged.
 
-        ``name`` is a string or a declared ``fl.FlowOutput``, whose ``description`` is used when
+        ``name`` is a string or a declared ``ff.FlowOutput``, whose ``description`` is used when
         none is given here. A parent flow's ``RunFlow`` exposes it as ``run[name]``; outputs are
         ordered by the order they were declared in. The ``flow_output`` node has no output handle
         on the canvas, so the returned frame is this one, not the sink.
@@ -2815,7 +2873,7 @@ class FlowFrame:
 
         Mirrors ``polars.LazyFrame.sql``. The node stores the query behind a
         ``WITH <table_name> AS (SELECT * FROM input_1)`` header, because the node itself names
-        its input ``input_1``. Use ``fl.sql`` to query several frames at once.
+        its input ``input_1``. Use ``ff.sql`` to query several frames at once.
         """
         from flowfile_frame.sql_query import _sql_frame
 
@@ -2829,7 +2887,7 @@ class FlowFrame:
         ``code`` is the node's code: a string, stored dedented and stripped, or a ``def`` function
         whose body is stored instead (a single ``return <expr>`` becomes ``<expr>``, a trailing
         ``return output_df`` is dropped, anything else is kept as written; the parameters, typed
-        ``fl.FlowFrame`` or not, are ignored). The code reads its input as ``input_df``, or
+        ``ff.FlowFrame`` or not, are ignored). The code reads its input as ``input_df``, or
         ``input_df_1``, ``input_df_2``, ... with several inputs, and yields ``output_df`` or its
         last expression, exactly as on the canvas.
         """
@@ -3047,6 +3105,82 @@ class FlowFrame:
             description=description,
         )
         self.flow_graph.add_graph_solver(graph_solver_settings)
+        return self._create_child_frame(new_node_id)
+
+    def explode_hierarchy(
+        self,
+        parent: str,
+        child: str,
+        quantity: str | None = None,
+        *,
+        output_detail: Literal["totals", "levels", "paths"] = "totals",
+        top_level_only: bool = False,
+        include_self: bool = False,
+        max_depth: int | None = None,
+        description: str | None = None,
+    ) -> FlowFrame:
+        """Explode a parent -> child hierarchy (bill of materials, chart of accounts) into all its levels.
+
+        Each row of the input is one edge from ``parent`` to ``child``. The result is a new
+        table, not the input with extra columns: quantities multiply along each path and add
+        up across paths, so it answers "how many screws does one bike need in total".
+
+        Parameters
+        ----------
+        parent:
+            Column holding the parent item (the assembly, the parent account).
+        child:
+            Column holding the child item (the component, the sub-account).
+        quantity:
+            Optional numeric column with the quantity of ``child`` per one ``parent``.
+            Without it every edge counts 1.
+        output_detail:
+            - ``"totals"`` — one row per (ancestor, descendant) with the total quantity;
+              ``level`` is the shallowest level the descendant appears at.
+            - ``"levels"`` — one row per (ancestor, descendant, level).
+            - ``"paths"`` — one row per path, depth-first (indented bill-of-materials order),
+              with ``parent``, ``quantity_per`` and the full ``path``.
+        top_level_only:
+            Only explode items that never appear as a child.
+        include_self:
+            Add a level-0 row from each exploded item to itself with quantity 1 (only the top-level
+            items when ``top_level_only`` is set).
+        max_depth:
+            Deepest level to explode (``>= 0``); ``None`` explodes every level.
+        description:
+            Optional node description shown in the visual designer.
+
+        Returns
+        -------
+        FlowFrame
+            Columns ``ancestor``, ``descendant``, ``level``, ``quantity`` and ``is_leaf``;
+            ``"paths"`` adds ``parent``, ``quantity_per`` and ``path``. A cycle or a null
+            quantity raises a ``ComputeError`` when the result is collected.
+
+        Raises
+        ------
+        ValueError
+            If ``parent`` or ``child`` is empty, or both name the same column.
+        """
+        hierarchy_input = transform_schema.ExplodeHierarchyInput(
+            parent_column=parent,
+            child_column=child,
+            quantity_column=quantity,
+            output_detail=output_detail,
+            top_level_only=top_level_only,
+            include_self=include_self,
+            max_depth=max_depth,
+        )
+        hierarchy_input.check_edge_columns()
+        new_node_id = generate_node_id()
+        settings = input_schema.NodeExplodeHierarchy(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            depending_on_id=self.node_id,
+            explode_hierarchy_input=hierarchy_input,
+            description=description,
+        )
+        self.flow_graph.add_explode_hierarchy(settings)
         return self._create_child_frame(new_node_id)
 
     def dynamic_rename(
@@ -3816,7 +3950,8 @@ class FlowFrame:
                 convertable_to_code=_check_if_convertible_to_code(all_input_expr_objects),
                 polars_expr=pl_expressions_for_fallback,
             )
-            return self._create_child_frame(new_node_id, precomputed_result=precomputed)
+            planned = self._planned_seed("with_columns", [all_input_expr_objects])
+            return self._create_child_frame(new_node_id, precomputed_result=precomputed, declared=planned)
 
         elif flowfile_formulas is not None and output_column_names is not None:
             refuse_parameter_as_column(output_column_names, "with_columns(output_column_names=)")
@@ -3961,6 +4096,7 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with exploded rows
         """
+        _refuse_frame_argument("explode", columns, more_columns)
         new_node_id = generate_node_id()
 
         all_columns = []
@@ -3974,10 +4110,8 @@ class FlowFrame:
             for col in more_columns:
                 all_columns.append(col.column_name if isinstance(col, Column) else col)
 
-        if len(all_columns) == 1:
-            columns_str = stringify_values(all_columns[0])
-        else:
-            columns_str = "[" + ", ".join([stringify_values(col) for col in all_columns]) + "]"
+        texts = [repr(col) if isinstance(col, str) else stringify_values(col) for col in all_columns]
+        columns_str = texts[0] if len(texts) == 1 else "[" + ", ".join(texts) + "]"
 
         code = f"""
         # Explode columns into multiple rows

@@ -3,7 +3,6 @@
 import json
 import socket
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -12,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from flowfile_core import main
 from flowfile_core.auth.jwt import get_internal_token
+from flowfile_core.routes import logs
 from flowfile_core.routes.routes import flow_file_handler
 
 LOG_LINE = "hello from the log stream"
@@ -60,13 +60,10 @@ def live_core():
     """Core's app on a real loopback port, so the worker's own HTTP log shipping is what runs."""
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
+    sock.listen()  # a request made before uvicorn serves waits in the backlog
     server = uvicorn.Server(uvicorn.Config(main.app, lifespan="off", log_level="warning"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
-    deadline = time.monotonic() + 10
-    while not server.started:
-        assert time.monotonic() < deadline, "uvicorn did not start"
-        time.sleep(0.05)
     yield f"http://127.0.0.1:{sock.getsockname()[1]}"
     server.should_exit = True
     thread.join(timeout=10)
@@ -100,6 +97,25 @@ def test_unsigned_raw_log_is_refused(own_flow, request_headers):
     response = client.post("/raw_logs", json=_raw_log(own_flow, "forged line"), headers=request_headers)
     assert response.status_code == 401
     assert "forged line" not in _flow_log_text(own_flow)
+
+
+@pytest.fixture()
+def fresh_unsigned_warning():
+    logs._warn_unsigned_raw_log.cache_clear()
+    yield
+    logs._warn_unsigned_raw_log.cache_clear()
+
+
+def test_unsigned_raw_log_warns_once_per_process(own_flow, fresh_unsigned_warning, monkeypatch):
+    warnings: list[str] = []
+    monkeypatch.setattr(logs.logger, "warning", lambda message, *args, **kwargs: warnings.append(message))
+    for _ in range(2):
+        response = client.post("/raw_logs", json=_raw_log(own_flow, "unsigned line"))
+        assert response.status_code == 401
+    assert "unsigned line" not in _flow_log_text(own_flow)
+    assert len(warnings) == 1
+    assert "/raw_logs" in warnings[0] and "must be rebuilt" in warnings[0]
+    assert "FLOWFILE_INTERNAL_TOKEN" in warnings[0]
 
 
 def test_raw_log_signed_with_the_internal_token_lands(own_flow):

@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
@@ -327,16 +327,6 @@ def decode_refresh_token(token: str) -> str:
         return username
     except JWTError:
         raise credentials_exception from None
-
-
-def get_current_user_from_query(
-    access_token: str = Query(..., description="JWT access token"), db: Session = Depends(get_db)
-):
-    """Authenticate from an ``access_token`` query parameter; no route uses it.
-
-    Routes authenticate by header: a query string lands in access logs and proxy logs.
-    """
-    return get_current_user_sync(access_token, db)
 
 
 async def get_current_admin_user(current_user: User = Depends(get_current_user)):

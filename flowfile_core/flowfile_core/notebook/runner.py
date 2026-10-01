@@ -1,11 +1,8 @@
 """The notebook's clean runner in core: every push and plan interprets the cells and executes none of them.
 
-:class:`NotebookRunner` is the production :class:`~flowfile_core.notebook.bridge.CleanRunner`. ``main.py``
-installs it once, at import, through :func:`install_notebook_runner`, the function tests call too; no
-setting or environment variable switches it. A clean run is one call on the calling thread, as the
-requesting user, holding ``notebook.RUN_LOCK``: it enters a sync on the canvas snapshot, runs every cell
-through a fresh executor and ends the mode. A request over a size bound (``allowlist.BOUNDS``) or naming a
-malformed cell id is refused before any cell is parsed. ``flowfile_frame`` is imported on the first run.
+:class:`NotebookRunner` is the production :class:`~flowfile_core.notebook.bridge.CleanRunner`, installed at
+import by ``main.py`` through :func:`install_notebook_runner` (tests call it too); no setting or environment
+variable switches it. :meth:`NotebookRunner.clean_run` documents a run.
 """
 
 from __future__ import annotations
@@ -33,10 +30,14 @@ def request_refusal(request: CleanRunRequest) -> CleanRunResult | None:
     """A ``refused`` result when ``request`` is over a size bound or names a malformed cell id, else ``None``.
 
     Cell ids end up in cell filenames and error details, so they are letters, digits and ``_ . : -``,
-    at most ``cell_id_length`` long; a malformed id is not echoed back.
+    at most ``cell_id_length`` long, and unique, as a rendering makes them; a malformed id is not echoed
+    back. The provenance is bounded too, and lists each canvas node at most once, under a well-formed
+    cell id, as a rendering does.
     """
     if len(request.cells) > BOUNDS["cells_per_request"]:
         return _refused(f"The notebook has more than {BOUNDS['cells_per_request']} cells")
+    if len({cell_id for cell_id, _ in request.cells}) < len(request.cells):
+        return _refused("The notebook lists a cell id twice")
     total = 0
     for cell_id, code in request.cells:
         if not _CELL_ID.fullmatch(cell_id):
@@ -50,6 +51,11 @@ def request_refusal(request: CleanRunRequest) -> CleanRunResult | None:
         total += size
     if total > BOUNDS["bytes_per_request"]:
         return _refused(f"The notebook is larger than {BOUNDS['bytes_per_request']} bytes")
+    canvas_ids = [canvas_id for entries in request.provenance.values() for _, canvas_id in entries]
+    if len(canvas_ids) > BOUNDS["provenance_entries_per_request"]:
+        return _refused(f"The notebook lists more than {BOUNDS['provenance_entries_per_request']} canvas nodes")
+    if len(set(canvas_ids)) < len(canvas_ids) or not all(map(_CELL_ID.fullmatch, request.provenance)):
+        return _refused("The notebook lists a canvas node twice or under a malformed cell id")
     return None
 
 

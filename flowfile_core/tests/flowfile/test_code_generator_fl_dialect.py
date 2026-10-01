@@ -1,4 +1,4 @@
-"""The FlowFrame export's ``fl`` dialect: placeholders, per-statement emissions and native flow ports."""
+"""The FlowFrame export's ``ff`` dialect: placeholders, per-statement emissions and native flow ports."""
 
 import ast
 
@@ -42,7 +42,7 @@ def test_placeholders_bind_downstream_and_carry_their_reason():
         ([6], "explore data is interactive only"),
     ]
     placeholder = converter.emissions()[1].code
-    assert placeholder == "filtered = fl.canvas_node(4, selected_1)  # Filter data: not configured yet"
+    assert placeholder == "filtered = ff.canvas_node(4, selected_1)  # Filter data: not configured yet"
 
 
 def test_placeholders_are_opt_in():
@@ -62,8 +62,8 @@ def test_emissions_resolve_parameters_and_expose_the_wrapper_parts():
 
     assert "def run_etl_pipeline(*, label: str = 'x'):" in code
     assert [em.node_ids for em in converter.emissions()] == [[1, 2]]
-    assert 'fl.col("age").alias(f"age_{label}")' in converter.emissions()[0].code
-    assert converter.import_lines() == ["import flowfile as fl"]
+    assert 'ff.col("age").alias(f"age_{label}")' in converter.emissions()[0].code
+    assert converter.import_lines() == ["import flowfile as ff"]
     assert [p.name for p in converter.parameters()] == ["label"]
 
 
@@ -83,9 +83,9 @@ def test_flow_ports_export_as_native_classes_and_run():
 
     code = FlowGraphToFlowFrameConverter(flow).convert()
 
-    assert "flow = fl.create_flow_graph()" in code
-    assert "fl.FlowInput(" in code and "flow_graph=flow," in code
-    assert 'sample=pl.DataFrame({"a": [1, 2]}, schema={"a": fl.Int64}, strict=False),' in code
+    assert "flow = ff.create_flow_graph()" in code
+    assert "ff.FlowInput(" in code and "flow_graph=flow," in code
+    assert 'sample=pl.DataFrame({"a": [1, 2]}, schema={"a": ff.Int64}, strict=False),' in code
     assert '.to_flow_output("result")' in code
     namespace: dict = {}
     exec(code, namespace)
@@ -102,5 +102,5 @@ def test_python_script_exports_as_a_native_script(placeholders):
 
     code = FlowGraphToFlowFrameConverter(flow, placeholders=placeholders).convert()
 
-    assert "scripted = fl.PythonScript(\n        source,\n        cells=[" in code
+    assert "scripted = ff.PythonScript(\n        source,\n        cells=[" in code
     assert "(\"cell-1\", \"flowfile_ctx.publish_output(df)\")," in code

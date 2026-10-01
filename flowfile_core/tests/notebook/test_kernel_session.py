@@ -78,7 +78,7 @@ def test_reset_drops_the_sessions_variables(orders_flow, client, kernel_sim):
     assert kernel_namespace["x"] == 41
     reset = client.post("/notebook/session/reset", json=_body(orders_flow, kernel_sim))
     assert reset.status_code == 200 and reset.json() == {"status": "cleared"}
-    assert "x" not in kernel_namespace and "fl" in kernel_namespace
+    assert "x" not in kernel_namespace and "ff" in kernel_namespace
     result = _execute(client, orders_flow, kernel_sim, "x")
     assert not result["success"] and "NameError" in result["error"]
 
@@ -141,9 +141,9 @@ def test_an_unconfigured_node_on_the_canvas_keeps_the_session_usable(open_as, cl
     from flowfile_core.flowfile import flow_graph as graph_module
     from flowfile_core.schemas import input_schema
 
-    import flowfile as fl
+    import flowfile as ff
 
-    source = fl.from_dict({"id": [1, 2, 3]})
+    source = ff.from_dict({"id": [1, 2, 3]})
     graph = source.flow_graph
     graph.add_node_promise(input_schema.NodePromise(flow_id=graph.flow_id, node_id=90, node_type="filter"))
     graph_module.add_connection(graph, input_schema.NodeConnection.create_from_simple_input(source.node_id, 90))

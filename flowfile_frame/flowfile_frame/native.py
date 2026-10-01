@@ -5,7 +5,7 @@ time (a subflow run, a kernel script, an external source, or a side-effect node 
 deferred frame). Such a node is seeded with typed zero-row outputs instead of being
 executed; only ``FlowGraph.run_graph()`` runs it for real. In a notebook sync (a mode entered
 with ``sync=True``) more nodes are held (:func:`held_in_sync`) and every held node is seeded by
-:func:`sync_seed_schemas`, which predicts nothing.
+:func:`sync_seed_schemas`, which runs nothing and reads only what the canvas reads to show a schema.
 
 This module must not import ``flowfile_frame.flow_frame`` at module level: ``flow_frame``
 imports from here.
@@ -75,7 +75,7 @@ PROBED_FILE_TYPES: frozenset[str] = frozenset({"csv", "json", "parquet", "ipc", 
 """File types whose canvas read node predicts its schema from the file's header or footer."""
 
 _FORMULA_RULE_TYPES: frozenset[str] = frozenset({"formula", "filter", "gate"})
-"""Types whose settings normalisation translates formulas; the oracle compares them structurally instead."""
+"""Types whose settings normalisation translates formulas; :func:`_twin_settings` compares them structurally."""
 
 
 def is_side_effect_node_type(node_type: str) -> bool:
@@ -125,7 +125,8 @@ def held_in_sync(node_type: str, setting_input: Any = None) -> bool:
     ``SYNC_HELD_NODE_TYPES``, a first-row ``dynamic_rename`` (it reads a row), a ``data_cleansing``
     that removes null columns (it counts every column's nulls, on the worker) and a ``sql_query``
     that uses a table function (``read_*`` / ``scan_*`` read files), by the canvas's own gate
-    (``shared.sql_validation.uses_table_function``).
+    (``shared.sql_validation.uses_table_function``), or holds a ``${name}`` reference (a parameter
+    can resolve to one when the node runs).
     """
     template = node_store.node_dict.get(node_type)
     if template is None or template.custom_node or node_type in SYNC_HELD_NODE_TYPES:
@@ -139,7 +140,8 @@ def held_in_sync(node_type: str, setting_input: Any = None) -> bool:
     if node_type == "data_cleansing":
         return setting_input.cleansing_input.remove_null_columns
     if node_type == "sql_query":
-        return uses_table_function(setting_input.sql_query_input.sql_code or "")
+        sql = setting_input.sql_query_input.sql_code or ""
+        return "${" in sql or uses_table_function(sql)
     return False
 
 
@@ -239,17 +241,18 @@ def predicted_schema_without_running(node: FlowNode) -> list[FlowfileColumn]:
         return []
 
 
-def seed_from_predicted_schema(node: FlowNode) -> None:
+def seed_from_predicted_schema(node: FlowNode, declared: Mapping[str, list[FlowfileColumn]] | None = None) -> None:
     """Seed ``node`` on output-0 with its own predicted schema, never executing it.
 
     A ``polars_code`` transform (seeded only in notebook mode) has no schema callback, so it
     predicts lazily over its inputs the way the canvas does; the frame's own writer fallbacks, the
     only fluent code that writes, are refused in notebook mode. A ``polars_code`` source would
     read to predict, so it gets the callback-only (empty) schema like any other source. In a sync
-    nothing is predicted: every handle takes :func:`sync_seed_schemas`.
+    nothing is predicted: every handle takes :func:`sync_seed_schemas` with ``declared`` (the
+    columns a frame method's own lazy plan gives, ``FlowFrame._planned_seed``).
     """
     if _in_sync():
-        seed_deferred_node(node, sync_seed_schemas(node, _handles(node)))
+        seed_deferred_node(node, sync_seed_schemas(node, _handles(node), declared))
         return
     if node.node_type == "polars_code" and node.all_inputs:
         seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: _placeholder_schema(node)})
@@ -261,8 +264,8 @@ def source_frame(flow_graph: FlowGraph, node_id: int) -> FlowFrame:
     """The frame of a source node just added to ``flow_graph``.
 
     In notebook mode a source that :func:`notebook_defers` names is seeded from its
-    schema callback and wrapped as a deferred frame, so building it never reads. So is a local file
-    source a notebook kernel cannot open (:func:`_kernel_hidden_path`), seeded from its canvas twin;
+    schema callback and wrapped as a deferred frame, so building it never runs the read. So is a local
+    file source a notebook kernel cannot open (:func:`_kernel_hidden_path`), seeded from its canvas twin;
     otherwise the node's build-time result is wrapped.
     """
     from flowfile_frame.flow_frame import FlowFrame
@@ -339,10 +342,10 @@ def _kernel_twin_id(node: FlowNode) -> int | None:
     mode = current()
     if mode is None or node.setting_input is None:
         return None
-    mine = _oracle_settings(node.setting_input, node.node_type)
+    mine = _twin_settings(node.setting_input, node.node_type)
     for canvas_id, twin in mode.snapshot.items():
         if twin.node_type == node.node_type and twin.setting_input is not None:
-            if _oracle_settings(twin.setting_input, node.node_type) == mine:
+            if _twin_settings(twin.setting_input, node.node_type) == mine:
                 return canvas_id
     return None
 
@@ -384,20 +387,11 @@ def sync_seed_schemas(
 ) -> dict[str, list[FlowfileColumn]]:
     """Per-handle schemas a sync seeds the held ``node`` with, predicted without running anything.
 
-    The first that applies:
-
-    1. the snapshot twin's schemas, when they hold columns: the canvas node the cell rendered it
-       from (:func:`_snapshot_twin`), when its settings are unchanged (compared without ids and
-       normalised as a push compares them) and, for ``polars_code``, its inputs still carry the same
-       column names;
-    2. what the cell declares: ``declared`` (a Python script's ``returns=``, a custom node's
-       ``schemas=``), else the settings' own (a source's ``fields``, a read's saved fields, the
-       fixed ``list_files`` schema, a Python script's ``output_schemas`` with its first input's
-       columns for the rest, a subflow without outputs' run summary);
-    3. what the canvas reads to show a schema: a local single-file read's header or footer
-       (``FlowDataEngine.create_from_path(received_file).schema``, the read node's own schema
-       callback) and a catalog table's registered schema;
-    4. no columns; the node is recorded on the mode's ``column_less``.
+    The first that applies: (1) the schemas of :func:`_snapshot_twin`, when they hold columns;
+    (2) what the cell declares, ``declared`` (a script's ``returns=``, a custom node's ``schemas=``,
+    the columns Polars' planner gives a frame method built as Polars code), else what the settings
+    declare (:func:`_declared_schemas`); (3) what the canvas reads to show a schema
+    (:func:`_canvas_probe`); (4) no columns, and the node is recorded on the mode's ``column_less``.
 
     Never a node function, a schema callback, a custom-node hook, a child flow, polars code, a
     directory glob, an eager reader, a connection or a decrypt.
@@ -435,8 +429,8 @@ def _without_ids(value: Any) -> Any:
     return value
 
 
-def _oracle_settings(settings: BaseModel, node_type: str) -> Any:
-    """``settings`` as the oracle compares them: without ids, and normalised like a push compares them.
+def _twin_settings(settings: BaseModel, node_type: str) -> Any:
+    """``settings`` as the twin lookups compare them: without ids, and normalised like a push compares them.
 
     The push's per-type normalisation (``flowfile_core.notebook.compare.normalise``: layout,
     labels, the node user, a read's display name, a script's cell ids) applies, except for the
@@ -457,9 +451,10 @@ def _snapshot_twin(node: FlowNode) -> Any | None:
     """The unchanged canvas node the running cell rendered ``node`` from, else ``None`` (:func:`sync_seed_schemas`).
 
     The first canvas id of ``node``'s type the cell rendered, in render order, that no other node of
-    the cell has claimed and whose settings equal ``node``'s; it is then claimed (``mode.claimed``).
-    Without edits this is the relabel rule (the k-th node of a type takes the k-th canvas id), and
-    a node the cell creates but does not keep (an unbound line) shifts nothing.
+    the cell has claimed and whose settings equal ``node``'s (a ``polars_code`` twin also needs the
+    same input column names); it is then claimed (``mode.claimed``). Without edits this is the
+    relabel rule (the k-th node of a type takes the k-th canvas id), and a node the cell creates but
+    does not keep (an unbound line) shifts nothing.
     """
     mode = current()
     if mode is None or not mode.sync or mode.cell_id is None or node.setting_input is None:
@@ -467,13 +462,14 @@ def _snapshot_twin(node: FlowNode) -> Any | None:
     if node.node_id not in mode.cell_nodes:
         return None
     taken = {canvas_id for node_id, canvas_id in mode.claimed.items() if node_id != node.node_id}
+    own = _twin_settings(node.setting_input, node.node_type)
     for node_type, canvas_id in mode.expected.get(mode.cell_id, ()):
         if node_type != node.node_type or canvas_id in taken:
             continue
         twin = mode.snapshot.get(canvas_id)
         if twin is None or twin.node_type != node.node_type or twin.setting_input is None:
             continue
-        if _oracle_settings(twin.setting_input, node.node_type) != _oracle_settings(node.setting_input, node.node_type):
+        if _twin_settings(twin.setting_input, node.node_type) != own:
             continue
         if node.node_type == "polars_code" and _input_columns(node) != _canvas_input_columns(twin, mode.snapshot):
             continue
@@ -615,7 +611,7 @@ def _reseed_lost_placeholders(nodes: Sequence[FlowNode]) -> None:
 def _undeclared_parameters_error(node: FlowNode, names: set[str]) -> NativeNodeError:
     return NativeNodeError(
         f"{node.node_type} node {node.node_id} references undeclared flow parameter(s) {sorted(names)}; "
-        "declare them with fl.add_flow_parameter(graph, fl.Parameter(name, default=...))"
+        "declare them with ff.add_flow_parameter(graph, ff.Parameter(name, default=...))"
     )
 
 
@@ -809,7 +805,7 @@ def merge_frames(frames: Sequence[FlowFrame]) -> FlowGraph:
     if mode is not None and len(unique_graphs) > 1 and any(graph is not mode.graph for graph in unique_graphs):
         raise NativeNodeError(
             "In a notebook every frame lives on the session graph; this one comes from another graph. "
-            "Build on the session graph: drop the explicit flow_graph= (and fl.create_flow_graph())"
+            "Build on the session graph: drop the explicit flow_graph= (and ff.create_flow_graph())"
         )
     if len(unique_graphs) <= 1:
         return frames[0].flow_graph
@@ -1127,14 +1123,14 @@ def _settings_class(node_type: Any) -> type[BaseModel]:
     if node_type == "promise":
         raise NativeNodeError("promise is the canvas placeholder of an unconfigured node; pass a real node type")
     if node_type == "polars_lazy_frame":
-        raise NativeNodeError("polars_lazy_frame wraps an in-memory LazyFrame; use fl.FlowFrame(lazy_frame) instead")
+        raise NativeNodeError("polars_lazy_frame wraps an in-memory LazyFrame; use ff.FlowFrame(lazy_frame) instead")
     if node_type == "run_flow":
-        raise NativeNodeError("run_flow keys its inputs by slot (input-0 is the parameter frame); use fl.RunFlow(...)")
+        raise NativeNodeError("run_flow keys its inputs by slot (input-0 is the parameter frame); use ff.RunFlow(...)")
     settings_cls = get_settings_class_for_node_type(node_type) if isinstance(node_type, str) else None
     if settings_cls is input_schema.UserDefinedNode:
-        raise NativeNodeError(f"{node_type!r} is a custom node; place it with fl.CustomNode(...)")
+        raise NativeNodeError(f"{node_type!r} is a custom node; place it with ff.CustomNode(...)")
     if settings_cls is None:
-        raise NativeNodeError(f"Unknown node type {node_type!r}; fl.NodeType lists the built-in types")
+        raise NativeNodeError(f"Unknown node type {node_type!r}; ff.NodeType lists the built-in types")
     return settings_cls
 
 
@@ -1161,8 +1157,8 @@ class Node(NativeNode):
     ``sql_query``), else frame i on ``input-i``. Outputs are deferred for subflow, script and
     external-source nodes, and for writers below a deferred frame or a gate; ``deferred``
     overrides that. In a canvas notebook session the node types :func:`notebook_defers` names
-    are always deferred, whatever ``deferred`` says. The dedicated classes (``fl.Gate`` and the
-    like) are the normal route for the nodes they cover; custom nodes go through ``fl.CustomNode``.
+    are always deferred, whatever ``deferred`` says. The dedicated classes (``ff.Gate`` and the
+    like) are the normal route for the nodes they cover; custom nodes go through ``ff.CustomNode``.
     """
 
     def __init__(

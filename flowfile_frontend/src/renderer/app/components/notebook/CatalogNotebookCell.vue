@@ -222,7 +222,7 @@ const props = defineProps<{
   nodeId?: number;
   /** Hide the type select; the cell menu switches between Python and Markdown instead. */
   typeInMenu?: boolean;
-  /** Canvas notebook only: the cell against the canvas, and the line a refused sync names. */
+  /** Canvas notebook only: the cell's sync state, and the line a refused sync names. */
   syncState?: SyncState | null;
   syncError?: SyncErrorMark | null;
 }>();

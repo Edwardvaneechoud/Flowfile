@@ -70,7 +70,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
     def _handle_list_files(
         self, settings: input_schema.NodeListFiles, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """Emit ``ff.list_files``, like the other Flowfile-native sources.
+        """Emit ``list_files`` under the dialect's ``flowfile_alias``, like the other Flowfile-native sources.
 
         There is no Polars equivalent for a directory listing, so the Polars dialect
         borrows the same call and unwraps the FlowFrame — exactly what the database
@@ -333,7 +333,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         self._add_code(f"# Read from catalog table: {table_name}")
         self._add_code(f"{var_name} = {self.flowfile_alias}.read_catalog_table(")
         self._add_code(f"    {self._py_str(table_name)},")
-        stored = (settings.catalog_full_table_name or "").rpartition(".")[0] if self.framework == "fl" else ""
+        stored = (settings.catalog_full_table_name or "").rpartition(".")[0] if self.framework == "ff" else ""
         self._emit_catalog_namespace(stored or None, settings.catalog_namespace_id)
         if settings.delta_version is not None:
             self._add_code(f"    delta_version={settings.delta_version},")
@@ -348,7 +348,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
     def _emit_change_feed_kwargs(
         self, feed: ChangeFeedReadSettings, consumer_name: str | None = None, start: str = "now"
     ) -> None:
-        """Emit the change-feed kwargs shared by ``ff.read_catalog_table`` and ``ff.read_from_cloud_storage``.
+        """Emit the change-feed kwargs shared by ``read_catalog_table`` and ``read_from_cloud_storage``.
 
         ``consumer_name`` and ``start`` are cursor settings only the catalog reader has; the cloud
         reader has no cursor store and leaves them at their defaults, which emit nothing.

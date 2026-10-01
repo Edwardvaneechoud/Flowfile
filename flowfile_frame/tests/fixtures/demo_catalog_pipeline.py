@@ -9,22 +9,22 @@ import time
 
 import polars as pl
 
-import flowfile as fl
+import flowfile as ff
 
 CATALOG, SCHEMA = "Demo", "sales_analytics"
 
-ORDERS_CLEAN = fl.FlowOutput("orders_clean")
-MIN_AMOUNT = fl.Parameter("min_amount", default=0, type="integer", description="Drop orders below this amount")
-MODE = fl.Parameter("mode", default="full", type="enum", enum_values=["full", "quick"])
+ORDERS_CLEAN = ff.FlowOutput("orders_clean")
+MIN_AMOUNT = ff.Parameter("min_amount", default=0, type="integer", description="Drop orders below this amount")
+MODE = ff.Parameter("mode", default="full", type="enum", enum_values=["full", "quick"])
 KERNEL = "lite"  # a kernel id, see Flowfile app > Settings > Execution > Python Kernels
-TARGET_PCT = fl.Parameter("target_pct", default=100, type="integer", description="Share of target that counts as met")
+TARGET_PCT = ff.Parameter("target_pct", default=100, type="integer", description="Share of target that counts as met")
 
 
 # A notebook node as a function: `# %%` splits the body into cells, `monthly` is the input, the return the output.
-@fl.python_script(
+@ff.python_script(
     kernel=KERNEL,
     outputs=["forecast"],
-    returns={"month": fl.Int64, "revenue_forecast": fl.Float64, "growing": fl.Boolean},
+    returns={"month": ff.Int64, "revenue_forecast": ff.Float64, "growing": ff.Boolean},
     description="Revenue trend forecast",
 )
 def forecast(monthly: pl.LazyFrame) -> pl.DataFrame:
@@ -52,13 +52,13 @@ def banner(title: str) -> None:
 
 def publish_clean_orders(schema):
     """Step 1: a reusable child flow (typed parameter filter + derived columns), published to the catalog."""
-    child = fl.create_flow_graph()
-    fl.add_flow_parameter(child, MIN_AMOUNT)
+    child = ff.create_flow_graph()
+    ff.add_flow_parameter(child, MIN_AMOUNT)
     # The input port: a parent's RunFlow feeds it; on its own it holds real sample rows from the catalog.
-    orders = fl.FlowInput("orders", sample=schema.read_table("sales").head(20).collect(), flow_graph=child)
-    clean = orders.filter((fl.col("status") == "Completed") & (fl.col("amount") >= MIN_AMOUNT)).with_columns(
-        fl.col("order_date").dt.month().alias("month"),
-        (fl.col("amount") * 0.35).round(2).alias("margin"),
+    orders = ff.FlowInput("orders", sample=schema.read_table("sales").head(20).collect(), flow_graph=child)
+    clean = orders.filter((ff.col("status") == "Completed") & (ff.col("amount") >= MIN_AMOUNT)).with_columns(
+        ff.col("order_date").dt.month().alias("month"),
+        (ff.col("amount") * 0.35).round(2).alias("margin"),
     )
     clean.to_flow_output(ORDERS_CLEAN)
     return schema.register_flow(child, name="Clean orders", overwrite=True)
@@ -70,33 +70,33 @@ def build_sales_analytics(schema, clean_ref):
     regions = schema.read_table("regions")
 
     # The child's output only exists once the flow runs: `clean` is a deferred frame, nothing executes here.
-    run = fl.RunFlow(clean_ref, orders=sales, params={"min_amount": 25}, description="Clean orders (published flow)")
+    run = ff.RunFlow(clean_ref, orders=sales, params={"min_amount": 25}, description="Clean orders (published flow)")
     clean = run.get_output(ORDERS_CLEAN)
     enriched = clean.join(regions, on="region", how="left")
 
     monthly = (
         enriched.group_by("month")
-        .agg(fl.col("amount").sum().alias("revenue"), fl.col("margin").sum().alias("margin"))
+        .agg(ff.col("amount").sum().alias("revenue"), ff.col("margin").sum().alias("margin"))
         .sort("month")
-        .with_columns((fl.col("revenue") / fl.col("revenue").shift(1) - 1).round(3).alias("mom_growth"))
+        .with_columns((ff.col("revenue") / ff.col("revenue").shift(1) - 1).round(3).alias("mom_growth"))
     )
     monthly.write_catalog_table("sales_monthly", schema=schema)
 
     # A notebook step: its cells run on a Docker kernel when the flow runs, so its output is deferred too.
     trend = forecast(monthly)
     # returns= typed that output, so it filters before anything runs: only an upward trend publishes a forecast.
-    trend.filter(fl.col("growing")).write_catalog_table("sales_forecast", schema=schema)
+    trend.filter(ff.col("growing")).write_catalog_table("sales_forecast", schema=schema)
 
     top_products = (
         enriched.group_by("region", "product")
-        .agg(fl.col("amount").sum().alias("revenue"))
-        .with_columns(fl.col("revenue").rank(method="dense", descending=True).over("region").alias("rank"))
-        .filter(fl.col("rank") <= 3)
+        .agg(ff.col("amount").sum().alias("revenue"))
+        .with_columns(ff.col("revenue").rank(method="dense", descending=True).over("region").alias("rank"))
+        .filter(ff.col("rank") <= 3)
         .sort("region", "rank")
     )
     top_products.write_catalog_table("sales_top_products", schema=schema)
 
-    revenue_per_region = fl.sql(
+    revenue_per_region = ff.sql(
         """
         SELECT r.region, r.manager, ROUND(SUM(o.amount), 2) AS revenue, r.target_sales
         FROM orders o JOIN regions r ON o.region = r.region
@@ -107,11 +107,11 @@ def build_sales_analytics(schema, clean_ref):
         description="Revenue per region",
     )
     vs_target = revenue_per_region.with_columns(
-        (100 * fl.col("revenue") / fl.col("target_sales")).round(1).alias("pct_of_target")
+        (100 * ff.col("revenue") / ff.col("target_sales")).round(1).alias("pct_of_target")
     ).sort("pct_of_target", descending=True)
     # An installed custom node, by its key; the threshold is a flow parameter, resolved when the flow runs.
-    fl.add_flow_parameter(vs_target, TARGET_PCT)
-    vs_target = fl.custom_nodes.mood_emoji(
+    ff.add_flow_parameter(vs_target, TARGET_PCT)
+    vs_target = ff.custom_nodes.mood_emoji(
         vs_target,
         source_column="pct_of_target",
         threshold_value=TARGET_PCT,
@@ -121,22 +121,22 @@ def build_sales_analytics(schema, clean_ref):
     vs_target.write_catalog_table("sales_vs_target", schema=schema)
 
     # A gate on an enum parameter: only one exit is live per run; the writers below it write on that side only.
-    fl.add_flow_parameter(enriched, MODE)
-    gate = fl.Gate(enriched, parameter=MODE, value="full", description="Full detail or quick summary?")
+    ff.add_flow_parameter(enriched, MODE)
+    gate = ff.Gate(enriched, parameter=MODE, value="full", description="Full detail or quick summary?")
     full = (
         gate.then.group_by("category", "product", "month")
-        .agg(fl.col("amount").sum().alias("revenue"), fl.col("quantity").sum().alias("units"))
-        .with_columns(fl.lit("full").alias("mode"))
+        .agg(ff.col("amount").sum().alias("revenue"), ff.col("quantity").sum().alias("units"))
+        .with_columns(ff.lit("full").alias("mode"))
         .sort("month", "revenue", descending=[False, True])
     )
     full.write_catalog_table("sales_detail_full", schema=schema)
     quick = (
         gate.otherwise.group_by("region")
-        .agg(fl.col("amount").sum().alias("revenue"), fl.col("order_id").count().alias("orders"))
-        .with_columns(fl.lit("quick").alias("mode"))
+        .agg(ff.col("amount").sum().alias("revenue"), ff.col("order_id").count().alias("orders"))
+        .with_columns(ff.lit("quick").alias("mode"))
     )
     # A union survives the closed side: the summary holds whichever branch ran.
-    summary = fl.concat([full, quick], how="diagonal_relaxed")
+    summary = ff.concat([full, quick], how="diagonal_relaxed")
     summary.write_catalog_table("sales_summary", schema=schema)
 
     schema.register_flow(summary, name="Sales analytics", overwrite=True)
@@ -168,8 +168,8 @@ def show(schema, table: str, *sort_by: str) -> None:
 
 
 def main() -> None:
-    schema = fl.get_catalog(CATALOG).get_schema(SCHEMA)
-    fl.get_version()
+    schema = ff.get_catalog(CATALOG).get_schema(SCHEMA)
+    ff.get_version()
 
     banner("1. Publish the reusable 'Clean orders' flow to the catalog")
     clean_ref = publish_clean_orders(schema)
@@ -186,10 +186,10 @@ def main() -> None:
     show(schema, "sales_top_products", "region", "rank")
     show(schema, "sales_summary", "month", "category", "product")
 
-    fl.set_flow_parameter(flow, MODE, "quick")
+    ff.set_flow_parameter(flow, MODE, "quick")
     run_and_report(flow, "quick")
     show(schema, "sales_summary", "region")
 
     banner("Done")
     print(f"Flowfile app > Catalog > {CATALOG} > {SCHEMA}: flows 'Clean orders' + 'Sales analytics', tables sales_*")
-    fl.open_graph_in_editor(flow)
+    ff.open_graph_in_editor(flow)

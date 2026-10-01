@@ -1,4 +1,4 @@
-"""``fl.CustomNode`` and ``fl.custom_node``: place a user-defined (custom) node from Python.
+"""``ff.CustomNode`` and ``ff.custom_node``: place a user-defined (custom) node from Python.
 
 ``CustomNode`` is the canonical form: settings nested as ``{section: {component: value}}``,
 one-to-one with what the node stores. ``custom_node(...)`` wraps a node class in a factory
@@ -46,7 +46,7 @@ _FACTORY_OPTIONS: tuple[tuple[str, str], ...] = (
 
 _INSTANCE_EXEMPT_FIELDS: frozenset[str] = frozenset({"settings_schema", "accessed_secrets"})
 
-# Node key -> the class fl.custom_nodes.install wrote to that key's file in this process.
+# Node key -> the class ff.custom_nodes.install wrote to that key's file in this process.
 _INSTALLED_CLASSES: dict[str, type[CustomNodeBase]] = {}
 
 
@@ -78,8 +78,8 @@ def _register_class(cls: type[CustomNodeBase]) -> type[CustomNodeBase]:
                 node_store.CUSTOM_NODE_STORE.pop(key, None)
             raise NativeNodeError(
                 f"Custom node class {cls.__name__} has the node key {key!r} of the installed node in "
-                f"{entry.file_name}; place the installed node by key with fl.CustomNode({key!r}, ...), or replace "
-                f"it with this class via fl.custom_nodes.install({cls.__name__}, overwrite=True) (also needed after "
+                f"{entry.file_name}; place the installed node by key with ff.CustomNode({key!r}, ...), or replace "
+                f"it with this class via ff.custom_nodes.install({cls.__name__}, overwrite=True) (also needed after "
                 "re-running the cell that defines an installed class), or rename its node_name"
             )
         return cls
@@ -88,7 +88,7 @@ def _register_class(cls: type[CustomNodeBase]) -> type[CustomNodeBase]:
             return cls
         refuse(
             f"Custom node class {cls.__name__}",
-            f"is not installed (fl.custom_nodes.install), and placing it registers the node type {key!r}",
+            f"is not installed (ff.custom_nodes.install), and placing it registers the node type {key!r}",
         )
     node_store.add_to_custom_node_store(cls)
     node_store.register_custom_node(instance.to_node_template())
@@ -127,7 +127,7 @@ def _resolve(node: type[CustomNodeBase] | CustomNodeBase | str) -> tuple[type[Cu
         if cls is None:
             template = node_store.node_dict.get(key)
             if template is not None and not template.custom_node:
-                raise NativeNodeError(f"{key!r} is a built-in node; place it with fl.Node({key!r}, ...)")
+                raise NativeNodeError(f"{key!r} is a built-in node; place it with ff.Node({key!r}, ...)")
             raise NativeNodeError(missing_custom_node_error(key))
         return cls, {}
     if isinstance(node, CustomNodeBase):
@@ -141,7 +141,7 @@ def _resolve(node: type[CustomNodeBase] | CustomNodeBase | str) -> tuple[type[Cu
 
 
 def _parameter_refs(value: Any) -> Any:
-    """``value`` with every ``fl.Parameter``, also inside dicts and lists, replaced by its ``${name}`` reference."""
+    """``value`` with every ``ff.Parameter``, also inside dicts and lists, replaced by its ``${name}`` reference."""
     if isinstance(value, Parameter):
         return value.ref
     if isinstance(value, Mapping):
@@ -206,7 +206,7 @@ class CustomNode(NativeNode):
     """A user-defined (custom) node, placed from its class, an instance of it, or its node type name.
 
     ``settings`` is nested as ``{section: {component: value}}``, one-to-one with what the node
-    stores; an instance contributes its configured values first, and a ``fl.Parameter`` value
+    stores; an instance contributes its configured values first, and a ``ff.Parameter`` value
     is stored as ``${name}``. Input frames are wired to ``input-0`` to ``input-2`` in order and
     must match the node's ``number_of_inputs``. ``kernel`` binds an ``environment="kernel"`` node
     to a kernel, by id or an object with an ``.id`` (required there, refused on a local node).
@@ -214,10 +214,10 @@ class CustomNode(NativeNode):
     A local node runs its ``process()`` when it is built. Kernel nodes, nodes whose schema needs
     data, installed nodes the worker would run, and output nodes (``node_type="output"``: a build
     would write once more than the run) are deferred instead; ``deferred`` overrides that, as on
-    ``fl.Node``. In a canvas notebook session the node types :func:`notebook_defers` names are
+    ``ff.Node``. In a canvas notebook session the node types :func:`notebook_defers` names are
     always deferred, whatever ``deferred`` says. ``schemas`` (``{output: {column: dtype}}``)
     shapes a hookless deferred node's placeholder. A class that is not installed opens on the
-    canvas in this process only; see ``fl.custom_nodes.install``.
+    canvas in this process only; see ``ff.custom_nodes.install``.
     """
 
     node_class: type[CustomNodeBase]
@@ -271,7 +271,7 @@ class CustomNode(NativeNode):
             if undeclared:
                 raise NativeNodeError(
                     f"Custom node {instance.item!r} references flow parameter(s) {undeclared}, which are not "
-                    "declared; declare them with fl.add_flow_parameter(flow, fl.Parameter(name, default=...))"
+                    "declared; declare them with ff.add_flow_parameter(flow, ff.Parameter(name, default=...))"
                 )
             try:
                 return input_schema.UserDefinedNode(
@@ -392,7 +392,7 @@ def _warn_session_only_custom_nodes(graph: FlowGraph, action: str) -> None:
         warnings.warn(
             f"{action}: custom node(s) {', '.join(found)} use a class registered in this Python process only; "
             "elsewhere the flow shows them as not installed. Install the class with "
-            "fl.custom_nodes.install(NodeClass) or fl.custom_nodes.install('path/to/node.py')",
+            "ff.custom_nodes.install(NodeClass) or ff.custom_nodes.install('path/to/node.py')",
             UserWarning,
             stacklevel=3,
         )
@@ -545,7 +545,7 @@ class CustomNodeFactory:
 def custom_node(node: type[CustomNodeBase] | CustomNodeBase | str) -> CustomNodeFactory:
     """A factory placing custom node ``node`` (a class, an instance, or its node type name).
 
-    ``fl.custom_node(NodeCleaner)(orders, trim=True)`` is the output frame of the node built
+    ``ff.custom_node(NodeCleaner)(orders, trim=True)`` is the output frame of the node built
     with ``trim`` set; see :class:`CustomNodeFactory`. The class is resolved (and a class
     that is not installed registered for this process) once, here.
     """

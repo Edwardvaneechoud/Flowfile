@@ -1,16 +1,16 @@
 """The notebook dialect: every import, name, attribute, call and operator a cell may use when core interprets it.
 
-Pure data. :mod:`flowfile_core.notebook.interpret` decides a value's *kind* from its exact type and
-looks each attribute read, call and subscript up here by ``(kind, attribute)``; anything not listed
-fails on its line with "this needs a kernel". The list is positive and as small as the FlowFrame
-exporter's output (the notebook render): every entry is used by a rendered corpus cell or named in
-:data:`EMITTED_OUTSIDE_THE_CORPUS` with the exporter handler that emits it, and every ``fl`` name
-has a verdict in :data:`FL_VERDICTS`. Keys are strings, so nothing here imports the frame.
+Pure string-keyed data, so nothing here imports the frame. :mod:`flowfile_core.notebook.interpret` looks
+every attribute read, call and subscript up by ``(kind, attribute)``, a kind being a value's exact type;
+anything not listed needs a kernel. The lists are positive. :data:`ALLOWLIST` is no larger than the FlowFrame
+exporter's output: ``tests/notebook`` ties every entry to a rendered corpus cell or to the exporter handler that
+emits it. :data:`INPUT_ONLY` names what a cell may also call that the render never writes, pinned to the frame's
+own pure transforms and node builders and to ``ff.LazyFrame`` / ``ff.DataFrame``.
 
 Usages: ``call`` (called as ``x.attr(...)``), ``read`` (read as ``x.attr``), ``both``,
-``decorator`` (only as ``@fl.attr`` or ``@fl.attr(...)``). The attribute ``__call__`` makes a
+``decorator`` (only as ``@ff.attr`` or ``@ff.attr(...)``). The attribute ``__call__`` makes a
 kind callable by name, ``[]`` subscriptable with a literal string key, and ``*`` makes every
-attribute a data key (``fl.custom_nodes.<node key>``).
+attribute a data key (``ff.custom_nodes.<node key>``).
 """
 
 from __future__ import annotations
@@ -50,11 +50,12 @@ _CORE_CLASSES = (
     "FlowGraph", "FlowDataEngine", "FlowNode", "FlowSettings", "FlowInformation", "FlowfileColumn",
     "FullCloudStorageConnection", "FlowFrame", "GroupByFrame", "DataType", "DataTypeClass",
 )  # fmt: skip
+_FRAME_CONSTRUCTORS = ("LazyFrame", "DataFrame")
 _NOT_EMITTED = (
     "Node", "NodeType", "CustomNode", "custom_node", "FlowOutput", "FlowRef", "ParamType", "GateOperator",
     "set_flow_parameter", "NativeNodeError", "from_dict", "read_parquet", "scan_delta", "scan_csv_from_cloud_storage",
     "scan_parquet_from_cloud_storage", "scan_json_from_cloud_storage", "column", "count", "cum_count", "sum", "min",
-    "max", "mean",
+    "max", "mean", *_FRAME_CONSTRUCTORS,
 )  # fmt: skip
 
 FL_VERDICTS: dict[str, tuple[str, str]] = {
@@ -79,7 +80,7 @@ FL_VERDICTS: dict[str, tuple[str, str]] = {
     **{name: (REFUSE, "is a selector, which the notebook does not emit") for name in _SELECTORS},
     **{name: (REFUSE, "is not part of the code the notebook emits") for name in _NOT_EMITTED},
 }
-"""Every name ``import flowfile as fl`` provides: ``(ALLOW, usage)`` or ``(REFUSE, reason)``."""
+"""Every name ``import flowfile as ff`` provides: ``(ALLOW, usage)`` or ``(REFUSE, reason)``."""
 
 _READERS = ("scan_ipc", "scan_ndjson", "read_avro", "read_ipc_stream")
 _WINDOW = ("rolling_sum", "rolling_mean", "rolling_min", "rolling_max", "rolling_std")
@@ -98,10 +99,11 @@ _FORMULA_DT = (
 )  # fmt: skip
 
 _FRAME_METHODS = (
-    "apply_model", "data_cleansing", "drop", "dynamic_rename", "evaluate_model", "filter", "filter_split", "fuzzy_join",
-    "group_by", "head", "join", "multi_field_formula", "pivot", "polars_code", "random_split", "rename", "sample",
-    "select", "solve_graph", "sort", "text_to_rows", "to_flow_output", "train_model", "unique", "unpivot", "wait_for",
-    "with_columns", "with_row_index", "write_csv", "write_excel", "write_parquet",
+    "apply_model", "data_cleansing", "drop", "dynamic_rename", "evaluate_model", "explode_hierarchy", "filter",
+    "filter_split", "fuzzy_join", "group_by", "head", "join", "multi_field_formula", "pivot", "polars_code",
+    "random_split", "rename", "sample", "select", "solve_graph", "sort", "text_to_rows", "to_flow_output",
+    "train_model", "unique", "unpivot", "wait_for", "with_columns", "with_row_index", "write_csv", "write_excel",
+    "write_parquet",
 )  # fmt: skip
 _EXPR_METHODS = (
     "alias", "cast", "count", "first", "last", "max", "mean", "median", "min", "n_unique", "std", "sum", "var", "over",
@@ -125,62 +127,31 @@ ALLOWLIST: dict[str, dict[str, str]] = {
     "helper": {"__call__": CALL},
     "reader": {"__call__": CALL},
 }
-"""Receiver kind -> attribute -> usage. ``fl`` is looked up in :data:`FL_VERDICTS` instead."""
+"""Receiver kind -> attribute -> usage. ``ff`` is looked up in :data:`FL_VERDICTS` instead."""
 
-_CG = "flowfile_core.flowfile.code_generator"
-_FF = f"{_CG}.code_generator:FlowGraphToFlowFrameConverter"
-_BASE = f"{_CG}.code_generator:FlowGraphCodeConverter"
-_CONNECTORS = f"{_CG}.connector_handlers:ConnectorHandlersMixin"
-_NATIVE = f"{_CG}.native_handlers:NativeHandlersMixin"
-_FILTER = f"{_CG}.expression_helpers:ExpressionHelpersMixin._create_basic_filter_expr"
-_WINDOWS = f"{_CG}.transform_handlers:TransformHandlersMixin._build_window_expr_code"
-_FORMULA = f"{_FF}._translate_to_ff_code"
+_FRAME_PURE_TRANSFORMS = (
+    "bottom_k", "cast", "count", "drop_nans", "drop_nulls", "explode", "fill_nan", "fill_null", "first",
+    "gather_every", "interpolate", "last", "limit", "max", "mean", "median", "melt", "min", "null_count", "quantile",
+    "reverse", "shift", "slice", "std", "sum", "tail", "top_k", "unnest", "var",
+)  # fmt: skip
+_FRAME_NODE_BUILDERS = (
+    "sink_csv", "sink_ipc", "sink_ndjson", "sql", "write_avro", "write_catalog_table", "write_csv_to_cloud_storage",
+    "write_database", "write_delta", "write_ipc", "write_json_to_cloud_storage", "write_ndjson",
+    "write_parquet_to_cloud_storage",
+)  # fmt: skip
 
-EMITTED_OUTSIDE_THE_CORPUS: dict[tuple[str, str], str] = {
-    **{
-        ("fl", name): f"{_CG}.native_handlers:_dtype_expr"
-        for name in _DTYPES
-        if name not in ("Boolean", "Float64", "Int32", "Int64", "Utf8")
-    },
-    ("fl", "when"): _WINDOWS,
-    ("fl", "read_csv"): f"{_BASE}._handle_csv_read_non_utf8",
-    ("fl", "list_files"): f"{_CONNECTORS}._handle_list_files",
-    ("fl", "read_database"): f"{_CONNECTORS}._handle_database_reader",
-    ("fl", "read_kafka"): f"{_FF}._handle_kafka_source",
-    ("fl", "read_api"): f"{_CONNECTORS}._handle_rest_api_reader",
-    ("fl", "read_from_cloud_storage"): f"{_FF}._handle_cloud_storage_reader",
-    ("fl", "read_catalog_sql"): f"{_CONNECTORS}._handle_catalog_sql_reader",
-    ("fl", "write_database"): f"{_CONNECTORS}._handle_database_writer",
-    ("fl", "write_to_cloud_storage"): f"{_FF}._handle_cloud_storage_writer",
-    ("datetime", "date"): f"{_CG}.expression_helpers:_temporal_literal",
-    ("datetime", "datetime"): f"{_CG}.expression_helpers:_temporal_literal",
-    ("FlowFrame", "drop"): f"{_BASE}._handle_select",
-    ("FlowFrame", "rename"): f"{_CG}.join_handlers:JoinHandlersMixin._apply_pre_join_transformations",
-    ("FlowFrame", "head"): f"{_FF}._handle_sample",
-    ("FlowFrame", "write_excel"): f"{_BASE}._handle_output_excel",
-    ("Expr", "median"): f"{_CG}.expression_helpers:ExpressionHelpersMixin._get_agg_function",
-    ("StringNS", "join"): f"{_CG}.expression_helpers:ExpressionHelpersMixin._get_agg_function",
-    **{("Expr", name): _FILTER for name in ("is_in", "is_null", "is_not_null", "not_", "str")},
-    **{("StringNS", name): _FILTER for name in ("contains", "starts_with", "ends_with")},
-    **{("Expr", name): _WINDOWS for name in (*_WINDOW, *_CUMULATIVE, "rank", "fill_null", "then", "otherwise")},
-    **{("Expr", name): _FORMULA for name in (*_FORMULA_EXPR, "dt")},
-    **{("StringNS", name): _FORMULA for name in _FORMULA_STR},
-    **{("DateTimeNS", name): _FORMULA for name in _FORMULA_DT},
-    ("NodeOutputs", "[]"): f"{_NATIVE}._bind_outputs",
-    ("CustomNodes", "[]"): f"{_NATIVE}._handle_user_defined",
-    ("CustomNodeFactory", "node"): f"{_NATIVE}._handle_user_defined",
-    ("ScriptFunction", "node"): f"{_NATIVE}._decorated_text",
-    ("reader", "__call__"): f"{_FF}._frame_reader",
-    ("helper", "_flowfile_expr_literal"): f"{_BASE}._gate_formula_arg",
-    ("import", "datetime"): f"{_CG}.expression_helpers:ExpressionHelpersMixin._create_basic_filter_expr",
-    ("import", "hashlib"): f"{_CG}.base:ConverterMixinBase._register_expr_stdlib_imports",
-    ("import", "json"): f"{_BASE}._mark_expr_literal_needed",
-    **{("from flowfile_frame", name): f"{_FF}._frame_reader" for name in _READERS},
+INPUT_ONLY: dict[str, dict[str, str]] = {
+    "FlowFrame": {name: CALL for name in (*_FRAME_PURE_TRANSFORMS, *_FRAME_NODE_BUILDERS)},
+    "ff": {name: CALL for name in _FRAME_CONSTRUCTORS},
 }
-"""Allowed entries no rendered corpus cell uses, each with the exporter handler (``module:qualname``) emitting it."""
+"""Receiver kind -> attribute -> usage a cell may call although the render never writes it, looked up after
+:data:`ALLOWLIST` (for ``ff``, after a refusing :data:`FL_VERDICTS` verdict): the frame's pure transforms (one
+Polars Code node each, or the node the frame builds, as ``limit`` a Sample), its own node builders (a SQL Query,
+Output or writer node) and ``ff.LazyFrame`` / ``ff.DataFrame`` (a Manual Input node, rendered back as
+``ff.from_raw_data``). The render's check (``interpret.interprets_expression``) never consults it."""
 
 IMPORTS: dict[tuple[str, str | None], str] = {
-    ("flowfile", "fl"): "fl",
+    ("flowfile", "ff"): "ff",
     ("polars", "pl"): "pl",
     ("datetime", None): "datetime",
     ("hashlib", None): "inert",
@@ -189,7 +160,7 @@ IMPORTS: dict[tuple[str, str | None], str] = {
 """``import <module> [as <alias>]`` -> what it binds. Any other import only as a Python Script's prelude."""
 
 FROM_IMPORTS: dict[str, frozenset[str]] = {"flowfile_frame": frozenset(_READERS)}
-"""``from <module> import <name>`` (no alias): the frame readers ``fl`` does not re-export."""
+"""``from <module> import <name>`` (no alias): the frame readers ``ff`` does not re-export."""
 
 HELPERS: tuple[str, ...] = ("_flowfile_flow_parameter", "_flowfile_expr_literal")
 """Module helpers the render defines; a cell's ``def`` binds one only when its text is the render's own."""
@@ -203,7 +174,7 @@ GENERATED_NAMES: tuple[str, ...] = (
 )
 """The ``_`` names the exporter binds; any other name starting with ``_`` is refused."""
 
-RESERVED_NAMES: frozenset[str] = frozenset({"fl", "pl", "flow", "datetime", "hashlib", "json", "display"})
+RESERVED_NAMES: frozenset[str] = frozenset({"ff", "pl", "flow", "datetime", "hashlib", "json", "display"})
 """Names a cell binds only through their import (or never: ``flow`` is the session graph)."""
 
 BINARY_OPERATORS: frozenset[str] = frozenset({"Add", "Sub", "Mult", "Div", "FloorDiv", "Mod", "BitAnd", "BitOr"})
@@ -211,17 +182,27 @@ COMPARE_OPERATORS: frozenset[str] = frozenset({"Eq", "NotEq", "Lt", "LtE", "Gt",
 """Operators, only with an expression on one side (a comparison takes one operator, never a chain)."""
 
 ARGUMENT_KINDS: dict[tuple[str, str], dict[int | str, str]] = {
-    ("fl", "add_flow_parameter"): {0: "graph", "flow": "graph"},
-    ("fl", "FlowInput"): {"flow_graph": "graph", "sample": "pl_frame"},
-    ("fl", "polars_code"): {0: "polars_code_def", "code": "polars_code_def"},
+    ("ff", "add_flow_parameter"): {0: "graph", "flow": "graph"},
+    ("ff", "FlowInput"): {"flow_graph": "graph", "sample": "pl_frame"},
+    ("ff", "polars_code"): {0: "polars_code_def", "code": "polars_code_def"},
     ("FlowFrame", "polars_code"): {0: "polars_code_def", "code": "polars_code_def"},
 }
 """Arguments (position or keyword) that also take one non-data kind: the session graph ``flow``, a flow
 input's sample frame, or a Polars Code ``def``."""
 
 REFUSED_KEYWORDS: dict[tuple[str, str], frozenset[str]] = {
-    ("fl", "RunFlow"): frozenset({"name", "schema", "overwrite"}),
+    ("ff", "RunFlow"): frozenset({"name", "schema", "overwrite"}),
 }
+
+DATA_ARGUMENTS: dict[tuple[str, str], frozenset[str]] = {
+    ("ff", name): frozenset(
+        {"data", "schema", "schema_overrides", "strict", "orient", "infer_schema_length", "nan_to_null"}
+    )
+    for name in _FRAME_CONSTRUCTORS
+}
+"""Calls that take only these keywords, Polars' frame constructor arguments (never the frame's ``flow_graph``,
+``node_id`` or other wrapping ones), only literal data and dtypes in any argument (no frame or expression), and
+``data`` that is not a string."""
 
 KEYWORD_REQUIRES: dict[tuple[str, str], tuple[str, str]] = {
     ("FlowFrame", "with_columns"): ("flowfile_formulas", "output_column_datatypes"),
@@ -232,7 +213,7 @@ LITERAL_ARGUMENTS: dict[tuple[str, str], str] = {
     ("pl", "DataFrame"): "sample",
     ("datetime", "date"): "ints",
     ("datetime", "datetime"): "ints",
-    ("fl", "canvas_node"): "node_id",
+    ("ff", "canvas_node"): "node_id",
 }
 """Calls whose arguments must have one literal shape: a flow input's sample frame, integer date parts, a node id."""
 
@@ -241,6 +222,7 @@ BOUNDS: dict[str, int] = {
     "bytes_per_cell": 4 * 1024 * 1024,
     "bytes_per_request": 16 * 1024 * 1024,
     "cell_id_length": 128,
+    "provenance_entries_per_request": 10_000,
     "ast_nodes_per_cell": 500_000,
     "statements_per_cell": 2_000,
     "depth": 100,
@@ -250,4 +232,8 @@ BOUNDS: dict[str, int] = {
     "nodes_per_request": 10_000,
     "expression_chars_per_request": 16_000_000,
 }
-"""Size limits: the first four per request (the runner), the rest per cell or per run (the interpreter)."""
+"""Size limits: the first five per request (the runner), the rest per cell or per run (the interpreter).
+
+``provenance_entries_per_request`` matches ``nodes_per_request``: provenance lists each canvas node a cell
+renders once, and a canvas with more nodes than a sync may build cannot sync anyway.
+"""

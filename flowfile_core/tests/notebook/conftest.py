@@ -166,8 +166,9 @@ class CorpusRuns:
     ``"interpreting"`` is the production :class:`NotebookRunner`, keeping each run's interpreter so tests can
     read what it used and counted; ``"exec"`` is :class:`ExecRunner`. A pass calls its runner the way
     ``plan_push`` does, as the notebook owner, inside :func:`no_kernel_manager` and between two
-    ``storage_files()`` listings. Every lookup hands out copies of the results, so a test that changes one
-    (``reconcile`` fills an output node's table settings in place) cannot change what another test reads.
+    ``storage_files()`` listings taken after the snapshots, whose first pivot schema prediction writes a worker
+    cache file. Every lookup hands out copies of the results, so a test that changes one (``reconcile`` fills an
+    output node's table settings in place) cannot change what another test reads.
     """
 
     def __init__(self, corpus: list[tuple[str, FlowGraph]]) -> None:
@@ -194,12 +195,13 @@ class CorpusRuns:
     def _pass(self, kind: str) -> CorpusPass:
         runner = self._runners[kind]
         runs = {}
-        before = storage_files()
         with no_kernel_manager() as kernel_calls:
-            for name, graph in self._corpus:
-                rendering = render(graph)
+            rendered = [(name, graph, render(graph)) for name, graph in self._corpus]
+            requests = [clean_run_request(graph, rendering) for _, graph, rendering in rendered]
+            before = storage_files()
+            for (name, graph, rendering), request in zip(rendered, requests):
                 kept = len(self._interpreters)
-                result = runner.clean_run(NOTEBOOK_OWNER_ID, graph.flow_id, clean_run_request(graph, rendering))
+                result = runner.clean_run(NOTEBOOK_OWNER_ID, graph.flow_id, request)
                 interpreter = self._interpreters[-1] if len(self._interpreters) > kept else None
                 runs[name] = CorpusRun(graph, rendering, cell_provenance(graph, rendering), result, interpreter)
         return CorpusPass(runs, storage_files() - before, list(kernel_calls))
@@ -268,10 +270,10 @@ def open_as(tmp_path):
 
 @pytest.fixture
 def orders_flow(open_as):
-    import flowfile as fl
+    import flowfile as ff
 
-    orders = fl.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
-    result = orders.filter(fl.col("amount") > 10).with_columns((fl.col("amount") * 2).alias("double"))
+    orders = ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
+    result = orders.filter(ff.col("amount") > 10).with_columns((ff.col("amount") * 2).alias("double"))
     return open_as(result.flow_graph)
 
 

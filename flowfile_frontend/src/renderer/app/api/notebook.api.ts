@@ -1,4 +1,4 @@
-// Catalog notebook CRUD plus a flow's canvas-notebook routes (render, plan, push, run lineage, kernel session). Catalog cells execute via KernelApi.
+// Catalog notebook CRUD plus a flow's canvas-notebook routes (render, push, run lineage, kernel session). Catalog cells execute via KernelApi.
 import axios from "../services/axios.config";
 import type { HistoryState } from "../types/flow.types";
 import type { ExecuteResult } from "../types/kernel.types";
@@ -74,6 +74,8 @@ export interface NotebookPushBody {
   provenance: Record<string, [string, number][]>;
   code_fingerprint: string;
   client_max_node_id: number;
+  /** Core holds back (`applied: false`) a push this action must review first; absent, it applies. */
+  trigger?: "push" | "run";
   /** Set when a kernel is picked: the push runs the cells on that kernel. */
   kernel_id?: string;
 }
@@ -90,23 +92,18 @@ export interface NotebookSessionExecute extends NotebookSessionKey {
   node_id: number;
 }
 
-export interface NotebookPlan {
-  operations: Record<string, unknown>[];
-  warnings: string[];
-  deletions: number[];
-  parameter_changes: boolean;
-  node_ids_by_cell: Record<string, number[]>;
-}
-
 export interface NotebookPushResult {
   history: HistoryState;
   code_fingerprint: string;
   max_node_id: number;
   node_ids_by_cell: Record<string, number[]>;
   warnings: string[];
+  applied: boolean;
+  deletions: number[];
+  parameter_changes: boolean;
 }
 
-/** The 422 detail of plan and push: the failing cell and 1-based line (`null` when unknown). */
+/** The 422 detail of a push: the failing cell and 1-based line (`null` when unknown). */
 export interface NotebookSyncErrorDetail {
   message: string;
   cell_id: string | null;
@@ -153,10 +150,6 @@ export class NotebookApi {
 
   static async renderFlowNotebook(flowId: number): Promise<NotebookRendering> {
     return (await axios.get("/notebook/render", { params: { flow_id: flowId } })).data;
-  }
-
-  static async planPush(body: NotebookPushBody): Promise<NotebookPlan> {
-    return (await axios.post("/notebook/plan", body)).data;
   }
 
   static async pushFlowNotebook(body: NotebookPushBody): Promise<NotebookPushResult> {
