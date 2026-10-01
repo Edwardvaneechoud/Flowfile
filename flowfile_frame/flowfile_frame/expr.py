@@ -445,7 +445,7 @@ class DateTimeMethods:
             def wrapper(*args, **kwargs):
                 result = pl_attr(*args, **kwargs)
                 # Assume generic getattr methods don't change aggregation status
-                return self._create_next_expr(name, result, *args, **kwargs)
+                return self._create_next_expr(name, result, self.convertable_to_code, *args, **kwargs)
 
             return wrapper
         else:
@@ -809,8 +809,11 @@ class Expr:
         return result
 
     def std(self, ddof=1):
+        """Standard deviation; at the default ``ddof=1`` (the Group By node's) it aggregates natively."""
         result_expr = self.expr.std(ddof=ddof) if self.expr is not None else None
-        result = self._create_next_expr(method_name="std", result_expr=result_expr, ddof=ddof, is_complex=True)
+        result = self._create_next_expr(
+            method_name="std", result_expr=result_expr, ddof=ddof, is_complex=self.is_complex or ddof != 1
+        )
         result.agg_func = "std"
         return result
 
@@ -836,8 +839,11 @@ class Expr:
         return result
 
     def var(self, ddof=1):
+        """Variance; at the default ``ddof=1`` (the Group By node's) it aggregates natively."""
         result_expr = self.expr.var(ddof=ddof) if self.expr is not None else None
-        result = self._create_next_expr(method_name="var", result_expr=result_expr, ddof=ddof, is_complex=True)
+        result = self._create_next_expr(
+            method_name="var", result_expr=result_expr, ddof=ddof, is_complex=self.is_complex or ddof != 1
+        )
         result.agg_func = "var"
         return result
 
@@ -1096,7 +1102,7 @@ class Expr:
         return result
 
     def is_in(self, values):
-        refuse_parameter_argument("is_in", (values,), {}, hint="compare with == instead: (fl.col(x) == parameter)")
+        refuse_parameter_argument("is_in", (values,), {}, hint="compare with == instead: (ff.col(x) == parameter)")
         res_expr = self.expr.is_in(values) if self.expr is not None else None
         # is_in is not an aggregation, resets agg_func
         result = self._create_next_expr(
@@ -1132,7 +1138,7 @@ class Expr:
 
     def fill_null(self, value):
         refuse_parameter_argument(
-            "fill_null", (value,), {}, hint="use fl.when(expr.is_null()).then(parameter).otherwise(expr)"
+            "fill_null", (value,), {}, hint="use ff.when(expr.is_null()).then(parameter).otherwise(expr)"
         )
         res_expr = self.expr.fill_null(value) if self.expr is not None else None
         val_ff = _get_ff_repr(value)
@@ -1391,7 +1397,7 @@ class Column(Expr):
     _select_input: transform_schema.SelectInput
 
     def __init__(self, name: str, select_input: transform_schema.SelectInput | None = None):
-        refuse_parameter_as_column(name, "fl.col")
+        refuse_parameter_as_column(name, "ff.col")
         super().__init__(
             expr=pl.col(name),
             column_name=name,

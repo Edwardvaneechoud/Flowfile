@@ -1,9 +1,12 @@
 import logging
 
 from flowfile_worker.configs import FLOWFILE_CORE_URI
+from flowfile_worker.internal_token import resolve_internal_token
 from flowfile_worker.log_models import RawLogInput
 
 LOGGING_URL = FLOWFILE_CORE_URI + "/raw_logs"
+# Core's header for worker/kernel callbacks; core→worker calls use X-Flowfile-Internal instead.
+CORE_INTERNAL_TOKEN_HEADER = "X-Internal-Token"
 
 
 class FlowfileLogHandler(logging.Handler):
@@ -25,13 +28,17 @@ class FlowfileLogHandler(logging.Handler):
                 log_type=record.levelname.upper(),
                 extra={},
             )
-            if self.flowfile_flow_id != -1 and self.flowfile_node_id != -1:
+            # Without a token core rejects the post; the stream handler still has the record.
+            if self.flowfile_flow_id != -1 and self.flowfile_node_id != -1 and (token := resolve_internal_token()):
                 import requests
 
                 response = requests.post(
                     LOGGING_URL,
                     json=raw_log_input.__dict__,
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        CORE_INTERNAL_TOKEN_HEADER: token,
+                    },
                     timeout=(2, 5),
                 )
                 if response.status_code != 200:

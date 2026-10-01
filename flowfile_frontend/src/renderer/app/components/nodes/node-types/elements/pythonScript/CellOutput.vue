@@ -2,7 +2,7 @@
   <div v-if="output" class="cell-output">
     <!-- Execution meta (time, count) -->
     <div v-if="output.execution_count" class="output-meta">
-      [{{ output.execution_count }}] {{ formatTime(output.execution_time_ms) }}
+      [{{ output.execution_count }}] {{ formatExecutionTime(output.execution_time_ms) }}
     </div>
 
     <!-- Error block — show prominently -->
@@ -108,7 +108,13 @@ import {
   rowsForCellCap,
   saveCsv,
 } from "../../../../../utils/tableExport";
-import { TABLE_MIME, EXPLORE_MIME, isTableMime, parseTablePayload } from "./notebookDisplay";
+import {
+  TABLE_MIME,
+  EXPLORE_MIME,
+  formatExecutionTime,
+  isTableMime,
+  parseTablePayload,
+} from "./notebookDisplay";
 
 // Lazy — GW pulls in React; load only when an explore() output appears.
 const VueGraphicWalker = defineAsyncComponent(
@@ -149,12 +155,6 @@ function onDownload(index: number) {
   return saveCsv(buildDelimited(p.columns, rows, ","), "notebook_table.csv");
 }
 
-const formatTime = (ms: number): string => {
-  if (ms < 1) return "<1ms";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
-};
-
 const autoResizeIframe = (event: Event) => {
   const iframe = event.target as HTMLIFrameElement;
   try {
@@ -171,33 +171,42 @@ const autoResizeIframe = (event: Event) => {
 <style scoped>
 .cell-output {
   padding: 0.25rem 0 0.25rem 0.5rem;
-  font-size: 0.8rem;
+  font-size: var(--font-size-sm);
 }
 
 .output-meta {
-  font-size: 0.7rem;
-  color: var(--el-text-color-secondary);
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
   text-align: right;
   padding-right: 0.5rem;
   margin-bottom: 0.15rem;
 }
 
-.output-error pre {
-  background: #2d1117;
-  color: #f85149;
-  padding: 0.5rem 0.75rem;
-  border-radius: 3px;
-  font-size: 0.8rem;
-  font-family: "Fira Code", monospace;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
+.output-error pre,
+.display-text pre,
+.output-stdout pre,
+.output-stderr pre {
   margin: 0;
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.output-error pre {
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 25%, transparent);
+  border-radius: var(--border-radius-md);
+  background: var(--color-danger-light);
+  color: var(--color-danger-dark);
+  word-break: break-word;
 }
 
 .display-image {
   max-width: 100%;
-  border-radius: 3px;
+  border-radius: var(--border-radius-md);
   background: white; /* for transparent PNGs */
 }
 
@@ -205,41 +214,32 @@ const autoResizeIframe = (event: Event) => {
   width: 100%;
   min-height: 300px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--border-radius-md);
 }
 
 .display-text pre {
-  background: #1e1e2e;
-  color: #cdd6f4;
-  padding: 0.5rem 0.75rem;
-  border-radius: 3px;
-  font-size: 0.8rem;
-  font-family: "Fira Code", monospace;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
 }
 
-/* Definite-height box; inner widget fills via flex. */
+/* Tables size to their rows; the explorer gets a definite-height box its widget fills. */
 .display-table,
 .display-explore {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--el-border-color, #dcdfe6);
-  border-radius: 3px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
   overflow: hidden;
-  background: var(--el-bg-color, #fff);
-}
-
-.display-table {
-  height: 440px;
+  background: var(--color-background-primary);
 }
 
 .display-explore {
   height: 560px;
 }
 
-.display-table > :first-child,
 .display-explore > :first-child {
   flex: 1 1 auto;
   min-height: 0;
@@ -250,10 +250,12 @@ const autoResizeIframe = (event: Event) => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 8px;
-  font-size: 0.7rem;
-  color: var(--el-text-color-secondary);
-  border-top: 1px solid var(--el-border-color-lighter, #ebeef5);
+  min-height: 28px;
+  padding: 2px 8px 2px 12px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  background: var(--color-background-secondary);
+  border-top: 1px solid var(--color-border-primary);
 }
 
 .display-table-export {
@@ -262,27 +264,23 @@ const autoResizeIframe = (event: Event) => {
 
 .output-stdout pre,
 .output-stderr pre {
-  font-size: 0.8rem;
-  font-family: "Fira Code", monospace;
-  padding: 0.25rem 0.5rem;
-  white-space: pre-wrap;
+  padding: 4px 2px;
   max-height: 200px;
   overflow-y: auto;
-  margin: 0;
 }
 
 .output-stdout pre {
-  color: var(--el-text-color-regular);
+  color: var(--color-text-secondary);
 }
 
 .output-stderr pre {
-  color: #e6a23c;
+  color: var(--color-warning-dark);
 }
 
 .display-title {
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--el-text-color-primary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
   margin: 0.25rem 0;
 }
 

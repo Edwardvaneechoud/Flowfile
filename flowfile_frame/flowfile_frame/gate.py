@@ -1,4 +1,4 @@
-"""``fl.Gate``: a pass-through whose downstream only runs when its condition holds."""
+"""``ff.Gate``: a pass-through whose downstream only runs when its condition holds."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def _formula_text(formula: str | Expr | None, flow_graph: FlowGraph) -> str | No
         return formula
     if not isinstance(formula, Expr):
         raise NativeNodeError(
-            f"Gate formula takes a flowfile formula string or an expression such as fl.col('a') > 1, "
+            f"Gate formula takes a flowfile formula string or an expression such as ff.col('a') > 1, "
             f"got {type(formula).__name__}"
         )
     from flowfile_frame.flow_frame import _filter_exprs_to_formula
@@ -66,9 +66,9 @@ class Gate(NativeNode):
     """A gate node: its data input flows through, and its downstream only runs when the condition holds.
 
     Give exactly one condition: a ``formula`` (a flowfile formula, or an expression with a formula
-    form such as ``fl.col("a") > 1``, that opens the gate when at least one row of ``control``,
+    form such as ``ff.col("a") > 1``, that opens the gate when at least one row of ``control``,
     else of ``frame``, matches) or a flow ``parameter`` compared
-    with ``operator`` and ``value`` (declare it first with ``fl.add_flow_parameter``). With
+    with ``operator`` and ``value`` (declare it first with ``ff.add_flow_parameter``). With
     ``else_output`` (the default) the gate routes: ``.then`` is live when the condition holds,
     ``.otherwise`` when it does not. Both exits are pass-through frames while building;
     ``collect()`` on any frame below the gate runs the flow and returns only the live side.
@@ -114,7 +114,7 @@ class Gate(NativeNode):
                 if parameter not in {p.name for p in parameters}:
                     raise NativeNodeError(
                         f"Gate references flow parameter {parameter!r}, which is not declared; "
-                        f"declare it with fl.add_flow_parameter(flow, fl.Parameter({parameter!r}, ...))"
+                        f"declare it with ff.add_flow_parameter(flow, ff.Parameter({parameter!r}, ...))"
                     )
                 _parameter_gate_is_open(gate_input, parameters)
             return input_schema.NodeGate(gate_input=gate_input, else_output=else_output, **base)

@@ -364,3 +364,32 @@ class TestNormalRunUnaffected:
         result = graph.get_node(3).get_resulting_data().to_pylist()
         assert [row["age_plus_one"] for row in result] == [31, 26, 36]
         assert [row["age_plus_two"] for row in result] == [32, 27, 37]
+
+
+# E) A failed node is not a completed node
+
+
+def _graph_with_failing_leaf() -> FlowGraph:
+    """manual_input(1) -> formula(2) ok, manual_input(1) -> formula(3) fails at run time."""
+    graph = create_test_graph(flow_id=1, execution_location="local")
+    add_test_manual_input(graph, SAMPLE_DATA, node_id=1)
+    _add_formula(graph, node_id=2, depends_on=1, output_field="age_plus_one", function="[age] + 1")
+    _add_formula(graph, node_id=3, depends_on=1, output_field="broken", function="[name] * 2")
+    return graph
+
+
+class TestFailedNodesAreNotCompleted:
+    def test_failed_leaf_is_excluded_from_nodes_completed(self):
+        run_info = _graph_with_failing_leaf().run_graph()
+
+        assert run_info.success is False
+        assert {r.node_id for r in run_info.node_step_result if not r.success} == {3}
+        assert (run_info.nodes_completed, run_info.number_of_nodes) == (2, 3)
+
+    def test_failed_single_node_fetch_completes_nothing(self):
+        graph = _graph_with_failing_leaf()
+
+        run_info = graph.trigger_fetch_node(3)
+
+        assert run_info.node_step_result[0].success is False
+        assert (run_info.nodes_completed, run_info.number_of_nodes) == (0, 1)

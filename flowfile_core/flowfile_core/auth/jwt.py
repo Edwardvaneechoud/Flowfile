@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
@@ -142,6 +142,23 @@ def get_internal_token() -> str:
 def verify_internal_token(token: str) -> bool:
     """Verify an internal service token."""
     return secrets.compare_digest(token, get_internal_token())
+
+
+def internal_token_valid(token: str | None) -> bool:
+    """True only when ``token`` is present and matches; False when core has no token configured."""
+    try:
+        return bool(token) and verify_internal_token(token)
+    except ValueError:
+        return False
+
+
+def require_internal_token(x_internal_token: str | None = Header(None, alias="X-Internal-Token")) -> None:
+    """Admit only the worker and kernels, which sign their core callbacks with the internal token.
+
+    Fails closed (401) when the header is missing or wrong, and when core has no token configured.
+    """
+    if not internal_token_valid(x_internal_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing internal token")
 
 
 def get_jwt_secret():
@@ -310,34 +327,6 @@ def decode_refresh_token(token: str) -> str:
         return username
     except JWTError:
         raise credentials_exception from None
-
-
-def get_current_user_from_query(
-    access_token: str = Query(..., description="JWT access token"), db: Session = Depends(get_db)
-):
-    """
-    Authenticate user using only the query parameter token.
-    Specialized for log streaming where header-based auth isn't possible.
-    """
-    credentials_exception = HTTPException(
-        status_code=401,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-    if not access_token:
-        raise credentials_exception
-
-    try:
-        payload = jwt.decode(access_token, get_jwt_secret(), algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception from None
-
-    return _resolve_token_user(db, token_data.username, credentials_exception)
 
 
 async def get_current_admin_user(current_user: User = Depends(get_current_user)):

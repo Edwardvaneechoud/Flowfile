@@ -54,11 +54,14 @@ def json_dumps(thing) -> str:
     )
 
 
+HASH_EXCLUDED_KEYS = frozenset({"pos_x", "pos_y", "description"})
+
+
 def get_hash(val):
     if hasattr(val, "overridden_hash") and val.overridden_hash():
         val = hash(val)
     elif hasattr(val, "__dict__"):
-        val = {k: v for k, v in val.__dict__.items() if k not in {"pos_x", "pos_y", "description"}}
+        val = {k: v for k, v in val.__dict__.items() if k not in HASH_EXCLUDED_KEYS}
     elif hasattr(val, "json"):
         pass
     return generate_sha256_hash(json_dumps(val).encode("utf-8"))

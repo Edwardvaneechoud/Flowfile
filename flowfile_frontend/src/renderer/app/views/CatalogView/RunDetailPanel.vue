@@ -34,7 +34,7 @@
         <span class="meta-value">{{ formatDuration(run.duration_seconds) }}</span>
       </div>
       <div class="meta-card">
-        <span class="meta-label">Nodes</span>
+        <span class="meta-label">Nodes succeeded</span>
         <span class="meta-value">{{ run.nodes_completed }} / {{ run.number_of_nodes }}</span>
       </div>
       <div class="meta-card">

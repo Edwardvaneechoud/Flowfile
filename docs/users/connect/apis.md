@@ -77,6 +77,7 @@ ff.read_api(
     record_path="",
     timeout_seconds=30.0,
     max_retries=3,
+    description=None,
 )
 ```
 

@@ -129,6 +129,7 @@ def read_database(
     table_name: str | None = None,
     schema_name: str | None = None,
     query: str | None = None,
+    description: str | None = None,
     flow_graph: FlowGraph | None = None,
 ) -> FlowFrame:
     """Read data from a database using a stored connection.
@@ -143,6 +144,7 @@ def read_database(
         table_name: Name of the table to read from.
         schema_name: Database schema name (e.g., 'public' for PostgreSQL).
         query: SQL query to execute instead of reading a table.
+        description: Optional description for the node.
         flow_graph: Optional existing FlowGraph to add the node to.
 
     Returns:
@@ -152,11 +154,11 @@ def read_database(
         ValueError: If neither table_name nor query is provided.
         ValueError: If the connection is not found.
     """
-    from flowfile_frame.flow_frame import FlowFrame
-    from flowfile_frame.utils import create_flow_graph
+    from flowfile_frame.native import source_frame
+    from flowfile_frame.utils import _implicit_graph
 
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     node_id = add_read_from_database(
         flow_graph,
@@ -164,13 +166,10 @@ def read_database(
         table_name=table_name,
         schema_name=schema_name,
         query=query,
+        description=description,
     )
 
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id,
-    )
+    return source_frame(flow_graph, node_id)
 
 
 def write_database(

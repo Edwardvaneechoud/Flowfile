@@ -11,7 +11,8 @@ from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_frame.callable_utils import resolve_callable
 from flowfile_frame.expr import Expr
 from flowfile_frame.flow_frame import FlowFrame, can_be_expr, generate_node_id
-from flowfile_frame.utils import create_flow_graph
+from flowfile_frame.native import notebook_defers, source_frame
+from flowfile_frame.utils import _implicit_graph
 
 
 def _determine_return_type(func_signature: inspect.Signature) -> Literal["FlowFrame", "Expr"]:
@@ -290,7 +291,7 @@ def _create_flowframe_result(polars_func_name: str, full_repr: str, flow_graph: 
     """
     node_id = generate_node_id()
     if not flow_graph:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     if "─────SPLIT─────" in full_repr:
         polars_code = full_repr
@@ -305,6 +306,8 @@ def _create_flowframe_result(polars_func_name: str, full_repr: str, flow_graph: 
         polars_code_input=transform_schema.PolarsCodeInput(polars_code),
     )
     flow_graph.add_polars_code(node_polars_code)
+    if notebook_defers("polars_code"):
+        return source_frame(flow_graph, node_id)
 
     try:
 

@@ -12,11 +12,12 @@ from flowfile_frame.flow_frame import FlowFrame
 class PythonScript(NativeNode):
     code: str
     cells: list[str]
+    cell_ids: list[str]
     kernel: str | None
-    def __init__(self, *inputs: FlowFrame, code: str | None=None, cells: list[str] | None=None, kernel: str | Any | None=None, outputs: list[str] | None=None, schemas: Mapping[str, Mapping[str, PolarsDataType]] | None=None, description: str | None=None, flow_graph: FlowGraph | None=None) -> None: ...
+    def __init__(self, *inputs: FlowFrame, code: str | None=None, cells: list[str] | list[tuple[str, str]] | None=None, kernel: str | Any | None=None, outputs: list[str] | None=None, schemas: Mapping[str, Mapping[str, PolarsDataType]] | None=None, description: str | None=None, flow_graph: FlowGraph | None=None) -> None: ...
 
 class PythonScriptFunction:
-    fn: Callable[..., Any]
+    fn: Callable[..., Any] | None
     cells: list[str]
     def __init__(self, fn: Callable[..., Any], *, kernel: str | Any | None=None, outputs: list[str] | None=None, returns: Mapping[str, Any] | None=None, description: str | None=None, flow_graph: FlowGraph | None=None) -> None: ...
     def __call__(self, *frames: FlowFrame) -> FlowFrame: ...

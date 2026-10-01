@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import pickle
 
 import polars as pl
@@ -31,6 +32,7 @@ from flowfile_frame import (
     RunFlow,
     SchemaReference,
     default_schema,
+    from_dict,
     get_catalog,
     list_catalogs,
     register_flow,
@@ -323,3 +325,51 @@ class TestCatalogNavigation:
         with pytest.raises(NativeNodeError, match="SchemaReference 'raw' .* no longer exists") as info:
             schema.list_flows()
         assert isinstance(info.value.__cause__, NamespaceNotFoundError)
+
+
+@pytest.fixture
+def table_schema():
+    """A fresh schema whose tables are deleted with their Delta files afterwards."""
+    schema = CatalogReference("ReadCat", auto_create=True).schema("raw", auto_create=True)
+    yield schema
+    with get_db_context() as db:
+        service = CatalogService(SQLAlchemyCatalogRepository(db))
+        for table in db.query(CatalogTable).filter_by(namespace_id=schema.id).all():
+            service.delete_table(table.id, delete_file=True)
+
+
+def _reader_ids(frame) -> tuple[int | None, int | None]:
+    settings = frame.flow_graph.get_node(frame.node_id).setting_input
+    return settings.catalog_table_id, settings.catalog_namespace_id
+
+
+class TestSchemaReadCatalogTable:
+    def test_reads_the_same_table_as_read_table(self, table_schema):
+        table_schema.write_table(from_dict({"currency": ["EUR", "USD"], "amount": [1.5, 2.0]}), "fx_rates")
+        aliased = table_schema.read_catalog_table("fx_rates")
+        direct = table_schema.read_table("fx_rates")
+        assert aliased.collect().equals(direct.collect())
+        assert aliased.collect().columns == ["currency", "amount"]
+        assert _reader_ids(aliased) == _reader_ids(direct)
+        assert _reader_ids(aliased)[1] == table_schema.id
+
+    def test_passes_keywords_through(self, table_schema):
+        table_schema.write_table(from_dict({"v": [1, 2]}), "versions")
+        table_schema.write_table(from_dict({"v": [3, 4, 5]}), "versions")
+        assert table_schema.read_catalog_table("versions", delta_version=0).collect()["v"].to_list() == [1, 2]
+        assert table_schema.read_catalog_table("versions").collect()["v"].to_list() == [3, 4, 5]
+
+    def test_signature_matches_read_table(self):
+        assert inspect.signature(SchemaReference.read_catalog_table) == inspect.signature(SchemaReference.read_table)
+
+    def test_missing_table_fails_like_read_table(self, table_schema):
+        with pytest.raises(Exception) as direct:
+            table_schema.read_table("missing").collect()
+        with pytest.raises(type(direct.value)) as aliased:
+            table_schema.read_catalog_table("missing").collect()
+        assert str(aliased.value) == str(direct.value)
+
+    def test_handle_stays_immutable(self, table_schema):
+        with pytest.raises(AttributeError, match="immutable"):
+            table_schema.read_catalog_table = None
+        assert pickle.loads(pickle.dumps(table_schema)) == table_schema

@@ -185,8 +185,8 @@ def custom_node_type():
     [
         ("not_a_node", "Unknown node type 'not_a_node'"),
         ("promise", "canvas placeholder"),
-        ("polars_lazy_frame", "fl.FlowFrame"),
-        ("user_defined", "fl.CustomNode"),
+        ("polars_lazy_frame", "ff.FlowFrame"),
+        ("user_defined", "ff.CustomNode"),
     ],
 )
 def test_refused_node_types(node_type, match):
@@ -195,7 +195,7 @@ def test_refused_node_types(node_type, match):
 
 
 def test_custom_node_type_points_at_custom_node(custom_node_type):
-    with pytest.raises(ff.NativeNodeError, match="fl.CustomNode"):
+    with pytest.raises(ff.NativeNodeError, match="ff.CustomNode"):
         ff.Node(custom_node_type, ff.from_dict(ORDERS))
 
 
@@ -246,5 +246,5 @@ def test_run_flow_is_refused_in_favour_of_the_dedicated_class():
     from flowfile_frame.native import NativeNodeError, Node
 
     orders = ff.from_dict({"id": [1]})
-    with pytest.raises(NativeNodeError, match="fl.RunFlow"):
+    with pytest.raises(NativeNodeError, match="ff.RunFlow"):
         Node("run_flow", orders)

@@ -256,11 +256,8 @@ class TestCustomNodeInputOrder:
 class TestCustomNodeCodeGeneration:
     """Integration tests for generating code with custom nodes."""
 
-    @pytest.mark.parametrize(
-        "export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"]
-    )
-    def test_generated_code_includes_custom_node_imports(self, AddColumnNode, export_func):
-        """Test that generated code includes necessary imports."""
+    def test_generated_code_includes_custom_node_imports(self, AddColumnNode):
+        """The Polars export inlines the node's source with its imports (the FlowFrame export calls ff.custom_nodes)."""
         add_to_custom_node_store(AddColumnNode)
 
         graph = create_graph()
@@ -270,7 +267,7 @@ class TestCustomNodeCodeGeneration:
         add_custom_node_to_graph(graph, AddColumnNode, node_id=2, settings=settings)
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-        code = export_func(graph)
+        code = export_flow_to_polars(graph)
 
         # Canonical re-added imports: nd alias plus the public node_designer SDK
         # symbols. Neither the internal shared.* nor core.node_designer spelling
@@ -345,10 +342,9 @@ class TestReturnNormalization:
 
 
 class TestFlowFrameConverter:
-    """FlowFrame export wraps a custom node's polars output back into a FlowFrame and
-    bridges FlowFrame inputs down to polars for the process() contract."""
+    """FlowFrame export places a custom node through ``ff.custom_nodes``, like the frame does."""
 
-    def test_output_wrapped_and_input_bridged(self, AddColumnNode):
+    def test_emits_the_custom_nodes_factory_with_its_settings(self, AddColumnNode):
         add_to_custom_node_store(AddColumnNode)
         graph = create_graph()
         add_manual_input(graph, [{"Column 1": "test"}], node_id=1)
@@ -358,13 +354,10 @@ class TestFlowFrameConverter:
 
         code = export_flow_to_flowframe(graph)
 
-        process_line = next(l for l in code.split("\n") if "_out_2 = " in l and ".process(" in l)
-        # Input bridged to the underlying polars LazyFrame via .data (no eager collect).
-        assert ".data" in process_line
-        assert ".collect()" not in process_line
-        # Output re-wrapped as a FlowFrame (not the polars isinstance/.lazy() form).
-        assert any("ff.FlowFrame(_out_2)" in l for l in code.split("\n"))
-        assert "isinstance(_out_2, pl.DataFrame)" not in code
+        call = next(line for line in code.split("\n") if "ff.custom_nodes" in line)
+        assert call.strip().startswith("df = ff.custom_nodes.")
+        assert '(source, column_name="new_col", fixed_value="hello")' in call
+        assert ".process(" not in code and "class " not in code
 
     def test_custom_node_executes_with_downstream_ff_op(self, AddColumnNode):
         """Regression guard: the custom-node output feeds a FlowFrame-only op
@@ -776,7 +769,7 @@ class BareDisplayNode(nd.CustomNodeBase):
 
 
 class TestFlowfileCtxInlineShim:
-    """Single-file exports provide their own kernel-context shim."""
+    """Single-file Polars exports inline custom nodes and provide their own kernel-context shim."""
 
     def test_flat_export_binds_bare_display_and_runs(self, tmp_path):
         """A node using the kernel's bare display() must still resolve in a flat export."""
@@ -791,7 +784,7 @@ class TestFlowfileCtxInlineShim:
             add_manual_input(graph, [{"x": 1}], node_id=1)
             add_custom_node_to_graph(graph, mod.BareDisplayNode, node_id=2, settings={})
             add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
-            code = export_flow_to_flowframe(graph)
+            code = export_flow_to_polars(graph)
         finally:
             sys.modules.pop("bare_display_flat_mod", None)
 
@@ -819,7 +812,7 @@ class TestFlowfileCtxInlineShim:
             add_manual_input(graph, [{"x": 1}], node_id=1)
             add_custom_node_to_graph(graph, mod.CtxLogger, node_id=2, settings={})
             add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
-            code = export_flow_to_flowframe(graph)
+            code = export_flow_to_polars(graph)
         finally:
             sys.modules.pop("ctx_logger_flat_mod", None)
 

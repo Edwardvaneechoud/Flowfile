@@ -1,4 +1,4 @@
-"""``fl.sql``: a SQL Query node over any number of frames, returned as its output frame."""
+"""``ff.sql``: a SQL Query node over any number of frames, returned as its output frame."""
 
 from __future__ import annotations
 
@@ -97,7 +97,11 @@ def _with_table_names(query: str, aliases: Mapping[int, str]) -> str:
 
 
 def _default_description(query: str) -> str:
-    """The query's first non-empty line, cut like the canvas default so the generated header never labels the node."""
+    """The query's first non-empty line, cut like the canvas default so the generated header never labels the node.
+
+    Only a query that gets a ``WITH`` header (named tables) is labelled this way; a positional
+    query is stored as written, so it carries no description the caller did not give.
+    """
     first_line = next((line.strip() for line in query.splitlines() if line.strip()), "")
     if len(first_line) > _DESCRIPTION_LIMIT:
         return first_line[: _DESCRIPTION_LIMIT - 3] + "..."
@@ -121,7 +125,7 @@ def _sql_frame(
     for frame in frames:
         if not isinstance(frame, FlowFrame):
             raise NativeNodeError(
-                f"fl.sql takes FlowFrames, got {type(frame).__name__}; wrap a Polars frame with fl.FlowFrame(...)"
+                f"ff.sql takes FlowFrames, got {type(frame).__name__}; wrap a Polars frame with ff.FlowFrame(...)"
             )
     aliases = dict(enumerate(named, start=len(positional) + 1))
     for slot, name in aliases.items():
@@ -132,7 +136,7 @@ def _sql_frame(
         "sql_query",
         *frames,
         settings={"sql_query_input": {"sql_code": _with_table_names(query, aliases)}},
-        description=description if description is not None else _default_description(query),
+        description=description if description is not None or not aliases else _default_description(query),
     )
     return node.output
 
@@ -144,13 +148,14 @@ def sql(query: str, /, *frames: FlowFrame, description: str | None = None, **tab
     is the table of that name (and also ``input_<n>``, numbered after the positional ones).
     The names are stored in the node's SQL as a ``WITH <name> AS (SELECT * FROM input_<n>)``
     header, which the designer shows as-is. Without frames the query reads no tables and the
-    node starts a new graph. The query uses the Polars SQL dialect and must be a single
-    ``SELECT`` or ``WITH`` statement; flow parameters go in as ``${name}`` (``Parameter.ref``).
+    node lands on the implicit graph (the notebook session's in a notebook, a new one otherwise).
+    The query uses the Polars SQL dialect and must be a single ``SELECT`` or ``WITH`` statement;
+    flow parameters go in as ``${name}`` (``Parameter.ref``).
     Frames on different graphs are merged onto one.
 
     Example::
 
-        fl.sql("SELECT o.id, c.name FROM orders o JOIN customers c ON o.customer_id = c.id",
+        ff.sql("SELECT o.id, c.name FROM orders o JOIN customers c ON o.customer_id = c.id",
                orders=orders, customers=customers)
     """
     return _sql_frame(query, frames, tables, description)

@@ -33,6 +33,7 @@ from __future__ import annotations
 import functools
 import weakref
 from typing import Any
+from urllib.parse import parse_qs
 
 from fastapi.routing import iter_route_contexts
 
@@ -121,6 +122,13 @@ ROUTE_EVENTS: dict[tuple[str, str], tuple[str, dict[str, Any] | None]] = {
     ("POST", "/ai/diff/{diff_id}/accept"): ("ai_diff_accepted", None),
     ("POST", "/ai/diff/{diff_id}/reject"): ("ai_diff_rejected", None),
     ("POST", "/catalog/schedules"): ("schedule_created", None),
+    ("GET", "/notebook/render"): ("notebook_opened", None),
+}
+
+# Routes that fire at most once: ``None`` per process, a query-parameter name once per distinct value of it.
+ROUTE_ONCE: dict[tuple[str, str], str | None] = {
+    # The panel re-renders on every canvas change, so "opened" counts flows, not renders.
+    ("GET", "/notebook/render"): "flow_id",
 }
 
 _builtin_node_types: frozenset[str] | None = None
@@ -128,6 +136,7 @@ _snapshots: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _middleware_installed = False
 _subscribed = False
 _launch_published = False
+_route_once_seen: set[tuple[str, str, str]] = set()
 
 
 def emit(event: str, props: dict[str, Any] | None = None) -> None:
@@ -306,6 +315,10 @@ def _on_app_started() -> None:
     emit("app_started")
 
 
+def _on_notebook_pushed() -> None:
+    emit("notebook_pushed")
+
+
 @functools.lru_cache(maxsize=8)
 def _full_route_paths(app) -> dict[int, str]:
     """Map each route object to its full path template.
@@ -336,11 +349,29 @@ def _emit_for_route(scope: dict[str, Any], status: int) -> None:
     if mapped is None:
         return
     event, props = mapped
+    key = (scope.get("method", ""), path)
+    if key not in ROUTE_ONCE:
+        emit(event, dict(props) if props else None)
+        return
+    param = ROUTE_ONCE[key]
+    if param is None:
+        emit_once(event, dict(props) if props else None)
+        return
+    value = _query_value(scope, param)
+    if value is None or (*key, value) in _route_once_seen:
+        return
+    _route_once_seen.add((*key, value))
     emit(event, dict(props) if props else None)
 
 
+def _query_value(scope: dict[str, Any], name: str) -> str | None:
+    """One query-string value, used only as an in-process dedupe key and never sent."""
+    values = parse_qs((scope.get("query_string") or b"").decode("latin-1")).get(name)
+    return values[0] if values else None
+
+
 class TelemetryMiddleware:
-    """Emit one event per successful request on a route in :data:`ROUTE_EVENTS`.
+    """Emit an event for a successful request on a route in :data:`ROUTE_EVENTS` (deduplicated per :data:`ROUTE_ONCE`).
 
     Pure ASGI on purpose: ``BaseHTTPMiddleware`` wraps and buffers the response
     body, which would break the streaming ``/ai`` endpoints.
@@ -378,6 +409,7 @@ def _subscribe() -> None:
     events.subscribe("app_started", _on_app_started)
     events.subscribe("alteryx_imported", _on_alteryx_imported)
     events.subscribe("alteryx_import_failed", _on_alteryx_import_failed)
+    events.subscribe("notebook_pushed", _on_notebook_pushed)
     _subscribed = True
 
 
@@ -396,10 +428,10 @@ def install_headless() -> None:
 
     Publishes ``app_started`` once per process: a headless run has no lifespan,
     so a scheduled- or CLI-only install would otherwise never register a launch
-    at all. The guard is its own flag rather than the subscription, because the
-    in-process ``--run-flow`` path imports ``main`` — where :func:`install`
-    already subscribed — before it gets here. Nothing else calls this, so the
-    server's lifespan publish and a consent grant's cannot be duplicated.
+    at all. The guard is its own flag rather than the subscription, because a
+    process that imported ``main`` has already subscribed through :func:`install`.
+    Nothing else calls this, so the server's lifespan publish and a consent
+    grant's cannot be duplicated.
     Publishing once per headless process cannot inflate the funnel, which counts
     installs that ever launched, not launches.
     """

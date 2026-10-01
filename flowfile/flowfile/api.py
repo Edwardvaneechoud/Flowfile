@@ -7,13 +7,15 @@ import platform
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import uuid
 import webbrowser
+from collections import deque
 from pathlib import Path
 from subprocess import Popen
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import IO, Any
 
 import requests
 
@@ -30,6 +32,7 @@ POETRY_PATH: str = os.environ.get("POETRY_PATH", "poetry")
 logger: logging.Logger = logging.getLogger(__name__)
 
 _server_process: Popen | None = None
+_server_stderr_tail: deque[str] = deque(maxlen=40)
 
 
 def is_flowfile_running() -> bool:
@@ -89,6 +92,17 @@ def stop_flowfile_server_process() -> None:
 
         if is_flowfile_running():
             logger.warning("Server may still be running after termination attempt")
+
+
+def _drain_server_stderr(stream: IO[bytes]) -> None:
+    """Read the server's stderr for its whole life: core logs there, and an unread pipe fills up and blocks it."""
+    for line in stream:
+        _server_stderr_tail.append(line.decode(errors="ignore").rstrip())
+
+
+def _log_server_stderr_tail() -> None:
+    if _server_stderr_tail:
+        logger.error("Server process stderr (last lines):\n" + "\n".join(_server_stderr_tail))
 
 
 def is_poetry_environment() -> bool:
@@ -233,6 +247,10 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> tup
                 stderr=subprocess.PIPE,
             )
 
+        _server_stderr_tail.clear()
+        threading.Thread(
+            target=_drain_server_stderr, args=(_server_process.stderr,), name="flowfile-server-stderr", daemon=True
+        ).start()
         logger.info(f"Started server process with PID: {_server_process.pid}")
 
         atexit.register(stop_flowfile_server_process)
@@ -253,12 +271,7 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> tup
                 "Try again or start service by running\n"
                 "flowfile run ui"
             )
-            if _server_process and _server_process.stderr:
-                try:
-                    stderr_output: str = _server_process.stderr.read().decode(errors="ignore")
-                    logger.error(f"Server process stderr:\n{stderr_output[:1000]}...")
-                except Exception as read_err:
-                    logger.error(f"Could not read stderr from server process: {read_err}")
+            _log_server_stderr_tail()
             stop_flowfile_server_process()
             return False, check_if_in_single_mode()
 
@@ -269,12 +282,7 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> tup
         return False, False
     except Exception as e:
         logger.error(f"An unexpected error occurred while starting the server process: {e}")
-        if _server_process and _server_process.stderr:
-            try:
-                stderr_output = _server_process.stderr.read().decode(errors="ignore")
-                logger.error(f"Server process stderr:\n{stderr_output[:1000]}...")
-            except Exception as read_err:
-                logger.error(f"Could not read stderr from server process: {read_err}")
+        _log_server_stderr_tail()
         stop_flowfile_server_process()
         _server_process = None
         return False, False

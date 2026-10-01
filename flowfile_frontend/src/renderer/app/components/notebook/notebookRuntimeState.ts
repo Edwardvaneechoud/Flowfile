@@ -50,6 +50,15 @@ export interface SettledMeta {
   revision?: number | null;
 }
 
+/** The generation/revision stamp is optional on older kernels, so never assume it is there. */
+export function settledMeta(res: unknown): SettledMeta {
+  const stamped = (res ?? {}) as { namespace_generation?: string | null; revision?: number | null };
+  return {
+    namespace_generation: stamped.namespace_generation ?? null,
+    revision: stamped.revision ?? null,
+  };
+}
+
 export type SessionEpochListener = (epoch: number) => void;
 
 export type ExecutionSettledListener = (
@@ -106,6 +115,29 @@ export function staleLabel(reason: StaleReason): string {
 
 export function staleTitle(reason: StaleReason): string {
   return STALE_TITLES[reason];
+}
+
+/** A flow notebook cell's sync state against the canvas, carried instead of a stale reason. */
+export type SyncState = "edited" | "synced" | "error";
+
+const SYNC_LABELS: Record<SyncState, string> = {
+  edited: "Edited",
+  synced: "Synced",
+  error: "Sync failed",
+};
+
+const SYNC_TITLES: Record<SyncState, string> = {
+  edited: "This cell changed since the canvas last matched it; Run or Push syncs it.",
+  synced: "The canvas holds this cell's code.",
+  error: "The last sync stopped at this cell; fix it and run again.",
+};
+
+export function syncLabel(state: SyncState): string {
+  return SYNC_LABELS[state];
+}
+
+export function syncTitle(state: SyncState): string {
+  return SYNC_TITLES[state];
 }
 
 /** A marker never downgrades: previous-session > code-changed > upstream-changed. */

@@ -16,6 +16,8 @@ from flowfile_core.schemas.input_schema import (
     FullDatabaseConnection,
     FullDatabaseConnectionInterface,
 )
+from flowfile_frame._identity import current_user_id
+from flowfile_frame.notebook import refuse
 from shared.db_dialects import KNOWN_DIALECT_NAMES, get_dialect_or_generic
 
 
@@ -23,10 +25,9 @@ def get_current_user_id() -> int:
     """Get the current user ID for database operations.
 
     Returns:
-        int: The current user ID (defaults to 1 for single-user mode).
+        int: The current user ID; see ``_identity.current_user_id``.
     """
-    # In single-file mode, we use user_id = 1
-    return 1
+    return current_user_id()
 
 
 def create_database_connection(
@@ -62,6 +63,7 @@ def create_database_connection(
         ValueError: If a connection with this name already exists, or the
             database_type is not a supported dialect.
     """
+    refuse("ff.create_database_connection")
     if database_type.lower() not in KNOWN_DIALECT_NAMES:
         raise ValueError(
             f"Unsupported database type '{database_type}'. Supported types: {', '.join(KNOWN_DIALECT_NAMES)}"
@@ -123,6 +125,7 @@ def create_database_connection_if_not_exists(
     Returns:
         FullDatabaseConnection: The existing or newly created connection.
     """
+    refuse("ff.create_database_connection_if_not_exists")
     get_current_user_id()
 
     existing = get_database_connection_by_name(connection_name)
@@ -191,6 +194,7 @@ def del_database_connection(connection_name: str) -> bool:
     Returns:
         True if the connection was deleted, False if it didn't exist.
     """
+    refuse("ff.del_database_connection")
     from flowfile_core.database.models import Secret
 
     user_id = get_current_user_id()

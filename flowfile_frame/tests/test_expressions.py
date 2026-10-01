@@ -221,6 +221,17 @@ class TestExpressions:
         expr = date_col.dt.day().map_elements(lambda x: x.upper())
         assert expr.convertable_to_code  # lambdas are now convertible via AST extraction
 
+    def test_a_datetime_method_keeps_its_first_argument(self):
+        expr = col("date").dt.truncate("1mo")
+        assert str(expr) == "pl.col('date').dt.truncate('1mo')"
+        assert expr.convertable_to_code is True
+        assert col("date").dt.truncate("").convertable_to_code is True
+
+    @pytest.mark.parametrize("keyword", ["convertable_to_code", "ff_repr", "_repr_override"])
+    def test_an_expression_method_takes_none_of_the_frames_own_keywords(self, keyword):
+        with pytest.raises(TypeError, match=rf"sqrt\(\) got an unexpected keyword argument '{keyword}'"):
+            col("age").sqrt(**{keyword: False})
+
     def test_null_related_methods(self):
         """Test null-related methods on expressions."""
         expr = col("age").is_null()

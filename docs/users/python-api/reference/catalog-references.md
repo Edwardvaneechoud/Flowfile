@@ -113,7 +113,7 @@ Like `CatalogReference`, schema references are immutable, hashable, and picklabl
 
 Return tables registered in this schema.
 
-#### `read_table(name, *, delta_version=None, scd2_view=None, scd2_as_of=None, changes_since=None, changes_consumer=None, changes_start="now", include_change_preimage=False, flow_graph=None) -> FlowFrame`
+#### `read_table(name, *, delta_version=None, scd2_view=None, scd2_as_of=None, changes_since=None, changes_consumer=None, changes_start="now", include_change_preimage=False, description=None, flow_graph=None) -> FlowFrame`
 
 Convenience for [`ff.read_catalog_table(name, schema=self, ...)`](reading-data.md#catalog-reading).
 
@@ -131,6 +131,14 @@ active = schema.read_table("customers", scd2_view="active")  # SCD2 tables only
 changes = schema.read_table(
     "orders", changes_since="last_run", changes_consumer="orders-feed"
 )
+```
+
+#### `read_catalog_table(name, *, ...) -> FlowFrame`
+
+Same method as `read_table`, with the same keywords, named like `ff.read_catalog_table` and like `flowfile_ctx`'s `SchemaRef.read_catalog_table`.
+
+```python
+fx = ff.get_catalog("Demo").get_schema("market").read_catalog_table("fx_rates")
 ```
 
 #### `write_table(df, name, *, write_mode="overwrite", merge_keys=None, partition_by=None, scd2_compare_columns=None, scd2_full_snapshot=False, scd2_surrogate_key_column="sk", scd2_valid_from_column="valid_from", scd2_valid_to_column="valid_to", scd2_is_current_column="is_current", scd2_partition_on_current=True, scd2_output_mode="input", track_changes=False, description=None) -> FlowFrame`

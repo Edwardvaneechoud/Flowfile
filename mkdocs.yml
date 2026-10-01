@@ -127,6 +127,7 @@ nav:
   - Visual Editor:
     - users/visual-editor/index.md
     - Building Flows: users/visual-editor/building-flows.md
+    - Canvas Notebook: users/visual-editor/notebook.md
     - Data Actions:
       - users/visual-editor/nodes/index.md
       - Input Sources: users/visual-editor/nodes/input.md
@@ -197,6 +198,16 @@ nav:
       - Native Node Classes: users/python-api/reference/native-nodes.md
     - Tutorials:
       - users/python-api/tutorials/index.md
+      - First steps: users/python-api/tutorials/first-steps.md
+      - Clean and shape: users/python-api/tutorials/clean-and-shape.md
+      - Combine: users/python-api/tutorials/combine.md
+      - Aggregate: users/python-api/tutorials/aggregate.md
+      - Flow parameters: users/python-api/tutorials/flow-parameters.md
+      - Branching with Gate: users/python-api/tutorials/branching.md
+      - Write results: users/python-api/tutorials/write-results.md
+      - Reusable flows: users/python-api/tutorials/reusable-flows.md
+      - Custom logic: users/python-api/tutorials/custom-logic.md
+      - Ship it: users/python-api/tutorials/ship-it.md
       - Building Flows with Code: users/python-api/tutorials/flowfile_frame_api.md
 
   - AI Assistant:
