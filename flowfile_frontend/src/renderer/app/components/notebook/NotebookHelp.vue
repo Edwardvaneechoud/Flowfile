@@ -11,11 +11,47 @@
         <div class="modal-content">
           <section class="api-section">
             <h4>Getting started</h4>
-            <p class="section-description">
+            <p v-if="flowMode" class="section-description">
+              This notebook is the open flow written as <code>ff</code> code. Cells are read as a
+              description of the flow, never executed: rows are only computed when the flow runs on
+              the canvas. <code>print()</code>, <code>display()</code>, loops and other imports need
+              a kernel, so a sync stops at that line and says so.
+            </p>
+            <p v-else class="section-description">
               Notebooks run Python (and Markdown) on a kernel. Pick a kernel in the toolbar — Python
               cells need one; Markdown renders without. The catalog API is exposed as
               <code>flowfile_ctx</code>.
             </p>
+            <template v-if="flowMode">
+              <div class="api-item">
+                <code>Run</code>
+                <p>
+                  When a cell was edited, added, removed or moved, first syncs the notebook to the
+                  canvas (one undo step on the canvas; it asks before deleting nodes). A node cell
+                  then runs its node and the nodes before it on the canvas and shows a preview of up
+                  to 100 of its rows; the parameters cell lists each parameter with its type and
+                  default; imports and plain values show nothing.
+                </p>
+              </div>
+              <div class="api-item">
+                <code>Run all</code>
+                <p>
+                  Syncs first when the notebook no longer matches the canvas, runs the whole flow on
+                  the canvas, then refreshes the output of the parameters cell and every node cell.
+                </p>
+              </div>
+              <div class="api-item">
+                <code>Push</code>
+                <p>Syncs the cells to the canvas without running anything.</p>
+              </div>
+              <div class="api-item">
+                <code>Edited · Synced · Sync failed</code>
+                <p>
+                  Whether the canvas holds a cell's code. A failed sync marks the line it stopped
+                  at; fix it and run again.
+                </p>
+              </div>
+            </template>
             <div class="api-item">
               <code>Shift + Enter</code>
               <p>Run the cell and move to the next one; a blank cell is added after the last.</p>
@@ -34,7 +70,12 @@
             </div>
             <div class="api-item">
               <code>⋯ Cell menu</code>
-              <p>
+              <p v-if="flowMode">
+                Insert above / Insert below, Duplicate, Collapse code / Collapse output, Convert to
+                Markdown / Convert to Python, Run and preview on canvas (node cells: runs the cell,
+                then opens the node's preview on the canvas), and Delete.
+              </p>
+              <p v-else>
                 Insert above / Insert below, Duplicate, Collapse code / Collapse output, and Delete.
               </p>
             </div>
@@ -45,7 +86,7 @@
                 a cell still undoes text.
               </p>
             </div>
-            <div class="api-item">
+            <div v-if="!flowMode" class="api-item">
               <code>Reset session</code>
               <p>
                 Toolbar ⋯ menu. Clears this notebook's variables on the kernel; the kernel keeps
@@ -53,7 +94,7 @@
                 changes nothing.
               </p>
             </div>
-            <div class="api-item">
+            <div v-if="!flowMode" class="api-item">
               <code>Outdated results</code>
               <p>
                 <strong>Code changed — rerun</strong>: this cell's code changed after the result was
@@ -63,7 +104,7 @@
                 to refresh it.
               </p>
             </div>
-            <div class="api-item">
+            <div v-if="!flowMode" class="api-item">
               <code>Column names</code>
               <p>
                 Open a quote in a column position — <code>df.select("</code>, <code>pl.col("</code>,
@@ -75,21 +116,21 @@
                 rather than guessing.
               </p>
             </div>
-            <div class="api-item">
+            <div v-if="!flowMode" class="api-item">
               <code>df</code>
               <p>A bare value on the last line shows its repr (what the object is).</p>
             </div>
-            <div class="api-item">
+            <div v-if="!flowMode" class="api-item">
               <code>display(df)</code>
               <p>Render a DataFrame as an interactive, sortable table.</p>
             </div>
-            <div class="api-item">
+            <div v-if="!flowMode" class="api-item">
               <code>explore(df)</code>
               <p>Open the Graphic Walker explorer (data grid + drag-to-chart).</p>
             </div>
           </section>
 
-          <section class="api-section">
+          <section v-if="!flowMode" class="api-section">
             <h4>Read catalog data</h4>
             <p class="section-description">
               Read tables straight from the catalog — no upstream flow needed. These return a Polars
@@ -121,7 +162,7 @@
             </div>
           </section>
 
-          <section class="api-section">
+          <section v-if="!flowMode" class="api-section">
             <h4>Display &amp; explore</h4>
             <p class="section-description">
               Render results inline in the cell output. Both are available as bare names —
@@ -141,7 +182,7 @@
             </div>
           </section>
 
-          <section class="api-section">
+          <section v-if="!flowMode" class="api-section">
             <h4>Write back to the catalog</h4>
             <div class="api-item">
               <code>flowfile_ctx.write_catalog_table(df, "result")</code>
@@ -159,7 +200,7 @@
             </div>
           </section>
 
-          <section class="api-section">
+          <section v-if="!flowMode" class="api-section">
             <h4>Artifacts &amp; logging</h4>
             <div class="api-item">
               <code>flowfile_ctx.publish_global("model", obj)</code>
@@ -175,7 +216,7 @@
             </div>
           </section>
 
-          <section class="api-section">
+          <section v-if="!flowMode" class="api-section">
             <h4>Common patterns</h4>
 
             <div class="pattern">
@@ -209,6 +250,9 @@ flowfile_ctx.write_catalog_table(summary, "fx_rate_avg")</code></pre>
 </template>
 
 <script setup lang="ts">
+/** `flowMode`: the canvas notebook, whose cells describe the flow instead of running on a kernel. */
+defineProps<{ flowMode?: boolean }>();
+
 defineEmits<{
   (e: "close"): void;
 }>();

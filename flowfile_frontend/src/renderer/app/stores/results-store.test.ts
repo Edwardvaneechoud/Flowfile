@@ -4,7 +4,7 @@
 
 import { setActivePinia, createPinia } from "pinia";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { FlowSettingsValidation } from "../types";
+import type { FlowSettingsValidation, NodeResult, RunInformation } from "../types";
 
 import { useResultsStore } from "./results-store";
 
@@ -78,5 +78,33 @@ describe("applySettingsValidation", () => {
 
     store.applySettingsValidation(1, backendResult([]));
     expect(store.getNodeValidation(2, 5).isValid).toBe(false);
+  });
+});
+
+describe("insertRunResult", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  const run = (flowId: number): RunInformation => ({
+    flow_id: flowId,
+    start_time: "t1",
+    end_time: "t1",
+    success: true,
+    is_running: false,
+    execution_mode: "Development",
+    nodes_completed: 1,
+    number_of_nodes: 1,
+    node_step_result: [{ node_id: 3, success: true } as NodeResult],
+    run_type: "full_run",
+  });
+
+  it("records a run that is not current without replacing the shown one", () => {
+    const store = useResultsStore();
+    store.insertRunResult(run(2));
+    store.insertRunResult(run(1), false);
+    expect(store.currentRunResult?.flow_id).toBe(2);
+    expect(store.getRunResult(1)?.flow_id).toBe(1);
+    expect(store.runNodeResults[1][3].success).toBe(true);
   });
 });

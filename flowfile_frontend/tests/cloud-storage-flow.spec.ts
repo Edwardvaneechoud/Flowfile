@@ -119,6 +119,9 @@ async function setFormula(page: Page, name: string, expression: string) {
   await nameField.click();
   await nameField.fill(name);
   await expect(nameField).toHaveValue(name);
+  // Close the column suggestions, which stay open over the editor when the name is unchanged.
+  await nameField.press("Tab");
+  await expect(page.locator(".el-autocomplete__popper:visible")).toHaveCount(0);
   const editor = entry.locator(".cm-content");
   await editor.click();
   await page.keyboard.type(expression);

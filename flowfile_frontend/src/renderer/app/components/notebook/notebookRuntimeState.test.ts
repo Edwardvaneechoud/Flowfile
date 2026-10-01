@@ -21,6 +21,8 @@ import {
   staleLabel,
   staleTitle,
   startBatch,
+  syncLabel,
+  syncTitle,
 } from "./notebookRuntimeState";
 import type { CellRuntime, RuntimeCellRef, SettleVerdict } from "./notebookRuntimeState";
 
@@ -481,5 +483,16 @@ describe("stale copy", () => {
       expect(title.endsWith(".")).toBe(true);
       expect(title.length).toBeGreaterThan(20);
     }
+  });
+});
+
+describe("sync copy", () => {
+  it("labels and explains every sync state", () => {
+    expect(syncLabel("edited")).toBe("Edited");
+    expect(syncLabel("synced")).toBe("Synced");
+    expect(syncLabel("error")).toBe("Sync failed");
+    const titles = [syncTitle("edited"), syncTitle("synced"), syncTitle("error")];
+    expect(new Set(titles).size).toBe(3);
+    for (const title of titles) expect(title.endsWith(".")).toBe(true);
   });
 });

@@ -111,7 +111,7 @@ Implemented in `flowfile/flowfile/__main__.py:run_flow()`. `--param key=value` (
 python -m flowfile_core.main --run-flow <path> --run-id <id>   # --run-id is REQUIRED here
 ```
 
-`flowfile_core/main.py` dispatches `--run-flow` (only reachable via `if __name__ == "__main__"`) to `_run_flow_cli`, which duplicates `run_flow()`'s logic *inside* `flowfile_core` because the top-level `flowfile` package isn't bundled into the PyInstaller binary. Missing `--run-id` prints `Error: --run-id is required` and exits 1 — unlike path A, there is no optional-run-id fallback here.
+`flowfile_core/main.py` dispatches `--run-flow` (only reachable via `if __name__ == "__main__"`, checked at the top of the file before any router import or the storage sweep) to `flowfile_core/run_flow_cli.py:run_flow_cli`, which duplicates `run_flow()`'s logic *inside* `flowfile_core` because the top-level `flowfile` package isn't bundled into the PyInstaller binary. Missing `--run-id` prints `Error: --run-id is required` and exits 1 — unlike path A, there is no optional-run-id fallback here.
 
 ### C. Scheduler-spawned
 
@@ -155,8 +155,8 @@ Gotcha: the browser tab opens after `time.sleep(5)` but **before** uvicorn start
 
 ### Core startup/shutdown side effects worth knowing
 
-- Import-time: `storage.cleanup_directories()` runs (see §8 cleanup policy) — **starting core deletes cache files older than 1 hour**, every time.
-- Lifespan startup: `logging.basicConfig(INFO, ...)` to stdout only (no file handler — Electron/Tauri pipes this); starts the embedded scheduler iff `FLOWFILE_SCHEDULER_ENABLED`.
+- Import-time: `storage.cleanup_directories()` runs (see §8 cleanup policy) — **starting core deletes cache files older than 1 hour**, every time. The `--run-flow` verb dispatches above it, so headless run children never sweep (`flowfile run flow` never imports `main` at all).
+- Lifespan startup: `logging.basicConfig(INFO, ...)` to stderr, where the import-time `PipelineHandler` console handler (`configs/__init__.py`) also writes, keeping stdout clean for script output (no file handler — Tauri pipes both streams); starts the embedded scheduler iff `FLOWFILE_SCHEDULER_ENABLED`.
 - Lifespan startup also runs `shared.run_logs.cleanup_old_logs()` — age-based retention over `scheduled_run_*.log` and `flow_*.log` (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30, `0` disables).
 - Lifespan shutdown: stops the scheduler, stops **every** Docker kernel container, and shuts down the optional local LLM. It **no longer deletes logs** — the old `clear_all_flow_logs()` call wiped every `*.log`, run logs included, on every restart. Logs now expire only by age.
 - `POST /shutdown` triggers a graceful uvicorn exit (used by the Tauri shutdown ladder).
@@ -299,7 +299,7 @@ Ciphertext format and HKDF derivation are owned by `flowfile-architecture-contra
 | docker logs | container stdout | `docker compose logs -f [service]` |
 
 Access:
-- Stream a flow's log live: `GET /logs/{flow_id}` (JWT via query param, `idle_timeout=300` default). Append: `POST /logs/{flow_id}`. Worker ingest: `POST /raw_logs`. Wipe all: `POST /clear-logs`.
+- Stream a flow's log live: `GET /logs/{flow_id}` (Bearer header, only flows open in the caller's session, `idle_timeout=300` default). Worker and kernel ingest: `POST /raw_logs` (signed with `X-Internal-Token`). Wipe all: `POST /clear-logs`.
 - Prompt-log CLI: `python -m flowfile_core.ai.prompt_log tail [N]` (default 10), `... grep PATTERN [SURFACE]`.
 - **Logs survive restarts and expire only by age** (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30d; swept at core startup and hourly on the scheduler tick). `POST /clear-logs` is scoped to `flow_*.log` and never touches run logs. Per-flow `flow_<id>.log` is still truncated at each run start, so it holds only the latest run.
 
@@ -385,7 +385,7 @@ Volatile facts above need periodic re-verification — commands are copy-pasteab
 - **Alembic migration head** (as of 2026-07-03: `028`): `ls flowfile_core/flowfile_core/alembic/versions/ | sort | tail -3`
 - **CLI verbs/flags** (§1): `sed -n '196,293p' flowfile/flowfile/__main__.py`
 - **Import side effects** (§2): `sed -n '1,20p' flowfile/flowfile/__init__.py`; `sed -n '1,20p' flowfile_core/flowfile_core/__init__.py`; `sed -n '20,30p' flowfile_core/flowfile_core/database/init_db.py`
-- **Headless run paths** (§3): `flowfile/flowfile/__main__.py:run_flow`, `flowfile_core/flowfile_core/main.py:_run_flow_cli`, `shared/subprocess_utils.py:spawn_flow_subprocess`
+- **Headless run paths** (§3): `flowfile/flowfile/__main__.py:run_flow`, `flowfile_core/flowfile_core/run_flow_cli.py:run_flow_cli`, `shared/subprocess_utils.py:spawn_flow_subprocess`
 - **Scheduler poll interval / launch guard**: `grep -n "DEFAULT_POLL_INTERVAL\|_maybe_launch" flowfile_scheduler/flowfile_scheduler/engine.py`
 - **`flowfile run ui` host/port rejection** (§1, §4): `grep -n "NotImplementedError" flowfile/flowfile/web/__init__.py`
 - **Single-file mode env coupling**: `grep -n "SINGLE_FILE_MODE\|get_default_worker_url" flowfile_core/flowfile_core/configs/settings.py`

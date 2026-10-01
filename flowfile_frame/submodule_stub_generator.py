@@ -69,6 +69,14 @@ def _is_property(decorators: list[ast.expr]) -> bool:
     return False
 
 
+def _setter_of(decorators: list[ast.expr]) -> str | None:
+    """The ``@<name>.setter`` decorator text, when one is present."""
+    for d in decorators:
+        if isinstance(d, ast.Attribute) and d.attr == "setter" and isinstance(d.value, ast.Name):
+            return _unparse(d)
+    return None
+
+
 def _render_class(cls: ast.ClassDef, indent: str = "") -> list[str]:
     bases = [_unparse(b) for b in cls.bases]
     keywords = [f"{kw.arg}={_unparse(kw.value)}" for kw in cls.keywords if kw.arg]
@@ -98,6 +106,8 @@ def _render_class(cls: ast.ClassDef, indent: str = "") -> list[str]:
                 continue
             if _is_property(stmt.decorator_list):
                 body.append(f"{body_indent}@property")
+            elif (setter := _setter_of(stmt.decorator_list)) is not None:
+                body.append(f"{body_indent}@{setter}")
             body.append(_render_function(stmt, indent=body_indent))
         elif isinstance(stmt, ast.ClassDef) and _is_public(stmt.name):
             body.extend(_render_class(stmt, indent=body_indent))

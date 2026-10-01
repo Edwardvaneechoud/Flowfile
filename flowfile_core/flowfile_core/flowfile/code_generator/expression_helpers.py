@@ -4,6 +4,13 @@ import re
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
 from flowfile_core.schemas import transform_schema
 
+_NUMBER = re.compile(r"-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)")
+
+
+def _is_number(value: str | None) -> bool:
+    """Whether a basic filter value is a plain decimal number, so it renders bare (``1-2`` stays text)."""
+    return bool(value) and _NUMBER.fullmatch(value) is not None
+
 
 def _temporal_base(field_dtype: str | None) -> str | None:
     """``"Date"`` or ``"Datetime"`` for a (possibly parametrized) temporal dtype string, else None."""
@@ -88,12 +95,12 @@ class ExpressionHelpersMixin(ConverterMixinBase):
                 if literal:
                     self.imports.add("import datetime")
                     return literal
-            if v and v.replace(".", "", 1).replace("-", "", 1).isnumeric():
+            if _is_number(v):
                 return v
             return self._py_str(v)
 
         # Determine if value is numeric (for proper quoting in the BETWEEN branch)
-        is_numeric = value.replace(".", "", 1).replace("-", "", 1).isnumeric() if value else False
+        is_numeric = _is_number(value)
 
         try:
             operator = basic.get_operator()
@@ -140,7 +147,7 @@ class ExpressionHelpersMixin(ConverterMixinBase):
             values = [v.strip() for v in value.split(",")]
             if temporal:
                 values_str = ", ".join(render(v) for v in values)
-            elif all(v.replace(".", "", 1).replace("-", "", 1).isnumeric() for v in values):
+            elif all(_is_number(v) for v in values):
                 values_str = ", ".join(values)
             else:
                 values_str = ", ".join(self._py_str(v) for v in values)
@@ -150,7 +157,7 @@ class ExpressionHelpersMixin(ConverterMixinBase):
             values = [v.strip() for v in value.split(",")]
             if temporal:
                 values_str = ", ".join(render(v) for v in values)
-            elif all(v.replace(".", "", 1).replace("-", "", 1).isnumeric() for v in values):
+            elif all(_is_number(v) for v in values):
                 values_str = ", ".join(values)
             else:
                 values_str = ", ".join(self._py_str(v) for v in values)
@@ -161,7 +168,7 @@ class ExpressionHelpersMixin(ConverterMixinBase):
                 return f"{col}  # BETWEEN requires two values"
             if temporal:
                 return f"({col} >= {render(value)}) & ({col} <= {render(value2)})"
-            if is_numeric and value2.replace(".", "", 1).replace("-", "", 1).isnumeric():
+            if is_numeric and _is_number(value2):
                 return f"({col} >= {value}) & ({col} <= {value2})"
             return f"({col} >= {self._py_str(value)}) & ({col} <= {self._py_str(value2)})"
 

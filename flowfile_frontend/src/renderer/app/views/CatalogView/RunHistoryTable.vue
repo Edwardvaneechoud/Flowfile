@@ -84,7 +84,7 @@
         <span class="col-schedule">Schedule</span>
         <span class="col-started">Started</span>
         <span class="col-duration">Duration</span>
-        <span class="col-nodes">Nodes</span>
+        <span class="col-nodes" title="Nodes succeeded / nodes in the run">Nodes</span>
         <span class="col-version">Version</span>
         <span class="col-actions"></span>
       </div>

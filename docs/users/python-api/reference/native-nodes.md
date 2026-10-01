@@ -1,6 +1,6 @@
 # Native Node Classes
 
-This page covers the canvas node types that have no fluent `FlowFrame` method, and the Python classes that place them: `Gate`, `FlowInput` / `to_flow_output`, `RunFlow`, `custom_node` / `CustomNode`, `python_script` / `PythonScript` and the generic `Node`, plus the helpers they use (flow parameters, flow references, flow registration, the `custom_nodes` registry). Each call adds one node to the same `FlowGraph` the fluent methods build, so the flow opens in the designer like any other.
+This page covers the canvas node types that have no fluent `FlowFrame` method, and the Python classes that place them: `Gate`, `FlowInput` / `to_flow_output`, `RunFlow`, `custom_node` / `CustomNode`, `python_script` / `PythonScript` and the generic `Node`, plus the helpers they use (flow parameters, flow references, flow registration, the `custom_nodes` registry, the `kernels` list). Each call adds one node to the same `FlowGraph` the fluent methods build, so the flow opens in the designer like any other.
 
 The examples use `import flowfile as ff`. The tested ones run in CI on every commit and share these imports:
 
@@ -18,10 +18,13 @@ Every class returns an object with the same accessors:
 | `node["name"]`, `node.get_output(name)` | The output frame with that name; `name` may also be a `ff.FlowOutput`. An unknown name raises `NativeNodeError` listing the outputs. |
 | `.outputs` | The output names, in handle order (`output-0` first). |
 | `.node_id`, `.node`, `.flow_graph` | The node id, the placed core `FlowNode`, and the graph it lives on. |
+| `.node_reference` | The node's reference, `None` for the default `df_<node_id>`. Settable; see below. |
 
 The `custom_node(...)` factory and a `@ff.python_script` function are callables instead: calling one returns the output frame, and its `.node(...)` method returns the node object with these accessors.
 
 Every class takes `description: str | None = None`, the label shown on the canvas. Classes that can be built without input frames take `flow_graph: FlowGraph | None = None`, the graph to place the node on; when it is omitted a new graph is created, as the readers do. Input frames that live on different graphs are merged onto one graph first, as `join` does.
+
+`.node_reference`, on a native node and on any `FlowFrame`, is the reference the designer's node settings edit: the variable name in exported code and the input name inside a downstream kernel script. Setting it follows the designer's rule (a lowercase letter, then lowercase letters, digits and underscores) and refuses a reference another node of the same graph already uses; both raise `NativeNodeError`. `None` or `""` clears it back to `df_<node_id>`. The reference is saved with the flow, and every output frame of a multi-output node shares its node's reference.
 
 ## Deferred frames
 
@@ -365,9 +368,20 @@ ff.custom_nodes.trim_text(orders)           # attribute form
 ff.custom_nodes.install(TrimNode)           # or a path to a .py file; overwrite=False by default
 ```
 
-`install` writes `<key>.py` to the custom-nodes directory and registers it. A class is written with the `NodeSettings` classes and imports it uses; a class that reads other module-level names is refused, so install its file instead. The written file must load the way the designer loads it; one that does not is removed again, a file it replaced is put back, and `install` raises. A running designer shows a new node after **Settings → Extensions → Custom Nodes → Rescan**.
+`install` writes `<key>.py` to the custom-nodes directory and registers it. A class is written with the `NodeSettings` classes and imports it uses; a class that reads other module-level names is refused, so install its file instead. The class may come from a file, a notebook cell or PyCharm's Python console: in the console, the class, its settings classes and their imports can each be run as a selection of their own, and a settings class is taken from the newest selection that defined it. The written file must load the way the designer loads it; one that does not is removed again, a file it replaced is put back, and `install` raises. A running designer resolves the node when it opens a flow that uses it, and lists it in the palette after **Settings → Extensions → Custom Nodes → Rescan**.
 
 An unknown key raises `NativeNodeError`; in the attribute form the error is also an `AttributeError`, so `hasattr(ff.custom_nodes, name)` is `False`.
+
+### `kernels`
+
+`ff.kernels` lists the kernels you created in the designer's [Kernel Manager](../../visual-editor/kernels.md#kernel-manager), by id. It reads the saved kernel definitions, so Docker need not run, and it reports no running or stopped state.
+
+```python
+ff.kernels.list() -> list[KernelInfo]         # KernelInfo(id, name, flavour, packages) per kernel, sorted by id
+ff.kernels.get(kernel_id: str) -> KernelInfo  # also ff.kernels[kernel_id]; in, len() and iteration (ids) work too
+```
+
+`flavour` is the kernel image flavour: `base`, `ml`, `lite` or `custom`. A `KernelInfo` works as a `kernel=` argument, whether it comes from the list (`ff.kernels.list()[0]`) or from a lookup by id (`ff.kernels["tutorial"]`): `PythonScript`, `@ff.python_script` and a kernel `CustomNode` store its `id`, still unchecked at build. [Tutorial chapter 9](../tutorials/custom-logic.md#a-python-script-version) passes the first listed kernel to a Python Script node. An unknown id raises `NativeNodeError`, also a `KeyError`, naming your kernel ids. There is no attribute form, since kernel ids can contain hyphens.
 
 ## `python_script` and `PythonScript`
 
@@ -481,7 +495,7 @@ The low-level form, one-to-one with what the node stores: the cells as strings. 
 ff.PythonScript(
     *inputs: FlowFrame,
     code: str | None = None,
-    cells: list[str] | None = None,
+    cells: list[str] | list[tuple[str, str]] | None = None,
     kernel: str | Any | None = None,
     outputs: list[str] | None = None,
     schemas: Mapping[str, Mapping[str, PolarsDataType]] | None = None,
@@ -491,12 +505,13 @@ ff.PythonScript(
 ```
 
 - Give exactly one of `code` or `cells`. The node stores both forms: the cells, and `code` as the non-empty cells joined by blank lines (what the kernel executes).
-- `kernel` is a kernel id, or an object with an `.id`, stored as given. It is **not** checked at build: a missing or unknown kernel fails when the flow runs.
+- `cells` is a list of strings, each stored under a fresh cell id, or a list of `(id, code)` tuples whose ids are stored as given. The ids must be non-empty and unique; a list mixing strings and tuples raises.
+- `kernel` is a kernel id, or an object with an `.id` such as an [`ff.kernels`](#kernels) entry, stored as given. It is **not** checked at build: a missing or unknown kernel fails when the flow runs.
 - `outputs` names the output handles (default `["main"]`); publish to them with `flowfile_ctx.publish_output(df, "name")`.
 - `schemas` declares output columns as `{output: {column: dtype}}`, the nested form of `returns=`, with the same checks.
 - Inputs are wired in order. Inside the kernel, `flowfile_ctx.read_input()` reads all of them; each is also readable by name, which is the upstream node's reference if set, else `df_<node_id>`.
 
-Outputs are [deferred](#deferred-frames); an output not declared in `schemas` has the first input's schema (no columns without inputs). `.code`, `.cells` and `.kernel` hold what was stored. See the [`flowfile_ctx` API](../../visual-editor/kernel-api.md) for the code side.
+Outputs are [deferred](#deferred-frames); an output not declared in `schemas` has the first input's schema (no columns without inputs). `.code`, `.cells` (the cell code), `.cell_ids` and `.kernel` hold what was stored. See the [`flowfile_ctx` API](../../visual-editor/kernel-api.md) for the code side.
 
 ```python
 --8<-- "docs/examples/native_nodes.py:script"
@@ -529,6 +544,33 @@ An API Response node, which has no fluent method, with its settings as a dict:
 --8<-- "docs/examples/native_nodes.py:node"
 ```
 
+## `polars_code`
+
+`ff.polars_code(code, *inputs, flow_graph=None, description=None)` places one Polars Code node. With inputs it is `inputs[0].polars_code(code, *inputs[1:])`: the code reads `input_df`, or `input_df_1`, `input_df_2`, ... with several inputs. With no inputs the node is a source whose code builds its own frame (`output_df = pl.LazyFrame(...)`); it lands on `flow_graph`, else on a new graph as the readers do. `code` is a string or a `def` whose body is stored, as `FlowFrame.polars_code` stores it. A node that fails to build raises `NativeNodeError` and is removed.
+
+## Notebook mode
+
+**Notebook build mode** is how `flowfile_frame` builds the [canvas notebook](../../visual-editor/notebook.md)'s cells, which use `import flowfile as ff`. The server runs no notebook process and never executes a cell: a sync (the notebook's **Run**, **Run all** or **Push**) interprets the cells, calling only the functions a flow description needs, and builds them in this mode. While the mode is active:
+
+- Every source without `flow_graph=` lands on the session graph, the flow seeded from the canvas; a merge with any other graph is refused.
+- Nodes are built, never run. Writers and other output nodes, model nodes, subflows, kernel scripts, database, REST, Kafka, Google Analytics and external sources, `pivot`, `polars_code` and virtual or SQL-mode catalog readers get their predicted schema instead of executing, and `collect()` on a [deferred](#deferred-frames) frame raises `NativeNodeError`: the notebook's **Run** runs a cell's node on the canvas instead.
+- A sync holds more: every source except literal data (`from_dict`, `from_raw_data`, `FlowInput`), every custom node, `fuzzy_join`, `random_split`, `pivot`, a first-row `dynamic_rename`, `data_cleansing(remove_null_columns=True)` and SQL that calls a file-reading table function. A held node takes the columns of the canvas node its cell rendered while its settings are unchanged and the canvas knows them, else the columns it declares, a local file's header or a catalog table's registered columns, else none; it never runs and opens no connection.
+- No placed source starts a background schema read, and a source or writer first passes the canvas's path and connection checks (cloud paths; cloud, database and Kafka connections); a refusal raises `NativeNodeError`.
+- Calls that write at build time or run a flow raise `NativeNodeError`: `register_flow`, `RunFlow(<graph>, name=...)`, `custom_nodes.install`, the connection helpers, `open_graph_in_editor` and `run_graph` on the session graph. Placing a custom node class that is neither installed nor already registered in this process raises too, since it would add a node type for the whole process. Getting a kernel manager raises as well, so nothing in a cell reaches Docker.
+- `add_flow_parameter` on the session graph updates an existing parameter instead of failing.
+- `FlowInput` and `to_flow_output` on the session graph accept a port name already in use, so a cell that places the canvas's own subflow ports can run again. Push runs the cells on a fresh graph, where a duplicate name still raises.
+- A lowercase name a cell binds to a frame or node it created becomes that node's `node_reference` (the rule above; reserved names such as `ff`, `pl` and `main` are skipped).
+
+Scripts outside notebook mode are unaffected.
+
+### `canvas_node`
+
+`ff.canvas_node(node_id, *inputs, output=None)` is how the notebook renders a node it has no code form for. It adopts canvas node `node_id` from the session's seed with its current settings, wires it to `inputs` in handle order, and returns a deferred frame with the node's predicted columns. `output` (an output name, `output-<n>` or an `ff.FlowOutput`) selects one handle; without it a single-output node returns its frame and a multi-output node an object with `.output`, `.then` / `.otherwise`, `node[name]` and `get_output(name)`, as the native classes have. It only works in notebook mode on a flow seeded from the canvas; elsewhere, and for an id the seed does not hold, it raises `NativeNodeError`.
+
+### Join keys
+
+The notebook renders a canvas join that keeps its right keys as `join(..., keep_right_keys=True)` (see [Joins](joins.md#keeping-the-right-keys)).
+
 ## Errors
 
 Every build or materialisation failure raises `ff.NativeNodeError`, a subclass of `ValueError`: bad arguments, wrong input counts, refused connections, a failed ancestor during `collect()`, and the checks `@ff.python_script` runs when it decorates a function. `flow_ref`, `register_flow` and `RunFlow` raise it for catalog failures too, chained from the `flowfile_core.catalog` error (`NamespaceNotFoundError`, `FlowNotFoundError`, `AmbiguousFlowError`, `FlowExistsError`, `NotAuthorizedError`); the `get_catalog(...).get_schema(...)` handles raise `NamespaceNotFoundError` itself. A node that fails to build is removed from the graph again.
@@ -550,7 +592,7 @@ Every build or materialisation failure raises `ff.NativeNodeError`, a subclass o
 - **`@ff.python_script` needs the function's source.** Files, notebook cells and PyCharm's Python console provide it; in the console, a definition run before flowfile was imported has to be run again. The plain `python` prompt before Python 3.13 keeps none.
 - **Notebook variables are shared across a flow's scripts.** The body runs at the top level of the kernel's namespace for the flow, so a name it assigns (even one that shadows a builtin, such as `max`) is visible to the flow's other Python Script nodes.
 - **An upstream node referenced as `main` fails a script's run.** `read_inputs()["main"]` holds every input in wiring order, so running the script refuses an input of that name. Give the node another reference.
-- **Code export emits `ff.sql`, not these classes.** The FlowFrame export writes a SQL Query node as `ff.sql(...)`, a gate as `if` blocks and a custom node as its inlined `process()`; a Python Script node does not become a `@ff.python_script` function.
+- **The FlowFrame export writes these classes back.** A gate becomes `ff.Gate(...)`, a SQL Query node `ff.sql(...)`, a custom node `ff.custom_nodes.<key>(...)`, and a Python Script node `@ff.python_script` when its cells regenerate byte for byte, else `ff.PythonScript(cells=...)`. The Polars export still writes gates as `if` blocks.
 - **No typed class per built-in node.** Node types without a dedicated class above are placed with `ff.Node` and a settings dict or model.
 
 ---

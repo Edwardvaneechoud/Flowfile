@@ -129,6 +129,24 @@
         "FLOWFILE_CORE_PORT=63594 npm run dev:web --prefix flowfile_frontend -- --port 8085"
       ],
       "port": 8085
+    },
+    {
+      "name": "core-nb",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "D=\"${TMPDIR:-/tmp}/flowfile-e2e-nb\" && mkdir -p \"$D/storage\" \"$D/user\" && FLOWFILE_DB_PATH=\"$D/ff.db\" FLOWFILE_STORAGE_DIR=\"$D/storage\" FLOWFILE_USER_DATA_DIR=\"$D/user\" FLOWFILE_OFFLOAD_TO_WORKER=0 FLOWFILE_KERNEL_GC=0 FLOWFILE_TELEMETRY=0 poetry run flowfile_core --port 63596"
+      ],
+      "port": 63596
+    },
+    {
+      "name": "web-nb",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "FLOWFILE_CORE_PORT=63596 npm run dev:web --prefix flowfile_frontend -- --port 8086"
+      ],
+      "port": 8086
     }
   ]
 }

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from flowfile_frame._identity import current_user_id
+
 if TYPE_CHECKING:
     from flowfile_core.schemas import input_schema
     from flowfile_frame.flow_frame import FlowFrame
@@ -18,9 +20,9 @@ def get_current_user_id() -> int:
     """Get the current user ID for REST API operations.
 
     Returns:
-        int: The current user ID (defaults to 1 for single-user mode).
+        int: The current user ID; see ``_identity.current_user_id``.
     """
-    return 1
+    return current_user_id()
 
 
 def _coerce_auth(auth) -> input_schema.RestApiAuthSettings:
@@ -121,6 +123,7 @@ def read_api(
     record_path: str = "",
     timeout_seconds: float = 30.0,
     max_retries: int = 3,
+    description: str | None = None,
     flow_graph=None,
 ) -> FlowFrame:
     """Read JSON data from a REST API into a FlowFrame.
@@ -144,16 +147,17 @@ def read_api(
             (e.g. ``"data.items"``). Empty uses the top-level response.
         timeout_seconds: Per-request timeout.
         max_retries: Max retries for transient failures.
+        description: Optional node description.
         flow_graph: Optional existing FlowGraph to add the node to.
 
     Returns:
         FlowFrame: A FlowFrame backed by a REST API reader node.
     """
-    from flowfile_frame.flow_frame import FlowFrame
-    from flowfile_frame.utils import create_flow_graph
+    from flowfile_frame.native import source_frame
+    from flowfile_frame.utils import _implicit_graph
 
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     node_id = add_read_from_api(
         flow_graph,
@@ -167,10 +171,7 @@ def read_api(
         record_path=record_path,
         timeout_seconds=timeout_seconds,
         max_retries=max_retries,
+        description=description,
     )
 
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id,
-    )
+    return source_frame(flow_graph, node_id)

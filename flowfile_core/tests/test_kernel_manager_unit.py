@@ -1169,6 +1169,23 @@ class TestCoreCallbackUrl:
         assert request.log_callback_url == f"{api_url}/raw_logs"
         assert "63580" in request.log_callback_url
 
+    def test_execute_request_carries_the_token_raw_logs_requires(self):
+        """The kernel signs its /raw_logs posts with this token; core refuses them without it."""
+        from flowfile_core.auth.jwt import verify_internal_token
+        from flowfile_core.kernel.execution import build_execute_request
+
+        request = build_execute_request(
+            node_id=1,
+            code="",
+            input_paths={},
+            output_dir="/tmp",
+            flow_id=1,
+            manager=_bare_manager(),
+            source_registration_id=1,
+        )
+
+        assert request.internal_token and verify_internal_token(request.internal_token)
+
 
 class TestStartupGcSafety:
     """A registry that failed to load must not be read as 'nothing should exist'.

@@ -2,7 +2,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, ClassVar, Literal, get_args
 
 import polars as pl
 from pydantic import (
@@ -2299,15 +2299,37 @@ def _validate_output_names(v: list[str]) -> list[str]:
 
 
 class NodePythonScript(NodeMultiInput):
-    """Node that executes Python code on a kernel container."""
+    """Node that executes Python code on a kernel container.
+
+    ``output_schemas`` optionally declares the columns of each named output (keyed by
+    an entry of ``output_names``), so schema prediction can report them without running
+    the kernel. It is excluded from the node hash: it describes the output rather than
+    changing it, so declaring or editing it never invalidates a cached kernel result.
+    """
+
+    hash_excluded_fields: ClassVar[frozenset[str]] = frozenset({"output_schemas"})
 
     python_script_input: PythonScriptInput = PythonScriptInput()
     output_names: list[str] = Field(default_factory=lambda: ["main"])
+    output_schemas: dict[str, list[MinimalFieldInfo]] | None = None
 
     @field_validator("output_names")
     @classmethod
     def validate_output_names(cls, v: list[str]) -> list[str]:
         return _validate_output_names(v)
+
+    @model_validator(mode="after")
+    def validate_output_schemas(self) -> "NodePythonScript":
+        if not self.output_schemas:
+            return self
+        unknown = sorted(set(self.output_schemas) - set(self.output_names))
+        if unknown:
+            raise ValueError(f"output_schemas declares unknown outputs {unknown}; outputs are {self.output_names}")
+        for output_name, fields in self.output_schemas.items():
+            names = [f.name for f in fields]
+            if len(names) != len(set(names)):
+                raise ValueError(f"output_schemas[{output_name!r}] has duplicate column names")
+        return self
 
 
 class UserDefinedNode(NodeMultiInput):

@@ -26,6 +26,7 @@ def read_from_cloud_storage(
     delta_version: int | None = None,
     changes_since: int | str | datetime | None = None,
     include_change_preimage: bool = False,
+    description: str | None = None,
     output_field_config: input_schema.OutputFieldConfig | None = None,
 ) -> FlowFrame:
     """Read data from cloud storage.
@@ -47,6 +48,7 @@ def read_from_cloud_storage(
             (only used for Delta format). See :func:`flowfile_frame.scan_delta`.
         include_change_preimage: Keep ``update_preimage`` rows in the change feed
             (only used for Delta format).
+        description: Optional description for the node.
         output_field_config: Optional schema validation/transformation config.
             Set ``enabled=True`` and supply ``fields`` to enforce the expected
             output schema (matches the canvas-side ``output_field_config``
@@ -73,6 +75,7 @@ def read_from_cloud_storage(
             delimiter=delimiter,
             has_header=has_header,
             encoding=encoding,
+            description=description,
             output_field_config=output_field_config,
         )
     elif file_format == "parquet":
@@ -80,6 +83,7 @@ def read_from_cloud_storage(
             source,
             connection_name=connection_name,
             scan_mode=scan_mode,
+            description=description,
             output_field_config=output_field_config,
         )
     elif file_format == "json":
@@ -87,6 +91,7 @@ def read_from_cloud_storage(
             source,
             connection_name=connection_name,
             scan_mode=scan_mode,
+            description=description,
             output_field_config=output_field_config,
         )
     elif file_format == "delta":
@@ -96,6 +101,7 @@ def read_from_cloud_storage(
             version=delta_version,
             changes_since=changes_since,
             include_change_preimage=include_change_preimage,
+            description=description,
             output_field_config=output_field_config,
         )
     else:

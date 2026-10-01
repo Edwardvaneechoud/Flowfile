@@ -189,6 +189,7 @@ df = ff.read_from_cloud_storage(
 - `delta_version`: Delta table version for time-travel queries. Only used for Delta
 - `changes_since`: Read the table's change feed instead of its rows. Only used for Delta; see [Delta Lake Reading](#delta-lake-reading)
 - `include_change_preimage`: Keep the before-image rows of each update in the change feed (default: `False`). Only used for Delta
+- `description`: Optional description for the node
 
 !!! tip "Recommended Approach"
     `read_from_cloud_storage()` is the recommended way to read from cloud storage. The format-specific `scan_*` functions below still work and are useful when you want a more concise call for a known format.
@@ -274,6 +275,7 @@ changes = ff.scan_delta(
 - `version`: Delta table version for time travel
 - `changes_since`: Read the table's change feed instead of its rows — an `int` returns the changes committed *after* that version, an ISO-8601 string or a `datetime` the changes committed at or after that instant. The result adds `_change_type`, `_commit_version` and `_commit_timestamp`
 - `include_change_preimage`: Keep the `update_preimage` rows (the before-image of each update). Dropped by default
+- `description`: Optional description for the node
 
 A change read needs the table to be change-tracked — write it with `track_changes=True` (see [Writing Data](writing-data.md#delta-lake-writing)) or turn tracking on from the visual reader. `changes_since` and `version` are mutually exclusive, `changes_since="last_run"` raises a `ValueError` because cursors exist for catalog tables only, and change reads are not supported for `gs://` paths. [Change Tracking](../../visual-editor/catalog/change-tracking.md#cloud-delta-tables) covers how cloud paths differ from catalog tables and has a tested end-to-end example.
 
@@ -306,6 +308,7 @@ df = ff.read_catalog_table("my_table", delta_version=5)
 - `schema`: A [`SchemaReference`](catalog-references.md) identifying the catalog/schema to read from. Preferred over `namespace_id`.
 - `namespace_full_name`: The schema as a plain `"catalog.schema"` string, resolved when the flow runs. Exported flow code uses this form
 - `delta_version`: Optional Delta version for time-travel queries (physical tables only)
+- `description`: Optional description for the node
 
 Returns a `FlowFrame`. Use `.collect()` to materialize, `.data` to access the underlying `LazyFrame`, or `open_graph_in_editor()` to visualize in the UI.
 
@@ -344,6 +347,7 @@ df = read_catalog_sql("""
 **Parameters:**
 
 - `sql_query`: SQL query string to execute (required)
+- `description`: Optional description for the node
 
 Returns a `FlowFrame` backed by a catalog SQL reader node. The SQL dialect is Polars SQL, which supports standard `SELECT`, `WHERE`, `JOIN`, `GROUP BY`, `ORDER BY`, `HAVING`, `UNION`, subqueries, and window functions.
 
@@ -370,6 +374,7 @@ df = ff.read_kafka(
 - `start_offset`: Where to start consuming: `"earliest"` or `"latest"` (default: `"latest"`)
 - `poll_timeout_seconds`: How long to poll for messages in seconds (default: `30.0`)
 - `value_format`: Message value format (default: `"json"`)
+- `description`: Optional description for the node
 
 Returns a `FlowFrame`.
 
@@ -418,6 +423,7 @@ df = ff.read_database(
 - `table_name`: Table to read from
 - `schema_name`: Database schema (e.g., "public")
 - `query`: Custom SQL query (takes precedence over `table_name`)
+- `description`: Optional description for the node
 
 !!! note "Return Type"
     `read_database()` returns a `FlowFrame` (not a raw Polars `LazyFrame`). The result supports `.collect()` to materialize data, `.data` to access the underlying `LazyFrame`, and `open_graph_in_editor()` to visualize the pipeline in the UI.

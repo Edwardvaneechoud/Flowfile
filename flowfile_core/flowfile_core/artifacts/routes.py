@@ -29,7 +29,7 @@ from flowfile_core.artifacts.exceptions import (
     NamespaceNotFoundError,
 )
 from flowfile_core.artifacts.service import ArtifactService
-from flowfile_core.auth.jwt import get_user_or_internal_service, verify_internal_token
+from flowfile_core.auth.jwt import get_user_or_internal_service, internal_token_valid
 from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.exceptions import FlowNotFoundError, NotAuthorizedError
 from flowfile_core.database.connection import get_db
@@ -82,12 +82,7 @@ def is_internal_service_call(
     Released kernel images call ``delete_global_artifact(name, version=latest)``
     and must keep working unchanged.
     """
-    if not x_internal_token:
-        return False
-    try:
-        return verify_internal_token(x_internal_token)
-    except ValueError:
-        return False
+    return internal_token_valid(x_internal_token)
 
 
 def _conflict(exc: ArtifactError) -> HTTPException:

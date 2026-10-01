@@ -23,6 +23,7 @@ from flowfile_core.flowfile.user_defined.registry import (
     compute_node_key,
     registry,
 )
+from flowfile_core.routes.custom_node_mounts import require_admin
 from flowfile_core.routes.routes import edit_flow, keep_server_owned_layout
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.history_schema import HistoryActionType, OperationResponse
@@ -275,8 +276,10 @@ def _reject_builtin_key_collision(source: str) -> None:
 
 
 @router.post("/save-custom-node", summary="Save a custom node definition")
-def save_custom_node(request: SaveCustomNodeRequest, current_user=Depends(get_current_active_user)):
+def save_custom_node(request: SaveCustomNodeRequest, current_user=Depends(require_admin)):
     """Write a custom node .py file and hot-register it (AST-only — no exec at save).
+
+    Admin-only: the file is install-wide and its module execs in core once placed.
 
     Designer mode regenerates canonical source from the DesignerState; code mode
     writes the supplied source verbatim. A file that saves but fails AST validation
@@ -336,11 +339,12 @@ def preview_custom_node(
 
 
 @router.post("/dry-run", summary="Run a candidate custom node against sample inputs")
-def dry_run_custom_node(request: DryRunRequest, current_user=Depends(get_current_active_user)) -> DryRunResponse:
+def dry_run_custom_node(request: DryRunRequest, current_user=Depends(require_admin)) -> DryRunResponse:
     """Execute a candidate node in the worker against bounded sample inputs.
 
     Never runs user code in core; a syntax error is caught before dispatch and an
-    unreachable worker surfaces as ``error_kind='load'``.
+    unreachable worker surfaces as ``error_kind='load'``. Admin-only, like save: the
+    candidate is arbitrary Python and the worker holds the master key.
     """
     return run_dry_run(request, current_user.id)
 
@@ -389,7 +393,7 @@ def get_custom_node(file_name: str, current_user=Depends(get_current_active_user
 
 
 @router.delete("/delete-custom-node/{file_name}", summary="Delete a custom node")
-def delete_custom_node(file_name: str, current_user=Depends(get_current_active_user)) -> dict[str, Any]:
+def delete_custom_node(file_name: str, current_user=Depends(require_admin)) -> dict[str, Any]:
     """Delete a custom node file and unregister it from the registry and the palette."""
     if not file_name.endswith(".py"):
         file_name += ".py"

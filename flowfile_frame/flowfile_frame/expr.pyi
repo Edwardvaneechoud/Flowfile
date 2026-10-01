@@ -880,6 +880,7 @@ class Expr:
     # Compute the square root of the elements.
     def sqrt(self, ) -> Expr: ...
 
+    # Standard deviation; at the default ``ddof=1`` (the Group By node's) it aggregates natively.
     def std(self, ddof=1) -> Any: ...
 
     # Method equivalent of subtraction operator `expr - other`.
@@ -923,6 +924,7 @@ class Expr:
     # Count the occurrence of unique values.
     def value_counts(self, sort: bool=False, parallel: bool=False, name: str_ | None=None, normalize: bool=False) -> Expr: ...
 
+    # Variance; at the default ``ddof=1`` (the Group By node's) it aggregates natively.
     def var(self, ddof=1) -> Any: ...
 
     # Filter a single column.
@@ -1638,6 +1640,7 @@ class Column(Expr):
     # Compute the square root of the elements.
     def sqrt(self, ) -> Expr: ...
 
+    # Standard deviation; at the default ``ddof=1`` (the Group By node's) it aggregates natively.
     def std(self, ddof=1) -> Any: ...
 
     # Method equivalent of subtraction operator `expr - other`.
@@ -1684,6 +1687,7 @@ class Column(Expr):
     # Count the occurrence of unique values.
     def value_counts(self, sort: bool=False, parallel: bool=False, name: str_ | None=None, normalize: bool=False) -> Expr: ...
 
+    # Variance; at the default ``ddof=1`` (the Group By node's) it aggregates natively.
     def var(self, ddof=1) -> Any: ...
 
     # Filter a single column.
@@ -2353,6 +2357,7 @@ class When(Expr):
     # Compute the square root of the elements.
     def sqrt(self, ) -> Expr: ...
 
+    # Standard deviation; at the default ``ddof=1`` (the Group By node's) it aggregates natively.
     def std(self, ddof=1) -> Any: ...
 
     # Method equivalent of subtraction operator `expr - other`.
@@ -2399,6 +2404,7 @@ class When(Expr):
     # Count the occurrence of unique values.
     def value_counts(self, sort: bool=False, parallel: bool=False, name: str_ | None=None, normalize: bool=False) -> Expr: ...
 
+    # Variance; at the default ``ddof=1`` (the Group By node's) it aggregates natively.
     def var(self, ddof=1) -> Any: ...
 
     # Create a new branch in the chain.

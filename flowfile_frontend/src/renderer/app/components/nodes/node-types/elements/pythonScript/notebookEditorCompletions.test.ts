@@ -198,4 +198,16 @@ describe("buildNotebookCompletionSources", () => {
     );
     expect(jedi?.detail).toBe("def read_catalog_table");
   });
+
+  it("offers the generated ff. names once, merged with Jedi's", async () => {
+    const code = "ff.read_c";
+    mockComplete.mockResolvedValue({
+      items: [{ label: "read_csv", type: "function", detail: "def read_csv", documentation: "" }],
+    });
+    const labels = (await allOptions(optsFor({ getKernelId: () => "k" }), code, code.length)).map(
+      (o) => o.label,
+    );
+    expect(labels.filter((l) => l === "read_csv")).toHaveLength(1);
+    expect(labels).toContain("read_database");
+  });
 });
