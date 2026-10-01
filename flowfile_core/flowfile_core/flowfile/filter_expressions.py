@@ -27,6 +27,21 @@ _COMPARISON_OPERATORS = frozenset(
     }
 )
 
+_NATIVE_MEMBERSHIP_BASE_DTYPES = frozenset(
+    {
+        "Int8",
+        "Int16",
+        "Int32",
+        "Int64",
+        "Int128",
+        "Float64",
+        "String",
+        "Categorical",
+        "Date",
+    }
+)
+_NATIVE_MEMBERSHIP_DATETIME = "Datetime(time_unit='us', time_zone=None)"
+
 
 def _is_numeric_string(value: str) -> bool:
     """Check if a string value represents a numeric value.
@@ -76,6 +91,19 @@ def resolve_filter_field_type(column) -> str | None:
     if base == "Datetime":
         return "datetime"
     return column.generic_datatype()
+
+
+def supports_native_membership(column) -> bool:
+    """Whether ``[col] in (...)`` keeps exactly the rows the ``=`` / ``!=`` chain keeps on this column.
+
+    ``is_in`` does not cast its members to the column's dtype the way a comparison does: a Float32
+    column misses ``0.1``, a non-microsecond Datetime misses or rejects a ``to_datetime`` member, an
+    Enum rejects a value outside its categories, a Boolean column rejects ``1`` / ``0``, an unsigned
+    column treats a negative member differently and a Decimal column (resolved as "str") rejects
+    its quoted members. Those dtypes, and any not listed, keep the chain.
+    """
+    data_type = str(column.data_type)
+    return data_type == _NATIVE_MEMBERSHIP_DATETIME or data_type.split("(", 1)[0] in _NATIVE_MEMBERSHIP_BASE_DTYPES
 
 
 def _normalize_datetime_value(value: str) -> str:
@@ -188,42 +216,52 @@ def _build_is_not_null_expression(field: str) -> str:
     return f"is_not_empty({field})"
 
 
-def _build_in_expression(field: str, value: str, field_data_type: str | None) -> str:
+def _build_in_expression(field: str, value: str, field_data_type: str | None, native: bool = False) -> str:
     """Build an IN expression for matching any of multiple values.
 
     Args:
         field: The formatted field name.
         value: Comma-separated list of values.
         field_data_type: The data type of the field.
+        native: Emit ``[field] in (a, b)`` instead of an OR chain. Only pass True when
+            ``supports_native_membership`` holds for the column. An empty bare member keeps the
+            chain, because the parser silently ends an ``in (...)`` list at one.
 
     Returns:
-        An OR-combined expression for each value.
+        A membership test, or an OR-combined expression for each value.
     """
     values = [v.strip() for v in value.split(",")]
     if len(values) == 1:
         return _build_equals_expression(field, _render_value(values[0], field_data_type), False)
 
-    conditions = [f"({field}={_render_value(v, field_data_type)})" for v in values]
-    return " | ".join(conditions)
+    members = [_render_value(v, field_data_type) for v in values]
+    if native and all(members):
+        return f"{field} in ({', '.join(members)})"
+    return " | ".join(f"({field}={m})" for m in members)
 
 
-def _build_not_in_expression(field: str, value: str, field_data_type: str | None) -> str:
+def _build_not_in_expression(field: str, value: str, field_data_type: str | None, native: bool = False) -> str:
     """Build a NOT IN expression for excluding multiple values.
 
     Args:
         field: The formatted field name.
         value: Comma-separated list of values.
         field_data_type: The data type of the field.
+        native: Emit ``[field] not in (a, b)`` instead of an AND chain. Only pass True when
+            ``supports_native_membership`` holds for the column. An empty bare member keeps the
+            chain, because the parser silently ends an ``in (...)`` list at one.
 
     Returns:
-        An AND-combined expression for each value.
+        A negated membership test, or an AND-combined expression for each value.
     """
     values = [v.strip() for v in value.split(",")]
     if len(values) == 1:
         return _build_not_equals_expression(field, _render_value(values[0], field_data_type), False)
 
-    conditions = [f"({field}!={_render_value(v, field_data_type)})" for v in values]
-    return " & ".join(conditions)
+    members = [_render_value(v, field_data_type) for v in values]
+    if native and all(members):
+        return f"{field} not in ({', '.join(members)})"
+    return " & ".join(f"({field}!={m})" for m in members)
 
 
 def _build_between_expression(field: str, value: str, value2: str, field_data_type: str | None) -> str:
@@ -249,7 +287,9 @@ def _build_between_expression(field: str, value: str, value2: str, field_data_ty
     return f"{lower} & {upper}"
 
 
-def build_filter_expression(basic_filter: BasicFilter, field_data_type: str | None = None) -> str:
+def build_filter_expression(
+    basic_filter: BasicFilter, field_data_type: str | None = None, native_membership: bool = False
+) -> str:
     """Build a filter expression string from a BasicFilter object.
 
     Uses the Flowfile expression language that is compatible with polars_expr_transformer.
@@ -259,6 +299,9 @@ def build_filter_expression(basic_filter: BasicFilter, field_data_type: str | No
         field_data_type: The data type of the field ("str", "numeric", "date", "datetime", or None).
             If None, the type is inferred from the value. Date and datetime columns wrap the
             value in ``to_date``/``to_datetime`` so the comparison is typed.
+        native_membership: Render a multi-value IN / NOT_IN as ``[field] in (...)`` /
+            ``[field] not in (...)`` instead of an ``=`` / ``!=`` chain. Pass
+            ``supports_native_membership(column)``.
 
     Returns:
         A filter expression string compatible with polars_expr_transformer.
@@ -326,10 +369,10 @@ def build_filter_expression(basic_filter: BasicFilter, field_data_type: str | No
         return _build_is_not_null_expression(field)
 
     elif operator == FilterOperator.IN:
-        return _build_in_expression(field, value, field_data_type)
+        return _build_in_expression(field, value, field_data_type, native_membership)
 
     elif operator == FilterOperator.NOT_IN:
-        return _build_not_in_expression(field, value, field_data_type)
+        return _build_not_in_expression(field, value, field_data_type, native_membership)
 
     elif operator == FilterOperator.BETWEEN:
         return _build_between_expression(field, value, value2, field_data_type)
