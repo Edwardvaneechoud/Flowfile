@@ -283,6 +283,7 @@ def custom_node_type():
 # Every mutating route of the editor route modules must be classified: graph mutations in GESTURE_ROUTES,
 # everything else in NON_GRAPH_ROUTES.
 GESTURE_ROUTES = {
+    "/editor/notebook/push/",
     "/editor/add_node/",
     "/editor/copy_node",
     "/editor/delete_node/",
@@ -307,6 +308,7 @@ GESTURE_ROUTES = {
     "/transform/add_input/",
 }
 NON_GRAPH_ROUTES = {
+    "/editor/notebook/run_lineage/",
     "/editor/undo/",
     "/editor/redo/",
     "/editor/history_clear/",

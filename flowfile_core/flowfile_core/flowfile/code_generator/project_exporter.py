@@ -23,14 +23,12 @@ import zipfile
 from pathlib import Path
 
 from flowfile_core.flowfile.code_generator.base import referenced_kernel_globals
-from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
+from flowfile_core.flowfile.code_generator.code_generator import FlowGraphCodeConverter, FlowGraphToFlowFrameConverter
+from flowfile_core.flowfile.code_generator.custom_node_handlers import CustomNodeHandlersMixin
 from flowfile_core.flowfile.code_generator.param_codegen import (
     SENTINEL_PREFIX,
-    apply_param_sentinels,
     codegen_parameters,
     parameter_default_repr,
-    resolve_param_sentinels,
-    restore_param_sentinels,
     restore_sentinels_to_refs,
 )
 from flowfile_core.flowfile.flow_graph import FlowGraph
@@ -40,9 +38,7 @@ from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.output_model import ProjectExportFile, ProjectExportManifest
 from flowfile_core.utils.utils import camel_case_to_snake_case
 
-# ParamType -> ff dtype expression for run-metadata casts (ff re-exports the
-# polars datatypes; values mirror subflow._PARAM_TYPE_TO_PL so generated output
-# dtypes match runtime output).
+# ParamType -> ff dtype for run-metadata casts; mirrors subflow._PARAM_TYPE_TO_PL.
 _PARAM_TYPE_TO_FF_EXPR = {
     "string": "ff.String",
     "enum": "ff.String",
@@ -192,6 +188,11 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
     support and per-module emission of custom node sources.
     """
 
+    # Custom nodes ship as modules the pipeline imports; flow ports are function arguments and return entries.
+    _handle_user_defined = CustomNodeHandlersMixin._handle_user_defined
+    _handle_flow_input = FlowGraphCodeConverter._handle_flow_input
+    _handle_flow_output = FlowGraphCodeConverter._handle_flow_output
+
     def __init__(self, flow_graph: FlowGraph):
         super().__init__(flow_graph)
         self.module_files: dict[str, str] = {}
@@ -207,28 +208,8 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         self._subflow_modules: dict[str, str] = {}
         self._subflow_module_info: dict[str, dict] = {}
         self._subflow_ancestry: set[str] = set()
-        # This flow's parameters that become function kwargs (set in convert()).
-        self._codegen_params: list[FlowParameter] = []
 
     # --- flow parameters as function arguments -------------------------------------------
-
-    def convert(self) -> str:
-        """Convert with ``${name}`` parameter refs turned into function-argument references."""
-        self._codegen_params = codegen_parameters(self.flow_graph.flow_settings.parameters)
-        restorations = apply_param_sentinels(
-            [node.setting_input for node in self.flow_graph.nodes], self._codegen_params
-        )
-        try:
-            code = super().convert()
-        finally:
-            restore_param_sentinels(restorations)
-        code, leaked = resolve_param_sentinels(code, {p.name for p in self._codegen_params})
-        if leaked:
-            self.warnings.append(
-                f"Parameter reference(s) {sorted(leaked)} appear in places that cannot reference a "
-                "function argument (e.g. multi-line strings) and were left as literal ${...} text."
-            )
-        return code
 
     def _function_def_line(self) -> str:
         if not self._codegen_params:
@@ -295,7 +276,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         used_params: set[str] = set()
         edge_refs: list[tuple[dict, int]] = []
         for source_node in node.all_inputs:
-            ref = getattr(source_node.setting_input, "node_reference", None)
+            ref = getattr(self._settings_for(source_node), "node_reference", None)
             name = ref if ref else f"df_{source_node.node_id}"
             upstream_var = self._resolve_upstream_var(node, source_node.node_id, f"df_{source_node.node_id}")
             entry = by_name.get(name)
@@ -424,21 +405,12 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
         self.imports.add(f"from subflows import {module_stem}")
 
         node = self.flow_graph.get_node(settings.node_id)
-        keyed = (node.node_inputs.keyed_inputs or {}) if node is not None else {}
-        source_handles = (node.node_inputs.keyed_source_handles or {}) if node is not None else {}
-
-        def upstream_var(handle: str) -> str | None:
-            source = keyed.get(handle)
-            if source is None:
-                return None
-            src_handle = source_handles.get(handle, "output-0")
-            per_handle = self.node_handle_var_mapping.get((source.node_id, src_handle))
-            return per_handle or self.node_var_mapping.get(source.node_id, f"df_{source.node_id}")
+        keyed_vars = self._keyed_vars(node) if node is not None else {}
 
         prefix = f"_sf_{settings.node_id}"
         call_kwargs: list[str] = []
         for index, slot in enumerate(settings.input_slots):
-            source_var = upstream_var(f"input-{index + 1}")
+            source_var = keyed_vars.get(f"input-{index + 1}")
             if source_var is not None:
                 call_kwargs.append(f"{info['input_args'].get(slot, slot)}={source_var}")
 
@@ -457,7 +429,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             elif binding.source == "column":
                 column_bindings.append(binding)
 
-        param_frame_var = upstream_var("input-0")
+        param_frame_var = keyed_vars.get("input-0")
         if column_bindings and param_frame_var is None:
             self.warnings.append(
                 f"run_flow node {settings.node_id}: column-mapped parameter(s) have no data connected "

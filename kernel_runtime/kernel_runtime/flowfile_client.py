@@ -136,7 +136,8 @@ def _set_context(
     _dry_run_globals.set({} if dry_run else None)
     _dry_run_next_id.set([1])
     if log_callback_url:
-        _log_client.set(httpx.Client(timeout=httpx.Timeout(5.0)))
+        # Core refuses unsigned /raw_logs posts; sign them like every other core callback.
+        _log_client.set(httpx.Client(timeout=httpx.Timeout(5.0), headers=_get_internal_auth_headers()))
     else:
         _log_client.set(None)
 

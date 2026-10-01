@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from flowfile_frame._identity import current_user_id
+
 if TYPE_CHECKING:
     from flowfile_frame.flow_frame import FlowFrame
 
@@ -16,9 +18,9 @@ def get_current_user_id() -> int:
     """Get the current user ID for Kafka operations.
 
     Returns:
-        int: The current user ID (defaults to 1 for single-user mode).
+        int: The current user ID; see ``_identity.current_user_id``.
     """
-    return 1
+    return current_user_id()
 
 
 def add_kafka_source(
@@ -30,6 +32,7 @@ def add_kafka_source(
     start_offset: str = "latest",
     poll_timeout_seconds: float = 30.0,
     value_format: str = "json",
+    description: str | None = None,
 ) -> int:
     """Add a Kafka source node to the flow graph.
 
@@ -41,6 +44,7 @@ def add_kafka_source(
         start_offset: Where to start consuming ('earliest' or 'latest').
         poll_timeout_seconds: How long to poll for messages.
         value_format: Message value format ('json').
+        description: Optional description for the node.
 
     Returns:
         int: The node ID of the created Kafka source node.
@@ -55,6 +59,7 @@ def add_kafka_source(
         flow_id=flow_id,
         node_id=node_id,
         user_id=get_current_user_id(),
+        description=description,
         kafka_settings=KafkaSourceSettings(
             kafka_connection_name=connection_name,
             topic_name=topic_name,
@@ -77,6 +82,7 @@ def read_kafka(
     start_offset: str = "latest",
     poll_timeout_seconds: float = 30.0,
     value_format: str = "json",
+    description: str | None = None,
     flow_graph=None,
 ) -> FlowFrame:
     """Read messages from a Kafka topic using a named Flowfile connection.
@@ -91,6 +97,7 @@ def read_kafka(
         start_offset: Where to start consuming ('earliest' or 'latest').
         poll_timeout_seconds: How long to poll for messages.
         value_format: Message value format ('json').
+        description: Optional description for the node.
         flow_graph: Optional existing FlowGraph to add the node to.
 
     Returns:
@@ -99,11 +106,11 @@ def read_kafka(
     Raises:
         ValueError: If the connection is not found.
     """
-    from flowfile_frame.flow_frame import FlowFrame
-    from flowfile_frame.utils import create_flow_graph
+    from flowfile_frame.native import source_frame
+    from flowfile_frame.utils import _implicit_graph
 
     if flow_graph is None:
-        flow_graph = create_flow_graph()
+        flow_graph = _implicit_graph()
 
     node_id = add_kafka_source(
         flow_graph,
@@ -113,10 +120,7 @@ def read_kafka(
         start_offset=start_offset,
         poll_timeout_seconds=poll_timeout_seconds,
         value_format=value_format,
+        description=description,
     )
 
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id,
-    )
+    return source_frame(flow_graph, node_id)

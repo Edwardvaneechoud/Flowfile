@@ -60,8 +60,7 @@ const nodeTarget = (item: string) => (ctx: TutorialContext) => {
 };
 
 const settingsOpenFor = (ctx: TutorialContext, item: string) =>
-  ctx.openSettingsNodeId !== null &&
-  (ctx.nodesByItem[item] ?? []).includes(ctx.openSettingsNodeId);
+  ctx.openSettingsNodeId !== null && (ctx.nodesByItem[item] ?? []).includes(ctx.openSettingsNodeId);
 
 const wrongNodeHint = (wanted: string) => (ev: { type: string; nodeItem?: string }) =>
   ev.type === "node-added" && ev.nodeItem !== wanted
@@ -494,8 +493,8 @@ export const gettingStartedTutorial: Tutorial = {
       id: "code-preview",
       title: "Your Python Code",
       content: `
-        <p>This is your flow as Python code. It opens on the <strong>FlowFrame</strong> tab (Flowfile's Python API) — switch to the <strong>Polars</strong> tab for pure Polars code with no Flowfile dependency.</p>
-        <p><strong>Export Code</strong> saves it as a .py file; <strong>Refresh</strong> regenerates it after changes.</p>
+        <p>This is your flow as Python code, in a pane beside the canvas (drag its left edge to resize it). <strong>FlowFrame</strong> is Flowfile's Python API; <strong>Polars</strong> is pure Polars code with no Flowfile dependency; <strong>Project</strong> exports a runnable project; <strong>Notebook</strong> lets you edit the flow as Python cells.</p>
+        <p><strong>Export Code</strong> saves the FlowFrame or Polars code as a .py file; the pane remembers the mode you pick for next time.</p>
       `,
       position: "center",
       interaction: "free",
@@ -511,7 +510,7 @@ export const gettingStartedTutorial: Tutorial = {
         <ul style="margin: 12px 0; padding-left: 20px;">
           <li><strong>Ctrl+S</strong> - save flow</li>
           <li><strong>Ctrl+E</strong> - run flow</li>
-          <li><strong>Ctrl+G</strong> - generate code</li>
+          <li><strong>Ctrl+G</strong> - show/hide the code pane</li>
           <li><strong>Ctrl+C/V</strong> - copy/paste nodes</li>
           <li><strong>Delete</strong> - remove selected node</li>
         </ul>

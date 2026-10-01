@@ -79,9 +79,9 @@ Operations with a visual-node equivalent appear as that node type, so the step s
 | `sort("a", descending=True)` | Sort data | an expression key, `nulls_last`, `maintain_order`, or `multithreaded=False` |
 | `unique(["a"])` | Drop duplicates | an expression subset or `maintain_order=True` |
 | `head(n)`, `limit(n)`, `sample(n)` | Take Sample | — |
-| `with_row_index("record_id")` | Add record Id | any other name with the default `offset=0` |
+| `with_row_index("index", offset=0, group_by=[...])` | Add record Id | never |
 | `group_by("g").agg(ff.col("a").sum())` | Group by | an aggregation outside `sum`, `max`, `mean`, `median`, `min`, `count`, `n_unique`, `first`, `last`, `std`, `var`, `concat`; a selector; or `maintain_order=True` |
-| `join(other, on="k", how="inner")` | Join | `suffix`, `validate`, `nulls_equal`, `coalesce`, or `maintain_order` |
+| `join(other, on="k", how="inner")` | Join | `validate`, `nulls_equal` or `maintain_order`; for joins other than inner/left also `suffix` or `coalesce`; for inner/left, a `suffix` whose renamed columns still clash, or `coalesce=False` when the right keys are not the trailing right columns |
 | `concat([a, b], how="diagonal_relaxed")` | Union data | any other `how` |
 | `sql("SELECT * FROM self")`, `ff.sql(query, orders=a, regions=b)` | SQL Query | never |
 | `pivot(...)`, `unpivot(...)` | Pivot data, Unpivot data | several `on` or `values` columns; custom variable or value names |

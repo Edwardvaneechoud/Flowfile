@@ -105,8 +105,68 @@ def test_graph_tree(capsys):
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(5, 6, 'main'))
 
     flow.print_tree()
-    stdout = capsys.readouterr().out
 
-    tree_elements = ["(id=", ">", "1.", "Execution Order", "Flow Graph Visualization", "="]
-    for element in tree_elements:
-        assert element in stdout
+    assert capsys.readouterr().out == (
+        "● Manual input (1)\n"
+        "│ ● Manual input (2)\n"
+        "│ │ ● Manual input (3)\n"
+        "│ │ │ ● Manual input (4)\n"
+        "├─┴─┴─┘\n"
+        "● Union data (5)\n"
+        "│\n"
+        "● Group by (6)\n"
+    )
+
+
+def test_print_tree_draws_branches_merges_and_named_exits(capsys):
+    """Branches open and merge back, a crossing lane stays visible, nodes in one column are linked, and Gate exits are named."""
+    import flowfile as ff
+
+    source = ff.from_dict({"x": [1, 5]}, description="Orders")
+    kept = source.filter(ff.col("x") > 0)
+    picked = source.select("x")
+    checked = kept.select("x")
+    stacked = ff.concat([kept, picked], how="diagonal_relaxed")
+    joined = stacked.join(checked, on="x")
+    gate = ff.Gate(frame=joined, formula=ff.col("x") > 3)
+    small = gate.otherwise.select("x")
+
+    small.flow_graph.print_tree()
+
+    assert capsys.readouterr().out == (
+        f"● Manual input ({source.node_id})  Orders\n"
+        "├─┐\n"
+        f"● │ Filter data ({kept.node_id})\n"
+        "├─┼─┐\n"
+        f"│ ● │ Select data ({picked.node_id})\n"
+        f"● │ │ Select data ({checked.node_id})\n"
+        "│ ├─┘\n"
+        f"│ ● Union data ({stacked.node_id})\n"
+        "├─┘\n"
+        f"● Join ({joined.node_id})\n"
+        "│\n"
+        f"● Gate ({gate.node_id})\n"
+        "│\n"
+        f"● Select data ({small.node_id})  [else]\n"
+    )
+
+
+def test_print_tree_closes_a_dead_end_branch_before_the_main_line(capsys):
+    """A dead end added last prints under the node it leaves; the branch with more below it keeps the column."""
+    import flowfile as ff
+
+    source = ff.from_dict({"x": [1, 5]})
+    kept = source.filter(ff.col("x") > 0)
+    shown = kept.select("x")
+    side = source.select("x")
+
+    source.flow_graph.print_tree()
+
+    assert capsys.readouterr().out == (
+        f"● Manual input ({source.node_id})\n"
+        "├─┐\n"
+        f"│ ● Select data ({side.node_id})\n"
+        f"● Filter data ({kept.node_id})\n"
+        "│\n"
+        f"● Select data ({shown.node_id})\n"
+    )

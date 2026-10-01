@@ -12,6 +12,7 @@ from flowfile_frame.callable_utils import (  # noqa: F401
     _get_function_source,
     _is_safely_representable,
 )
+from flowfile_frame.notebook import current
 
 
 def _is_iterable(obj: Any) -> bool:
@@ -78,6 +79,12 @@ def create_flow_graph(flow_id: int = None) -> FlowGraph:
     return FlowGraph(flow_settings=flow_settings)
 
 
+def _implicit_graph() -> FlowGraph:
+    """The graph a source without ``flow_graph=`` builds on: the notebook session graph, else a new one."""
+    mode = current()
+    return mode.graph if mode is not None else create_flow_graph()
+
+
 def stringify_values(v: Any) -> str:
     """Convert various types of values to a string representation.
 
@@ -99,6 +106,10 @@ data = {"c": 0}
 
 
 def generate_node_id() -> int:
+    """Next node id; in notebook mode never at or below an id already on the session graph."""
+    mode = current()
+    if mode is not None:
+        data["c"] = max(data["c"], max((n.node_id for n in mode.graph.nodes), default=0))
     data["c"] += 1
     return data["c"]
 

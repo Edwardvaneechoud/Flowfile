@@ -570,6 +570,14 @@ class TestSQLQueryValidation:
         for query in safe_after_stripping:
             validate_sql_query(query)  # Should not raise - comments are stripped
 
+    def test_many_unclosed_comment_openers_are_kept_and_the_query_still_validates(self):
+        """Unclosed ``/*`` openers stay in the text, and stripping them does not scan past each one again."""
+        from shared.sql_validation import _remove_sql_comments
+
+        openers = "/* a" * 200_000
+        assert _remove_sql_comments(f"SELECT 1 /* c */ -- d\n{openers}") == f"SELECT 1    \n{openers}"
+        validate_sql_query(f"SELECT a FROM input_1 {openers}")
+
     def test_dangerous_sql_outside_comments_blocked(self):
         """Test that dangerous SQL outside of comments is blocked."""
         with pytest.raises(UnsafeSQLError) as exc_info:

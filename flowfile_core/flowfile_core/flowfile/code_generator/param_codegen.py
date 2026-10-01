@@ -89,7 +89,7 @@ def param_arg(parameter: FlowParameter) -> str:
     return f"{parameter.name}: {annotation} = {parameter_default_repr(parameter)}"
 
 
-def _rewrite_string_token(token_text: str, param_names: set[str]) -> str | None:
+def _rewrite_string_token(token_text: str, param_names: set[str], verbatim: bool = False) -> str | None:
     match = _STRING_TOKEN_RE.match(token_text)
     if match is None:
         return None
@@ -102,6 +102,8 @@ def _rewrite_string_token(token_text: str, param_names: set[str]) -> str | None:
     whole = _SENTINEL_RE.fullmatch(inner)
     if whole is not None and whole.group(1) in param_names:
         return whole.group(1)
+    if verbatim:
+        return restore_sentinels_to_refs(token_text)
     if not any(param_sentinel(name) in inner for name in param_names):
         return None
     escaped = inner.replace("{", "{{").replace("}", "}}")
@@ -112,9 +114,11 @@ def _rewrite_string_token(token_text: str, param_names: set[str]) -> str | None:
     return f"f{prefix}{quote}{escaped}{quote}"
 
 
-def resolve_param_sentinels(code: str, param_names: set[str]) -> tuple[str, set[str]]:
+def resolve_param_sentinels(code: str, param_names: set[str], verbatim: bool = False) -> tuple[str, set[str]]:
     """Rewrite sentinels in *code* into references to same-named function arguments.
 
+    With ``verbatim`` a sentinel inside longer text is restored to its ``${name}`` reference instead of
+    becoming an f-string field; a string that is exactly one sentinel still becomes the bare name.
     Returns ``(rewritten_code, leaked_names)`` where leaked names could not be
     rewritten safely and were degraded back to literal ``${name}`` text.
     """
@@ -136,7 +140,7 @@ def resolve_param_sentinels(code: str, param_names: set[str]) -> tuple[str, set[
             if sentinel_match is not None and sentinel_match.group(1) in param_names:
                 replacement = sentinel_match.group(1)
         elif tok.type == tokenize.STRING and SENTINEL_PREFIX in tok.string:
-            replacement = _rewrite_string_token(tok.string, param_names)
+            replacement = _rewrite_string_token(tok.string, param_names, verbatim)
         if replacement is not None:
             edits.setdefault(tok.start[0] - 1, []).append((tok.start[1], tok.end[1], replacement))
 

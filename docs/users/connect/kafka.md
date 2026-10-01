@@ -68,6 +68,7 @@ ff.read_kafka(
     start_offset="latest",
     poll_timeout_seconds=30.0,
     value_format="json",
+    description=None,
 )
 ```
 

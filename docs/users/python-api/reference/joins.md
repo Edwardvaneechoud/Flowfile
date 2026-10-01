@@ -123,6 +123,10 @@ unmatched = result.filter(ff.col("amount").is_null()).select(
 print(f"Unmatched records: {unmatched['unmatched'][0]}")
 ```
 
+## Keeping the right keys
+
+The canvas join keeps the right join keys after the other right columns; Polars' `coalesce=False` puts them elsewhere. `FlowFrame.join(..., keep_right_keys=True)` keeps them where the canvas does, renaming a right key whose name the left side also has with `suffix`, so the [canvas notebook](../../visual-editor/notebook.md) renders such a canvas join as one native join node. An inner or left join places a native join node for it; other join types keep a Polars Code node. It is refused with `how="semi"`, `"anti"` or `"cross"` and with `coalesce=True`.
+
 !!! warning "`join_asof` and `join_where` are not supported"
     These methods are present on FlowFrame (they are injected from Polars) but raise at call time — Flowfile has no native node for them. Use raw Polars in a Python Script node for time- or predicate-based joins.
 

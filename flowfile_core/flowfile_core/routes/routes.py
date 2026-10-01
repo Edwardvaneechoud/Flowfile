@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from flowfile_core import flow_file_handler
+from flowfile_core import events, flow_file_handler
 
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
@@ -114,11 +114,14 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
+from flowfile_core.notebook.push import NotebookPushRequest, needs_confirmation, node_id_ceiling, plan_push
+from flowfile_core.notebook.render import code_fingerprint
 from flowfile_core.routes._connection_sharing import (
     authorize_connection_mutation,
     changed_target_fields,
     require_credentials_on_target_change,
 )
+from flowfile_core.routes.notebook import require_notebook_sync
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, output_model, schemas, transform_schema
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
@@ -393,8 +396,8 @@ def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
     return reg_id, display_name, flow_path
 
 
-def _run_and_track(flow, user_id: int | None):
-    """Wrapper that runs a flow and persists the run record to the database.
+def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
+    """Wrapper that runs a flow (only ``node_ids`` when given) and persists the run record to the database.
 
     Uses a two-phase pattern:
     1. Create a run record BEFORE execution (makes run visible as "active")
@@ -442,7 +445,7 @@ def _run_and_track(flow, user_id: int | None):
                 flow_name=flow_name,
                 flow_path=flow_path,
                 user_id=user_id if user_id is not None else 0,
-                number_of_nodes=len(flow.nodes),
+                number_of_nodes=len(node_ids) if node_ids is not None else len(flow.nodes),
                 run_type="in_designer_run",
                 flow_snapshot=snapshot_yaml,
             )
@@ -451,7 +454,7 @@ def _run_and_track(flow, user_id: int | None):
     except Exception as exc:
         logger.error(f"Failed to create run record for flow '{flow_name}': {exc}", exc_info=True)
 
-    run_info = flow.run_graph()
+    run_info = flow.run_graph(node_ids=node_ids)
     if run_info is None:
         logger.error(f"Flow '{flow_name}' returned no run_info - run tracking skipped")
         return
@@ -506,6 +509,14 @@ def _run_and_track(flow, user_id: int | None):
         )
 
 
+async def _start_run(flow, flow_id: int, user_id, background_tasks: BackgroundTasks, node_ids=None) -> None:
+    """Queue a tracked run under the flow's run lock; 422 when it is already running."""
+    async with get_flow_run_lock(flow_id):
+        if flow.flow_settings.is_running:
+            raise HTTPException(422, "Flow is already running")
+        background_tasks.add_task(_run_and_track, flow, user_id, node_ids)
+
+
 @router.post("/flow/run/", tags=["editor"])
 async def run_flow(
     flow_id: int, background_tasks: BackgroundTasks, current_user=Depends(get_current_active_user)
@@ -529,12 +540,8 @@ async def run_flow(
             status_code=404,
             detail=f"Flow {flow_id} is no longer in memory. Reload the flow and try again.",
         )
-    lock = get_flow_run_lock(flow_id)
     user_id = current_user.id if current_user else None
-    async with lock:
-        if flow.flow_settings.is_running:
-            raise HTTPException(422, "Flow is already running")
-        background_tasks.add_task(_run_and_track, flow, user_id)
+    await _start_run(flow, flow_id, user_id, background_tasks)
     return JSONResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_200_OK)
 
 
@@ -979,6 +986,23 @@ def delete_comment(flow_id: int, comment_id: int) -> OperationResponse:
     return OperationResponse(success=True, history=txn.history)
 
 
+class NotebookPushResponse(BaseModel):
+    """``POST /editor/notebook/push/``: the new history, fingerprint and max node id, and each cell's node ids.
+
+    ``applied`` is false when the request's ``trigger`` needs the plan confirmed first; history and fingerprint
+    are then the current ones and ``warnings``, ``deletions`` and ``parameter_changes`` are what to review.
+    """
+
+    history: HistoryState
+    code_fingerprint: str
+    max_node_id: int
+    node_ids_by_cell: dict[str, list[int]]
+    warnings: list[str] = Field(default_factory=list)
+    applied: bool = True
+    deletions: list[int]
+    parameter_changes: bool
+
+
 @router.post("/editor/apply_operations/", tags=["editor"], response_model=OperationResponse)
 def apply_operations(
     request: schemas.ApplyOperationsRequest, current_user=Depends(get_current_active_user)
@@ -992,15 +1016,36 @@ def apply_operations(
     """
     flow = get_flow_or_404(request.flow_id)
     with edit_flow(flow, request.label, HistoryActionType.BATCH) as txn:
-        for index, operation in enumerate(request.operations):
+        _run_operations(flow, request.flow_id, request.operations, current_user)
+    return OperationResponse(success=True, history=txn.history)
+
+
+def _run_operations(flow, flow_id: int, operations: list[schemas.EditorOperation], current_user) -> None:
+    """Apply ops in order inside the caller's transaction; a failure also restores the parameters.
+
+    Parameters are outside the undo scope, so the transaction's rollback does not bring them back.
+    """
+    parameters = list(flow.flow_settings.parameters)
+    try:
+        for index, operation in enumerate(operations):
             try:
-                _apply_operation(request.flow_id, operation, current_user)
+                _apply_operation(flow_id, operation, current_user)
             except HTTPException as exc:
                 raise HTTPException(exc.status_code, f"Operation {index} ({operation.op}): {exc.detail}") from exc
             except Exception as exc:
                 logger.exception(f"apply_operations: operation {index} ({operation.op}) failed")
                 raise HTTPException(500, f"Operation {index} ({operation.op}): {exc}") from exc
-    return OperationResponse(success=True, history=txn.history)
+    except BaseException:
+        flow.flow_settings.parameters = parameters
+        raise
+
+
+def _batch_settings(operation: schemas.EditorOperation, flow_id: int) -> dict:
+    """The operation's settings with ``flow_id`` defaulted to the batch's; 422 when it names another flow."""
+    settings = dict(operation.settings)
+    if int(settings.setdefault("flow_id", flow_id)) != flow_id:
+        raise HTTPException(422, "settings.flow_id does not match the batch flow_id")
+    return settings
 
 
 def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_user) -> None:
@@ -1008,10 +1053,7 @@ def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_u
         case "add_node":
             add_node(flow_id, operation.node_id, operation.node_type, operation.pos_x, operation.pos_y)
         case "update_settings":
-            settings = dict(operation.settings)
-            if int(settings.setdefault("flow_id", flow_id)) != flow_id:
-                raise HTTPException(422, "settings.flow_id does not match the batch flow_id")
-            add_generic_settings(settings, operation.node_type, current_user=current_user)
+            add_generic_settings(_batch_settings(operation, flow_id), operation.node_type, current_user=current_user)
         case "delete_node":
             delete_node(flow_id, operation.node_id)
         case "connect":
@@ -1028,6 +1070,77 @@ def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_u
             delete_comment(flow_id, operation.comment_id)
         case "insert_on_edge":
             insert_node_on_edge(get_flow_or_404(flow_id), operation.node_id, operation.connection)
+        case "update_user_defined_settings":
+            from flowfile_core.routes.user_defined_components import update_user_defined_node
+
+            settings = _batch_settings(operation, flow_id)
+            update_user_defined_node(settings, operation.node_type, current_user=current_user)
+        case "set_flow_parameters":
+            get_flow_or_404(flow_id).flow_settings.parameters = list(operation.parameters)
+
+
+@router.post(
+    "/editor/notebook/push/",
+    tags=["editor"],
+    response_model=NotebookPushResponse,
+)
+def push_notebook(request: NotebookPushRequest, current_user=Depends(require_notebook_sync)) -> NotebookPushResponse:
+    """Push notebook cells onto the canvas: clean run, reconcile, and apply the ops as one transaction.
+
+    The clean run happens outside the edit lock; the fingerprint is checked again under it, so a
+    canvas edit that lands meanwhile is a 409 instead of being overwritten. A ``trigger`` whose plan
+    needs confirmation applies nothing and answers ``applied=False``.
+    """
+    flow = flow_file_handler.get_flow(request.flow_id, current_user.id)
+    if flow is None:
+        raise HTTPException(404, "Flow not found")
+    plan, result = plan_push(flow, current_user, request)
+    applied = request.trigger is None or not needs_confirmation(plan, request.trigger)
+    fingerprint = request.code_fingerprint
+    if applied and plan.operations:
+        with edit_flow(flow, "Push notebook", HistoryActionType.BATCH) as txn:
+            live_fingerprint = code_fingerprint(flow)
+            if live_fingerprint != request.code_fingerprint:
+                detail = {"message": "The canvas changed during the push.", "code_fingerprint": live_fingerprint}
+                raise HTTPException(409, detail)
+            _run_operations(flow, request.flow_id, plan.operations, current_user)
+            fingerprint = code_fingerprint(flow)
+        history = txn.history
+    else:
+        history = flow.get_history_state()
+    if applied:
+        events.publish("notebook_pushed")
+    max_node_id = node_id_ceiling(flow, request.client_max_node_id)
+    return NotebookPushResponse(
+        history=history,
+        code_fingerprint=fingerprint,
+        max_node_id=max_node_id,
+        node_ids_by_cell=result.node_ids_by_cell,
+        warnings=plan.warnings,
+        applied=applied,
+        deletions=plan.deletions,
+        parameter_changes=plan.parameter_changes,
+    )
+
+
+class RunLineageRequest(BaseModel):
+    flow_id: int
+    node_id: int
+
+
+@router.post("/editor/notebook/run_lineage/", tags=["editor"])
+async def run_notebook_lineage(
+    request: RunLineageRequest, background_tasks: BackgroundTasks, current_user=Depends(get_current_active_user)
+) -> JSONResponse:
+    """Run one node and its ancestors on the canvas, gate-aware, like ``/flow/run/``; poll ``/flow/run_status/``."""
+    flow = flow_file_handler.get_flow(request.flow_id, current_user.id)
+    if flow is None:
+        raise HTTPException(404, "Flow not found")
+    if flow.get_node(request.node_id) is None:
+        raise HTTPException(404, f"Node {request.node_id} not found")
+    node_ids = {request.node_id, *flow._get_upstream_node_ids(request.node_id)}
+    await _start_run(flow, request.flow_id, current_user.id, background_tasks, node_ids)
+    return JSONResponse(content={"message": "Data started", "flow_id": request.flow_id, "node_ids": sorted(node_ids)})
 
 
 @router.get("/editor/expression_doc", tags=["editor"], response_model=list[output_model.ExpressionsOverview])

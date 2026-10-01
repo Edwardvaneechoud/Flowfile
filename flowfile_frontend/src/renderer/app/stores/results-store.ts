@@ -111,8 +111,9 @@ export const useResultsStore = defineStore("results", {
     },
 
     // ========== Run Results Management ==========
-    insertRunResult(runResult: RunInformation): void {
-      this.currentRunResult = runResult;
+    /** Record a flow's run; `current` also makes it the run the Results pane shows. */
+    insertRunResult(runResult: RunInformation, current = true): void {
+      if (current) this.currentRunResult = runResult;
       this.runResults[runResult.flow_id] = runResult;
       this.initializeResultCache(runResult.flow_id);
 

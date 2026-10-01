@@ -18,6 +18,7 @@ from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.types import DataType
 from flowfile_core.flowfile.param_types import FlowParameter
+from tests.flowfile_core_test_utils import exec_script
 
 try:
     import os
@@ -62,16 +63,14 @@ def find_parent_directory(target_dir_name, start_path=None):
 def verify_if_execute(code: str):
     exec_globals = {}
     try:
-        exec(code, exec_globals)
+        exec_script(code, exec_globals)
         _ = exec_globals['run_etl_pipeline']()
     except Exception as e:
         raise Exception(f"Code execution should not raise an exception:\n {e}\n\n could not execute {code}")
 
 
 def get_result_from_generated_code(code: str) -> pl.DataFrame | pl.LazyFrame | list[pl.DataFrame | pl.LazyFrame] | None:
-    exec_globals = {}
-    exec(code, exec_globals)
-    return exec_globals['run_etl_pipeline']()
+    return exec_script(code)['run_etl_pipeline']()
 
 
 def normalize_result(result):
@@ -560,9 +559,9 @@ def test_manual_input_with_select(export_func):
         assert 'pl.col("city")' not in code
     verify_if_execute(code)
     result = normalize_result(get_result_from_generated_code(code))
-    expected_result = normalize_result(get_reference_polars_dataframe()
-                       .select(pl.col('name').alias("full_name"), "age", pl.col("salary").cast(pl.Float64))
-                       )
+    # keep_missing (the default) passes the unlisted id column through
+    expected_result = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
+    assert "id" in expected_result.columns
     assert_frame_equal(result, expected_result)
 
 
@@ -1665,8 +1664,8 @@ def test_flowframe_formula_native_expression():
     assert_frame_equal(result_df, expected_df)
 
 
-def test_flowframe_formula_native_cast():
-    """A formula with an explicit output data type gets a native ff cast appended."""
+def test_flowframe_typed_formula_keeps_keyword_form():
+    """A formula with an explicit output data type keeps the keyword form that stores the type."""
     flow = create_basic_flow()
     flow = create_sales_dataframe_node(flow)
     formula_node = input_schema.NodeFormula(
@@ -1682,8 +1681,11 @@ def test_flowframe_formula_native_cast():
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     code = export_flow_to_flowframe(flow)
-    verify_code_contains(code, 'ff.col("price")', 'alias("total")', "cast(ff.Int64)")
-    assert "flowfile_formulas" not in code
+    verify_code_contains(
+        code,
+        ".with_columns(flowfile_formulas=['[price] * [quantity]'], output_column_names=['total'], "
+        "output_column_datatypes=['Integer'])",
+    )
     verify_if_execute(code)
     result_df = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
@@ -1755,10 +1757,9 @@ def test_independent_formula_entries_still_chain_one_call_each(export_func):
         verify_code_contains(
             code,
             '.with_columns((ff.col("price") * ff.col("quantity")).alias("total"))',
-            '.with_columns((ff.col("region").str.to_uppercase()).alias("region_upper").cast(ff.String))',
-            '.with_columns((ff.lit(1)).alias("marker").cast(ff.Int64))',
+            ".with_columns(flowfile_formulas=['uppercase([region])'], output_column_names=['region_upper'], "
+            "output_column_datatypes=['String'])",
         )
-        assert "flowfile_formulas" not in code
 
     verify_if_execute(code)
     assert_frame_equal(
@@ -2025,20 +2026,6 @@ def test_formula_encoding_function_round_trips(export_func):
     result = normalize_result(get_result_from_generated_code(code))
     expected_df = normalize_result(flow.get_node(2).get_resulting_data().data_frame)
     assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
-
-
-def test_native_cast_type_rendering():
-    """Cast targets are validated: simple and parameterized types render, container types fall back."""
-    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
-
-    converter = FlowGraphToFlowFrameConverter(create_basic_flow())
-    assert converter._native_cast_type("Integer") == "ff.Int64"
-    datetime_cast = converter._native_cast_type("Datetime")
-    assert datetime_cast is not None and datetime_cast.startswith("ff.Datetime")
-    # Bare container types ("List") don't instantiate and str() of nested types
-    # references unbound inner names — both must return None so the formula
-    # handler falls back to the legacy flowfile_formulas emission.
-    assert converter._native_cast_type("List") is None
 
 
 @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
@@ -7952,8 +7939,7 @@ def test_fusion_keeps_named_boundaries_at_join(export_func):
     assert_frame_equal(result, expected, check_row_order=False)
 
 
-@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
-def test_fusion_grouped_record_id_self_reference_preserved(export_func):
+def test_fusion_grouped_record_id_self_reference_preserved():
     """Grouped record_id reads its input's .columns, so that input must stay named."""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)  # node 1 (has 'city')
@@ -7975,7 +7961,7 @@ def test_fusion_grouped_record_id_self_reference_preserved(export_func):
     ))
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4))
 
-    code = export_func(flow)
+    code = export_flow_to_polars(flow)
     # Frame-equality would NameError if the .columns self-reference's target were fused away.
     assert _count_pipeline_assignments(code) >= 2
     assert "+ 1 - 1" not in code
@@ -8002,7 +7988,9 @@ def test_fusion_record_id_offset_folding(export_func, offset):
 
     code = export_func(flow)
     assert "+ 1 - 1" not in code
-    if offset == 1:
+    if export_func is export_flow_to_flowframe:
+        assert f".with_row_index(\"row_num\", offset={offset}, group_by=['city'])" in code
+    elif offset == 1:
         assert "+ 0" not in code
         assert ".over(['city']))" in code
     elif offset == 0:

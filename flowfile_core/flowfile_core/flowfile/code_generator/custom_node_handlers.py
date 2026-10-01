@@ -255,7 +255,7 @@ class CustomNodeHandlersMixin(ConverterMixinBase):
         self, node: FlowNode, custom_node_class: type, var_name: str, input_vars: dict[str, str]
     ) -> None:
         """Emit the instantiation, settings population, and process() call for a custom node."""
-        settings = node.setting_input
+        settings = self._settings_for(node)
         class_name = custom_node_class.__name__
         settings_dict = getattr(settings, "settings", {}) or {}
         output_names = list(getattr(settings, "output_names", None) or ["main"])

@@ -11,6 +11,7 @@ from shared._version import get_version
 
 __version__ = get_version()
 
+import functools
 import logging
 import os
 import sys
@@ -18,282 +19,24 @@ import sys
 os.environ["FLOWFILE_WORKER_PORT"] = "63578"
 os.environ["FLOWFILE_SINGLE_FILE_MODE"] = "1"
 
-from polars.datatypes import (
-    Array,
-    Binary,
-    Boolean,
-    Categorical,
-    DataType,
-    DataTypeClass,
-    Date,
-    Datetime,
-    Decimal,
-    Duration,
-    Enum,
-    Field,
-    Float32,
-    Float64,
-    Int8,
-    Int16,
-    Int32,
-    Int64,
-    Int128,
-    List,
-    Null,
-    Object,
-    String,
-    Struct,
-    Time,
-    UInt8,
-    UInt16,
-    UInt32,
-    UInt64,
-    Unknown,
-    Utf8,
-)
-
-from flowfile.api import open_graph_in_editor
+from flowfile.api import open_graph_in_editor as _open_graph_in_editor
 from flowfile.web import start_server as start_web_ui
-from flowfile_core.flowfile import node_designer
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.schemas import input_schema as node_interface
-from flowfile_core.schemas import transform_schema
-from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
-from flowfile_core.schemas.schemas import FlowInformation, FlowSettings
-from flowfile_frame import (
-    CatalogReference,
-    FuzzyMapping,
-    Gate,
-    GateOperator,
-    NativeNodeError,
-    Node,
-    NodeType,
-    Parameter,
-    ParamType,
-    SchemaReference,
-    add_flow_parameter,
-    concat,
-    create_cloud_storage_connection,
-    create_cloud_storage_connection_if_not_exists,
-    create_database_connection,
-    create_database_connection_if_not_exists,
-    default_schema,
-    del_cloud_storage_connection,
-    del_database_connection,
-    from_dict,
-    from_raw_data,
-    get_all_available_cloud_storage_connections,
-    get_all_available_database_connections,
-    get_database_connection_by_name,
-    list_catalogs,
-    list_files,
-    read_api,
-    read_catalog_sql,
-    read_catalog_table,
-    read_csv,
-    read_database,
-    read_excel,
-    read_from_cloud_storage,
-    read_kafka,
-    read_parquet,
-    scan_csv,
-    scan_csv_from_cloud_storage,
-    scan_delta,
-    scan_json_from_cloud_storage,
-    scan_parquet,
-    scan_parquet_from_cloud_storage,
-    set_flow_parameter,
-    write_catalog_table,
-    write_database,
-    write_to_cloud_storage,
-)
-from flowfile_frame.catalog_reference import get_catalog
-from flowfile_frame.custom_node import CustomNode, custom_node
-from flowfile_frame.custom_nodes import custom_nodes
-from flowfile_frame.expr import col, column, count, cum_count, len, lit, max, mean, min, sum, when
-from flowfile_frame.flow_frame import FlowFrame
-from flowfile_frame.group_frame import GroupByFrame
-from flowfile_frame.python_script import PythonScript, python_script
-from flowfile_frame.run_flow import FlowInput, FlowOutput, FlowRef, RunFlow, flow_ref, register_flow
-from flowfile_frame.selectors import (
-    all_,
-    boolean,
-    by_dtype,
-    categorical,
-    contains,
-    date,
-    datetime,
-    duration,
-    ends_with,
-    float_,
-    integer,
-    list_,
-    matches,
-    numeric,
-    object_,
-    starts_with,
-    string,
-    struct,
-    temporal,
-    time,
-)
-from flowfile_frame.sql_query import sql
-from flowfile_frame.utils import create_flow_graph
+from flowfile_frame import _fl_namespace
+from flowfile_frame._fl_namespace import *  # noqa: F403
+from flowfile_frame._fl_namespace import node_designer
+from flowfile_frame.notebook import refuse
 
-LazyFrame = FlowFrame
-DataFrame = FlowFrame
+
+@functools.wraps(_open_graph_in_editor)
+def open_graph_in_editor(*args, **kwargs):
+    refuse("ff.open_graph_in_editor")
+    return _open_graph_in_editor(*args, **kwargs)
+
 
 # Bind node_designer as a real submodule so `from flowfile.node_designer import ...`
 # resolves (it is otherwise only an attribute); the os.path idiom.
 sys.modules[f"{__name__}.node_designer"] = node_designer
 
-__all__ = [
-    # Core FlowFrame classes
-    "FlowFrame",
-    "GroupByFrame",
-    "FullCloudStorageConnection",
-    # Main creation functions
-    "read_csv",
-    "read_excel",
-    "read_parquet",
-    "read_kafka",
-    "read_api",
-    "from_dict",
-    "from_raw_data",
-    "list_files",
-    "read_catalog_table",
-    "read_catalog_sql",
-    "write_catalog_table",
-    "CatalogReference",
-    "SchemaReference",
-    "get_catalog",
-    "list_catalogs",
-    "default_schema",
-    "concat",
-    "scan_csv",
-    "scan_parquet",
-    "scan_delta",
-    "scan_parquet_from_cloud_storage",
-    "scan_json_from_cloud_storage",
-    "scan_csv_from_cloud_storage",
-    # Cloud storage connection management
-    "get_all_available_cloud_storage_connections",
-    "create_cloud_storage_connection",
-    "del_cloud_storage_connection",
-    "create_cloud_storage_connection_if_not_exists",
-    # Database functions
-    "read_database",
-    "read_from_cloud_storage",
-    "write_database",
-    "write_to_cloud_storage",
-    "create_database_connection",
-    "create_database_connection_if_not_exists",
-    "del_database_connection",
-    "get_all_available_database_connections",
-    "get_database_connection_by_name",
-    "FlowGraph",
-    "FlowDataEngine",
-    "node_interface",
-    "FlowSettings",
-    "transform_schema",
-    "FlowNode",
-    "FlowfileColumn",
-    "FlowInformation",
-    "FuzzyMapping",
-    # Native node classes
-    "Gate",
-    "Node",
-    "NativeNodeError",
-    "FlowInput",
-    "FlowOutput",
-    "RunFlow",
-    "FlowRef",
-    "flow_ref",
-    "register_flow",
-    "CustomNode",
-    "custom_node",
-    "custom_nodes",
-    "PythonScript",
-    "python_script",
-    "sql",
-    "Parameter",
-    "add_flow_parameter",
-    "set_flow_parameter",
-    "GateOperator",
-    "ParamType",
-    "NodeType",
-    # Expression API
-    "col",
-    "lit",
-    "column",
-    "cum_count",
-    "len",
-    "sum",
-    "min",
-    "max",
-    "mean",
-    "count",
-    "when",
-    # Selector utilities
-    "numeric",
-    "float_",
-    "integer",
-    "string",
-    "temporal",
-    "datetime",
-    "date",
-    "time",
-    "duration",
-    "boolean",
-    "categorical",
-    "object_",
-    "list_",
-    "struct",
-    "all_",
-    "by_dtype",
-    "contains",
-    "starts_with",
-    "ends_with",
-    "matches",
-    "node_designer",
-    # Utilities
-    "create_flow_graph",
-    "open_graph_in_editor",
-    # Data types from Polars
-    "Int8",
-    "Int16",
-    "Int32",
-    "Int64",
-    "Int128",
-    "UInt8",
-    "UInt16",
-    "UInt32",
-    "UInt64",
-    "Float32",
-    "Float64",
-    "Boolean",
-    "String",
-    "Utf8",
-    "Binary",
-    "Null",
-    "List",
-    "Array",
-    "Struct",
-    "Object",
-    "Date",
-    "Time",
-    "Datetime",
-    "Duration",
-    "Categorical",
-    "Decimal",
-    "Enum",
-    "Unknown",
-    "DataType",
-    "DataTypeClass",
-    "Field",
-    "start_web_ui",
-]
+__all__ = ["open_graph_in_editor", "start_web_ui"]
+__all__ += _fl_namespace.__all__
 logging.getLogger("PipelineHandler").setLevel(logging.WARNING)

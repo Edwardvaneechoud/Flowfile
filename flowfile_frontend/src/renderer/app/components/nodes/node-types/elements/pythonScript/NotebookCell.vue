@@ -112,7 +112,9 @@ import {
 import { registerCellView, unregisterCellView } from "../../../../notebook/editorViews";
 import type { CellRuntime } from "../../../../notebook/notebookRuntimeState";
 import type { NotebookCell } from "../../../../../types/node.types";
+import { NO_LSP_CONTEXT } from "../../../../notebook/notebookExecutor";
 import CellOutput from "./CellOutput.vue";
+import type { LspContext } from "./lspCompletionSource";
 import { buildNotebookEditorExtensions } from "./notebookEditor";
 import type { UpstreamColumn } from "./useUpstreamColumns";
 
@@ -136,9 +138,8 @@ interface Props {
   priorCellCodes?: string[];
   /** Cells before this one with their ids, so column inference can date each assignment. */
   priorCells?: { id: string; code: string }[];
-  kernelId?: string | null;
-  flowId?: number;
-  nodeId?: number;
+  /** Resolved per request, so the executor's current kernel is what Jedi sees. */
+  lspContext?: () => LspContext;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -151,9 +152,7 @@ const props = withDefaults(defineProps<Props>(), {
   upstreamColumns: () => [],
   priorCellCodes: () => [],
   priorCells: () => [],
-  kernelId: null,
-  flowId: 0,
-  nodeId: 0,
+  lspContext: () => NO_LSP_CONTEXT,
 });
 
 const emit = defineEmits<{
@@ -200,9 +199,7 @@ const cellExtensions = [
     getOwnerId: () => props.ownerId,
     getCellId: () => props.cell.id,
     getSurface: () => "node",
-    getKernelId: () => props.kernelId,
-    getFlowId: () => props.flowId,
-    getNodeId: () => props.nodeId,
+    getLspContext: () => props.lspContext(),
   }),
   EditorView.updateListener.of((u) => {
     if (u.focusChanged && u.view.hasFocus) emit("focus");

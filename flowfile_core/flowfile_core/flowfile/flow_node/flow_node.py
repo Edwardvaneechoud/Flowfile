@@ -1,6 +1,7 @@
 import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from time import sleep
 from typing import Any, Literal, Optional
 
@@ -49,10 +50,13 @@ from flowfile_core.flowfile.flow_node.state import NodeExecutionState
 from flowfile_core.flowfile.param_types import ParamValue
 from flowfile_core.flowfile.parameter_resolver import apply_parameters_in_place, restore_parameters
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
-from flowfile_core.flowfile.utils import get_hash
+from flowfile_core.flowfile.utils import HASH_EXCLUDED_KEYS, get_hash
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.output_model import FileColumn, NodeData, TableExample
 from flowfile_core.utils.arrow_reader import get_read_top_n
+
+schema_prefetch_blocked: ContextVar[bool] = ContextVar("schema_prefetch_blocked", default=False)
+"""Set while the calling context must start no schema prefetch (notebook build mode); other contexts still do."""
 
 
 class DeferredNodeError(RuntimeError):
@@ -124,6 +128,20 @@ def first_upstream_prediction_warning(node: "FlowNode") -> str | None:
             return current._schema_prediction_blocked
         stack.extend(n for n, _ in current._slot_input_pairs() if n is not None)
     return None
+
+
+def _settings_for_hash(setting_input: Any) -> Any:
+    """Drop the fields a settings class declares in ``hash_excluded_fields`` before hashing.
+
+    Classes without exclusions pass through untouched, so their hashes stay byte-identical.
+    The dict mirrors what ``get_hash`` builds from ``__dict__`` minus the excluded keys, so
+    adding an excluded field to an existing settings class does not move any existing hash.
+    """
+    excluded = getattr(type(setting_input), "hash_excluded_fields", None)
+    if not excluded or not hasattr(setting_input, "__dict__"):
+        return setting_input
+    skip = HASH_EXCLUDED_KEYS | excluded
+    return {k: v for k, v in setting_input.__dict__.items() if k not in skip}
 
 
 class FlowNode:
@@ -801,7 +819,7 @@ class FlowNode:
             ]
         else:
             depends_on_hashes = [_node.hash for _node in self.all_inputs]
-        node_data_hash = get_hash(setting_input)
+        node_data_hash = get_hash(_settings_for_hash(setting_input))
         return get_hash(depends_on_hashes + [node_data_hash, self.parent_uuid, self._cache_epoch])
 
     @property
@@ -1888,8 +1906,8 @@ class FlowNode:
         This also triggers a reset on all downstream nodes. A node placed deferred
         (``placed_deferred``) gets ``deferred_until_run`` back with its dropped result, so only a
         real run executes it again. A start node's eager schema prefetch is skipped while
-        ``deferred_until_run`` is set: without a declared schema callback that prefetch runs the
-        node function.
+        ``deferred_until_run`` is set (without a declared schema callback that prefetch runs the
+        node function) and while ``schema_prefetch_blocked`` is set in the calling context.
 
         Args:
             deep: If True, forces a reset even if the hash hasn't changed.
@@ -1924,11 +1942,35 @@ class FlowNode:
                 # masks I/O latency. Downstream nodes' callbacks read upstream
                 # node state, so eagerly starting them races with the cascade
                 # of resets that graph.reset() is currently performing.
-                if self.is_start and not self.deferred_until_run and self.schema_callback:
+                prefetch = self.is_start and not self.deferred_until_run and not schema_prefetch_blocked.get()
+                if prefetch and self.schema_callback:
                     logger.info(f"{self.node_id}: Resetting the schema callback")
                     self.schema_callback.start()
             self.evaluate_nodes()
             _ = self.hash  # Recalculate the hash after reset
+
+    def refresh_predicted_schema(self) -> None:
+        """Drop cached schema predictions here and downstream, leaving results and hashes alone.
+
+        For settings excluded from the hash (``hash_excluded_fields``): the hash-driven
+        ``reset()`` skips such an edit, so without this the stale prediction would survive.
+        Nodes that have run with their current setup keep their real result schema.
+        """
+        stack: list[FlowNode] = [self]
+        seen: set[int] = set()
+        while stack:
+            node = stack.pop()
+            if id(node) in seen or node.node_stats.has_run_with_current_setup:
+                continue
+            seen.add(id(node))
+            node._schema_callback = None
+            node._named_schemas = {}
+            node._schema_prediction_blocked = None
+            node.node_schema.predicted_schema = None
+            node.node_schema.result_schema = None
+            node._execution_state.predicted_schema = None
+            node._execution_state.result_schema = None
+            stack.extend(node.leads_to_nodes)
 
     def invalidate_cache(self):
         """Force cache invalidation by incrementing the cache epoch.

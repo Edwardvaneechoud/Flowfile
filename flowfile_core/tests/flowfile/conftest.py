@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from sqlalchemy import Boolean, Column, Float, Integer, String, Text, create_engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
@@ -308,3 +310,16 @@ def catalog_clean_state():
     catalog_cleanup()
     yield
     catalog_cleanup()
+
+
+@pytest.fixture
+def keep_single_file_env(monkeypatch):
+    """Restore ``FLOWFILE_SINGLE_FILE_MODE``/``FLOWFILE_WORKER_PORT`` after the test.
+
+    Importing ``flowfile`` (as exec'ing a FlowFrame export does) rewrites both for the process.
+    """
+    for key in ("FLOWFILE_SINGLE_FILE_MODE", "FLOWFILE_WORKER_PORT"):
+        if key in os.environ:
+            monkeypatch.setenv(key, os.environ[key])
+        else:
+            monkeypatch.delenv(key, raising=False)

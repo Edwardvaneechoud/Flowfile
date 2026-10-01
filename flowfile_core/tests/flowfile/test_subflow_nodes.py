@@ -93,6 +93,20 @@ def test_duplicate_flow_output_name_rejected():
         )
 
 
+def test_duplicate_port_names_are_accepted_only_with_the_check_off():
+    graph = make_graph(209)
+    assert graph.unique_subflow_port_names is True
+    build_passthrough_subflow(graph)
+    graph.unique_subflow_port_names = False
+    add_promise(graph, 3, "flow_input")
+    graph.add_flow_input(input_schema.NodeFlowInput(flow_id=graph.flow_id, node_id=3, input_name="customers"))
+    add_promise(graph, 4, "flow_output")
+    graph.add_flow_output(
+        input_schema.NodeFlowOutput(flow_id=graph.flow_id, node_id=4, output_name="result", depending_on_id=3)
+    )
+    assert [graph.get_node(i).node_type for i in (3, 4)] == ["flow_input", "flow_output"]
+
+
 def test_invalid_port_names_rejected():
     with pytest.raises(ValueError):
         input_schema.NodeFlowInput(flow_id=1, node_id=1, input_name="1starts_with_digit")

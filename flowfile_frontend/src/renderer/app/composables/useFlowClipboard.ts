@@ -248,8 +248,8 @@ export const hasTextSelection = (selection?: { toString(): string } | null): boo
 
 /**
  * Everything a paste can land on that is NOT the bare canvas. DraggableItem
- * (every floating panel incl. the node-settings drawer) carries
- * data-canvas-overlay; the rest are Element Plus overlays (poppers/selects
+ * (every floating panel incl. the node-settings drawer) and the code split
+ * pane carry data-canvas-overlay; the rest are Element Plus overlays (poppers/selects
  * teleport to <body>, so closest() must see their wrapper class) and the
  * custom canvas context menu.
  */

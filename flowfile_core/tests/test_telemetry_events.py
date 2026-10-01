@@ -568,6 +568,53 @@ class TestRouteMiddleware:
         assert names(sent) == []
 
 
+class TestNotebookRouteEvents:
+    """The canvas notebook's events: opened once per flow, pushed per applied push."""
+
+    @staticmethod
+    def _app() -> FastAPI:
+        app = FastAPI()
+
+        @app.get("/notebook/render")
+        def _render(flow_id: int):
+            return {"cells": []}
+
+        @app.post("/editor/notebook/push/")
+        def _push():
+            return {"applied": False}
+
+        app.add_middleware(glue.TelemetryMiddleware)
+        return app
+
+    @pytest.fixture
+    def http(self, monkeypatch) -> Iterator[TestClient]:
+        monkeypatch.setattr(glue, "_route_once_seen", set())
+        with TestClient(self._app(), raise_server_exceptions=False) as testclient:
+            yield testclient
+
+    def test_rendering_counts_each_flow_once(self, sent, http) -> None:
+        for flow_id in (1, 1, 2, 1, 2):
+            assert http.get(f"/notebook/render?flow_id={flow_id}").status_code == 200
+        emitted = drain(sent)
+        assert [e["event"] for e in emitted] == ["notebook_opened", "notebook_opened"]
+        assert all(e["props"] == {} for e in emitted), "the flow id is a dedupe key only and never travels"
+
+    def test_a_render_without_a_flow_id_emits_nothing(self, sent, http) -> None:
+        assert http.get("/notebook/render").status_code == 422
+        assert names(sent) == []
+
+    def test_a_push_emits_only_when_the_handler_publishes_it_applied(self, sent, subscribed, http) -> None:
+        """A push held for review answers 200 too, so the route itself emits nothing."""
+        assert http.post("/editor/notebook/push/").status_code == 200
+        assert names(sent) == []
+        events.publish("notebook_pushed")
+        assert names(sent) == ["notebook_pushed"]
+
+
+def test_every_once_route_is_a_mapped_route() -> None:
+    assert set(glue.ROUTE_ONCE) <= set(glue.ROUTE_EVENTS)
+
+
 class TestInstall:
     def test_install_is_idempotent(self, monkeypatch) -> None:
         monkeypatch.setattr(glue, "_middleware_installed", False)
@@ -580,7 +627,7 @@ class TestInstall:
 
         try:
             assert [m.cls for m in app.user_middleware] == [glue.TelemetryMiddleware]
-            assert [len(handlers) for handlers in events._handlers.values()] == [1, 1, 1, 1, 1, 1, 1]
+            assert [len(handlers) for handlers in events._handlers.values()] == [1, 1, 1, 1, 1, 1, 1, 1]
         finally:
             events._reset_for_tests()
             glue._subscribed = False
@@ -601,6 +648,7 @@ class TestInstall:
                 "app_started",
                 "alteryx_imported",
                 "alteryx_import_failed",
+                "notebook_pushed",
             }
             assert all(len(handlers) == 1 for handlers in events._handlers.values())
         finally:
@@ -624,7 +672,7 @@ class TestInstall:
             glue._subscribe()
 
     def test_install_headless_publishes_even_when_install_already_subscribed(self, sent) -> None:
-        """``--run-flow`` imports ``main``, so ``install(app)`` subscribed long before this call."""
+        """A process that imported ``main`` already subscribed through ``install(app)``."""
         from flowfile_core import main  # noqa: F401  — importing it is what runs install(app)
 
         assert glue._subscribed is True, "importing main.py must leave the observer subscribed"
