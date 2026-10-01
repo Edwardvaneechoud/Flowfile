@@ -63,6 +63,14 @@ def format_default_value(param: inspect.Parameter) -> str | None:
     return "..."
 
 
+def first_keyword_only(sig: inspect.Signature) -> str | None:
+    """The parameter a bare ``*`` goes before: the first keyword-only one, when the signature has no ``*args``."""
+    params = sig.parameters.values()
+    if any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params):
+        return None
+    return next((p.name for p in params if p.kind == inspect.Parameter.KEYWORD_ONLY), None)
+
+
 def format_subscripted_generic(alias) -> str:
     """
     Render a PEP 585 subscripted generic (``list[str]``, ``dict[str, int]``) with its arguments.
@@ -325,6 +333,7 @@ def generate_improved_type_stub(
         "from flowfile_core.flowfile.flow_node.flow_node import FlowNode",
         "from flowfile_frame import group_frame",
         "from flowfile_frame.expr import Expr",
+        "from flowfile_frame.run_flow import FlowOutput",
         "from flowfile_core.schemas import transform_schema",
         "",
         "# Conditional imports",
@@ -358,7 +367,10 @@ def generate_improved_type_stub(
                     module_function_lines.append(f"def {fn_name}(*args, **kwargs) -> Any: ...")
                     continue
                 params: list[str] = []
+                kw_only_start = first_keyword_only(sig)
                 for p in sig.parameters.values():
+                    if p.name == kw_only_start:
+                        params.append("*")
                     if p.kind == inspect.Parameter.VAR_KEYWORD:
                         params.append(f"**{p.name}")
                         continue
@@ -415,6 +427,7 @@ def generate_improved_type_stub(
                 "    def with_columns(self, *exprs: Union[Expr, Iterable[Expr], Any], "
                 "flowfile_formulas: Optional[List[str]] = None, "
                 "output_column_names: Optional[List[str]] = None, "
+                "output_column_datatypes: Optional[List[str]] = None, "
                 "description: Optional[str] = None, "
                 "**named_exprs: Union[Expr, Any]) -> 'FlowFrame': ..."
             )
@@ -508,12 +521,16 @@ def generate_improved_type_stub(
                 has_var_keyword = False
                 var_keyword_param = None
                 description_param_str = None
+                description_is_positional = False
 
                 is_new_method = name == "__new__"
+                kw_only_start = first_keyword_only(sig)
 
                 for i, (param_name, param) in enumerate(sig.parameters.items()):
                     if i == 0 and (param_name == "self" or (is_new_method and param_name == "cls")):
                         continue
+                    if param_name == kw_only_start:
+                        processed_params.append("*")
 
                     param_str = param_name
                     if param.annotation is not inspect.Parameter.empty:
@@ -533,6 +550,7 @@ def generate_improved_type_stub(
 
                     if param_name == "description" and param.default is not inspect.Parameter.empty:
                         description_param_str = param_str
+                        description_is_positional = param.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD
                         continue
 
                     processed_params.append(param_str)
@@ -545,6 +563,8 @@ def generate_improved_type_stub(
                     and not description_param_str
                 ):
                     processed_params.append("description: Optional[str] = None")
+                elif description_param_str and description_is_positional and "*" in processed_params:
+                    processed_params.insert(processed_params.index("*"), description_param_str)
                 elif description_param_str:
                     processed_params.append(description_param_str)
 
@@ -645,10 +665,13 @@ def generate_improved_type_stub(
                 has_var_keyword = False
                 var_keyword_param = None
                 description_param_added = False
+                kw_only_start = first_keyword_only(sig)
 
                 for i, (param_name, param) in enumerate(sig.parameters.items()):
                     if i == 0:
                         continue
+                    if param_name == kw_only_start:
+                        processed_params.append("*")
 
                     param_str = param_name
                     if param.annotation is not inspect.Parameter.empty:

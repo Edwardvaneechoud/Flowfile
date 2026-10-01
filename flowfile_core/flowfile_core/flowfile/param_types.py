@@ -5,6 +5,7 @@ both ``schemas.schemas`` and ``schemas.input_schema`` can depend on it.
 """
 
 import json
+from collections.abc import Iterable
 from typing import Literal
 
 from pydantic import BaseModel, model_validator
@@ -100,3 +101,8 @@ class FlowParameter(BaseModel):
             return coerce_param_value(self.type, self.default_value, self.enum_values)
         except ValueError:
             return self.default_value
+
+
+def typed_parameter_values(parameters: Iterable[FlowParameter] | None) -> dict[str, ParamValue]:
+    """Each parameter's typed default by name: the values a run resolves ``${name}`` references with."""
+    return {p.name: p.typed_default() for p in parameters or []}

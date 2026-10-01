@@ -353,8 +353,7 @@ class FlowGraphToProjectConverter(FlowGraphToFlowFrameConverter):
             f'"{b["name"]}": [{b["param"]}]' if len(b["args"]) == 1 else f'"{b["name"]}": {b["param"]}'
             for b in bindings
         ]
-        if bindings and all(b["name"] != "main" for b in bindings):
-            entries.append(f'"main": [{", ".join(main_items)}]')
+        entries.append(f'"main": [{", ".join(main_items)}]')
         inputs_literal = "{" + ", ".join(entries) + "}"
 
         return (

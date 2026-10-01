@@ -1,15 +1,21 @@
 """Unit tests for the parameter resolver module."""
 
+import polars as pl
 import pytest
 from pydantic import BaseModel, Field
 
+from flowfile_core.flowfile.code_generator.param_codegen import apply_param_sentinels, restore_param_sentinels
+from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.flowfile.parameter_resolver import (
     apply_parameters_in_place,
+    resolve_code_parameters,
     resolve_expression_parameters,
     resolve_node_settings,
     resolve_parameters,
     restore_parameters,
 )
+from flowfile_core.schemas.input_schema import NodePolarsCode
+from flowfile_core.schemas.transform_schema import PolarsCodeInput
 
 
 # resolve_parameters
@@ -319,3 +325,92 @@ def test_expression_field_restores_after_run():
     restorations = apply_parameters_in_place(settings, {"city": "NYC"})
     restore_parameters(restorations)
     assert settings.expr == "[a] == ${city}"
+
+
+# Polars-code rendering (string literals re-rendered, everything else raw)
+
+
+def _run_code(code: str, params: dict) -> dict:
+    namespace = {"pl": pl}
+    exec(resolve_code_parameters(code, params), namespace)
+    return namespace
+
+
+@pytest.mark.parametrize(
+    "value",
+    ['say "hi"', "line one\nline two", "C:\\temp\\new", "O'Brien", 'a """ b', "a ''' b", ""],
+    ids=["double-quote", "newline", "backslash", "single-quote", "triple-double", "triple-single", "empty"],
+)
+@pytest.mark.parametrize("literal", ['"${v}"', "'${v}'", '"""${v}"""', "'''${v}'''", 'r"${v}"', 'u"${v}"'])
+def test_code_string_literal_keeps_the_value_a_string(value, literal):
+    assert _run_code(f"value = {literal}", {"v": value})["value"] == value
+
+
+def test_code_string_literal_keeps_the_text_around_the_reference():
+    code = 'value = """before ${a}\nafter ${b}"""'
+    assert _run_code(code, {"a": 'x"', "b": 3})["value"] == 'before x"\nafter 3'
+
+
+def test_code_string_literal_renders_typed_values_as_their_text():
+    code = 'value = pl.select(pl.lit("${n}").cast(pl.Int64), (pl.lit("${on}") == "true").alias("b")).row(0)'
+    assert _run_code(code, {"n": 5, "on": True})["value"] == (5, True)
+
+
+def test_code_reference_outside_a_string_is_raw():
+    code = "value = 2 * ${n} + ${f}  # scale ${n}"
+    assert resolve_code_parameters(code, {"n": 5, "f": 0.5}) == "value = 2 * 5 + 0.5  # scale 5"
+    assert resolve_code_parameters("${n}", {"n": 5}) == "5"
+
+
+@pytest.mark.parametrize(
+    "code",
+    ['value = f"{prefix}-${s}"', "value = f\"{d['${s}']}\"", 'value = b"${s}"', 'value = rb"${s}"'],
+    ids=["f-string", "string-nested-in-f-string", "bytes", "raw-bytes"],
+)
+def test_code_f_strings_and_byte_strings_stay_raw(code):
+    params = {"s": 'x"y'}
+    assert resolve_code_parameters(code, params) == resolve_parameters(code, params)
+
+
+@pytest.mark.parametrize(
+    "code",
+    ['value = "${s}"\nother = "unterminated ${s}', 'value = "${s}"\nother = """unterminated', 'value = ("${s}",'],
+    ids=["unterminated-string", "unterminated-triple-quote", "unclosed-bracket"],
+)
+def test_code_that_does_not_tokenize_falls_back_to_raw(code):
+    params = {"s": 'x"y'}
+    assert resolve_code_parameters(code, params) == resolve_parameters(code, params)
+
+
+def test_code_unknown_reference_left_as_is():
+    code = "value = \"${missing}\" + '${s}'"
+    assert resolve_code_parameters(code, {"s": "ok"}) == "value = \"${missing}\" + 'ok'"
+
+
+def test_polars_code_field_routes_to_the_code_renderer():
+    code = 'output_df = pl.lit("${s}")  # ${s}'
+    settings = NodePolarsCode(flow_id=1, node_id=1, polars_code_input=PolarsCodeInput(polars_code=code))
+    restorations = apply_parameters_in_place(settings, {"s": 'x"y'})
+    assert settings.polars_code_input.polars_code == "output_df = pl.lit('x\"y')  # x\"y"
+    restore_parameters(restorations)
+    assert settings.polars_code_input.polars_code == code
+
+
+def test_polars_code_whole_field_reference_stays_a_string():
+    settings = PolarsCodeInput(polars_code="${n}")
+    apply_parameters_in_place(settings, {"n": 5})
+    assert settings.polars_code == "5"
+
+
+def test_other_string_fields_keep_raw_substitution():
+    settings = SimpleSettings(path='pl.lit("${s}")')
+    apply_parameters_in_place(settings, {"s": 'x"y'})
+    assert settings.path == 'pl.lit("x"y")'
+
+
+def test_code_gen_sentinels_stay_verbatim_in_polars_code():
+    settings = PolarsCodeInput(polars_code='output_df = pl.lit("${s}")')
+    restorations = apply_param_sentinels([settings], [FlowParameter(name="s", default_value='x"y')])
+    assert settings.polars_code == 'output_df = pl.lit("__FF_PARAM_s__")'
+    restore_param_sentinels(restorations)
+    assert settings.polars_code == 'output_df = pl.lit("${s}")'

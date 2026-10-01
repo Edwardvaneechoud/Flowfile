@@ -166,6 +166,32 @@ def test_create_graph():
     assert graph.__name__ == 'new_flow', 'Flow name should be new_flow'
 
 
+def test_create_graph_without_settings_is_standalone_and_local():
+    graph = FlowGraph()
+    assert graph.flow_id > 0
+    assert graph.flow_settings.flow_id == graph.flow_id
+    assert graph.flow_settings.name == f"Flow_{graph.flow_id}"
+    assert graph.flow_settings.path == ""
+    assert graph.flow_settings.track_history is False
+    assert graph.execution_location == "local"
+    assert FlowGraph().flow_id != graph.flow_id
+
+
+def test_standalone_graph_adopts_the_file_stem_on_its_first_save(tmp_path):
+    from flowfile_core.flowfile.manage.io_flowfile import open_flow
+
+    graph = FlowGraph()
+    assert graph.__name__ == graph.flow_settings.name == f"Flow_{graph.flow_id}"
+    target = tmp_path / "my_pipeline.yaml"
+
+    graph.save_flow(str(target))
+
+    assert graph.__name__ == graph.flow_settings.name == "my_pipeline"
+    assert graph.flow_settings.save_location == str(target.absolute())
+    reopened = open_flow(target)
+    assert reopened.__name__ == reopened.flow_settings.name == "my_pipeline"
+
+
 def test_add_node_promise_for_manual_input():
     graph = create_graph()
     node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='manual_input')
@@ -3480,3 +3506,55 @@ def test_basic_filter_on_temporal_column(field, operator, value, value2, expecte
     graph.run_graph()
     node = graph.get_node(2)
     assert node.get_resulting_data().collect()["d"].to_list() == expected
+
+
+def _record_count_and_csv_writer(tmp_dir: str) -> FlowGraph:
+    """Manual input (1) feeding a record count (2) and, on a second branch, a csv writer (3)."""
+    graph = create_graph(execution_location="local")
+    add_manual_input(graph, data=[{"name": "a"}, {"name": "b"}])
+    add_node_promise_on_type(graph, "record_count", 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.add_record_count(input_schema.NodeRecordCount(flow_id=1, node_id=2))
+    add_node_promise_on_type(graph, "output", 3)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 3))
+    output_settings = input_schema.OutputSettings(
+        name="out.csv", directory=tmp_dir, file_type="csv", table_settings=input_schema.OutputCsvTable()
+    )
+    graph.add_output(input_schema.NodeOutput(flow_id=1, node_id=3, output_settings=output_settings))
+    return graph
+
+
+def test_run_graph_restricted_to_node_ids(tmp_path):
+    graph = _record_count_and_csv_writer(str(tmp_path))
+    source_callbacks = []
+    graph.get_node(1)._on_flow_complete = source_callbacks.append
+
+    run_info = graph.run_graph(node_ids=[1, 2])
+
+    handle_run_info(run_info)
+    assert (run_info.number_of_nodes, run_info.nodes_completed) == (2, 2)
+    assert sorted(result.node_id for result in run_info.node_step_result) == [1, 2]
+    assert graph.get_node(2).get_resulting_data().collect()["number_of_records"].to_list() == [2]
+    assert not (tmp_path / "out.csv").exists()
+    assert source_callbacks == []  # its writer did not run: the callback waits for a run that reaches it
+
+    run_info = graph.run_graph()
+
+    handle_run_info(run_info)
+    assert run_info.number_of_nodes == 3
+    assert (tmp_path / "out.csv").exists()
+    assert source_callbacks == [True]
+
+
+def test_run_graph_restricted_to_node_ids_fires_callbacks_whose_downstream_ran(tmp_path):
+    graph = _record_count_and_csv_writer(str(tmp_path))
+    record_count_callbacks, writer_callbacks = [], []
+    graph.get_node(2)._on_flow_complete = record_count_callbacks.append
+    graph.get_node(3)._on_flow_complete = writer_callbacks.append
+
+    handle_run_info(graph.run_graph(node_ids={1, 2}))
+
+    assert record_count_callbacks == [True]
+    assert writer_callbacks == []
+    assert graph.get_node(3)._on_flow_complete is not None
+

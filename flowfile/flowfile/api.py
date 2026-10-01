@@ -18,6 +18,7 @@ from typing import Any
 import requests
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_frame.custom_node import _warn_session_only_custom_nodes
 
 FLOWFILE_HOST: str = os.environ.get("FLOWFILE_HOST", "127.0.0.1")
 FLOWFILE_PORT: int = int(os.environ.get("FLOWFILE_PORT", 63578))
@@ -417,6 +418,7 @@ def open_graph_in_editor(
     Returns:
     True if the graph was successfully imported, False otherwise.
     """
+    _warn_session_only_custom_nodes(flow_graph, "open_graph_in_editor")
     temp_dir_obj: TemporaryDirectory | None = None
     try:
         original_execution_settings = flow_graph.flow_settings.model_copy()

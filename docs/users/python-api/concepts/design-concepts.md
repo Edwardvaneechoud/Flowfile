@@ -83,6 +83,7 @@ Operations with a visual-node equivalent appear as that node type, so the step s
 | `group_by("g").agg(ff.col("a").sum())` | Group by | an aggregation outside `sum`, `max`, `mean`, `median`, `min`, `count`, `n_unique`, `first`, `last`, `std`, `var`, `concat`; a selector; or `maintain_order=True` |
 | `join(other, on="k", how="inner")` | Join | `suffix`, `validate`, `nulls_equal`, `coalesce`, or `maintain_order` |
 | `concat([a, b], how="diagonal_relaxed")` | Union data | any other `how` |
+| `sql("SELECT * FROM self")`, `ff.sql(query, orders=a, regions=b)` | SQL Query | never |
 | `pivot(...)`, `unpivot(...)` | Pivot data, Unpivot data | several `on` or `values` columns; custom variable or value names |
 | `tail`, `slice`, `shift`, `fill_null`, and the rest of the `LazyFrame` API | Polars code | always |
 

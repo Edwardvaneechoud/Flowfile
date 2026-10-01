@@ -549,16 +549,7 @@ def _apply_add_node(flow, node_type: str, settings: BaseModel, ctx: InsertionCon
 
     target_id = settings.node_id
     main_ids = [uid for uid in ctx.upstream_node_ids if uid != ctx.right_input_node_id]
-    # ``NodeConnection.create_from_simple_input`` takes the SEMANTIC
-    # ``input_type`` ("main" / "right" / "left"), NOT the
-    # connection-class string ("input-0" / "input-1"). Passing
-    # ``input_type="input-0"`` / ``"input-1"`` falls through to the
-    # default ``_ → "input-0"`` in the match block, so BOTH the main and
-    # right wires would get connection_class "input-0" —
-    # ``add_node_connection`` then routes both to ``main_inputs`` and
-    # the second call silently overwrites the first (the ``input <= 2``
-    # branch in flow_node.py clobbers main_inputs each time). Pass the
-    # semantic names so the connection class lands correctly.
+    # Semantic slot names ("main" / "right") map to input-0 / input-1; an explicit "input-N" also passes through.
     for uid in main_ids:
         connection = input_schema.NodeConnection.create_from_simple_input(
             from_id=uid, to_id=target_id, input_type="main", output_handle="output-0"

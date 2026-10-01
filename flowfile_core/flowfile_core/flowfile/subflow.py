@@ -15,7 +15,9 @@ import polars as pl
 from pydantic import BaseModel
 
 from flowfile_core.auth import sharing
+from flowfile_core.catalog.exceptions import AmbiguousFlowError
 from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+from flowfile_core.catalog.service import CatalogService
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.database.connection import get_db_context
@@ -32,6 +34,9 @@ from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.schemas import input_schema
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from flowfile_core.database.models import FlowRegistration
     from flowfile_core.flowfile.flow_graph import FlowGraph
 
 MAX_SUBFLOW_DEPTH = 5
@@ -74,31 +79,77 @@ class ResolvedSubflow:
 
 
 _cache_lock = threading.Lock()
-_interface_cache: dict[str, tuple[float, SubflowInterface]] = {}
-_output_schema_cache: dict[str, tuple[float, dict[int, list[FlowfileColumn]]]] = {}
+_interface_cache: dict[str, tuple[tuple[int, int], SubflowInterface]] = {}
+_output_schema_cache: dict[str, tuple[tuple[int, int], dict[int, list[FlowfileColumn]]]] = {}
+
+_RESELECT_HINT = "re-select the flow in the Run Flow settings"
+
+
+def _file_version(path: Path) -> tuple[int, int]:
+    """Cache key part for a flow file: a same-second rewrite still changes the size or the ns mtime."""
+    stat = path.stat()
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _find_by_qualified_name(db: "Session", namespace: str, name: str, user_id: int | None) -> "FlowRegistration | None":
+    """The one registration called ``name`` in ``namespace`` that ``user_id`` may use."""
+    service = CatalogService(SQLAlchemyCatalogRepository(db))
+    namespace_id = service.resolve_namespace_id_by_full_name(namespace)
+    if namespace_id is None:
+        return None
+    matches = [
+        registration
+        for registration in service.repo.list_flows_by_name(name, namespace_id)
+        if sharing.user_id_can_use(db, user_id, "flow", registration.id)
+    ]
+    if len(matches) > 1:
+        candidates = [
+            {"id": r.id, "name": r.name, "namespace_id": r.namespace_id, "namespace_name": namespace} for r in matches
+        ]
+        error = AmbiguousFlowError(name, candidates)
+        raise SubflowResolutionError(f"{error}; {_RESELECT_HINT}") from error
+    return matches[0] if matches else None
+
+
+def _find_registration(db: "Session", ref: input_schema.SubflowReference, user_id: int | None) -> "FlowRegistration":
+    """The registration ``ref`` names on this install.
+
+    ``flow_uuid`` first; then ``registration_id``, trusted only when the reference has no
+    uuid, because ids are install-local and a reused id holds another flow; then
+    ``(namespace, name)``. Raises :class:`SubflowResolutionError` when none resolves,
+    naming both flows when the id belongs to a different one.
+    """
+    repo = SQLAlchemyCatalogRepository(db)
+    if ref.flow_uuid:
+        registration = repo.get_flow_by_uuid(ref.flow_uuid)
+        if registration is not None:
+            return registration
+    by_id = repo.get_flow(ref.registration_id)
+    if by_id is not None and not ref.flow_uuid:
+        return by_id
+    if ref.namespace and ref.name:
+        registration = _find_by_qualified_name(db, ref.namespace, ref.name, user_id)
+        if registration is not None:
+            return registration
+    label = f"'{ref.namespace}.{ref.name}' " if ref.namespace and ref.name else ""
+    if by_id is not None:
+        raise SubflowResolutionError(
+            f"The referenced flow {label}(uuid {ref.flow_uuid}) is not registered on this install, and "
+            f"registration {ref.registration_id} here is a different flow (uuid {by_id.flow_uuid}); {_RESELECT_HINT}"
+        )
+    raise SubflowResolutionError(
+        f"Referenced flow {label}(registration {ref.registration_id}) no longer exists in the catalog"
+    )
 
 
 def resolve_subflow_path(ref: input_schema.SubflowReference, user_id: int | None) -> ResolvedSubflow:
     """Resolve a SubflowReference to an on-disk flow file, enforcing access.
 
-    ``registration_id`` first; a stamped ``flow_uuid`` repairs a dangling id.
+    The registration is found as :func:`_find_registration` describes.
     ``user_id`` None means an internal/CLI run and is unrestricted.
     """
-    from flowfile_core.database import models as db_models
-
     with get_db_context() as db:
-        repo = SQLAlchemyCatalogRepository(db)
-        registration = repo.get_flow(ref.registration_id)
-        if registration is None and ref.flow_uuid:
-            registration = (
-                db.query(db_models.FlowRegistration)
-                .filter(db_models.FlowRegistration.flow_uuid == ref.flow_uuid)
-                .first()
-            )
-        if registration is None:
-            raise SubflowResolutionError(
-                f"Referenced flow (registration {ref.registration_id}) no longer exists in the catalog"
-            )
+        registration = _find_registration(db, ref, user_id)
         if user_id is not None and not sharing.user_id_can_use(db, user_id, "flow", registration.id):
             raise SubflowResolutionError(f"No access to the referenced flow '{registration.name}'")
         resolved = ResolvedSubflow(
@@ -113,26 +164,37 @@ def resolve_subflow_path(ref: input_schema.SubflowReference, user_id: int | None
 
 
 def stamp_flow_reference(settings: input_schema.NodeRunFlow) -> None:
-    """Best-effort: fill flow_uuid/flow_path on the reference from the registry."""
+    """Best-effort: re-stamp the reference from the registration it resolves to on this install.
+
+    A reference that does not resolve is left as it is, so the run reports why.
+    """
+    ref = settings.flow_reference
     try:
         with get_db_context() as db:
-            registration = SQLAlchemyCatalogRepository(db).get_flow(settings.flow_reference.registration_id)
-            if registration is not None:
-                settings.flow_reference.flow_uuid = registration.flow_uuid
-                settings.flow_reference.flow_path = registration.flow_path
+            registration = _find_registration(db, ref, settings.user_id)
+            namespace = CatalogService(SQLAlchemyCatalogRepository(db)).resolve_namespace_full_name(
+                registration.namespace_id
+            )
+            ref.registration_id = registration.id
+            ref.flow_uuid = registration.flow_uuid
+            ref.flow_path = registration.flow_path
+            ref.namespace = namespace
+            ref.name = registration.name
+    except SubflowResolutionError:
+        return
     except Exception:  # noqa: BLE001 - purely informational stamping
         logger.warning("Could not stamp flow reference for run_flow node %s", settings.node_id, exc_info=True)
 
 
 def get_subflow_interface(path: Path) -> SubflowInterface:
-    """Parse a flow file's interface (mtime-cached; no FlowGraph construction)."""
+    """Parse a flow file's interface (cached per file version; no FlowGraph construction)."""
     from flowfile_core.flowfile.manage.io_flowfile import _load_flow_storage
 
     key = str(path.resolve())
-    mtime = path.stat().st_mtime
+    version = _file_version(path)
     with _cache_lock:
         cached = _interface_cache.get(key)
-        if cached is not None and cached[0] == mtime:
+        if cached is not None and cached[0] == version:
             return cached[1]
     flow_info = _load_flow_storage(path)
     inputs = []
@@ -149,19 +211,19 @@ def get_subflow_interface(path: Path) -> SubflowInterface:
         parameters=list(flow_info.flow_settings.parameters),
     )
     with _cache_lock:
-        _interface_cache[key] = (mtime, interface)
+        _interface_cache[key] = (version, interface)
     return interface
 
 
 def get_subflow_output_schemas(path: Path, user_id: int | None) -> dict[int, list[FlowfileColumn]]:
-    """Predicted schema per flow_output node id (mtime-cached; opens the graph)."""
+    """Predicted schema per flow_output node id (cached per file version; opens the graph)."""
     from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
     key = str(path.resolve())
-    mtime = path.stat().st_mtime
+    version = _file_version(path)
     with _cache_lock:
         cached = _output_schema_cache.get(key)
-        if cached is not None and cached[0] == mtime:
+        if cached is not None and cached[0] == version:
             return cached[1]
     graph = open_flow(path, user_id=user_id)
     schemas: dict[int, list[FlowfileColumn]] = {}
@@ -173,7 +235,7 @@ def get_subflow_output_schemas(path: Path, user_id: int | None) -> dict[int, lis
         except Exception:  # noqa: BLE001 - prediction is best-effort
             schemas[node.node_id] = []
     with _cache_lock:
-        _output_schema_cache[key] = (mtime, schemas)
+        _output_schema_cache[key] = (version, schemas)
     return schemas
 
 
@@ -293,9 +355,7 @@ def _build_run_params(
                     spec.type, _stringify_cell(cell), spec.enum_values
                 )
             except ValueError as exc:
-                raise ValueError(
-                    f"Parameter '{binding.parameter_name}' (row {row_index + 1}): {exc}"
-                ) from exc
+                raise ValueError(f"Parameter '{binding.parameter_name}' (row {row_index + 1}): {exc}") from exc
         runs.append(run_params)
     return runs
 
@@ -352,6 +412,23 @@ def _empty_outputs(settings: input_schema.NodeRunFlow) -> "NamedOutputs | FlowDa
     return NamedOutputs(engines)
 
 
+def predict_run_summary_schema(settings: input_schema.NodeRunFlow) -> list[FlowfileColumn]:
+    """Columns of :func:`_run_summary`, the one-row-per-run frame a flow without outputs returns.
+
+    ``run_index`` and ``success``, then one ``param_<name>`` column per bound parameter in the
+    order :func:`_build_run_params` fills a run (constants, then column bindings), typed from
+    ``settings.parameter_specs``. Predicted from the settings alone, without resolving the flow.
+    """
+    types = {spec.name: spec.type for spec in settings.parameter_specs}
+    bound = [b for b in settings.parameter_bindings if b.source == "constant"]
+    bound += [b for b in settings.parameter_bindings if b.source == "column"]
+    columns = [FlowfileColumn.from_input(RUN_INDEX_COLUMN, "Int64"), FlowfileColumn.from_input("success", "Boolean")]
+    for binding in bound:
+        dtype = _PARAM_TYPE_TO_POLARS.get(types.get(binding.parameter_name, "string"), "String")
+        columns.append(FlowfileColumn.from_input(f"{PARAM_COLUMN_PREFIX}{binding.parameter_name}", dtype))
+    return columns
+
+
 def _run_summary(settings: input_schema.NodeRunFlow, runs: list[dict[str, ParamValue]]) -> FlowDataEngine:
     rows = []
     for i, run_params in enumerate(runs, start=1):
@@ -406,11 +483,7 @@ def execute_run_flow_node(
         node_logger.info("Parameter input has 0 rows in iterate mode; producing empty outputs")
         return _empty_outputs(settings)
 
-    unbound = [
-        slot
-        for i, slot in enumerate(settings.input_slots)
-        if i >= len(data_inputs) or data_inputs[i] is None
-    ]
+    unbound = [slot for i, slot in enumerate(settings.input_slots) if i >= len(data_inputs) or data_inputs[i] is None]
     if unbound:
         node_logger.warning(f"Subflow input(s) not connected: {', '.join(unbound)}; using their sample data")
 

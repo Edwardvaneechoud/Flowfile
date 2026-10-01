@@ -9,6 +9,7 @@ Public interface:
 """
 
 from .exceptions import (
+    AmbiguousFlowError,
     AmbiguousTableError,
     CatalogError,
     CdcCursorNotFoundError,
@@ -79,6 +80,7 @@ __all__ = [
     "NotAVirtualTableError",
     "WorkerUnavailableError",
     "AmbiguousTableError",
+    "AmbiguousFlowError",
     "StaleWriteError",
     "VisualizationNotFoundError",
     "VisualizationExistsError",

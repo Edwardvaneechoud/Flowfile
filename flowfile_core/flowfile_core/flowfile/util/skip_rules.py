@@ -24,9 +24,16 @@ the rest.
 
 from collections import deque
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+from flowfile_core.flowfile.param_types import typed_parameter_values
+from flowfile_core.flowfile.parameter_resolver import resolve_parameters
+
+if TYPE_CHECKING:
+    from flowfile_core.flowfile.param_types import FlowParameter
+    from flowfile_core.schemas.transform_schema import GateInput
 
 ANY_INPUT_NODE_TYPES: frozenset[str] = frozenset({"union"})
 GATE_NODE_TYPE = "gate"
@@ -55,6 +62,19 @@ def uses_any_rule(node: FlowNode) -> bool:
 
 def gate_has_else_output(node: FlowNode) -> bool:
     return bool(getattr(node.setting_input, "else_output", False))
+
+
+def parameter_gate_is_open(gate_input: "GateInput", parameters: "list[FlowParameter]") -> bool:
+    """Evaluate a parameter-mode gate condition against the flow's parameters, as a run does.
+
+    ``${refs}`` in the comparison value resolve first with the parameters' typed values,
+    matching the exported code (where they become live parameter-to-parameter comparisons).
+    Raises ``ValueError`` for an unknown parameter or a value that cannot be coerced.
+    """
+    if "${" in gate_input.value:
+        typed = typed_parameter_values(parameters)
+        gate_input = gate_input.model_copy(update={"value": resolve_parameters(gate_input.value, typed)})
+    return gate_input.evaluate({p.name: p for p in parameters})
 
 
 def dead_gate_handles(is_open: bool, has_else_output: bool) -> frozenset[str] | None:

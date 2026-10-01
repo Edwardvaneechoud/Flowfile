@@ -1,4 +1,3 @@
-import uuid
 from collections.abc import Iterable
 from typing import Any
 
@@ -57,33 +56,26 @@ def ensure_inputs_as_iterable(inputs: Any | Iterable[Any]) -> list[Any]:
     return list(inputs)
 
 
-def _generate_id() -> int:
-    """Generate a simple unique ID for nodes."""
-    return int(uuid.uuid4().int % 100000)
-
-
 def create_flow_graph(flow_id: int = None) -> FlowGraph:
     """
     Create a new FlowGraph instance with a unique flow ID.
     Parameters
        - flow_id (int): Optional flow ID. If not provided, a new unique ID will be generated.
     Returns
-       - FlowGraph: A new instance of FlowGraph with the specified or generated flow ID.
+       - FlowGraph: A new instance of FlowGraph with the specified or generated flow ID, no file path,
+         history off and local execution (the same defaults as ``FlowGraph()``).
 
     """
     if flow_id is None:
-        flow_id = _generate_id()
+        return FlowGraph()
     flow_settings = schemas.FlowSettings(
         flow_id=flow_id,
         name=f"Flow_{flow_id}",
-        path=f"flow_{flow_id}",
-        track_history=False,  # Disable undo/redo history for flowfile_frame
+        path="",
+        track_history=False,
+        execution_location="local",
     )
-    flow_graph = FlowGraph(flow_settings=flow_settings)
-    flow_graph.flow_settings.execution_location = (
-        "local"  # always create a local frame so that the run time does not attempt to use the flowfile_worker process
-    )
-    return flow_graph
+    return FlowGraph(flow_settings=flow_settings)
 
 
 def stringify_values(v: Any) -> str:

@@ -3,7 +3,10 @@
 Resolves ${param_name} references in node settings at execution time.
 """
 
+import ast
+import io
 import re
+import tokenize
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -15,8 +18,13 @@ from flowfile_core.flowfile.param_types import (
     render_param_as_expr_literal,
     stringify_param_value,
 )
+from flowfile_core.schemas.transform_schema import PolarsCodeInput
 
 _PARAM_PATTERN = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+_STRING_PREFIX = re.compile(r"[a-zA-Z]*")
+# Python 3.12+ splits f-strings into tokens; a string nested in one stays raw like the f-string.
+_FSTRING_START = getattr(tokenize, "FSTRING_START", None)
+_FSTRING_END = getattr(tokenize, "FSTRING_END", None)
 
 # Type alias: list of (object, field_name_or_key_or_index, original_value) triples
 # used to restore mutated fields after node execution.
@@ -54,10 +62,74 @@ def resolve_expression_parameters(text: str, params: dict[str, ParamValue]) -> s
     )
 
 
+def _render_code_string_literal(token: str, params: dict[str, ParamValue]) -> str | None:
+    """The substituted ``repr`` of a plain string-literal token, or ``None`` to leave the token as it is."""
+    if {"f", "b"} & set(_STRING_PREFIX.match(token).group(0).lower()):
+        return None
+    try:
+        content = ast.literal_eval(token)
+    except (ValueError, SyntaxError):
+        return None
+    if not isinstance(content, str):
+        return None
+    resolved = resolve_parameters(content, params)
+    return repr(resolved) if resolved != content else None
+
+
+def resolve_code_parameters(code: str, params: dict[str, ParamValue]) -> str:
+    """Replace ${name} patterns in Python source (the Polars-code node) without letting a value become code.
+
+    A reference inside a plain string literal (any quoting, no ``f``/``b`` prefix) re-renders that
+    literal as the ``repr`` of its substituted content, so quotes, backslashes and newlines in a
+    value stay part of the string. References anywhere else (bare code, comments, f-strings, byte
+    strings) are substituted as raw text, as is all of *code* when it does not tokenize.
+    """
+    if not params or "${" not in code:
+        return code
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(code).readline))
+    except (tokenize.TokenError, SyntaxError):
+        return resolve_parameters(code, params)
+
+    line_starts = [0]
+    for line in io.StringIO(code).readlines():
+        line_starts.append(line_starts[-1] + len(line))
+
+    pieces: list[str] = []
+    cursor = 0
+    fstring_depth = 0
+    for token in tokens:
+        if token.type == tokenize.ERRORTOKEN and token.string.startswith(("'", '"')):
+            return resolve_parameters(code, params)
+        if token.type == _FSTRING_START:
+            fstring_depth += 1
+        elif token.type == _FSTRING_END:
+            fstring_depth -= 1
+        if token.type != tokenize.STRING or fstring_depth or "${" not in token.string:
+            continue
+        literal = _render_code_string_literal(token.string, params)
+        if literal is None:
+            continue
+        start = line_starts[token.start[0] - 1] + token.start[1]
+        end = line_starts[token.end[0] - 1] + token.end[1]
+        if code[start:end] != token.string:
+            return resolve_parameters(code, params)
+        pieces.append(resolve_parameters(code[cursor:start], params))
+        pieces.append(literal)
+        cursor = end
+    pieces.append(resolve_parameters(code[cursor:], params))
+    return "".join(pieces)
+
+
 def _is_expression_field(model: BaseModel, field_name: str) -> bool:
     """Whether *field_name* on *model* is tagged as a raw-expression field."""
     extra = type(model).model_fields[field_name].json_schema_extra
     return isinstance(extra, dict) and extra.get("expression") is True
+
+
+def _is_python_code_field(model: BaseModel, field_name: str) -> bool:
+    """Whether *field_name* on *model* holds the Python source of a Polars-code node."""
+    return isinstance(model, PolarsCodeInput) and field_name == "polars_code"
 
 
 def _substitute(value: str, params: dict[str, ParamValue]) -> Any:
@@ -147,7 +219,8 @@ def _apply_recursive(
     """Substitute ``${name}`` refs in *obj* in place.
 
     When *render_expressions* is True (runtime resolution) expression fields render
-    typed literals via ``resolve_expression_parameters``. When False (e.g. code-gen
+    typed literals via ``resolve_expression_parameters`` and Polars code renders its
+    string literals via ``resolve_code_parameters``. When False (e.g. code-gen
     sentinel substitution) every field uses the raw ``_substitute`` path so the
     replacement text is inserted verbatim.
     """
@@ -158,6 +231,8 @@ def _apply_recursive(
                 if "${" in value:
                     if render_expressions and _is_expression_field(obj, field_name):
                         resolved = resolve_expression_parameters(value, params)
+                    elif render_expressions and _is_python_code_field(obj, field_name):
+                        resolved = resolve_code_parameters(value, params)
                     else:
                         resolved = _substitute(value, params)
                     if resolved != value:

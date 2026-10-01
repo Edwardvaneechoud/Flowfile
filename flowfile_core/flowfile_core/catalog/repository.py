@@ -81,6 +81,10 @@ class CatalogRepository(Protocol):
 
     def get_flow_by_name(self, name: str, namespace_id: int) -> FlowRegistration | None: ...
 
+    def get_flow_by_uuid(self, flow_uuid: str) -> FlowRegistration | None: ...
+
+    def list_flows_by_name(self, name: str, namespace_id: int | None = None) -> list[FlowRegistration]: ...
+
     def get_flow_by_path(self, flow_path: str) -> FlowRegistration | None: ...
 
     def count_flows_by_path(self, flow_path: str) -> int: ...
@@ -457,6 +461,19 @@ class SQLAlchemyCatalogRepository:
 
     def get_flow_by_name(self, name: str, namespace_id: int) -> FlowRegistration | None:
         return self._db.query(FlowRegistration).filter_by(name=name, namespace_id=namespace_id).first()
+
+    def get_flow_by_uuid(self, flow_uuid: str) -> FlowRegistration | None:
+        return self._db.query(FlowRegistration).filter_by(flow_uuid=flow_uuid).first()
+
+    def list_flows_by_name(self, name: str, namespace_id: int | None = None) -> list[FlowRegistration]:
+        """Every registration called ``name`` (optionally in one namespace), lowest id first.
+
+        ``(name, namespace_id)`` is not unique, so callers must treat more than one row as ambiguous.
+        """
+        q = self._db.query(FlowRegistration).filter_by(name=name)
+        if namespace_id is not None:
+            q = q.filter_by(namespace_id=namespace_id)
+        return q.order_by(FlowRegistration.id).all()
 
     def get_flow_by_path(self, flow_path: str) -> FlowRegistration | None:
         return self._db.query(FlowRegistration).filter_by(flow_path=flow_path).first()

@@ -32,7 +32,7 @@ df = df.filter(flowfile_formula="[price] > 15 and [qty] > 0")
 ```
 
 !!! note "Which node the filter becomes"
-    `filter(flowfile_formula=...)` emits an editable Filter node. A plain `filter(ff.col(...) > x)` predicate emits a `polars_code` node instead — the result is identical, but only the formula form is editable in the visual editor.
+    Both `filter(flowfile_formula=...)` and a plain `filter(ff.col(...) > x)` predicate emit an editable Filter node. A predicate with no formula form, such as a lambda, falls back to a `polars_code` node; see [which operations become which node](../concepts/design-concepts.md#which-operations-become-which-node).
 
 ## Selecting columns
 
@@ -122,6 +122,27 @@ df = df.unique(subset=["product_id"])
 ```
 
 The result is a new table with the columns `ancestor`, `descendant`, `level`, `quantity` and `is_leaf`, plus `parent`, `quantity_per` and `path` for `"paths"`; the input's other columns are not carried through. `top_level_only=True` explodes only the items that never appear as a child, `include_self=True` adds a level-0 row from each exploded item to itself (only the top-level ones with `top_level_only=True`), and `max_depth` stops after that many levels. A cycle or a null quantity raises a `ComputeError` when the result is collected, not when the method is called.
+
+## SQL queries
+
+`frame.sql(query)` and `ff.sql(query, ...)` place a [SQL Query node](../../visual-editor/nodes/transform.md#sql-query) and return its output frame. The query uses the Polars SQL dialect and must be a single `SELECT` or `WITH` statement.
+
+```python
+--8<-- "docs/examples/sql_query.py:example"
+```
+
+```python
+FlowFrame.sql(query: str, *, table_name: str = "self", description: str | None = None) -> FlowFrame
+
+ff.sql(query: str, /, *frames: FlowFrame, description: str | None = None, **tables: FlowFrame) -> FlowFrame
+```
+
+- `frame.sql` mirrors `polars.LazyFrame.sql`: the frame is the table `self`, or `table_name`.
+- In `ff.sql`, positional frames are the tables `input_1`, `input_2`, … and each keyword frame is the table of that name, numbered after the positional ones. `description` is the node label, so it is the one name that cannot be a table. Frames on different graphs are merged onto one. Without frames the query reads no tables and the node starts a new graph: `ff.sql("SELECT 1 AS x")`. Unlike `pl.sql`, `ff.sql` takes its frames as arguments and never reads variables from the calling namespace.
+- The node itself names its inputs `input_1`, `input_2`, …, so a named table is stored as a header in front of the query, merged into the query's own `WITH` when it has one: `WITH orders AS (SELECT * FROM input_1), regions AS (SELECT * FROM input_2)`. The designer shows that header as part of the query. Table names are case-sensitive, as in Polars. The query is trimmed before it is stored, and dedented unless a quoted string in it spans lines.
+- Without `description`, the node is labelled with the first line of the query.
+- A flow parameter goes in as `${name}`, or `min_amount.ref` in an f-string, and is substituted as text, so a string value needs its SQL quotes: `WHERE region = '${region}'`. See [Flow parameters](native-nodes.md#flow-parameters).
+- An empty query, a table name that is not a plain identifier, a name that is another input's `input_<n>`, a statement other than `SELECT`/`WITH`, and a query that does not resolve against its inputs all raise `NativeNodeError` when the node is built, and the node is removed again.
 
 ## String operations
 
