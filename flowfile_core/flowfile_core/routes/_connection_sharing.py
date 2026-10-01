@@ -36,7 +36,7 @@ def require_credentials_on_target_change(
 ) -> None:
     if changed_fields and has_bundled_secrets and not has_new_credentials:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Changing the connection target ({', '.join(changed_fields)}) on a shared "
                 "connection requires re-entering the credentials"

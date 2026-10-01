@@ -11,6 +11,7 @@ import random
 import threading
 
 import pytest
+from fastapi.routing import iter_route_contexts
 from fastapi.testclient import TestClient
 
 from flowfile_core import flow_file_handler, main
@@ -350,7 +351,7 @@ EDITOR_ROUTE_MODULES = {"flowfile_core.routes.routes", "flowfile_core.routes.use
 def test_every_mutating_editor_route_is_classified():
     mutating = {
         route.path
-        for route in main.app.routes
+        for route in iter_route_contexts(main.app.routes)
         if getattr(getattr(route, "endpoint", None), "__module__", None) in EDITOR_ROUTE_MODULES
         and set(getattr(route, "methods", None) or ()) - {"GET", "HEAD", "OPTIONS"}
     }

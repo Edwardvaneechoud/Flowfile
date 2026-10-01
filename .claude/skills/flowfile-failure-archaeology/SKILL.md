@@ -252,15 +252,20 @@ origin copy of `fix/overwrite-open-flow` before writing new save/open
 logic — it overlaps `handler.py` with #15, so landing either branch first
 changes the merge conflict the other hits.**
 
-**17. FastAPI upgrade attempted and reverted — main never moved.**
+**17. FastAPI upgrade reverted in 2026-05, retried 2026-10.**
 `eff7287b` "Reverting upgrade Fastapi" (2026-05-11) exists only on branch
-`feature/LLM-security-patches`. `fastapi = "~0.115.2"` (`pyproject.toml`
-line 29) has been unchanged since the file's initial commit. The upgrade
+`feature/LLM-security-patches`; `fastapi = "~0.115.2"` stayed from the
+initial commit until the retry. The upgrade
 was tried during the LLM-safeguards work (which landed separately as
 `f55aa92c` #457) and abandoned before merge; **the revert message does not
-record why** — treat the cause as genuinely unknown, not solved. **Rule:
-treat the pin as deliberate; budget real investigation time if you attempt
-this again.**
+record why**. **Retried 2026-10-01** (`~0.142.2`, for the Starlette
+Dependabot alerts) with the most likely cause fixed: FastAPI 0.132 made
+`strict_content_type=True` the default, so a JSON body without a
+`Content-Type` header gets a 422 — and ~10 core→worker calls in
+`subprocess_operations.py` posted `data=model.model_dump_json()` with no
+header. They now pass `_JSON_HEADERS`. **Rule: any new JSON call to a
+Flowfile FastAPI app must send `Content-Type: application/json`** (or use
+`json=`); don't "fix" it by setting `strict_content_type=False`.
 
 **18. Database migrations: born from a production bug, now 28 revisions
 (root CLAUDE.md is stale).** Pre-history: `e2977f5c` (#422, ~2026-04-08) —
@@ -466,10 +471,9 @@ before reusing it.
   without both you get an **empty `coverage.xml`** — worse than not
   setting the flag. xdist itself was deliberately deferred (shared SQLite
   test DB needs per-worker isolation first) as part of incident 19.
-- **Upgrading FastAPI off `~0.115.2`.** Already tried on
-  `feature/LLM-security-patches` and reverted (`eff7287b`, incident 17).
-  Reason not recorded — budget real investigation time, don't assume it's
-  a trivial bump.
+- **Downgrading FastAPI back to `~0.115.2`.** It was raised to `~0.142.2`
+  on 2026-10-01 to clear Starlette CVEs (incident 17); a 422 on a JSON
+  call means a missing `Content-Type` header, not a reason to revert.
 
 ---
 

@@ -1,6 +1,7 @@
 """GET /editor/share_link — auth, 404, and the response contract the UI codes against."""
 
 import pytest
+from fastapi.routing import iter_route_contexts
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
@@ -71,8 +72,8 @@ def test_unknown_flow_returns_404():
 
 def test_route_is_registered_without_a_trailing_slash():
     """The frontend must call the exact path: a trailing slash costs a silent 307."""
-    assert SHARE_LINK_URL in {route.path for route in main.app.routes}
-    assert f"{SHARE_LINK_URL}/" not in {route.path for route in main.app.routes}
+    assert SHARE_LINK_URL in {route.path for route in iter_route_contexts(main.app.routes)}
+    assert f"{SHARE_LINK_URL}/" not in {route.path for route in iter_route_contexts(main.app.routes)}
     redirected = authed_client.get(f"{SHARE_LINK_URL}/", params={"flow_id": 1}, follow_redirects=False)
     assert redirected.status_code == 307
 

@@ -15,7 +15,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import APIRouter, FastAPI, HTTPException, Response
+from fastapi.routing import iter_route_contexts
 from fastapi.testclient import TestClient
 
 from flowfile_core import events
@@ -519,6 +520,13 @@ class TestRouteMiddleware:
         def _unmapped():
             return "nothing to see"
 
+        ai = APIRouter()
+
+        @ai.post("/diff/{diff_id}/accept")
+        def _accept(diff_id: str):
+            return diff_id
+
+        app.include_router(ai, prefix="/ai")
         app.add_middleware(glue.TelemetryMiddleware)
         return app
 
@@ -532,6 +540,10 @@ class TestRouteMiddleware:
         emitted = drain(sent)
         assert [e["event"] for e in emitted] == ["export_code_used"]
         assert emitted[0]["props"] == {"target": "polars"}
+
+    def test_a_route_under_an_include_prefix_is_matched_on_its_full_path(self, sent, http) -> None:
+        assert http.post("/ai/diff/abc/accept").status_code == 200
+        assert names(sent) == ["ai_diff_accepted"]
 
     def test_rendering_the_code_panel_is_not_an_export(self, sent, http) -> None:
         """The Code tab GETs its code on every tab switch; only the button exports."""
@@ -664,7 +676,7 @@ def test_every_mapped_route_exists_on_the_app() -> None:
     """Route drift would silently stop an HTTP event; this is the tripwire."""
     from flowfile_core.main import app
 
-    real = {(method, route.path) for route in app.routes for method in getattr(route, "methods", None) or ()}
+    real = {(method, route.path) for route in iter_route_contexts(app.routes) for method in getattr(route, "methods", None) or ()}
     missing = sorted(key for key in glue.ROUTE_EVENTS if key not in real)
     assert missing == [], f"telemetry route table names routes that do not exist: {missing}"
 

@@ -30,8 +30,11 @@ Import stays side-effect free: ``node_store`` is imported lazily and
 
 from __future__ import annotations
 
+import functools
 import weakref
 from typing import Any
+
+from fastapi.routing import iter_route_contexts
 
 from flowfile_core import events
 from shared import telemetry as _client
@@ -303,10 +306,30 @@ def _on_app_started() -> None:
     emit("app_started")
 
 
+@functools.lru_cache(maxsize=8)
+def _full_route_paths(app) -> dict[int, str]:
+    """Map each route object to its full path template.
+
+    FastAPI keeps an included router nested, so the route it stamps on ``scope["route"]``
+    carries only its own path, without the ``include_router(prefix=...)`` part.
+    """
+    return {id(rc.original_route): rc.path for rc in iter_route_contexts(app.routes) if rc.path}
+
+
+def _route_path(scope: dict[str, Any]) -> str | None:
+    route = scope.get("route")
+    app = scope.get("app")
+    if route is not None and app is not None:
+        path = _full_route_paths(app).get(id(route))
+        if path:
+            return path
+    return getattr(route, "path", None)
+
+
 def _emit_for_route(scope: dict[str, Any], status: int) -> None:
     if status >= 300:
         return
-    path = getattr(scope.get("route"), "path", None)
+    path = _route_path(scope)
     if path is None:
         return
     mapped = ROUTE_EVENTS.get((scope.get("method", ""), path))

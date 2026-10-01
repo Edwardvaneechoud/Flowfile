@@ -66,6 +66,8 @@ class _WorkerAuth(requests.auth.AuthBase):
 _worker_session = requests.Session()
 _worker_session.auth = _WorkerAuth()
 
+_JSON_HEADERS = {"Content-Type": "application/json"}
+
 # (connect, read) timeout for the short worker control calls so a dead/wedged
 # worker surfaces promptly instead of hanging a request thread indefinitely.
 _WORKER_TIMEOUT = (5, 30)
@@ -139,7 +141,9 @@ def trigger_fuzzy_match_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = _worker_session.post(f"{WORKER_URL}/add_fuzzy_join", data=fuzzy_join_input.model_dump_json())
+    v = _worker_session.post(
+        f"{WORKER_URL}/add_fuzzy_join", data=fuzzy_join_input.model_dump_json(), headers=_JSON_HEADERS
+    )
     if not v.ok:
         raise Exception(f"trigger_fuzzy_match_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
@@ -149,7 +153,7 @@ def trigger_custom_node_operation(request: CustomNodeExecuteInput) -> Status:
     v = _worker_session.post(
         f"{WORKER_URL}/execute_custom_node",
         data=request.model_dump_json(),
-        headers={"Content-Type": "application/json"},
+        headers=_JSON_HEADERS,
     )
     if not v.ok:
         raise Exception(f"trigger_custom_node_operation: Could not start the custom node, {v.text}")
@@ -183,7 +187,7 @@ def trigger_train_model_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = _worker_session.post(f"{WORKER_URL}/train_ml_model", data=payload.model_dump_json())
+    v = _worker_session.post(f"{WORKER_URL}/train_ml_model", data=payload.model_dump_json(), headers=_JSON_HEADERS)
     if not v.ok:
         raise Exception(f"trigger_train_model_operation: Could not start training, {v.text}")
     return Status(**v.json())
@@ -206,7 +210,7 @@ def trigger_apply_model_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = _worker_session.post(f"{WORKER_URL}/apply_ml_model", data=payload.model_dump_json())
+    v = _worker_session.post(f"{WORKER_URL}/apply_ml_model", data=payload.model_dump_json(), headers=_JSON_HEADERS)
     if not v.ok:
         raise Exception(f"trigger_apply_model_operation: Could not start scoring, {v.text}")
     return Status(**v.json())
@@ -221,6 +225,7 @@ def trigger_create_operation(
     f = _worker_session.post(
         url=f"{WORKER_URL}/create_table/{file_type}",
         data=received_table.model_dump_json(),
+        headers=_JSON_HEADERS,
         params={"flowfile_flow_id": flow_id, "flowfile_node_id": node_id},
     )
     if not f.ok:
@@ -230,7 +235,9 @@ def trigger_create_operation(
 
 def trigger_database_read_collector(database_external_read_settings: DatabaseExternalReadSettings):
     f = _worker_session.post(
-        url=f"{WORKER_URL}/store_database_read_result", data=database_external_read_settings.model_dump_json()
+        url=f"{WORKER_URL}/store_database_read_result",
+        data=database_external_read_settings.model_dump_json(),
+        headers=_JSON_HEADERS,
     )
     if not f.ok:
         raise Exception(f"trigger_database_read_collector: Could not cache the data, {f.text}")
@@ -239,7 +246,9 @@ def trigger_database_read_collector(database_external_read_settings: DatabaseExt
 
 def trigger_kafka_read(kafka_read_settings) -> Status:
     """Send a Kafka read request to the worker service."""
-    f = _worker_session.post(url=f"{WORKER_URL}/store_kafka_read_result", data=kafka_read_settings.model_dump_json())
+    f = _worker_session.post(
+        url=f"{WORKER_URL}/store_kafka_read_result", data=kafka_read_settings.model_dump_json(), headers=_JSON_HEADERS
+    )
     if not f.ok:
         raise Exception(f"trigger_kafka_read: Could not read from Kafka, {f.text}")
     return Status(**f.json())
@@ -263,7 +272,9 @@ def fetch_kafka_offsets(task_id: str) -> dict | None:
 def trigger_google_analytics_read(ga_read_settings) -> Status:
     """Send a Google Analytics 4 read request to the worker service."""
     f = _worker_session.post(
-        url=f"{WORKER_URL}/store_google_analytics_read_result", data=ga_read_settings.model_dump_json()
+        url=f"{WORKER_URL}/store_google_analytics_read_result",
+        data=ga_read_settings.model_dump_json(),
+        headers=_JSON_HEADERS,
     )
     if not f.ok:
         raise Exception(f"trigger_google_analytics_read: Could not read from GA, {f.text}")
@@ -273,7 +284,10 @@ def trigger_google_analytics_read(ga_read_settings) -> Status:
 def trigger_rest_api_read(settings) -> Status:
     """Send a REST API read request to the worker service."""
     f = _worker_session.post(
-        url=f"{WORKER_URL}/store_rest_api_read_result", data=settings.model_dump_json(), timeout=_WORKER_TIMEOUT
+        url=f"{WORKER_URL}/store_rest_api_read_result",
+        data=settings.model_dump_json(),
+        headers=_JSON_HEADERS,
+        timeout=_WORKER_TIMEOUT,
     )
     if not f.ok:
         raise Exception(f"trigger_rest_api_read: Could not read from the REST API, {f.text}")
@@ -282,7 +296,9 @@ def trigger_rest_api_read(settings) -> Status:
 
 def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings):
     f = _worker_session.post(
-        url=f"{WORKER_URL}/store_database_write_result", data=database_external_write_settings.model_dump_json()
+        url=f"{WORKER_URL}/store_database_write_result",
+        data=database_external_write_settings.model_dump_json(),
+        headers=_JSON_HEADERS,
     )
     if not f.ok:
         raise Exception(f"trigger_database_write: Could not cache the data, {f.text}")
@@ -291,7 +307,9 @@ def trigger_database_write(database_external_write_settings: DatabaseExternalWri
 
 def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWriteSettingsWorkerInterface):
     f = _worker_session.post(
-        url=f"{WORKER_URL}/write_data_to_cloud", data=database_external_write_settings.model_dump_json()
+        url=f"{WORKER_URL}/write_data_to_cloud",
+        data=database_external_write_settings.model_dump_json(),
+        headers=_JSON_HEADERS,
     )
     if not f.ok:
         raise Exception(f"trigger_cloud_storage_write: Could not cache the data, {f.text}")
