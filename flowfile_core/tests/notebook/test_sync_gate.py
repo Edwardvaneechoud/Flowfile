@@ -60,7 +60,7 @@ def test_a_member_cannot_sync_in_a_multi_user_mode(runner, open_as, client_as, f
     assert rendered.status_code == 200, rendered.text
     lineage = {"flow_id": graph.flow_id, "node_id": _node_of_type(graph, "filter").node_id}
     ran = member.post("/editor/notebook/run_lineage/", json=lineage)
-    assert ran.status_code != 403, ran.text
+    assert ran.status_code == 200, ran.text
 
 
 @pytest.mark.parametrize("mode", ["docker", "package"])
