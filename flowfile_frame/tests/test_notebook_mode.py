@@ -336,9 +336,9 @@ def test_identity_hook():
 
 
 BUILT_IN_A_SYNC = {
-    "cross_join", "data_cleansing", "dynamic_rename", "filter", "flow_input", "formula", "gate", "graph_solver",
-    "group_by", "join", "manual_input", "multi_field_formula", "record_count", "record_id", "sample", "select", "sort",
-    "sql_query", "text_to_rows", "union", "unique", "unpivot", "wait_for", "window_functions",
+    "cross_join", "data_cleansing", "dynamic_rename", "explode_hierarchy", "filter", "flow_input", "formula", "gate",
+    "graph_solver", "group_by", "join", "manual_input", "multi_field_formula", "record_count", "record_id", "sample",
+    "select", "sort", "sql_query", "text_to_rows", "union", "unique", "unpivot", "wait_for", "window_functions",
 }  # fmt: skip
 
 
