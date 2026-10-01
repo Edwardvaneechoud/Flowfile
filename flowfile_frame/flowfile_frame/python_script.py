@@ -1,4 +1,4 @@
-"""``fl.PythonScript`` and ``fl.python_script``: a Python Script node, run on a kernel container when the flow runs.
+"""``ff.PythonScript`` and ``ff.python_script``: a Python Script node, run on a kernel container when the flow runs.
 
 ``PythonScript`` is the canonical form: notebook cells as strings, one-to-one with what the node
 stores. ``python_script(...)`` turns a module-level function into those cells: its parameters are
@@ -256,7 +256,7 @@ def _check_function(fn: Any) -> str:
     if fn.__qualname__ != name:
         raise NativeNodeError(f"`{fn.__qualname__}` is a method; python_script decorates a module-level function")
     if hasattr(fn, "__wrapped__"):
-        raise NativeNodeError(f"`{name}` is wrapped by another decorator; @fl.python_script must be its only decorator")
+        raise NativeNodeError(f"`{name}` is wrapped by another decorator; @ff.python_script must be its only decorator")
     if inspect.iscoroutinefunction(fn) or inspect.isgeneratorfunction(fn) or inspect.isasyncgenfunction(fn):
         raise NativeNodeError(f"`{name}` is async or a generator; its body cannot run as notebook cells")
     return name
@@ -872,7 +872,7 @@ def python_script(
 ) -> PythonScriptFunction | Callable[[Callable[..., Any]], PythonScriptFunction]:
     """Decorate a module-level function to place it as a Python Script (notebook) node.
 
-    Use it bare, ``@fl.python_script``, or with options, ``@fl.python_script(kernel="lite")``.
+    Use it bare, ``@ff.python_script``, or with options, ``@ff.python_script(kernel="lite")``.
     The body becomes the notebook: split at Jupytext ``# %%`` markers, ``# %% [markdown]`` notes
     and the docstring as the first note (see :func:`_notebook_cells`). Its parameters are the input
     frames and its single, final ``return`` is what the node publishes: a frame to the one output,

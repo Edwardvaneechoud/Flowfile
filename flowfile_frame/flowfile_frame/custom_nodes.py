@@ -1,4 +1,4 @@
-"""``fl.custom_nodes``: list, look up and install custom nodes by node key."""
+"""``ff.custom_nodes``: list, look up and install custom nodes by node key."""
 
 from __future__ import annotations
 
@@ -34,11 +34,11 @@ from shared.node_designer.custom_node import CustomNodeBase, NodeSettings, node_
 
 
 class CustomNodeLookupError(NativeNodeError, AttributeError):
-    """An ``fl.custom_nodes.<name>`` lookup of a node that is unknown or does not load; ``hasattr`` sees ``False``."""
+    """An ``ff.custom_nodes.<name>`` lookup of a node that is unknown or does not load; ``hasattr`` sees ``False``."""
 
 
 class CustomNodeInfo(NamedTuple):
-    """One entry of ``fl.custom_nodes.list()``; ``file`` is ``None`` for a session-only class."""
+    """One entry of ``ff.custom_nodes.list()``; ``file`` is ``None`` for a session-only class."""
 
     key: str
     name: str
@@ -106,7 +106,7 @@ def _defining_module(cls: type[CustomNodeBase]) -> tuple[str, ast.Module]:
     kind = "custom node class" if issubclass(cls, CustomNodeBase) else "class"
     raise NativeNodeError(
         f"Cannot read the source of {kind} {cls.__name__}; save it in a .py file and install "
-        "the file: fl.custom_nodes.install('path/to/node.py')"
+        "the file: ff.custom_nodes.install('path/to/node.py')"
     )
 
 
@@ -215,7 +215,7 @@ def _class_file_source(cls: type[CustomNodeBase]) -> str:
     if cls.__qualname__ != cls.__name__:
         raise NativeNodeError(
             f"Custom node class {cls.__qualname__} is defined inside a function or class; install takes a "
-            "class defined at the top level of a module, or a node file: fl.custom_nodes.install('path/to/node.py')"
+            "class defined at the top level of a module, or a node file: ff.custom_nodes.install('path/to/node.py')"
         )
     home, namespace = cls.__module__, _defining_namespace(cls)
     carried: dict[str, tuple[ast.ClassDef, _Fragment]] = {}
@@ -255,7 +255,7 @@ def _class_file_source(cls: type[CustomNodeBase]) -> str:
         raise NativeNodeError(
             f"Custom node class {cls.__name__} and a NodeSettings class it uses were defined under different "
             "`from __future__` imports; define them in one selection, or install the module's file instead: "
-            "fl.custom_nodes.install('path/to/node.py')"
+            "ff.custom_nodes.install('path/to/node.py')"
         )
     kept = [
         (stmt, fragment)
@@ -275,7 +275,7 @@ def _class_file_source(cls: type[CustomNodeBase]) -> str:
         raise NativeNodeError(
             f"Custom node class {cls.__name__} reads {uncovered} from its module; install writes only the class, "
             "the NodeSettings classes it uses and top-level imports, so install the module's file instead: "
-            "fl.custom_nodes.install('path/to/node.py')"
+            "ff.custom_nodes.install('path/to/node.py')"
         )
     imports = [_verbatim(stmt, fragment.lines) for stmt, fragment in kept] + sorted(filter(None, synthesized.values()))
     header = list(dict.fromkeys(futures + imports))
@@ -328,7 +328,7 @@ def _restore(path: Path, previous: bytes | None, template: NodeTemplate | None, 
 
 
 class CustomNodes:
-    """The custom nodes this process can place (``fl.custom_nodes``), by node key or display name.
+    """The custom nodes this process can place (``ff.custom_nodes``), by node key or display name.
 
     A membership test or lookup that misses first picks up node files written since the last
     scan (``registry.refresh``, exec-free), so a node another process installed resolves.
@@ -356,7 +356,7 @@ class CustomNodes:
         does not is removed again, and a file it replaced is put back. A running designer picks it up
         when it opens a flow that uses it, and lists it after Settings → Extensions → Custom Nodes → Rescan.
         """
-        refuse("fl.custom_nodes.install")
+        refuse("ff.custom_nodes.install")
         node_class = None
         if isinstance(node, type) and issubclass(node, CustomNodeBase):
             node_class, source, label = node, _class_file_source(node), f"class {node.__name__}"
@@ -387,7 +387,7 @@ class CustomNodes:
             if holder.file_path.exists():
                 raise NativeNodeError(
                     f"Custom node {key!r} is already installed from {holder.file_path}; place that node by its "
-                    f"key, fl.custom_nodes[{key!r}], or delete that file and install again"
+                    f"key, ff.custom_nodes[{key!r}], or delete that file and install again"
                 )
             registry.remove_file(holder.file_path)
         if target.exists() and not overwrite:
@@ -440,7 +440,7 @@ class CustomNodes:
         return sorted(set(super().__dir__()) | {key for key in self if key.isidentifier()})
 
     def __repr__(self) -> str:
-        return f"fl.custom_nodes({builtins.list(self)})"
+        return f"ff.custom_nodes({builtins.list(self)})"
 
 
 custom_nodes: CustomNodes = CustomNodes()

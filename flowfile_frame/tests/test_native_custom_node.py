@@ -161,7 +161,7 @@ def test_unknown_name_raises_not_installed():
 
 
 def test_built_in_name_points_at_node():
-    with pytest.raises(ff.NativeNodeError, match=r"fl.Node\('filter'"):
+    with pytest.raises(ff.NativeNodeError, match=r"ff.Node\('filter'"):
         ff.CustomNode("filter", _frame())
 
 

@@ -107,23 +107,23 @@ def capture_codegen_flow(test_name: str, tmp_dir: Path) -> FlowGraph:
 
 
 def build_native_gate() -> FlowGraph:
-    import flowfile as fl
+    import flowfile as ff
 
-    mode = fl.Parameter("mode", default="full", type="enum", enum_values=["full", "quick"])
-    source = fl.from_dict({"region": ["N", "S", "N"], "amount": [1.0, 2.0, 3.0]})
-    fl.add_flow_parameter(source, mode)
-    gate = fl.Gate(source, parameter=mode, value="full", description="Full or quick?")
-    full = gate.then.with_columns(fl.lit("full").alias("mode"))
-    quick = gate.otherwise.group_by("region").agg(fl.col("amount").sum()).with_columns(fl.lit("quick").alias("mode"))
-    return fl.concat([full, quick], how="diagonal_relaxed").flow_graph
+    mode = ff.Parameter("mode", default="full", type="enum", enum_values=["full", "quick"])
+    source = ff.from_dict({"region": ["N", "S", "N"], "amount": [1.0, 2.0, 3.0]})
+    ff.add_flow_parameter(source, mode)
+    gate = ff.Gate(source, parameter=mode, value="full", description="Full or quick?")
+    full = gate.then.with_columns(ff.lit("full").alias("mode"))
+    quick = gate.otherwise.group_by("region").agg(ff.col("amount").sum()).with_columns(ff.lit("quick").alias("mode"))
+    return ff.concat([full, quick], how="diagonal_relaxed").flow_graph
 
 
 def build_native_flow_io() -> FlowGraph:
-    import flowfile as fl
+    import flowfile as ff
 
-    graph = fl.create_flow_graph()
-    orders = fl.FlowInput("orders", sample=pl.DataFrame({"id": [1, 2, 3], "amount": [5, 15, 25]}), flow_graph=graph)
-    orders.filter(fl.col("amount") > 10).to_flow_output(fl.FlowOutput("big_orders"))
+    graph = ff.create_flow_graph()
+    orders = ff.FlowInput("orders", sample=pl.DataFrame({"id": [1, 2, 3], "amount": [5, 15, 25]}), flow_graph=graph)
+    orders.filter(ff.col("amount") > 10).to_flow_output(ff.FlowOutput("big_orders"))
     return graph
 
 
@@ -201,16 +201,16 @@ def _no_register(self, flow_or_frame, *, name, overwrite=False):
 @contextmanager
 def demo_graph() -> Iterator[FlowGraph]:
     """Seed the demo's catalog, register its child flow, install ``mood_emoji`` and build the analytics graph."""
-    import flowfile as fl
+    import flowfile as ff
     from flowfile_frame.catalog_reference import SchemaReference
 
     demo = load_demo()
     _drop_catalog(demo.CATALOG)
     with installed_mood_emoji():
         try:
-            schema = fl.CatalogReference(demo.CATALOG, auto_create=True).schema(demo.SCHEMA, auto_create=True)
-            schema.write_table(fl.from_dict(SALES), "sales")
-            schema.write_table(fl.from_dict(REGIONS), "regions")
+            schema = ff.CatalogReference(demo.CATALOG, auto_create=True).schema(demo.SCHEMA, auto_create=True)
+            schema.write_table(ff.from_dict(SALES), "sales")
+            schema.write_table(ff.from_dict(REGIONS), "regions")
             clean_ref = demo.publish_clean_orders(schema)
             original = SchemaReference.register_flow
             SchemaReference.register_flow = _no_register

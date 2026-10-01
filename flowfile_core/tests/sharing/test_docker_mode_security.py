@@ -124,8 +124,8 @@ def test_codegen_dtype_expr_does_not_evaluate_calls(probe_env):
 
 
 def test_codegen_dtype_expr_keeps_emittable_forms():
-    assert _dtype_expr("Int64") == "fl.Int64"
-    assert _dtype_expr("Datetime(time_unit='us', time_zone=None)") == "fl.Datetime(time_unit='us', time_zone=None)"
+    assert _dtype_expr("Int64") == "ff.Int64"
+    assert _dtype_expr("Datetime(time_unit='us', time_zone=None)") == "ff.Datetime(time_unit='us', time_zone=None)"
     assert _dtype_expr("List(Int64)") is None
 
 

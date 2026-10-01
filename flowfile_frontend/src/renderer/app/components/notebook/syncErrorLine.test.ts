@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { setSyncErrorMark, syncErrorLineField, type SyncErrorMark } from "./syncErrorLine";
 
-const CODE = "import flowfile as fl\nx = fl.col('a')\nprint(x)";
+const CODE = "import flowfile as ff\nx = ff.col('a')\nprint(x)";
 
 function marked(state: EditorState): { line: number; title: string }[] {
   const out: { line: number; title: string }[] = [];

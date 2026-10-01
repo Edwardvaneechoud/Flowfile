@@ -333,7 +333,7 @@ class ConnectorHandlersMixin(ConverterMixinBase):
         self._add_code(f"# Read from catalog table: {table_name}")
         self._add_code(f"{var_name} = {self.flowfile_alias}.read_catalog_table(")
         self._add_code(f"    {self._py_str(table_name)},")
-        stored = (settings.catalog_full_table_name or "").rpartition(".")[0] if self.framework == "fl" else ""
+        stored = (settings.catalog_full_table_name or "").rpartition(".")[0] if self.framework == "ff" else ""
         self._emit_catalog_namespace(stored or None, settings.catalog_namespace_id)
         if settings.delta_version is not None:
             self._add_code(f"    delta_version={settings.delta_version},")

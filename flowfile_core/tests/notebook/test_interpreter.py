@@ -102,74 +102,74 @@ def test_the_corpus_stays_far_below_every_bound(notebook_corpus, corpus_runs, mo
         assert len(graph.nodes) * 10 < bounds["nodes_per_request"], name
 
 
-IMPORTS = "import flowfile as fl\nimport polars as pl"
-SOURCE = "src = fl.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1, 2, 3]]})"
+IMPORTS = "import flowfile as ff\nimport polars as pl"
+SOURCE = "src = ff.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1, 2, 3]]})"
 HELPERS = "\n\n\n".join(_NOTEBOOK_HELPERS.values())
 SHAPES = {
     "parameters_bound_and_bare": [
         IMPORTS,
-        "min_a = fl.add_flow_parameter(flow, fl.Parameter('min_a', default=2, type='integer'))\n"
-        "fl.add_flow_parameter(flow, fl.Parameter('label', default='x'))",
-        SOURCE + "\nkept = src.filter(fl.col('a') >= min_a)",
+        "min_a = ff.add_flow_parameter(flow, ff.Parameter('min_a', default=2, type='integer'))\n"
+        "ff.add_flow_parameter(flow, ff.Parameter('label', default='x'))",
+        SOURCE + "\nkept = src.filter(ff.col('a') >= min_a)",
     ],
     "flow_input_sample": [
         IMPORTS,
-        "orders = fl.FlowInput(\n    'orders',\n    sample=pl.DataFrame({'id': [1, 2], 'amount': [5, 15]}, "
-        "schema={'id': fl.Int64, 'amount': fl.Int64}, strict=False),\n    flow_graph=flow,\n)\n"
-        "big = orders.filter(fl.col('amount') > 10)\nbig.to_flow_output('big')",
+        "orders = ff.FlowInput(\n    'orders',\n    sample=pl.DataFrame({'id': [1, 2], 'amount': [5, 15]}, "
+        "schema={'id': ff.Int64, 'amount': ff.Int64}, strict=False),\n    flow_graph=flow,\n)\n"
+        "big = orders.filter(ff.col('amount') > 10)\nbig.to_flow_output('big')",
     ],
     "flow_input_signed_sample": [
         IMPORTS,
-        "refunds = fl.FlowInput(\n    'refunds',\n    sample=pl.DataFrame({'amount': [-5, 15], 'delta': [-2.5, +1.0]}, "
-        "schema={'amount': fl.Int64, 'delta': fl.Float64}, strict=False),\n    flow_graph=flow,\n)\n"
-        "negative = refunds.filter(fl.col('amount') < 0)",
+        "refunds = ff.FlowInput(\n    'refunds',\n    sample=pl.DataFrame({'amount': [-5, 15], 'delta': [-2.5, +1.0]}, "
+        "schema={'amount': ff.Int64, 'delta': ff.Float64}, strict=False),\n    flow_graph=flow,\n)\n"
+        "negative = refunds.filter(ff.col('amount') < 0)",
     ],
     "tuple_unpacking_and_bare_writer": [
         IMPORTS,
-        SOURCE + "\nkept, dropped = src.filter_split(fl.col('a') > 1)\n"
+        SOURCE + "\nkept, dropped = src.filter_split(ff.col('a') > 1)\n"
         "kept.write_csv('/nonexistent/kept.csv', separator=',')\nlast = dropped.select('a')",
     ],
     "helpers_and_gates": [
         IMPORTS + "\nimport json\n\n\n" + HELPERS,
-        "mode = fl.add_flow_parameter(flow, fl.Parameter('mode', default='a', type='enum', enum_values=['a', 'b']))\n"
-        "cut = fl.add_flow_parameter(flow, fl.Parameter('cut', default=1, type='integer'))",
-        SOURCE + "\ngate = fl.Gate(src, parameter=_flowfile_flow_parameter(src, 'mode', mode, type='enum', "
+        "mode = ff.add_flow_parameter(flow, ff.Parameter('mode', default='a', type='enum', enum_values=['a', 'b']))\n"
+        "cut = ff.add_flow_parameter(flow, ff.Parameter('cut', default=1, type='integer'))",
+        SOURCE + "\ngate = ff.Gate(src, parameter=_flowfile_flow_parameter(src, 'mode', mode, type='enum', "
         "enum_values=['a', 'b']), value='a')\nopen_side = gate.then.select('a')\nother = gate.otherwise\n"
-        "formula_gate = fl.Gate(src, f'[a] > {_flowfile_expr_literal(cut)}')\nlive = formula_gate.then",
+        "formula_gate = ff.Gate(src, f'[a] > {_flowfile_expr_literal(cut)}')\nlive = formula_gate.then",
     ],
     "temporal_literals": [
         IMPORTS + "\nimport datetime",
-        "src = fl.from_raw_data({'columns': [{'name': 'd', 'data_type': 'Date'}], 'data': [['2024-01-01']]})\n"
-        "late = src.filter(fl.col('d') > datetime.date(2024, 1, 2))\n"
-        "later = src.filter(fl.col('d') < datetime.datetime(2025, 1, 2, 3, 4, 5))",
+        "src = ff.from_raw_data({'columns': [{'name': 'd', 'data_type': 'Date'}], 'data': [['2024-01-01']]})\n"
+        "late = src.filter(ff.col('d') > datetime.date(2024, 1, 2))\n"
+        "later = src.filter(ff.col('d') < datetime.datetime(2025, 1, 2, 3, 4, 5))",
     ],
     "polars_code_defs": [
         IMPORTS,
         SOURCE + "\nother = src.select('a')",
-        "def _polars_code_3(input_df_1: fl.FlowFrame, input_df_2: fl.FlowFrame):\n"
+        "def _polars_code_3(input_df_1: ff.FlowFrame, input_df_2: ff.FlowFrame):\n"
         "    output_df = input_df_1.join(input_df_2, how='cross')\n    return output_df\n\n\n"
         "joined = src.polars_code(_polars_code_3, other, description='Cross')",
         "def _polars_code_4():\n    output_df = pl.LazyFrame({'a': [1, 2]})\n    return output_df\n\n\n"
-        "made = fl.polars_code(_polars_code_4)",
-        "def _polars_code_5(input_df: fl.FlowFrame):\n    return input_df.with_columns(\n        \n"
+        "made = ff.polars_code(_polars_code_4)",
+        "def _polars_code_5(input_df: ff.FlowFrame):\n    return input_df.with_columns(\n        \n"
         "        b=pl.lit(1),\n    )\n\n\nwidened = src.polars_code(_polars_code_5)",
         "texted = src.polars_code(\n    'output_df = input_df'\n)",
     ],
     "python_script_forms": [
         IMPORTS,
         SOURCE,
-        "import json\nLIMIT = 2\n\n\n@fl.python_script(\n    kernel='lite',\n    returns={'a': fl.Int64},\n"
+        "import json\nLIMIT = 2\n\n\n@ff.python_script(\n    kernel='lite',\n    returns={'a': ff.Int64},\n"
         '    description=\'Keep a few\',\n)\ndef _script_3(frame):\n    """Keep the first rows."""\n'
         "    rows = frame.collect().head(LIMIT)\n    # %% Publish\n    return rows.with_columns(\n"
         "        tag=pl.lit(json.dumps(1)))\n\n\nscripted = _script_3(src)",
-        "@fl.python_script(outputs=['left', 'right'])\ndef split(frame):\n    return {'left': frame, 'right': frame}\n\n\n"
+        "@ff.python_script(outputs=['left', 'right'])\ndef split(frame):\n    return {'left': frame, 'right': frame}\n\n\n"
         "split_4 = split.node(src)\nleft = split_4['left']\nright = split_4['right']",
     ],
     "python_script_prelude_constants": [
         IMPORTS,
         SOURCE,
         "_STOPWORDS = {'a', 'the'}\nKEY = b'k'\nLOOKUP = {(1, 2): 'x'}\nEMPTY = set()\nFLOOR = -1\n\n\n"
-        "@fl.python_script(kernel='lite')\ndef clean(frame):\n"
+        "@ff.python_script(kernel='lite')\ndef clean(frame):\n"
         "    keep = len(_STOPWORDS) + len(KEY) + len(LOOKUP) + len(EMPTY) > FLOOR\n"
         "    return frame if keep else frame\n\n\ncleaned = clean(src)",
     ],
@@ -226,9 +226,9 @@ def test_custom_node_attribute_subscript_and_node_forms_interpret(notebook_corpu
     cells = [
         IMPORTS,
         SOURCE.replace("'Integer'", "'Double'") + "\nordered = src.sort('a')",
-        f"by_attribute = fl.custom_nodes.mood_emoji{call}",
-        f"by_key = fl.custom_nodes['mood_emoji']{call}",
-        f"placed = fl.custom_nodes.mood_emoji.node{call}\nby_node = placed.output",
+        f"by_attribute = ff.custom_nodes.mood_emoji{call}",
+        f"by_key = ff.custom_nodes['mood_emoji']{call}",
+        f"placed = ff.custom_nodes.mood_emoji.node{call}\nby_node = placed.output",
     ]
     interpreted, executed = (_run_cells(cells, executor) for executor in (CellInterpreter(), ExecRunner.executor()))
     assert executed["ok"], executed.get("error")
@@ -237,22 +237,22 @@ def test_custom_node_attribute_subscript_and_node_forms_interpret(notebook_corpu
 
 
 ERRORS = {
-    "frame_error": "fl.Gate(df, parameter='undeclared', value=1)",
+    "frame_error": "ff.Gate(df, parameter='undeclared', value=1)",
     "third_call_of_a_chain": (
-        "out = (\n    df.filter(fl.col('a') > 1)\n    .with_columns(fl.col('a').alias('b'))\n    .join(df, on='nope')\n)"
+        "out = (\n    df.filter(ff.col('a') > 1)\n    .with_columns(ff.col('a').alias('b'))\n    .join(df, on='nope')\n)"
     ),
-    "method_name_above_its_arguments": "out = (df\n    .filter(fl.col('a') > 1)\n    .join(\n        df, on='nope'))",
+    "method_name_above_its_arguments": "out = (df\n    .filter(ff.col('a') > 1)\n    .join(\n        df, on='nope'))",
     "polars_error": "out = df.unpivot(on=['nope'])",
-    "python_script_decorator": "x = 1\n@fl.python_script(\n    kernel='k')\ndef s(df):\n    return helper(df)",
+    "python_script_decorator": "x = 1\n@ff.python_script(\n    kernel='k')\ndef s(df):\n    return helper(df)",
     "invalid_settings": "out = df.to_flow_output('')",
-    "notebook_refusal": "fl.RunFlow(df)",
-    "missing_custom_node": "x = fl.custom_nodes.nope_nope",
-    "missing_custom_node_by_key": "x = fl.custom_nodes['nope_nope']",
+    "notebook_refusal": "ff.RunFlow(df)",
+    "missing_custom_node": "x = ff.custom_nodes.nope_nope",
+    "missing_custom_node_by_key": "x = ff.custom_nodes['nope_nope']",
     "syntax": "x = (",
     "scope_error": "nonlocal x",
 }
 ERROR_SETUP = (
-    "import flowfile as fl\ndf = fl.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1]]})"
+    "import flowfile as ff\ndf = ff.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1]]})"
 )
 
 
@@ -342,7 +342,7 @@ def test_a_basic_filter_value_shaped_like_arithmetic_renders_as_text():
         )
         add_connection(graph, input_schema.NodeConnection.create_from_simple_input(source.node_id, node_id))
     code = "\n".join(cell.code for cell in render(graph).cells)
-    assert 'fl.col("a") > "1-2"' in code and 'fl.col("a") > -3' in code
+    assert 'ff.col("a") > "1-2"' in code and 'ff.col("a") > -3' in code
     _assert_both_runners_build_it_alike(graph)
 
 
@@ -373,7 +373,7 @@ def test_a_script_whose_stored_prelude_has_another_order_still_renders_decorated
     assert cells[0].code == "import json\nimport math"
     cells[0].code = "import math\nimport json"
     code = "\n".join(cell.code for cell in render(graph).cells)
-    assert "import math\nimport json\n\n\n@fl.python_script(" in code
+    assert "import math\nimport json\n\n\n@ff.python_script(" in code
     _assert_both_runners_build_it_alike(graph)
 
 
@@ -382,7 +382,7 @@ def test_a_prelude_import_of_a_module_without_a_spec_interprets_as_exec_imports_
     cells = [
         IMPORTS,
         SOURCE,
-        "import spec_less_module\n\n\n@fl.python_script(kernel='lite')\ndef s(frame):\n"
+        "import spec_less_module\n\n\n@ff.python_script(kernel='lite')\ndef s(frame):\n"
         "    return frame if spec_less_module else frame\n\n\nkept = s(src)",
     ]
     interpreted, executed = (_run_cells(cells, executor) for executor in (CellInterpreter(), ExecRunner.executor()))

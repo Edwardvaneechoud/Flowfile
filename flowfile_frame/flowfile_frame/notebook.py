@@ -1,6 +1,6 @@
 """Notebook build mode: the frame builds onto one session graph and never runs, writes or registers.
 
-While the mode is active every implicit graph (a source without ``flow_graph=``, ``fl.Node``
+While the mode is active every implicit graph (a source without ``flow_graph=``, ``ff.Node``
 without inputs) is the session graph and a merge with any other graph is refused; every node
 ``native.notebook_defers`` names is seeded instead of executed at build; calls that write at
 build, register a node type or run a flow raise ``NativeNodeError``; ``get_kernel_manager()``
@@ -53,7 +53,7 @@ class NotebookMode:
     session graph; ``refusals`` every message raised through :func:`refuse`. Other notebook-mode
     errors (writer fallbacks, ``sink_*``, deferred ``collect()``, cross-graph merges, the refused
     ``run_graph`` and the kernel manager refusal) are raised directly and not recorded.
-    ``snapshot`` holds the canvas nodes ``fl.canvas_node`` adopts and a sync seeds from
+    ``snapshot`` holds the canvas nodes ``ff.canvas_node`` adopts and a sync seeds from
     (``notebook_cells.seed_session`` or ``enter_snapshot_session`` fills it), ``cell_files`` the
     ``linecache`` names of the cells run in the mode. ``owns_graph`` is set when :func:`enter`
     created the session graph. ``sync`` marks a sync; there ``expected`` maps a cell to the

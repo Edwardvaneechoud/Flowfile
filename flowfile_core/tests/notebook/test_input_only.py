@@ -1,11 +1,11 @@
-"""Frame methods and ``fl`` names a cell may call although the render never writes them (``allowlist.INPUT_ONLY``).
+"""Frame methods and ``ff`` names a cell may call although the render never writes them (``allowlist.INPUT_ONLY``).
 
 Each builds the node the frame builds for it, through the interpreter exactly as through ``exec``, and the
 edited cells together use every input-only entry. A sync of them reads and runs nothing beyond a literal
 source's own rows, a call the frame cannot hold as code fails on its line as ``exec`` reports it, and the
 render's own check accepts none of them. In a sync the Polars Code node the frame's ``lazy_methods`` wrapper
 builds for such a call takes the columns Polars plans for it, so the calls below it build checked.
-``fl.LazyFrame(data)`` and ``fl.DataFrame(data)`` place one Manual Input node holding the data.
+``ff.LazyFrame(data)`` and ``ff.DataFrame(data)`` place one Manual Input node holding the data.
 """
 
 from __future__ import annotations
@@ -30,9 +30,9 @@ from tests.notebook.test_sync_io import (  # noqa: F401  (database_connection is
 )
 from tests.notebook.test_sync_io import _run as _run_in
 
-IMPORTS = "import flowfile as fl"
+IMPORTS = "import flowfile as ff"
 SOURCE = (
-    "src = fl.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}, "
+    "src = ff.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}, "
     "{'name': 'b', 'data_type': 'String'}], 'data': [[1, 2, 3], ['x', 'y', 'z']]})"
 )
 EDITED: dict[str, tuple[str, str]] = {
@@ -59,12 +59,12 @@ EDITED: dict[str, tuple[str, str]] = {
     "quantile": ("src.quantile(0.5)", "polars_code"),
     "melt": ("src.melt(id_vars=['b'])", "polars_code"),
     "explode": ("src.explode('a')", "polars_code"),
-    "cast": ("src.cast({'a': fl.Float64})", "polars_code"),
+    "cast": ("src.cast({'a': ff.Float64})", "polars_code"),
     "count": ("src.count()", "polars_code"),
     "unnest": ("src.unnest('a')", "polars_code"),
     "gather_every": ("src.gather_every(2)", "polars_code"),
     "top_k": ("src.top_k(2, by='a')", "polars_code"),
-    "bottom_k": ("src.bottom_k(2, by=fl.col('a'))", "polars_code"),
+    "bottom_k": ("src.bottom_k(2, by=ff.col('a'))", "polars_code"),
     "sql": ("src.sql('SELECT a FROM self')", "sql_query"),
     "sink_csv": ("src.sink_csv('/nonexistent/input_only.csv')", "output"),
     "sink_ipc": ("src.sink_ipc('/nonexistent/input_only.arrow')", "output"),
@@ -116,7 +116,7 @@ def test_every_input_only_entry_has_an_edited_cell():
 def test_a_scan_unique_select_limit_chain_ends_in_a_sample_node(tmp_path):
     path = tmp_path / "rows.csv"
     pl.DataFrame({"a": [1, 1, 2], "b": ["x", "y", "z"]}).write_csv(path)
-    cell = f"rows = fl.scan_csv({str(path)!r}).unique(['a']).select(['a', 'b']).limit(1)"
+    cell = f"rows = ff.scan_csv({str(path)!r}).unique(['a']).select(['a', 'b']).limit(1)"
     interpreted, executed = _both([IMPORTS, cell])
     assert executed["ok"], executed.get("message")
     assert interpreted["ok"], (interpreted.get("line"), interpreted.get("message"))
@@ -162,7 +162,7 @@ def test_every_input_only_polars_code_call_is_seeded_with_the_columns_polars_pla
 
 
 def test_a_planned_node_lets_the_calls_below_it_build_checked_as_exec_does():
-    cell = "dropped = src.tail(2).drop('a')\nkept = src.tail(2).filter(fl.col('a') > 1)"
+    cell = "dropped = src.tail(2).drop('a')\nkept = src.tail(2).filter(ff.col('a') > 1)"
     interpreted, executed = _both([IMPORTS, SOURCE, cell])
     assert interpreted["ok"] and executed["ok"], (interpreted.get("message"), executed.get("message"))
     assert masked_payload(interpreted) == masked_payload(executed)
@@ -178,11 +178,11 @@ FAILURES = {
     "unknown_keyword": ("out = src.tail(nope=1)", "tail() got an unexpected keyword argument 'nope'"),
     "missing_argument": ("out = src.slice()", "slice() missing a required argument: 'offset'"),
     "expression_build_keyword": (
-        "out = src.with_columns(fl.col('a').sqrt(convertable_to_code=False))",
+        "out = src.with_columns(ff.col('a').sqrt(convertable_to_code=False))",
         "sqrt() got an unexpected keyword argument 'convertable_to_code'",
     ),
     "expression_formula_keyword": (
-        "out = src.with_columns(fl.col('a').sqrt(ff_repr='[b]'))",
+        "out = src.with_columns(ff.col('a').sqrt(ff_repr='[b]'))",
         "sqrt() got an unexpected keyword argument 'ff_repr'",
     ),
 }
@@ -207,21 +207,21 @@ def test_text_that_reads_like_a_lambda_stays_the_nodes_code():
 
 
 def test_the_render_check_accepts_no_input_only_call():
-    source = "fl.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1]]})"
+    source = "ff.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1]]})"
     assert interprets_expression(f"{source}.head(1)")
     assert not interprets_expression(f"{source}.limit(1)")
 
 
 FRAMES: dict[str, tuple[str, list[tuple[str, str]], list[list]]] = {
-    "lazyframe_list": ("fl.LazyFrame([1, 2, 3])", [("column_0", "Int64")], [[1, 2, 3]]),
+    "lazyframe_list": ("ff.LazyFrame([1, 2, 3])", [("column_0", "Int64")], [[1, 2, 3]]),
     "dataframe_dict": (
-        "fl.DataFrame({'a': [1, 2], 'b': ['x', 'y']})",
+        "ff.DataFrame({'a': [1, 2], 'b': ['x', 'y']})",
         [("a", "Int64"), ("b", "String")],
         [[1, 2], ["x", "y"]],
     ),
-    "dict_with_schema": ("fl.LazyFrame({'a': [1, 2]}, schema={'a': fl.Float64})", [("a", "Float64")], [[1.0, 2.0]]),
+    "dict_with_schema": ("ff.LazyFrame({'a': [1, 2]}, schema={'a': ff.Float64})", [("a", "Float64")], [[1.0, 2.0]]),
     "rows": (
-        "fl.DataFrame(data=[[1, None], [2, 'y']], schema=['a', 'b'], orient='row', strict=False)",
+        "ff.DataFrame(data=[[1, None], [2, 'y']], schema=['a', 'b'], orient='row', strict=False)",
         [("a", "Int64"), ("b", "String")],
         [[1, 2], [None, "y"]],
     ),
@@ -230,8 +230,8 @@ FRAMES: dict[str, tuple[str, list[tuple[str, str]], list[list]]] = {
 
 
 def test_every_input_only_fl_name_has_a_frame():
-    called = {call.split("(")[0].removeprefix("fl.") for call, _, _ in FRAMES.values()}
-    assert called == set(allowlist.INPUT_ONLY["fl"])
+    called = {call.split("(")[0].removeprefix("ff.") for call, _, _ in FRAMES.values()}
+    assert called == set(allowlist.INPUT_ONLY["ff"])
 
 
 @pytest.mark.parametrize("name", sorted(FRAMES))
@@ -247,11 +247,11 @@ def test_a_frame_built_from_data_is_one_manual_input_node_as_exec_builds_it(name
     assert node["type"] == "manual_input"
     assert [(column["name"], column["data_type"]) for column in raw["columns"]] == columns
     assert raw["data"] == data
-    assert interpreter.used_input_only == {("fl", call.split("(")[0].removeprefix("fl."))}
+    assert interpreter.used_input_only == {("ff", call.split("(")[0].removeprefix("ff."))}
 
 
 def test_a_frame_built_from_data_feeds_the_calls_below_it_as_exec_does():
-    cell = "df = fl.LazyFrame({'a': [1, 2, 3]})\nkept = df.filter(fl.col('a') > 1).tail(1)"
+    cell = "df = ff.LazyFrame({'a': [1, 2, 3]})\nkept = df.filter(ff.col('a') > 1).tail(1)"
     interpreted, executed = _both([IMPORTS, cell])
     assert interpreted["ok"] and executed["ok"], (interpreted.get("message"), executed.get("message"))
     assert masked_payload(interpreted) == masked_payload(executed)
@@ -275,7 +275,7 @@ def test_a_sync_of_frames_built_from_data_reads_connects_and_runs_nothing(monkey
 
 
 def test_the_render_check_accepts_no_frame_built_from_data():
-    assert interprets_expression("fl.from_raw_data({'columns': [], 'data': []})")
-    for name in allowlist.INPUT_ONLY["fl"]:
-        assert not interprets_expression(f"fl.{name}([1, 2, 3])")
-        assert not interprets_expression(f"fl.{name}")
+    assert interprets_expression("ff.from_raw_data({'columns': [], 'data': []})")
+    for name in allowlist.INPUT_ONLY["ff"]:
+        assert not interprets_expression(f"ff.{name}([1, 2, 3])")
+        assert not interprets_expression(f"ff.{name}")

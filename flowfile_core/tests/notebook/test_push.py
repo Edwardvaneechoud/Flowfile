@@ -10,7 +10,7 @@ from contextlib import contextmanager
 
 import pytest
 
-import flowfile as fl
+import flowfile as ff
 from flowfile_core import events
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRun
@@ -232,7 +232,7 @@ def test_push_refuses_a_cell_outside_the_dialect_and_leaves_the_canvas(runner, o
 
 
 def test_push_refuses_an_in_memory_lazy_frame(exec_runner, orders_flow, client_as):
-    code = "import polars as pl\nextra = fl.FlowFrame(pl.LazyFrame({'x': [1]}))"
+    code = "import polars as pl\nextra = ff.FlowFrame(pl.LazyFrame({'x': [1]}))"
 
     response = _push(client_as(OWNER_ID), orders_flow, code)
     assert response.status_code == 422, response.text
@@ -242,7 +242,7 @@ def test_push_refuses_an_in_memory_lazy_frame(exec_runner, orders_flow, client_a
 
 
 def test_an_in_memory_lazy_frame_needs_a_kernel_in_core(runner, orders_flow, client_as):
-    code = "import polars as pl\nextra = fl.FlowFrame(pl.LazyFrame({'x': [1]}))"
+    code = "import polars as pl\nextra = ff.FlowFrame(pl.LazyFrame({'x': [1]}))"
 
     response = _push(client_as(OWNER_ID), orders_flow, code)
     assert response.status_code == 422, response.text
@@ -251,7 +251,7 @@ def test_an_in_memory_lazy_frame_needs_a_kernel_in_core(runner, orders_flow, cli
     assert "needs a kernel" in detail["message"]
 
 
-@pytest.mark.parametrize("code", ["extra = fl.LazyFrame()", "extra = fl.DataFrame(schema={'x': fl.Int64})"])
+@pytest.mark.parametrize("code", ["extra = ff.LazyFrame()", "extra = ff.DataFrame(schema={'x': ff.Int64})"])
 def test_a_frame_without_data_is_refused_as_an_in_memory_lazy_frame(runner_kind, request, orders_flow, client_as, code):
     request.getfixturevalue("runner" if runner_kind == "interpreting" else "exec_runner")
     fingerprint = code_fingerprint(orders_flow)
@@ -264,9 +264,9 @@ def test_a_frame_without_data_is_refused_as_an_in_memory_lazy_frame(runner_kind,
     assert code_fingerprint(orders_flow) == fingerprint
 
 
-FAILING_CHAIN = """extra = fl.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1]]})
+FAILING_CHAIN = """extra = ff.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1]]})
 out = (
-    extra.filter(fl.col('a') > 1)
+    extra.filter(ff.col('a') > 1)
     .join(extra, on='nope')
 )"""
 # 3.10 reports a method call with keywords on the call's first line, 3.11+ on the method name's line
@@ -277,7 +277,7 @@ FAILING_CHAIN_LINE = 4 if sys.version_info >= (3, 11) else 3
     "code, line",
     [
         (FAILING_CHAIN, FAILING_CHAIN_LINE),
-        ("extra = missing_frame.filter(fl.col('a') > 1)", 1),
+        ("extra = missing_frame.filter(ff.col('a') > 1)", 1),
         ("threshold = 8\nx = (", 2),
     ],
     ids=["frame_error_in_a_chain", "undefined_name", "syntax_error"],
@@ -335,7 +335,7 @@ def test_refusals_name_custom_classes_inline_rest_secrets_and_lazy_frames():
     refusals = [m for m, _ in refused_nodes(live, session, installed=lambda node_type: False)]
     assert len(refusals) == 3
     assert "Node 1" in refusals[0] and "LazyFrame" in refusals[0]
-    assert "cell_node" in refusals[1] and "fl.custom_nodes.install" in refusals[1]
+    assert "cell_node" in refusals[1] and "ff.custom_nodes.install" in refusals[1]
     assert "Node 3" in refusals[2] and "secret_name" in refusals[2]
     assert [m for m, _ in refused_nodes(live, session, installed=lambda node_type: True)][1:] == refusals[2:]
 
@@ -411,7 +411,7 @@ def test_push_is_503_without_a_runner(orders_flow, client_as):
 def test_an_inline_file_database_syncs_without_the_password_it_does_not_use(
     runner, open_as, client_as, tmp_path, database_type, status
 ):
-    graph = fl.create_flow_graph()
+    graph = ff.create_flow_graph()
     connection = input_schema.DatabaseConnection(
         database_type=database_type, database=str(tmp_path / "orders.db"), password_ref="gone"
     )
@@ -439,7 +439,7 @@ def test_a_described_catalog_reader_renders_its_description_and_syncs_back_keepi
 ):
     demo = dict(notebook_corpus)["demo"]
     sales = next(node.setting_input for node in demo.nodes if getattr(node.setting_input, "catalog_table_name", None))
-    frame = fl.read_catalog_table(
+    frame = ff.read_catalog_table(
         sales.catalog_table_name, namespace_id=sales.catalog_namespace_id, description="sales data"
     )
     graph = open_as(frame.flow_graph)
@@ -457,7 +457,7 @@ def test_a_described_catalog_reader_renders_its_description_and_syncs_back_keepi
 
 
 def test_user_2_cannot_push_plan_or_run_user_3s_flow(runner, open_as, client_as):
-    graph = open_as(fl.from_dict({"a": [1, 2]}).filter(fl.col("a") > 1).flow_graph, user_id=3)
+    graph = open_as(ff.from_dict({"a": [1, 2]}).filter(ff.col("a") > 1).flow_graph, user_id=3)
     fingerprint = code_fingerprint(graph)
     body = _body(graph, _raise_threshold)
     intruder = client_as(2)
@@ -471,10 +471,10 @@ def test_user_2_cannot_push_plan_or_run_user_3s_flow(runner, open_as, client_as)
 
 
 def _gated_writer(tmp_path, default):
-    mode = fl.Parameter("mode", default=default, type="enum", enum_values=["full", "quick"])
-    source = fl.from_dict({"region": ["N", "S"], "amount": [1.0, 2.0]})
-    fl.add_flow_parameter(source, mode)
-    gate = fl.Gate(source, parameter=mode, value="full")
+    mode = ff.Parameter("mode", default=default, type="enum", enum_values=["full", "quick"])
+    source = ff.from_dict({"region": ["N", "S"], "amount": [1.0, 2.0]})
+    ff.add_flow_parameter(source, mode)
+    gate = ff.Gate(source, parameter=mode, value="full")
     target = tmp_path / f"written_{default}.csv"
     gate.then.write_csv(str(target))
     return gate.then.flow_graph, target
@@ -497,8 +497,8 @@ def test_run_lineage_honours_a_closed_gate(open_as, client_as, tmp_path, default
 
 
 def test_run_lineage_runs_only_the_ancestors(open_as, client_as):
-    source = fl.from_dict({"a": [1, 2, 3]})
-    kept = source.filter(fl.col("a") > 1)
+    source = ff.from_dict({"a": [1, 2, 3]})
+    kept = source.filter(ff.col("a") > 1)
     source.sort("a")
     graph = open_as(kept.flow_graph)
     response = client_as(OWNER_ID).post(

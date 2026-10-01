@@ -5,12 +5,12 @@ every attribute read, call and subscript up by ``(kind, attribute)``, a kind bei
 anything not listed needs a kernel. The lists are positive. :data:`ALLOWLIST` is no larger than the FlowFrame
 exporter's output: ``tests/notebook`` ties every entry to a rendered corpus cell or to the exporter handler that
 emits it. :data:`INPUT_ONLY` names what a cell may also call that the render never writes, pinned to the frame's
-own pure transforms and node builders and to ``fl.LazyFrame`` / ``fl.DataFrame``.
+own pure transforms and node builders and to ``ff.LazyFrame`` / ``ff.DataFrame``.
 
 Usages: ``call`` (called as ``x.attr(...)``), ``read`` (read as ``x.attr``), ``both``,
-``decorator`` (only as ``@fl.attr`` or ``@fl.attr(...)``). The attribute ``__call__`` makes a
+``decorator`` (only as ``@ff.attr`` or ``@ff.attr(...)``). The attribute ``__call__`` makes a
 kind callable by name, ``[]`` subscriptable with a literal string key, and ``*`` makes every
-attribute a data key (``fl.custom_nodes.<node key>``).
+attribute a data key (``ff.custom_nodes.<node key>``).
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ FL_VERDICTS: dict[str, tuple[str, str]] = {
     **{name: (REFUSE, "is a selector, which the notebook does not emit") for name in _SELECTORS},
     **{name: (REFUSE, "is not part of the code the notebook emits") for name in _NOT_EMITTED},
 }
-"""Every name ``import flowfile as fl`` provides: ``(ALLOW, usage)`` or ``(REFUSE, reason)``."""
+"""Every name ``import flowfile as ff`` provides: ``(ALLOW, usage)`` or ``(REFUSE, reason)``."""
 
 _READERS = ("scan_ipc", "scan_ndjson", "read_avro", "read_ipc_stream")
 _WINDOW = ("rolling_sum", "rolling_mean", "rolling_min", "rolling_max", "rolling_std")
@@ -126,7 +126,7 @@ ALLOWLIST: dict[str, dict[str, str]] = {
     "helper": {"__call__": CALL},
     "reader": {"__call__": CALL},
 }
-"""Receiver kind -> attribute -> usage. ``fl`` is looked up in :data:`FL_VERDICTS` instead."""
+"""Receiver kind -> attribute -> usage. ``ff`` is looked up in :data:`FL_VERDICTS` instead."""
 
 _FRAME_PURE_TRANSFORMS = (
     "bottom_k", "cast", "count", "drop_nans", "drop_nulls", "explode", "fill_nan", "fill_null", "first",
@@ -141,16 +141,16 @@ _FRAME_NODE_BUILDERS = (
 
 INPUT_ONLY: dict[str, dict[str, str]] = {
     "FlowFrame": {name: CALL for name in (*_FRAME_PURE_TRANSFORMS, *_FRAME_NODE_BUILDERS)},
-    "fl": {name: CALL for name in _FRAME_CONSTRUCTORS},
+    "ff": {name: CALL for name in _FRAME_CONSTRUCTORS},
 }
 """Receiver kind -> attribute -> usage a cell may call although the render never writes it, looked up after
-:data:`ALLOWLIST` (for ``fl``, after a refusing :data:`FL_VERDICTS` verdict): the frame's pure transforms (one
+:data:`ALLOWLIST` (for ``ff``, after a refusing :data:`FL_VERDICTS` verdict): the frame's pure transforms (one
 Polars Code node each, or the node the frame builds, as ``limit`` a Sample), its own node builders (a SQL Query,
-Output or writer node) and ``fl.LazyFrame`` / ``fl.DataFrame`` (a Manual Input node, rendered back as
-``fl.from_raw_data``). The render's check (``interpret.interprets_expression``) never consults it."""
+Output or writer node) and ``ff.LazyFrame`` / ``ff.DataFrame`` (a Manual Input node, rendered back as
+``ff.from_raw_data``). The render's check (``interpret.interprets_expression``) never consults it."""
 
 IMPORTS: dict[tuple[str, str | None], str] = {
-    ("flowfile", "fl"): "fl",
+    ("flowfile", "ff"): "ff",
     ("polars", "pl"): "pl",
     ("datetime", None): "datetime",
     ("hashlib", None): "inert",
@@ -159,7 +159,7 @@ IMPORTS: dict[tuple[str, str | None], str] = {
 """``import <module> [as <alias>]`` -> what it binds. Any other import only as a Python Script's prelude."""
 
 FROM_IMPORTS: dict[str, frozenset[str]] = {"flowfile_frame": frozenset(_READERS)}
-"""``from <module> import <name>`` (no alias): the frame readers ``fl`` does not re-export."""
+"""``from <module> import <name>`` (no alias): the frame readers ``ff`` does not re-export."""
 
 HELPERS: tuple[str, ...] = ("_flowfile_flow_parameter", "_flowfile_expr_literal")
 """Module helpers the render defines; a cell's ``def`` binds one only when its text is the render's own."""
@@ -173,7 +173,7 @@ GENERATED_NAMES: tuple[str, ...] = (
 )
 """The ``_`` names the exporter binds; any other name starting with ``_`` is refused."""
 
-RESERVED_NAMES: frozenset[str] = frozenset({"fl", "pl", "flow", "datetime", "hashlib", "json", "display"})
+RESERVED_NAMES: frozenset[str] = frozenset({"ff", "pl", "flow", "datetime", "hashlib", "json", "display"})
 """Names a cell binds only through their import (or never: ``flow`` is the session graph)."""
 
 BINARY_OPERATORS: frozenset[str] = frozenset({"Add", "Sub", "Mult", "Div", "FloorDiv", "Mod", "BitAnd", "BitOr"})
@@ -181,20 +181,20 @@ COMPARE_OPERATORS: frozenset[str] = frozenset({"Eq", "NotEq", "Lt", "LtE", "Gt",
 """Operators, only with an expression on one side (a comparison takes one operator, never a chain)."""
 
 ARGUMENT_KINDS: dict[tuple[str, str], dict[int | str, str]] = {
-    ("fl", "add_flow_parameter"): {0: "graph", "flow": "graph"},
-    ("fl", "FlowInput"): {"flow_graph": "graph", "sample": "pl_frame"},
-    ("fl", "polars_code"): {0: "polars_code_def", "code": "polars_code_def"},
+    ("ff", "add_flow_parameter"): {0: "graph", "flow": "graph"},
+    ("ff", "FlowInput"): {"flow_graph": "graph", "sample": "pl_frame"},
+    ("ff", "polars_code"): {0: "polars_code_def", "code": "polars_code_def"},
     ("FlowFrame", "polars_code"): {0: "polars_code_def", "code": "polars_code_def"},
 }
 """Arguments (position or keyword) that also take one non-data kind: the session graph ``flow``, a flow
 input's sample frame, or a Polars Code ``def``."""
 
 REFUSED_KEYWORDS: dict[tuple[str, str], frozenset[str]] = {
-    ("fl", "RunFlow"): frozenset({"name", "schema", "overwrite"}),
+    ("ff", "RunFlow"): frozenset({"name", "schema", "overwrite"}),
 }
 
 DATA_ARGUMENTS: dict[tuple[str, str], frozenset[str]] = {
-    ("fl", name): frozenset(
+    ("ff", name): frozenset(
         {"data", "schema", "schema_overrides", "strict", "orient", "infer_schema_length", "nan_to_null"}
     )
     for name in _FRAME_CONSTRUCTORS
@@ -212,7 +212,7 @@ LITERAL_ARGUMENTS: dict[tuple[str, str], str] = {
     ("pl", "DataFrame"): "sample",
     ("datetime", "date"): "ints",
     ("datetime", "datetime"): "ints",
-    ("fl", "canvas_node"): "node_id",
+    ("ff", "canvas_node"): "node_id",
 }
 """Calls whose arguments must have one literal shape: a flow input's sample frame, integer date parts, a node id."""
 

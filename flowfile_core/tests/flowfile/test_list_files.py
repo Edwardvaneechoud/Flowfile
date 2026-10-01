@@ -408,7 +408,7 @@ class TestCodeExport:
         from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_flowframe
 
         code = export_flow_to_flowframe(self._graph(sample_tree))
-        assert "fl.list_files(" in code
+        assert "ff.list_files(" in code
         assert "recursive=True" in code
         assert "max_files=10" in code
 

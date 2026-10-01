@@ -12,7 +12,7 @@ For pure transformation flows (filter, join, group by, etc.), the generated code
 
 * Transformation nodes translate to Polars operations; I/O nodes (database, catalog, cloud storage, Kafka) translate to FlowFrame API calls (`ff.read_database()`, `ff.read_catalog_table()`, etc.).
 * The structure mirrors your visual flow. Pure transformation flows depend only on Polars (plus a small `polars_*` helper package for formula, fuzzy-match, or graph-solver nodes); flows with I/O nodes require `pip install flowfile`.
-* The **FlowFrame** export writes the same flow in the `fl` dialect instead (`import flowfile as fl`): every node becomes the frame call that adds that node type back — `write_csv`, `.polars_code(fn)`, `with_row_index`, `text_to_rows`, `fl.sql`, and so on — with a node's description as `description=`, so running the script rebuilds the flow as well as computing it. The [canvas notebook](../notebook.md), the Code panel's **Notebook** mode, shows this export split into cells, one per statement; a cell spans every node its statement chains together.
+* The **FlowFrame** export writes the same flow with the FlowFrame API instead (`import flowfile as ff`): every node becomes the frame call that adds that node type back — `write_csv`, `.polars_code(fn)`, `with_row_index`, `text_to_rows`, `ff.sql`, and so on — with a node's description as `description=`, so running the script rebuilds the flow as well as computing it. The [canvas notebook](../notebook.md), the Code panel's **Notebook** mode, shows this export split into cells, one per statement; a cell spans every node its statement chains together.
 
 ## Examples of Generated Code
 
@@ -213,7 +213,7 @@ The `if`/`else` fusion applies only when the two guards are one gate's exactly-c
 A gate that routes on a **formula** instead emits a boolean flag — the formula applied as a row predicate to the control input (or the data input) via a small helper the generator adds to the script; the `if` blocks then read the flag.
 
 !!! note "Gates in the FlowFrame and Project exports"
-    The `if` blocks, union assignment and list-appends above belong to the Polars export only. The FlowFrame and Project exports place a gate as `fl.Gate(...)`, and the nodes behind it read `gate.then` (and `gate.otherwise` when the else output is on), so the rebuilt flow holds a real Gate node that routes when a frame below it is collected, exactly as the canvas does.
+    The `if` blocks, union assignment and list-appends above belong to the Polars export only. The FlowFrame and Project exports place a gate as `ff.Gate(...)`, and the nodes behind it read `gate.then` (and `gate.otherwise` when the else output is on), so the rebuilt flow holds a real Gate node that routes when a frame below it is collected, exactly as the canvas does.
 
 ## Project Export
 
@@ -234,10 +234,10 @@ my_flow/
 
 Key points:
 
-* **Notebook nodes get their own modules** (the Polars export refuses them; the FlowFrame export inlines them as `@fl.python_script` when their cells regenerate byte for byte, else as `fl.PythonScript(cells=...)`). Each one becomes its own module exposing a `run()` function that the pipeline calls with the node's input frames; the notebook code is preserved verbatim inside it (cell structure kept via `# %%` markers), and the bundled `flowfile_ctx.py` shim makes `read_input()` / `publish_output()` / artifacts / logging work standalone — inputs and outputs are exchanged in memory as Polars LazyFrames.
+* **Notebook nodes get their own modules** (the Polars export refuses them; the FlowFrame export inlines them as `@ff.python_script` when their cells regenerate byte for byte, else as `ff.PythonScript(cells=...)`). Each one becomes its own module exposing a `run()` function that the pipeline calls with the node's input frames; the notebook code is preserved verbatim inside it (cell structure kept via `# %%` markers), and the bundled `flowfile_ctx.py` shim makes `read_input()` / `publish_output()` / artifacts / logging work standalone — inputs and outputs are exchanged in memory as Polars LazyFrames.
 * **Custom nodes get their own modules** under `custom_nodes/` instead of being inlined into the script.
-* The pipeline itself uses the **FlowFrame API** (`import flowfile as fl`), written like the FlowFrame export.
-* **Gates land in `pipeline.py` as `fl.Gate` nodes** read through `.then` / `.otherwise`, exactly like the FlowFrame export.
+* The pipeline itself uses the **FlowFrame API** (`import flowfile as ff`), written like the FlowFrame export.
+* **Gates land in `pipeline.py` as `ff.Gate` nodes** read through `.then` / `.otherwise`, exactly like the FlowFrame export.
 * Server-backed `flowfile_ctx` APIs (global artifacts, catalog access) raise `NotImplementedError` in the exported project; the export panel and the generated README list these limitations per node.
 
 From the Code panel you can either **download the project as a .zip** or **save it directly into a folder** using the built-in file browser.

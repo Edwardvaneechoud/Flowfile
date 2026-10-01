@@ -415,7 +415,7 @@ ONE_ENTRY_PINS: list[tuple[str, str, list[tuple[str, str, str]], list[str]]] = [
         "ff",
         "native",
         [("Total", "[Value] * 2", "Auto")],
-        ['        .with_columns((fl.col("Value") * fl.lit(2)).alias("Total"))'],
+        ['        .with_columns((ff.col("Value") * ff.lit(2)).alias("Total"))'],
     ),
     (
         "ff",
@@ -427,7 +427,7 @@ ONE_ENTRY_PINS: list[tuple[str, str, list[tuple[str, str, str]], list[str]]] = [
         ],
     ),
 ]
-"""What a one-entry node must keep emitting; all but the `fl` native row are the pre-multi-entry baseline (845818d0).
+"""What a one-entry node must keep emitting; all but the `ff` native row are the pre-multi-entry baseline (845818d0).
 
 `string_similarity` has no native translation, so it pins the fallback branch.
 """

@@ -1,8 +1,8 @@
-"""The allowlist is complete and exact: every ``fl`` name has a verdict, every entry exists on its receiver,
+"""The allowlist is complete and exact: every ``ff`` name has a verdict, every entry exists on its receiver,
 no entry runs code or reaches data, every entry outside the corpus names a real exporter handler, and
 everything the exporter can emit is allowed or kept as formula text. The input-only table is exactly the
 frame's own pure transforms and node builders the render does not write, none of them a hazard, plus
-``fl.LazyFrame`` / ``fl.DataFrame``, which take Polars' constructor arguments only."""
+``ff.LazyFrame`` / ``ff.DataFrame``, which take Polars' constructor arguments only."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ WEB_UI_NAMES = {"open_graph_in_editor", "start_web_ui"}
 
 
 def test_every_fl_name_has_a_verdict():
-    completions = {entry["name"] for entry in json.loads(COMPLETIONS.read_text(encoding="utf-8"))["fl"]}
+    completions = {entry["name"] for entry in json.loads(COMPLETIONS.read_text(encoding="utf-8"))["ff"]}
     assert set(allowlist.FL_VERDICTS) == completions == set(_fl_namespace.__all__) | WEB_UI_NAMES
     allowed = {name for name, (verdict, _) in allowlist.FL_VERDICTS.items() if verdict == allowlist.ALLOW}
     assert allowed <= set(_fl_namespace.__all__)
@@ -124,7 +124,7 @@ def _wrapped_polars_methods(names) -> set[str]:
 
 def test_input_only_entries_are_the_frames_pure_transforms_and_node_builders():
     frame = allowlist.INPUT_ONLY["FlowFrame"]
-    assert set(allowlist.INPUT_ONLY) == {"FlowFrame", "fl"} and set(frame.values()) == {allowlist.CALL}
+    assert set(allowlist.INPUT_ONLY) == {"FlowFrame", "ff"} and set(frame.values()) == {allowlist.CALL}
     assert set(frame) == (PURE_TRANSFORMS - set(allowlist.ALLOWLIST["FlowFrame"])) | FRAME_NODE_BUILDERS
     wrapped = _wrapped_polars_methods(frame)
     assert set(frame) - wrapped == FRAME_NODE_BUILDERS | FRAME_OWN_TRANSFORMS
@@ -134,11 +134,11 @@ def test_input_only_entries_are_the_frames_pure_transforms_and_node_builders():
 
 
 def test_the_input_only_fl_names_are_the_frame_aliases_taking_polars_constructor_arguments():
-    names = allowlist.INPUT_ONLY["fl"]
+    names = allowlist.INPUT_ONLY["ff"]
     assert names == {"LazyFrame": allowlist.CALL, "DataFrame": allowlist.CALL}
     assert all(getattr(_fl_namespace, name) is FlowFrame for name in names)
     assert all(allowlist.FL_VERDICTS[name][0] == allowlist.REFUSE for name in names)
-    assert set(allowlist.DATA_ARGUMENTS) == {("fl", name) for name in names}
+    assert set(allowlist.DATA_ARGUMENTS) == {("ff", name) for name in names}
     polars = set(inspect.signature(pl.DataFrame).parameters)
     assert polars == set(inspect.signature(pl.LazyFrame).parameters)
     frame = set(inspect.signature(FlowFrame.__new__).parameters)
@@ -171,7 +171,7 @@ def _resolve(handler: str):
 
 
 def _allowed_entries() -> set[tuple[str, str]]:
-    entries = {("fl", name) for name, (verdict, _) in allowlist.FL_VERDICTS.items() if verdict == allowlist.ALLOW}
+    entries = {("ff", name) for name, (verdict, _) in allowlist.FL_VERDICTS.items() if verdict == allowlist.ALLOW}
     entries |= {(kind, attr) for kind, table in allowlist.ALLOWLIST.items() for attr in table}
     entries |= {("import", module) for module, _ in allowlist.IMPORTS}
     entries |= {(f"from {module}", name) for module, names in allowlist.FROM_IMPORTS.items() for name in names}
@@ -189,20 +189,20 @@ _FORMULA = f"{_FF}._translate_to_ff_code"
 
 EMITTED_OUTSIDE_THE_CORPUS: dict[tuple[str, str], str] = {
     **{
-        ("fl", name): f"{_CG}.native_handlers:_dtype_expr"
+        ("ff", name): f"{_CG}.native_handlers:_dtype_expr"
         for name in allowlist._DTYPES
         if name not in ("Boolean", "Float64", "Int32", "Int64", "Utf8")
     },
-    ("fl", "when"): _WINDOWS,
-    ("fl", "read_csv"): f"{_BASE}._handle_csv_read_non_utf8",
-    ("fl", "list_files"): f"{_CONNECTORS}._handle_list_files",
-    ("fl", "read_database"): f"{_CONNECTORS}._handle_database_reader",
-    ("fl", "read_kafka"): f"{_FF}._handle_kafka_source",
-    ("fl", "read_api"): f"{_CONNECTORS}._handle_rest_api_reader",
-    ("fl", "read_from_cloud_storage"): f"{_FF}._handle_cloud_storage_reader",
-    ("fl", "read_catalog_sql"): f"{_CONNECTORS}._handle_catalog_sql_reader",
-    ("fl", "write_database"): f"{_CONNECTORS}._handle_database_writer",
-    ("fl", "write_to_cloud_storage"): f"{_FF}._handle_cloud_storage_writer",
+    ("ff", "when"): _WINDOWS,
+    ("ff", "read_csv"): f"{_BASE}._handle_csv_read_non_utf8",
+    ("ff", "list_files"): f"{_CONNECTORS}._handle_list_files",
+    ("ff", "read_database"): f"{_CONNECTORS}._handle_database_reader",
+    ("ff", "read_kafka"): f"{_FF}._handle_kafka_source",
+    ("ff", "read_api"): f"{_CONNECTORS}._handle_rest_api_reader",
+    ("ff", "read_from_cloud_storage"): f"{_FF}._handle_cloud_storage_reader",
+    ("ff", "read_catalog_sql"): f"{_CONNECTORS}._handle_catalog_sql_reader",
+    ("ff", "write_database"): f"{_CONNECTORS}._handle_database_writer",
+    ("ff", "write_to_cloud_storage"): f"{_FF}._handle_cloud_storage_writer",
     ("datetime", "date"): f"{_CG}.expression_helpers:_temporal_literal",
     ("datetime", "datetime"): f"{_CG}.expression_helpers:_temporal_literal",
     ("FlowFrame", "drop"): f"{_BASE}._handle_select",
@@ -273,17 +273,17 @@ KEPT_AS_FORMULA_TEXT = frozenset(
         ("DateTimeNS", "offset_by"),
         *(("StringNS", name) for name in ("count_matches", "find", "pad_end", "pad_start", "replace_many")),
         *(("StringNS", name) for name in ("slice", "split")),
-        *(("fl", name) for name in ("coalesce", "concat_list", "concat_str", "duration", "int_range")),
-        *(("fl", name) for name in ("max_horizontal", "min_horizontal")),
+        *(("ff", name) for name in ("coalesce", "concat_list", "concat_str", "duration", "int_range")),
+        *(("ff", name) for name in ("max_horizontal", "min_horizontal")),
     }
 )
 """What the formula translator emits outside the allowlist: hashing's ``lambda``, clock reads, ``elseif``
 chains and the rest; the notebook render keeps a formula using any of them as its formula text."""
-_MODULES = {"fl", "pl", "datetime", "hashlib"}
+_MODULES = {"ff", "pl", "datetime", "hashlib"}
 
 
 def _emitted(code: str) -> set[tuple[str, str]]:
-    """The ``(kind, attribute)`` of every attribute an ``fl`` snippet reads or calls outside a ``lambda``."""
+    """The ``(kind, attribute)`` of every attribute an ``ff`` snippet reads or calls outside a ``lambda``."""
 
     def receiver(node: ast.expr) -> str:
         if isinstance(node, ast.Name):
@@ -311,8 +311,8 @@ def _emitted(code: str) -> set[tuple[str, str]]:
 def _translations() -> dict[str, str]:
     """Every function the formula translator maps, applied to a column and literals, plus its conditional
     and membership forms, as the render writes them."""
-    arguments = ['fl.col("a")', "fl.lit(1)", "fl.lit(2)"]
-    snippets = {name: generate(arguments, prefix="fl") for name, generate in FUNCTION_CODE_GEN.items()}
+    arguments = ['ff.col("a")', "ff.lit(1)", "ff.lit(2)"]
+    snippets = {name: generate(arguments, prefix="ff") for name, generate in FUNCTION_CODE_GEN.items()}
     for formula in ("if [a] > 1 then 1 elseif [a] > 0 then 2 else 3 endif", "[a] in ([b], 1)", "[a] in (1, 2)"):
         snippets[formula] = _polars_code_to_flowframe(to_flowframe_code(formula), modules=("ff",))
     return snippets
@@ -323,7 +323,7 @@ def _handler_expressions() -> list[str]:
     converter = FlowGraphToFlowFrameConverter.__new__(FlowGraphToFlowFrameConverter)
     converter.imports = set()
     aggregations = set(re.findall(r'value: "(\w+)"', AGGREGATIONS.read_text())) | set(_NATIVE_AGG_FUNCS)
-    expressions = [f'fl.col("a").{converter._get_agg_function(agg)}' for agg in sorted(aggregations)]
+    expressions = [f'ff.col("a").{converter._get_agg_function(agg)}' for agg in sorted(aggregations)]
     for function in typing.get_args(transform_schema.WindowFunctionName):
         window = transform_schema.WindowFunctionInput(
             column="a", function=function, new_column_name="b", window_size=2, number_of_groups=2

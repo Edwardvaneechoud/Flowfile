@@ -31,7 +31,7 @@ class NodeEmission:
     num_inputs: int  # number of distinct (resolved) input nodes
     is_boundary: bool
     pinned: bool = False  # user named the node (node_reference) -> keep it a variable
-    placeholder_reason: str | None = None  # set when the node emitted ``fl.canvas_node``; never fused
+    placeholder_reason: str | None = None  # set when the node emitted ``ff.canvas_node``; never fused
     node_ids: list[int] = field(default_factory=list)  # after fusion: every node of the statement, in order
 
     @property

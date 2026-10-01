@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-import flowfile as fl
+import flowfile
 import flowfile_core.kernel as kernel_package
 import flowfile_frame as ff
 from flowfile_core.configs import node_store
@@ -106,7 +106,7 @@ def test_sink_refuses_in_the_mode(mode, tmp_path):
         lambda g: ff.create_cloud_storage_connection(None),
         lambda g: ff.create_cloud_storage_connection_if_not_exists(None),
         lambda g: ff.del_cloud_storage_connection("nb"),
-        lambda g: fl.open_graph_in_editor(g),
+        lambda g: flowfile.open_graph_in_editor(g),
     ],
     ids=[
         "register_flow",

@@ -265,10 +265,10 @@ def open_as(tmp_path):
 
 @pytest.fixture
 def orders_flow(open_as):
-    import flowfile as fl
+    import flowfile as ff
 
-    orders = fl.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
-    result = orders.filter(fl.col("amount") > 10).with_columns((fl.col("amount") * 2).alias("double"))
+    orders = ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
+    result = orders.filter(ff.col("amount") > 10).with_columns((ff.col("amount") * 2).alias("double"))
     return open_as(result.flow_graph)
 
 

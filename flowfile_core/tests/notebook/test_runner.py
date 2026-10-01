@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-import flowfile as fl
+import flowfile as ff
 from flowfile_core import main
 from flowfile_core.notebook import allowlist, bridge
 from flowfile_core.notebook import runner as runner_module
@@ -38,7 +38,7 @@ def _request(graph, cells=None) -> bridge.CleanRunRequest:
 
 
 def _small_graph():
-    return fl.from_dict({"a": [1, 2, 3]}).filter(fl.col("a") > 1).flow_graph
+    return ff.from_dict({"a": [1, 2, 3]}).filter(ff.col("a") > 1).flow_graph
 
 
 def test_main_installs_the_notebook_runner_once_right_after_the_notebook_router():
@@ -119,7 +119,7 @@ def test_the_runner_syncs_as_the_requesting_user_under_the_lock_on_one_thread(op
 @pytest.mark.parametrize("user_id", [0, -3, None, True, "1", 1.0])
 def test_the_runner_needs_the_requesting_users_id(user_id):
     with pytest.raises(TypeError, match="positive int"):
-        NotebookRunner().clean_run(user_id, 1, bridge.CleanRunRequest(cells=[("imports", "import flowfile as fl")]))
+        NotebookRunner().clean_run(user_id, 1, bridge.CleanRunRequest(cells=[("imports", "import flowfile as ff")]))
 
 
 def test_a_run_leaves_the_callers_snapshot_alone():

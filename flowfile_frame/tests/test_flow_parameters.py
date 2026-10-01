@@ -19,7 +19,7 @@ from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from .native_helpers import core_node
 
 ORDERS = {"id": [1, 2, 3, 4], "amount": [10.0, 25.0, 70.0, 120.0], "flag": [True, False, True, False]}
-SUPPORTED_USES = "fl.lit(...), in comparisons, in fl.Gate(parameter=...) or in fl.RunFlow(params=...)"
+SUPPORTED_USES = "ff.lit(...), in comparisons, in ff.Gate(parameter=...) or in ff.RunFlow(params=...)"
 
 
 def _orders() -> tuple[ff.FlowGraph, ff.FlowFrame]:
@@ -136,7 +136,7 @@ def test_add_flow_parameter_takes_only_a_parameter_and_stores_a_copy():
     assert min_amount.default == 0
     with pytest.raises(ff.NativeNodeError, match="already declared"):
         ff.add_flow_parameter(child, ff.Parameter("min_amount"))
-    with pytest.raises(ff.NativeNodeError, match=r"takes a fl\.Parameter.*fl\.Parameter\(name"):
+    with pytest.raises(ff.NativeNodeError, match=r"takes a ff\.Parameter.*ff\.Parameter\(name"):
         ff.add_flow_parameter(child, "region")
     with pytest.raises(TypeError):
         ff.add_flow_parameter(child, "region", default="EU")
@@ -281,7 +281,7 @@ def test_save_and_open_keeps_the_reference():
 @pytest.mark.parametrize(
     "build, position",
     [
-        (lambda raw, p: ff.col(p), "fl.col"),
+        (lambda raw, p: ff.col(p), "ff.col"),
         (lambda raw, p: raw.select(p), "select"),
         (lambda raw, p: raw.select("${region}"), "select"),
         (lambda raw, p: raw.group_by(p), "group_by"),
@@ -337,10 +337,10 @@ def test_set_flow_parameter_refuses_another_parameter_as_the_value():
 @pytest.mark.parametrize(
     "build, method, hint",
     [
-        (lambda p: ff.col("amount").clip(p), "clip", "fl.lit(parameter)"),
-        (lambda p: ff.col("amount").clip(upper_bound=[p]), "clip", "fl.lit(parameter)"),
-        (lambda p: ff.col("amount").shift(fill_value={"v": (p,)}), "shift", "fl.lit(parameter)"),
-        (lambda p: ff.col("amount").fill_null(p), "fill_null", "fl.when"),
+        (lambda p: ff.col("amount").clip(p), "clip", "ff.lit(parameter)"),
+        (lambda p: ff.col("amount").clip(upper_bound=[p]), "clip", "ff.lit(parameter)"),
+        (lambda p: ff.col("amount").shift(fill_value={"v": (p,)}), "shift", "ff.lit(parameter)"),
+        (lambda p: ff.col("amount").fill_null(p), "fill_null", "ff.when"),
         (lambda p: ff.col("amount").is_in([p]), "is_in", "compare with =="),
     ],
 )
@@ -351,7 +351,7 @@ def test_parameter_as_an_expr_method_argument_raises(build, method, hint):
     with pytest.raises(ff.NativeNodeError) as info:
         build(min_amount)
     message = str(info.value)
-    assert message.startswith(f"{method}() takes no fl.Parameter") and hint in message
+    assert message.startswith(f"{method}() takes no ff.Parameter") and hint in message
 
 
 def test_parameter_through_lit_works_as_an_expr_method_argument():

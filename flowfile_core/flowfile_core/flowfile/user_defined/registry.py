@@ -168,7 +168,7 @@ class CustomNodeRegistry:
         """Exec-free catch-up for a lookup of an unknown node type; returns the entries it loaded.
 
         Loads node files that appeared in the nodes directory or a mount since the last glob
-        (another process wrote them, e.g. ``fl.custom_nodes.install`` in a script) and retries
+        (another process wrote them, e.g. ``ff.custom_nodes.install`` in a script) and retries
         broken entries whose file changed. The glob is skipped while the nodes directory,
         ``mounts.json`` and every mount directory keep the ``st_mtime_ns`` they had at the last
         glob, so a refresh with nothing new costs a few ``stat`` calls (``mounts.json`` is re-read

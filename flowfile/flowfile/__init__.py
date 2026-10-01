@@ -29,7 +29,7 @@ from flowfile_frame.notebook import refuse
 
 @functools.wraps(_open_graph_in_editor)
 def open_graph_in_editor(*args, **kwargs):
-    refuse("fl.open_graph_in_editor")
+    refuse("ff.open_graph_in_editor")
     return _open_graph_in_editor(*args, **kwargs)
 
 

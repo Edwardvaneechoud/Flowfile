@@ -43,7 +43,7 @@ def test_cells_cover_every_node_once_in_statement_order():
 def test_names_refs_and_descriptions_are_what_the_frame_stores_back():
     rendering = render(_pipeline())
     code = "\n".join(cell.code for cell in rendering.cells)
-    assert 'factor = fl.add_flow_parameter(flow, fl.Parameter("factor", default=2, type="integer"))' in code
+    assert 'factor = ff.add_flow_parameter(flow, ff.Parameter("factor", default=2, type="integer"))' in code
     assert "[amount] * ${factor}" in code and "[region] = '${label}'" in code and "__FF_PARAM" not in code
     assert 'description="Add region names"' in code
     joined = next(cell for cell in rendering.cells if 'description="Add region names"' in cell.code)
@@ -69,7 +69,7 @@ def test_the_cells_rebuild_every_node_exactly(runner_kind):
 def test_parameters_cell_runs_against_the_frame_api():
     params = next(cell for cell in render(_pipeline()).cells if cell.kind == "parameters")
     flow = FlowGraph()
-    namespace = {"fl": ff, "flow": flow}
+    namespace = {"ff": ff, "flow": flow}
     exec(compile(params.code, "parameters", "exec"), namespace)
     assert isinstance(namespace["factor"], ff.Parameter)
     assert [(p.name, p.type, p.default_value) for p in flow.flow_settings.parameters] == [
@@ -88,10 +88,10 @@ def test_an_unconfigured_node_and_its_downstream_are_placeholders():
     cells = {cell.node_ids[-1]: cell for cell in render(graph).cells if cell.node_ids}
     promise, downstream = cells[900], cells[901]
     assert (promise.status, promise.reason) == ("placeholder", "not configured yet")
-    assert promise.code.startswith(f"selected_900 = fl.canvas_node(900, filtered_{last})  # ")
+    assert promise.code.startswith(f"selected_900 = ff.canvas_node(900, filtered_{last})  # ")
     assert downstream.reason == "downstream of node 900, which is not editable as code"
-    assert downstream.code.startswith("counted_901 = fl.canvas_node(901, selected_900)")
-    assert downstream.uses == ["fl", "selected_900"]
+    assert downstream.code.startswith("counted_901 = ff.canvas_node(901, selected_900)")
+    assert downstream.uses == ["ff", "selected_900"]
 
 
 def test_render_does_not_mutate_live_settings():

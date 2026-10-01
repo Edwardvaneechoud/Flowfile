@@ -311,7 +311,7 @@ def test_unknown_names_raise():
         _ = ff.custom_nodes.no_such_custom_node
     with pytest.raises(ff.NativeNodeError, match="'no_such_custom_node' is not installed"):
         ff.custom_nodes["No Such Custom Node"]
-    with pytest.raises(ff.NativeNodeError, match=r"fl.Node\('filter'"):
+    with pytest.raises(ff.NativeNodeError, match=r"ff.Node\('filter'"):
         ff.custom_nodes.get("filter")
     assert "filter" not in ff.custom_nodes and 42 not in ff.custom_nodes
 
@@ -460,8 +460,8 @@ def test_a_class_redefined_after_install_names_the_reinstall(nodes_dir, tmp_path
     assert rerun is not first
     with pytest.raises(
         ff.NativeNodeError,
-        match=r"fl\.CustomNode\('install_test_rerun', \.\.\.\).*"
-        r"fl\.custom_nodes\.install\(InstallRerun, overwrite=True\)",
+        match=r"ff\.CustomNode\('install_test_rerun', \.\.\.\).*"
+        r"ff\.custom_nodes\.install\(InstallRerun, overwrite=True\)",
     ):
         ff.CustomNode(rerun, ff.from_dict(DATA))
 
@@ -592,7 +592,7 @@ def test_install_path_refusals(nodes_dir, tmp_path):
     with pytest.raises(
         ff.NativeNodeError,
         match=r"'install_test_upper' is already installed from .*some_other_name.py; place that node by its key, "
-        r"fl.custom_nodes\['install_test_upper'\], or delete that file and install again",
+        r"ff.custom_nodes\['install_test_upper'\], or delete that file and install again",
     ):
         ff.custom_nodes.install(copy)
     assert not (nodes_dir / "install_test_upper.py").exists()
@@ -660,7 +660,7 @@ def test_flow_with_a_session_class_opens_elsewhere_as_a_placeholder_until_instal
 def test_register_flow_warns_about_a_session_class_but_not_an_installed_one(nodes_dir):
     schema = ff.CatalogReference(f"CustomNodes_{uuid4().hex[:8]}", auto_create=True).schema("flows", auto_create=True)
     out = ff.CustomNode(InstallDoubler, ff.from_dict(DATA)).output
-    with pytest.warns(UserWarning, match=r"install_test_doubler \(node \d+\).*fl\.custom_nodes\.install"):
+    with pytest.warns(UserWarning, match=r"install_test_doubler \(node \d+\).*ff\.custom_nodes\.install"):
         ff.register_flow(out.flow_graph, name="session class", schema=schema)
 
     ff.custom_nodes.install(InstallDoubler)
@@ -668,7 +668,7 @@ def test_register_flow_warns_about_a_session_class_but_not_an_installed_one(node
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         ff.register_flow(installed.flow_graph, name="installed class", schema=schema)
-    assert not [w for w in caught if "fl.custom_nodes.install" in str(w.message)]
+    assert not [w for w in caught if "ff.custom_nodes.install" in str(w.message)]
 
 
 # kernel end-to-end (Docker)

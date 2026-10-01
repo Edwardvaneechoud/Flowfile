@@ -272,7 +272,7 @@ export const RERENDER_FAILED = "The notebook could not be re-rendered from the c
 export const PREVIEW_ROW_LIMIT = 100;
 export const notOnCanvasText = (nodeId: number): string => `Node #${nodeId} is not on the canvas.`;
 
-/** A placeholder keeps its `fl.canvas_node(...)` text under its reason as a comment. */
+/** A placeholder keeps its `ff.canvas_node(...)` text under its reason as a comment. */
 function renderedCode(cell: RenderedCell): string {
   return cell.status !== "code" && cell.reason
     ? `# ${cell.reason.replace(/\n/g, " ")}\n${cell.code}`

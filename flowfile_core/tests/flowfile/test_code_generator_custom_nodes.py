@@ -116,7 +116,7 @@ def connect(graph: FlowGraph, from_id: int, to_id: int, input_handle: str = "inp
 
 
 def add_record_count(graph: FlowGraph, node_id: int, depends_on: int) -> FlowGraph:
-    """Wire a downstream record_count node — a FlowFrame-only op (emits fl.len())."""
+    """Wire a downstream record_count node — a FlowFrame-only op (emits ff.len())."""
     graph.add_record_count(
         input_schema.NodeRecordCount(flow_id=graph.flow_id, node_id=node_id, depending_on_id=depends_on)
     )
@@ -257,7 +257,7 @@ class TestCustomNodeCodeGeneration:
     """Integration tests for generating code with custom nodes."""
 
     def test_generated_code_includes_custom_node_imports(self, AddColumnNode):
-        """The Polars export inlines the node's source with its imports (the FlowFrame export calls fl.custom_nodes)."""
+        """The Polars export inlines the node's source with its imports (the FlowFrame export calls ff.custom_nodes)."""
         add_to_custom_node_store(AddColumnNode)
 
         graph = create_graph()
@@ -342,7 +342,7 @@ class TestReturnNormalization:
 
 
 class TestFlowFrameConverter:
-    """FlowFrame export places a custom node through ``fl.custom_nodes``, like the frame does."""
+    """FlowFrame export places a custom node through ``ff.custom_nodes``, like the frame does."""
 
     def test_emits_the_custom_nodes_factory_with_its_settings(self, AddColumnNode):
         add_to_custom_node_store(AddColumnNode)
@@ -354,14 +354,14 @@ class TestFlowFrameConverter:
 
         code = export_flow_to_flowframe(graph)
 
-        call = next(line for line in code.split("\n") if "fl.custom_nodes" in line)
-        assert call.strip().startswith("df = fl.custom_nodes.")
+        call = next(line for line in code.split("\n") if "ff.custom_nodes" in line)
+        assert call.strip().startswith("df = ff.custom_nodes.")
         assert '(source, column_name="new_col", fixed_value="hello")' in call
         assert ".process(" not in code and "class " not in code
 
     def test_custom_node_executes_with_downstream_ff_op(self, AddColumnNode):
         """Regression guard: the custom-node output feeds a FlowFrame-only op
-        (record_count -> fl.len()), which only runs if the output is a FlowFrame."""
+        (record_count -> ff.len()), which only runs if the output is a FlowFrame."""
         add_to_custom_node_store(AddColumnNode)
         graph = create_graph()
         add_manual_input(graph, [{"Column 1": "test"}], node_id=1)
@@ -719,14 +719,14 @@ class TestManualInputPublicApiOnly:
 
         code = export_flow_to_flowframe(graph)
         assert "flowfile_core" not in code
-        assert "fl.from_raw_data({" in code
+        assert "ff.from_raw_data({" in code
         assert "RawData(" not in code
 
         ns: dict = {}
         exec(compile(code, "<gen>", "exec"), ns)
         result = ns["run_etl_pipeline"]()
         df = result.collect() if hasattr(result, "collect") else result
-        # Explicit Float64 preserved (fl.from_dict would re-infer Int64 for [1, 2, 3]).
+        # Explicit Float64 preserved (ff.from_dict would re-infer Int64 for [1, 2, 3]).
         assert df.schema["amount"] == pl.Float64
         assert df["amount"].to_list() == [1.0, 2.0, 3.0]
         assert df["label"].to_list() == ["a", "b", "c"]

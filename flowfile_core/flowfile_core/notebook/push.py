@@ -30,7 +30,7 @@ LAZY_FRAME_REFUSAL = (
 )
 CUSTOM_CLASS_REFUSAL = (
     "Node {node_id} uses the custom node class {node_type!r}, defined in a cell and not installed; "
-    "install it from a script with fl.custom_nodes.install(...) and push again."
+    "install it from a script with ff.custom_nodes.install(...) and push again."
 )
 INLINE_SECRET_REFUSAL = (
     "Node {node_id} (REST API reader) carries an inline secret, which is never stored on the canvas; "

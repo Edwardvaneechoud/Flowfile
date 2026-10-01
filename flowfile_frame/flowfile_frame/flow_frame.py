@@ -2858,7 +2858,7 @@ class FlowFrame:
     def to_flow_output(self, name: str | FlowOutput, *, description: str | None = None) -> FlowFrame:
         """Mark this frame as the flow output ``name`` (a ``flow_output`` node) and return it unchanged.
 
-        ``name`` is a string or a declared ``fl.FlowOutput``, whose ``description`` is used when
+        ``name`` is a string or a declared ``ff.FlowOutput``, whose ``description`` is used when
         none is given here. A parent flow's ``RunFlow`` exposes it as ``run[name]``; outputs are
         ordered by the order they were declared in. The ``flow_output`` node has no output handle
         on the canvas, so the returned frame is this one, not the sink.
@@ -2872,7 +2872,7 @@ class FlowFrame:
 
         Mirrors ``polars.LazyFrame.sql``. The node stores the query behind a
         ``WITH <table_name> AS (SELECT * FROM input_1)`` header, because the node itself names
-        its input ``input_1``. Use ``fl.sql`` to query several frames at once.
+        its input ``input_1``. Use ``ff.sql`` to query several frames at once.
         """
         from flowfile_frame.sql_query import _sql_frame
 
@@ -2886,7 +2886,7 @@ class FlowFrame:
         ``code`` is the node's code: a string, stored dedented and stripped, or a ``def`` function
         whose body is stored instead (a single ``return <expr>`` becomes ``<expr>``, a trailing
         ``return output_df`` is dropped, anything else is kept as written; the parameters, typed
-        ``fl.FlowFrame`` or not, are ignored). The code reads its input as ``input_df``, or
+        ``ff.FlowFrame`` or not, are ignored). The code reads its input as ``input_df``, or
         ``input_df_1``, ``input_df_2``, ... with several inputs, and yields ``output_df`` or its
         last expression, exactly as on the canvas.
         """

@@ -133,7 +133,7 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
         from flowfile_frame.flow_frame import generate_node_id
 
         refuse_parameter_argument(
-            method_name, args, kwargs, hint="pass a plain value, or an expression such as fl.lit(parameter)"
+            method_name, args, kwargs, hint="pass a plain value, or an expression such as ff.lit(parameter)"
         )
         if _has_build_time_effect(method_name) and current() is not None:
             raise NativeNodeError(

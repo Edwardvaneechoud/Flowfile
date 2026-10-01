@@ -872,7 +872,7 @@ describe("flow notebook", () => {
   it("opens an ephemeral tab from the rendering with no kernel, never persisted", async () => {
     mocks.render.mockResolvedValue(
       rendering("f1", [
-        cell(1, "a = fl.canvas_node(1)", { status: "placeholder", reason: "Not configured" }),
+        cell(1, "a = ff.canvas_node(1)", { status: "placeholder", reason: "Not configured" }),
         cell(2, "b = a.filter(x)"),
       ]),
     );
@@ -893,7 +893,7 @@ describe("flow notebook", () => {
     expect(nb.kernelId).toBeNull();
     expect(nb.sessionFlowId).toBe(7);
     expect(nb.cells.map((c) => [c.id, c.code])).toEqual([
-      ["node-1", "# Not configured\na = fl.canvas_node(1)"],
+      ["node-1", "# Not configured\na = ff.canvas_node(1)"],
       ["node-2", "b = a.filter(x)"],
     ]);
     expect(store._snapshot().openNotebooks.some((n) => n.tabId === nb.tabId)).toBe(false);
@@ -1063,7 +1063,7 @@ describe("flow notebook run", () => {
     cell_id: "imports",
     node_ids: [],
     kind: "imports",
-    code: "import flowfile as fl",
+    code: "import flowfile as ff",
     status: "code",
     reason: null,
   };
@@ -1071,7 +1071,7 @@ describe("flow notebook run", () => {
     cell_id: "parameters",
     node_ids: [],
     kind: "parameters",
-    code: 'n = fl.add_flow_parameter(flow, fl.Parameter("n", default=8, type="integer"))',
+    code: 'n = ff.add_flow_parameter(flow, ff.Parameter("n", default=8, type="integer"))',
     status: "code",
     reason: null,
   };
@@ -1092,8 +1092,8 @@ describe("flow notebook run", () => {
   const defaultCells = () => [
     importsCell,
     paramsCell,
-    nodeCell([1], 'source_1 = fl.read_csv("a.csv")'),
-    nodeCell([2, 3], "filtered_2 = source_1.filter(fl.col('q') >= n).head(5)"),
+    nodeCell([1], 'source_1 = ff.read_csv("a.csv")'),
+    nodeCell([2, 3], "filtered_2 = source_1.filter(ff.col('q') >= n).head(5)"),
   ];
   const pushed = (extra = {}) => ({
     history: { flow_id: FLOW },
@@ -1230,7 +1230,7 @@ describe("flow notebook run", () => {
 
   it("syncs first when a cell is edited, then runs the node the push attributed", async () => {
     const { store, nb } = await openFlow();
-    store.setCellCode("cell-2", "filtered_2 = source_1.filter(fl.col('q') >= n)");
+    store.setCellCode("cell-2", "filtered_2 = source_1.filter(ff.col('q') >= n)");
     mocks.push.mockResolvedValue(pushed({ node_ids_by_cell: { "cell-2": [2, 4] } }));
     mocks.getFlowData.mockResolvedValue({
       node_inputs: [1, 2, 4].map((id) => ({ id, item: "filter" })),
@@ -1267,7 +1267,7 @@ describe("flow notebook run", () => {
 
   it("reports a node the sync removed as not on the canvas without reading its data", async () => {
     const { store, nb } = await openFlow();
-    store.setCellCode("cell-1", 'source_1 = fl.read_csv("b.csv")');
+    store.setCellCode("cell-1", 'source_1 = ff.read_csv("b.csv")');
     mocks.getFlowData
       .mockResolvedValueOnce({ node_inputs: [1, 2, 3].map((id) => ({ id, item: "filter" })) })
       .mockResolvedValue({ node_inputs: [1, 2].map((id) => ({ id, item: "filter" })) });
@@ -1323,7 +1323,7 @@ describe("flow notebook run", () => {
 
   it("puts a 422 on its cell and line, blocking the sync and the run", async () => {
     const { store, nb } = await openFlow();
-    const bad = "filtered_2 = source_1.filter(fl.col('q') >= n)\nprint(filtered_2)";
+    const bad = "filtered_2 = source_1.filter(ff.col('q') >= n)\nprint(filtered_2)";
     store.setCellCode("cell-2", bad);
     const detail = {
       message: "print is not part of the notebook's flow code; this needs a kernel",
@@ -1491,7 +1491,7 @@ describe("flow notebook run", () => {
 
   it("run all syncs, runs the whole flow, then refreshes every parameters and node cell", async () => {
     const { store, nb } = await openFlow();
-    store.setCellCode("cell-2", "filtered_2 = source_1.filter(fl.col('q') >= n)");
+    store.setCellCode("cell-2", "filtered_2 = source_1.filter(ff.col('q') >= n)");
     mocks.push.mockResolvedValue(pushed({ node_ids_by_cell: { "cell-2": [2, 3] } }));
     await store.runAll();
     expect(mocks.push).toHaveBeenCalledTimes(1);
@@ -1635,7 +1635,7 @@ describe("flow notebook run", () => {
 
   it("re-renders before the push, so a drawer save in prepare is no stale fingerprint", async () => {
     const { store, nb } = await openFlow();
-    const edited = "filtered_2 = source_1.filter(fl.col('q') >= n)";
+    const edited = "filtered_2 = source_1.filter(ff.col('q') >= n)";
     store.setCellCode("cell-2", edited);
     hooks.prepare.mockImplementationOnce(async () => {
       mocks.render.mockResolvedValue(rendered("f1b"));
@@ -1784,7 +1784,7 @@ describe("flow notebook run", () => {
 
   it("flow cells carry no kernel staleness", async () => {
     const { store, nb } = await openFlow();
-    store.setCellCode("cell-1", "source_1 = fl.read_csv('b.csv')");
+    store.setCellCode("cell-1", "source_1 = ff.read_csv('b.csv')");
     store.moveCell("cell-2", -1);
     const owner = ownerIdForNotebook(nb.tabId);
     for (const cell of nb.cells)

@@ -4,7 +4,7 @@ Converts a `FlowGraph` (the in-memory DAG behind a visual flow) into runnable,
 hand-written-looking Python. Two output shapes:
 
 - **a standalone script** — Polars (`export_flow_to_polars`) or FlowFrame
-  (`export_flow_to_flowframe`, the `import flowfile as fl` dialect), one `run_etl_pipeline()` function.
+  (`export_flow_to_flowframe`, the `import flowfile as ff` dialect), one `run_etl_pipeline()` function.
 - **a multi-file project** — `export_flow_to_project` (zip via
   `project_to_zip_bytes`), with python-script nodes split into runnable modules.
 
@@ -21,7 +21,7 @@ confidently recognize stays a named statement, so output degrades to "less
 pretty", never "wrong". After `convert()`, `emissions()` returns those statements
 (each with the `node_ids` it contains) so the notebook can split the body into cells;
 `FlowGraphToFlowFrameConverter(graph, placeholders=True)` turns a node it cannot
-express into `fl.canvas_node(...)` instead of failing. The round-trip tests (exec the generated code,
+express into `ff.canvas_node(...)` instead of failing. The round-trip tests (exec the generated code,
 `assert_frame_equal` against the engine) are the correctness net.
 
 ## Files
@@ -33,7 +33,7 @@ express into `fl.canvas_node(...)` instead of failing. The round-trip tests (exe
 | `join_handlers.py` | `JoinHandlersMixin` — standard / semi-anti / cross joins, join-key transforms, post-join processing. |
 | `transform_handlers.py` | `TransformHandlersMixin` — row/column transforms (group_by, formula, pivot, sort, window, fuzzy match, record_id, …). |
 | `connector_handlers.py` | `ConnectorHandlersMixin` — external connectors (cloud storage, Kafka, database, REST API, catalog readers/writers). |
-| `native_handlers.py` | `NativeHandlersMixin` (FlowFrame export only) — gates, subflows, Python Scripts, flow ports and custom nodes as the frame's native classes (`fl.Gate`, `fl.RunFlow`, `fl.PythonScript`/`@fl.python_script`, `fl.FlowInput`, `.to_flow_output`, `fl.custom_nodes`). |
+| `native_handlers.py` | `NativeHandlersMixin` (FlowFrame export only) — gates, subflows, Python Scripts, flow ports and custom nodes as the frame's native classes (`ff.Gate`, `ff.RunFlow`, `ff.PythonScript`/`@ff.python_script`, `ff.FlowInput`, `.to_flow_output`, `ff.custom_nodes`). |
 | `custom_node_handlers.py` | `CustomNodeHandlersMixin` — user-defined node source registration and call emission. |
 | `expression_helpers.py` | `ExpressionHelpersMixin` — filter-expression parsing and Polars dtype / aggregation mapping. |
 | `chain_fusion.py` | Pure string/graph fusion pass (`render_pipeline`); no flow imports, unit-testable in isolation. |

@@ -56,9 +56,9 @@ class Parameter:
 
     Holds core's validated ``FlowParameter`` (``model``): ``default`` is stored as a string and
     checked against ``type`` (``enum`` needs ``enum_values``). Add it to a graph with
-    ``fl.add_flow_parameter(flow, parameter)``; use it as a value in
-    expressions (``fl.col("amount") >= parameter``, ``fl.lit(parameter)``), in
-    ``fl.Gate(parameter=...)``, ``fl.set_flow_parameter`` and as a ``fl.RunFlow(params=...)`` key.
+    ``ff.add_flow_parameter(flow, parameter)``; use it as a value in
+    expressions (``ff.col("amount") >= parameter``, ``ff.lit(parameter)``), in
+    ``ff.Gate(parameter=...)``, ``ff.set_flow_parameter`` and as a ``ff.RunFlow(params=...)`` key.
     Nothing is looked up at construction: an expression over a parameter the graph does not
     declare fails when its node is built. Parameters are values, never column names.
     Equal and hashable by name.
@@ -152,7 +152,7 @@ def _param_name(parameter: str | Parameter) -> str:
 def _column_parameter_error(where: str) -> NativeNodeError:
     return NativeNodeError(
         f"Flow parameters are values, not column names: `{where}` takes column names. "
-        "Use them with fl.lit(...), in comparisons, in fl.Gate(parameter=...) or in fl.RunFlow(params=...)"
+        "Use them with ff.lit(...), in comparisons, in ff.Gate(parameter=...) or in ff.RunFlow(params=...)"
     )
 
 
@@ -199,15 +199,15 @@ def add_flow_parameter(flow: FlowGraph | FlowFrame, parameter: Parameter) -> Par
     """Declare ``parameter`` on the flow and return it.
 
     The graph stores its own copy of the declaration (``parameter.model``), so
-    ``fl.set_flow_parameter`` on it never changes the ``Parameter`` or another graph it was
+    ``ff.set_flow_parameter`` on it never changes the ``Parameter`` or another graph it was
     added to. A name that is already declared raises, except on the notebook session graph,
     where the declaration replaces it (a seeded session already holds the canvas's parameters).
     """
     graph = _graph_of(flow)
     if not isinstance(parameter, Parameter):
         raise NativeNodeError(
-            f"add_flow_parameter takes a fl.Parameter, got {type(parameter).__name__}; "
-            "declare it as fl.Parameter(name, default=..., type=...)"
+            f"add_flow_parameter takes a ff.Parameter, got {type(parameter).__name__}; "
+            "declare it as ff.Parameter(name, default=..., type=...)"
         )
     declared = graph.flow_settings.parameters
     existing = next((i for i, p in enumerate(declared) if p.name == parameter.name), None)
@@ -217,7 +217,7 @@ def add_flow_parameter(flow: FlowGraph | FlowFrame, parameter: Parameter) -> Par
         return parameter
     if existing is not None:
         raise NativeNodeError(
-            f"Flow parameter {parameter.name!r} is already declared; change it with fl.set_flow_parameter"
+            f"Flow parameter {parameter.name!r} is already declared; change it with ff.set_flow_parameter"
         )
     graph.flow_settings.parameters.append(parameter.model.model_copy())
     return parameter
@@ -231,12 +231,12 @@ def set_flow_parameter(flow: FlowGraph | FlowFrame, name: str | Parameter, value
     if parameter is None:
         declared = [p.name for p in graph.flow_settings.parameters]
         raise NativeNodeError(
-            f"Flow parameter {name!r} is not declared (declared: {declared}); add it with fl.add_flow_parameter"
+            f"Flow parameter {name!r} is not declared (declared: {declared}); add it with ff.add_flow_parameter"
         )
     if isinstance(value, Parameter):
         raise NativeNodeError(
             f"Flow parameter {name!r}: a parameter's value cannot be another parameter ({value.ref}); "
-            f"set a plain value, e.g. fl.set_flow_parameter(flow, {name!r}, {value.name}.default)"
+            f"set a plain value, e.g. ff.set_flow_parameter(flow, {name!r}, {value.name}.default)"
         )
     raw = _as_parameter_string(value)
     if raw != "":

@@ -406,19 +406,19 @@ check_stubs: stubs
 	fi
 	@echo "Stubs are in sync."
 
-# Regenerate the static fl. completion source for the notebook cell editors.
+# Regenerate the static ff. completion source for the notebook cell editors.
 # Run after changing flowfile.__all__ or an exported name's signature or docstring.
 fl_completions:
-	@echo "Generating fl completions..."
+	@echo "Generating ff completions..."
 	$(POETRY_RUN) python tools/generate_fl_completions.py
 
 # Drift check: regenerate and fail if the committed completions changed.
 check_fl_completions: fl_completions
 	@if ! git diff --exit-code -- flowfile_frontend/src/renderer/app/components/notebook/flCompletions.json; then \
-		echo "ERROR: fl completions are out of sync. Run 'make fl_completions' and commit the result."; \
+		echo "ERROR: ff completions are out of sync. Run 'make fl_completions' and commit the result."; \
 		exit 1; \
 	fi
-	@echo "fl completions are in sync."
+	@echo "ff completions are in sync."
 
 # Regenerate the formula function reference (docs/users/formulas/functions.md)
 # and the counts snippet index.md includes, from the polars-expr-transformer

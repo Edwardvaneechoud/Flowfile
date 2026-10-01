@@ -77,7 +77,7 @@ def test_lookup_by_id(saved):
     assert saved.theirs not in ff.kernels and 42 not in ff.kernels
     assert list(ff.kernels) == [saved.base, saved.ml]
     assert len(ff.kernels) == 2
-    assert repr(ff.kernels) == f"fl.kernels({[saved.base, saved.ml]!r})"
+    assert repr(ff.kernels) == f"ff.kernels({[saved.base, saved.ml]!r})"
     assert not hasattr(ff.kernels, "base")
 
 

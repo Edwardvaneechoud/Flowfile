@@ -185,7 +185,7 @@ def _resolve_namespace(
         if stored is None or stored.name != namespace.name:
             raise NativeNodeError(
                 f"{type(namespace).__name__} {namespace.name!r} (id={namespace.id}) no longer exists; "
-                "look it up again with fl.get_catalog(...)"
+                "look it up again with ff.get_catalog(...)"
             ) from NamespaceNotFoundError(namespace_id=namespace.id)
         return stored.id, service.resolve_namespace_full_name(stored.id)
     raise NativeNodeError(
@@ -244,7 +244,7 @@ def _find_registration(
                 fix = "pick one with registration_id= or uuid="
             else:
                 example = error.candidates[0]["namespace_name"] or "catalog.schema"
-                fix = f"pass its schema first, e.g. fl.flow_ref({example!r}, {name!r}), or registration_id="
+                fix = f"pass its schema first, e.g. ff.flow_ref({example!r}, {name!r}), or registration_id="
             raise NativeNodeError(f"{error}; {fix}") from error
         return matches[0]
     if uuid is not None:
@@ -369,7 +369,7 @@ def register_flow(
     on the canvas, and afterwards lives at the registered file (``flow_settings.path``). Warns
     about custom node classes that are not installed.
     """
-    refuse("fl.register_flow")
+    refuse("ff.register_flow")
     graph = _graph_of(flow_or_frame)
     if not name or not name.strip():
         raise NativeNodeError("register_flow needs a non-empty name")
@@ -554,13 +554,13 @@ def _interface(ref: FlowRef) -> subflow.SubflowInterface:
 
 
 def _bound_column(value: Any) -> str | None:
-    """The column a parameter is bound to (a plain ``fl.col(...)``), or ``None`` for a constant."""
+    """The column a parameter is bound to (a plain ``ff.col(...)``), or ``None`` for a constant."""
     if isinstance(value, Expr):
         value = value.expr
     if not isinstance(value, pl.Expr):
         return None
     if not value.meta.is_column():
-        raise NativeNodeError(f"A parameter is bound to a plain column such as fl.col('region'), not {value}")
+        raise NativeNodeError(f"A parameter is bound to a plain column such as ff.col('region'), not {value}")
     return value.meta.output_name()
 
 
@@ -627,7 +627,7 @@ def _parameter_bindings(
     if param_frame is not None and not any(b.source == "column" for b in bindings):
         raise NativeNodeError(
             "param_frame is only read by column bindings; bind a parameter to one of its columns, "
-            "e.g. params={'region': fl.col('region')}"
+            "e.g. params={'region': ff.col('region')}"
         )
     return bindings
 
@@ -640,7 +640,7 @@ class RunFlow(NativeNode):
     them (a re-run reuses that registration). Each child input is fed by keyword
     (``orders=frame``) or through ``inputs={"orders": frame}``, which also reaches an input
     named like one of these keywords. ``params`` sets child parameters: a constant, or
-    ``fl.col(name)`` to read the value from ``param_frame`` (the first row, or one child run
+    ``ff.col(name)`` to read the value from ``param_frame`` (the first row, or one child run
     per row with ``iterate=True``, which needs such a column binding and appends ``param_*``
     and ``run_index`` columns unless ``append_metadata=False``). Outputs are named after the
     child's outputs, in creation order, and read with ``run[name]`` or ``run.get_output(name)``
@@ -683,12 +683,12 @@ class RunFlow(NativeNode):
         if param_frame is not None and not isinstance(param_frame, FlowFrame):
             not_frames.append("param_frame")
         if not_frames:
-            raise NativeNodeError(f"{not_frames} must be FlowFrames; wrap a Polars frame with fl.FlowFrame(...)")
+            raise NativeNodeError(f"{not_frames} must be FlowFrames; wrap a Polars frame with ff.FlowFrame(...)")
         bindings = _parameter_bindings(self.flow.name, interface.parameters, params, param_frame)
         if iterate and not any(binding.source == "column" for binding in bindings):
             raise NativeNodeError(
                 "iterate=True runs the flow once per row of param_frame, so it needs a parameter bound to one of "
-                "its columns, e.g. params={'region': fl.col('region')}, param_frame=regions"
+                "its columns, e.g. params={'region': ff.col('region')}, param_frame=regions"
             )
         frames: list[FlowFrame] = [param_frame] if param_frame is not None else []
         handles = [input_handle(0)] if param_frame is not None else []

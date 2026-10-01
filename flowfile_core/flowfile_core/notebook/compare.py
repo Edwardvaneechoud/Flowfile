@@ -99,7 +99,7 @@ def strip_outer_parens(formula: str) -> str:
 def param_comparison_filter(formula: str | None) -> dict | None:
     """The basic ``filter_input`` an advanced ``[col] <op> ${name}`` (or a between of two refs) spells, or None.
 
-    The frame stores ``fl.col("x") > PARAM`` as ``([x] > ${param})``; a canvas basic filter whose value
+    The frame stores ``ff.col("x") > PARAM`` as ``([x] > ${param})``; a canvas basic filter whose value
     is the whole-field ``${param}`` is the same comparison, since both substitute before they run.
     """
     text = strip_outer_parens(formula or "")

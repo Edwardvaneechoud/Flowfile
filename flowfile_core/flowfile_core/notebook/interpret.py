@@ -37,7 +37,7 @@ _DATA_KINDS = frozenset(
 _LITERAL_KINDS = frozenset({"none", "bool", "int", "float", "str"})
 _LITERAL_DATA_KINDS = frozenset({*_LITERAL_KINDS, "list", "tuple", "dict", "date", "datetime_value", "dtype"})
 _OPERAND_KINDS = frozenset({"Expr", "int", "float", "str", "bool", "none", "Parameter", "date", "datetime_value"})
-_MODULE_KINDS = frozenset({"fl", "pl", "datetime", "inert", "reader", "helper", "polars_code_def"})
+_MODULE_KINDS = frozenset({"ff", "pl", "datetime", "inert", "reader", "helper", "polars_code_def"})
 _DISPLAYED_KINDS = frozenset({"FlowFrame", "Gate", "NodeOutputs"})
 _BINARY = {
     "Add": operator.add, "Sub": operator.sub, "Mult": operator.mul, "Div": operator.truediv,
@@ -85,7 +85,7 @@ class _Inert(_Standin):
 
 
 class _Reader(_Standin):
-    """A frame reader ``fl`` does not re-export (``from flowfile_frame import scan_ipc``)."""
+    """A frame reader ``ff`` does not re-export (``from flowfile_frame import scan_ipc``)."""
 
 
 class _Helper(_Standin):
@@ -141,7 +141,7 @@ def kind_of(value: Any) -> str | None:
     if value is pl:
         return "pl"
     if type(value) is types.ModuleType and value.__name__ == "flowfile":
-        return "fl"
+        return "ff"
     if isinstance(value, pl.DataType) or type(value) is DataTypeClass:
         return "dtype" if type(value).__module__.startswith("polars.") else None
     return None
@@ -180,7 +180,7 @@ def _error(exc: BaseException, line: int | None) -> _Failure:
 
 
 def _kind_label(kind: str | None) -> str:
-    return {"fl": "`fl`", "pl": "`pl`", "none": "None", "graph": "the session graph `flow`"}.get(kind or "", kind or "")
+    return {"ff": "`ff`", "pl": "`pl`", "none": "None", "graph": "the session graph `flow`"}.get(kind or "", kind or "")
 
 
 class CellInterpreter:
@@ -202,12 +202,12 @@ class CellInterpreter:
         self.expression_chars = 0
         self._fl: types.ModuleType | None = None
 
-    def fl(self) -> types.ModuleType:
-        """The ``fl`` module ``import flowfile as fl`` binds: the notebook cell namespace's own."""
+    def ff(self) -> types.ModuleType:
+        """The ``ff`` module ``import flowfile as ff`` binds: the notebook cell namespace's own."""
         if self._fl is None:
             from flowfile_frame.notebook_cells import new_namespace
 
-            self._fl = new_namespace()["fl"]
+            self._fl = new_namespace()["ff"]
         return self._fl
 
     def __call__(self, filename: str, code: str, namespace: dict[str, Any]) -> Any:
@@ -223,13 +223,13 @@ class CellInterpreter:
 
 
 def interprets_expression(code: str) -> bool:
-    """Whether a cell interprets ``code``, one expression naming only ``fl``, ``pl`` and ``datetime``.
+    """Whether a cell interprets ``code``, one expression naming only ``ff``, ``pl`` and ``datetime``.
 
     The notebook render asks this of each translated formula, so a translation outside the dialect
     keeps its formula text instead of rendering a cell that needs a kernel.
     """
     interpreter = CellInterpreter(emitted_only=True)
-    namespace = {"fl": interpreter.fl(), "pl": pl, "datetime": _Datetime("datetime")}
+    namespace = {"ff": interpreter.ff(), "pl": pl, "datetime": _Datetime("datetime")}
     try:
         _Cell(interpreter, code, namespace).expr(ast.parse(code, mode="eval").body)
     except (_Failure, RecursionError):
@@ -334,7 +334,7 @@ class _Cell:
             self.namespace[bound] = _Inert(alias.name if alias.asname else top)
             return
         self.interpreter.used.add(("import", alias.name))
-        values = {"fl": self.interpreter.fl, "pl": lambda: pl, "datetime": lambda: _Datetime("datetime")}
+        values = {"ff": self.interpreter.ff, "pl": lambda: pl, "datetime": lambda: _Datetime("datetime")}
         self.namespace[bound] = values[binding]() if binding in values else _Inert(alias.name)
 
     def import_from(self, node: ast.ImportFrom) -> None:
@@ -430,22 +430,22 @@ class _Cell:
                 isinstance(annotation, ast.Attribute)
                 and isinstance(annotation.value, ast.Name)
                 and annotation.attr == "FlowFrame"
-                and kind_of(self.name(annotation.value)) == "fl"
+                and kind_of(self.name(annotation.value)) == "ff"
             ):
                 raise _needs_kernel(f"The annotation {self.text(annotation)}", annotation.lineno)
         self.check_store(node.name, node.lineno)
         self.namespace[node.name] = _PolarsCodeDef(node.name, _polars_code_text(_block(self.code, node.lineno)))
 
     def script_def(self, node: ast.FunctionDef) -> None:
-        """``@fl.python_script(...)``: the decorator's keywords like a call's, the cells from the source text."""
+        """``@ff.python_script(...)``: the decorator's keywords like a call's, the cells from the source text."""
         from flowfile_frame.python_script import PythonScriptFunction
 
         decorator = node.decorator_list[0]
         call = decorator if isinstance(decorator, ast.Call) else None
         target = call.func if call is not None else decorator
-        if kind_of(self.name(target.value)) != "fl":
+        if kind_of(self.name(target.value)) != "ff":
             raise _needs_kernel(f"The decorator {self.text(decorator)}", decorator.lineno)
-        self.interpreter.used.add(("fl", "python_script"))
+        self.interpreter.used.add(("ff", "python_script"))
         if call is not None and call.args:
             raise _needs_kernel(f"The decorator {self.text(decorator)}", decorator.lineno)
         keywords = {}
@@ -610,20 +610,20 @@ class _Cell:
         """``(kind, attribute, usage)`` for ``receiver.attr``, recorded as used; else a refusal on ``line``.
 
         The attribute string handed to ``getattr`` is the allowlist's own; only a custom node key
-        (the ``*`` entry of ``fl.custom_nodes``, never one of its class's attributes) is data. An ``fl``
+        (the ``*`` entry of ``ff.custom_nodes``, never one of its class's attributes) is data. An ``ff``
         name the render refuses is still an input-only entry when ``allowlist.INPUT_ONLY`` names it.
         """
         kind = kind_of(receiver)
         if attr.startswith("_"):
             raise _needs_kernel(f"The attribute `.{attr}`", line)
         input_only = {} if self.interpreter.emitted_only else allowlist.INPUT_ONLY.get(kind or "", {})
-        if kind == "fl":
+        if kind == "ff":
             verdict, detail = allowlist.FL_VERDICTS.get(attr, (allowlist.REFUSE, "is not a flowfile name"))
             if verdict == allowlist.ALLOW:
                 self.interpreter.used.add((kind, attr))
                 return kind, _FL_STRINGS[attr], detail
             if attr not in input_only:
-                raise _needs_kernel(f"`fl.{attr}` {detail}; it", line)
+                raise _needs_kernel(f"`ff.{attr}` {detail}; it", line)
         table = allowlist.ALLOWLIST.get(kind or "", {})
         if attr in table:
             self.interpreter.used.add((kind, attr))
@@ -655,7 +655,7 @@ class _Cell:
         line = node.end_lineno
         kind, attr, usage = self.entry(receiver, node.attr, line)
         if usage == allowlist.DECORATOR:
-            raise _needs_kernel(f"Calling `fl.{attr}` outside a decorator", line)
+            raise _needs_kernel(f"Calling `ff.{attr}` outside a decorator", line)
         # 3.10 compiles a method call with keywords as a plain call, reported on the call's first line
         call_line = call.lineno if sys.version_info < (3, 11) and call.keywords else line
         if usage in (allowlist.CALL, allowlist.BOTH):
@@ -714,7 +714,7 @@ class _Cell:
             raise _needs_kernel(f"`{key[1]}({needs[0]}=...)` without `{needs[1]}=`", call.lineno)
         # Polars makes a row of each character of a string, which no literal budget charges
         if accepted is not None and isinstance(args[0] if args else kwargs.get("data"), str):
-            raise _needs_kernel(f"`fl.{key[1]}` with a string as data", line)
+            raise _needs_kernel(f"`ff.{key[1]}` with a string as data", line)
         try:
             result = function(*args, **kwargs)
         except Exception as exc:
@@ -840,7 +840,7 @@ def _is_prelude_literal(node: ast.expr) -> bool:
 
 
 def _is_script(node: ast.FunctionDef) -> bool:
-    """Exactly one decorator, ``fl.python_script`` or ``fl.python_script(...)``."""
+    """Exactly one decorator, ``ff.python_script`` or ``ff.python_script(...)``."""
     if len(node.decorator_list) != 1:
         return False
     decorator = node.decorator_list[0]
@@ -849,7 +849,7 @@ def _is_script(node: ast.FunctionDef) -> bool:
         isinstance(target, ast.Attribute)
         and target.attr == "python_script"
         and isinstance(target.value, ast.Name)
-        and target.value.id == "fl"
+        and target.value.id == "ff"
     )
 
 

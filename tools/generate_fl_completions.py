@@ -1,6 +1,6 @@
-"""Generate the static ``fl.`` completion source for the notebook cell editors.
+"""Generate the static ``ff.`` completion source for the notebook cell editors.
 
-The shared cell editor (``pythonScript/notebookEditor.ts``) completes ``fl.<name>``
+The shared cell editor (``pythonScript/notebookEditor.ts``) completes ``ff.<name>``
 without a kernel, so the candidates are derived here at build time from
 ``flowfile.__all__`` and committed as JSON. Annotations are dropped from the
 signatures so the output does not depend on how a given Python version formats
@@ -64,7 +64,7 @@ def fl_entries() -> list[dict]:
 
 
 def build() -> dict:
-    return {"fl": fl_entries()}
+    return {"ff": fl_entries()}
 
 
 def render() -> str:

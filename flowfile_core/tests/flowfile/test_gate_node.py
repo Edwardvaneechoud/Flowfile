@@ -16,7 +16,7 @@ C. Control-input gates: routing on the first value of a second input, decided
 D. Failure modes: an unknown parameter must fail the gate loudly.
 E. Gate-blind callers (single-node fetch, code export) must plan as if every
    gate were open.
-F. Code export parity across the Polars (if-blocks) and FlowFrame (``fl.Gate``) exports.
+F. Code export parity across the Polars (if-blocks) and FlowFrame (``ff.Gate``) exports.
 G. YAML round-trip of the gate's settings.
 
 Run with an isolated DB:
@@ -1083,7 +1083,7 @@ class TestPolarsExport:
         assert run_generated(code).height == 0
 
 class TestFlowFrameExport:
-    """The FlowFrame export places gates as ``fl.Gate`` nodes, like the frame does.
+    """The FlowFrame export places gates as ``ff.Gate`` nodes, like the frame does.
 
     The exported module rebuilds the gate node, so ``collect()`` on a frame below it runs the
     lineage and returns only the live side; a parameter gate declares its parameter with the
@@ -1096,11 +1096,11 @@ class TestFlowFrameExport:
         code = FlowGraphToFlowFrameConverter(graph).convert()
 
         assert "def run_etl_pipeline(*, env" in code
-        assert "import flowfile as fl" in code
-        assert 'gate_1 = fl.Gate(source, parameter=_flowfile_flow_parameter(source, "env", env), value="prod"' in code
+        assert "import flowfile as ff" in code
+        assert 'gate_1 = ff.Gate(source, parameter=_flowfile_flow_parameter(source, "env", env), value="prod"' in code
         assert 'operator="not_equals"' in code
         assert "gate_1.then.select(" in code and "gate_2.then.select(" in code
-        assert "fl.concat([" in code
+        assert "ff.concat([" in code
         assert "if env" not in code and "_frames" not in code
 
     @pytest.mark.parametrize("env", ["prod", "dev"])
@@ -1134,7 +1134,7 @@ class TestFlowFrameExport:
 
         code = FlowGraphToFlowFrameConverter(graph).convert()
 
-        assert 'gate = fl.Gate(source_1, "[flag]", control=source_2, else_output=False)' in code
+        assert 'gate = ff.Gate(source_1, "[flag]", control=source_2, else_output=False)' in code
         assert "_flowfile_gate_formula_matches" not in code
         result = run_generated(code)
         assert result.columns == ["a_kept"]
@@ -1319,7 +1319,7 @@ class TestAllGatedOffUnionExport:
     Engine: the union and its downstream are deliberately skipped (green
     skipped rows, no result). Export: in the Polars export the guarded append
     list stays empty and the generator's fallback appends an empty schema-typed
-    frame; the FlowFrame export's closed ``fl.Gate`` nodes leave the union
+    frame; the FlowFrame export's closed ``ff.Gate`` nodes leave the union
     empty; both run downstream to a zero-row result. Accepted behavior — documented next to the
     ``if not df_6_frames`` explanation in
     docs/users/visual-editor/tutorials/code-generator.md. Built with two
@@ -2009,7 +2009,7 @@ class TestNestedParameterGates:
     inner gate itself only executes (decides) when the outer gate lets data
     reach it. Export: the Polars export's inner guard renders the two-atom
     conjunction — never flat-merged into an else, which would invert the outer
-    condition; the FlowFrame export places both ``fl.Gate`` nodes.
+    condition; the FlowFrame export places both ``ff.Gate`` nodes.
     """
 
     _COMBOS = [("prod", "x"), ("prod", "y"), ("qa", "x"), ("qa", "y")]
@@ -2058,7 +2058,7 @@ class TestNestedParameterGates:
             assert "if (env == 'prod') and (mode == 'x'):" in code
             assert "else:" not in code
         else:
-            assert code.count("fl.Gate(") == 2
+            assert code.count("ff.Gate(") == 2
 
         graph.run_graph()
         engine_result = graph.get_node(4).results.resulting_data

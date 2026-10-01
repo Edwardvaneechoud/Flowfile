@@ -235,7 +235,7 @@ def test_injected_lazyframe_method_refuses_a_parameter_argument(call):
     limit = ff.add_flow_parameter(frame, ff.Parameter("limit", default=2, type="integer"))
     node_count = len(frame.flow_graph.nodes)
 
-    with pytest.raises(ff.NativeNodeError, match=r"takes no fl.Parameter as an argument; pass a plain value"):
+    with pytest.raises(ff.NativeNodeError, match=r"takes no ff.Parameter as an argument; pass a plain value"):
         call(frame, limit)
 
     assert len(frame.flow_graph.nodes) == node_count

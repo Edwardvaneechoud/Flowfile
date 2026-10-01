@@ -386,7 +386,7 @@ def test_notebook_multi_output_feeds_downstream_nodes():
     module = get_file(manifest, "notebooks/node_02_python_script.py")
     assert "output_names=['main', 'rejected']" in module
     pipeline = get_file(manifest, "pipeline.py")
-    assert 'df_2_rejected = fl.FlowFrame(_nb_2_outputs["rejected"])' in pipeline
+    assert 'df_2_rejected = ff.FlowFrame(_nb_2_outputs["rejected"])' in pipeline
     # The downstream filter must consume the output-1 variable
     assert "filtered = df_2_rejected.filter" in pipeline
 
@@ -751,7 +751,7 @@ def _build_gated_diamond(flow_id: int = 1) -> FlowGraph:
 
 
 def test_project_export_supports_parameter_gates(tmp_path):
-    """A gated flow exports as a runnable project whose pipeline.py places ``fl.Gate`` nodes."""
+    """A gated flow exports as a runnable project whose pipeline.py places ``ff.Gate`` nodes."""
     flow = _build_gated_diamond()
 
     manifest = export_flow_to_project(flow)
@@ -788,7 +788,7 @@ def test_project_export_formula_gate_places_a_native_gate():
     manifest = export_flow_to_project(flow)
 
     pipeline = get_file(manifest, "pipeline.py")
-    assert 'fl.Gate(source, "[age] > 20", else_output=False)' in pipeline
+    assert 'ff.Gate(source, "[age] > 20", else_output=False)' in pipeline
     assert "_flowfile_gate_formula_matches" not in pipeline
     ast.parse(pipeline)
     assert _run_pipeline_module(pipeline)["age_kept"].to_list() == [25, 30, 35]
@@ -843,7 +843,7 @@ def _build_split_diamond_flow(flow_id: int = 1) -> FlowGraph:
 
 
 def test_project_export_else_output_split_reads_both_gate_exits_and_matches_engine():
-    """The then/else gate exports as one ``fl.Gate`` read through ``.then``/``.otherwise``, and the
+    """The then/else gate exports as one ``ff.Gate`` read through ``.then``/``.otherwise``, and the
     executed module matches the engine for both parameter values."""
     flow = _build_split_diamond_flow()
 
@@ -1024,7 +1024,7 @@ class TestRunFlowProjectExport:
         assert "subflows/__init__.py" in paths
 
         module = _manifest_file(manifest, "subflows/head_subflow.py")
-        assert "def run(customers: fl.FlowFrame | None = None, *, limit: int = 10) -> dict[str, fl.FlowFrame]:" in module
+        assert "def run(customers: ff.FlowFrame | None = None, *, limit: int = 10) -> dict[str, ff.FlowFrame]:" in module
         assert "head({limit})" in module  # sentinel resolved to the kwarg
         assert '"result":' in module and '"row_count":' in module
         assert "customers if customers is not None else" in module  # FlowFrame arg used directly
@@ -1038,11 +1038,11 @@ class TestRunFlowProjectExport:
         # subflow modules speak FlowFrame end-to-end: no .data / FlowFrame() hops
         assert '= _sf_9_outputs["result"]' in pipeline
         assert '= _sf_9_outputs["row_count"]' in pipeline
-        assert 'fl.FlowFrame(_sf_9_outputs' not in pipeline
+        assert 'ff.FlowFrame(_sf_9_outputs' not in pipeline
         ast.parse(pipeline)
 
     def test_subflow_module_renders_else_output_split(self, tmp_path):
-        """A subflow with an else_output gate exports as one ``fl.Gate`` read through
+        """A subflow with an else_output gate exports as one ``ff.Gate`` read through
         ``.then``/``.otherwise``, and the executed module routes exactly one side per env value."""
         sub = _build_split_subflow(tmp_path)
         flow = create_basic_flow(flow_id=53, name="parent_split")
@@ -1063,7 +1063,7 @@ class TestRunFlowProjectExport:
         manifest = export_flow_to_project(flow)
 
         module = _manifest_file(manifest, "subflows/split_subflow.py")
-        assert "def run(customers: fl.FlowFrame | None = None, *, env: str = 'prod') -> dict[str, fl.FlowFrame]:" in module
+        assert "def run(customers: ff.FlowFrame | None = None, *, env: str = 'prod') -> dict[str, ff.FlowFrame]:" in module
         assert "else_output=True" in module
         assert "gate.then.select(" in module and "gate.otherwise.select(" in module
         ast.parse(module)
@@ -1107,10 +1107,10 @@ class TestRunFlowProjectExport:
         assert "_sf_9_param_rows = " in pipeline and ".collect().to_dicts()" in pipeline
         assert "head_subflow.run(customers=" in pipeline
         assert "limit=_sf_9_row['limit'])" in pipeline
-        assert "fl.concat([" in pipeline
+        assert "ff.concat([" in pipeline
         assert 'how="diagonal_relaxed"' in pipeline
-        assert 'fl.lit(_sf_9_row[\'limit\']).cast(fl.Int64).alias("param_limit")' in pipeline
-        assert 'fl.lit(_sf_9_i).cast(fl.UInt32).alias("run_index")' in pipeline
+        assert 'ff.lit(_sf_9_row[\'limit\']).cast(ff.Int64).alias("param_limit")' in pipeline
+        assert 'ff.lit(_sf_9_i).cast(ff.UInt32).alias("run_index")' in pipeline
         assert ".data" not in pipeline  # subflow boundary stays at the FlowFrame level
         ast.parse(pipeline)
 
@@ -1203,7 +1203,7 @@ class TestRunFlowProjectExport:
 
         pipeline = _manifest_file(export_flow_to_project(flow), "pipeline.py")
         assert f"limit=_sf_9_row[{col!r}]" in pipeline          # loop kwarg
-        assert f"fl.lit(_sf_9_row[{col!r}]).cast(" in pipeline  # metadata value_expr
+        assert f"ff.lit(_sf_9_row[{col!r}]).cast(" in pipeline  # metadata value_expr
         ast.parse(pipeline)
 
     def test_module_reuse_across_two_nodes(self, tmp_path):
@@ -1283,7 +1283,7 @@ class TestRunFlowProjectExport:
             converter.convert()
         assert any(node_type == "run_flow" for _, node_type, _ in converter.unsupported_nodes)
         code = FlowGraphToFlowFrameConverter(flow).convert()
-        assert "fl.RunFlow(fl.flow_ref(" in code
+        assert "ff.RunFlow(ff.flow_ref(" in code
 
     def test_project_with_subflow_executes_end_to_end(self, tmp_path):
         sub = _build_head_subflow(tmp_path)
@@ -1377,7 +1377,7 @@ def test_flow_input_sample_expression_uses_public_api(tmp_path):
     manifest = export_flow_to_project(flow)
     module = get_file(manifest, "subflows/head_subflow.py")
     assert "flowfile_core" not in module
-    assert "fl.from_raw_data(" in module
+    assert "ff.from_raw_data(" in module
     assert "RawData(" not in module
     ast.parse(module)
 

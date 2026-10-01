@@ -12,7 +12,7 @@
           <section class="api-section">
             <h4>Getting started</h4>
             <p v-if="flowMode" class="section-description">
-              This notebook is the open flow written as <code>fl</code> code. Cells are read as a
+              This notebook is the open flow written as <code>ff</code> code. Cells are read as a
               description of the flow, never executed: rows are only computed when the flow runs on
               the canvas. <code>print()</code>, <code>display()</code>, loops and other imports need
               a kernel, so a sync stops at that line and says so.

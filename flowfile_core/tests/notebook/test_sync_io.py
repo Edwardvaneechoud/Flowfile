@@ -53,7 +53,7 @@ from flowfile_frame.notebook_cells import clean_run, enter_snapshot_session, exe
 from tests.notebook.conftest import NOTEBOOK_OWNER_ID, no_kernel_manager
 
 EXCEL = Path(__file__).resolve().parents[1] / "support_files" / "data" / "fake_data.xlsx"
-IMPORTS = "import flowfile as fl"
+IMPORTS = "import flowfile as ff"
 DATABASE_CONNECTION = "notebook_sync_database"
 LITERAL_COLLECTS = {
     "add_datasource": "a manual input's own rows",
@@ -223,7 +223,7 @@ def test_a_sync_starts_no_schema_callback_and_leaves_no_logger_or_log_file(noteb
     monkeypatch.setattr(notebook, "_scratch_graph", lambda: graphs.append(scratch()) or graphs[-1])
     calls = _Calls()
     calls.record(monkeypatch, SingleExecutionFuture, "start")
-    new_cells = cells + [("cell-new", "more = fl.read_csv(" + repr(_csv_path_of(snapshot)) + ")")]
+    new_cells = cells + [("cell-new", "more = ff.read_csv(" + repr(_csv_path_of(snapshot)) + ")")]
     assert _sync(new_cells, snapshot, provenance, ceiling)["ok"]
     assert calls.named("start") == []
     assert len(graphs) == 2
@@ -290,8 +290,8 @@ def test_an_edited_held_source_seeds_from_the_declaration_then_the_probe_then_no
         _run(namespace, "imports", IMPORTS)
         _run(namespace, excel_cell, excel_code.replace('"Sheet1"', '"Sheet2"').replace("'Sheet1'", "'Sheet2'"))
         edited = next(value for name, value in namespace.items() if name.startswith(("source_", "read_")))
-        _run(namespace, "declared", f"listed = fl.list_files({str(tmp_path)!r})")
-        _run(namespace, "probed", f"probed = fl.read_csv({str(tmp_path / 'other.csv')!r})")
+        _run(namespace, "declared", f"listed = ff.list_files({str(tmp_path)!r})")
+        _run(namespace, "probed", f"probed = ff.read_csv({str(tmp_path / 'other.csv')!r})")
         assert _names(edited) == [] and edited.node_id in mode.column_less
         assert _names(namespace["listed"]) == [column.column_name for column in list_files_schema()]
         assert _names(namespace["probed"]) == ["n", "m"]
@@ -313,7 +313,7 @@ def test_a_canvas_twin_without_columns_gives_way_to_the_probe_and_then_to_no_col
     with _snapshot_session(snapshot, provenance) as (mode, namespace):
         for cell_id, code in cells:
             _run(namespace, cell_id, code)
-        _run(namespace, "below", f"kept = {names[excel_id]}.filter(fl.col('ID') > 1)")
+        _run(namespace, "below", f"kept = {names[excel_id]}.filter(ff.col('ID') > 1)")
         excel, rows = namespace[names[excel_id]], namespace[names[rows_id]]
         assert _names(rows) == ["a", "b"] and rows.node_id not in mode.column_less
         assert _names(excel) == [] and excel.node_id in mode.column_less
@@ -328,7 +328,7 @@ def test_an_unbound_same_type_line_above_a_held_source_leaves_it_its_canvas_twin
     cells, provenance, ceiling, snapshot = _rendered(graph)
     snapshot["schemas"][rows_id] = {"output-0": [{"name": "from_canvas", "data_type": "Int64"}]}
     rows_cell, _ = _cell_of(graph, rows_id)
-    scratch = f"fl.read_csv({str(tmp_path / 'other.csv')!r})\n"
+    scratch = f"ff.read_csv({str(tmp_path / 'other.csv')!r})\n"
     edited = [(cell_id, scratch + code if cell_id == rows_cell else code) for cell_id, code in cells]
     with _snapshot_session(snapshot, provenance) as (_, namespace):
         for cell_id, code in edited:
@@ -341,8 +341,8 @@ def test_an_unbound_same_type_line_above_a_held_source_leaves_it_its_canvas_twin
 
 def test_a_python_script_seeds_from_its_declared_returns(notebook_corpus):
     cells = [
-        (IMPORTS + "\nsrc = fl.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1]]})"),
-        "@fl.python_script(kernel='nb', returns={'total': fl.Int64})\ndef summed(frame):\n    return frame\n\n\n"
+        (IMPORTS + "\nsrc = ff.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Integer'}], 'data': [[1]]})"),
+        "@ff.python_script(kernel='nb', returns={'total': ff.Int64})\ndef summed(frame):\n    return frame\n\n\n"
         "out = summed(src)",
     ]
     with _snapshot_session({"flowfile_data": _empty_flow(), "schemas": {}}, {}) as (_, namespace):
@@ -360,7 +360,7 @@ def test_a_new_catalog_read_takes_the_registered_schema_without_opening_the_tabl
     reader = next(node for node in demo.nodes if node.node_type == "catalog_reader")
     settings = reader.setting_input
     code = (
-        f"{IMPORTS}\nsales = fl.read_catalog_table({settings.catalog_table_name!r}, "
+        f"{IMPORTS}\nsales = ff.read_catalog_table({settings.catalog_table_name!r}, "
         f"namespace_id={settings.catalog_namespace_id})"
     )
     calls = _Calls()
@@ -408,13 +408,13 @@ ROWS_DATA = {
     "columns": [{"name": "a", "data_type": "Integer"}, {"name": "b", "data_type": "String"}],
     "data": [[1, 2, 3], ["x", "y", "z"]],
 }
-ROWS = f"src = fl.from_raw_data({ROWS_DATA!r})"
+ROWS = f"src = ff.from_raw_data({ROWS_DATA!r})"
 PLANNED = {
-    "with_columns": ("src.with_columns(fl.col('a').cum_sum().alias('c'))", ["a", "b", "c"]),
-    "select": ("src.select(fl.col('a').rank().alias('r'), 'b')", ["r", "b"]),
-    "filter": ("src.filter(fl.col('a').cum_sum() > 1)", ["a", "b"]),
-    "sort": ("src.sort(fl.col('a') * -1)", ["a", "b"]),
-    "plan refused": ("src.with_columns(fl.col('missing').cum_sum())", []),
+    "with_columns": ("src.with_columns(ff.col('a').cum_sum().alias('c'))", ["a", "b", "c"]),
+    "select": ("src.select(ff.col('a').rank().alias('r'), 'b')", ["r", "b"]),
+    "filter": ("src.filter(ff.col('a').cum_sum() > 1)", ["a", "b"]),
+    "sort": ("src.sort(ff.col('a') * -1)", ["a", "b"]),
+    "plan refused": ("src.with_columns(ff.col('missing').cum_sum())", []),
 }
 
 
@@ -465,8 +465,8 @@ def test_cells_below_a_column_less_source_still_sync_without_connecting(database
     held_ran = _record_io(monkeypatch, calls)
     cells = [
         ("imports", IMPORTS),
-        ("rows", f"rows = fl.read_database({database_connection!r}, table_name='orders')"),
-        ("kept", "kept = rows.filter(fl.col('x') > 1).select('x')"),
+        ("rows", f"rows = ff.read_database({database_connection!r}, table_name='orders')"),
+        ("kept", "kept = rows.filter(ff.col('x') > 1).select('x')"),
     ]
     result = _sync(cells)
     assert result["ok"], result.get("message")
@@ -479,8 +479,8 @@ def test_cells_below_a_column_less_source_still_sync_without_connecting(database
 def test_a_cell_failing_below_a_column_less_source_syncs_with_a_warning_naming_its_node(database_connection):
     cells = [
         ("imports", IMPORTS),
-        ("rows", f"rows = fl.read_database({database_connection!r}, table_name='orders')"),
-        ("broken", "broken = rows.filter(fl.col('amonut') > 1)"),
+        ("rows", f"rows = ff.read_database({database_connection!r}, table_name='orders')"),
+        ("broken", "broken = rows.filter(ff.col('amonut') > 1)"),
     ]
     with no_kernel_manager():
         result = NotebookRunner().clean_run(NOTEBOOK_OWNER_ID, 1, CleanRunRequest(cells=cells))
@@ -491,19 +491,19 @@ def test_a_cell_failing_below_a_column_less_source_syncs_with_a_warning_naming_i
 
 
 KAFKA_CONNECTION = "notebook_sync_kafka"
-SOURCE = "src = fl.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Double'}], 'data': [[1.0, 2.0]]})"
+SOURCE = "src = ff.from_raw_data({'columns': [{'name': 'a', 'data_type': 'Double'}], 'data': [[1.0, 2.0]]})"
 NEW_HELD_NODES = {
-    "kafka": (f"rows = fl.read_kafka({KAFKA_CONNECTION!r}, topic_name='orders')", "kafka_source"),
-    "rest api": ("rows = fl.read_api('http://127.0.0.1:1/rows')", "rest_api_reader"),
-    "directory read": ("rows = fl.read_csv(<tmp>)", "read"),
-    "url read": ("rows = fl.read_csv('https://127.0.0.1:1/rows.csv')", "read"),
-    "excel read": ("rows = fl.read_excel(<excel>, sheet_name='Sheet1')", "read"),
+    "kafka": (f"rows = ff.read_kafka({KAFKA_CONNECTION!r}, topic_name='orders')", "kafka_source"),
+    "rest api": ("rows = ff.read_api('http://127.0.0.1:1/rows')", "rest_api_reader"),
+    "directory read": ("rows = ff.read_csv(<tmp>)", "read"),
+    "url read": ("rows = ff.read_csv('https://127.0.0.1:1/rows.csv')", "read"),
+    "excel read": ("rows = ff.read_excel(<excel>, sheet_name='Sheet1')", "read"),
     "custom node": (
-        f"{SOURCE}\nrows = fl.custom_nodes.mood_emoji(src, source_column='a', threshold_value=1, "
+        f"{SOURCE}\nrows = ff.custom_nodes.mood_emoji(src, source_column='a', threshold_value=1, "
         "emoji_column_name='mood', add_random_sparkle=False)",
         "mood_emoji",
     ),
-    "polars code source": ("rows = fl.polars_code('output_df = pl.LazyFrame({\"a\": [1]})')", "polars_code"),
+    "polars code source": ("rows = ff.polars_code('output_df = pl.LazyFrame({\"a\": [1]})')", "polars_code"),
     "null column cleansing": (f"{SOURCE}\nrows = src.data_cleansing(remove_null_columns=True)", "data_cleansing"),
 }
 
@@ -530,7 +530,7 @@ def test_a_new_held_node_is_placed_and_seeded_without_reading_connecting_or_runn
     held_ran = _record_io(monkeypatch, calls)
     cell = code.replace("<tmp>", repr(str(tmp_path / "*.csv"))).replace("<excel>", repr(str(EXCEL)))
     result = _sync(
-        [("imports", IMPORTS + "\nimport polars as pl"), ("new", cell + "\nkept = rows.select(fl.col('a'))")]
+        [("imports", IMPORTS + "\nimport polars as pl"), ("new", cell + "\nkept = rows.select(ff.col('a'))")]
     )
     assert result["ok"], (result.get("line"), result.get("message"))
     assert node_type in {node["type"] for node in result["flowfile_data"]["nodes"]}
@@ -624,7 +624,7 @@ def test_a_sql_table_function_fails_the_canvas_check_on_its_line_and_reads_nothi
     calls = _Calls()
     held_ran = _record_io(monkeypatch, calls)
     query = f"SELECT * FROM {function}('{(tmp_path / 'a.csv').as_posix()}')"
-    cell = f"kept = 1\nrows = fl.sql({query!r})"
+    cell = f"kept = 1\nrows = ff.sql({query!r})"
     result = _sync([("imports", IMPORTS), ("reads", cell)])
     assert (result["ok"], result["cell_id"], result["line"]) == (False, "reads", 2)
     assert "SQL table functions are not allowed" in result["message"]
@@ -634,23 +634,23 @@ def test_a_sql_table_function_fails_the_canvas_check_on_its_line_and_reads_nothi
 
 MULTI_USER_REFUSALS = {
     "a local path for a cloud read": (
-        "rows = fl.read_from_cloud_storage('/etc/hosts', file_format='csv')",
+        "rows = ff.read_from_cloud_storage('/etc/hosts', file_format='csv')",
         "is a local path, which this server does not allow",
     ),
     "a cloud read without a connection": (
-        "rows = fl.read_from_cloud_storage('s3://bucket/rows.parquet')",
+        "rows = ff.read_from_cloud_storage('s3://bucket/rows.parquet')",
         "Select a cloud storage connection; server credentials are not available in multi-user mode.",
     ),
     "an unknown cloud connection": (
-        "rows = fl.read_from_cloud_storage('s3://bucket/rows.parquet', connection_name='nobody_has_this')",
+        "rows = ff.read_from_cloud_storage('s3://bucket/rows.parquet', connection_name='nobody_has_this')",
         "Cloud connection settings not found",
     ),
     "an unknown database connection": (
-        "rows = fl.read_database('nobody_has_this', table_name='orders')",
+        "rows = ff.read_database('nobody_has_this', table_name='orders')",
         "Database connection 'nobody_has_this' not found or not accessible for this user",
     ),
     "an unknown Kafka connection": (
-        "rows = fl.read_kafka('nobody_has_this', topic_name='orders')",
+        "rows = ff.read_kafka('nobody_has_this', topic_name='orders')",
         "Kafka connection not found",
     ),
 }
@@ -684,7 +684,7 @@ def test_a_single_user_install_places_a_local_cloud_path_and_reads_nothing(monke
     calls = _Calls()
     held_ran = _record_io(monkeypatch, calls)
     result = _sync(
-        [("imports", IMPORTS), ("rows", "rows = fl.read_from_cloud_storage('/etc/hosts', file_format='csv')")]
+        [("imports", IMPORTS), ("rows", "rows = ff.read_from_cloud_storage('/etc/hosts', file_format='csv')")]
     )
     assert result["ok"], result.get("message")
     assert [node["type"] for node in result["flowfile_data"]["nodes"]] == ["cloud_storage_reader"]
@@ -694,14 +694,14 @@ def test_a_single_user_install_places_a_local_cloud_path_and_reads_nothing(monke
 
 DESCRIBED = "description='Orders feed'"
 DESCRIBED_READERS = {
-    "catalog table": (f"fl.read_catalog_table('orders', namespace_id=1, {DESCRIBED})", "catalog_reader"),
-    "catalog sql": (f"fl.read_catalog_sql('SELECT * FROM orders', {DESCRIBED})", "catalog_reader"),
-    "database": (f"fl.read_database({DATABASE_CONNECTION!r}, table_name='orders', {DESCRIBED})", "database_reader"),
-    "rest api": (f"fl.read_api('http://127.0.0.1:1/rows', {DESCRIBED})", "rest_api_reader"),
-    "kafka": (f"fl.read_kafka({KAFKA_CONNECTION!r}, topic_name='orders', {DESCRIBED})", "kafka_source"),
+    "catalog table": (f"ff.read_catalog_table('orders', namespace_id=1, {DESCRIBED})", "catalog_reader"),
+    "catalog sql": (f"ff.read_catalog_sql('SELECT * FROM orders', {DESCRIBED})", "catalog_reader"),
+    "database": (f"ff.read_database({DATABASE_CONNECTION!r}, table_name='orders', {DESCRIBED})", "database_reader"),
+    "rest api": (f"ff.read_api('http://127.0.0.1:1/rows', {DESCRIBED})", "rest_api_reader"),
+    "kafka": (f"ff.read_kafka({KAFKA_CONNECTION!r}, topic_name='orders', {DESCRIBED})", "kafka_source"),
     **{
         f"cloud {file_format}": (
-            f"fl.read_from_cloud_storage('/etc/hosts', file_format={file_format!r}, {DESCRIBED})",
+            f"ff.read_from_cloud_storage('/etc/hosts', file_format={file_format!r}, {DESCRIBED})",
             "cloud_storage_reader",
         )
         for file_format in ("csv", "parquet", "json", "delta")

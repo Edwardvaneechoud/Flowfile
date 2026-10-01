@@ -523,7 +523,7 @@ def _reseed_lost_placeholders(nodes: Sequence[FlowNode]) -> None:
 def _undeclared_parameters_error(node: FlowNode, names: set[str]) -> NativeNodeError:
     return NativeNodeError(
         f"{node.node_type} node {node.node_id} references undeclared flow parameter(s) {sorted(names)}; "
-        "declare them with fl.add_flow_parameter(graph, fl.Parameter(name, default=...))"
+        "declare them with ff.add_flow_parameter(graph, ff.Parameter(name, default=...))"
     )
 
 
@@ -717,7 +717,7 @@ def merge_frames(frames: Sequence[FlowFrame]) -> FlowGraph:
     if mode is not None and len(unique_graphs) > 1 and any(graph is not mode.graph for graph in unique_graphs):
         raise NativeNodeError(
             "In a notebook every frame lives on the session graph; this one comes from another graph. "
-            "Build on the session graph: drop the explicit flow_graph= (and fl.create_flow_graph())"
+            "Build on the session graph: drop the explicit flow_graph= (and ff.create_flow_graph())"
         )
     if len(unique_graphs) <= 1:
         return frames[0].flow_graph
@@ -1035,14 +1035,14 @@ def _settings_class(node_type: Any) -> type[BaseModel]:
     if node_type == "promise":
         raise NativeNodeError("promise is the canvas placeholder of an unconfigured node; pass a real node type")
     if node_type == "polars_lazy_frame":
-        raise NativeNodeError("polars_lazy_frame wraps an in-memory LazyFrame; use fl.FlowFrame(lazy_frame) instead")
+        raise NativeNodeError("polars_lazy_frame wraps an in-memory LazyFrame; use ff.FlowFrame(lazy_frame) instead")
     if node_type == "run_flow":
-        raise NativeNodeError("run_flow keys its inputs by slot (input-0 is the parameter frame); use fl.RunFlow(...)")
+        raise NativeNodeError("run_flow keys its inputs by slot (input-0 is the parameter frame); use ff.RunFlow(...)")
     settings_cls = get_settings_class_for_node_type(node_type) if isinstance(node_type, str) else None
     if settings_cls is input_schema.UserDefinedNode:
-        raise NativeNodeError(f"{node_type!r} is a custom node; place it with fl.CustomNode(...)")
+        raise NativeNodeError(f"{node_type!r} is a custom node; place it with ff.CustomNode(...)")
     if settings_cls is None:
-        raise NativeNodeError(f"Unknown node type {node_type!r}; fl.NodeType lists the built-in types")
+        raise NativeNodeError(f"Unknown node type {node_type!r}; ff.NodeType lists the built-in types")
     return settings_cls
 
 
@@ -1069,8 +1069,8 @@ class Node(NativeNode):
     ``sql_query``), else frame i on ``input-i``. Outputs are deferred for subflow, script and
     external-source nodes, and for writers below a deferred frame or a gate; ``deferred``
     overrides that. In a canvas notebook session the node types :func:`notebook_defers` names
-    are always deferred, whatever ``deferred`` says. The dedicated classes (``fl.Gate`` and the
-    like) are the normal route for the nodes they cover; custom nodes go through ``fl.CustomNode``.
+    are always deferred, whatever ``deferred`` says. The dedicated classes (``ff.Gate`` and the
+    like) are the normal route for the nodes they cover; custom nodes go through ``ff.CustomNode``.
     """
 
     def __init__(

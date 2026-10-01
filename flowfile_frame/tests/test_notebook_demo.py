@@ -8,7 +8,7 @@ mode and installs the ``mood_emoji`` custom node from the community-node test re
 
 import pytest
 
-import flowfile as fl
+import flowfile as ff
 import flowfile_core.kernel as kernel_package
 from flowfile_frame import notebook
 from flowfile_frame.catalog_reference import SchemaReference
@@ -30,9 +30,9 @@ WRITTEN_TABLES = {
 def demo_catalog():
     with installed_mood_emoji():
         demo = load_demo()
-        schema = fl.CatalogReference(demo.CATALOG, auto_create=True).schema(demo.SCHEMA, auto_create=True)
-        schema.write_table(fl.from_dict(SALES), "sales")
-        schema.write_table(fl.from_dict(REGIONS), "regions")
+        schema = ff.CatalogReference(demo.CATALOG, auto_create=True).schema(demo.SCHEMA, auto_create=True)
+        schema.write_table(ff.from_dict(SALES), "sales")
+        schema.write_table(ff.from_dict(REGIONS), "regions")
         clean_ref = demo.publish_clean_orders(schema)
         yield demo, schema, clean_ref
 
@@ -72,7 +72,7 @@ def test_build_sales_analytics_builds_in_notebook_mode_without_writing(demo_cata
 
     cell = (
         DEMO_FILE.read_text()
-        + "\nschema = fl.get_catalog(CATALOG).get_schema(SCHEMA)"
+        + "\nschema = ff.get_catalog(CATALOG).get_schema(SCHEMA)"
         + "\nclean_ref = schema.get_flow('Clean orders')"
         + "\nbuild_sales_analytics(schema, clean_ref)\n"
     )

@@ -31,10 +31,10 @@ def flowfile_mode(monkeypatch, tmp_path):
 
 
 def _orders(open_as, user_id):
-    import flowfile as fl
+    import flowfile as ff
 
-    orders = fl.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
-    return open_as(orders.filter(fl.col("amount") > 10).flow_graph, user_id=user_id)
+    orders = ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
+    return open_as(orders.filter(ff.col("amount") > 10).flow_graph, user_id=user_id)
 
 
 def _edit_body(graph):
