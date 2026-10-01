@@ -28,7 +28,8 @@ class FlowfileLogHandler(logging.Handler):
                 log_type=record.levelname.upper(),
                 extra={},
             )
-            if self.flowfile_flow_id != -1 and self.flowfile_node_id != -1:
+            # Without a token core rejects the post; the stream handler still has the record.
+            if self.flowfile_flow_id != -1 and self.flowfile_node_id != -1 and (token := resolve_internal_token()):
                 import requests
 
                 response = requests.post(
@@ -36,7 +37,7 @@ class FlowfileLogHandler(logging.Handler):
                     json=raw_log_input.__dict__,
                     headers={
                         "Content-Type": "application/json",
-                        CORE_INTERNAL_TOKEN_HEADER: resolve_internal_token() or "",
+                        CORE_INTERNAL_TOKEN_HEADER: token,
                     },
                     timeout=(2, 5),
                 )

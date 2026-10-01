@@ -5,9 +5,13 @@ flow_id at construction, so a node_id-only cache key makes any process that
 serves a second flow (e.g. a pooled worker child) ship logs to the wrong flow.
 """
 
-import pytest
+from types import SimpleNamespace
 
-from flowfile_worker.flow_logger import FlowfileLogHandler, get_worker_logger
+import pytest
+import requests
+
+from flowfile_worker import internal_token, secrets
+from flowfile_worker.flow_logger import CORE_INTERNAL_TOKEN_HEADER, FlowfileLogHandler, get_worker_logger
 
 
 def _http_handler(logger) -> FlowfileLogHandler:
@@ -44,3 +48,25 @@ def test_repeated_lookup_reuses_logger_without_duplicating_handlers():
 
     assert first is second
     assert len(second.handlers) == 2  # stream + http, added exactly once
+
+
+@pytest.mark.worker
+def test_records_reach_core_only_once_a_token_resolves(monkeypatch):
+    sent = []
+
+    def post(url, **kwargs):
+        sent.append(kwargs["headers"])
+        return SimpleNamespace(status_code=200, text="")
+
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.delenv("FLOWFILE_INTERNAL_TOKEN", raising=False)
+    monkeypatch.setattr(secrets, "get_password", lambda service, username: None)
+    monkeypatch.setattr(internal_token, "_token", None)
+    logger = get_worker_logger(flowfile_flow_id=401, flowfile_node_id=3)
+
+    logger.info("before core minted a token")
+    assert sent == []
+
+    monkeypatch.setenv("FLOWFILE_INTERNAL_TOKEN", "minted-later")
+    logger.info("after")
+    assert [headers[CORE_INTERNAL_TOKEN_HEADER] for headers in sent] == ["minted-later"]
