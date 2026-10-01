@@ -993,6 +993,14 @@ class Expr:
         return self._create_binary_op_expr("<=", other, res_expr)
 
     # --- Logical operations ---
+    def __bool__(self) -> bool:
+        """Refuse truthiness, as Polars does: ``and``/``or``/``not`` would silently drop a condition."""
+        raise TypeError(
+            "the truth value of an Expr is ambiguous\n\n"
+            "Use `&` instead of `and`, `|` instead of `or` and `~` instead of `not`, "
+            "e.g. `(ff.col('a') > 0) & (ff.col('b') > 0)`."
+        )
+
     def __and__(self, other) -> Expr:
         from flowfile_frame.selectors import Selector
 
