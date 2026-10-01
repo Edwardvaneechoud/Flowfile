@@ -17,7 +17,7 @@ the node type:
   ``derive_schema``). The executor does NOT do its own ``pl.scan_*``
   calls — that would bypass the worker.
 
-The 22+1 explicit ``static`` set covers everything in
+The 31-entry explicit ``static`` set covers everything in
 ``NODE_TYPE_TO_SETTINGS_CLASS`` whose schema is derivable from
 ``(settings, upstream_schema)`` without code execution. The 9-entry ``dynamic``
 set names the nodes whose schema callback either reads the upstream lazy frame
@@ -61,6 +61,8 @@ _NODE_CLASS_MAP: Final[dict[str, NodeClass]] = {
     "unpivot": "dynamic",
     "text_to_rows": "dynamic",
     "graph_solver": "dynamic",
+    # Unlike graph_solver, the output columns are fixed per output_detail.
+    "explode_hierarchy": "static",
     "python_script": "dynamic",
     "polars_code": "dynamic",
     # sql_query has a schema_callback (add_sql_query) that resolves the output

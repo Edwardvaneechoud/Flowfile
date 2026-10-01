@@ -25,8 +25,10 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import (
     WorkerStreamInterrupted,
     WorkerStreamStalled,
+    WorkerTaskError,
     _receive_raw_result,
 )
+from flowfile_core.flowfile.flow_node.models import RemoteExecutionError
 
 
 def _closed_ok() -> ConnectionClosedOK:
@@ -204,6 +206,23 @@ def test_generic_stream_error_still_falls_back_to_rest(monkeypatch):
         )
 
 
+def test_sampler_rest_fallback_without_file_ref_polls_its_own_task(monkeypatch):
+    """With no file_ref, the REST submit must carry the id the poll thread uses (real worker)."""
+
+    def _no_ws(**kwargs):
+        raise ConnectionRefusedError("worker has no WS endpoint")
+
+    monkeypatch.setattr(subprocess_ops, "streaming_start", _no_ws)
+
+    sampler = subprocess_ops.ExternalSampler(
+        lf=pl.LazyFrame({"a": list(range(10))}), node_id=1, flow_id=1, file_ref=None, sample_size=3
+    )
+
+    assert not sampler.has_error, sampler.error_description
+    assert sampler.status.background_task_id == sampler.file_ref
+    assert pl.read_ipc(sampler.status.file_ref)["a"].to_list() == [0, 1, 2]
+
+
 def test_receive_thread_marks_stall_as_worker_unresponsive(monkeypatch):
     """Non-blocking mode: a stall surfaces via get_result() with error_code -2.
 
@@ -278,3 +297,237 @@ def test_cancel_mid_stream_classified_as_interrupted_not_worker_death(monkeypatc
     assert fetcher.error_code == -2, "user cancel must classify as interrupted (-2), not worker death (-1)"
     with pytest.raises(Exception, match="Canceled"):
         fetcher.get_result()
+
+
+def test_task_error_frame_raises_worker_task_error():
+    """An error frame marked status "Error" is the task's own failure, not a dead child."""
+    frame = '{"type": "error", "error_message": "ComputeError: cycle a -> b -> a", "status": "Error"}'
+    with pytest.raises(WorkerTaskError, match="a -> b -> a"):
+        _receive_raw_result(_FakeWs(script=[frame]), "task-failed")
+
+
+def test_unmarked_error_frame_keeps_degrade_semantics():
+    """Frames without the status (child died, older worker) must not become task errors."""
+    frame = '{"type": "error", "error_message": "Process ended unexpectedly"}'
+    with pytest.raises(Exception, match="Process ended unexpectedly") as exc_info:
+        _receive_raw_result(_FakeWs(script=[frame]), "task-died")
+    assert not isinstance(exc_info.value, WorkerTaskError)
+
+
+def test_receive_thread_marks_task_error_as_a_real_failure(monkeypatch):
+    """Non-blocking mode: a task error is error_code 1 like the REST path, never -1 (degrade)."""
+    monkeypatch.setattr(subprocess_ops, "streaming_start", lambda **kwargs: _FakeWs())
+
+    def _failed_receive(ws, task_id, should_abort=None):
+        raise WorkerTaskError("ComputeError: cycle a -> b -> a")
+
+    monkeypatch.setattr(subprocess_ops, "streaming_receive", _failed_receive)
+
+    fetcher = subprocess_ops.ExternalDfFetcher(
+        flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-async-task-error", wait_on_completion=False
+    )
+    with pytest.raises(Exception, match="a -> b -> a"):
+        fetcher.get_result()
+    assert fetcher.error_code == 1
+
+
+def test_blocking_task_error_is_recorded_without_rest_resubmit(monkeypatch):
+    """Blocking mode: a task that ran and failed must not be re-submitted over REST."""
+    monkeypatch.setattr(subprocess_ops, "streaming_start", lambda **kwargs: _FakeWs())
+
+    def _failed_receive(ws, task_id, should_abort=None):
+        raise WorkerTaskError("ComputeError: cycle a -> b -> a")
+
+    monkeypatch.setattr(subprocess_ops, "streaming_receive", _failed_receive)
+    monkeypatch.setattr(
+        subprocess_ops,
+        "trigger_df_operation",
+        lambda **kwargs: pytest.fail("REST fallback must not run after the worker reported a task error"),
+    )
+
+    with pytest.raises(RemoteExecutionError, match="a -> b -> a"):
+        subprocess_ops.ExternalDfFetcher(
+            flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-block-task-error", wait_on_completion=True
+        )
+
+
+def test_blocking_sampler_task_error_raises_without_rest_resubmit(monkeypatch):
+    """The sampler behind narrow nodes must raise too, or the node is marked successful."""
+    monkeypatch.setattr(subprocess_ops, "streaming_start", lambda **kwargs: _FakeWs())
+
+    def _failed_receive(ws, task_id, should_abort=None):
+        raise WorkerTaskError("InvalidOperationError: conversion from `str` to `i64` failed")
+
+    monkeypatch.setattr(subprocess_ops, "streaming_receive", _failed_receive)
+    monkeypatch.setattr(
+        subprocess_ops,
+        "trigger_sample_operation",
+        lambda **kwargs: pytest.fail("REST fallback must not run after the worker reported a task error"),
+    )
+
+    with pytest.raises(RemoteExecutionError, match="conversion from") as exc_info:
+        subprocess_ops.ExternalSampler(
+            lf=pl.LazyFrame({"a": [1]}), node_id=1, flow_id=1, file_ref="t-sample-task-error", wait_on_completion=True
+        )
+    assert exc_info.value.original_class == "InvalidOperationError"
+
+
+def test_environment_error_frame_degrades_like_a_dead_child():
+    """error_kind "environment" (plan unloadable, result write failed, time limit) keeps code -1."""
+    frame = (
+        '{"type": "error", "error_message": "ModuleNotFoundError: No module named \'udfs\'",'
+        ' "status": "Error", "error_kind": "environment"}'
+    )
+    with pytest.raises(WorkerTaskError, match="udfs") as exc_info:
+        _receive_raw_result(_FakeWs(script=[frame]), "task-env")
+    assert exc_info.value.error_code == -1
+
+
+@pytest.mark.parametrize("kind", ["task", None])
+def test_task_or_unkinded_error_frame_fails_the_node(kind):
+    """A data failure, or an "Error" from a worker that sends no kind, keeps code 1."""
+    kind_field = f', "error_kind": "{kind}"' if kind else ""
+    frame = f'{{"type": "error", "error_message": "ComputeError: cycle", "status": "Error"{kind_field}}}'
+    with pytest.raises(WorkerTaskError) as exc_info:
+        _receive_raw_result(_FakeWs(script=[frame]), "task-data")
+    assert exc_info.value.error_code == 1
+
+
+def test_receive_thread_degrades_on_an_environment_failure(monkeypatch):
+    monkeypatch.setattr(subprocess_ops, "streaming_start", lambda **kwargs: _FakeWs())
+
+    def _failed_receive(ws, task_id, should_abort=None):
+        raise WorkerTaskError("ModuleNotFoundError: No module named 'udfs'", "environment")
+
+    monkeypatch.setattr(subprocess_ops, "streaming_receive", _failed_receive)
+
+    fetcher = subprocess_ops.ExternalDfFetcher(
+        flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-async-env-error", wait_on_completion=False
+    )
+    with pytest.raises(Exception, match="udfs"):
+        fetcher.get_result()
+    assert fetcher.error_code == -1
+
+
+def test_blocking_environment_failure_raises_without_rest_resubmit(monkeypatch):
+    monkeypatch.setattr(subprocess_ops, "streaming_start", lambda **kwargs: _FakeWs())
+
+    def _failed_receive(ws, task_id, should_abort=None):
+        raise WorkerTaskError("Task exceeded the 3600s time limit and was terminated", "environment")
+
+    monkeypatch.setattr(subprocess_ops, "streaming_receive", _failed_receive)
+    monkeypatch.setattr(
+        subprocess_ops,
+        "trigger_df_operation",
+        lambda **kwargs: pytest.fail("a task the worker already ran must not be re-submitted over REST"),
+    )
+
+    with pytest.raises(RemoteExecutionError, match="time limit"):
+        subprocess_ops.ExternalDfFetcher(
+            flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref="t-block-env-error", wait_on_completion=True
+        )
+
+
+def _run_receive_thread_failing_with(monkeypatch, caplog, error: Exception, file_ref: str):
+    """Fail the non-blocking receive thread with *error* and return the records it logged."""
+    import logging
+
+    monkeypatch.setattr(subprocess_ops, "streaming_start", lambda **kwargs: _FakeWs())
+
+    def _failed_receive(ws, task_id, should_abort=None):
+        raise error
+
+    monkeypatch.setattr(subprocess_ops, "streaming_receive", _failed_receive)
+    # The core logger doesn't propagate, so route it to caplog's root handler for the test.
+    monkeypatch.setattr(subprocess_ops.logger, "propagate", True)
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger=subprocess_ops.logger.name):
+        fetcher = subprocess_ops.ExternalDfFetcher(
+            flow_id=1, node_id=1, lf=pl.LazyFrame({"a": [1]}), file_ref=file_ref, wait_on_completion=False
+        )
+        with pytest.raises(RemoteExecutionError):
+            fetcher.get_result()
+    return [r for r in caplog.records if r.name == subprocess_ops.logger.name]
+
+
+@pytest.mark.parametrize("kind", ["task", "environment", None])
+def test_receive_thread_logs_worker_task_failure_as_warning_without_traceback(monkeypatch, caplog, kind):
+    """A failure the worker classified is expected (a data cycle, a bad cast): no ERROR, no stack trace."""
+    import logging
+
+    records = _run_receive_thread_failing_with(
+        monkeypatch, caplog, WorkerTaskError("ComputeError: cycle a -> b -> a", kind), f"t-log-task-{kind}"
+    )
+    assert records, "the task failure should still be logged"
+    assert all(r.levelno < logging.ERROR for r in records)
+    assert all(r.exc_info is None for r in records)
+    assert any(r.levelno == logging.WARNING and "a -> b -> a" in r.getMessage() for r in records)
+
+
+def test_receive_thread_logs_unexpected_error_with_traceback(monkeypatch, caplog):
+    """Transport, protocol or core bugs are not task failures and keep the full exception log."""
+    import logging
+
+    records = _run_receive_thread_failing_with(
+        monkeypatch, caplog, RuntimeError("unexpected frame"), "t-log-unexpected"
+    )
+    assert any(r.levelno == logging.ERROR and r.exc_info is not None for r in records)
+
+
+@pytest.fixture
+def running_worker():
+    from tests.conftest import is_worker_running
+
+    if not is_worker_running():
+        pytest.skip("flowfile_worker is not running")
+
+
+@pytest.fixture
+def core_only_udf_plan(tmp_path, monkeypatch) -> pl.LazyFrame:
+    """A plan whose UDF lives in a module only this (core) process can import, as with separate images."""
+    module_name = f"core_only_udf_{tmp_path.name.replace('-', '_')}"
+    (tmp_path / f"{module_name}.py").write_text("def plus_one(s):\n    return s + 1\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    module = __import__(module_name)
+    return pl.LazyFrame({"a": [1, 2]}).select(pl.col("a").map_batches(module.plus_one, return_dtype=pl.Int64))
+
+
+def _force_rest(monkeypatch):
+    def _no_websocket(**kwargs):
+        raise ConnectionRefusedError("websocket disabled for this test")
+
+    monkeypatch.setattr(subprocess_ops, "streaming_start", _no_websocket)
+
+
+@pytest.mark.parametrize("transport", ["websocket", "rest"])
+def test_real_worker_that_cannot_load_the_plan_degrades(running_worker, core_only_udf_plan, transport, monkeypatch):
+    """The worker can't import the plan's UDF: error code -1, so the node continues in core."""
+    if transport == "rest":
+        _force_rest(monkeypatch)
+    fetcher = subprocess_ops.ExternalDfFetcher(
+        flow_id=1,
+        node_id=1,
+        lf=core_only_udf_plan,
+        file_ref=f"t-real-env-{transport}-{time.monotonic_ns()}",
+        wait_on_completion=False,
+    )
+    with pytest.raises(RemoteExecutionError, match="core_only_udf"):
+        fetcher.get_result()
+    assert fetcher.error_code == -1
+
+
+@pytest.mark.parametrize("transport", ["websocket", "rest"])
+def test_real_worker_data_failure_fails_the_node(running_worker, transport, monkeypatch):
+    """The plan loads but fails on its data: error code 1, a real node error."""
+    if transport == "rest":
+        _force_rest(monkeypatch)
+    fetcher = subprocess_ops.ExternalDfFetcher(
+        flow_id=1,
+        node_id=1,
+        lf=pl.LazyFrame({"a": ["abc"]}).with_columns(pl.col("a").cast(pl.Int64)),
+        file_ref=f"t-real-data-{transport}-{time.monotonic_ns()}",
+        wait_on_completion=False,
+    )
+    with pytest.raises(RemoteExecutionError, match="InvalidOperationError"):
+        fetcher.get_result()
+    assert fetcher.error_code == 1
