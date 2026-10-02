@@ -366,8 +366,7 @@ rebuild_kernel:
 	docker build $(KERNEL_BUILD_ARG) -t flowfile-kernel-$(KERNEL_FLAVOUR):local kernel_runtime/
 	@echo "Built flowfile-kernel-$(KERNEL_FLAVOUR):local (reports __version__ via /health)."
 
-# Dev notebook kernel: this checkout's flowfile wheel on flowfile-kernel-lite:local (build that
-# first with `make rebuild_kernel KERNEL_FLAVOUR=lite`). Use the tag as a custom-image kernel.
+# Dev notebook kernel image on flowfile-kernel-lite:local (run `make rebuild_kernel KERNEL_FLAVOUR=lite` first).
 NOTEBOOK_KERNEL_WHEEL_DIR := build/notebook_kernel
 notebook_kernel_dev:
 	@rm -rf $(NOTEBOOK_KERNEL_WHEEL_DIR) && mkdir -p $(NOTEBOOK_KERNEL_WHEEL_DIR)

@@ -2,17 +2,17 @@
 
 A kernel session runs the user's cells as Python in a notebook kernel (one with ``flowfile`` installed),
 so it is offered only in ``electron`` mode (the desktop app and a default ``pip install flowfile``), and
-there only to a caller on the same machine, and only with a SQLite file catalog. ``FLOWFILE_MODE`` is
-read per call, since ``settings.FLOWFILE_MODE`` is cached at import (the same reason as
-``auth.sharing.sharing_enabled``).
+there only to a caller on the same machine, and only with a SQLite file catalog. The mode is read per call
+through ``auth.sharing.sharing_enabled`` (false only in electron).
 """
 
 from __future__ import annotations
 
 import ipaddress
-import os
 
 from fastapi import HTTPException, Request
+
+from flowfile_core.auth import sharing
 
 DISABLED_DETAIL = "Notebook kernel sessions are only available in the desktop app with a SQLite catalog database"
 REMOTE_DETAIL = "Notebook kernel sessions only accept local connections"
@@ -23,7 +23,7 @@ def kernel_sessions_allowed(user) -> bool:
     which core copies for the kernel (``kernel.notebook_db``)."""
     from shared.database import sqlite_database_path
 
-    return os.environ.get("FLOWFILE_MODE", "electron") == "electron" and sqlite_database_path() is not None
+    return not sharing.sharing_enabled() and sqlite_database_path() is not None
 
 
 def is_loopback(http: Request) -> bool:

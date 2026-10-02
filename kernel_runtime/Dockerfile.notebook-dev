@@ -1,6 +1,4 @@
-# Dev-only notebook kernel: the checkout's flowfile wheel layered on the local lite image, so
-# unreleased code runs as a custom-image kernel. Built by `make notebook_kernel_dev`; the build
-# context is the folder holding the wheel.
+# Dev-only notebook kernel: this checkout's flowfile wheel on the local lite image (`make notebook_kernel_dev`).
 ARG BASE_IMAGE=flowfile-kernel-lite:local
 
 # polars-grouper publishes no linux/aarch64 wheel, so build it where a Rust toolchain exists.

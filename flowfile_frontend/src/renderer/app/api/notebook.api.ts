@@ -1,4 +1,4 @@
-// Catalog notebook CRUD plus a flow's canvas-notebook routes (render, push, run lineage, kernel session). Catalog cells execute via KernelApi.
+// Catalog notebook CRUD plus a flow's canvas-notebook routes; catalog cells execute via KernelApi.
 import axios from "../services/axios.config";
 import type { HistoryState } from "../types/flow.types";
 import type { ExecuteResult } from "../types/kernel.types";

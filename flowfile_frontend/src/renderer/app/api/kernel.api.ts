@@ -53,7 +53,7 @@ export class KernelApi {
 
   static async update(
     kernelId: string,
-    update: { packages?: string[]; mounted_folders?: MountedFolderEntry[] },
+    update: { packages: string[]; mounted_folders?: MountedFolderEntry[] },
   ): Promise<KernelInfo> {
     try {
       const response = await axios.patch<KernelInfo>(

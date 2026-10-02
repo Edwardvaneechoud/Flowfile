@@ -112,7 +112,7 @@ In the desktop app, and with `pip install flowfile` in the default mode, the not
 | **Run** | Runs the cell as Python in the session. The canvas does not change. |
 | **Run all** | Runs every cell in the session. |
 | **Push** | Runs every cell again in a fresh session on the kernel, then applies what they build to the canvas as one step, with the same review as without a kernel. The session is then reseeded from the canvas. |
-| **Run and preview on canvas** (⋯) | Pushes an edited cell first, then runs the node on the canvas, as without a kernel. |
+| **Run and preview on canvas** (⋯) | Pushes first when the notebook differs from the canvas, then runs the node on the canvas, as without a kernel. |
 | **Reset session** (⋯) | Drops the session's variables and binds one variable per canvas node again. |
 | **Stop** | Shown beside a running cell's run button. Interrupts the cell, and cancels the canvas run it is waiting on for rows. |
 
@@ -122,7 +122,7 @@ The kernel is busy with the cell while the canvas runs, so that run cannot use t
 
 The kernel can read the Flowfile folders (saved flows, custom nodes, catalog tables) and a copy of the catalog database that the app refreshes whenever a cell reads the catalog. Other files are visible only in the folders you add under **Folders this kernel can read** in the [kernel's settings](kernels.md#folders-this-kernel-can-read). Stored secrets cannot be decrypted in the kernel, so a cloud or database source shows rows only through the canvas.
 
-In cells, write file paths as they are on your machine (`C:\Users\me\data\sales.csv` on Windows). Flowfile's readers, writers and `list_files` open them through the kernel's folders, and a push stores them as written. Plain Polars calls such as `pl.read_csv` see the kernel's path, which on Windows is under `/host/<drive>/`; `from flowfile_frame.notebook import kernel_path` gives it, as `kernel_path(r"C:\Users\me\data\sales.csv")`. A push turns a kernel path in a reader, writer or `list_files` back into the path on your machine. Writing a file directly from a cell, such as `df.write_csv(...)`, needs a folder marked **Writable**; an `ff` writer in a cell adds a writer node instead, which writes when the flow runs.
+In cells, write file paths as they are on your machine (`C:\Users\me\data\sales.csv` on Windows). Flowfile's readers and `list_files` open them through the kernel's folders, and a push stores them as written. Plain Polars calls such as `pl.read_csv` see the kernel's path, which on Windows is under `/host/<drive>/`; `from flowfile_frame.notebook import kernel_path` gives it, as `kernel_path(r"C:\Users\me\data\sales.csv")`. A push turns a kernel path in a reader, writer or `list_files` back into the path on your machine. Writing a file directly from a cell, such as `df.write_csv(...)`, needs a folder marked **Writable**; an `ff` writer in a cell adds a writer node instead, which writes when the flow runs.
 
 Limits:
 
@@ -132,7 +132,7 @@ Limits:
 
 ## Kernels, Docker and deployments
 
-With **No kernel** picked the notebook starts no Python process and needs no [kernel](kernels.md) and no Docker. A Python Script node in the flow still runs on its kernel: its cell is an `ff.PythonScript` or `@ff.python_script` definition, and running that cell runs the node on its kernel, which needs Docker as it does on the canvas. Python that prints, displays or computes runs in a Python Script node or a [catalog notebook](catalog/notebooks.md), both on a kernel.
+With **No kernel** picked the notebook starts no Python process and needs no [kernel](kernels.md) and no Docker. A Python Script node in the flow still runs on its kernel: its cell is an `ff.PythonScript` or `@ff.python_script` definition, and running that cell runs the node on its kernel, which needs Docker as it does on the canvas. Python that prints, displays or computes needs a kernel: this notebook [on a kernel](#running-on-a-kernel), a Python Script node or a [catalog notebook](catalog/notebooks.md).
 
 Viewing and editing the cells, and running them while the notebook matches the canvas, work for every user, for their own flows, in the desktop app, with `pip install flowfile` and in a Docker deployment. Syncing works for every user in the default `electron` mode: the desktop app, and `pip install flowfile` unless you set `FLOWFILE_MODE`. With any other `FLOWFILE_MODE` (`docker` in a Docker deployment, or `package`) syncing needs an admin account, because the catalog lookups a cell can reach do not check each user's access. Other users keep editable cells; **Run** and **Run all** when the notebook no longer matches the canvas, and **Push**, leave the edits in the notebook, and a banner says that syncing needs an admin. The notebook has no settings of its own.
 

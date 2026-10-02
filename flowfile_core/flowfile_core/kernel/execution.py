@@ -154,8 +154,6 @@ class KernelBusyError(RuntimeError):
             f"Kernel '{kernel_id}' is busy with the notebook cell waiting on this run, so node {node_id} cannot run "
             "on it now"
         )
-        self.node_id = node_id
-        self.kernel_id = kernel_id
 
 
 class KernelHold:

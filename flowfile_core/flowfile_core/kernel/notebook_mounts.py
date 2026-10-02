@@ -10,6 +10,7 @@ import logging
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from flowfile_core.auth import sharing
 from flowfile_core.kernel.models import MountedFolder
 from flowfile_core.kernel.notebook_support import is_notebook_kernel_config
 
@@ -20,10 +21,6 @@ WINDOWS_HOST_ROOT = "/host"
 _RESERVED_TREES = ("/app", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/sbin", "/sys", "/usr")
 _RESERVED_EXACT = ("/", "/home", "/host", "/mnt", "/opt", "/root", "/run", "/srv", "/tmp", "/var")
 _KERNEL_OWN_MOUNTS = ("/shared", "/catalog_tables")
-
-
-def is_electron_mode() -> bool:
-    return os.environ.get("FLOWFILE_MODE", "electron") == "electron"
 
 
 def _windows_drive_path(path: str) -> PureWindowsPath | None:
@@ -87,7 +84,7 @@ def validate_mounted_folders(folders: list[str | MountedFolder]) -> list[str | M
     """
     if not folders:
         return []
-    if not is_electron_mode():
+    if sharing.sharing_enabled():
         raise ValueError("Kernel folders can only be mounted in the desktop app (FLOWFILE_MODE=electron)")
     out: list[str | MountedFolder] = []
     seen: set[str] = set()
@@ -135,7 +132,7 @@ def build_mount_table(kernel) -> dict[str, str]:
     ``mounted_folders``. Missing folders are skipped, and so is a folder saved before
     ``validate_mounted_folders`` refused one that holds Flowfile's storage folder.
     """
-    if not is_electron_mode():
+    if sharing.sharing_enabled():
         return {}
     hosts: list[str] = []
     if is_notebook_kernel_config(kernel):

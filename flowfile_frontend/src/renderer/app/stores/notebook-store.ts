@@ -1,4 +1,4 @@
-// Notebook store: catalog tabs run python through KernelApi; a flow tab runs in its kernel session when one is picked, else syncs to the canvas and runs there.
+// Notebook store: catalog tabs run on a kernel; a flow tab runs in its kernel session if picked, else on the canvas.
 import { defineStore } from "pinia";
 import { FlowApi } from "../api/flow.api";
 import { KernelApi } from "../api/kernel.api";
@@ -856,12 +856,7 @@ export const useNotebookStore = defineStore("notebook", {
     },
 
     /** The canvas now holds the pushed `cells`: they count as unedited until the next rendering. */
-    markFlowPushed(
-      nb: OpenNotebook,
-      result: Pick<NotebookPushResult, "node_ids_by_cell" | "code_fingerprint"> &
-        Partial<NotebookPushResult>,
-      cells: [string, string][],
-    ) {
+    markFlowPushed(nb: OpenNotebook, result: NotebookPushResult, cells: [string, string][]) {
       nb.generated = Object.fromEntries(cells);
       nb.nodeIds = { ...nb.nodeIds, ...result.node_ids_by_cell };
       nb.fingerprint = result.code_fingerprint;

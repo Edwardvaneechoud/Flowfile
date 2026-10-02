@@ -111,7 +111,7 @@
       v-if="detailsKernel"
       :kernel="detailsKernel"
       :flavour-info="flavourInfo"
-      :on-save="handleSavePackages"
+      :on-save="updateKernel"
       @close="closeDetails"
     />
 
@@ -149,7 +149,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
-import type { KernelConfig, KernelInfo, MountedFolderEntry } from "../../types";
+import type { KernelConfig, KernelInfo } from "../../types";
 import { useKernelManager } from "./useKernelManager";
 import CreateKernelForm from "./CreateKernelForm.vue";
 import KernelStatusSidebar from "./KernelStatusSidebar.vue";
@@ -183,14 +183,6 @@ const openDetails = (kernelId: string) => {
 
 const closeDetails = () => {
   detailsKernelId.value = null;
-};
-
-const handleSavePackages = async (
-  kernelId: string,
-  update: { packages: string[]; mounted_folders?: MountedFolderEntry[] },
-): Promise<void> => {
-  // Re-throws so the modal can surface the error inline; parent doesn't toast.
-  await updateKernel(kernelId, update);
 };
 
 // ---- stats derivations --------------------------------------------------

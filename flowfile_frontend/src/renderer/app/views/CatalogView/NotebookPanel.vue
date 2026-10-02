@@ -553,7 +553,7 @@ function openCreateKernel() {
   kernelSelectRef.value?.blur();
   createKernelVisible.value = true;
 }
-const notebookKernelSuggestion = computed<KernelSuggestion>(() => ({
+const notebookKernelSuggestion: KernelSuggestion = {
   config: {
     id: "notebook",
     name: "Notebook",
@@ -567,7 +567,7 @@ const notebookKernelSuggestion = computed<KernelSuggestion>(() => ({
   },
   covered_by_flavour: [],
   flavour_image_available: null,
-}));
+};
 
 async function onKernelCreated(kernel: KernelInfo) {
   store.setKernel(kernel.id);
