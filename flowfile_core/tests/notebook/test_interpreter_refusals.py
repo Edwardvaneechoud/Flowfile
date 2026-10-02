@@ -239,6 +239,22 @@ def test_a_construct_outside_the_dialect_needs_a_kernel_on_its_line(name):
     assert placed == (before[0] if before else 0)
 
 
+@pytest.mark.parametrize(
+    "code, hint",
+    [
+        ("x = df.filter(ff.col('a') > 0 and ff.col('a') < 3)", "combine expressions with `&` / `|`, not `and` / `or`"),
+        ("x = df.filter(ff.col('a') > 0 or ff.col('a') < 3)", "combine expressions with `&` / `|`, not `and` / `or`"),
+        ("x = df.filter(not (ff.col('a') > 0))", "negate an expression with `.not_()`, not `not`"),
+    ],
+    ids=["and", "or", "not"],
+)
+def test_a_python_boolean_operator_names_the_expression_operator(code, hint):
+    result, placed = _interpret(code)
+    assert (result.line, result.kind) == (1, "needs_kernel")
+    assert f"({hint})" in result.message and result.message.endswith("this needs a kernel")
+    assert placed == 0
+
+
 @pytest.mark.parametrize("name", REFUSED_FL)
 def test_every_refused_fl_name_needs_a_kernel(name):
     result, placed = _interpret(f"\nx = ff.{name}")

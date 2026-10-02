@@ -61,7 +61,11 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     get_encrypted_credential,
     get_ga_connection,
 )
-from flowfile_core.flowfile.filter_expressions import build_filter_expression, resolve_filter_field_type
+from flowfile_core.flowfile.filter_expressions import (
+    build_filter_expression,
+    resolve_filter_field_type,
+    supports_native_membership,
+)
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
@@ -3710,11 +3714,13 @@ class FlowGraph:
                     return fl
 
                 try:
-                    field_data_type = resolve_filter_field_type(fl.get_schema_column(basic_filter.field))
+                    column = fl.get_schema_column(basic_filter.field)
+                    field_data_type = resolve_filter_field_type(column)
+                    native_membership = supports_native_membership(column)
                 except Exception:
-                    field_data_type = None
+                    field_data_type, native_membership = None, False
 
-                expression = build_filter_expression(basic_filter, field_data_type)
+                expression = build_filter_expression(basic_filter, field_data_type, native_membership)
 
             if filter_settings.split_mode:
                 return fl.filter_split(expression)
