@@ -23,7 +23,6 @@ import json
 import linecache
 import logging
 import os
-import re
 import threading
 from collections.abc import Callable, Iterator
 from contextvars import ContextVar, Token
@@ -39,7 +38,6 @@ logger = logging.getLogger(__name__)
 
 KERNEL_REFUSAL = "kernel nodes run on the canvas: use Run on canvas"
 MOUNTS_ENV = "FLOWFILE_NOTEBOOK_MOUNTS"
-_WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
 
 RUN_LOCK = threading.Lock()
 """Serializes notebook runs (a seed plus a clean run) that share a process, such as a server's.
@@ -358,24 +356,12 @@ def _paths_as_written() -> Iterator[None]:
 def translate_path(path: str, table: dict[str, str]) -> str | None:
     """The kernel-side path of host ``path`` under ``table`` (host folder -> kernel folder), or ``None``.
 
-    The longest covering host folder wins; a Windows folder (``C:\\...``) matches case-insensitively
-    and with either slash.
+    Core's ``kernel.notebook_mounts.translate``: the longest covering host folder wins; a Windows
+    folder (``C:\\...``) matches case-insensitively and with either slash.
     """
-    best: tuple[int, str] | None = None
-    written = path.replace("\\", "/").rstrip("/")
-    for host, target in table.items():
-        base = host.replace("\\", "/").rstrip("/")
-        folded = _WINDOWS_DRIVE.match(host) is not None
-        probe, prefix = (written.casefold(), base.casefold()) if folded else (written, base)
-        if probe == prefix:
-            rest = ""
-        elif prefix and probe.startswith(prefix + "/"):
-            rest = written[len(base) + 1 :]
-        else:
-            continue
-        if best is None or len(base) > best[0]:
-            best = (len(base), f"{target.rstrip('/')}/{rest}" if rest else target)
-    return best[1] if best else None
+    from flowfile_core.kernel.notebook_mounts import translate
+
+    return translate(path, table)
 
 
 def kernel_path(path: str) -> str | None:

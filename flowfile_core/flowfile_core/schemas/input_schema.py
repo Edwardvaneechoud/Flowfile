@@ -1,9 +1,10 @@
 import os
+import posixpath
 import re
 from collections.abc import Callable
 from contextvars import ContextVar
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Annotated, Any, ClassVar, Literal, get_args
 
 import polars as pl
@@ -306,7 +307,18 @@ class ReceivedTable(BaseModel):
             return
         if keep_paths_as_written.get():
             translate = kernel_file_path.get()
-            self.abs_file_path = (translate(self.path) if translate is not None else None) or self.path
+            translated = translate(self.path) if translate is not None else None
+            # A translated path is the Linux kernel's, whatever the host's separators.
+            moved = translated is not None and translated != self.path
+            path_type, join = (PurePosixPath, posixpath.join) if moved else (Path, os.path.join)
+            resolved = translated or self.path
+            # In the Linux kernel the frame's name of a Windows path is the whole path.
+            name = PureWindowsPath(self.name).name if self.name else None
+            if self.scan_mode == "single_file" and name and name not in path_type(resolved).name:
+                resolved = join(resolved, name)
+            if self.scan_mode == "directory":
+                resolved = ensure_glob_pattern(resolved, default_scan_extension(self.file_type))
+            self.abs_file_path = resolved
             return
         base_path = Path(self.path).expanduser()
         if not base_path.is_absolute():

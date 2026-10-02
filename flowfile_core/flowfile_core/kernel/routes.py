@@ -28,6 +28,7 @@ from flowfile_core.kernel.models import (
     KernelMemoryInfo,
     KernelSuggestion,
     KernelUpdate,
+    MountedFolder,
     RecoveryStatus,
 )
 from flowfile_core.kernel.notebook_mounts import validate_mounted_folders
@@ -62,7 +63,7 @@ async def _get_manager():
 router = APIRouter(prefix="/kernels", dependencies=[Depends(get_current_active_user)])
 
 
-def _validated_folders(folders: list[str]) -> list[str]:
+def _validated_folders(folders: list[str | MountedFolder]) -> list[str | MountedFolder]:
     """``notebook_mounts.validate_mounted_folders`` with its refusal as a 422."""
     try:
         return validate_mounted_folders(folders)

@@ -69,6 +69,11 @@ def _resolve_scan_mode(source: str, *, glob: bool = True) -> Literal["single_fil
         return "single_file"
     if is_glob_pattern(source) or source.endswith(("/", os.sep)):
         return "directory"
+    if input_schema.keep_paths_as_written.get():
+        # In a notebook kernel the folder is probed where the kernel sees it; a Windows one may end in "\".
+        translate = input_schema.kernel_file_path.get()
+        probe = (translate(source) if translate is not None else None) or source
+        return "directory" if source.endswith("\\") or Path(probe).is_dir() else "single_file"
     return "directory" if Path(source).expanduser().is_dir() else "single_file"
 
 

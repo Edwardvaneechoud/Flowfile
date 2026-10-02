@@ -98,11 +98,12 @@
             <div v-if="kernel.mounted_folders?.length" class="extra-pkg-list">
               <span
                 v-for="f in kernel.mounted_folders"
-                :key="f"
+                :key="folderPath(f)"
                 class="extra-pkg"
-                title="Read-only"
+                :title="isWritable(f) ? 'Read and write' : 'Read-only'"
               >
-                <i class="fa-regular fa-folder"></i> {{ f }}
+                <i class="fa-regular fa-folder"></i> {{ folderPath(f) }}
+                <span v-if="isWritable(f)" class="folder-writable">(writable)</span>
               </span>
             </div>
             <p v-if="kernel.packages.length === 0" class="empty-line">No extra packages.</p>
@@ -203,9 +204,11 @@ import {
   type FlavourPackage,
   type ImageFlavour,
   type KernelInfo,
+  type MountedFolderEntry,
 } from "../../types";
 import KernelStatusBadge from "./KernelStatusBadge.vue";
 import KernelFoldersField from "../../components/kernel/KernelFoldersField.vue";
+import { cleanFolders, folderPath, isWritable } from "../../components/kernel/kernelFolders";
 import authService from "../../services/auth.service";
 
 const props = defineProps<{
@@ -213,7 +216,7 @@ const props = defineProps<{
   flavourInfo: Map<ImageFlavour, FlavourInfo>;
   onSave: (
     kernelId: string,
-    update: { packages: string[]; mounted_folders?: string[] },
+    update: { packages: string[]; mounted_folders?: MountedFolderEntry[] },
   ) => Promise<void>;
 }>();
 
@@ -226,7 +229,7 @@ const editPackages = ref<string[]>([]);
 const editNewPackage = ref("");
 // Core refuses mounted folders outside desktop mode.
 const showFolders = authService.isInDesktopMode();
-const editFolders = ref<string[]>([]);
+const editFolders = ref<MountedFolderEntry[]>([]);
 const saving = ref(false);
 const saveError = ref<string | null>(null);
 
@@ -344,9 +347,7 @@ const save = async () => {
   try {
     await props.onSave(props.kernel.id, {
       packages: [...editPackages.value],
-      ...(showFolders
-        ? { mounted_folders: editFolders.value.map((f) => f.trim()).filter(Boolean) }
-        : {}),
+      ...(showFolders ? { mounted_folders: cleanFolders(editFolders.value) } : {}),
     });
     editing.value = false;
   } catch (err: any) {
@@ -542,6 +543,10 @@ const save = async () => {
   font-weight: var(--font-weight-medium);
   padding: var(--spacing-0-5) var(--spacing-1-5);
   border-radius: var(--border-radius-sm);
+}
+
+.folder-writable {
+  font-weight: var(--font-weight-semibold);
 }
 
 .empty-line {

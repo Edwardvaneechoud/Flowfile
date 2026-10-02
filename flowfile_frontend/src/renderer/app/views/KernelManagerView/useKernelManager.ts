@@ -9,6 +9,7 @@ import type {
   KernelConfig,
   KernelInfo,
   KernelMemoryInfo,
+  MountedFolderEntry,
 } from "../../types";
 
 const POLL_INTERVAL_MS = 5000;
@@ -78,7 +79,7 @@ export function useKernelManager() {
 
   const updateKernel = async (
     kernelId: string,
-    update: { packages: string[]; mounted_folders?: string[] },
+    update: { packages: string[]; mounted_folders?: MountedFolderEntry[] },
   ) => {
     actionInProgress.value[kernelId] = true;
     try {

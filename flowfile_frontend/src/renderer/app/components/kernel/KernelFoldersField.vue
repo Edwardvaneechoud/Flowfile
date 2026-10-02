@@ -6,14 +6,28 @@
     </label>
     <div v-for="(folder, i) in modelValue" :key="i" class="kernel-folders__row">
       <input
-        :value="folder"
+        :value="folderPath(folder)"
         type="text"
         class="form-input"
         placeholder="/Users/me/data"
         :aria-label="`Folder ${i + 1}`"
         :disabled="disabled"
-        @input="update(i, ($event.target as HTMLInputElement).value)"
+        @input="
+          update(i, folderEntry(($event.target as HTMLInputElement).value, isWritable(folder)))
+        "
       />
+      <label class="kernel-folders__writable">
+        <input
+          type="checkbox"
+          :checked="isWritable(folder)"
+          :aria-label="`Folder ${i + 1} writable`"
+          :disabled="disabled"
+          @change="
+            update(i, folderEntry(folderPath(folder), ($event.target as HTMLInputElement).checked))
+          "
+        />
+        Writable
+      </label>
       <button
         type="button"
         class="btn btn-secondary btn-sm"
@@ -27,18 +41,28 @@
     <button type="button" class="btn btn-secondary btn-sm" :disabled="disabled" @click="add">
       <i class="fa-solid fa-plus"></i> Add folder
     </button>
+    <p v-if="anyWritable" class="warning-text">
+      Code on this kernel can change or delete files in a writable folder.
+    </p>
     <p class="form-help">
-      Absolute paths on this machine, mounted read-only at the same path. Code on this kernel
-      (notebook cells, Python Script nodes) can read them but never change them.
+      Absolute paths on this machine. Each appears inside the kernel at the same path, or under
+      /host/&lt;drive&gt;/ for a Windows path (C:\data is /host/c/data). The kernel can change files
+      only in folders marked Writable.
     </p>
   </div>
 </template>
 
 <script setup lang="ts">
-const props = defineProps<{ modelValue: string[]; disabled?: boolean }>();
-const emit = defineEmits<{ (e: "update:modelValue", value: string[]): void }>();
+import { computed } from "vue";
+import type { MountedFolderEntry } from "../../types";
+import { folderEntry, folderPath, isWritable } from "./kernelFolders";
 
-const update = (index: number, value: string) =>
+const props = defineProps<{ modelValue: MountedFolderEntry[]; disabled?: boolean }>();
+const emit = defineEmits<{ (e: "update:modelValue", value: MountedFolderEntry[]): void }>();
+
+const anyWritable = computed(() => props.modelValue.some(isWritable));
+
+const update = (index: number, value: MountedFolderEntry) =>
   emit(
     "update:modelValue",
     props.modelValue.map((f, i) => (i === index ? value : f)),
@@ -59,6 +83,13 @@ const add = () => emit("update:modelValue", [...props.modelValue, ""]);
 }
 .kernel-folders__row .form-input {
   flex: 1;
+}
+.kernel-folders__writable {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
 }
 .kernel-folders > .btn {
   align-self: flex-start;

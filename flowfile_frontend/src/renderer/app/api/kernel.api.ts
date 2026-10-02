@@ -11,6 +11,7 @@ import type {
   KernelMatchBatchResponse,
   KernelMatchResponse,
   KernelMemoryInfo,
+  MountedFolderEntry,
 } from "../types";
 
 const API_BASE_URL = "/kernels";
@@ -52,7 +53,7 @@ export class KernelApi {
 
   static async update(
     kernelId: string,
-    update: { packages?: string[]; mounted_folders?: string[] },
+    update: { packages?: string[]; mounted_folders?: MountedFolderEntry[] },
   ): Promise<KernelInfo> {
     try {
       const response = await axios.patch<KernelInfo>(

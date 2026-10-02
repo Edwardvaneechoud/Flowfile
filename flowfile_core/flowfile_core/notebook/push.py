@@ -233,8 +233,9 @@ def plan_push(flow: FlowGraph, user, request: NotebookPushRequest) -> tuple[Reco
         from flowfile_core.notebook.kernel_runner import KernelCleanRunner
         from flowfile_core.notebook.validate import validate_clean_run
 
-        result = KernelCleanRunner(request.kernel_id, user).clean_run(user.id, flow.flow_id, clean_request)
-        result = validate_clean_run(result, clean_request)
+        runner = KernelCleanRunner(request.kernel_id, user)
+        result = runner.clean_run(user.id, flow.flow_id, clean_request)
+        result = validate_clean_run(result, clean_request, runner.host_folders())
     if result.error is not None:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,

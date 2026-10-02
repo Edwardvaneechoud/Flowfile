@@ -122,6 +122,8 @@ The kernel is busy with the cell while the canvas runs, so that run cannot use t
 
 The kernel can read the Flowfile folders (saved flows, custom nodes, catalog tables) and a copy of the catalog database that the app refreshes whenever a cell reads the catalog. Other files are visible only in the folders you add under **Folders this kernel can read** in the [kernel's settings](kernels.md#folders-this-kernel-can-read). Stored secrets cannot be decrypted in the kernel, so a cloud or database source shows rows only through the canvas.
 
+In cells, write file paths as they are on your machine (`C:\Users\me\data\sales.csv` on Windows). Flowfile's readers, writers and `list_files` open them through the kernel's folders, and a push stores them as written. Plain Polars calls such as `pl.read_csv` see the kernel's path, which on Windows is under `/host/<drive>/`; `from flowfile_frame.notebook import kernel_path` gives it, as `kernel_path(r"C:\Users\me\data\sales.csv")`. A push turns a kernel path in a reader, writer or `list_files` back into the path on your machine. Writing a file directly from a cell, such as `df.write_csv(...)`, needs a folder marked **Writable**; an `ff` writer in a cell adds a writer node instead, which writes when the flow runs.
+
 Limits:
 
 - Only in the desktop app and in a default `pip install flowfile` (`FLOWFILE_MODE` unset or `electron`), for a local connection, and with the default SQLite catalog database. Docker deployments keep the notebook without a kernel.

@@ -520,3 +520,7 @@ class KernelCleanRunner:
             return CleanRunResult(error="The notebook kernel returned a result core cannot read", kind="refused")
         result.traceback = payload.get("traceback")
         return result
+
+    def host_folders(self) -> dict[str, str]:
+        """Kernel folder -> host folder of this kernel (``KernelManager.host_folders``), for ``notebook.validate``."""
+        return _manager().host_folders(self.kernel_id)

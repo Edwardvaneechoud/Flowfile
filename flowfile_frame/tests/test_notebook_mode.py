@@ -472,3 +472,42 @@ def test_kernel_path_translates_through_the_notebook_mount_table(monkeypatch):
     assert notebook.kernel_path(r"c:\users\ME\.flowfile\flows\a.yaml") == "/host/c/Users/me/.flowfile/flows/a.yaml"
     assert notebook.kernel_path(r"D:\data\sales.csv") is None
     assert notebook.kernel_path(r"C:\Users\meadow\x.csv") is None
+
+
+def test_paths_kept_as_written_still_glob_a_folder_and_join_a_name(tmp_path, monkeypatch):
+    from flowfile_core.schemas.input_schema import ReceivedTable
+    from shared.path_utils import expand_glob_pattern
+
+    folder = tmp_path / "sales"
+    folder.mkdir()
+    (folder / "a.csv").write_text("x\n1\n")
+    monkeypatch.delenv(notebook.MOUNTS_ENV, raising=False)
+    with notebook.paths_as_written():
+        directory = ReceivedTable(path=str(folder), file_type="csv", scan_mode="directory")
+        assert expand_glob_pattern(directory.abs_file_path) == [str(folder / "a.csv")]
+        assert ReceivedTable(path=str(folder), name="a.csv", file_type="csv").abs_file_path == str(folder / "a.csv")
+
+    monkeypatch.setenv(notebook.MOUNTS_ENV, json.dumps({r"C:\data": str(folder)}))
+    with notebook.paths_as_written():
+        directory = ReceivedTable(path=r"C:\data", file_type="csv", scan_mode="directory")
+        assert directory.path == r"C:\data"
+        assert expand_glob_pattern(directory.abs_file_path) == [str(folder / "a.csv")]
+        assert ReceivedTable(path=r"C:\data", name="a.csv", file_type="csv").abs_file_path == f"{folder}/a.csv"
+        assert ReceivedTable(path=r"C:\data\a.csv", name=r"C:\data\a.csv", file_type="csv").abs_file_path == (
+            f"{folder}/a.csv"
+        )
+        read = ff.read_csv(r"C:\data\a.csv")
+        assert read.collect().to_dicts() == [{"x": 1}]
+
+
+def test_scan_mode_probes_the_folder_the_kernel_sees(tmp_path, monkeypatch):
+    from flowfile_frame.flow_frame_methods import _resolve_scan_mode
+
+    folder = tmp_path / "sales"
+    folder.mkdir()
+    monkeypatch.setenv(notebook.MOUNTS_ENV, json.dumps({r"C:\data": str(folder)}))
+    assert _resolve_scan_mode(r"C:\data") == "single_file"
+    with notebook.paths_as_written():
+        assert _resolve_scan_mode(r"C:\data") == "directory"
+        assert _resolve_scan_mode("C:\\other\\") == "directory"
+        assert _resolve_scan_mode(r"C:\data\a.csv") == "single_file"

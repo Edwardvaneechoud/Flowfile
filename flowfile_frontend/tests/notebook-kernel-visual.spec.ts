@@ -255,9 +255,9 @@ test.describe("Notebook on a kernel, visual inspection", () => {
       await page.locator("#kernel-id").fill("relcheck");
       await page.locator("#kernel-name").fill("Relative path check");
       await page.getByRole("button", { name: "Add folder" }).click();
-      await page.getByLabel("Folder 1").fill("data/relative");
+      await page.getByLabel("Folder 1", { exact: true }).fill("data/relative");
       await page.getByRole("button", { name: "Add folder" }).click();
-      await page.getByLabel("Folder 2").fill(path.dirname(CSV_PATH));
+      await page.getByLabel("Folder 2", { exact: true }).fill(path.dirname(CSV_PATH));
       const created = page.waitForResponse(
         (r) => r.url().includes("/kernels/") && r.request().method() === "POST",
       );
@@ -361,7 +361,7 @@ test.describe("Notebook on a kernel, visual inspection", () => {
       await modal.getByRole("button", { name: "Edit" }).click();
       await expect(modal.getByText("Folders this kernel can read")).toBeVisible();
       await modal.getByRole("button", { name: "Add folder" }).click();
-      await modal.getByLabel("Folder 1").fill("/Users/me/does-not-exist");
+      await modal.getByLabel("Folder 1", { exact: true }).fill("/Users/me/does-not-exist");
       const editing = await shot(page, "02b-kernel-details-edit-folders");
       await modal.getByRole("button", { name: "Save" }).click();
       const err = modal.locator(".form-error");
@@ -763,7 +763,7 @@ test.describe("Notebook on a kernel, visual inspection", () => {
         const modal = page.locator(".km-details-modal");
         await modal.getByRole("button", { name: "Edit" }).click();
         await modal.getByRole("button", { name: "Add folder" }).click();
-        await modal.getByLabel("Folder 1").fill(path.dirname(CSV_PATH));
+        await modal.getByLabel("Folder 1", { exact: true }).fill(path.dirname(CSV_PATH));
         shots.push(await shot(page, "12a-kernel-edit-add-folder"));
         const patched = responseTo(page, `/kernels/${KERNEL_ID}`);
         await modal.getByRole("button", { name: "Save" }).click();

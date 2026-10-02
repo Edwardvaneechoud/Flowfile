@@ -49,6 +49,7 @@ from flowfile_core.kernel.models import (
     KernelInfo,
     KernelMemoryInfo,
     KernelState,
+    MountedFolder,
     RecoveryStatus,
     ResolvedPackage,
 )
@@ -675,7 +676,7 @@ class KernelManager:
         ``/catalog_tables``; we swap whichever prefix matches, always producing
         a pure-POSIX path (Windows host paths contain backslashes the Linux
         container would treat as literal filename characters). With ``kernel_id``
-        the kernel's read-only mount table (``notebook_mounts``) is consulted next.
+        the kernel's mount table (``notebook_mounts``) is consulted next.
         """
         if self._kernel_volume:
             # Same volume, same mount point — no translation needed
@@ -694,6 +695,18 @@ class KernelManager:
             if translated is not None:
                 return translated
         return local_path
+
+    def host_folders(self, kernel_id: str) -> dict[str, str]:
+        """Kernel folder -> host folder of ``kernel_id``'s mount table, to turn its paths back into host paths.
+
+        Folders mounted at their own path (every POSIX host folder) are left out, so a push never
+        rewrites a path there.
+        """
+        kernel = self._kernels.get(kernel_id)
+        if self._kernel_volume or kernel is None:
+            return {}
+        table = notebook_mounts.build_mount_table(kernel)
+        return {target: host for host, target in table.items() if target != host}
 
     def resolve_node_paths(self, request: "ExecuteRequest") -> None:
         """Populate ``input_paths`` and ``output_dir`` from ``flow_id``/``node_id``.
@@ -800,8 +813,9 @@ class KernelManager:
             # Separate Mount entries: a table folder may share a source with the binds above.
             table = notebook_mounts.build_mount_table(kernel)
             if table:
+                writable = notebook_mounts.writable_sources(kernel)
                 run_kwargs["mounts"] = [
-                    docker.types.Mount(target=target, source=source, type="bind", read_only=True)
+                    docker.types.Mount(target=target, source=source, type="bind", read_only=source not in writable)
                     for source, target in table.items()
                 ]
                 masked = notebook_mounts.masked_paths(table)
@@ -1884,7 +1898,7 @@ class KernelManager:
         logger.info("Stopped kernel '%s'", kernel_id)
 
     async def update_kernel(
-        self, kernel_id: str, packages: list[str], mounted_folders: list[str] | None = None
+        self, kernel_id: str, packages: list[str], mounted_folders: list[str | MountedFolder] | None = None
     ) -> KernelInfo:
         """Update a kernel's package list and, when given, the folders it may read.
 

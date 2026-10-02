@@ -219,6 +219,40 @@ def test_an_unedited_push_through_the_kernel_of_a_file_it_cannot_see_changes_not
     assert any('"op": "clean_run"' in r.code for r in kernel_sim.requests)
 
 
+
+def test_a_push_through_the_kernel_stores_the_host_path_of_a_kernel_path(open_as, kernel_sim, tmp_path, monkeypatch):
+    import flowfile as ff
+
+    host, inside = (tmp_path / "host_data").resolve(), (tmp_path / "kernel_view").resolve()
+    for folder in (host, inside):
+        folder.mkdir()
+        (folder / "orders.csv").write_text("id,amount\n1,10\n2,20\n")
+    flow = open_as(ff.read_csv(str(host / "orders.csv")).flow_graph)
+    monkeypatch.setattr(kernel_sim, "host_folders", lambda kernel_id: {str(inside): str(host)})
+    from flowfile_core.auth.models import User as PydanticUser
+    from flowfile_core.notebook.push import NotebookPushRequest, plan_push
+    from flowfile_core.notebook.render import render
+    from tests.notebook.conftest import cell_provenance
+
+    rendering = render(flow)
+    cells = [(cell.cell_id, cell.code.replace("host_data", "kernel_view")) for cell in rendering.cells]
+    edited = [cell_id for (cell_id, code), cell in zip(cells, rendering.cells) if code != cell.code]
+    assert len(edited) == 1
+    request = NotebookPushRequest(
+        flow_id=flow.flow_id,
+        cells=cells,
+        changed_cell_ids=edited,
+        provenance=cell_provenance(flow, rendering),
+        code_fingerprint=rendering.code_fingerprint,
+        client_max_node_id=max(node.node_id for node in flow.nodes),
+        kernel_id=kernel_sim.kernel.id,
+    )
+    owner = PydanticUser(username="nb_kernel", id=NOTEBOOK_OWNER_ID, disabled=False, is_admin=True)
+    plan, _ = plan_push(flow, owner, request)
+    assert not plan.operations, [op.model_dump(mode="json") for op in plan.operations]
+    assert any('"op": "clean_run"' in r.code for r in kernel_sim.requests)
+
+
 def _rows(result: dict) -> list:
     return _table(result)["data"]
 
