@@ -207,9 +207,13 @@ function rememberOutputDirectory(directory: string | undefined) {
   if (directory) fileBrowserStore.setCurrentPath("output", directory);
 }
 
+// The default-folder lookup of a never-configured node; a save waits for it.
+let directoryLookup: Promise<void> | null = null;
+
 const { saveSettings, pushNodeData } = useNodeSettings({
   nodeRef: nodeOutput,
-  onBeforeSave: () => {
+  onBeforeSave: async () => {
+    await directoryLookup;
     rememberOutputDirectory(nodeOutput.value?.output_settings.directory);
   },
 });
@@ -398,7 +402,9 @@ async function resolveDefaultOutputDirectory(): Promise<string> {
 /**
  * For a never-configured node, pre-fill a real, writable location rather than an
  * unresolved "." — the last-used output dir (else home), remembered. Closing the drawer
- * of such a node saves what it shows, so the field never shows an unpersisted value.
+ * of such a node saves what it shows, so the field never shows an unpersisted value; a close
+ * before the lookup answered waits for it, since core resolves a saved "." against its own
+ * working directory.
  */
 async function ensureResolvedDirectory() {
   const settings = nodeOutput.value?.output_settings;
@@ -466,7 +472,8 @@ async function loadNodeData(nodeId: number) {
   }
   if (nodeOutput.value?.is_setup === false) {
     relativeHint.value = null;
-    await ensureResolvedDirectory();
+    directoryLookup = ensureResolvedDirectory();
+    await directoryLookup;
   } else {
     await describeRelativeDirectory();
   }
