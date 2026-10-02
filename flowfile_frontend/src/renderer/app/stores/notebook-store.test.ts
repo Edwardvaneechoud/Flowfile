@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   openSession: vi.fn(),
   executeInSession: vi.fn(),
   resetSession: vi.fn(),
+  interruptSession: vi.fn(),
 }));
 
 vi.mock("../api/kernel.api", () => ({
@@ -40,6 +41,7 @@ vi.mock("../api/notebook.api", () => ({
     openSession: mocks.openSession,
     executeInSession: mocks.executeInSession,
     resetSession: mocks.resetSession,
+    interruptSession: mocks.interruptSession,
   },
 }));
 vi.mock("../api/flow.api", () => ({
@@ -324,6 +326,21 @@ describe("run routing", () => {
     expect(c1.output).not.toBeNull();
     expect(c2.output).not.toBeNull();
     expect(otherTab.cells.every((c) => c.output === null)).toBe(true);
+  });
+
+  it("interruptSession never calls the session route for a catalog notebook", async () => {
+    let resolve!: (v: unknown) => void;
+    mocks.executeCell.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    const store = useNotebookStore();
+    store.ensureHydrated();
+    store.setKernel("kern-1");
+    const cell = store.active!.cells[0];
+    const run = store.runCell(cell.id);
+    expect(cell.execState).toBe("running");
+    await store.interruptSession();
+    expect(mocks.interruptSession).not.toHaveBeenCalled();
+    resolve(okExecResult);
+    await run;
   });
 });
 
@@ -1970,12 +1987,18 @@ describe("flow notebook run", () => {
     const KERNEL = "nb-kernel";
 
     beforeEach(() => {
-      for (const m of [mocks.openSession, mocks.executeInSession, mocks.resetSession]) {
+      for (const m of [
+        mocks.openSession,
+        mocks.executeInSession,
+        mocks.resetSession,
+        mocks.interruptSession,
+      ]) {
         m.mockReset();
       }
       mocks.openSession.mockResolvedValue({ status: "open" });
       mocks.executeInSession.mockResolvedValue(okExecResult);
       mocks.resetSession.mockResolvedValue(undefined);
+      mocks.interruptSession.mockResolvedValue(undefined);
     });
 
     async function openWithKernel() {
@@ -2062,6 +2085,69 @@ describe("flow notebook run", () => {
       await store.resetSession();
       expect(mocks.resetSession).toHaveBeenCalledWith({ flow_id: FLOW, kernel_id: KERNEL });
       expect(mocks.clearNamespace).not.toHaveBeenCalled();
+    });
+
+    it("interrupts the session while a cell runs and leaves the cell to its run", async () => {
+      const { store, nb } = await openWithKernel();
+      await store.interruptSession();
+      expect(mocks.interruptSession).not.toHaveBeenCalled();
+      let resolve!: (v: unknown) => void;
+      mocks.executeInSession.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+      const run = store.runCell("cell-2");
+      await vi.waitFor(() => expect(mocks.executeInSession).toHaveBeenCalled());
+      const cell = nb.cells.find((c) => c.id === "cell-2")!;
+      await store.interruptSession();
+      expect(mocks.interruptSession).toHaveBeenCalledTimes(1);
+      expect(mocks.interruptSession).toHaveBeenCalledWith({ flow_id: FLOW, kernel_id: KERNEL });
+      expect(cell.execState).toBe("running");
+      resolve({ ...okExecResult, success: false, error: "KeyboardInterrupt" });
+      expect(await run).toBe(false);
+      expect(cell.execState).toBe("error");
+      expect(cell.output!.error).toBe("KeyboardInterrupt");
+    });
+
+    it("interrupts the kernel the running cell was sent to after the picker changed", async () => {
+      const { store, nb } = await openWithKernel();
+      let resolve!: (v: unknown) => void;
+      mocks.executeInSession.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+      const run = store.runCell("cell-2");
+      await vi.waitFor(() => expect(mocks.executeInSession).toHaveBeenCalled());
+      store.setKernel("other-kernel");
+      expect(nb.kernelId).toBe("other-kernel");
+      await store.interruptSession();
+      expect(mocks.interruptSession).toHaveBeenCalledWith({ flow_id: FLOW, kernel_id: KERNEL });
+      resolve({ ...okExecResult, success: false, error: "KeyboardInterrupt" });
+      await run;
+      await store.interruptSession();
+      expect(mocks.interruptSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("surfaces a failed interrupt as a notice and keeps the cell running", async () => {
+      const { store, nb } = await openWithKernel();
+      let resolve!: (v: unknown) => void;
+      mocks.executeInSession.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+      mocks.interruptSession.mockRejectedValue(httpError(503, "Kernel is not running"));
+      const run = store.runCell("cell-2");
+      await vi.waitFor(() => expect(mocks.executeInSession).toHaveBeenCalled());
+      await store.interruptSession();
+      expect(nb.notice).toEqual({ tone: "error", message: "Kernel is not running" });
+      expect(nb.cells.find((c) => c.id === "cell-2")!.execState).toBe("running");
+      resolve(okExecResult);
+      expect(await run).toBe(true);
+    });
+
+    it("never interrupts a flow tab without a kernel", async () => {
+      const { store, nb } = await openFlow();
+      let release!: () => void;
+      hooks.prepare.mockImplementationOnce(
+        () => new Promise<boolean>((r) => (release = () => r(true))),
+      );
+      const run = store.runCell("cell-2");
+      expect(nb.cells.find((c) => c.id === "cell-2")!.execState).toBe("running");
+      await store.interruptSession();
+      expect(mocks.interruptSession).not.toHaveBeenCalled();
+      release();
+      expect(await run).toBe(true);
     });
 
     it("points a needs_kernel refusal at the picker when no kernel is picked", async () => {

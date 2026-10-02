@@ -114,8 +114,11 @@ In the desktop app, and with `pip install flowfile` in the default mode, the not
 | **Push** | Runs every cell again in a fresh session on the kernel, then applies what they build to the canvas as one step, with the same review as without a kernel. The session is then reseeded from the canvas. |
 | **Run and preview on canvas** (⋯) | Pushes an edited cell first, then runs the node on the canvas, as without a kernel. |
 | **Reset session** (⋯) | Drops the session's variables and binds one variable per canvas node again. |
+| **Stop** | Shown beside a running cell's run button. Interrupts the cell, and cancels the canvas run it is waiting on for rows. |
 
 When the session opens, every canvas node is bound to its variable, so a cell can use `filtered_2` without running anything first. `display(frame)` shows rows. The kernel computes them itself when it can (manual input, catalog tables, files in a folder it may read, and transforms on those); for any other node that is on the canvas, such as a database reader or a Python Script node, the canvas runs the node and hands its rows to the kernel. A node that exists only in your cells and that the kernel cannot read shows its columns and asks you to push first.
+
+The kernel is busy with the cell while the canvas runs, so that run cannot use the notebook's own kernel. When it would have to run a node on it, such as a Python Script node on that kernel (also inside a subflow or a virtual table's producer), the cell stops at once with a message naming the node. Use **Run and preview on canvas** for the node first, so the canvas runs it while the kernel is free, or run the notebook on another kernel.
 
 The kernel can read the Flowfile folders (saved flows, custom nodes, catalog tables) and a copy of the catalog database that the app refreshes whenever a cell reads the catalog. Other files are visible only in the folders you add under **Folders this kernel can read** in the [kernel's settings](kernels.md#folders-this-kernel-can-read). Stored secrets cannot be decrypted in the kernel, so a cloud or database source shows rows only through the canvas.
 

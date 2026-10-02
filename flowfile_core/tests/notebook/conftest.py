@@ -7,6 +7,7 @@ import contextvars
 import copy
 import io
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -358,21 +359,73 @@ class KernelSimManager:
         return ExecuteResult(success=error is None, stdout=stdout.getvalue(), stderr=stderr.getvalue(), error=error)
 
 
-@pytest.fixture
-def kernel_sim(monkeypatch, tmp_path):
-    """A :class:`KernelSimManager` as ``get_kernel_manager()``, in electron mode; the sessions are closed afterwards."""
+class LockingKernelSimManager(KernelSimManager):
+    """:class:`KernelSimManager` with the real manager's per-kernel execution lock, for every kernel id.
+
+    A call waits while another call holds its kernel's lock and returns cancelled once its ``cancel_event`` is
+    set, as ``KernelManager.execute_sync`` does; a wait longer than ``LOCK_WAIT`` seconds raises
+    ``TimeoutError`` instead of hanging the test. A Python Script node's call runs its code as any call does.
+    """
+
+    LOCK_WAIT = 5.0
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._docker_network = None
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_lock = threading.Lock()
+
+    def execute_sync(self, kernel_id, request, flow_logger=None, cancel_event=None):
+        with self._locks_lock:
+            lock = self._locks.setdefault(kernel_id, threading.Lock())
+        deadline = time.monotonic() + self.LOCK_WAIT
+        while not lock.acquire(timeout=0.05):
+            if cancel_event is not None and cancel_event.is_set():
+                return ExecuteResult(success=False, error="Execution cancelled by user")
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"waited {self.LOCK_WAIT}s for kernel '{kernel_id}': a deadlock")
+        try:
+            return super().execute_sync(kernel_id, request, flow_logger, cancel_event)
+        finally:
+            lock.release()
+
+
+def _install_kernel_sim(monkeypatch, manager: KernelSimManager) -> None:
     import flowfile_core.kernel as kernel_package
+    from flowfile_core.flowfile import flow_graph as flow_graph_module
+    from flowfile_frame import notebook_kernel
+
+    monkeypatch.setenv("FLOWFILE_MODE", "electron")
+    monkeypatch.setattr(kernel_package, "get_kernel_manager", lambda: manager)
+    monkeypatch.setattr(flow_graph_module, "get_kernel_manager", lambda: manager)
+    monkeypatch.setattr(notebook_kernel, "transport", manager.node_result)
+
+
+def _forget_kernel_sim() -> None:
     from flowfile_core.notebook import kernel_runner
     from flowfile_frame import notebook_kernel
 
-    manager = KernelSimManager(shared=tmp_path / "shared")
-    monkeypatch.setenv("FLOWFILE_MODE", "electron")
-    monkeypatch.setattr(kernel_package, "get_kernel_manager", lambda: manager)
-    monkeypatch.setattr(notebook_kernel, "transport", manager.node_result)
-    yield manager
     for flow_id in list(notebook_kernel._SESSIONS):
         notebook_kernel._close(flow_id)
     kernel_runner._sessions.clear()
     kernel_runner._verified.clear()
     kernel_runner._fingerprints.clear()
     kernel_runner._results.clear()
+
+
+@pytest.fixture
+def locking_kernel_sim(monkeypatch, tmp_path):
+    """A :class:`LockingKernelSimManager` as ``get_kernel_manager()`` (also for the canvas's kernel nodes)."""
+    manager = LockingKernelSimManager(shared=tmp_path / "shared")
+    _install_kernel_sim(monkeypatch, manager)
+    yield manager
+    _forget_kernel_sim()
+
+
+@pytest.fixture
+def kernel_sim(monkeypatch, tmp_path):
+    """A :class:`KernelSimManager` as ``get_kernel_manager()``, in electron mode; the sessions are closed afterwards."""
+    manager = KernelSimManager(shared=tmp_path / "shared")
+    _install_kernel_sim(monkeypatch, manager)
+    yield manager
+    _forget_kernel_sim()

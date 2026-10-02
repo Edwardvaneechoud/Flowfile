@@ -9,6 +9,7 @@ import type {
   NotebookPushBody,
   NotebookPushResult,
   NotebookRendering,
+  NotebookSessionKey,
   NotebookSummary,
   NotebookSyncErrorDetail,
   RenderedCell,
@@ -276,6 +277,7 @@ export const PICK_KERNEL_HINT = "Pick a notebook kernel in the toolbar to run th
 export const NOTHING_TO_PUSH = "Nothing to push: the canvas already matches these cells.";
 export const SESSION_NOT_RESEEDED =
   "Pushed to the canvas, but the kernel session still holds the old frames; use Reset session.";
+export const INTERRUPT_FAILED = "The running cell could not be stopped.";
 export const PREVIEW_ROW_LIMIT = 100;
 
 const FLOW_KERNELS_KEY = "flowfile.notebook.flowKernels.v1";
@@ -315,6 +317,9 @@ const tracksRuntime = (nb: OpenNotebook): boolean => nb.flowId == null || !!nb.k
 const sessionKey = (nb: OpenNotebook) => ({ flow_id: nb.flowId!, kernel_id: nb.kernelId! });
 
 const openedSessions = new Map<string, { kernelId: string; opening: Promise<unknown> }>();
+
+/** Per tab, the session a cell's execute is in flight on: Stop goes there even if the picker changed since. */
+const executingSessions = new Map<string, NotebookSessionKey>();
 
 /** Open the tab's session once per kernel; a failed open is retried on the next call. */
 function ensureFlowSession(nb: OpenNotebook): Promise<unknown> {
@@ -1234,12 +1239,18 @@ export const useNotebookStore = defineStore("notebook", {
         });
       }
       await ensureFlowSession(nb);
-      return NotebookApi.executeInSession({
-        ...sessionKey(nb),
-        cell_id: cell.id,
-        code: cell.code,
-        node_id: cellNodeId(cell.id),
-      });
+      const key = sessionKey(nb);
+      executingSessions.set(nb.tabId, key);
+      try {
+        return await NotebookApi.executeInSession({
+          ...key,
+          cell_id: cell.id,
+          code: cell.code,
+          node_id: cellNodeId(cell.id),
+        });
+      } finally {
+        if (executingSessions.get(nb.tabId) === key) executingSessions.delete(nb.tabId);
+      }
     },
 
     /** One execution batch per notebook (a single run is a batch of one). Resolves
@@ -1554,6 +1565,19 @@ export const useNotebookStore = defineStore("notebook", {
       bumpSessionEpoch(ownerOf(nb));
       this.clearOutputs();
       nb.executionCount = 0;
+    },
+
+    /** Stop the cell running in a flow tab's kernel session, on the kernel its execute was sent
+     * to. The cell keeps its running state: the pending execute answers and settles it. */
+    async interruptSession() {
+      const nb = this.active;
+      const key = nb ? executingSessions.get(nb.tabId) : undefined;
+      if (!nb || !key) return;
+      try {
+        await NotebookApi.interruptSession(key);
+      } catch (e) {
+        nb.notice = { tone: "error", message: detailMessage(e, INTERRUPT_FAILED) };
+      }
     },
 
     /** Free every open catalog notebook's kernel namespace (don't leak them into the

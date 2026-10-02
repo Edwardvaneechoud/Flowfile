@@ -164,6 +164,7 @@ from flowfile_core.kafka.connection_manager import (
 )
 from flowfile_core.kernel import get_kernel_manager
 from flowfile_core.kernel.execution import (
+    KernelHold,
     build_execute_request,
     clear_stale_parquets,
     forward_kernel_logs,
@@ -249,6 +250,12 @@ placement_check: ContextVar[Callable[[Any], None] | None] = ContextVar("placemen
 
 Notebook build mode sets it so a cell's source or writer is refused on its path and connection rules
 before a node exists; canvas requests and other threads never see it.
+"""
+
+ambient_kernel_hold: ContextVar[KernelHold | None] = ContextVar("ambient_kernel_hold", default=None)
+"""The ``kernel_hold`` of the run whose thread this is: ``run_graph`` sets it for its own thread and every node it
+executes, so a graph opened in-process during the run (a virtual table's producer) refuses the held kernels too.
+Schema prefetches copy their starting context, so they carry it as well.
 """
 
 
@@ -2181,6 +2188,8 @@ class FlowGraph:
         # execute on ThreadPoolExecutor threads.
         self._subflow_ancestry: frozenset[str] = frozenset()
         self._subflow_depth: int = 0
+        # The claimed run's kernel_hold (run_graph); release_run clears it.
+        self._kernel_hold: KernelHold | None = None
         # Last user_id seen on any node settings (stamped by the editor routes /
         # open_flow). Lets restore_from_snapshot re-stamp the owner even when the
         # live graph is empty at undo time (snapshots intentionally omit user_id).
@@ -3378,6 +3387,9 @@ class FlowGraph:
         Handles artifact context, directory setup, input writing, kernel execution,
         log forwarding, artifact recording, and output reading.
         """
+        hold = self._kernel_hold or ambient_kernel_hold.get()
+        if hold is not None:
+            hold.check(self.flow_id, node_id, kernel_id)
         manager = get_kernel_manager()
         if required_dependencies:
             # Fail fast with a clear message instead of a ModuleNotFoundError
@@ -3434,6 +3446,9 @@ class FlowGraph:
         if node is not None:
             node._kernel_cancel_context = (kernel_id, manager, request.exec_token)
             node._kernel_cancel_event = cancel_event
+        if self.flow_settings.is_canceled:
+            # A cancel that landed before the event was registered could not set it.
+            cancel_event.set()
         try:
             result = manager.execute_sync(kernel_id, request, self.flow_logger, cancel_event=cancel_event)
         finally:
@@ -6937,6 +6952,7 @@ class FlowGraph:
     def release_run(self) -> None:
         """Release the single-run slot claimed by try_claim_run (idempotent)."""
         with self._run_claim_lock:
+            self._kernel_hold = None
             self.flow_settings.is_running = False
 
     def trigger_fetch_node(
@@ -7125,6 +7141,7 @@ class FlowGraph:
             self.latest_run_info.node_step_result.append(node_result)
 
         with ExitStack() as params_scope:
+            params_scope.callback(ambient_kernel_hold.reset, ambient_kernel_hold.set(self._kernel_hold))
             try:
                 params_scope.enter_context(node_parameters_resolved(node))
             except ValueError as e:
@@ -7688,7 +7705,9 @@ class FlowGraph:
             node.reset()
             self.flow_logger.info(f"Node {node.node_id}: source files changed; invalidating cached result")
 
-    def run_graph(self, *, node_ids: Collection[int | str] | None = None) -> RunInformation | None:
+    def run_graph(
+        self, *, node_ids: Collection[int | str] | None = None, kernel_hold: KernelHold | None = None
+    ) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
         Independent nodes within the same execution stage are run in parallel
@@ -7701,6 +7720,8 @@ class FlowGraph:
                 Only they are probed, routed, planned, executed and reported, and a source's
                 post-execution callback fires only when its whole downstream is among them.
                 ``None`` runs the whole graph.
+            kernel_hold: Kernels whose execution lock the caller holds while it waits on this run; a kernel
+                node on one fails at once (``KernelBusyError``) instead of waiting, here and in subflows.
 
         Returns:
             A RunInformation object summarizing the execution results.
@@ -7710,6 +7731,9 @@ class FlowGraph:
         """
         if not self.try_claim_run():
             raise Exception("Flow is already running")
+        self._kernel_hold = kernel_hold
+        ambient = ambient_kernel_hold.set(kernel_hold)
+        released = False
         try:
             self.flow_settings.is_canceled = False
             self.flow_logger.clear_log_file()
@@ -7759,6 +7783,7 @@ class FlowGraph:
             self.flow_logger.info("Flow completed!")
             self.end_datetime = datetime.datetime.now()
             self.release_run()
+            released = True
             if self.flow_settings.is_canceled:
                 self.flow_logger.info("Flow canceled")
             run_info = self.get_run_info()
@@ -7769,7 +7794,10 @@ class FlowGraph:
             publish("flow_run_crashed", graph=self, error=e)
             raise
         finally:
-            self.release_run()
+            ambient_kernel_hold.reset(ambient)
+            # Released once: a second release would end a run another caller claimed meanwhile.
+            if not released:
+                self.release_run()
 
     def get_run_info(self) -> RunInformation:
         """Gets a summary of the most recent graph execution.

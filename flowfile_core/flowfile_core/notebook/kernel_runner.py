@@ -14,15 +14,19 @@ before its first database connection in a call (:func:`refresh_database`).
 :class:`KernelCleanRunner` is the ``bridge.CleanRunner`` a push uses when it names a kernel; its result
 goes through ``notebook.validate`` before it is reconciled. :func:`node_result` is the canvas fallback a
 session calls back for rows it cannot compute: the node's canvas result as parquet under the kernel's
-shared folder (``notebook/<flow_id>/``, removed when the flow's sessions close).
+shared folder (``notebook/<flow_id>/``, removed when the flow's sessions close). The session's kernel call
+holds the kernel while it waits on that fallback, so the fallback's canvas run refuses to run anything on
+that kernel (a ``kernel.execution.KernelHold``), and :func:`interrupt` cancels the run a cell waits on.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
 import threading
+import weakref
 from typing import Any
 from uuid import uuid4
 
@@ -44,7 +48,7 @@ _running: dict[tuple[str, int], str] = {}
 _sessions: dict[int, set[str]] = {}
 _verified: set[tuple[str, str | None]] = set()
 _fingerprints: dict[tuple[str, int], str] = {}
-_results: dict[int, dict[tuple[int, str], tuple[Any, str]]] = {}
+_results: dict[int, dict[tuple[int, str], tuple[weakref.ref, str, str]]] = {}
 
 
 def _manager():
@@ -276,7 +280,12 @@ def dataframe_schemas(flow, user, kernel_id: str) -> dict:
 
 
 def interrupt(flow, user, kernel_id: str) -> dict:
-    """Interrupt the call running for this flow on the kernel, if any."""
+    """Interrupt the call running for this flow on the kernel, if any, and cancel the canvas run it waits on.
+
+    The kernel's interrupt cannot reach a cell blocked reading core's answer to its canvas fallback, so that
+    run, the one holding this kernel (:func:`_run_lineage`), is cancelled here; the fallback then answers and
+    the cell stops.
+    """
     if not kernel_sessions_allowed(user):
         raise HTTPException(403, DISABLED_DETAIL)
     manager = _manager()
@@ -284,9 +293,12 @@ def interrupt(flow, user, kernel_id: str) -> dict:
         raise HTTPException(403, "Not authorized to access this kernel")
     with _lock:
         token = _running.get((kernel_id, flow.flow_id))
-    if token is None or not manager.interrupt_execution_sync(kernel_id, token):
-        return {"status": "no_execution_running"}
-    return {"status": "interrupted"}
+    interrupted = token is not None and manager.interrupt_execution_sync(kernel_id, token)
+    hold = flow._kernel_hold
+    if hold is not None and kernel_id in hold.kernel_ids:
+        flow.cancel()
+        interrupted = True
+    return {"status": "interrupted" if interrupted else "no_execution_running"}
 
 
 def close_flow_sessions(flow_id: int) -> None:
@@ -350,12 +362,32 @@ def _has_result(flow, node) -> bool:
     return last is None or not any(r.node_id == node.node_id and r.skipped for r in last.node_step_result)
 
 
+def _own_kernel_detail(node, kernel_id: str, needed: str) -> str:
+    """The 409 detail when ``node``'s rows need ``needed`` to run on the session's own kernel, with the ways out.
+
+    Run and preview on canvas runs them while the kernel is free; the node then holds a current result, which
+    the fallback hands over without running anything.
+    """
+    return (
+        f"Node {node.node_id} needs {needed} to run on this notebook's own kernel '{kernel_id}', which is busy "
+        f"with this cell: use Run and preview on canvas for node {node.node_id} first, or run the notebook on "
+        "another kernel"
+    )
+
+
 def _run_lineage(flow, node, kernel_id: str) -> None:
     """Run ``node`` and its ancestors on the canvas, gate-aware, as "Run and preview on canvas" does.
 
-    409 while the flow runs, when the run would wait on this same kernel, or when a gate routes the node away;
-    422 when the run fails.
+    The session's kernel call holds ``kernel_id`` until this returns, so nothing of the run may execute on it.
+    A node on it without a current result is refused before anything runs; any other node that runs again
+    anyway (Performance mode, a missing cache, a changed source, a subflow's or a virtual table producer's
+    nodes) is refused by the run itself through a ``KernelHold``, at once and without waiting. That hold also
+    marks the run for :func:`interrupt`.
+
+    409 while the flow runs, when the run needs this same kernel, when it was cancelled, or when a gate routes
+    the node away; 422 when the run fails.
     """
+    from flowfile_core.kernel.execution import KernelHold
     from flowfile_core.routes.routes import _resolve_node_kernel_id
 
     lineage = {node.node_id, *flow._get_upstream_node_ids(node.node_id)}
@@ -370,18 +402,22 @@ def _run_lineage(flow, node, kernel_id: str) -> None:
         and _resolve_node_kernel_id(upstream) == kernel_id
     )
     if waiting:
-        raise HTTPException(
-            409,
-            f"Node {node.node_id} needs node(s) {', '.join(map(str, waiting))} to run on this notebook's own kernel, "
-            f"which is busy with this cell: use Run and preview on canvas for node {node.node_id} first, "
-            "or run the notebook on another kernel",
-        )
+        raise HTTPException(409, _own_kernel_detail(node, kernel_id, f"node(s) {', '.join(map(str, waiting))}"))
+    hold = KernelHold({kernel_id})
     try:
-        run_info = flow.run_graph(node_ids=lineage)
+        run_info = flow.run_graph(node_ids=lineage, kernel_hold=hold)
     except Exception as exc:
         if "already running" in str(exc):
             raise HTTPException(409, running) from exc
         raise HTTPException(422, f"Running node {node.node_id} on the canvas failed: {exc}") from exc
+    if flow.flow_settings.is_canceled:
+        raise HTTPException(409, f"The canvas run for node {node.node_id} was cancelled")
+    if hold.refusals:
+        here = sorted({node_id for flow_id, node_id in hold.refusals if flow_id == flow.flow_id})
+        parts = [f"node(s) {', '.join(map(str, here))}"] if here else []
+        if any(flow_id != flow.flow_id for flow_id, _ in hold.refusals):
+            parts.append("nodes of a flow it runs (a subflow or a virtual table's producer)")
+        raise HTTPException(409, _own_kernel_detail(node, kernel_id, " and ".join(parts)))
     results = {result.node_id: result for result in (run_info.node_step_result if run_info else [])}
     own = results.get(node.node_id)
     if own is not None and own.skipped:
@@ -395,37 +431,28 @@ def _run_lineage(flow, node, kernel_id: str) -> None:
 
 def _write_result(flow, node_id: int, data, path: str) -> None:
     """Write a canvas result as parquet: through the worker when offloading, so core never collects it."""
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-    from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
-        ExternalDfFetcher,
-    )
-    from flowfile_core.kernel.execution import _write_parquet_locally
+    from flowfile_core.kernel.execution import write_parquet_for_kernel
 
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    if not OFFLOAD_TO_WORKER or flow.flow_settings.execution_location == "local":
-        _write_parquet_locally(data.data_frame, path)
-        return
-    fetcher = ExternalDfFetcher(
-        flow_id=flow.flow_id,
-        node_id=node_id,
-        lf=data.data_frame,
-        wait_on_completion=True,
-        operation_type="write_parquet",
-        kwargs={"output_path": path},
-    )
-    if fetcher.has_error:
-        raise HTTPException(422, f"Could not hand node {node_id}'s rows to the kernel: {fetcher.error_description}")
+    local = flow.flow_settings.execution_location == "local"
+    try:
+        write_parquet_for_kernel(
+            data.data_frame, path, flow_id=flow.flow_id, node_id=node_id, local=local, what=f"node {node_id}'s rows"
+        )
+    except RuntimeError as exc:
+        raise HTTPException(422, f"Could not hand node {node_id}'s rows to the kernel: {exc}") from exc
 
 
 def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle: str | None) -> dict:
     """A canvas node's result for the flow's session on ``kernel_id``: ``{"path", "canvas_changed"}``.
 
     Answers only the owner of a kernel that holds an open session for the flow. The node and its
-    ancestors run on the canvas first unless the node holds a current result; the result is written
-    as parquet under the kernel's shared folder and reused while it is unchanged. ``path`` is the
-    kernel's view of the file; ``canvas_changed`` tells whether the canvas changed since the session
-    was seeded. 409 while the flow runs, when the run would need this same kernel, or for a node a
-    gate routed away.
+    ancestors run on the canvas first unless the node holds a current result (:func:`_run_lineage`); the
+    result is written as parquet under the kernel's shared folder and reused while the canvas holds that
+    same result (a weak reference, so the cache never keeps a result alive). A file this kernel was handed
+    before is removed once superseded: its earlier session is gone, while another kernel's may still read it.
+    ``path`` is the kernel's view of the file; ``canvas_changed`` tells whether the canvas changed since the
+    session was seeded. 409 while the flow runs, when the run would need this same kernel, when it was
+    cancelled, or for a node a gate routed away.
     """
     from flowfile_core import flow_file_handler
     from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
@@ -456,13 +483,17 @@ def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle:
         raise HTTPException(422, f"Node {node_id} has no result for output {handle}")
     with _lock:
         cached = _results.get(flow_id, {}).get((node_id, handle))
-    if cached is not None and cached[0] is data and os.path.exists(cached[1]):
+    if cached is not None and cached[0]() is data and os.path.exists(cached[1]):
         path = cached[1]
     else:
-        path = os.path.join(_results_dir(manager, flow_id), f"{node_id}_{handle}_{node.hash}.parquet")
+        path = os.path.join(_results_dir(manager, flow_id), f"{node_id}_{handle}_{uuid4().hex}.parquet")
         _write_result(flow, node_id, data, path)
         with _lock:
-            _results.setdefault(flow_id, {})[(node_id, handle)] = (data, path)
+            superseded = _results.setdefault(flow_id, {}).get((node_id, handle))
+            _results[flow_id][(node_id, handle)] = (weakref.ref(data), path, kernel_id)
+        if superseded is not None and superseded[2] == kernel_id:
+            with contextlib.suppress(OSError):
+                os.remove(superseded[1])
     with _lock:
         seeded_with = _fingerprints.get((kernel_id, flow_id))
     return {"path": manager.to_kernel_path(path), "canvas_changed": code_fingerprint(flow) != seeded_with}

@@ -35,6 +35,17 @@
         <i v-else class="fa-solid fa-play"></i>
       </button>
       <button
+        v-if="stoppable && cell.execState === 'running'"
+        type="button"
+        class="nb-stop"
+        data-testid="nb-cell-stop"
+        title="Stop the running cell"
+        aria-label="Stop the running cell"
+        @click="emit('stop')"
+      >
+        <i class="fa-solid fa-stop"></i>
+      </button>
+      <button
         type="button"
         class="nb-drag-handle"
         :aria-label="`Reorder cell ${index + 1} of ${cellCount}`"
@@ -225,11 +236,14 @@ const props = defineProps<{
   /** Canvas notebook only: the cell's sync state, and the line a refused sync names. */
   syncState?: SyncState | null;
   syncError?: SyncErrorMark | null;
+  /** A running cell can be interrupted (a flow tab's kernel session). */
+  stoppable?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: "run"): void;
   (e: "run-advance"): void;
+  (e: "stop"): void;
   (e: "update:code", code: string): void;
   (e: "update:type", cellType: CellType): void;
   (e: "update:editing", editing: boolean): void;
@@ -380,6 +394,7 @@ onBeforeUnmount(() => {
 /* Ghost icon buttons share one recipe. */
 .nb-drag-handle,
 .nb-run,
+.nb-stop,
 .nb-act {
   display: inline-flex;
   align-items: center;
@@ -442,6 +457,14 @@ onBeforeUnmount(() => {
 }
 .nb-run .fa-play {
   margin-left: 1px; /* optical-center the triangle */
+}
+
+.nb-stop {
+  color: var(--color-danger);
+}
+.nb-stop:hover {
+  background: var(--color-danger-light);
+  color: var(--color-danger-dark);
 }
 
 /* Floating toolbar on the card's top-right edge, clear of the code. */

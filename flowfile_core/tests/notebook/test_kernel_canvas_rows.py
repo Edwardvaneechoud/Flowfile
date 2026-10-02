@@ -4,6 +4,8 @@ node the kernel cannot compute come from the canvas as parquet on the kernel's s
 from __future__ import annotations
 
 import json
+import time
+from pathlib import Path
 
 import pytest
 
@@ -67,6 +69,9 @@ def test_display_and_collect_on_a_deferred_canvas_node_show_the_canvas_rows(code
 def test_a_reset_session_reuses_the_canvas_file(coded_flow, client, kernel_sim):
     from pathlib import Path
 
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+    from flowfile_core.notebook import kernel_runner
+
     node_id = _coded_id(coded_flow)
     assert _execute(client, coded_flow, kernel_sim, _bind(node_id) + "display(coded)")["success"]
     files = {path: path.stat().st_mtime_ns for path in Path(_results_folder(kernel_sim, coded_flow)).iterdir()}
@@ -78,6 +83,37 @@ def test_a_reset_session_reuses_the_canvas_file(coded_flow, client, kernel_sim):
     assert len(kernel_sim.node_results) == 2
     after = {path: path.stat().st_mtime_ns for path in Path(_results_folder(kernel_sim, coded_flow)).iterdir()}
     assert after == files
+
+    settings = coded_flow.get_node(node_id).setting_input.model_copy(deep=True)
+    settings.polars_code_input.polars_code = "input_df.with_columns(pl.col('amount') * 100)"
+    coded_flow.add_polars_code(settings)
+    assert client.post("/notebook/session/reset", json=body).status_code == 200
+    shown = _execute(client, coded_flow, kernel_sim, _bind(node_id) + "display(coded)")
+    assert shown["success"] and "3000" in json.dumps(_rows(shown)), shown
+    changed = list(Path(_results_folder(kernel_sim, coded_flow)).iterdir())
+    assert len(changed) == 1 and changed[0] not in files, "the superseded file is removed"
+    cached = [value for entry in kernel_runner._results.values() for pair in entry.values() for value in pair]
+    assert cached and not any(isinstance(value, FlowDataEngine) for value in cached), cached
+
+
+def test_a_new_canvas_result_under_unchanged_settings_is_handed_over(coded_flow, client, kernel_sim):
+    """A re-run can change a node's rows without changing its hash (a subflow, a database read in Performance
+    mode), so the file follows the canvas's result itself."""
+    import polars as pl
+
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+
+    node_id = _coded_id(coded_flow)
+    assert len(_rows(_execute(client, coded_flow, kernel_sim, _bind(node_id) + "display(coded)"))) == 3
+    node = coded_flow.get_node(node_id)
+    digest = node.hash
+    node.results.resulting_data = FlowDataEngine(pl.LazyFrame({"id": [1, 2, 3, 4], "amount": [1, 2, 3, 4]}))
+    assert node.hash == digest
+
+    body = {"flow_id": coded_flow.flow_id, "kernel_id": kernel_sim.kernel.id}
+    assert client.post("/notebook/session/reset", json=body).status_code == 200
+    assert len(_rows(_execute(client, coded_flow, kernel_sim, _bind(node_id) + "display(coded)"))) == 4
+    assert len(list(Path(_results_folder(kernel_sim, coded_flow)).iterdir())) == 1
 
 
 def test_a_new_frame_on_a_deferred_canvas_node_computes_here_on_the_canvas_rows(coded_flow, client, kernel_sim):
@@ -352,3 +388,208 @@ def test_a_seeded_name_no_cell_builds_adopts_its_canvas_node(editor_built_flow, 
     assert added[0]["node_id"] > 2 and plan.deletions == [2], plan
     connects = [op.connection.output_connection.node_id for op in plan.operations if op.op == "connect"]
     assert connects == [1], plan
+
+
+OTHER_KERNEL = "other-kernel"
+
+
+@pytest.fixture
+def locking_client(client_as, locking_kernel_sim):
+    return client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+
+
+@pytest.fixture
+def scripted_flow(open_as):
+    """``from_dict -> Python Script on kernel -> filter``, opened; the filter's rows need the script run on the canvas."""
+    import flowfile as ff
+
+    def _build(kernel: str, *, mode: str = "Development", cache_results: bool = False, run: bool = True):
+        orders = ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
+        script = ff.PythonScript(orders, code="x = 1", kernel=kernel)
+        flow = open_as(script.output.filter(ff.col("amount") > 10).flow_graph)
+        flow.flow_settings.execution_mode = mode
+        if cache_results:
+            node = flow.get_node(_node_id(flow, "python_script"))
+            flow.add_python_script(node.setting_input.model_copy(update={"cache_results": True}))
+        if run:
+            assert all(result.success for result in flow.run_graph().node_step_result)
+            _edit_filter(flow)
+        return flow
+
+    return _build
+
+
+def _node_id(flow, node_type: str) -> int:
+    return next(node.node_id for node in flow.nodes if node.node_type == node_type)
+
+
+def _edit_filter(flow, upstream: str = "python_script") -> None:
+    """Change the filter's settings as the editor does, so it has no current result and ``upstream`` still has one."""
+    from flowfile_core.notebook.kernel_runner import _has_result
+
+    node = flow.get_node(_node_id(flow, "filter"))
+    settings = node.setting_input.model_copy(deep=True)
+    settings.filter_input.advanced_filter = "[amount] > 15"
+    flow.add_filter(settings)
+    assert not _has_result(flow, flow.get_node(node.node_id))
+    assert _has_result(flow, flow.get_node(_node_id(flow, upstream)))
+
+
+def _collect_filter(client, flow, sim) -> tuple[dict, float]:
+    started = time.monotonic()
+    result = _execute(client, flow, sim, _bind(_node_id(flow, "filter")) + "print(coded.collect().height)")
+    return result, time.monotonic() - started
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [{"mode": "Performance"}, {"cache_results": True}],
+    ids=["performance-mode", "cache-results"],
+)
+def test_a_rerun_on_the_sessions_own_kernel_is_refused_at_once(
+    scripted_flow, locking_client, locking_kernel_sim, setup
+):
+    flow = scripted_flow(locking_kernel_sim.kernel.id, **setup)
+    result, took = _collect_filter(locking_client, flow, locking_kernel_sim)
+    assert took < locking_kernel_sim.LOCK_WAIT, result
+    assert not result["success"], result
+    assert "deadlock" not in result["error"], result
+    script_id, filter_id = _node_id(flow, "python_script"), _node_id(flow, "filter")
+    assert f"needs node(s) {script_id} to run on this notebook's own kernel" in result["error"], result
+    assert f"use Run and preview on canvas for node {filter_id} first" in result["error"], result
+
+    lineage = {filter_id, *flow._get_upstream_node_ids(filter_id)}
+    assert all(step.success for step in flow.run_graph(node_ids=lineage).node_step_result)
+    result, _ = _collect_filter(locking_client, flow, locking_kernel_sim)
+    assert result["success"] and result["stdout"].strip() == "2", "the advice works"
+
+
+def test_a_never_run_node_on_the_sessions_own_kernel_is_refused_before_the_canvas_runs(
+    scripted_flow, locking_client, locking_kernel_sim
+):
+    flow = scripted_flow(locking_kernel_sim.kernel.id, run=False)
+    result, took = _collect_filter(locking_client, flow, locking_kernel_sim)
+    assert took < locking_kernel_sim.LOCK_WAIT and not result["success"], result
+    assert "Run and preview on canvas" in result["error"], result
+    assert flow.latest_run_info is None, "nothing ran on the canvas"
+
+
+@pytest.mark.parametrize("mode", ["Development", "Performance"])
+def test_a_node_on_another_kernel_still_runs(scripted_flow, locking_client, locking_kernel_sim, mode):
+    flow = scripted_flow(OTHER_KERNEL, mode=mode)
+    result, took = _collect_filter(locking_client, flow, locking_kernel_sim)
+    assert result["success"], result
+    assert result["stdout"].strip() == "2" and took < locking_kernel_sim.LOCK_WAIT, result
+
+
+def _interrupted_cell(client, flow, sim) -> tuple[dict, float]:
+    """Collect the filter while the script's kernel is busy, Stop the cell once its canvas run started, and
+    return its result: the run waits on ``OTHER_KERNEL``, whose lock this holds meanwhile."""
+    import threading
+
+    held = sim._locks.setdefault(OTHER_KERNEL, threading.Lock())
+    held.acquire()
+    results: list = []
+    try:
+        cell = threading.Thread(target=lambda: results.append(_collect_filter(client, flow, sim)))
+        cell.start()
+        deadline = time.monotonic() + sim.LOCK_WAIT
+        while not flow.flow_settings.is_running and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert flow.flow_settings.is_running, "the cell's canvas run started"
+        answer = client.post("/notebook/session/interrupt", json={"flow_id": flow.flow_id, "kernel_id": sim.kernel.id})
+        assert answer.status_code == 200 and answer.json()["status"] == "interrupted", answer.text
+        cell.join(timeout=sim.LOCK_WAIT)
+        assert not cell.is_alive(), "the cell came back once its canvas run was cancelled"
+    finally:
+        held.release()
+    return results[0]
+
+
+def test_interrupting_a_cell_cancels_the_canvas_run_it_waits_on(scripted_flow, locking_client, locking_kernel_sim):
+    flow = scripted_flow(OTHER_KERNEL, mode="Performance")
+    result, took = _interrupted_cell(locking_client, flow, locking_kernel_sim)
+    assert not result["success"] and took < locking_kernel_sim.LOCK_WAIT, result
+    assert "cancel" in result["error"].lower(), result
+
+
+def test_after_stop_the_cell_runs_again(scripted_flow, locking_client, locking_kernel_sim):
+    flow = scripted_flow(OTHER_KERNEL, run=False)
+    flow.flow_settings.execution_location = "remote"
+    result, _ = _interrupted_cell(locking_client, flow, locking_kernel_sim)
+    assert not result["success"] and "cancel" in result["error"].lower(), result
+    again, _ = _collect_filter(locking_client, flow, locking_kernel_sim)
+    assert again["success"] and again["stdout"].strip() == "2", again
+
+
+def test_a_subflow_node_on_the_sessions_own_kernel_is_refused_at_once(open_as, locking_client, locking_kernel_sim):
+    from uuid import uuid4
+
+    import flowfile as ff
+
+    catalog = ff.CatalogReference(f"NbHold_{uuid4().hex[:8]}", auto_create=True)
+    child = ff.create_flow_graph()
+    raw = ff.FlowInput("orders", schema={"id": ff.Int64, "amount": ff.Int64}, flow_graph=child)
+    ff.PythonScript(raw, code="x = 1", kernel=locking_kernel_sim.kernel.id).output.to_flow_output("kept")
+    ref = catalog.schema("flows", auto_create=True).register_flow(raw, name=f"child_{uuid4().hex[:8]}")
+    run = ff.RunFlow(ref, orders=ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]}))
+    flow = open_as(run["kept"].filter(ff.col("amount") > 10).flow_graph)
+    assert all(result.success for result in flow.run_graph().node_step_result)
+    _edit_filter(flow, upstream="run_flow")
+
+    result, took = _collect_filter(locking_client, flow, locking_kernel_sim)
+    assert took < locking_kernel_sim.LOCK_WAIT and not result["success"], result
+    assert "needs nodes of a flow it runs (a subflow" in result["error"], result
+    assert "Run and preview on canvas" in result["error"] and "another kernel" in result["error"], result
+
+
+def test_a_virtual_table_producer_node_on_the_sessions_own_kernel_is_refused_at_once(
+    open_as, locking_client, locking_kernel_sim
+):
+    from uuid import uuid4
+
+    import flowfile as ff
+
+    schema = ff.CatalogReference(f"NbHold_{uuid4().hex[:8]}", auto_create=True).schema("tables", auto_create=True)
+    table = f"vt_{uuid4().hex[:8]}"
+    orders = ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
+    produced = ff.PythonScript(orders, code="x = 1", kernel=locking_kernel_sim.kernel.id).output
+    producer = produced.write_catalog_table(table, schema=schema, write_mode="virtual")
+    assert all(result.success for result in producer.flow_graph.run_graph().node_step_result)
+    reader = ff.read_catalog_table(table, schema=schema)
+    flow = open_as(
+        ff.PythonScript(reader, code="x = 2", kernel=OTHER_KERNEL).output.filter(ff.col("amount") > 10).flow_graph
+    )
+
+    result, took = _collect_filter(locking_client, flow, locking_kernel_sim)
+    assert took < locking_kernel_sim.LOCK_WAIT and not result["success"], result
+    assert "deadlock" not in result["error"] and "a virtual table's producer" in result["error"], result
+
+
+def test_a_file_another_kernel_was_handed_is_kept_when_superseded(coded_flow, kernel_sim, monkeypatch):
+    """Two kernels' sessions on one flow: kernel B superseding the file kernel A's session reads leaves it, while a
+    kernel superseding its own file (its earlier session is gone) removes it."""
+    import polars as pl
+
+    from flowfile_core.auth.models import User as PydanticUser
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+    from flowfile_core.notebook import kernel_runner
+
+    monkeypatch.setattr(kernel_sim, "get_kernel_owner", lambda kernel_id: kernel_sim.owner_id)
+    kernel_runner._sessions[coded_flow.flow_id] = {"kernel-a", "kernel-b"}
+    user = PydanticUser(username="nb_owner", id=kernel_sim.owner_id, disabled=False)
+    node_id = _coded_id(coded_flow)
+
+    def fetch(kernel_id: str) -> Path:
+        return Path(kernel_runner.node_result(kernel_id, user, coded_flow.flow_id, node_id, None)["path"])
+
+    def rerun() -> None:
+        coded_flow.get_node(node_id).results.resulting_data = FlowDataEngine(pl.LazyFrame({"id": [1], "amount": [1]}))
+
+    for_a = fetch("kernel-a")
+    rerun()
+    for_b = fetch("kernel-b")
+    assert for_a.exists() and for_b.exists() and for_a != for_b
+    rerun()
+    again_b = fetch("kernel-b")
+    assert for_a.exists() and again_b.exists() and not for_b.exists()
