@@ -170,6 +170,55 @@ def build_python_script_cells() -> FlowGraph:
     return graph
 
 
+def build_drawer_script() -> FlowGraph:
+    """A script as the node's drawer stores one: it reads and publishes through ``flowfile_ctx`` itself and each
+    cell ends in a newline, with a filter below it. It renders as a ``@ff.python_script`` function with no
+    ``return``."""
+    from flowfile_core.flowfile.flow_graph import add_connection
+    from flowfile_core.schemas import input_schema, schemas, transform_schema
+
+    graph = FlowGraph(flow_settings=schemas.FlowSettings(flow_id=1, name="drawer_script", path="."))
+    graph.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=1,
+            raw_data_format=input_schema.RawData(
+                columns=[input_schema.MinimalFieldInfo(name="amount", data_type="Float64")], data=[[1.0, 2.0]]
+            ),
+        )
+    )
+    graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=2, node_type="python_script"))
+    cells = [
+        input_schema.NotebookCell(
+            id="template",
+            code="import polars as pl\n\ndf = flowfile_ctx.read_input()\n\n# Your transformation here\n",
+        ),
+        input_schema.NotebookCell(id="publish", code="flowfile_ctx.publish_output(df.filter(pl.col('amount') > 0))\n"),
+    ]
+    graph.add_python_script(
+        input_schema.NodePythonScript(
+            flow_id=1,
+            node_id=2,
+            depending_on_ids=[1],
+            python_script_input=input_schema.PythonScriptInput(
+                code="\n\n".join(cell.code for cell in cells), kernel_id="corpus_kernel", cells=cells
+            ),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=3, node_type="filter"))
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+    graph.add_filter(
+        input_schema.NodeFilter(
+            flow_id=1,
+            node_id=3,
+            depending_on_id=2,
+            filter_input=transform_schema.FilterInput(mode="advanced", advanced_filter="[amount] > 1"),
+        )
+    )
+    return graph
+
+
 def _drop_catalog(name: str) -> None:
     """Delete the catalog ``name`` with its schemas, tables and flow registrations (the corpus's own seed)."""
     from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
@@ -230,6 +279,7 @@ def build_corpus(tmp_dir_factory: Callable[[str], Path]) -> list[tuple[str, Flow
     corpus.append(("native_gate", build_native_gate()))
     corpus.append(("native_flow_io", build_native_flow_io()))
     corpus.append(("python_script_cells", build_python_script_cells()))
+    corpus.append(("drawer_script", build_drawer_script()))
     return corpus
 
 

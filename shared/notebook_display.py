@@ -18,6 +18,8 @@ import polars as pl
 
 TABLE_MIME = "application/vnd.flowfile.table+json"
 DISPLAY_MAX_ROWS = 2_000
+KERNEL_RESULT_MARKER = "@@flowfile-notebook-result@@"
+"""Prefix of the one stdout line a kernel notebook call publishes its JSON result on; core strips that line."""
 
 _QUANTITATIVE = {
     "Int8",

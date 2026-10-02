@@ -153,7 +153,9 @@ def render(flow_graph: FlowGraph) -> NotebookRendering:
     and the next refresh renders again instead of keeping cells for the pre-edit graph.
     """
     fingerprint = code_fingerprint(flow_graph)
-    converter = FlowGraphToFlowFrameConverter(flow_graph, placeholders=True, deterministic_names=True)
+    converter = FlowGraphToFlowFrameConverter(
+        flow_graph, placeholders=True, deterministic_names=True, decorated_scripts=True
+    )
     converter.convert()
     emissions = converter.emissions(verbatim_refs=True)
     imports = ["import flowfile as ff", *(line for line in converter.import_lines() if line != "import flowfile as ff")]

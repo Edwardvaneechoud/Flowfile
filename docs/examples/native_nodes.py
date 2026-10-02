@@ -133,6 +133,34 @@ except ff.NativeNodeError as exc:
 else:
     raise AssertionError("a function with two outputs must be placed with .node(...)")
 
+flowfile_ctx = None  # the kernel defines it; nothing here runs the body
+
+
+# --8<-- [start:script-raw]
+@ff.python_script(kernel="docs-kernel", returns={"orders": ff.UInt32, "total": ff.Float64})
+def summarise():
+    """Order count and total."""
+    import polars as pl
+
+    df = flowfile_ctx.read_input()
+
+    # %% Publish
+    flowfile_ctx.publish_output(df.select(pl.len().alias("orders"), pl.col("amount").sum().alias("total")))
+
+
+order_summary = summarise(order_lines)  # the frames go in the call
+# --8<-- [end:script-raw]
+
+assert summarise.cells == [
+    "# Order count and total.",
+    "import polars as pl\n\ndf = flowfile_ctx.read_input()",
+    "# Publish\n"
+    'flowfile_ctx.publish_output(df.select(pl.len().alias("orders"), pl.col("amount").sum().alias("total")))',
+]
+assert order_summary.columns == ["orders", "total"]
+summary_node = order_summary.flow_graph.get_node(order_summary.node_id)
+assert [source.node_id for source in summary_node.node_inputs.main_inputs] == [order_lines.node_id]
+
 # --8<-- [start:script]
 readings = ff.from_dict({"id": [1, 2, 3], "amount": [120.0, 40.0, 900.0]})
 script = ff.PythonScript(

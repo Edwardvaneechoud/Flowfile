@@ -760,6 +760,8 @@ export interface CellOutput {
   error: string | null;
   execution_time_ms: number;
   execution_count: number;
+  /** The failing line (1-based) when the run names one. */
+  line?: number | null;
 }
 
 export interface NotebookCell {

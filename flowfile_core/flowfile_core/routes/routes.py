@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 # External dependencies
@@ -114,6 +114,8 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     list_db_tables,
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
+from flowfile_core.notebook.gate import require_kernel_sessions
+from flowfile_core.notebook.kernel_runner import close_flow_sessions
 from flowfile_core.notebook.push import NotebookPushRequest, needs_confirmation, node_id_ceiling, plan_push
 from flowfile_core.notebook.render import code_fingerprint
 from flowfile_core.routes._connection_sharing import (
@@ -1084,13 +1086,18 @@ def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_u
     tags=["editor"],
     response_model=NotebookPushResponse,
 )
-def push_notebook(request: NotebookPushRequest, current_user=Depends(require_notebook_sync)) -> NotebookPushResponse:
+def push_notebook(
+    request: NotebookPushRequest, http: Request, current_user=Depends(require_notebook_sync)
+) -> NotebookPushResponse:
     """Push notebook cells onto the canvas: clean run, reconcile, and apply the ops as one transaction.
 
     The clean run happens outside the edit lock; the fingerprint is checked again under it, so a
     canvas edit that lands meanwhile is a 409 instead of being overwritten. A ``trigger`` whose plan
-    needs confirmation applies nothing and answers ``applied=False``.
+    needs confirmation applies nothing and answers ``applied=False``. With ``kernel_id`` the cells run
+    on that notebook kernel.
     """
+    if request.kernel_id is not None:
+        require_kernel_sessions(http, current_user)
     flow = flow_file_handler.get_flow(request.flow_id, current_user.id)
     if flow is None:
         raise HTTPException(404, "Flow not found")
@@ -1394,6 +1401,7 @@ def close_flow(flow_id: int, current_user=Depends(get_current_active_user)) -> N
     if not flow_file_handler.user_has_flow(user_id, flow_id):
         return
     flow_file_handler.delete_flow(flow_id, user_id=user_id)
+    close_flow_sessions(flow_id)
 
 
 class RenameFlowInput(BaseModel):

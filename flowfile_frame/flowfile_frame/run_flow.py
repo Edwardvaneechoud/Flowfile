@@ -45,7 +45,7 @@ from flowfile_frame.config import logger
 from flowfile_frame.custom_node import _warn_session_only_custom_nodes
 from flowfile_frame.expr import Expr
 from flowfile_frame.native import NativeNode, NativeNodeError, Node
-from flowfile_frame.notebook import refuse
+from flowfile_frame.notebook import kernel_path, refuse
 from flowfile_frame.parameters import (
     Parameter,
     _as_parameter_string,
@@ -299,7 +299,7 @@ def flow_ref(
         resolved_namespace = _resolve_namespace(service, namespace)
         registration = _find_registration(db, service, user_id, resolved_namespace, name, uuid, registration_id)
         ref = _flow_ref_from_registration(service.repo, registration)
-    path = Path(ref.flow_path)
+    path = _flow_file(ref)
     if not path.is_absolute() or not path.is_file():
         raise NativeNodeError(
             f"Flow {ref.name!r} (registration {ref.registration_id}) has no flow file at {ref.flow_path!r}; "
@@ -546,9 +546,21 @@ def _as_flow_ref(
     )
 
 
+def _flow_file(ref: FlowRef) -> Path:
+    """Where this process opens the flow file of ``ref``: in a notebook kernel, through its mounted folders."""
+    local = kernel_path(ref.flow_path)
+    if local is None:
+        raise NativeNodeError(
+            f"The flow file of {ref.name!r} ({ref.flow_path!r}) is not visible to the kernel: "
+            "add its folder to the kernel's folders, or use the flow on the canvas"
+        )
+    return Path(local)
+
+
 def _interface(ref: FlowRef) -> subflow.SubflowInterface:
+    path = _flow_file(ref)
     try:
-        return subflow.get_subflow_interface(Path(ref.flow_path))
+        return subflow.get_subflow_interface(path)
     except Exception as exc:
         raise NativeNodeError(f"Could not read the inputs and outputs of flow {ref.name!r}: {exc}") from exc
 

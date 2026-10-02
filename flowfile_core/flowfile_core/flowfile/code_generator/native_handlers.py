@@ -18,6 +18,7 @@ import re
 import types
 
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
+from flowfile_core.flowfile.code_generator.param_codegen import _SENTINEL_RE
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
@@ -42,25 +43,44 @@ _PUBLISH_STARTS = (
     "if not isinstance(_result, dict)",
 )
 _SESSION_PRELUDE = {"pl": "import polars as pl"}
+# Line breaks str.splitlines sees and the AST does not: the regenerated source would count rows differently.
+_UNCOUNTED_LINE_BREAKS = re.compile("[\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]")
 
 
-def str_literal(text: str) -> str:
-    """A string literal: triple-quoted for multi-line text it spells verbatim, else JSON-escaped."""
-    if "\n" in text and '"""' not in text and "\\" not in text and "\r" not in text and not text.endswith('"'):
-        return f'"""{text}"""'
-    return json.dumps(text, ensure_ascii=False)
+def literal_lines(text: str) -> list[str]:
+    """``text`` as single-line string literals, one per line of text, that concatenate back to it.
+
+    No literal spans a physical line, so the export's indentation (the function wrapper, chain fusion)
+    cannot reach into the text; a triple-quoted block would take the indent on every continuation line.
+    A last line that is only a parameter joins the line before it, since the parameter post-pass turns a
+    literal that is exactly one reference into a bare name, which cannot be concatenated with a string.
+    """
+    pieces = text.split("\n")
+    pieces = [piece + "\n" for piece in pieces[:-1]] + [piece for piece in pieces[-1:] if piece]
+    if len(pieces) > 1 and _SENTINEL_RE.fullmatch(pieces[-1]):
+        pieces[-2:] = [pieces[-2] + pieces[-1]]
+    return [json.dumps(piece, ensure_ascii=False) for piece in pieces] or ['""']
 
 
 def value_literal(value) -> str | None:
-    """A Python literal that evaluates back to ``value``, or None."""
+    """A Python literal on one line that evaluates back to ``value``, or None."""
     if isinstance(value, str):
-        return str_literal(value)
+        return json.dumps(value, ensure_ascii=False)
     text = repr(value)
     try:
         restored = ast.literal_eval(text)
     except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
         return None
     return text if type(restored) is type(value) and restored == value else None
+
+
+def _cell_entry(cell_id: str, code: str) -> str:
+    """A ``cells=[...]`` entry: ``(id, code)`` on one line, or the code as one literal per line of the cell."""
+    literals = literal_lines(code)
+    if len(literals) == 1:
+        return f"        ({json.dumps(cell_id)}, {literals[0]}),\n"
+    lines = [json.dumps(cell_id) + ",", *literals[:-1], literals[-1] + ","]
+    return "        (\n" + "".join(f"            {line}\n" for line in lines) + "        ),\n"
 
 
 def call(func: str, args: list[str]) -> str:
@@ -131,18 +151,33 @@ def _script_function_text(name: str, parameters: list[str], body_cells: list[str
     return "\n".join(lines)
 
 
+def _docstring_candidates(body: list[str]) -> list[tuple[str | None, list[str]]]:
+    """``(docstring, body cells)`` to try: a leading ``#`` note as the docstring first, then every cell as body."""
+    candidates: list[tuple[str | None, list[str]]] = [(None, body)]
+    docstring = _undocstring(body[0]) if len(body) > 1 and _is_note(body[0]) else None
+    if docstring is not None:
+        candidates.insert(0, (docstring, body[1:]))
+    return candidates
+
+
 def _decorator_parts(cells: list[str]) -> tuple | None:
-    """Split stored cells into prelude lines, parameters, candidate ``(docstring, body cells)`` and a name, or None.
+    """Split stored cells into prelude lines, parameters, candidate ``(docstring, body cells)``, a name and
+    whether the script is raw, or None.
 
     The layout is ``python_script._notebook_cells``: optional prelude, the inputs cell, an optional
     docstring note, the body, and a last cell holding the outputs marker. Each body candidate (with or
     without the docstring) is checked by regenerating it. The function name is only recoverable from
-    a dict guard's message, which spells it.
+    a dict guard's message, which spells it. Cells without either marker are a raw script (a function
+    with no ``return``): no prelude, no parameters, every cell is body.
     """
     from flowfile_frame.python_script import INPUTS_MARKER, OUTPUTS_MARKER
 
     marker = next((i for i, cell in enumerate(cells) if cell.split("\n", 1)[0] == INPUTS_MARKER), None)
-    if marker is None or marker > 1 or len(cells) < marker + 2:
+    if marker is None:
+        if not cells or any(line in (INPUTS_MARKER, OUTPUTS_MARKER) for cell in cells for line in cell.split("\n")):
+            return None
+        return [], [], _docstring_candidates(cells), None, True
+    if marker > 1 or len(cells) < marker + 2:
         return None
     reads = [_INPUT_READ.match(line) for line in cells[marker].split("\n")[1:]]
     if not reads or any(match is None for match in reads):
@@ -161,13 +196,21 @@ def _decorator_parts(cells: list[str]) -> tuple | None:
     value = [last[at + 1][len("_result = ") :], *last[at + 2 : end]]
     closing = "\n".join([*last[:at], "return " + value[0], *value[1:]])
     body = [*cells[marker + 1 : -1], closing]
-    candidates: list[tuple[str | None, list[str]]] = [(None, body)]
-    docstring = _undocstring(body[0]) if len(body) > 1 and _is_note(body[0]) else None
-    if docstring is not None:
-        candidates.insert(0, (docstring, body[1:]))
     prelude = cells[0].split("\n") if marker == 1 else []
     named = re.search(r'raise \w+Error\("(?P<name>[A-Za-z_]\w*) (?:returns|must return) a dict', "\n".join(last[end:]))
-    return prelude, [match["name"] for match in reads], candidates, named["name"] if named else None
+    name = named["name"] if named else None
+    return prelude, [match["name"] for match in reads], _docstring_candidates(body), name, False
+
+
+def _fits_a_cell(text: str) -> bool:
+    """Whether the notebook interpreter reads ``text``: a script body is a cell's statements, under its bounds."""
+    from flowfile_core.notebook.interpret import _Failure, _parse
+
+    try:
+        _parse("<python-script-export>", text)
+    except (_Failure, SyntaxError):
+        return False
+    return True
 
 
 class NativeHandlersMixin(ConverterMixinBase):
@@ -368,7 +411,9 @@ class NativeHandlersMixin(ConverterMixinBase):
     def _handle_python_script(
         self, settings: input_schema.NodePythonScript, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """``@ff.python_script`` when the cells regenerate byte for byte, else ``ff.PythonScript(cells=...)``."""
+        """``ff.PythonScript(cells=...)``; the notebook render (``decorated_scripts``) writes ``@ff.python_script``
+        when the cells regenerate byte for byte. The flat export wraps its body in a function, where a
+        decorated ``def`` is not module-level."""
         script = settings.python_script_input
         if not script.cells:
             reason = "a code-only Python Script has no cells to render; open it in the drawer to give it cells"
@@ -383,9 +428,11 @@ class NativeHandlersMixin(ConverterMixinBase):
                 reason = f"output {name!r} has a column dtype with no ff.* form"
                 return self._refuse(settings.node_id, "python_script", reason)
             schema_literals[name] = literal
-        code = self._decorated_script(settings, var_name, inputs, outputs, schema_literals)
+        code = None
+        if self.decorated_scripts:
+            code = self._decorated_script(settings, var_name, inputs, outputs, schema_literals)
         if code is None:
-            cells = "".join(f"        ({json.dumps(c.id)}, {str_literal(c.code)}),\n" for c in script.cells)
+            cells = "".join(_cell_entry(c.id, c.code) for c in script.cells)
             args = [*inputs, "cells=[\n" + cells + "    ]"]
             if script.kernel_id:
                 args.append(f"kernel={json.dumps(script.kernel_id)}")
@@ -410,21 +457,32 @@ class NativeHandlersMixin(ConverterMixinBase):
     ) -> str | None:
         """The ``@ff.python_script`` form, when regenerating its cells reproduces the stored ones exactly.
 
-        The prelude's lines are independent statements, so a stored prelude in another order (one saved
-        when the frame ordered it by bytecode) still counts as reproduced.
+        The stored cells are compared as a push compares them (``compare.script_cells``: the drawer keeps
+        a trailing newline the frame trims). The prelude's lines are independent statements, so a stored
+        prelude in another order (one saved when the frame ordered it by bytecode) still counts as
+        reproduced. A script written in the drawer has neither marker and regenerates as a function
+        without a ``return``, which takes its frames in the call.
 
         Prelude imports become stub modules (each must pass ``importlib.util.find_spec``) and constant
         assignments become literals, so nothing the script imports is loaded; the ``def`` is compiled and
-        executed to bind the function (its body never runs), then the frame's ``_notebook_cells`` regenerates the cells.
+        executed to bind the function (its body never runs), then the frame's ``_notebook_cells`` regenerates
+        the cells. A notebook binds node references and flow parameters as variables, which the body would
+        read instead of a builtin of the same name, so those names are bound here too and such a body does
+        not regenerate. The text must also fit a cell the interpreter reads (``_fits_a_cell``).
         """
+        from flowfile_core.notebook.compare import script_cells
         from flowfile_frame.python_script import _notebook_cells
 
-        cells = [cell.code for cell in settings.python_script_input.cells]
-        parts = _decorator_parts(cells)
-        if parts is None or len(parts[1]) != len(inputs):
+        cells = script_cells([cell.code for cell in settings.python_script_input.cells])
+        if any(_UNCOUNTED_LINE_BREAKS.search(cell) for cell in cells):
             return None
-        prelude, parameters, candidates, function = parts
-        namespace: dict = {"__builtins__": builtins}
+        parts = _decorator_parts(cells)
+        if parts is None:
+            return None
+        prelude, parameters, candidates, function, raw = parts
+        if not raw and len(parameters) != len(inputs):
+            return None
+        namespace: dict = {"__builtins__": builtins, **{name: object() for name in self._shadowed_builtins()}}
         known = getattr(self, "_script_prelude", None) or dict(_SESSION_PRELUDE)
         bound: dict[str, str] = {}
         for line in prelude:
@@ -473,11 +531,20 @@ class NativeHandlersMixin(ConverterMixinBase):
                 if regenerated == cells or (
                     prelude and regenerated[1:] == cells[1:] and sorted(regenerated[0].split("\n")) == sorted(prelude)
                 ):
-                    self._script_prelude = {**known, **bound}
-                    return self._decorated_text(
+                    text = self._decorated_text(
                         settings, var_name, prelude, source, function, option, inputs, schema_literals
                     )
+                    if not _fits_a_cell(text):
+                        return None
+                    self._script_prelude = {**known, **bound}
+                    return text
         return None
+
+    def _shadowed_builtins(self) -> set[str]:
+        """The names a notebook binds (node references, flow parameters) that are also builtins."""
+        names = {parameter.name for parameter in self.flow_graph.flow_settings.parameters}
+        names |= {getattr(node.setting_input, "node_reference", None) for node in self.flow_graph.nodes}
+        return {name for name in names if name and hasattr(builtins, name)}
 
     def _decorated_text(self, settings, var_name, prelude, source, function, option, inputs, schema_literals) -> str:
         """Prelude, ``@ff.python_script(...)``, the ``def`` and the call."""

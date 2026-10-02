@@ -21,9 +21,8 @@ from flowfile_core.flowfile.code_generator.connector_handlers import ConnectorHa
 from flowfile_core.flowfile.code_generator.custom_node_handlers import CustomNodeHandlersMixin
 from flowfile_core.flowfile.code_generator.expression_helpers import ExpressionHelpersMixin
 from flowfile_core.flowfile.code_generator.join_handlers import JoinHandlersMixin
-from flowfile_core.flowfile.code_generator.native_handlers import FLOW_VAR, NativeHandlersMixin
+from flowfile_core.flowfile.code_generator.native_handlers import FLOW_VAR, NativeHandlersMixin, literal_lines
 from flowfile_core.flowfile.code_generator.param_codegen import (
-    _SENTINEL_RE,
     SENTINEL_PREFIX,
     apply_param_sentinels,
     codegen_parameters,
@@ -340,12 +339,7 @@ def _sql_query_literal_lines(sql_code: str) -> list[str]:
     A last line that is only a parameter joins the line before it, since the post-pass turns a literal
     that is exactly one reference into a bare name, which cannot be concatenated with a string.
     """
-    lines = sql_code.strip().split("\n")
-    if len(lines) > 1 and _SENTINEL_RE.fullmatch(lines[-1]):
-        lines[-2:] = [f"{lines[-2]}\n{lines[-1]}"]
-    return [json.dumps(line + "\n", ensure_ascii=False) for line in lines[:-1]] + [
-        json.dumps(lines[-1], ensure_ascii=False)
-    ]
+    return literal_lines(sql_code.strip())
 
 
 def _sql_query_input_vars(input_vars: dict[str, str]) -> list[str]:
@@ -539,6 +533,7 @@ class FlowGraphCodeConverter(
     framework: str = "pl"
     flowfile_alias: str = "ff"
     placeholders: bool = False
+    decorated_scripts: bool = False
     function_name: str = "run_etl_pipeline"
 
     def __init__(self, flow_graph: FlowGraph):
@@ -2309,7 +2304,9 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
     the export with ``UnsupportedNodeError``. Every node is written as the frame call that adds that
     same node type back (``write_csv``, ``.polars_code``, ``with_row_index``, ...), with its user
     description as ``description=``. ``deterministic_names=True`` names an unnamed boundary
-    ``<type_label>_<id>``, what a seeded notebook session binds.
+    ``<type_label>_<id>``, what a seeded notebook session binds. ``decorated_scripts=True`` writes a
+    Python Script as ``@ff.python_script`` when its cells regenerate; it needs module-level statements,
+    so only the notebook render asks for it and the wrapped export keeps ``ff.PythonScript(cells=...)``.
 
     The notebook render (``placeholders=True``) keeps every cell inside what a notebook interprets
     without a kernel: a formula whose translation a cell does not interpret (a ``lambda`` for hashing,
@@ -2320,10 +2317,17 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
     framework = "ff"
     flowfile_alias = "ff"
 
-    def __init__(self, flow_graph: FlowGraph, placeholders: bool = False, deterministic_names: bool = False):
+    def __init__(
+        self,
+        flow_graph: FlowGraph,
+        placeholders: bool = False,
+        deterministic_names: bool = False,
+        decorated_scripts: bool = False,
+    ):
         super().__init__(flow_graph)
         self.placeholders = placeholders
         self.deterministic_names = deterministic_names
+        self.decorated_scripts = decorated_scripts
         self._blocked: set[int] = set()
         self._statuses: dict | None = None
         self.imports.add("import flowfile as ff")
@@ -2363,7 +2367,10 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         return "" if node.node_type in _NATIVE_TYPES else _user_description(node.setting_input)
 
     def _ends_statement(self, node: FlowNode) -> bool:
-        """A flow output or a described node ends its statement, so ``description=`` lands on its own call."""
+        """A flow output or a described node ends its statement, so ``description=`` lands on its own call;
+        so does a Python Script, whose cells read as one statement rather than the head of a chain."""
+        if node.node_type == "python_script":
+            return True
         return super()._ends_statement(node) or bool(self._description(node))
 
     def _describe(self, node: FlowNode) -> None:

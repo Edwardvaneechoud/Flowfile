@@ -20,7 +20,7 @@ os.environ["FLOWFILE_WORKER_PORT"] = "63578"
 os.environ["FLOWFILE_SINGLE_FILE_MODE"] = "1"
 
 from flowfile.api import open_graph_in_editor as _open_graph_in_editor
-from flowfile.web import start_server as start_web_ui
+from flowfile.web import start_server as _start_web_ui
 from flowfile_frame import _fl_namespace
 from flowfile_frame._fl_namespace import *  # noqa: F403
 from flowfile_frame._fl_namespace import node_designer
@@ -31,6 +31,12 @@ from flowfile_frame.notebook import refuse
 def open_graph_in_editor(*args, **kwargs):
     refuse("ff.open_graph_in_editor")
     return _open_graph_in_editor(*args, **kwargs)
+
+
+@functools.wraps(_start_web_ui)
+def start_web_ui(*args, **kwargs):
+    refuse("ff.start_web_ui", "starts a server")
+    return _start_web_ui(*args, **kwargs)
 
 
 # Bind node_designer as a real submodule so `from flowfile.node_designer import ...`

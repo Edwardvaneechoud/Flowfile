@@ -73,11 +73,20 @@ A kernel's flavour matters beyond notebooks: a [kernel-environment custom node](
 | **Memory (GB)** | Maximum memory the container can use (0.5–64 GB) | `4` |
 | **CPU Cores** | Number of CPU cores allocated (0.5–32) | `2` |
 | **GPU** | Enable GPU passthrough (requires NVIDIA Docker) | `false` |
+| **Folders this kernel can read** | Folders on this machine the kernel may read, and write when marked **Writable**; desktop app and default `pip install` only, see below | *(none)* |
 
 3. Click **Create Kernel** to save the configuration
 4. Click **Start** on the kernel card to launch the container
 
 Extra packages are resolved against the flavour's version constraints and baked into a per-kernel image when the kernel is created — not installed on every start. Editing a stopped kernel's package list rebuilds its image.
+
+### Folders this kernel can read
+
+In the desktop app, and with `pip install flowfile` in the default mode, a kernel can read folders on your machine. Each folder must be an absolute path to an existing directory. On macOS and Linux it appears at the same path inside the container, so `pl.read_csv("/Users/me/data/sales.csv")` in a cell or Python Script node on that kernel reads the file you see on your machine. On Windows it appears under `/host/<drive>/`: `C:\Users\me\data` is `/host/c/Users/me/data`. A folder that holds Flowfile's own folder (`~/.flowfile`, so also your home folder) is refused; add narrower folders instead, such as one for your data.
+
+Folders are read-only unless you tick **Writable**, which lets any code on the kernel create, change or delete files in that folder, so keep only data in it. On Linux, files the kernel writes there belong to root. Flowfile's own key store is always hidden, even inside a folder you add. Edit the list on a stopped kernel in its details; changes take effect on the next start. Docker deployments refuse the setting.
+
+A kernel with the `flowfile` package installed can also run the [canvas notebook](notebook.md#running-on-a-kernel) and additionally reads Flowfile's saved flows, custom nodes and catalog tables; that section lists its limits, including Apple Silicon Macs.
 
 ### Kernel Cards
 
@@ -222,7 +231,7 @@ For details on building custom nodes, see [Node Designer](node-designer.md#how-k
 
 ## Current limitations
 
-- **Flow-to-code export** — the Polars export refuses Python Script nodes; the FlowFrame export writes them as `ff.PythonScript` / `@ff.python_script` and the Project export as their own modules (see [Export to Python](tutorials/code-generator.md)).
+- **Flow-to-code export** — the Polars export refuses Python Script nodes; the FlowFrame export writes them as `ff.PythonScript(cells=...)`, the [canvas notebook](notebook.md) as `@ff.python_script` where the cells regenerate unchanged, and the Project export as their own modules (see [Export to Python](tutorials/code-generator.md)).
 - **Artifact state visibility** — There is no UI to browse or inspect the contents of stored artifacts. You can list artifacts via `flowfile_ctx.list_artifacts()` in code, but there is no visual artifact explorer.
 
 ---

@@ -16,7 +16,7 @@ from flowfile_frame.config import logger
 from flowfile_frame.expr import col
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.native import source_frame
-from flowfile_frame.utils import _implicit_graph, generate_node_id
+from flowfile_frame.utils import _expand_user, _implicit_graph, generate_node_id
 from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_glob_pattern, is_url
 
 
@@ -69,6 +69,11 @@ def _resolve_scan_mode(source: str, *, glob: bool = True) -> Literal["single_fil
         return "single_file"
     if is_glob_pattern(source) or source.endswith(("/", os.sep)):
         return "directory"
+    if input_schema.keep_paths_as_written.get():
+        # In a notebook kernel the folder is probed where the kernel sees it; a Windows one may end in "\".
+        translate = input_schema.kernel_file_path.get()
+        probe = (translate(source) if translate is not None else None) or source
+        return "directory" if source.endswith("\\") or Path(probe).is_dir() else "single_file"
     return "directory" if Path(source).expanduser().is_dir() else "single_file"
 
 
@@ -174,11 +179,11 @@ def read_csv(
     if isinstance(source, str | os.PathLike):
         current_source_path_for_native = str(source)
         if "~" in current_source_path_for_native:
-            current_source_path_for_native = os.path.expanduser(current_source_path_for_native)
+            current_source_path_for_native = _expand_user(current_source_path_for_native)
     elif isinstance(source, list) and all(isinstance(s, str | os.PathLike) for s in source):
         current_source_path_for_native = str(source[0]) if source else None
         if current_source_path_for_native and "~" in current_source_path_for_native:
-            current_source_path_for_native = os.path.expanduser(current_source_path_for_native)
+            current_source_path_for_native = _expand_user(current_source_path_for_native)
     elif isinstance(source, io.BytesIO | io.StringIO):
         logger.warning("Read from bytes io from csv not supported, converting data to raw data")
         return from_dict(pl.read_csv(source), flow_graph=flow_graph, description=description)
@@ -234,7 +239,7 @@ def read_csv(
                 row_delimiter=eol_char,
             ),
         )
-        if convert_to_absolute_path:
+        if convert_to_absolute_path and not input_schema.keep_paths_as_written.get():
             try:
                 received_table.set_absolute_filepath()
                 received_table.path = received_table.abs_file_path
@@ -462,7 +467,7 @@ def read_parquet(
         include_file_paths=include_file_paths,
         table_settings=input_schema.InputParquetTable(),
     )
-    if convert_to_absolute_path:
+    if convert_to_absolute_path and not input_schema.keep_paths_as_written.get():
         received_table.path = received_table.abs_file_path
 
     read_node = input_schema.NodeRead(
@@ -497,7 +502,7 @@ def _read_simple_file(
     at their single-file defaults.
     """
     if isinstance(source, str) and "~" in source:
-        source = os.path.expanduser(source)
+        source = _expand_user(source)
     node_id = generate_node_id()
 
     if flow_graph is None:
@@ -513,7 +518,7 @@ def _read_simple_file(
         include_file_paths=include_file_paths,
         table_settings=table_settings,
     )
-    if convert_to_absolute_path:
+    if convert_to_absolute_path and not input_schema.keep_paths_as_written.get():
         received_table.path = received_table.abs_file_path
 
     read_node = input_schema.NodeRead(
@@ -685,7 +690,7 @@ def read_excel(
         name=Path(source).name,
         table_settings=input_schema.InputExcelTable(sheet_name=sheet_name, has_headers=has_header),
     )
-    if convert_to_absolute_path:
+    if convert_to_absolute_path and not input_schema.keep_paths_as_written.get():
         received_table.path = received_table.abs_file_path
 
     read_node = input_schema.NodeRead(

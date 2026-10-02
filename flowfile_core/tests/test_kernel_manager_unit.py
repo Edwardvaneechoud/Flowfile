@@ -1393,3 +1393,32 @@ class TestAdoptedOwnership:
         mgr.shutdown_all()
 
         mgr._cleanup_container.assert_called_once_with("k1")
+
+
+def test_bake_failure_summary_keeps_the_last_meaningful_pip_lines():
+    log = [
+        "Step 1/4 : FROM flowfile-kernel:lite",
+        " ---> 1234abcd",
+        "Collecting flowfile==0.21.0",
+        "  Downloading flowfile-0.21.0-py3-none-any.whl (5.1 MB)",
+        "     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.1/5.1 MB 9.0 MB/s eta 0:00:00",
+        "Collecting polars-grouper",
+        "",
+        *[f"  compile line {i}" for i in range(40)],
+        "  error: can't find Rust compiler",
+        "  ERROR: Failed building wheel for polars-grouper",
+        "ERROR: Could not build wheels for polars-grouper, which is required to install pyproject.toml-based projects",
+    ]
+    summary = kernel_manager.bake_failure_summary(["flowfile==0.21.0"], log)
+    lines = summary.splitlines()
+    assert lines[0] == "Installing flowfile==0.21.0 into the kernel image failed."
+    assert len(lines) <= 16 and len(summary) <= 1600
+    assert lines[-1].startswith("ERROR: Could not build wheels for polars-grouper")
+    assert "can't find Rust compiler" in summary
+    assert not any(noise in summary for noise in ("Step 1/4", "Downloading", "━", "Collecting"))
+
+
+def test_bake_failure_summary_caps_characters_and_handles_an_empty_log():
+    assert kernel_manager.bake_failure_summary(["x"], []) == "Installing x into the kernel image failed."
+    summary = kernel_manager.bake_failure_summary(["x"], ["E" * 5000])
+    assert len(summary.splitlines()[1]) == 1500

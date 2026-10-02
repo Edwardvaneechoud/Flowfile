@@ -24,6 +24,8 @@ from flowfile_frame.flow_frame import _polars_code_source, _polars_code_text, _P
 from flowfile_frame.native import NativeNodeError
 from flowfile_frame.python_script import (
     PythonScriptFunction,
+    _function_source,
+    _is_raw,
     _module_reads,
     _notebook_cells,
     _parameters,
@@ -109,6 +111,23 @@ SCRIPT_CELLS = {
         "        return [row async for row in fetch()] + [await fetch()]\n"
         "    return orders\n"
     ),
+    "script_as_written": (
+        "import polars as pl\nLIMIT = 3\n\n\n"
+        "@ff.python_script(outputs=['kept', 'rest'])\n"
+        "def script():\n"
+        '    """Reads and publishes itself."""\n'
+        "    rows = flowfile_ctx.read_input().collect()\n"
+        "    # %% Publish\n"
+        "    flowfile_ctx.publish_output(rows.head(LIMIT), 'kept')\n"
+        "    flowfile_ctx.publish_output(pl.DataFrame(), 'rest')\n"
+    ),
+    "script_publishing_in_a_helper": (
+        "@ff.python_script\n"
+        "def script():\n"
+        "    def publish(df):\n"
+        "        return flowfile_ctx.publish_output(df)\n"
+        "    publish(flowfile_ctx.read_input())\n"
+    ),
 }
 
 SCRIPT_ERRORS = {
@@ -127,6 +146,8 @@ SCRIPT_ERRORS = {
     "outside_value": "THING = object()\n\n\n@ff.python_script\ndef script(orders):\n    return orders.head(THING)\n",
     "flowfile_package": "@ff.python_script\ndef script(orders):\n    return orders.filter(ff.col('a') > 1)\n",
     "dict_without_outputs": "@ff.python_script\ndef script(orders):\n    return {'a': orders}\n",
+    "script_with_parameters": "@ff.python_script\ndef script(orders):\n    flowfile_ctx.publish_output(orders)\n",
+    "script_without_a_publish": "@ff.python_script\ndef script():\n    x = 1\n",
 }
 
 
@@ -177,11 +198,7 @@ def test_a_script_def_read_as_text_gives_the_cells_of_its_function(name):
     code = SCRIPT_CELLS[name]
     fn, first_line, namespace = _script(code)
     outputs = fn._options.get("outputs")
-    assert _source_cells(code, first_line, namespace, outputs) == (
-        fn.__name__,
-        _parameters(fn, fn.__name__),
-        _notebook_cells(fn, outputs),
-    )
+    assert _source_cells(code, first_line, namespace, outputs) == _function_parts(fn, outputs)
 
 
 @pytest.mark.parametrize("name", sorted(SCRIPT_ERRORS))
@@ -215,7 +232,8 @@ def test_every_decorated_test_fixture_reads_the_same_from_its_file(module_name):
 
 
 def _function_parts(fn, outputs):
-    return fn.__name__, _parameters(fn, fn.__name__), _notebook_cells(fn, outputs)
+    cells = _notebook_cells(fn, outputs)
+    return fn.__name__, _parameters(fn, fn.__name__), cells, _is_raw(_function_source(fn, fn.__name__)[1])
 
 
 def _outcome(build, *args):
@@ -242,6 +260,27 @@ def test_from_source_builds_the_function_s_node_settings():
     assert [c.code for c in placed[0].python_script_input.cells] == [
         c.code for c in placed[1].python_script_input.cells
     ]
+
+
+def test_from_source_places_a_script_like_its_function():
+    """A ``def`` without a ``return`` takes its frames in the call, from text as from the function."""
+    code = SCRIPT_CELLS["script_as_written"]
+    fn, first_line, namespace = _script(code)
+    options = {"outputs": ["kept", "rest"], "kernel": "k"}
+    by_function = PythonScriptFunction(fn, **options)
+    by_text = PythonScriptFunction._from_source(code, first_line, namespace, **options)
+    assert by_text._raw is by_function._raw is True and by_text._parameters == []
+    placed = []
+    for script in (by_function, by_text):
+        left, right = ff.from_dict({"a": [1]}), ff.from_dict({"b": [2]})
+        node = script.node(left, right).node
+        assert [source.node_id for source in node.node_inputs.main_inputs] == [left.node_id, right.node_id]
+        placed.append(node.setting_input)
+    assert placed[0].output_names == placed[1].output_names == ["kept", "rest"]
+    cells = [[cell.code for cell in settings.python_script_input.cells] for settings in placed]
+    assert cells[0] == cells[1] and cells[0][0] == "import polars as pl\nLIMIT = 3"
+    dumped = [settings.python_script_input.model_dump(exclude={"cells"}) for settings in placed]
+    assert dumped[0] == dumped[1]
 
 
 MODULE_READS = [

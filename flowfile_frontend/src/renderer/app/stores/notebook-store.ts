@@ -1,4 +1,4 @@
-// Notebook store: catalog tabs run python through KernelApi; a flow tab syncs its cells to the canvas and runs them there.
+// Notebook store: catalog tabs run on a kernel; a flow tab runs in its kernel session if picked, else on the canvas.
 import { defineStore } from "pinia";
 import { FlowApi } from "../api/flow.api";
 import { KernelApi } from "../api/kernel.api";
@@ -9,12 +9,13 @@ import type {
   NotebookPushBody,
   NotebookPushResult,
   NotebookRendering,
+  NotebookSessionKey,
   NotebookSummary,
   NotebookSyncErrorDetail,
   RenderedCell,
 } from "../api/notebook.api";
 import type { FlowParameter, RunInformation } from "../types/flow.types";
-import type { DisplayOutput } from "../types/kernel.types";
+import type { DisplayOutput, ExecuteResult } from "../types/kernel.types";
 import type { CellOutput, TableExample } from "../types/node.types";
 import { detailMessage } from "../composables/saveError";
 import {
@@ -22,6 +23,7 @@ import {
   type TablePayload,
 } from "../components/nodes/node-types/elements/pythonScript/notebookDisplay";
 import type { CellType, NotebookCellModel } from "../components/notebook/types";
+import type { SyncErrorMark } from "../components/notebook/syncErrorLine";
 import {
   disposeOwnerViews,
   getCellView,
@@ -50,6 +52,7 @@ import {
   beginExecution,
   bumpSessionEpoch,
   bumpSourceRevision,
+  cellRuntime,
   clearResults,
   disposeOwner,
   endBatch,
@@ -91,6 +94,11 @@ export function cellNodeId(cellId: string): number {
  * notebooks use -id (small negatives); ephemeral sessions sit far below that. */
 function newEphemeralSessionId(): number {
   return -(1_500_000_000 + Math.floor(Math.random() * 100_000_000));
+}
+
+/** The kernel namespace a flow's session runs in (core's kernel_runner.kernel_flow_id), below both ranges above. */
+export function flowSessionId(flowId: number): number {
+  return -(2 ** 40) - flowId;
 }
 
 function newCell(cellType: CellType): NotebookCellModel {
@@ -269,7 +277,66 @@ export const SYNC_NEEDS_ADMIN =
 export const CANVAS_CHANGED =
   "The canvas changed since these cells were rendered, so they were refreshed; run again to sync your edits.";
 export const RERENDER_FAILED = "The notebook could not be re-rendered from the canvas.";
+export const PICK_KERNEL_HINT = "Pick a notebook kernel in the toolbar to run this cell as Python.";
+export const NOTHING_TO_PUSH = "Nothing to push: the canvas already matches these cells.";
+export const SESSION_NOT_RESEEDED =
+  "Pushed to the canvas, but the kernel session still holds the old frames; use Reset session.";
+export const INTERRUPT_FAILED = "The running cell could not be stopped.";
 export const PREVIEW_ROW_LIMIT = 100;
+
+const FLOW_KERNELS_KEY = "flowfile.notebook.flowKernels.v1";
+
+function storedFlowKernels(): Record<string, string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(FLOW_KERNELS_KEY) ?? "{}");
+    return raw && typeof raw === "object" ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The kernel last picked for a flow's notebook, kept in this browser. */
+export function rememberedFlowKernel(flowId: number): string | null {
+  const id = storedFlowKernels()[String(flowId)];
+  return typeof id === "string" ? id : null;
+}
+
+function rememberFlowKernel(flowId: number, kernelId: string | null): void {
+  try {
+    const kernels = storedFlowKernels();
+    if (kernelId) kernels[String(flowId)] = kernelId;
+    else delete kernels[String(flowId)];
+    localStorage.setItem(FLOW_KERNELS_KEY, JSON.stringify(kernels));
+  } catch {
+    // Storage unavailable: the choice lasts for this page only.
+  }
+}
+
+/** A flow tab with a kernel picked runs its cells in that kernel's session for the flow. */
+const inFlowSession = (nb: OpenNotebook): boolean => nb.flowId != null && !!nb.kernelId;
+
+/** Catalog tabs and kernel sessions track staleness; a canvas-run flow tab shows sync state instead. */
+const tracksRuntime = (nb: OpenNotebook): boolean => nb.flowId == null || !!nb.kernelId;
+
+const sessionKey = (nb: OpenNotebook) => ({ flow_id: nb.flowId!, kernel_id: nb.kernelId! });
+
+const openedSessions = new Map<string, { kernelId: string; opening: Promise<unknown> }>();
+
+/** Per tab, the session a cell's execute is in flight on: Stop goes there even if the picker changed since. */
+const executingSessions = new Map<string, NotebookSessionKey>();
+
+/** Open the tab's session once per kernel; a failed open is retried on the next call. */
+function ensureFlowSession(nb: OpenNotebook): Promise<unknown> {
+  const key = sessionKey(nb);
+  const known = openedSessions.get(nb.tabId);
+  if (known?.kernelId === key.kernel_id) return known.opening;
+  const opening = NotebookApi.openSession(key);
+  openedSessions.set(nb.tabId, { kernelId: key.kernel_id, opening });
+  opening.catch(() => {
+    if (openedSessions.get(nb.tabId)?.opening === opening) openedSessions.delete(nb.tabId);
+  });
+  return opening;
+}
 export const notOnCanvasText = (nodeId: number): string => `Node #${nodeId} is not on the canvas.`;
 
 /** A placeholder keeps its `ff.canvas_node(...)` text under its reason as a comment. */
@@ -349,6 +416,7 @@ export function flowPushBody(
     provenance,
     code_fingerprint: nb.fingerprint ?? "",
     client_max_node_id: Math.max(clientMaxNodeId, ...nodeTypes.keys()),
+    ...(nb.kernelId ? { kernel_id: nb.kernelId } : {}),
   };
 }
 
@@ -367,6 +435,16 @@ export function flowCellKind(nb: OpenNotebook, cellId: string): FlowCellKind {
 export function syncErrorFor(nb: OpenNotebook, cell: NotebookCellModel): FlowSyncError | null {
   const error = nb.syncError;
   return error && error.cell_id === cell.id && error.code === cell.code ? error : null;
+}
+
+/** The line to mark in a cell: the last sync's refusal, else the failing line of its last run. */
+export function cellErrorMark(nb: OpenNotebook, cell: NotebookCellModel): SyncErrorMark | null {
+  const sync = syncErrorFor(nb, cell);
+  if (sync) return sync;
+  const out = cell.output;
+  if (!out?.error || out.line == null) return null;
+  const lines = out.error.trim().split("\n");
+  return { line: out.line, message: lines[lines.length - 1] };
 }
 
 export function flowCellSyncState(nb: OpenNotebook, cell: NotebookCellModel): SyncState {
@@ -544,9 +622,9 @@ const ownerOf = (nb: OpenNotebook): string => ownerIdForNotebook(nb.tabId);
 const refs = (nb: OpenNotebook): RuntimeCellRef[] =>
   nb.cells.map((c) => ({ id: c.id, isPython: c.cellType === "python" }));
 
-/** Catalog tabs mark later results stale; flow cells show edited/synced/error instead. */
+/** Catalog tabs and kernel sessions mark later results stale; canvas-run flow cells show sync state. */
 function invalidateAfter(nb: OpenNotebook, fromIndex: number): void {
-  if (nb.flowId == null) invalidateFrom(ownerOf(nb), refs(nb), fromIndex, "upstream-changed");
+  if (tracksRuntime(nb)) invalidateFrom(ownerOf(nb), refs(nb), fromIndex, "upstream-changed");
 }
 
 /** First position a structural op can have invalidated; a move reaches back to its origin. */
@@ -582,6 +660,8 @@ interface NotebookState {
   activeTabId: string | null;
   loading: boolean;
   hydrated: boolean;
+  /** `GET /notebook/status`; `null` until loaded or when it failed. */
+  flowStatus: { kernel_sessions: boolean } | null;
 }
 
 let _persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -593,6 +673,7 @@ export const useNotebookStore = defineStore("notebook", {
     activeTabId: null,
     loading: false,
     hydrated: false,
+    flowStatus: null,
   }),
 
   getters: {
@@ -601,6 +682,10 @@ export const useNotebookStore = defineStore("notebook", {
     },
     hasPythonCells(): boolean {
       return this.active?.cells.some((c) => c.cellType === "python") ?? false;
+    },
+    /** A flow tab may pick a kernel when the server runs kernel sessions. */
+    kernelSessions(state): boolean {
+      return !!state.flowStatus?.kernel_sessions;
     },
     /** A new catalog tab inherits the active catalog tab's kernel. */
     inheritedKernelId(): string | null {
@@ -661,6 +746,10 @@ export const useNotebookStore = defineStore("notebook", {
       } else {
         this.newTab();
       }
+    },
+
+    async loadFlowStatus() {
+      this.flowStatus = await NotebookApi.flowStatus();
     },
 
     async loadList() {
@@ -737,12 +826,12 @@ export const useNotebookStore = defineStore("notebook", {
         this.openNotebooks.push({
           tabId: uid("tab"),
           persistedId: null,
-          sessionFlowId: flowId,
+          sessionFlowId: flowSessionId(flowId),
           name,
           description: null,
           namespaceId: null,
           cells: [],
-          kernelId: null,
+          kernelId: this.kernelSessions ? rememberedFlowKernel(flowId) : null,
           dirty: false,
           saving: false,
           executionCount: 0,
@@ -785,7 +874,8 @@ export const useNotebookStore = defineStore("notebook", {
       const idx = this.openNotebooks.findIndex((n) => n.tabId === tabId);
       if (idx < 0) return;
       const tab = this.openNotebooks[idx];
-      if (tab.kernelId) {
+      openedSessions.delete(tab.tabId);
+      if (tab.kernelId && tab.flowId == null) {
         KernelApi.clearNamespace(tab.kernelId, tab.sessionFlowId).catch(() => undefined);
       }
       this.openNotebooks.splice(idx, 1);
@@ -869,7 +959,12 @@ export const useNotebookStore = defineStore("notebook", {
       const nb = this.active;
       if (!nb || nb.kernelId === kernelId) return;
       nb.kernelId = kernelId;
-      nb.dirty = true;
+      // A flow tab's `dirty` means a structural change against the canvas.
+      if (nb.flowId == null) nb.dirty = true;
+      else {
+        rememberFlowKernel(nb.flowId, kernelId);
+        if (kernelId) void ensureFlowSession(nb).catch(() => undefined);
+      }
       bumpSessionEpoch(ownerOf(nb));
       this._schedulePersist();
     },
@@ -883,7 +978,7 @@ export const useNotebookStore = defineStore("notebook", {
       // A flow tab compares edits with the canvas; there `dirty` means a structural change.
       if (nb.flowId == null) nb.dirty = true;
       // Markdown edits change only their own preview, so they invalidate nothing.
-      if (cell.cellType === "python" && nb.flowId == null) {
+      if (cell.cellType === "python" && tracksRuntime(nb)) {
         bumpSourceRevision(ownerOf(nb), cellId);
         invalidateFrom(ownerOf(nb), refs(nb), idx + 1, "upstream-changed");
       }
@@ -1063,7 +1158,7 @@ export const useNotebookStore = defineStore("notebook", {
         this.runMarkdownCell(cell);
         return true;
       }
-      if (nb.flowId != null) return this.runFlowCell(cellId);
+      if (nb.flowId != null && !nb.kernelId) return this.runFlowCell(cellId);
       return this._runBatch(nb, [cell]);
     },
 
@@ -1093,11 +1188,7 @@ export const useNotebookStore = defineStore("notebook", {
       const ticket = beginExecution(ownerId, cell.id);
       cell.execState = "running";
       try {
-        const res = await KernelApi.executeCell(nb.kernelId, {
-          node_id: cellNodeId(cell.id),
-          code: cell.code,
-          flow_id: nb.sessionFlowId, // negative, never a real flow id
-        });
+        const res = await this._execute(nb, cell);
         if (settleExecution(ticket, settledMeta(res)) === "discard") {
           cell.execState = "idle"; // nothing newer owns this cell (re-entrancy guard), so release it
           return false;
@@ -1111,10 +1202,13 @@ export const useNotebookStore = defineStore("notebook", {
           error: res.error,
           execution_time_ms: res.execution_time_ms,
           execution_count: nb.executionCount,
+          line: res.line ?? null,
         };
         target.execState = res.error ? "error" : "idle";
         return res.success && !res.error;
       } catch (e: any) {
+        // The session may be gone (kernel restarted); the next run opens it again.
+        openedSessions.delete(nb.tabId);
         if (settleExecution(ticket) === "discard") {
           cell.execState = "idle";
           return false;
@@ -1124,12 +1218,36 @@ export const useNotebookStore = defineStore("notebook", {
           stdout: "",
           stderr: "",
           display_outputs: [],
-          error: e?.message ?? "Cell execution failed",
+          error: detailMessage(e, "Cell execution failed"),
           execution_time_ms: 0,
           execution_count: nb.executionCount,
         };
         target.execState = "error";
         return false;
+      }
+    },
+
+    /** A catalog tab runs in its kernel namespace; a flow tab in its session on the picked kernel. */
+    async _execute(nb: OpenNotebook, cell: NotebookCellModel): Promise<ExecuteResult> {
+      if (!inFlowSession(nb)) {
+        return KernelApi.executeCell(nb.kernelId!, {
+          node_id: cellNodeId(cell.id),
+          code: cell.code,
+          flow_id: nb.sessionFlowId, // negative, never a real flow id
+        });
+      }
+      await ensureFlowSession(nb);
+      const key = sessionKey(nb);
+      executingSessions.set(nb.tabId, key);
+      try {
+        return await NotebookApi.executeInSession({
+          ...key,
+          cell_id: cell.id,
+          code: cell.code,
+          node_id: cellNodeId(cell.id),
+        });
+      } finally {
+        if (executingSessions.get(nb.tabId) === key) executingSessions.delete(nb.tabId);
       }
     },
 
@@ -1170,7 +1288,7 @@ export const useNotebookStore = defineStore("notebook", {
     async runAll() {
       const nb = this.active;
       if (!nb) return;
-      if (nb.flowId != null) await this.runAllFlow();
+      if (nb.flowId != null && !nb.kernelId) await this.runAllFlow();
       else await this._runBatch(nb, nb.cells.slice(), { skipPythonWithoutKernel: true });
     },
 
@@ -1232,15 +1350,33 @@ export const useNotebookStore = defineStore("notebook", {
         }
         this.markFlowPushed(nb, result, cells);
         nb.syncForbidden = false;
-        hooks.pushed(result);
+        // The fingerprint covers settings, edges and parameters: unmoved, the push changed nothing.
+        const changed = result.code_fingerprint !== body.code_fingerprint;
+        if (changed) hooks.pushed(result);
         if (result.parameter_changes) nb.rerenderAfterAction = true;
-        if (trigger === "push") nb.notice = { tone: "success", message: "Pushed to the canvas" };
-        else if (result.warnings.length) {
-          nb.notice = { tone: "warning", message: result.warnings.join("\n") };
-        }
+        const warned = result.warnings.join("\n");
+        if (trigger === "push" && changed) {
+          nb.notice = { tone: "success", message: "Pushed to the canvas" };
+        } else if (trigger === "push") {
+          nb.notice = warned
+            ? { tone: "warning", message: `${NOTHING_TO_PUSH}\n${warned}` }
+            : { tone: "success", message: NOTHING_TO_PUSH };
+        } else if (warned) nb.notice = { tone: "warning", message: warned };
+        if (changed && body.kernel_id) await this._reseedFlowSession(nb);
         return "synced";
       } catch (e) {
         return this._syncFailed(nb, e, cells);
+      }
+    },
+
+    /** The canvas changed under an open session: re-seed it; earlier results are from before. */
+    async _reseedFlowSession(nb: OpenNotebook) {
+      if (openedSessions.get(nb.tabId)?.kernelId !== nb.kernelId) return;
+      try {
+        await NotebookApi.resetSession(sessionKey(nb));
+        invalidateFrom(ownerOf(nb), refs(nb), 0, "previous-session");
+      } catch {
+        nb.notice = { tone: "warning", message: SESSION_NOT_RESEEDED };
       }
     },
 
@@ -1263,6 +1399,9 @@ export const useNotebookStore = defineStore("notebook", {
         return "forbidden";
       }
       if (response?.status === 422 && isSyncErrorDetail(detail)) {
+        if (detail.kind === "needs_kernel" && !nb.kernelId && this.kernelSessions) {
+          detail.message = `${detail.message} ${PICK_KERNEL_HINT}`;
+        }
         const code = cells.find(([id]) => id === detail.cell_id)?.[1] ?? null;
         nb.syncError = { ...detail, code };
         const cell = nb.cells.find((c) => c.id === detail.cell_id);
@@ -1337,6 +1476,9 @@ export const useNotebookStore = defineStore("notebook", {
           }
           cell.output = this._flowOutput(nb, result, started);
           cell.execState = result.error ? "error" : "idle";
+          // Canvas rows are current, so a "Previous session" marker no longer applies.
+          const rt = cellRuntime(ownerOf(nb), cell.id);
+          if (rt) rt.staleReason = null;
           return !result.error;
         } finally {
           if (cell.execState === "running") cell.execState = "idle";
@@ -1413,12 +1555,27 @@ export const useNotebookStore = defineStore("notebook", {
     async resetSession() {
       const nb = this.active;
       if (!nb) return;
-      if (nb.kernelId) {
-        await KernelApi.clearNamespace(nb.kernelId, nb.sessionFlowId);
-      }
+      // An unopened session has nothing to reset: opening it seeds it from the canvas.
+      if (inFlowSession(nb) && openedSessions.get(nb.tabId)?.kernelId === nb.kernelId) {
+        await NotebookApi.resetSession(sessionKey(nb));
+      } else if (inFlowSession(nb)) await ensureFlowSession(nb);
+      else if (nb.kernelId) await KernelApi.clearNamespace(nb.kernelId, nb.sessionFlowId);
       bumpSessionEpoch(ownerOf(nb));
       this.clearOutputs();
       nb.executionCount = 0;
+    },
+
+    /** Stop the cell running in a flow tab's kernel session, on the kernel its execute was sent
+     * to. The cell keeps its running state: the pending execute answers and settles it. */
+    async interruptSession() {
+      const nb = this.active;
+      const key = nb ? executingSessions.get(nb.tabId) : undefined;
+      if (!nb || !key) return;
+      try {
+        await NotebookApi.interruptSession(key);
+      } catch (e) {
+        nb.notice = { tone: "error", message: detailMessage(e, INTERRUPT_FAILED) };
+      }
     },
 
     /** Free every open catalog notebook's kernel namespace (don't leak them into the

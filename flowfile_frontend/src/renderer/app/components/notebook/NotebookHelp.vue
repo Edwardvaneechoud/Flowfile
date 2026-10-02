@@ -11,18 +11,55 @@
         <div class="modal-content">
           <section class="api-section">
             <h4>Getting started</h4>
-            <p v-if="flowMode" class="section-description">
+            <p v-if="kernelMode" class="section-description">
+              This notebook is the open flow written as <code>ff</code> code, running as real Python
+              in a session on the kernel you picked. The session starts from the canvas, so every
+              node's frame is already bound. Run never changes the canvas; Push does.
+            </p>
+            <p v-else-if="flowMode" class="section-description">
               This notebook is the open flow written as <code>ff</code> code. Cells are read as a
               description of the flow, never executed: rows are only computed when the flow runs on
               the canvas. <code>print()</code>, <code>display()</code>, loops and other imports need
-              a kernel, so a sync stops at that line and says so.
+              a kernel: pick one in the toolbar (when offered) to run cells as Python.
             </p>
             <p v-else class="section-description">
               Notebooks run Python (and Markdown) on a kernel. Pick a kernel in the toolbar — Python
               cells need one; Markdown renders without. The catalog API is exposed as
               <code>flowfile_ctx</code>.
             </p>
-            <template v-if="flowMode">
+            <template v-if="kernelMode">
+              <div class="api-item">
+                <code>Run</code>
+                <p>
+                  Executes the cell in the kernel session and shows its prints, errors and
+                  <code>display()</code> output. The canvas is unchanged.
+                </p>
+              </div>
+              <div class="api-item">
+                <code>Run all</code>
+                <p>Runs every cell in the session, top to bottom.</p>
+              </div>
+              <div class="api-item">
+                <code>Push</code>
+                <p>
+                  Runs every cell on the kernel in a fresh session and applies what they build to
+                  the canvas as one undo step (it asks before deleting nodes). The session is then
+                  re-seeded from the canvas.
+                </p>
+              </div>
+              <div class="api-item">
+                <code>Run and preview on canvas</code>
+                <p>
+                  Node cell ⋯ menu. Syncs the notebook when it was edited, runs the node on the
+                  canvas and opens its preview.
+                </p>
+              </div>
+              <div class="api-item">
+                <code>Reset session</code>
+                <p>Toolbar ⋯ menu. Re-seeds the session from the canvas as it is now.</p>
+              </div>
+            </template>
+            <template v-else-if="flowMode">
               <div class="api-item">
                 <code>Run</code>
                 <p>
@@ -250,8 +287,8 @@ flowfile_ctx.write_catalog_table(summary, "fx_rate_avg")</code></pre>
 </template>
 
 <script setup lang="ts">
-/** `flowMode`: the canvas notebook, whose cells describe the flow instead of running on a kernel. */
-defineProps<{ flowMode?: boolean }>();
+/** `flowMode`: the canvas notebook; `kernelMode`: it runs in a session on a picked kernel. */
+defineProps<{ flowMode?: boolean; kernelMode?: boolean }>();
 
 defineEmits<{
   (e: "close"): void;

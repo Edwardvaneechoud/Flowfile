@@ -48,6 +48,9 @@ export interface FlavourInfo {
   packages: FlavourPackage[];
 }
 
+/** A mounted host folder: a plain path is read-only, an object can mark it writable. */
+export type MountedFolderEntry = string | { path: string; writable: boolean };
+
 export interface KernelConfig {
   id: string;
   name: string;
@@ -57,6 +60,8 @@ export interface KernelConfig {
   gpu: boolean;
   image_flavour: ImageFlavour;
   custom_image: string | null;
+  /** Absolute host folders mounted into the kernel (desktop only). */
+  mounted_folders?: MountedFolderEntry[];
 }
 
 export interface KernelImageStatus {
@@ -104,6 +109,7 @@ export interface KernelInfo {
   created_at: string;
   error_message: string | null;
   kernel_version: string | null;
+  mounted_folders?: MountedFolderEntry[];
 }
 
 // "unknown" = the image's contents can't be enumerated, so nothing is provably
@@ -174,6 +180,8 @@ export interface ExecuteResult {
   // Namespace identity of the run; absent on kernel images older than 0.6.0.
   namespace_generation?: string | null;
   revision?: number | null;
+  /** A failed canvas-notebook session cell's 1-based failing line; absent elsewhere. */
+  line?: number | null;
 }
 
 export interface ExecuteCellRequest {

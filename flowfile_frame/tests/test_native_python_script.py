@@ -509,6 +509,73 @@ def body_class(orders):
     return orders.with_columns(pl.lit(cutoff).alias("cutoff"))
 
 
+# decorator: scripts (a function without a return reads and publishes through flowfile_ctx itself)
+
+
+@ff.python_script(kernel="lite")
+def drawer_template():
+    import polars as pl
+
+    df = flowfile_ctx.read_input()
+
+    # Your transformation here
+
+    flowfile_ctx.publish_output(df.count())
+
+
+DRAWER_TEMPLATE_CELLS = [
+    "import polars as pl\n\ndf = flowfile_ctx.read_input()\n\n# Your transformation here\n\n"
+    "flowfile_ctx.publish_output(df.count())"
+]
+
+
+@ff.python_script(outputs=["kept", "dropped"])
+def script_split():
+    """Split the orders at the growth rate."""
+    orders = flowfile_ctx.read_input().collect()
+
+    # %% [markdown]
+    # Amounts above GROWTH are kept.
+
+    # %% Publish
+    flowfile_ctx.publish_output(orders.filter(pl.col("amount") > GROWTH), "kept")
+    flowfile_ctx.publish_output(orders.filter(pl.col("amount") <= GROWTH), "dropped")
+
+
+SCRIPT_SPLIT_CELLS = [
+    "import polars as pl\nGROWTH = 1.05",
+    "# Split the orders at the growth rate.",
+    "orders = flowfile_ctx.read_input().collect()",
+    "# Amounts above GROWTH are kept.",
+    '# Publish\nflowfile_ctx.publish_output(orders.filter(pl.col("amount") > GROWTH), "kept")\n'
+    'flowfile_ctx.publish_output(orders.filter(pl.col("amount") <= GROWTH), "dropped")',
+]
+
+
+@ff.python_script()
+def publishes_in_a_helper():
+    def publish(df):
+        flowfile_ctx.publish_output(df)
+
+    publish(flowfile_ctx.read_input())
+
+
+@ff.python_script()
+def returns_only_in_a_helper():
+    def first(df):
+        return df.head(1)
+
+    flowfile_ctx.publish_output(first(flowfile_ctx.read_input()))
+
+
+def script_with_parameters(orders):
+    flowfile_ctx.publish_output(orders)
+
+
+def script_without_a_publish():
+    kept = 1
+
+
 # decorator: cells
 
 
@@ -852,6 +919,75 @@ def test_invalid_schemas_raise_and_leave_no_node(schemas, match):
     assert [n.node_id for n in source.flow_graph.nodes] == [source.node_id]
 
 
+# decorator: scripts
+
+
+def test_a_function_without_a_return_keeps_its_body_as_the_cells():
+    assert drawer_template.cells == DRAWER_TEMPLATE_CELLS
+    assert script_split.cells == SCRIPT_SPLIT_CELLS
+    assert publishes_in_a_helper.cells == [
+        "def publish(df):\n    flowfile_ctx.publish_output(df)\n\npublish(flowfile_ctx.read_input())"
+    ]
+    assert returns_only_in_a_helper.cells == [
+        "def first(df):\n    return df.head(1)\n\nflowfile_ctx.publish_output(first(flowfile_ctx.read_input()))"
+    ]
+
+
+def test_a_script_takes_its_frames_in_the_call_and_wires_them_in_order():
+    orders = ff.from_dict(ORDERS)
+    out = drawer_template(orders)
+    node = out.flow_graph.get_node(out.node_id)
+    assert node.node_type == "python_script" and out._deferred is True
+    assert [cell.code for cell in node.setting_input.python_script_input.cells] == DRAWER_TEMPLATE_CELLS
+    assert node.setting_input.python_script_input.kernel_id == "lite"
+    assert [n.node_id for n in node.node_inputs.main_inputs] == [orders.node_id]
+
+    left, right = ff.from_dict(ORDERS), ff.from_dict(CUSTOMERS)
+    script = publishes_in_a_helper.node(left, right)
+    assert [n.node_id for n in script.node.node_inputs.main_inputs] == [left.node_id, right.node_id]
+
+
+def test_a_script_without_frames_is_placed_on_the_given_graph():
+    flow = ff.create_flow_graph()
+    out = ff.python_script(flow_graph=flow)(drawer_template.fn)()
+    assert out.flow_graph is flow and out._deferred is True
+    assert not flow.get_node(out.node_id).node_inputs.main_inputs
+
+
+def test_a_script_with_several_outputs_is_placed_with_node():
+    orders = ff.from_dict(ORDERS)
+    with pytest.raises(ff.NativeNodeError, match=r"outputs \['kept', 'dropped'\]; place it with script_split\.node"):
+        script_split(orders)
+    assert [n.node_id for n in orders.flow_graph.nodes] == [orders.node_id]
+    script = script_split.node(orders)
+    assert script.node.setting_input.output_names == ["kept", "dropped"]
+    assert script["dropped"]._deferred is True
+
+
+def test_a_script_refuses_an_argument_that_is_no_frame():
+    with pytest.raises(ff.NativeNodeError, match="`drawer_template` takes FlowFrames; input 2 got LazyFrame"):
+        drawer_template(ff.from_dict(ORDERS), pl.LazyFrame(MONTHLY))
+
+
+def test_a_script_round_trips():
+    script = script_split.node(ff.from_dict(ORDERS))
+    reopened, _ = round_trip(script["kept"], "script.yaml")
+    stored = reopened.get_node(script.node_id).setting_input
+    assert stored.python_script_input == _script_input(script)
+    assert [cell.code for cell in stored.python_script_input.cells] == SCRIPT_SPLIT_CELLS
+    assert stored.output_names == ["kept", "dropped"]
+
+
+def test_a_scripts_function_runs_with_a_flowfile_ctx_where_it_is_defined(monkeypatch):
+    published = {}
+    ctx = SimpleNamespace(
+        read_input=lambda: pl.LazyFrame(ORDERS), publish_output=lambda df, name="main": published.update({name: df})
+    )
+    monkeypatch.setattr(sys.modules[__name__], "flowfile_ctx", ctx, raising=False)
+    assert script_split.fn() is None
+    assert published["kept"]["order_id"].to_list() == [1, 2, 3] and published["dropped"].height == 0
+
+
 # decorator: errors
 
 
@@ -874,6 +1010,13 @@ def test_nested_function_is_refused():
         (with_star_args, {}, r"`frames` is \*args"),
         (with_keyword_only, {}, "`limit` is keyword-only"),
         (no_return, {}, r"`no_return` must end with `return <frame>`"),
+        (script_without_a_publish, {}, r"`script_without_a_publish` must end with `return <frame>`"),
+        (
+            script_with_parameters,
+            {},
+            r"`script_with_parameters` has no `return`, so it is a script that reads its inputs with flowfile_ctx: "
+            r"drop its parameters and pass the frames when you call it, or end it with `return <frame>`",
+        ),
         (return_inside_if, {}, r"`return_inside_if` must return exactly once.*found 1 return"),
         (two_returns, {}, r"`two_returns` must return exactly once.*found 2 return"),
         (returns_a_dict, {}, r"`returns_a_dict` returns a dict; name its outputs with outputs="),

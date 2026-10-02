@@ -526,7 +526,7 @@ def execute_run_flow_node(
         if node is not None:
             node._subflow_cancel_context = child
         try:
-            run_info = child.run_graph()
+            run_info = child.run_graph(kernel_hold=parent_graph._kernel_hold)
         finally:
             if node is not None:
                 node._subflow_cancel_context = None

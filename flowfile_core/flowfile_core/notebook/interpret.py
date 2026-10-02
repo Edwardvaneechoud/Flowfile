@@ -3,8 +3,20 @@
 :class:`CellInterpreter` is the cell executor core hands to ``notebook_cells.clean_run``. Nothing a cell
 contains reaches ``exec``, ``eval`` or ``compile``: a cell is read with ``ast.parse`` and ``symtable``, and
 only the frame calls :mod:`flowfile_core.notebook.allowlist` names for a value's *kind* (its exact type) run;
-anything else fails on its line with "this needs a kernel". The statement subset, the ``def`` shapes and
-the failure lines are documented with the notebook package in ``flowfile_core/CLAUDE.md``.
+anything else fails on its line with "this needs a kernel".
+
+Statements: ``import`` and ``from ... import`` of what the allowlist names, assignments, expression statements (a
+call, name, attribute, subscript or constant) and ``def``. A ``def`` binds only in the render's three shapes: a
+module helper whose text equals ``render._NOTEBOOK_HELPERS`` byte for byte (core's copy is bound), a Polars Code
+body (its text, through the frame's ``_polars_code_text``) and an ``@ff.python_script``
+(``PythonScriptFunction._from_source``). A script's prelude may also import a module the dialect does not name,
+bound inert once ``importlib.util.find_spec`` finds it, checked on its top-level name only (a dotted name would
+import the parent).
+
+A failure is a ``notebook_cells.CellFailure`` on the line CPython reports (a chain's method name, its
+``end_lineno``; on 3.10 a method call with keywords reports the call's ``lineno`` and a failing
+``@ff.python_script`` its ``def`` line), with ``format_exception_only`` text. Its kind is ``needs_kernel``
+outside the dialect, ``refused`` for a bound, else what ``execute_cell`` makes of the frame's exception.
 """
 
 from __future__ import annotations
@@ -115,7 +127,7 @@ def _kinds() -> dict[type, str]:
     from flowfile_frame.flow_frame import FlowFrame
     from flowfile_frame.gate import Gate
     from flowfile_frame.group_frame import GroupByFrame
-    from flowfile_frame.notebook_cells import _CanvasNode
+    from flowfile_frame.notebook_cells import SeededNode, _CanvasNode
     from flowfile_frame.parameters import Parameter
     from flowfile_frame.python_script import PythonScript, PythonScriptFunction
     from flowfile_frame.run_flow import FlowRef, RunFlow
@@ -126,6 +138,7 @@ def _kinds() -> dict[type, str]:
         FlowFrame: "FlowFrame", GroupByFrame: "GroupByFrame", Expr: "Expr", Column: "Expr", When: "Expr",
         StringMethods: "StringNS", DateTimeMethods: "DateTimeNS", Gate: "Gate",
         RunFlow: "NodeOutputs", PythonScript: "NodeOutputs", CustomNode: "NodeOutputs", _CanvasNode: "NodeOutputs",
+        SeededNode: "NodeOutputs",
         CustomNodes: "CustomNodes", CustomNodeFactory: "CustomNodeFactory", PythonScriptFunction: "ScriptFunction",
         Parameter: "Parameter", FlowRef: "FlowRef", FuzzyMapping: "FuzzyMapping", pl.DataFrame: "pl_frame",
         FlowGraph: "graph", pl.Field: "dtype",
@@ -470,11 +483,14 @@ class _Cell:
         if name.startswith("__") or (name.startswith("_") and not _STORE_NAME.fullmatch(name)):
             if name not in allowlist.HELPERS:
                 raise _needs_kernel(f"The name `{name}`", node.lineno)
-        if name not in self.namespace:
+        try:
+            value = self.namespace[name]  # not `in`: a clean run's namespace resolves seeded names on lookup
+        except KeyError:
             if name in _BUILTIN_NAMES or name == "display":
-                raise _needs_kernel(f"`{name}`", node.lineno)
-            raise _error(NameError(f"name {name!r} is not defined", name=name), node.lineno)
-        value = self.namespace[name]
+                raise _needs_kernel(f"`{name}`", node.lineno) from None
+            raise _error(NameError(f"name {name!r} is not defined", name=name), node.lineno) from None
+        except NameError as exc:
+            raise _error(exc, node.lineno) from exc
         if kind_of(value) is None:
             raise _needs_kernel(f"`{name}`", node.lineno)
         return value

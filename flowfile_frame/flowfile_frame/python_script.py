@@ -2,7 +2,9 @@
 
 ``PythonScript`` is the canonical form: notebook cells as strings, one-to-one with what the node
 stores. ``python_script(...)`` turns a module-level function into those cells: its parameters are
-the inputs, its body is the notebook, and its ``return`` is what the node publishes.
+the inputs, its body is the notebook, and its ``return`` is what the node publishes. A function
+without a ``return`` is a script as the node's drawer writes one: its body is the cells as written,
+reading and publishing through ``flowfile_ctx``, and the frames go in the call.
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ _CELL_MARKER = re.compile(r"#\s*%%(?:\s+(?P<rest>.*))?$")
 _MARKDOWN_TAG = re.compile(r"\[(?:markdown|md)\]")
 _NEW_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 _GLOBAL_LOADS: frozenset[str] = frozenset({"LOAD_GLOBAL", "LOAD_NAME", "LOAD_FROM_DICT_OR_GLOBALS"})
+_NO_RETURN = "`{name}` must end with `return <frame>`: what it returns is the node's output"
 _PARAMETER_KINDS: dict[Any, str] = {
     inspect.Parameter.VAR_POSITIONAL: "*args",
     inspect.Parameter.VAR_KEYWORD: "**kwargs",
@@ -378,7 +381,7 @@ def _final_return(name: str, func: ast.FunctionDef) -> ast.Return:
     """The one top-level ``return``, which must end the body and return a value."""
     returns = [node for node in _scope_nodes(func.body) if isinstance(node, ast.Return)]
     if not returns:
-        raise NativeNodeError(f"`{name}` must end with `return <frame>`: what it returns is the node's output")
+        raise NativeNodeError(_NO_RETURN.format(name=name))
     last = func.body[-1]
     if len(returns) > 1 or returns[0] is not last:
         raise NativeNodeError(
@@ -391,6 +394,37 @@ def _final_return(name: str, func: ast.FunctionDef) -> ast.Return:
         kind = type(last.value).__name__.lower()
         raise NativeNodeError(f"`{name}` returns a {kind}; return one frame, or a dict of frames with outputs=[...]")
     return last
+
+
+def _is_raw(func: ast.FunctionDef) -> bool:
+    """Whether ``func`` has no ``return`` of its own (a nested function's does not count): a script, not a function."""
+    return not any(isinstance(node, ast.Return) for node in _scope_nodes(func.body))
+
+
+def _publishes(func: ast.FunctionDef) -> bool:
+    """Whether the body names ``flowfile_ctx.publish_output`` anywhere, nested functions included."""
+    return any(
+        isinstance(node, ast.Attribute)
+        and node.attr == "publish_output"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "flowfile_ctx"
+        for statement in func.body
+        for node in ast.walk(statement)
+    )
+
+
+def _check_raw(name: str, func: ast.FunctionDef, parameters: list[str]) -> None:
+    """A function without a ``return`` must publish through ``flowfile_ctx`` itself and take no parameters.
+
+    Without a publish it is a function whose ``return`` was forgotten, so it gets that message.
+    """
+    if not _publishes(func):
+        raise NativeNodeError(_NO_RETURN.format(name=name))
+    if parameters:
+        raise NativeNodeError(
+            f"`{name}` has no `return`, so it is a script that reads its inputs with flowfile_ctx: drop its "
+            "parameters and pass the frames when you call it, or end it with `return <frame>`"
+        )
 
 
 def _returns_dict(value: ast.expr) -> bool:
@@ -565,6 +599,12 @@ def _notebook_cells(fn: Callable[..., Any], outputs: Sequence[str] | None = None
     a dict. Notes are cells of ``#`` comments, as the editor makes of imported markdown cells; core
     runs the cells joined as one script, so cell boundaries only matter in the designer.
 
+    A function without a ``return`` of its own (:func:`_is_raw`) is a script: it takes no
+    parameters, so there is no inputs cell, and nothing is rewritten, so there is no outputs marker;
+    the prelude, the docstring note and the split at the percent markers are the same. Its body
+    reads and publishes through ``flowfile_ctx`` (:func:`_check_raw`). The export writes a drawer
+    script this way, so the cells are the body exactly as written.
+
     The kernel defines ``flowfile_ctx`` but imports nothing (``kernel_runtime/main.py``), hence
     ``import polars as pl`` in the prelude when the body uses ``pl``. ``read_inputs()["main"]``
     holds every input file in wiring order (``kernel_runtime/flowfile_client.py::read_inputs``,
@@ -587,8 +627,8 @@ def _notebook_cells(fn: Callable[..., Any], outputs: Sequence[str] | None = None
 
 def _source_cells(
     code: str, first_line: int, namespace: Mapping[str, Any], outputs: Sequence[str] | None
-) -> tuple[str, list[str], list[str]]:
-    """``(name, parameters, cells)`` of the decorated ``def`` at ``first_line`` of ``code``, never compiled.
+) -> tuple[str, list[str], list[str], bool]:
+    """``(name, parameters, cells, raw)`` of the decorated ``def`` at ``first_line`` of ``code``, never compiled.
 
     What :func:`_notebook_cells` makes of the function that ``code`` would define, with every
     check in the same order and the same messages: the source is the block ``inspect.getsource``
@@ -620,7 +660,7 @@ def _source_cells(
         symtable.symtable("\n\n".join(cells), f"<{name}>", "exec")
     except SyntaxError as exc:
         raise _not_top_level(name, exc) from exc
-    return name, parameters, cells
+    return name, parameters, cells, _is_raw(parsed)
 
 
 def _compile_refuses(nodes: Iterable[ast.AST], in_loop: bool = False, in_async: bool = False) -> ast.AST | None:
@@ -665,8 +705,12 @@ def _cells(
     namespace: Mapping[str, Any],
 ) -> list[str]:
     """The cells of a parsed ``def`` (:func:`_notebook_cells`); ``first_line`` numbers its lines in messages."""
-    returned = _final_return(name, func)
-    publish = _publish_lines(name, returned.value, outputs)
+    returned = None
+    if _is_raw(func):
+        _check_raw(name, func, parameters)
+    else:
+        returned = _final_return(name, func)
+        publish = _publish_lines(name, returned.value, outputs)
 
     body = func.body
     indent = body[0].col_offset
@@ -718,14 +762,17 @@ def _cells(
             return ""
         return raw[indent:] if raw[:indent].isspace() else raw
 
-    raw = lines[returned.lineno - 1]
-    col = _char_col(raw, returned.col_offset)
-    head = raw[:col].strip().rstrip(";").rstrip()
-    rewritten = {returned.lineno: ([head] if head else []) + [OUTPUTS_MARKER, f"_result = {raw[col + 6 :].lstrip()}"]}
-    if returned.end_lineno == returned.lineno:
-        rewritten[returned.lineno] += publish
-    else:
-        rewritten[returned.end_lineno] = [text(returned.end_lineno), *publish]
+    rewritten: dict[int, list[str]] = {}
+    if returned is not None:
+        return_line = lines[returned.lineno - 1]
+        col = _char_col(return_line, returned.col_offset)
+        head = return_line[:col].strip().rstrip(";").rstrip()
+        value = f"_result = {return_line[col + 6 :].lstrip()}"
+        rewritten[returned.lineno] = ([head] if head else []) + [OUTPUTS_MARKER, value]
+        if returned.end_lineno == returned.lineno:
+            rewritten[returned.lineno] += publish
+        else:
+            rewritten[returned.end_lineno] = [text(returned.end_lineno), *publish]
 
     cells: list[str] = []
     imports = _prelude(_module_reads("\n".join(lines), func), namespace, name)
@@ -768,10 +815,12 @@ class PythonScriptFunction:
 
     ``fn(*frames)`` places the node and returns its output frame; ``fn.node(*frames)`` returns the
     :class:`PythonScript` (``.output``, ``[name]``, ``.outputs``) and is the way to reach the frames
-    of a function with several outputs. One frame is passed per parameter, in order. ``.fn`` is
-    the undecorated function, to run it locally on Polars frames (``None`` for one built from
-    source text by :meth:`_from_source`); ``.cells`` holds the notebook cells, built once when the
-    function is decorated. Every error is :class:`NativeNodeError`.
+    of a function with several outputs. One frame is passed per parameter, in order. A function
+    without a ``return`` is a script: it has no parameters and takes any number of frames, wired in
+    call order for its body to read with ``flowfile_ctx``. ``.fn`` is the undecorated function, to
+    run it locally on Polars frames (a script's needs a ``flowfile_ctx`` where it is defined;
+    ``None`` for one built from source text by :meth:`_from_source`); ``.cells`` holds the notebook
+    cells, built once when the function is decorated. Every error is :class:`NativeNodeError`.
     """
 
     fn: Callable[..., Any] | None
@@ -792,6 +841,7 @@ class PythonScriptFunction:
         self._kernel = _kernel_id(kernel)
         self.cells = _notebook_cells(fn, outputs)
         self._parameters = _parameters(fn, fn.__name__)
+        self._raw = _is_raw(_function_source(fn, fn.__name__)[1])
         self._finish(returns, description, flow_graph)
         self.fn = fn
 
@@ -817,7 +867,7 @@ class PythonScriptFunction:
         self = cls.__new__(cls)
         self._outputs = _output_names(outputs)
         self._kernel = _kernel_id(kernel)
-        name, self._parameters, self.cells = _source_cells(code, first_line, namespace, outputs)
+        name, self._parameters, self.cells, self._raw = _source_cells(code, first_line, namespace, outputs)
         self.__name__ = self.__qualname__ = name
         self._finish(returns, description, flow_graph)
         self.fn = None
@@ -842,13 +892,14 @@ class PythonScriptFunction:
         from flowfile_frame.flow_frame import FlowFrame
 
         name = self.__name__
-        if len(frames) != len(self._parameters):
+        if not self._raw and len(frames) != len(self._parameters):
             expected = f"{len(self._parameters)} input frame(s) ({', '.join(self._parameters)})"
             takes = expected if self._parameters else "no input frames"
             raise NativeNodeError(f"`{name}` takes {takes}, got {len(frames)}")
-        for parameter, frame in zip(self._parameters, frames, strict=True):
+        labels = [f"input {i + 1}" for i in range(len(frames))] if self._raw else [f"`{p}`" for p in self._parameters]
+        for label, frame in zip(labels, frames, strict=True):
             if not isinstance(frame, FlowFrame):
-                raise NativeNodeError(f"`{name}` takes FlowFrames; `{parameter}` got {type(frame).__name__}")
+                raise NativeNodeError(f"`{name}` takes FlowFrames; {label} got {type(frame).__name__}")
         return PythonScript(
             *frames,
             cells=list(self.cells),
@@ -856,7 +907,7 @@ class PythonScriptFunction:
             outputs=list(self._outputs),
             schemas=self._schemas,
             description=self._description,
-            flow_graph=None if self._parameters else self._flow_graph,
+            flow_graph=None if frames else self._flow_graph,
         )
 
 
@@ -876,7 +927,9 @@ def python_script(
     The body becomes the notebook: split at Jupytext ``# %%`` markers, ``# %% [markdown]`` notes
     and the docstring as the first note (see :func:`_notebook_cells`). Its parameters are the input
     frames and its single, final ``return`` is what the node publishes: a frame to the one output,
-    or a dict of frames with ``outputs=[...]`` naming its keys. Modules and plain constants it
+    or a dict of frames with ``outputs=[...]`` naming its keys. A function without a ``return`` is
+    a script instead: no parameters, a body that reads and publishes through ``flowfile_ctx``, and
+    the frames passed when it is called. Modules and plain constants it
     reads from its module become prelude lines; any other outside name raises. ``returns``
     declares the output columns (``{column: dtype}``, or ``{output: {column: dtype}}`` for
     several) so frames built on the output know them before the flow runs; they are saved as the

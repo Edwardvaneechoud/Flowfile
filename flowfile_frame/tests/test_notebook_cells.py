@@ -372,6 +372,36 @@ def test_a_seeded_subflow_re_runs_its_port_cells():
         notebook.exit()
 
 
+@pytest.mark.parametrize("order", [("build", "use"), ("use", "build")], ids=["in-order", "use-moved-above"])
+def test_clean_run_resolves_seeded_names_only_below_the_cell_that_builds_them(order):
+    graph = ff.create_flow_graph()
+    source = ff.from_dict({"a": [1, 2, 3]}, flow_graph=graph)
+    big = source.filter(ff.col("a") > 1)
+    data = graph.get_flowfile_data().model_dump(mode="json")
+    try:
+        bound = seed_session(data, [], {}, {}, user_id=1)
+        name = {getattr(value, "node_id", None): key for key, value in bound.items()}
+        code = {
+            "build": f"{name[big.node_id]} = {DATA}.filter(ff.col('a') > 1)",
+            "use": f"picked = {name[big.node_id]}.select('a')\nkept = {name[source.node_id]}.select('a')",
+        }
+        provenance = {"build": [("manual_input", source.node_id), ("filter", big.node_id)]}
+        cells = [(c, code[c]) for c in order]
+        result = clean_run(cells, big.node_id, provenance, user_id=1, executor=exec_cell)
+    finally:
+        notebook.exit()
+
+    if order[0] == "use":
+        assert (result["ok"], result["cell_id"], result["line"]) == (False, "use", 1), result
+        assert "move this cell below the one that builds it" in result["message"]
+        return
+    assert result["ok"], result
+    nodes = result["flowfile_data"]["nodes"]
+    assert sorted(node["id"] for node in nodes) == [source.node_id, big.node_id, big.node_id + 1, big.node_id + 2]
+    selects = sorted(node["input_ids"] for node in nodes if node["type"] == "select")
+    assert selects == [[source.node_id], [big.node_id]]
+
+
 def test_clean_run_still_refuses_a_duplicate_flow_input_name():
     cells = [
         ("a", "orders = ff.FlowInput('orders', schema={'amount': pl.Int64})"),
