@@ -21,9 +21,8 @@ from flowfile_core.flowfile.code_generator.connector_handlers import ConnectorHa
 from flowfile_core.flowfile.code_generator.custom_node_handlers import CustomNodeHandlersMixin
 from flowfile_core.flowfile.code_generator.expression_helpers import ExpressionHelpersMixin
 from flowfile_core.flowfile.code_generator.join_handlers import JoinHandlersMixin
-from flowfile_core.flowfile.code_generator.native_handlers import FLOW_VAR, NativeHandlersMixin
+from flowfile_core.flowfile.code_generator.native_handlers import FLOW_VAR, NativeHandlersMixin, literal_lines
 from flowfile_core.flowfile.code_generator.param_codegen import (
-    _SENTINEL_RE,
     SENTINEL_PREFIX,
     apply_param_sentinels,
     codegen_parameters,
@@ -340,12 +339,7 @@ def _sql_query_literal_lines(sql_code: str) -> list[str]:
     A last line that is only a parameter joins the line before it, since the post-pass turns a literal
     that is exactly one reference into a bare name, which cannot be concatenated with a string.
     """
-    lines = sql_code.strip().split("\n")
-    if len(lines) > 1 and _SENTINEL_RE.fullmatch(lines[-1]):
-        lines[-2:] = [f"{lines[-2]}\n{lines[-1]}"]
-    return [json.dumps(line + "\n", ensure_ascii=False) for line in lines[:-1]] + [
-        json.dumps(lines[-1], ensure_ascii=False)
-    ]
+    return literal_lines(sql_code.strip())
 
 
 def _sql_query_input_vars(input_vars: dict[str, str]) -> list[str]:
@@ -2373,7 +2367,10 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
         return "" if node.node_type in _NATIVE_TYPES else _user_description(node.setting_input)
 
     def _ends_statement(self, node: FlowNode) -> bool:
-        """A flow output or a described node ends its statement, so ``description=`` lands on its own call."""
+        """A flow output or a described node ends its statement, so ``description=`` lands on its own call;
+        so does a Python Script, whose cells read as one statement rather than the head of a chain."""
+        if node.node_type == "python_script":
+            return True
         return super()._ends_statement(node) or bool(self._description(node))
 
     def _describe(self, node: FlowNode) -> None:

@@ -18,6 +18,7 @@ import re
 import types
 
 from flowfile_core.flowfile.code_generator.base import ConverterMixinBase
+from flowfile_core.flowfile.code_generator.param_codegen import _SENTINEL_RE
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import safe_eval_pl_type
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.param_types import coerce_param_value, stringify_param_value
@@ -46,23 +47,40 @@ _SESSION_PRELUDE = {"pl": "import polars as pl"}
 _UNCOUNTED_LINE_BREAKS = re.compile("[\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]")
 
 
-def str_literal(text: str) -> str:
-    """A string literal: triple-quoted for multi-line text it spells verbatim, else JSON-escaped."""
-    if "\n" in text and '"""' not in text and "\\" not in text and "\r" not in text and not text.endswith('"'):
-        return f'"""{text}"""'
-    return json.dumps(text, ensure_ascii=False)
+def literal_lines(text: str) -> list[str]:
+    """``text`` as single-line string literals, one per line of text, that concatenate back to it.
+
+    No literal spans a physical line, so the export's indentation (the function wrapper, chain fusion)
+    cannot reach into the text; a triple-quoted block would take the indent on every continuation line.
+    A last line that is only a parameter joins the line before it, since the parameter post-pass turns a
+    literal that is exactly one reference into a bare name, which cannot be concatenated with a string.
+    """
+    pieces = text.split("\n")
+    pieces = [piece + "\n" for piece in pieces[:-1]] + [piece for piece in pieces[-1:] if piece]
+    if len(pieces) > 1 and _SENTINEL_RE.fullmatch(pieces[-1]):
+        pieces[-2:] = [pieces[-2] + pieces[-1]]
+    return [json.dumps(piece, ensure_ascii=False) for piece in pieces] or ['""']
 
 
 def value_literal(value) -> str | None:
-    """A Python literal that evaluates back to ``value``, or None."""
+    """A Python literal on one line that evaluates back to ``value``, or None."""
     if isinstance(value, str):
-        return str_literal(value)
+        return json.dumps(value, ensure_ascii=False)
     text = repr(value)
     try:
         restored = ast.literal_eval(text)
     except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
         return None
     return text if type(restored) is type(value) and restored == value else None
+
+
+def _cell_entry(cell_id: str, code: str) -> str:
+    """A ``cells=[...]`` entry: ``(id, code)`` on one line, or the code as one literal per line of the cell."""
+    literals = literal_lines(code)
+    if len(literals) == 1:
+        return f"        ({json.dumps(cell_id)}, {literals[0]}),\n"
+    lines = [json.dumps(cell_id) + ",", *literals[:-1], literals[-1] + ","]
+    return "        (\n" + "".join(f"            {line}\n" for line in lines) + "        ),\n"
 
 
 def call(func: str, args: list[str]) -> str:
@@ -414,7 +432,7 @@ class NativeHandlersMixin(ConverterMixinBase):
         if self.decorated_scripts:
             code = self._decorated_script(settings, var_name, inputs, outputs, schema_literals)
         if code is None:
-            cells = "".join(f"        ({json.dumps(c.id)}, {str_literal(c.code)}),\n" for c in script.cells)
+            cells = "".join(_cell_entry(c.id, c.code) for c in script.cells)
             args = [*inputs, "cells=[\n" + cells + "    ]"]
             if script.kernel_id:
                 args.append(f"kernel={json.dumps(script.kernel_id)}")

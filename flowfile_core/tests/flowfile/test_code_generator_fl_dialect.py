@@ -150,6 +150,31 @@ def _script_flow(cells: list[str], *, inputs: int = 1, outputs: list[str] | None
     return flow
 
 
+def _emitted_cells(code: str) -> list[list[str]]:
+    """The cell texts each ``ff.PythonScript(cells=...)`` call in ``code`` evaluates to."""
+    calls = [node for node in ast.walk(ast.parse(code)) if isinstance(node, ast.Call)]
+    scripts = [node for node in calls if ast.unparse(node.func) == "ff.PythonScript"]
+    return [[text for _, text in ast.literal_eval(kw.value)] for node in scripts for kw in node.keywords if kw.arg == "cells"]
+
+
+@pytest.mark.parametrize("placeholders", [False, True])
+def test_a_multi_line_cell_exports_as_the_stored_text(placeholders):
+    """The wrapper's indent does not reach into a cell's text, and a script is not fused into the call below it."""
+    cells = [
+        "import polars as pl\n\ndf = flowfile_ctx.read_input()\n\nflowfile_ctx.publish_output(df)\n",
+        'text = """a\n   \nb"""',
+        "flowfile_ctx.publish_output(\n    df\n)",
+        "n = 1",
+    ]
+    flow = _script_flow(cells, flow_id=516)
+    _add_rename_select(flow, node_id=3, depending_on_id=2, old="age", new="years")
+    converter = FlowGraphToFlowFrameConverter(flow, placeholders=placeholders)
+
+    assert _emitted_cells(converter.convert()) == [cells]
+    script = converter.emissions()[1]
+    assert script.node_ids == [2] and _emitted_cells(script.code) == [cells]
+
+
 def _script_statement(flow) -> str:
     """The script's statement as the notebook render asks for it (decorated when its cells regenerate)."""
     converter = FlowGraphToFlowFrameConverter(flow, placeholders=True, deterministic_names=True, decorated_scripts=True)
