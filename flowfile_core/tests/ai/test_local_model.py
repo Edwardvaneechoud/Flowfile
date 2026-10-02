@@ -11,6 +11,7 @@ from __future__ import annotations
 import signal
 
 import pytest
+from fastapi.routing import iter_route_contexts
 
 from flowfile_core.ai.local_model import manager
 from flowfile_core.ai.providers.base import Provider
@@ -378,7 +379,7 @@ def test_get_configured_provider_returns_local_without_db():
 def test_local_model_routes_registered():
     import flowfile_core.ai.routes as ai_routes
 
-    paths = {getattr(r, "path", "") for r in ai_routes.router.routes}
+    paths = {getattr(r, "path", "") for r in iter_route_contexts(ai_routes.router.routes)}
     for expected in (
         "/local-model/status",
         "/local-model/install",

@@ -109,7 +109,8 @@ Rules, with the incident behind each:
 
 | Pin | Value | Why it's pinned | Evidence |
 |---|---|---|---|
-| `fastapi` | `~0.115.2` (`pyproject.toml`) | An upgrade was attempted and reverted; the reason wasn't recorded in the commit message. Treat the pin as **deliberate** — don't bump it casually. | Commit `eff7287b` "Reverting upgrade Fastapi" (2026-05-11) on branch `feature/LLM-security-patches`; the pin has otherwise been unchanged since the file's initial add. |
+| `fastapi` / `starlette` | `~0.142.2` / `>=1.3.1` (root and `kernel_runtime/pyproject.toml`, kernel image 0.6.1) | Raised 2026-10-01 for the Starlette Dependabot alerts; the explicit `starlette` floor exists because FastAPI no longer caps it. FastAPI ≥0.132 422s a JSON body without `Content-Type`, so every JSON call into core/worker/kernel must send the header (incident 17 in `flowfile-failure-archaeology`). | The 2026-05 attempt (`eff7287b`, #457) was reverted without a recorded reason; the missing core→worker header is the likely cause. |
+| `cryptography` | `>=48.0.1,<49.0.0` | 49+ ships no x86_64 macOS wheels, which breaks the Intel desktop build (`release.yaml` `macos-15-intel`) and Intel pip installs. The Dependabot alerts fixed only in 49/50 (X.509 verifier, PKCS#7 decryption) are in APIs Flowfile does not call. | cryptography 49.0.0 changelog. |
 | `polars` | `>=1.39.0, !=1.43.0, !=1.43.1, <1.44` (`pyproject.toml`; floor set by `polars-grouper>=0.6.0` and `polars-simed` requiring `polars>=1.39`, guarded by `tools/tests/test_polars_pin_floor.py`; 1.43.0/.1 deadlock `SQLContext.execute` over `scan_delta` frames — catalog SQL readers/views hang) | Must move **together** with `kernel_runtime`'s own Polars pin, `flowfile_frame`, and the version-coupled `polars-*` plugin packages (e.g. `pl-fuzzy-frame-match`). Kernel containers read their own `poetry.lock` at startup to surface/detect drift. Bumping the root pin alone breaks the kernel/frame contract. | Root `CLAUDE.md` "Things to Avoid"; `CONTRIBUTING.md` additionally still claims a Windows-only `<=1.25.2` ceiling that was **removed** (single cross-platform pin now) — CONTRIBUTING is stale on this point, follow the `pyproject.toml` value, not the prose. |
 | API-key hash | SHA-256, `flowfile_core/flowfile_core/auth/api_key.py::hash_api_key` | Intentional for 256-bit random tokens (no password-guessing surface to slow down with a KDF). The CodeQL "weak hash" alert on this line is a **known false positive** — do not "fix" it with bcrypt/argon2/PBKDF2. | Root `CLAUDE.md`; verified in-file (`hashlib.sha256(...).hexdigest()`, one-way, "never recoverable" per the module docstring). |
 
@@ -247,7 +248,7 @@ python3 tools/check_version_sync.py                               # should print
 grep -n "bump-version\|check-version\|^stubs:\|^check_stubs:\|^formula_docs:\|^check_formula_docs:" Makefile
 
 # Deliberate pins
-grep -n "^fastapi\|^polars " pyproject.toml                       # expect fastapi ~0.115.2, polars >=1.39.0,<1.44
+grep -n "^fastapi\|^polars \|^cryptography" pyproject.toml        # expect fastapi ~0.142.2, polars >=1.39.0,<1.44, cryptography <49
 sed -n '1,30p' flowfile_core/flowfile_core/auth/api_key.py        # expect hashlib.sha256(...).hexdigest()
 
 # Alembic migration count (root CLAUDE.md's number rots fast — trust this, not prose)

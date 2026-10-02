@@ -219,7 +219,7 @@ def test_plan_the_worker_cannot_load_is_an_environment_failure_over_rest(unloada
 def test_add_fuzzy_join(create_fuzzy_data):
     load = create_fuzzy_data
     # Use model_dump_json() - Pydantic handles single base64 encoding for bytes in JSON
-    v = client.post('/add_fuzzy_join', data=load.model_dump_json())
+    v = client.post('/add_fuzzy_join', data=load.model_dump_json(), headers={"Content-Type": "application/json"})
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status: models.Status = models.Status.model_validate(v.json())
@@ -317,7 +317,7 @@ def test_write_output_csv():
         sheet_name='Sheet1',
         delimiter=','
     )
-    v = client.post('/write_results/', data=polars_script_write.model_dump_json())
+    v = client.post('/write_results/', data=polars_script_write.model_dump_json(), headers={"Content-Type": "application/json"})
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status: models.Status = models.Status.model_validate(v.json())

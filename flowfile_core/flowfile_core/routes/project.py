@@ -163,8 +163,8 @@ def _no_active_project(e: NoActiveProjectError) -> HTTPException:
 def _import_error(e: ValueError) -> HTTPException:
     """Cap breach → 413; any other malformed-manifest ValueError → 422."""
     if isinstance(e, ImportTooLargeError):
-        return HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, str(e))
-    return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e))
+        return HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(e))
+    return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(e))
 
 
 def _display_folder_path(project: ActiveProject) -> str:

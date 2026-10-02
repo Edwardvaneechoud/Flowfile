@@ -218,7 +218,7 @@ def create_flow_with_manual_input_and_select() -> FlowId:
     flow_id = create_flow_with_manual_input()
     add_node(flow_id, 2, node_type="select", pos_x=0, pos_y=0)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    client.post("/editor/connect_node/", data=connection.model_dump_json(), params={"flow_id": flow_id})
+    client.post("/editor/connect_node/", data=connection.model_dump_json(), headers={"Content-Type": "application/json"}, params={"flow_id": flow_id})
     flow = flow_file_handler.get_flow(flow_id)
     select_settings = input_schema.NodeSelect(
         flow_id=flow_id, node_id=2, select_input=[SelectInput(old_name="name")], keep_missing=False
@@ -230,7 +230,7 @@ def create_flow_with_manual_input_and_select() -> FlowId:
 def add_select_node(node_id: int, flow_id: int, node_input_id: int):
     add_node(flow_id, node_id, node_type="select", pos_x=0, pos_y=0)
     connection = input_schema.NodeConnection.create_from_simple_input(node_input_id, node_id)
-    client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": flow_id})
+    client.post("/editor/connect_node/", data=connection.json(), headers={"Content-Type": "application/json"}, params={"flow_id": flow_id})
     flow = flow_file_handler.get_flow(flow_id)
     select_settings = input_schema.NodeSelect(
         flow_id=1, node_id=node_id, select_input=[SelectInput(old_name="name")], keep_missing=False
@@ -840,7 +840,7 @@ def test_connect_node():
     add_node(flow_id, 1, node_type="manual_input", pos_x=0, pos_y=0)
     add_node(flow_id, 2, node_type="select", pos_x=0, pos_y=0)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    r = client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": flow_id})
+    r = client.post("/editor/connect_node/", data=connection.json(), headers={"Content-Type": "application/json"}, params={"flow_id": flow_id})
     assert r.status_code == 200, "Node not connected"
     assert flow_file_handler.get_node(flow_id, 1).leads_to_nodes[0].node_id == 2, "Node from to not connected"
     assert flow_file_handler.get_node(flow_id, 2).all_inputs[0].node_id == 1, "Node to from not connected"
@@ -864,7 +864,7 @@ def test_delete_main_connection():
     client.post("/update_settings/", json=data, params={"node_type": "join"})
     node_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(1, 3)
     response = client.post(
-        "/editor/delete_connection", data=node_connection.model_dump_json(), params={"flow_id": flow_id}
+        "/editor/delete_connection", data=node_connection.model_dump_json(), headers={"Content-Type": "application/json"}, params={"flow_id": flow_id}
     )
     assert response.status_code == 200, "Connection not deleted"
     assert flow.get_node(1).leads_to_nodes == [], "Connection not deleted"
@@ -879,7 +879,7 @@ def test_delete_right_connection():
     right_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(2, 3)
     right_connection.input_connection.connection_class = "input-1"
     response = client.post(
-        "/editor/delete_connection", data=right_connection.model_dump_json(), params={"flow_id": flow_id}
+        "/editor/delete_connection", data=right_connection.model_dump_json(), headers={"Content-Type": "application/json"}, params={"flow_id": flow_id}
     )
     assert response.status_code == 200, "Connection not deleted"
     assert flow.get_node(2).leads_to_nodes == [], "Connection not deleted"
@@ -893,7 +893,7 @@ def test_delete_connection_with_wrong_input():
     client.post("/update_settings/", json=data, params={"node_type": "join"})
     right_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(2, 3)
     response = client.post(
-        "/editor/delete_connection", data=right_connection.model_dump_json(), params={"flow_id": flow_id}
+        "/editor/delete_connection", data=right_connection.model_dump_json(), headers={"Content-Type": "application/json"}, params={"flow_id": flow_id}
     )
     assert response.status_code == 422, "Connection should not be able to delete"
     assert flow.get_node(2).leads_to_nodes != [], "Connection should not be deleted"
@@ -908,7 +908,7 @@ def test_run_error_flow_with_join():
     right_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(2, 3)
     right_connection.input_connection.connection_class = "input-1"
     response = client.post(
-        "/editor/delete_connection", data=right_connection.model_dump_json(), params={"flow_id": flow_id}
+        "/editor/delete_connection", data=right_connection.model_dump_json(), headers={"Content-Type": "application/json"}, params={"flow_id": flow_id}
     )
     assert response.status_code == 200, "Connection not deleted, breaking off test"
     response = client.post("/flow/run/", params={"flow_id": flow_id})
@@ -1039,7 +1039,7 @@ def test_delete_connection():
         raise Exception("Node not connected, breaking off test")
     node_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     response = client.post(
-        "/editor/delete_connection", data=node_connection.model_dump_json(), params={"flow_id": flow_id}
+        "/editor/delete_connection", data=node_connection.model_dump_json(), headers={"Content-Type": "application/json"}, params={"flow_id": flow_id}
     )
     assert response.status_code == 200, "Connection not deleted"
     assert 2 not in flow_file_handler.get_node(flow_id, 1).leads_to_nodes, "Connection not deleted"
@@ -1055,7 +1055,7 @@ def test_run_invalid_flow():
         raise Exception("Node not connected, breaking off test")
     node_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     response = client.post(
-        "/editor/delete_connection", data=node_connection.model_dump_json(), params={"flow_id": flow_id}
+        "/editor/delete_connection", data=node_connection.model_dump_json(), headers={"Content-Type": "application/json"}, params={"flow_id": flow_id}
     )
     assert response.status_code == 200, "Connection not deleted, breaking off test"
     response = client.post("/flow/run/", params={"flow_id": flow_id})
@@ -2002,7 +2002,7 @@ def test_get_flow_data_v2():
     add_node(flow_id, 1, node_type="manual_input", pos_x=0, pos_y=0)
     add_node(flow_id, 2, node_type="select", pos_x=0, pos_y=0)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": flow_id})
+    client.post("/editor/connect_node/", data=connection.json(), headers={"Content-Type": "application/json"}, params={"flow_id": flow_id})
     response = client.get("/flow_data/v2", params={"flow_id": flow_id})
     assert response.status_code == 200, "Flow data not retrieved"
 
@@ -3003,7 +3003,7 @@ def test_copy_node_not_run():
     assert r.status_code == 200, "Node not copied"
     copied_node = flow.get_node(3)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 3)
-    client.post("/editor/connect_node/", data=connection.model_dump_json(), params={"flow_id": flow_id})
+    client.post("/editor/connect_node/", data=connection.model_dump_json(), headers={"Content-Type": "application/json"}, params={"flow_id": flow_id})
 
     assert copied_node is not None, "Node not copied"
     assert copied_node.node_type == "select", "Node type not copied"
@@ -3022,7 +3022,7 @@ def test_from_other_flow():
     assert r.status_code == 200, "Node not copied"
     assert flow_file_handler.get_node(flow_id_to_copy_to, 34) is not None, "Node not copied"
     connection = input_schema.NodeConnection.create_from_simple_input(1, 34)
-    client.post("/editor/connect_node/", data=connection.model_dump_json(), params={"flow_id": flow_id_to_copy_to})
+    client.post("/editor/connect_node/", data=connection.model_dump_json(), headers={"Content-Type": "application/json"}, params={"flow_id": flow_id_to_copy_to})
     r = flow_file_handler.get_flow(flow_id_to_copy_to).run_graph()
     assert r.success, "Flow not run"
 
@@ -3042,7 +3042,7 @@ def test_copy_node_run():
     connection = input_schema.NodeConnection.create_from_simple_input(1, 3)
     client.post(
         "/editor/connect_node/",
-        data=connection.model_dump_json(),
+        data=connection.model_dump_json(), headers={"Content-Type": "application/json"},
         params={"flow_id": flow_id},
     )
 

@@ -10,6 +10,7 @@ Asserts that:
 import importlib
 
 import pytest
+from fastapi.routing import iter_route_contexts
 
 AI_SUBMODULES = [
     "flowfile_core.ai",
@@ -55,14 +56,14 @@ def test_ai_submodule_imports(module_name: str) -> None:
 def test_ai_router_exposes_health_route() -> None:
     from flowfile_core.ai import router
 
-    paths = {route.path for route in router.routes}
+    paths = {route.path for route in iter_route_contexts(router.routes)}
     assert "/health" in paths, f"Expected /health on ai_router; saw {paths}"
 
 
 def test_ai_router_mounted_on_app() -> None:
     from flowfile_core.main import app
 
-    paths = {route.path for route in app.routes}
+    paths = {route.path for route in iter_route_contexts(app.routes)}
     assert "/ai/health" in paths, (
         "Expected /ai/health on the FastAPI app; the ai_router may not be mounted "
         f"(saw {sorted(p for p in paths if p.startswith('/ai'))})."
