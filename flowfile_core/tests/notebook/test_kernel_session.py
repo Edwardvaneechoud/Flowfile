@@ -4,6 +4,8 @@ a cell as real Python, reset, the mode gate, and an unedited corpus push through
 from __future__ import annotations
 
 import json
+import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -125,11 +127,116 @@ def test_an_unedited_corpus_push_through_the_kernel_changes_nothing(notebook_cor
     assert sum('"op": "clean_run"' in r.code for r in kernel_sim.requests) == len(pushed)
 
 
+def _owner() -> PydanticUser:
+    return PydanticUser(username="nb_kernel_owner", id=NOTEBOOK_OWNER_ID, disabled=False)
+
+
+def test_a_session_call_copies_the_database_only_when_the_kernel_asks(orders_flow, client, kernel_sim):
+    from flowfile_core.kernel import notebook_db
+    from flowfile_core.notebook import kernel_runner
+
+    copy = notebook_db.copy_path(kernel_sim.shared_volume_path, kernel_sim.kernel.id)
+    assert _execute(client, orders_flow, kernel_sim, "x = 1")["success"]
+    assert client.post("/notebook/session/schemas", json=_body(orders_flow, kernel_sim)).status_code == 200
+    assert not copy.exists()
+
+    assert kernel_runner.refresh_database(kernel_sim.kernel.id, _owner()) == {"path": str(copy)}
+    with closing(sqlite3.connect(f"{copy.as_uri()}?mode=ro", uri=True)) as conn:
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchone()
+
+
+def test_only_the_kernels_owner_in_desktop_mode_refreshes_its_copy(kernel_sim, monkeypatch):
+    from fastapi import HTTPException
+
+    from flowfile_core.notebook import kernel_runner
+
+    stranger = PydanticUser(username="stranger", id=NOTEBOOK_OWNER_ID + 1, disabled=False)
+    with pytest.raises(HTTPException) as refused:
+        kernel_runner.refresh_database(kernel_sim.kernel.id, stranger)
+    assert refused.value.status_code == 403
+    monkeypatch.setenv("FLOWFILE_MODE", "docker")
+    with pytest.raises(HTTPException) as refused:
+        kernel_runner.refresh_database(kernel_sim.kernel.id, _owner())
+    assert refused.value.status_code == 403
+
+
+def test_the_database_route_answers_only_a_kernel(client, kernel_sim):
+    from flowfile_core import main
+    from flowfile_core.auth.jwt import get_user_or_internal_service
+
+    main.app.dependency_overrides[get_user_or_internal_service] = _owner
+    try:
+        assert client.post("/notebook/session/database").status_code == 403
+        answer = client.post("/notebook/session/database", headers={"X-Kernel-Id": kernel_sim.kernel.id})
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["path"].endswith("flowfile_catalog.db")
+    finally:
+        main.app.dependency_overrides.pop(get_user_or_internal_service, None)
+
+
+def test_a_kernel_call_refreshes_the_copy_once_before_its_first_connection(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine, text
+
+    from flowfile_frame import notebook_kernel
+
+    copy = tmp_path / "flowfile_catalog.db"
+    asks = []
+
+    def core_refresh() -> dict:
+        asks.append(len(asks) + 1)
+        with closing(sqlite3.connect(copy)) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS t (v INTEGER)")
+            conn.execute("INSERT INTO t VALUES (?)", (asks[-1],))
+            conn.commit()
+        return {"path": str(copy)}
+
+    monkeypatch.setattr(notebook_kernel, "database_transport", core_refresh)
+    monkeypatch.setattr(notebook_kernel, "_database_path", lambda: copy)
+    monkeypatch.setattr(notebook_kernel, "_refresh_pending", False)
+    engine = create_engine(f"sqlite:///{copy}")
+    try:
+        notebook_kernel._rearm(engine)
+        assert asks == []
+        with engine.connect() as first, engine.connect() as second:
+            assert first.execute(text("SELECT v FROM t")).scalars().all() == [1]
+            assert second.execute(text("SELECT v FROM t")).scalars().all() == [1]
+        assert asks == [1]
+
+        notebook_kernel._rearm(engine)
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT v FROM t ORDER BY v")).scalars().all() == [1, 2]
+        assert asks == [1, 2]
+    finally:
+        engine.dispose()
+
+
+def test_a_copy_core_did_not_write_fails_the_connection_and_is_asked_for_again(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+
+    from flowfile_frame import notebook_kernel
+
+    copy = tmp_path / "flowfile_catalog.db"
+    asks = []
+    monkeypatch.setattr(notebook_kernel, "database_transport", lambda: asks.append(1) or {"path": "/elsewhere"})
+    monkeypatch.setattr(notebook_kernel, "_database_path", lambda: copy)
+    monkeypatch.setattr(notebook_kernel, "_refresh_pending", False)
+    engine = create_engine(f"sqlite:///{copy}")
+    try:
+        notebook_kernel._rearm(engine)
+        for _ in range(2):
+            with pytest.raises(RuntimeError, match="missing in this kernel"):
+                engine.connect()
+        assert asks == [1, 1]
+    finally:
+        engine.dispose()
+
+
 def test_stopping_the_kernel_forgets_its_sessions_and_database_copy(orders_flow, client, kernel_sim):
     from flowfile_core.kernel import notebook_db
     from flowfile_core.notebook import kernel_runner
 
     assert client.post("/notebook/session/open", json=_body(orders_flow, kernel_sim)).status_code == 200
+    kernel_runner.refresh_database(kernel_sim.kernel.id, _owner())
     copy = notebook_db.copy_path(kernel_sim.shared_volume_path, kernel_sim.kernel.id)
     assert copy.exists()
     kernel_runner.forget_kernel(kernel_sim.kernel.id, kernel_sim.shared_volume_path)

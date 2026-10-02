@@ -2,7 +2,8 @@
 
 Mounted at ``/notebook``. The ``/notebook/session/*`` routes run cells on one of the caller's notebook
 kernels (``notebook.kernel_runner``); they are gated by ``notebook.gate`` (403) before the flow lookup (404).
-``/notebook/session/node_result`` is the kernel's own call back for a canvas node's rows.
+``/notebook/session/node_result`` and ``/notebook/session/database`` are the kernel's own call backs, for a
+canvas node's rows and a fresh copy of the catalog database.
 """
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -161,3 +162,17 @@ def notebook_node_result(
     if not x_kernel_id:
         raise HTTPException(status_code=403, detail="Only a notebook kernel can ask for a node's rows")
     return kernel_runner.node_result(x_kernel_id, current_user, body.flow_id, body.node_id, body.output_handle)
+
+
+@router.post("/session/database")
+def notebook_session_database(
+    x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
+    current_user=Depends(get_user_or_internal_service),
+) -> dict:
+    """Bring the calling notebook kernel's copy of the catalog database up to date: ``{"path"}``, as the kernel sees it.
+
+    Called by the kernel (``X-Internal-Token`` + ``X-Kernel-Id``) before its first database connection in a call.
+    """
+    if not x_kernel_id:
+        raise HTTPException(status_code=403, detail="Only a notebook kernel can refresh its database copy")
+    return kernel_runner.refresh_database(x_kernel_id, current_user)

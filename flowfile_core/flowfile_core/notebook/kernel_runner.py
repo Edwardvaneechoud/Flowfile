@@ -9,7 +9,8 @@ the kernel runs the op and prints its JSON result on a line starting with
 ``shared.notebook_display.KERNEL_RESULT_MARKER``, which is cut from the call's stdout here. Results
 come back in the kernel routes' own shapes (``ExecuteResult``, plus a failed cell's ``line``, and the
 ``dataframe_schemas`` payload). The first call to a kernel checks its flowfile version against core's.
-Before every call the kernel's copy of the catalog database is refreshed (``kernel.notebook_db``).
+The kernel's copy of the catalog database (``kernel.notebook_db``) is refreshed only when the kernel asks,
+before its first database connection in a call (:func:`refresh_database`).
 :class:`KernelCleanRunner` is the ``bridge.CleanRunner`` a push uses when it names a kernel; its result
 goes through ``notebook.validate`` before it is reconciled. :func:`node_result` is the canvas fallback a
 session calls back for rows it cannot compute: the node's canvas result as parquet under the kernel's
@@ -83,11 +84,6 @@ def _call(manager, kernel_id: str, flow_id: int, op: str, **fields: Any) -> tupl
         exec_token=uuid4().hex,
     )
     key = (kernel_id, flow_id)
-    if op != "close":
-        try:
-            notebook_db.refresh(manager.shared_volume_path, kernel_id)
-        except Exception as exc:
-            raise HTTPException(502, f"Could not copy the catalog database for the notebook kernel: {exc}") from exc
     with _lock:
         _running[key] = request.exec_token
     try:
@@ -116,10 +112,8 @@ def _succeeded(payload: dict | None, raw: ExecuteResult) -> dict:
     return payload
 
 
-def _checked(kernel_id: str, user, flow_id: int):
-    """The manager, after the mode gate, the kernel's owner and packages, and (once per container) its version."""
-    from shared._version import get_version
-
+def _notebook_kernel(kernel_id: str, user):
+    """The manager and ``kernel_id``'s kernel, after the mode gate and the kernel's owner and packages."""
     if not kernel_sessions_allowed(user):
         raise HTTPException(403, DISABLED_DETAIL)
     manager = _manager()
@@ -130,6 +124,14 @@ def _checked(kernel_id: str, user, flow_id: int):
         raise HTTPException(403, "Not authorized to access this kernel")
     if not is_notebook_kernel_config(kernel):
         raise HTTPException(422, f"Kernel '{kernel_id}' has no flowfile package; pick or create a notebook kernel")
+    return manager, kernel
+
+
+def _checked(kernel_id: str, user, flow_id: int):
+    """The manager, after :func:`_notebook_kernel` and (once per container) the kernel's version."""
+    from shared._version import get_version
+
+    manager, kernel = _notebook_kernel(kernel_id, user)
     key = (kernel_id, kernel.container_id)
     if key not in _verified:
         hello = _succeeded(*_call(manager, kernel_id, flow_id, "hello"))
@@ -148,6 +150,20 @@ def _checked(kernel_id: str, user, flow_id: int):
             )
         _verified.add(key)
     return manager
+
+
+def refresh_database(kernel_id: str, user) -> dict:
+    """The kernel's own call before its first database connection in a call: its catalog copy brought up to date.
+
+    Answers ``{"path"}``, the copy as the kernel sees it (``None`` without a SQLite file catalog). It never calls
+    the kernel, so it is safe while a session call holds the kernel's execution lock.
+    """
+    manager, _ = _notebook_kernel(kernel_id, user)
+    try:
+        target = notebook_db.refresh(manager.shared_volume_path, kernel_id)
+    except Exception as exc:
+        raise HTTPException(502, f"Could not copy the catalog database for the notebook kernel: {exc}") from exc
+    return {"path": None if target is None else manager.to_kernel_path(str(target))}
 
 
 def _open(manager, flow, user, kernel_id: str, op: str) -> None:

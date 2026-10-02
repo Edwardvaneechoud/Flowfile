@@ -21,6 +21,11 @@ Rows the kernel cannot compute come from the canvas: a seeded canvas node that n
 core's ``POST /notebook/session/node_result`` (through :data:`transport`), which runs it on the canvas
 when needed and answers with a parquet path on the kernel's shared folder, read with ``pl.scan_parquet``
 and kept per node and output until the session is reset.
+
+The catalog database is a copy core keeps in the kernel's shared folder (``FLOWFILE_DB_PATH``). A call that
+reads it asks core to refresh it first (``POST /notebook/session/database``, through
+:data:`database_transport`), once per call and just before the call's first connection; calls that never
+touch the catalog never copy it.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -65,8 +71,8 @@ CANVAS_CHANGED = "The canvas changed since this session started: Reset session t
 PUSH_FIRST = "Push, then it runs on the canvas."
 
 
-def post_node_result(body: dict[str, Any]) -> dict[str, Any]:
-    """Ask core for a canvas node's result (``POST /notebook/session/node_result``) as this kernel."""
+def _post_core(route: str, body: dict[str, Any], what: str) -> dict[str, Any]:
+    """POST ``body`` to core's ``route`` as this kernel; a failure is a ``NativeNodeError`` about ``what``."""
     import httpx
 
     url = os.environ.get("FLOWFILE_CORE_URL", "http://host.docker.internal:63578").rstrip("/")
@@ -80,13 +86,13 @@ def post_node_result(body: dict[str, Any]) -> dict[str, Any]:
     }
     try:
         response = httpx.post(
-            f"{url}/notebook/session/node_result",
+            f"{url}{route}",
             json=body,
             headers=headers,
             timeout=httpx.Timeout(None, connect=10.0),
         )
     except httpx.HTTPError as exc:
-        raise NativeNodeError(f"Could not reach Flowfile for node {body['node_id']}'s rows: {exc}") from exc
+        raise NativeNodeError(f"Could not reach Flowfile for {what}: {exc}") from exc
     if response.status_code != 200:
         try:
             detail = response.json().get("detail")
@@ -96,8 +102,21 @@ def post_node_result(body: dict[str, Any]) -> dict[str, Any]:
     return response.json()
 
 
+def post_node_result(body: dict[str, Any]) -> dict[str, Any]:
+    """Ask core for a canvas node's result (``POST /notebook/session/node_result``) as this kernel."""
+    return _post_core("/notebook/session/node_result", body, f"node {body['node_id']}'s rows")
+
+
+def post_database_refresh() -> dict[str, Any]:
+    """Ask core to bring this kernel's copy of the catalog database up to date (``POST /notebook/session/database``)."""
+    return _post_core("/notebook/session/database", {}, "a fresh copy of the catalog database")
+
+
 transport: Callable[[dict[str, Any]], dict[str, Any]] = post_node_result
 """How a session asks core for a canvas node's result; tests route it to core in-process."""
+
+database_transport: Callable[[], dict[str, Any]] = post_database_refresh
+"""How a call asks core to refresh the kernel's catalog copy; tests route it to core in-process."""
 
 
 @dataclass
@@ -210,6 +229,7 @@ def _database_path() -> Path | None:
 
 def _schema_revision() -> str | None:
     """The Alembic revision of the catalog database copy, read-only; ``None`` when it cannot be read."""
+    _refresh_database()
     path = _database_path()
     if path is None or not path.exists():
         return None
@@ -221,22 +241,58 @@ def _schema_revision() -> str | None:
     return row[0] if row else None
 
 
-def _release_database() -> None:
-    """In a kernel, close the pooled catalog connections so the next read opens core's latest copy.
+_database_lock = threading.Lock()
+_refresh_pending = False
 
-    Core replaces the copy (``FLOWFILE_DB_PATH``) between calls; it is a plain rollback-journal file,
-    so the engine's WAL switch is taken off too. Outside a kernel (``FLOWFILE_KERNEL_ID`` unset) nothing happens.
+
+def _refresh_database() -> None:
+    """Have core refresh the catalog copy if this call has not yet; a copy still missing afterwards raises."""
+    global _refresh_pending
+    with _database_lock:
+        if not _refresh_pending:
+            return
+        answer = database_transport()
+        path = _database_path()
+        if path is not None and not path.exists():
+            raise RuntimeError(
+                f"The Flowfile database {path} is missing in this kernel (core copied it to {answer.get('path')}); "
+                "recreate the notebook kernel"
+            )
+        _refresh_pending = False
+
+
+def _refresh_before_connect(dialect, conn_rec, cargs, cparams) -> None:
+    _refresh_database()
+
+
+def _rearm(engine) -> None:
+    """Close ``engine``'s pooled connections and have its next new connection refresh the copy first.
+
+    The copy is a plain rollback-journal file core replaces between calls, so the engine's WAL switch is taken
+    off, and the refresh runs before the connection opens the file (``do_connect``).
     """
-    if not os.environ.get("FLOWFILE_KERNEL_ID"):
-        return
+    global _refresh_pending
     from sqlalchemy import event
 
-    from shared.database import _enable_wal, get_catalog_engine
+    from shared.database import _enable_wal
 
-    engine = get_catalog_engine()
     if event.contains(engine, "connect", _enable_wal):
         event.remove(engine, "connect", _enable_wal)
+    if not event.contains(engine, "do_connect", _refresh_before_connect):
+        event.listen(engine, "do_connect", _refresh_before_connect)
+    with _database_lock:
+        _refresh_pending = True
     engine.dispose()
+
+
+def _release_database() -> None:
+    """In a notebook kernel (``FLOWFILE_KERNEL_ID`` and ``FLOWFILE_DB_PATH`` set), re-arm the catalog engine for
+    this call (:func:`_rearm`); elsewhere nothing happens."""
+    if not (os.environ.get("FLOWFILE_KERNEL_ID") and os.environ.get("FLOWFILE_DB_PATH")):
+        return
+    from shared.database import get_catalog_engine
+
+    _rearm(get_catalog_engine())
 
 
 def _hello(request: dict[str, Any]) -> dict[str, Any]:
@@ -275,9 +331,6 @@ def _open(flow_id: int, request: dict[str, Any], kernel_namespace: dict[str, Any
 
     The session's namespace is ``kernel_namespace`` (emptied first) when given, else a new dict.
     """
-    path = _database_path()
-    if path is not None and not path.exists():
-        raise RuntimeError(f"The Flowfile database {path} is missing in this kernel; recreate the notebook kernel")
     snapshot = request.get("snapshot") or {}
     user_id = int(request["user_id"])
     _close(flow_id)

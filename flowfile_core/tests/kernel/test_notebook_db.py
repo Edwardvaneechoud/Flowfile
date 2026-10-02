@@ -2,6 +2,7 @@
 
 import hashlib
 import sqlite3
+import threading
 from contextlib import closing
 
 from flowfile_core.kernel import notebook_db
@@ -57,3 +58,19 @@ def test_the_copy_follows_the_source_and_leaves_it_untouched(tmp_path, monkeypat
 def test_no_copy_without_a_sqlite_file(tmp_path, monkeypatch):
     monkeypatch.setenv("FLOWFILE_DB_PATH", "sqlite:///:memory:")
     assert notebook_db.refresh(str(tmp_path), "k") is None
+
+
+def test_one_kernels_copy_never_waits_on_anothers(tmp_path, monkeypatch):
+    source = tmp_path / "flowfile_catalog.db"
+    monkeypatch.setenv("FLOWFILE_DB_PATH", str(source))
+    with closing(sqlite3.connect(source)) as conn:
+        conn.execute("CREATE TABLE t (v INTEGER)")
+        conn.commit()
+    shared = str(tmp_path / "shared")
+    copied = threading.Event()
+    with notebook_db._lock("busy"):
+        other = threading.Thread(target=lambda: notebook_db.refresh(shared, "other") and copied.set(), daemon=True)
+        other.start()
+        assert copied.wait(10), "a copy for one kernel waited on another kernel's lock"
+    other.join(10)
+    assert notebook_db.copy_path(shared, "other").exists()

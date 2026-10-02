@@ -117,7 +117,7 @@ In the desktop app, and with `pip install flowfile` in the default mode, the not
 
 When the session opens, every canvas node is bound to its variable, so a cell can use `filtered_2` without running anything first. `display(frame)` shows rows. The kernel computes them itself when it can (manual input, catalog tables, files in a folder it may read, and transforms on those); for any other node that is on the canvas, such as a database reader or a Python Script node, the canvas runs the node and hands its rows to the kernel. A node that exists only in your cells and that the kernel cannot read shows its columns and asks you to push first.
 
-The kernel can read the Flowfile folders (saved flows, custom nodes, catalog tables) and a copy of the catalog database that the app refreshes before every call. Other files are visible only in the folders you add under **Folders this kernel can read** in the [kernel's settings](kernels.md#folders-this-kernel-can-read). Stored secrets cannot be decrypted in the kernel, so a cloud or database source shows rows only through the canvas.
+The kernel can read the Flowfile folders (saved flows, custom nodes, catalog tables) and a copy of the catalog database that the app refreshes whenever a cell reads the catalog. Other files are visible only in the folders you add under **Folders this kernel can read** in the [kernel's settings](kernels.md#folders-this-kernel-can-read). Stored secrets cannot be decrypted in the kernel, so a cloud or database source shows rows only through the canvas.
 
 Limits:
 
