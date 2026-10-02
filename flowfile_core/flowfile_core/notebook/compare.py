@@ -236,12 +236,34 @@ def _gate(settings: dict) -> None:
         gate_input.pop("formula", None)
 
 
+def script_cells(cells: list[str]) -> list[str]:
+    """Script cells as they compare: blank lines at each cell's start and end dropped, then blank cells."""
+    trimmed = []
+    for cell in cells:
+        lines = cell.split("\n")
+        start, end = 0, len(lines)
+        while start < end and not lines[start].strip():
+            start += 1
+        while end > start and not lines[end - 1].strip():
+            end -= 1
+        if start < end:
+            trimmed.append("\n".join(lines[start:end]))
+    return trimmed
+
+
 def _python_script(settings: dict) -> None:
-    """Cells compare by code, never by their ids."""
+    """Cells compare by code (:func:`script_cells`), never by their ids.
+
+    ``code`` follows the cells only while it is their join, as the drawer and the frame store it,
+    so a ``code`` that says something else still differs.
+    """
     script = settings.get("python_script_input") or {}
     cells = script.get("cells")
     if cells is not None:
-        script["cells"] = [cell.get("code", "") if isinstance(cell, dict) else cell for cell in cells]
+        raw = [cell.get("code", "") if isinstance(cell, dict) else cell for cell in cells]
+        script["cells"] = script_cells(raw)
+        if script.get("code") == "\n\n".join(cell for cell in raw if cell):
+            script["code"] = "\n\n".join(script["cells"])
 
 
 def _drop_select_positions(value: Any) -> None:

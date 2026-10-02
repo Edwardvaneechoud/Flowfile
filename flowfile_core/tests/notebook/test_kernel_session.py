@@ -20,6 +20,7 @@ from tests.notebook.conftest import NOTEBOOK_OWNER_ID, cell_provenance
 from tests.notebook.test_ledger import grade
 
 LOOPBACK = ("127.0.0.1", 50123)
+COPY_NAME = re.compile(r"flowfile_catalog\.[0-9a-f]{32}\.db")
 
 LOOP_CELL = """import re
 
@@ -143,12 +144,14 @@ def test_a_session_call_copies_the_database_only_when_the_kernel_asks(orders_flo
     from flowfile_core.kernel import notebook_db
     from flowfile_core.notebook import kernel_runner
 
-    copy = notebook_db.copy_path(kernel_sim.shared_volume_path, kernel_sim.kernel.id)
+    directory = notebook_db.copy_dir(kernel_sim.shared_volume_path, kernel_sim.kernel.id)
     assert _execute(client, orders_flow, kernel_sim, "x = 1")["success"]
     assert client.post("/notebook/session/schemas", json=_body(orders_flow, kernel_sim)).status_code == 200
-    assert not copy.exists()
+    assert not directory.exists()
 
-    assert kernel_runner.refresh_database(kernel_sim.kernel.id, _owner()) == {"path": str(copy)}
+    copy = Path(kernel_runner.refresh_database(kernel_sim.kernel.id, _owner())["path"])
+    assert copy.parent == directory and COPY_NAME.fullmatch(copy.name)
+    assert [entry.name for entry in directory.iterdir()] == [copy.name]
     with closing(sqlite3.connect(f"{copy.as_uri()}?mode=ro", uri=True)) as conn:
         assert conn.execute("SELECT version_num FROM alembic_version").fetchone()
 
@@ -177,43 +180,52 @@ def test_the_database_route_answers_only_a_kernel(client, kernel_sim):
         assert client.post("/notebook/session/database").status_code == 403
         answer = client.post("/notebook/session/database", headers={"X-Kernel-Id": kernel_sim.kernel.id})
         assert answer.status_code == 200, answer.text
-        assert answer.json()["path"].endswith("flowfile_catalog.db")
+        assert COPY_NAME.fullmatch(Path(answer.json()["path"]).name)
     finally:
         main.app.dependency_overrides.pop(get_user_or_internal_service, None)
 
 
-def test_a_kernel_call_refreshes_the_copy_once_before_its_first_connection(tmp_path, monkeypatch):
+def test_each_connection_opens_the_copy_core_named_last(tmp_path, monkeypatch):
+    """A call asks core once, before its first connection, and every connection opens the copy core answered
+    with, never the fixed ``FLOWFILE_DB_PATH`` name; a connection outside a call reuses the last copy."""
     from sqlalchemy import create_engine, text
 
     from flowfile_frame import notebook_kernel
 
-    copy = tmp_path / "flowfile_catalog.db"
+    fixed = tmp_path / "flowfile_catalog.db"
     asks = []
 
     def core_refresh() -> dict:
         asks.append(len(asks) + 1)
+        copy = tmp_path / f"flowfile_catalog.{asks[-1]}.db"
         with closing(sqlite3.connect(copy)) as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS t (v INTEGER)")
+            conn.execute("CREATE TABLE t (v INTEGER)")
             conn.execute("INSERT INTO t VALUES (?)", (asks[-1],))
             conn.commit()
         return {"path": str(copy)}
 
+    def read() -> list[list[int]]:
+        with engine.connect() as first, engine.connect() as second:
+            return [conn.execute(text("SELECT v FROM t")).scalars().all() for conn in (first, second)]
+
     monkeypatch.setattr(notebook_kernel, "database_transport", core_refresh)
-    monkeypatch.setattr(notebook_kernel, "_database_path", lambda: copy)
     monkeypatch.setattr(notebook_kernel, "_refresh_pending", False)
-    engine = create_engine(f"sqlite:///{copy}")
+    monkeypatch.setattr(notebook_kernel, "_database_copy", None)
+    engine = create_engine(f"sqlite:///{fixed}")
     try:
         notebook_kernel._rearm(engine)
         assert asks == []
-        with engine.connect() as first, engine.connect() as second:
-            assert first.execute(text("SELECT v FROM t")).scalars().all() == [1]
-            assert second.execute(text("SELECT v FROM t")).scalars().all() == [1]
+        assert read() == [[1], [1]]
         assert asks == [1]
 
         notebook_kernel._rearm(engine)
-        with engine.connect() as conn:
-            assert conn.execute(text("SELECT v FROM t ORDER BY v")).scalars().all() == [1, 2]
+        assert read() == [[2], [2]]
         assert asks == [1, 2]
+
+        engine.dispose()
+        assert read() == [[2], [2]]
+        assert asks == [1, 2]
+        assert not fixed.exists()
     finally:
         engine.dispose()
 
@@ -223,12 +235,12 @@ def test_a_copy_core_did_not_write_fails_the_connection_and_is_asked_for_again(t
 
     from flowfile_frame import notebook_kernel
 
-    copy = tmp_path / "flowfile_catalog.db"
+    missing = str(tmp_path / "elsewhere" / "flowfile_catalog.0.db")
     asks = []
-    monkeypatch.setattr(notebook_kernel, "database_transport", lambda: asks.append(1) or {"path": "/elsewhere"})
-    monkeypatch.setattr(notebook_kernel, "_database_path", lambda: copy)
+    monkeypatch.setattr(notebook_kernel, "database_transport", lambda: asks.append(1) or {"path": missing})
     monkeypatch.setattr(notebook_kernel, "_refresh_pending", False)
-    engine = create_engine(f"sqlite:///{copy}")
+    monkeypatch.setattr(notebook_kernel, "_database_copy", None)
+    engine = create_engine(f"sqlite:///{tmp_path / 'flowfile_catalog.db'}")
     try:
         notebook_kernel._rearm(engine)
         for _ in range(2):
@@ -244,8 +256,7 @@ def test_stopping_the_kernel_forgets_its_sessions_and_database_copy(orders_flow,
     from flowfile_core.notebook import kernel_runner
 
     assert client.post("/notebook/session/open", json=_body(orders_flow, kernel_sim)).status_code == 200
-    kernel_runner.refresh_database(kernel_sim.kernel.id, _owner())
-    copy = notebook_db.copy_path(kernel_sim.shared_volume_path, kernel_sim.kernel.id)
+    copy = Path(kernel_runner.refresh_database(kernel_sim.kernel.id, _owner())["path"])
     assert copy.exists()
     kernel_runner.forget_kernel(kernel_sim.kernel.id, kernel_sim.shared_volume_path)
     assert orders_flow.flow_id not in kernel_runner._sessions

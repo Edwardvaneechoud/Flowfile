@@ -68,6 +68,7 @@ class ConverterMixinBase:
         framework: str
         flowfile_alias: str
         placeholders: bool
+        decorated_scripts: bool
         imports: set[str]
         custom_node_classes: dict[str, str]
         unsupported_nodes: list[tuple[int, str, str]]

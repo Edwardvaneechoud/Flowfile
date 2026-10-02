@@ -1,25 +1,12 @@
-"""The canvas notebook on a notebook kernel: core's side of the session that runs in the kernel.
+"""Core's side of the canvas notebook session that runs in a notebook kernel (one with ``flowfile`` installed).
 
-A notebook kernel is one of the user's kernels with ``flowfile`` installed
-(``kernel.notebook_support.is_notebook_kernel_config``). Core never runs the cells: it sends the kernel one
-constant snippet through ``KernelManager.execute_sync`` (a flow id from :func:`kernel_flow_id`, so the call never
-shares a namespace with the flow's Python Script nodes or a catalog notebook; the session keeps its variables in
-that namespace, where the editor's code intelligence reads them), and the frame's ``notebook_kernel`` module in
-the kernel runs the op and prints its JSON result on a line starting with
-``shared.notebook_display.KERNEL_RESULT_MARKER``, which is cut from the call's stdout here. Results
-come back in the kernel routes' own shapes (``ExecuteResult``, plus a failed cell's ``line``, and the
-``dataframe_schemas`` payload). A cell runs as its own node id, so the kernel keeps what it published until that
-cell runs again; every other op runs as node 0. The first call to a kernel checks its flowfile version against
-core's and the Alembic head its flowfile_core ships against the catalog's revision. Each open session is known by
-its generation, so closing a flow closes only the sessions it had, never one opened again since.
-The kernel's copy of the catalog database (``kernel.notebook_db``) is refreshed only when the kernel asks,
-before its first database connection in a call (:func:`refresh_database`).
-:class:`KernelCleanRunner` is the ``bridge.CleanRunner`` a push uses when it names a kernel; its result
-goes through ``notebook.validate`` before it is reconciled. :func:`node_result` is the canvas fallback a
-session calls back for rows it cannot compute: the node's canvas result as parquet under the kernel's
-shared folder (``notebook/<flow_id>/``, removed when the flow's sessions close). The session's kernel call
-holds the kernel while it waits on that fallback, so the fallback's canvas run refuses to run anything on
-that kernel (a ``kernel.execution.KernelHold``), and :func:`interrupt` cancels the run a cell waits on.
+Core never runs the cells. Every op is one constant :data:`SNIPPET` sent through ``KernelManager.execute_sync``
+under the flow's own kernel namespace (:func:`kernel_flow_id`), where the editor's code intelligence also reads
+the session's variables. The frame's ``notebook_kernel`` module runs the op and prints its JSON result on a
+``shared.notebook_display.KERNEL_RESULT_MARKER`` line, which :func:`_call` cuts from the call's stdout; results
+come back in the kernel routes' own shapes. Besides the session ops, :class:`KernelCleanRunner` runs a push that
+names a kernel (its result then goes through ``notebook.validate``), and the kernel calls back for canvas rows it
+cannot compute (:func:`node_result`) and for a fresh copy of the catalog database (:func:`refresh_database`).
 """
 
 from __future__ import annotations
@@ -77,12 +64,8 @@ def _schema_revision() -> str | None:
 
 
 def kernel_flow_id(flow_id: int) -> int:
-    """The flow id a flow's session runs under in the kernel: its namespace there, which the editor's code
-    intelligence reads too (the notebook store's ``flowSessionId`` for a flow tab).
-
-    It lies below ``-2**40``, apart from the catalog notebooks' namespaces (``-id`` when saved,
-    ``-(1.5e9 + ...)`` when not) and every real flow id.
-    """
+    """The kernel namespace of a flow's session, below every catalog notebook's and real flow's; mirrored by the
+    notebook store's ``flowSessionId``."""
     return -(1 << 40) - flow_id
 
 
@@ -177,8 +160,9 @@ def _checked(kernel_id: str, user, flow_id: int):
 def refresh_database(kernel_id: str, user) -> dict:
     """The kernel's own call before its first database connection in a call: its catalog copy brought up to date.
 
-    Answers ``{"path"}``, the copy as the kernel sees it (``None`` without a SQLite file catalog). It never calls
-    the kernel, so it is safe while a session call holds the kernel's execution lock.
+    Answers ``{"path"}``, the copy as the kernel sees it (``None`` without a SQLite file catalog): a new file
+    whenever the catalog changed, which the kernel's next connections open. It never calls the kernel, so it is
+    safe while a session call holds the kernel's execution lock.
     """
     manager, _ = _notebook_kernel(kernel_id, user)
     try:
@@ -208,9 +192,7 @@ def reset_session(flow, user, kernel_id: str) -> None:
     _open(_checked(kernel_id, user, flow.flow_id), flow, user, kernel_id, "reset")
 
 
-def _rows_hint(lazy_safe: bool, hint: str | None = None) -> str:
-    if hint:
-        return hint
+def _rows_hint(lazy_safe: bool) -> str:
     canvas = "Run and preview on canvas in the ⋯ menu of the cell that builds it"
     if lazy_safe:
         return f"Rows are not computed here. Use {canvas}, or call display(...) to compute them in this session."
@@ -231,7 +213,7 @@ def _displays(payload: dict[str, Any], title: str = "") -> list[DisplayOutput]:
             data = value if isinstance(value, str) else json.dumps(value, default=str)
             return [DisplayOutput(mime_type=key, data=data, title=payload.get("title") or title)]
     columns = "".join(f"\n  {c['name']}: {c['data_type']}" for c in payload.get("schema") or [])
-    hint = _rows_hint(bool(payload.get("lazy_safe")), payload.get("rows_hint"))
+    hint = payload.get("rows_hint") or _rows_hint(bool(payload.get("lazy_safe")))
     text = f"Schema:{columns}\n\n{hint}" if columns else hint
     return [DisplayOutput(mime_type="text/plain", data=text, title=title)]
 
@@ -243,13 +225,12 @@ class SessionExecuteResult(ExecuteResult):
 
 
 def run_cell(flow, user, kernel_id: str, cell_id: str, code: str, node_id: int = 0) -> SessionExecuteResult:
-    """Run one cell in the flow's session on the kernel as node ``node_id``, opening the session first when core
-    has none open there (the flow was closed since, or never opened) or the kernel has lost it.
+    """Run one cell as node ``node_id`` in the flow's session on the kernel.
 
-    So a cell never runs in a session a queued close is about to end. The displays come in the order the cell
-    made them (the session's one list), followed by what the kernel shows by itself: its end-of-cell figures and a
-    direct ``flowfile_ctx.display``. A failure's ``error`` is the traceback from the cell down, as the editor shows
-    a kernel error, with its ``line``.
+    The session is opened first when core has none open there or the kernel lost it, so a cell never runs in a
+    session a queued close is about to end. Displays come in the cell's order, then what the kernel shows by
+    itself (end-of-cell figures, a direct ``flowfile_ctx.display``); a failure's ``error`` is the traceback from
+    the cell down, with its ``line``.
     """
     manager = _checked(kernel_id, user, flow.flow_id)
     with _lock:
@@ -416,14 +397,13 @@ def _own_kernel_detail(node, kernel_id: str, needed: str) -> str:
 def _run_lineage(flow, node, kernel_id: str) -> None:
     """Run ``node`` and its ancestors on the canvas, gate-aware, as "Run and preview on canvas" does.
 
-    The session's kernel call holds ``kernel_id`` until this returns, so nothing of the run may execute on it.
-    A node on it without a current result is refused before anything runs; any other node that runs again
-    anyway (Performance mode, a missing cache, a changed source, a subflow's or a virtual table producer's
-    nodes) is refused by the run itself through a ``KernelHold``, at once and without waiting. That hold also
-    marks the run for :func:`interrupt`.
+    The session's kernel call holds ``kernel_id`` until this returns, so nothing in the run may execute on it: a
+    node on it without a current result is refused up front, and one that runs anyway (Performance mode, a missing
+    cache, a changed source, a subflow, a virtual table's producer) is refused at once by the run's ``KernelHold``,
+    which also marks the run for :func:`interrupt`.
 
-    409 while the flow runs, when the run needs this same kernel, when it was cancelled, or when a gate routes
-    the node away; 422 when the run fails.
+    409 while the flow runs, when the run needs this kernel, when it was cancelled, or when a gate routes the node
+    away; 422 when the run fails.
     """
     from flowfile_core.kernel.execution import KernelHold
     from flowfile_core.routes.routes import _resolve_node_kernel_id
@@ -481,17 +461,14 @@ def _write_result(flow, node_id: int, data, path: str) -> None:
 
 
 def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle: str | None) -> dict:
-    """A canvas node's result for the flow's session on ``kernel_id``: ``{"path", "canvas_changed"}``.
+    """A canvas node's rows for the flow's session on ``kernel_id``: ``{"path", "canvas_changed"}``.
 
-    Answers only the owner of a kernel that holds an open session for the flow or runs a call for it (a push's
-    clean run, which reads the rows of nodes the canvas already has). The node and its
-    ancestors run on the canvas first unless the node holds a current result (:func:`_run_lineage`); the
-    result is written as parquet under the kernel's shared folder and reused while the canvas holds that
-    same result (a weak reference, so the cache never keeps a result alive). A file this kernel was handed
-    before is removed once superseded: its earlier session is gone, while another kernel's may still read it.
-    ``path`` is the kernel's view of the file; ``canvas_changed`` tells whether the canvas changed since the
-    session was seeded. 409 while the flow runs, when the run would need this same kernel, when it was
-    cancelled, or for a node a gate routed away.
+    Only for the kernel's owner while the kernel holds the flow's session or runs a call for it (a push's clean
+    run). ``path`` is the kernel's view of a parquet in its shared folder, written after :func:`_run_lineage`
+    when the node has no current result (409/422 as there, and 409 for a gate output routed away);
+    ``canvas_changed`` is whether the canvas changed since the session was seeded. The cache holds the result
+    weakly, so it never keeps one alive, and removes a superseded file only when this kernel was handed it:
+    another kernel's session may still read it.
     """
     from flowfile_core import flow_file_handler
     from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE

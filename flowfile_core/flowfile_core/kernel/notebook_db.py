@@ -2,11 +2,13 @@
 
 A read-only bind mount of the WAL-mode catalog goes stale inside a Docker Desktop VM (new rows show
 up only after a checkpoint), so core hands each notebook kernel a copy instead:
-``<shared>/notebook_db/<kernel_id>/flowfile_catalog.db``, written with the SQLite backup API from a
-read-only connection, switched to ``journal_mode=DELETE`` (one plain file) and moved into place with
-``os.replace``. :func:`refresh` runs when the kernel asks for it, before its first database connection in a
-call (``notebook.kernel_runner.refresh_database``), and copies only when the source database or its ``-wal``
-changed since the last copy. Each kernel's copy has its own lock. Only a SQLite file catalog can be copied.
+``<shared>/notebook_db/<kernel_id>/flowfile_catalog.<uuid>.db``, written with the SQLite backup API from a
+read-only connection and switched to ``journal_mode=DELETE`` (one plain file). Every copy gets a new name
+and the older ones are deleted: a file replaced in place keeps its old entry in the VM for a few
+milliseconds, in which the kernel sees it exist and cannot open it. :func:`refresh` runs when the kernel asks
+for it, before its first database connection in a call (``notebook.kernel_runner.refresh_database``), copies
+only when the source database or its ``-wal`` changed since the last copy and answers with the copy to open.
+Each kernel's copies have their own lock. Only a SQLite file catalog can be copied.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import shutil
 import sqlite3
 import threading
 import time
+from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
 
@@ -23,17 +26,12 @@ from flowfile_core.database.backup import _BACKUP_TIMEOUT_SECONDS, _deadline_pro
 
 COPY_DIR = "notebook_db"
 DB_NAME = "flowfile_catalog.db"
+_DB_STEM = "flowfile_catalog"
 
 _locks_lock = threading.Lock()
 _locks: dict[str, threading.Lock] = {}
 _stamps: dict[str, tuple] = {}
-
-
-def source_path() -> Path | None:
-    """Core's catalog database file, or ``None`` when the catalog is not a SQLite file."""
-    from shared.database import sqlite_database_path
-
-    return sqlite_database_path()
+_copies: dict[str, Path] = {}
 
 
 def copy_dir(shared_dir: str, kernel_id: str) -> Path:
@@ -41,6 +39,7 @@ def copy_dir(shared_dir: str, kernel_id: str) -> Path:
 
 
 def copy_path(shared_dir: str, kernel_id: str) -> Path:
+    """The path a notebook kernel's ``FLOWFILE_DB_PATH`` carries; nothing is written there (:func:`refresh`)."""
     return copy_dir(shared_dir, kernel_id) / DB_NAME
 
 
@@ -77,28 +76,45 @@ def _write_copy(source: Path, target: Path) -> None:
         os.replace(tmp, target)
     finally:
         tmp.unlink(missing_ok=True)
-    for suffix in ("-wal", "-shm", "-journal"):
-        target.with_name(target.name + suffix).unlink(missing_ok=True)
+
+
+def _sweep(directory: Path, keep: Path) -> None:
+    """Delete every other copy in ``directory``, with its sidecars and any temporary file left behind."""
+    for entry in directory.iterdir():
+        if entry != keep and _DB_STEM in entry.name:
+            with suppress(OSError):
+                entry.unlink()
 
 
 def refresh(shared_dir: str, kernel_id: str) -> Path | None:
-    """Bring the kernel's copy up to date with core's database; ``None`` when there is nothing to copy."""
-    source = source_path()
+    """The kernel's up-to-date copy of core's database, a new file when it had to copy; ``None`` when there is
+    nothing to copy.
+
+    The kernel closed its connections before it asked and opens the answered path next, so the older copies
+    can go.
+    """
+    from shared.database import sqlite_database_path
+
+    source = sqlite_database_path()
     if source is None or not source.exists():
         return None
-    target = copy_path(shared_dir, kernel_id)
+    directory = copy_dir(shared_dir, kernel_id)
     with _lock(kernel_id):
         stamp = _stamp(source)
-        if _stamps.get(kernel_id) == stamp and target.exists():
-            return target
-        target.parent.mkdir(parents=True, exist_ok=True)
+        current = _copies.get(kernel_id)
+        if _stamps.get(kernel_id) == stamp and current is not None and current.parent == directory and current.exists():
+            return current
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / f"{_DB_STEM}.{uuid4().hex}.db"
         _write_copy(source, target)
-        _stamps[kernel_id] = stamp
+        _stamps[kernel_id], _copies[kernel_id] = stamp, target
+        _sweep(directory, target)
     return target
 
 
 def remove(shared_dir: str, kernel_id: str) -> None:
-    """Delete the kernel's copy (on stop and delete); the kernel's next database read asks for a fresh one."""
+    """Delete the kernel's copies (on stop and delete); the kernel's next database read asks for a fresh one."""
     with _lock(kernel_id):
         _stamps.pop(kernel_id, None)
+        _copies.pop(kernel_id, None)
         shutil.rmtree(copy_dir(shared_dir, kernel_id), ignore_errors=True)

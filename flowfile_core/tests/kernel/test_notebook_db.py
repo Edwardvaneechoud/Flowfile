@@ -1,11 +1,14 @@
 """The notebook kernel's copy of the catalog database (no Docker)."""
 
 import hashlib
+import re
 import sqlite3
 import threading
 from contextlib import closing
 
 from flowfile_core.kernel import notebook_db
+
+COPY_NAME = re.compile(r"flowfile_catalog\.[0-9a-f]{32}\.db")
 
 
 def _digest(path):
@@ -33,7 +36,7 @@ def test_the_copy_follows_the_source_and_leaves_it_untouched(tmp_path, monkeypat
         before = _digest(source)
         copy = notebook_db.refresh(str(shared), "k")
         assert _digest(source) == before
-        assert copy == notebook_db.copy_path(str(shared), "k")
+        assert copy.parent == notebook_db.copy_dir(str(shared), "k") and COPY_NAME.fullmatch(copy.name)
         assert _rows(copy) == [1]
         with closing(sqlite3.connect(copy)) as conn:
             assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
@@ -46,13 +49,43 @@ def test_the_copy_follows_the_source_and_leaves_it_untouched(tmp_path, monkeypat
         writer.execute("INSERT INTO t VALUES (2)")
         writer.commit()
         before = _digest(source)
-        notebook_db.refresh(str(shared), "k")
+        newer = notebook_db.refresh(str(shared), "k")
         assert _digest(source) == before
-        assert _rows(copy) == [1, 2]
+        assert newer != copy and COPY_NAME.fullmatch(newer.name)
+        assert _rows(newer) == [1, 2]
+        assert sorted(p.name for p in newer.parent.iterdir()) == [newer.name]
     finally:
         writer.close()
     notebook_db.remove(str(shared), "k")
     assert not notebook_db.copy_dir(str(shared), "k").exists()
+
+
+def test_a_copy_is_never_written_over_a_name_the_kernel_has_seen(tmp_path, monkeypatch):
+    """Docker Desktop serves a replaced file's old entry for a moment: every copy is a new name, the fixed one
+    (``FLOWFILE_DB_PATH``) is never written, and what an earlier copy left behind is swept."""
+    source = tmp_path / "flowfile_catalog.db"
+    monkeypatch.setenv("FLOWFILE_DB_PATH", str(source))
+    with closing(sqlite3.connect(source)) as conn:
+        conn.execute("CREATE TABLE t (v INTEGER)")
+        conn.commit()
+    shared = str(tmp_path / "shared")
+    directory = notebook_db.copy_dir(shared, "k")
+    directory.mkdir(parents=True)
+    leftovers = [notebook_db.copy_path(shared, "k"), directory / "flowfile_catalog.db-journal"]
+    leftovers.append(directory / ".flowfile_catalog.0123.db.4567.tmp")
+    for leftover in leftovers:
+        leftover.write_bytes(b"stale")
+    names = []
+    for value in range(3):
+        with closing(sqlite3.connect(source)) as conn:
+            conn.execute("INSERT INTO t VALUES (?)", (value,))
+            conn.commit()
+        copy = notebook_db.refresh(shared, "k")
+        names.append(copy.name)
+        assert [p.name for p in directory.iterdir()] == [copy.name]
+        assert _rows(copy) == list(range(value + 1))
+        notebook_db.remove(shared, "k") if value == 1 else None
+    assert len(set(names)) == 3 and all(COPY_NAME.fullmatch(name) for name in names)
 
 
 def test_no_copy_without_a_sqlite_file(tmp_path, monkeypatch):
@@ -73,4 +106,4 @@ def test_one_kernels_copy_never_waits_on_anothers(tmp_path, monkeypatch):
         other.start()
         assert copied.wait(10), "a copy for one kernel waited on another kernel's lock"
     other.join(10)
-    assert notebook_db.copy_path(shared, "other").exists()
+    assert [COPY_NAME.fullmatch(p.name) is not None for p in notebook_db.copy_dir(shared, "other").iterdir()] == [True]

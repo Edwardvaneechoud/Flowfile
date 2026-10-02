@@ -539,6 +539,7 @@ class FlowGraphCodeConverter(
     framework: str = "pl"
     flowfile_alias: str = "ff"
     placeholders: bool = False
+    decorated_scripts: bool = False
     function_name: str = "run_etl_pipeline"
 
     def __init__(self, flow_graph: FlowGraph):
@@ -2309,7 +2310,9 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
     the export with ``UnsupportedNodeError``. Every node is written as the frame call that adds that
     same node type back (``write_csv``, ``.polars_code``, ``with_row_index``, ...), with its user
     description as ``description=``. ``deterministic_names=True`` names an unnamed boundary
-    ``<type_label>_<id>``, what a seeded notebook session binds.
+    ``<type_label>_<id>``, what a seeded notebook session binds. ``decorated_scripts=True`` writes a
+    Python Script as ``@ff.python_script`` when its cells regenerate; it needs module-level statements,
+    so only the notebook render asks for it and the wrapped export keeps ``ff.PythonScript(cells=...)``.
 
     The notebook render (``placeholders=True``) keeps every cell inside what a notebook interprets
     without a kernel: a formula whose translation a cell does not interpret (a ``lambda`` for hashing,
@@ -2320,10 +2323,17 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
     framework = "ff"
     flowfile_alias = "ff"
 
-    def __init__(self, flow_graph: FlowGraph, placeholders: bool = False, deterministic_names: bool = False):
+    def __init__(
+        self,
+        flow_graph: FlowGraph,
+        placeholders: bool = False,
+        deterministic_names: bool = False,
+        decorated_scripts: bool = False,
+    ):
         super().__init__(flow_graph)
         self.placeholders = placeholders
         self.deterministic_names = deterministic_names
+        self.decorated_scripts = decorated_scripts
         self._blocked: set[int] = set()
         self._statuses: dict | None = None
         self.imports.add("import flowfile as ff")

@@ -13,6 +13,7 @@ import ast
 import asyncio
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -30,6 +31,7 @@ from tests.notebook.conftest import NOTEBOOK_OWNER_ID, cell_provenance
 IMAGE = "flowfile-kernel-notebook:dev"
 KERNEL_ID = "nb-smoke"
 LOOPBACK = ("127.0.0.1", 50123)
+COPY_NAME = re.compile(r"flowfile_catalog\.[0-9a-f]{32}\.db")
 
 
 def _image_present() -> bool:
@@ -184,12 +186,55 @@ def test_a_notebook_session_on_a_real_kernel(smoke_flow, notebook_kernel, client
     new_nodes = [n for n in smoke_flow.nodes if n.node_id not in before]
     assert [n.node_type for n in new_nodes] == ["formula"], [n.node_type for n in new_nodes]
 
-    copy = Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID / "flowfile_catalog.db"
-    assert not copy.exists(), "nothing above reads the catalog, so the kernel never asked for a copy"
+    copies = Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID
+    assert not copies.exists(), "nothing above reads the catalog, so the kernel never asked for a copy"
     code = "print('kernels', sorted(ff.kernels))"
     catalog = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-catalog", "code": code})
     assert catalog.status_code == 200 and catalog.json()["success"], catalog.text
-    assert KERNEL_ID in catalog.json()["stdout"] and copy.exists(), catalog.json()
+    assert KERNEL_ID in catalog.json()["stdout"], catalog.json()
+    assert [COPY_NAME.fullmatch(copy.name) is not None for copy in copies.iterdir()] == [True]
+
+
+def test_a_cell_reads_the_catalog_right_after_core_wrote_it(smoke_flow, notebook_kernel, client_as):
+    """Docker Desktop serves a replaced file's old entry for a few milliseconds, in which the file exists and
+    does not open; every copy core writes therefore has a new name, which a cell opens at once."""
+    from sqlalchemy import text
+
+    from flowfile_core.database.connection import get_db_context
+
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}
+    assert client.post("/notebook/session/open", json=key).status_code == 200
+    listed = client.post(
+        "/notebook/session/execute", json={**key, "cell_id": "cell-kernels", "code": "print(sorted(ff.kernels))"}
+    )
+    assert listed.status_code == 200 and listed.json()["success"], listed.text
+    copies = Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID
+    seen = {copy.name for copy in copies.iterdir()}
+    probe = (
+        "from sqlalchemy import text\n"
+        "from flowfile_core.database.connection import get_db_context\n"
+        "with get_db_context() as db:\n"
+        "    print('probe', db.execute(text('SELECT max(v) FROM nb_copy_probe')).scalar())\n"
+    )
+    try:
+        with get_db_context() as db:
+            db.execute(text("CREATE TABLE IF NOT EXISTS nb_copy_probe (v INTEGER)"))
+            db.commit()
+        for value in range(1, 13):
+            with get_db_context() as db:
+                db.execute(text("INSERT INTO nb_copy_probe VALUES (:v)"), {"v": value})
+                db.commit()
+            read = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-probe", "code": probe})
+            assert read.status_code == 200 and read.json()["success"], read.text
+            assert f"probe {value}" in read.json()["stdout"], read.json()
+            left = [copy.name for copy in copies.iterdir()]
+            assert len(left) == 1 and COPY_NAME.fullmatch(left[0]) and left[0] not in seen, (left, seen)
+            seen.add(left[0])
+    finally:
+        with get_db_context() as db:
+            db.execute(text("DROP TABLE IF EXISTS nb_copy_probe"))
+            db.commit()
 
 
 def test_a_cells_artifacts_and_display_order_outlive_the_calls_after_it(smoke_flow, notebook_kernel, client_as):

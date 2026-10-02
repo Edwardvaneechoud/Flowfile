@@ -20,6 +20,7 @@ import docker.errors
 import docker.types
 import httpx
 
+from flowfile_core.auth import sharing
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.events import publish
 from flowfile_core.kernel import notebook_db, notebook_mounts
@@ -408,10 +409,14 @@ def _rebase_to_posix(local_path: str, host_prefix: str, container_prefix: str) -
 
 
 def _notebook_env(kernel: KernelInfo, db_path: str) -> dict[str, str]:
-    """A notebook kernel's flowfile reads the mounted Flowfile folders and core's copy of the database
-    (``db_path``, kernel side), and never migrates, seeds or GCs anything."""
+    """A notebook kernel's flowfile reads the mounted Flowfile folders and core's copy of the database, and never
+    migrates, seeds or GCs anything.
+
+    ``db_path`` (kernel side) only marks the catalog as a SQLite file in the copy folder: no file is written
+    there, and the kernel's session opens the copy core names on each refresh (``notebook_db.refresh``).
+    """
     env: dict[str, str] = {}
-    if notebook_mounts.is_electron_mode() and is_notebook_kernel_config(kernel):
+    if not sharing.sharing_enabled() and is_notebook_kernel_config(kernel):
         env.update(
             {
                 "FLOWFILE_STORAGE_DIR": notebook_mounts.kernel_side(str(storage.base_directory)),
