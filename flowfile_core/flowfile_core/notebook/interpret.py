@@ -115,7 +115,7 @@ def _kinds() -> dict[type, str]:
     from flowfile_frame.flow_frame import FlowFrame
     from flowfile_frame.gate import Gate
     from flowfile_frame.group_frame import GroupByFrame
-    from flowfile_frame.notebook_cells import _CanvasNode
+    from flowfile_frame.notebook_cells import SeededNode, _CanvasNode
     from flowfile_frame.parameters import Parameter
     from flowfile_frame.python_script import PythonScript, PythonScriptFunction
     from flowfile_frame.run_flow import FlowRef, RunFlow
@@ -126,6 +126,7 @@ def _kinds() -> dict[type, str]:
         FlowFrame: "FlowFrame", GroupByFrame: "GroupByFrame", Expr: "Expr", Column: "Expr", When: "Expr",
         StringMethods: "StringNS", DateTimeMethods: "DateTimeNS", Gate: "Gate",
         RunFlow: "NodeOutputs", PythonScript: "NodeOutputs", CustomNode: "NodeOutputs", _CanvasNode: "NodeOutputs",
+        SeededNode: "NodeOutputs",
         CustomNodes: "CustomNodes", CustomNodeFactory: "CustomNodeFactory", PythonScriptFunction: "ScriptFunction",
         Parameter: "Parameter", FlowRef: "FlowRef", FuzzyMapping: "FuzzyMapping", pl.DataFrame: "pl_frame",
         FlowGraph: "graph", pl.Field: "dtype",
@@ -470,11 +471,14 @@ class _Cell:
         if name.startswith("__") or (name.startswith("_") and not _STORE_NAME.fullmatch(name)):
             if name not in allowlist.HELPERS:
                 raise _needs_kernel(f"The name `{name}`", node.lineno)
-        if name not in self.namespace:
+        try:
+            value = self.namespace[name]  # not `in`: a clean run's namespace resolves seeded names on lookup
+        except KeyError:
             if name in _BUILTIN_NAMES or name == "display":
-                raise _needs_kernel(f"`{name}`", node.lineno)
-            raise _error(NameError(f"name {name!r} is not defined", name=name), node.lineno)
-        value = self.namespace[name]
+                raise _needs_kernel(f"`{name}`", node.lineno) from None
+            raise _error(NameError(f"name {name!r} is not defined", name=name), node.lineno) from None
+        except NameError as exc:
+            raise _error(exc, node.lineno) from exc
         if kind_of(value) is None:
             raise _needs_kernel(f"`{name}`", node.lineno)
         return value

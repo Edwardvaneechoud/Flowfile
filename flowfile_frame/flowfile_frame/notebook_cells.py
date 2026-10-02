@@ -844,9 +844,10 @@ def _prune(graph: FlowGraph, namespace: dict[str, Any]) -> set[int]:
 class _SeededNames(dict):
     """A clean run's namespace, which also resolves the names a session seeds from the canvas (:func:`seed_session`).
 
-    A seeded name no cell has bound is the node a cell already rebuilt for that canvas node (the relabel
-    rule), else that canvas node adopted as :func:`canvas_node` does, with its input resolved the same way;
-    ``adopted`` maps each adopted node to its canvas id. Only Python name lookups reach it (``exec``).
+    A seeded name no cell has bound is the node a cell above already rebuilt for that canvas node (the
+    relabel rule), as a fused chain binds only its last node's name; when no cell has rebuilt it yet,
+    looking it up raises ``NameError``, since the cells run top to bottom. Both executors resolve names
+    through ``self[name]``, so both reach :meth:`__missing__`.
     """
 
     def __init__(self, namespace: dict[str, Any], mode: notebook.NotebookMode) -> None:
@@ -856,19 +857,25 @@ class _SeededNames(dict):
             getattr(twin.setting_input, "node_reference", None) or node_label(twin.node_type, canvas_id): canvas_id
             for canvas_id, twin in mode.snapshot.items()
         }
-        self.adopted: dict[int, int] = {}
 
     def __missing__(self, name: str) -> Any:
         if name not in self._canvas_ids:
             raise KeyError(name)
-        return self._binding(self._canvas_ids[name])
+        canvas_id = self._canvas_ids[name]
+        node = self._rebuilt(canvas_id)
+        if node is None:
+            raise NameError(
+                f"name {name!r} is not defined yet: the cells run top to bottom and no cell above this one builds "
+                f"canvas node {canvas_id}; move this cell below the one that builds it",
+                name=name,
+            )
+        return self._binding(node)
 
     def _mapping(self) -> dict[int, int]:
         """Every node built so far onto its canvas id, the relabel rule's (an id above the snapshot's when new)."""
         mode, graph = self._mode, self._mode.graph
         running = [(mode.cell_id, graph.get_node(n).node_type, n) for n in mode.cell_nodes if graph.get_node(n)]
-        created = [entry for entry in (*mode.provenance, *running) if entry[2] not in self.adopted]
-        return {**provenance_mapping(created, mode.expected, max(mode.snapshot, default=0)), **self.adopted}
+        return provenance_mapping([*mode.provenance, *running], mode.expected, max(mode.snapshot, default=0))
 
     def _rebuilt(self, canvas_id: int) -> FlowNode | None:
         graph = self._mode.graph
@@ -916,37 +923,22 @@ class _SeededNames(dict):
 
         return resolve
 
-    def _binding(self, canvas_id: int) -> FlowFrame | SeededNode:
+    def _binding(self, node: FlowNode) -> FlowFrame | SeededNode:
         graph = self._mode.graph
-        node = self._rebuilt(canvas_id)
-        if node is not None:
-            names = output_names_of(node.setting_input)
-            frames = {
-                output_handle(i): FlowFrame(
-                    data=materialise(node, None if i == 0 else output_handle(i)).data_frame,
-                    flow_graph=graph,
-                    node_id=node.node_id,
-                    output_handle=output_handle(i),
-                    deferred=True,
-                )
-                for i in range(len(names))
-            }
-            if _binds_seeded_node(node.node_type, node.setting_input):
-                return SeededNode(graph, node.node_id, node.node_type, names, frames)
-            return frames[DEFAULT_OUTPUT_HANDLE]
-        twin = self._mode.snapshot[canvas_id]
-        if len(twin.inputs) > 1:
-            raise NativeNodeError(
-                f"Canvas node {canvas_id} has several inputs and no cell builds it; "
-                f"build it in a cell, or with ff.canvas_node({canvas_id}, ...)"
+        names = output_names_of(node.setting_input)
+        frames = {
+            output_handle(i): FlowFrame(
+                data=materialise(node, None if i == 0 else output_handle(i)).data_frame,
+                flow_graph=graph,
+                node_id=node.node_id,
+                output_handle=output_handle(i),
+                deferred=True,
             )
-        inputs = []
-        for source_id, handle in twin.inputs:
-            source = self._binding(source_id)
-            inputs.append(source[handle] if isinstance(source, SeededNode) else source)
-        bound = canvas_node(canvas_id, *inputs)
-        self.adopted[bound.node_id] = canvas_id
-        return bound
+            for i in range(len(names))
+        }
+        if _binds_seeded_node(node.node_type, node.setting_input):
+            return SeededNode(graph, node.node_id, node.node_type, names, frames)
+        return frames[DEFAULT_OUTPUT_HANDLE]
 
 
 def clean_run(
@@ -1012,9 +1004,8 @@ def clean_run(
                         "refusals": list(mode.refusals),
                     }
             kept = _prune(mode.graph, namespace)
-            created = [entry for entry in mode.provenance if entry[2] in kept and entry[2] not in namespace.adopted]
-            adopted = {node_id: canvas_id for node_id, canvas_id in namespace.adopted.items() if node_id in kept}
-            mapping = {**provenance_mapping(created, known, ceiling), **adopted}
+            created = [entry for entry in mode.provenance if entry[2] in kept]
+            mapping = provenance_mapping(created, known, ceiling)
             payload = relabel(mode.graph.get_flowfile_data().model_dump(mode="json"), mapping)
             cell_nodes: dict[str, list[int]] = {cell_id: [] for cell_id, _ in cells}
             for cell_id, _, node_id in created:

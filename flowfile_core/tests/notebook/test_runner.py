@@ -11,6 +11,7 @@ import pytest
 
 import flowfile as ff
 from flowfile_core import main
+from flowfile_core.flowfile.code_generator.code_generator import node_label
 from flowfile_core.notebook import allowlist, bridge
 from flowfile_core.notebook import runner as runner_module
 from flowfile_core.notebook.interpret import CellInterpreter
@@ -19,7 +20,7 @@ from flowfile_core.notebook.render import render
 from flowfile_core.notebook.runner import NotebookRunner, install_notebook_runner, request_refusal
 from flowfile_frame import notebook, notebook_cells
 from flowfile_frame.notebook_cells import exec_cell
-from tests.notebook.conftest import NOTEBOOK_OWNER_ID, ExecRunner
+from tests.notebook.conftest import NOTEBOOK_OWNER_ID, RUNNERS, ExecRunner, masked_payload
 from tests.notebook.test_push import _body, _cell_of, _node_of_type, _raise_threshold
 
 
@@ -259,3 +260,27 @@ def test_the_exec_runner_differs_from_the_production_runner_only_in_its_executor
     assert ExecRunner().executor() is exec_cell
     first, second = NotebookRunner().executor(), NotebookRunner().executor()
     assert isinstance(first, CellInterpreter) and isinstance(second, CellInterpreter) and first is not second
+
+
+@pytest.mark.parametrize("above", [False, True], ids=["below-the-chain", "above-the-chain"])
+def test_both_runners_resolve_a_fused_chains_inner_name_only_below_the_chain(above):
+    graph = _small_graph()
+    source = _node_of_type(graph, "manual_input")
+    name = node_label(source.node_type, source.node_id)
+    cells = [(cell.cell_id, cell.code) for cell in render(graph).cells]
+    assert not any(code.startswith(f"{name} =") for _, code in cells), "the chain binds only its last name"
+    cells.insert(1 if above else len(cells), ("uses", f"picked = {name}.select('a')"))
+    request = _request(graph, cells)
+    results = {kind: runner().clean_run(NOTEBOOK_OWNER_ID, 1, request) for kind, runner in RUNNERS.items()}
+
+    if above:
+        failures = {kind: (r.cell_id, r.line, r.kind, r.error) for kind, r in results.items()}
+        assert failures["interpreting"] == failures["exec"], failures
+        assert failures["exec"][:3] == ("uses", 1, "error") and "move this cell below" in failures["exec"][3]
+        return
+    assert all(r.error is None for r in results.values()), {kind: r.error for kind, r in results.items()}
+    payloads = {kind: masked_payload(r.flowfile_data) for kind, r in results.items()}
+    assert payloads["interpreting"] == payloads["exec"]
+    nodes = results["exec"].flowfile_data["nodes"]
+    assert len({node["id"] for node in nodes}) == len(nodes)
+    assert next(node for node in nodes if node["type"] == "select")["input_ids"] == [source.node_id]

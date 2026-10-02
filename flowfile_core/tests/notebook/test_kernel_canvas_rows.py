@@ -458,13 +458,18 @@ def test_pushing_a_loop_cell_on_a_file_the_kernel_cannot_see_adds_its_node(edito
     assert [op.node_type for op in added] == ["formula"], [op.model_dump(mode="json") for op in plan.operations]
 
 
-def test_a_seeded_name_no_cell_builds_adopts_its_canvas_node(editor_built_flow, kernel_sim):
-    plan = _plan(editor_built_flow, kernel_sim, "big = source_1.filter(ff.col('quantity') > 10)", rendered=False)
-    added = [op.model_dump(mode="json") for op in plan.operations if op.op == "add_node"]
-    assert [op["node_type"] for op in added] == ["filter"], added
-    assert added[0]["node_id"] > 2 and plan.deletions == [2], plan
-    connects = [op.connection.output_connection.node_id for op in plan.operations if op.op == "connect"]
-    assert connects == [1], plan
+def test_a_seeded_name_no_cell_builds_fails_on_its_cell_with_and_without_a_kernel(editor_built_flow, kernel_sim):
+    from fastapi import HTTPException
+
+    details = []
+    for kernel in (kernel_sim, None):
+        with pytest.raises(HTTPException) as failed:
+            _plan(editor_built_flow, kernel, "big = source_1.filter(ff.col('quantity') > 10)", rendered=False)
+        assert failed.value.status_code == 422
+        details.append(failed.value.detail)
+    assert details[0] == details[1], details
+    assert (details[0]["cell_id"], details[0]["line"], details[0]["kind"]) == ("extra-0", 1, "error"), details[0]
+    assert "name 'source_1' is not defined yet" in details[0]["message"], details[0]
 
 
 @pytest.fixture
