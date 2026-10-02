@@ -127,7 +127,6 @@ In cells, write file paths as they are on your machine (`C:\Users\me\data\sales.
 Limits:
 
 - Only in the desktop app and in a default `pip install flowfile` (`FLOWFILE_MODE` unset or `electron`), for a local connection, and with the default SQLite catalog database. Docker deployments keep the notebook without a kernel.
-- Not on Windows yet.
 - The kernel's `flowfile` must have the same version as the app; after an update, recreate the notebook kernel.
 - On Apple Silicon Macs (Linux arm64 containers), installing `flowfile` on the lite kernel currently fails, because `polars-grouper` publishes no aarch64 Linux wheel.
 

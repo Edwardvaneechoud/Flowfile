@@ -16,7 +16,6 @@ import type {
 } from "../api/notebook.api";
 import type { FlowParameter, RunInformation } from "../types/flow.types";
 import type { DisplayOutput, ExecuteResult } from "../types/kernel.types";
-import { desktopPlatform } from "../../lib/desktop";
 import type { CellOutput, TableExample } from "../types/node.types";
 import { detailMessage } from "../composables/saveError";
 import {
@@ -684,9 +683,9 @@ export const useNotebookStore = defineStore("notebook", {
     hasPythonCells(): boolean {
       return this.active?.cells.some((c) => c.cellType === "python") ?? false;
     },
-    /** A flow tab may pick a kernel: the server runs sessions and the host is not Windows (yet). */
+    /** A flow tab may pick a kernel when the server runs kernel sessions. */
     kernelSessions(state): boolean {
-      return !!state.flowStatus?.kernel_sessions && desktopPlatform !== "windows";
+      return !!state.flowStatus?.kernel_sessions;
     },
     /** A new catalog tab inherits the active catalog tab's kernel. */
     inheritedKernelId(): string | null {
