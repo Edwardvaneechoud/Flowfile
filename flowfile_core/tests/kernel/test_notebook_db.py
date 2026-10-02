@@ -6,6 +6,8 @@ import sqlite3
 import threading
 from contextlib import closing
 
+import pytest
+
 from flowfile_core.kernel import notebook_db
 
 COPY_NAME = re.compile(r"flowfile_catalog\.[0-9a-f]{32}\.db")
@@ -91,6 +93,28 @@ def test_a_copy_is_never_written_over_a_name_the_kernel_has_seen(tmp_path, monke
 def test_no_copy_without_a_sqlite_file(tmp_path, monkeypatch):
     monkeypatch.setenv("FLOWFILE_DB_PATH", "sqlite:///:memory:")
     assert notebook_db.refresh(str(tmp_path), "k") is None
+
+
+@pytest.mark.parametrize("kernel_id", ["..", ".", "../artifacts", "{outside}"])
+def test_a_kernel_id_that_leaves_the_copies_folder_is_refused(tmp_path, monkeypatch, kernel_id):
+    source = tmp_path / "flowfile_catalog.db"
+    monkeypatch.setenv("FLOWFILE_DB_PATH", str(source))
+    with closing(sqlite3.connect(source)) as conn:
+        conn.execute("CREATE TABLE t (v INTEGER)")
+        conn.commit()
+    shared, outside = tmp_path / "shared", tmp_path / "outside"
+    kept = [shared / "artifacts" / "model.bin", outside / "data.csv"]
+    for path in kept:
+        path.parent.mkdir(parents=True)
+        path.write_text("kept")
+    copy = notebook_db.refresh(str(shared), "k")
+    kernel_id = kernel_id.format(outside=outside)
+
+    for call in (notebook_db.refresh, notebook_db.remove, notebook_db.copy_path):
+        with pytest.raises(ValueError, match="Kernel id"):
+            call(str(shared), kernel_id)
+    assert copy.exists() and all(path.read_text() == "kept" for path in kept)
+    assert sorted(p.name for p in outside.iterdir()) == ["data.csv"]
 
 
 def test_one_kernels_copy_never_waits_on_anothers(tmp_path, monkeypatch):

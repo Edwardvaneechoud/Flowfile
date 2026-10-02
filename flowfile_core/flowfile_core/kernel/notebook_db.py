@@ -35,7 +35,16 @@ _copies: dict[str, Path] = {}
 
 
 def copy_dir(shared_dir: str, kernel_id: str) -> Path:
-    return Path(shared_dir) / COPY_DIR / kernel_id
+    """The folder of ``kernel_id``'s copies, which :func:`remove` deletes whole.
+
+    ``ValueError`` for an id that does not name a folder inside the copies folder (``..``, a path): a kernel's
+    id is whatever its creator typed.
+    """
+    root = os.path.normpath(os.path.join(shared_dir, COPY_DIR))
+    directory = os.path.normpath(os.path.join(root, kernel_id))
+    if not directory.startswith(root + os.sep):
+        raise ValueError(f"Kernel id {kernel_id!r} cannot name the folder of its database copies")
+    return Path(directory)
 
 
 def copy_path(shared_dir: str, kernel_id: str) -> Path:
