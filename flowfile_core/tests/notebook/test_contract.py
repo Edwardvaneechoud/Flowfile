@@ -396,5 +396,5 @@ def test_only_the_kernel_session_names_the_exec_executor():
             if {"tests", "__pycache__"} & set(path.relative_to(base).parts[:-1]):
                 continue
             if "exec_cell" in _names(ast.parse(path.read_text(encoding="utf-8"), str(path))):
-                naming.add(str(path.relative_to(REPO)))
+                naming.add(path.relative_to(REPO).as_posix())
     assert naming == EXEC_CELL_SITES, naming

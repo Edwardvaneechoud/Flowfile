@@ -1,5 +1,7 @@
 """The kernel mount table and folder validation (no Docker)."""
 
+import sys
+
 import pytest
 
 from flowfile_core.kernel import notebook_mounts
@@ -53,6 +55,11 @@ def test_validate_folders(tmp_path, monkeypatch):
         validate_mounted_folders(["relative/dir"])
     with pytest.raises(ValueError, match="does not exist"):
         validate_mounted_folders([str(tmp_path / "missing")])
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a Windows folder appears under /host/<drive>, never a system path")
+def test_folders_shadowing_kernel_system_paths_are_refused(monkeypatch):
+    monkeypatch.delenv("FLOWFILE_MODE", raising=False)
     with pytest.raises(ValueError, match="kernel's own files"):
         validate_mounted_folders(["/usr"])
 
@@ -70,7 +77,7 @@ def test_mount_table_for_plain_and_notebook_kernels(tmp_path, monkeypatch):
     chosen = tmp_path / "chosen"
     chosen.mkdir()
     plain = KernelInfo(id="k", name="k", mounted_folders=[str(chosen), str(tmp_path / "gone")])
-    assert build_mount_table(plain) == {str(chosen): str(chosen)}
+    assert build_mount_table(plain) == {str(chosen): kernel_side(str(chosen))}
 
     notebook = KernelInfo(id="n", name="n", packages=["flowfile==0.21.0"])
     assert is_notebook_kernel_config(notebook)
@@ -91,8 +98,9 @@ def test_custom_image_marker():
 
 def test_key_store_masked_when_a_folder_holds_it(tmp_path, monkeypatch):
     monkeypatch.setenv("FLOWFILE_SECURE_STORAGE_PATH", str(tmp_path / ".config" / "flowfile"))
-    assert masked_paths({str(tmp_path): str(tmp_path)}) == [str(tmp_path / ".config" / "flowfile")]
-    assert masked_paths({str(tmp_path / "data"): str(tmp_path / "data")}) == []
+    key_store = kernel_side(str(tmp_path / ".config" / "flowfile"))
+    assert masked_paths({str(tmp_path): kernel_side(str(tmp_path))}) == [key_store]
+    assert masked_paths({str(tmp_path / "data"): kernel_side(str(tmp_path / "data"))}) == []
     assert notebook_mounts.key_store_dir() == str(tmp_path / ".config" / "flowfile")
 
 
@@ -113,9 +121,9 @@ def test_run_kwargs_and_env_for_a_folder_kernel(tmp_path, monkeypatch):
 
     kwargs = mgr._build_run_kwargs("k", kernel, {})
     assert [(m["Source"], m["Target"], m["ReadOnly"]) for m in kwargs["mounts"]] == [
-        (str(tmp_path / "home"), str(tmp_path / "home"), True)
+        (str(tmp_path / "home"), kernel_side(str(tmp_path / "home")), True)
     ]
-    assert kwargs["tmpfs"] == {str(tmp_path / "home" / ".config" / "flowfile"): "ro"}
+    assert kwargs["tmpfs"] == {kernel_side(str(tmp_path / "home" / ".config" / "flowfile")): "ro"}
     assert mgr.to_kernel_path(str(tmp_path / "shared" / "a")) == "/shared/a"
 
     env = mgr._build_kernel_env("k", kernel)
@@ -148,7 +156,7 @@ def test_folders_holding_flowfile_storage_are_refused(tmp_path, monkeypatch):
         str(base / "outputs"),
     ]
     saved = KernelInfo(id="k", name="k", mounted_folders=[str(tmp_path), str(tmp_path / "data")])
-    assert build_mount_table(saved) == {str(tmp_path / "data"): str(tmp_path / "data")}
+    assert build_mount_table(saved) == {str(tmp_path / "data"): kernel_side(str(tmp_path / "data"))}
 
 
 @pytest.mark.parametrize(
