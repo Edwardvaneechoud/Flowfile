@@ -23,6 +23,7 @@ from flowfile_core.notebook.runner import NotebookRunner
 from flowfile_core.routes import routes as editor_routes
 from flowfile_core.schemas import input_schema
 from tests.notebook.conftest import ExecRunner
+from tests.notebook.corpus import build_drawer_script, build_python_script_cells
 
 OWNER_ID = 1
 
@@ -100,6 +101,64 @@ def test_push_with_nothing_changed_applies_nothing(runner, orders_flow, client_a
     assert response.status_code == 200, response.text
     assert response.json()["history"]["undo_count"] == undo_before
     assert response.json()["code_fingerprint"] == code_fingerprint(orders_flow)
+
+
+def _script_input(graph):
+    return _node_of_type(graph, "python_script").setting_input.python_script_input
+
+
+def test_an_unedited_drawer_script_pushes_nothing_and_keeps_its_cells(runner_kind, request, open_as, client_as):
+    """The script renders as a function without a ``return``; its cells keep their ids and trailing newlines."""
+    request.getfixturevalue("runner" if runner_kind == "interpreting" else "exec_runner")
+    client, graph = client_as(OWNER_ID), open_as(build_drawer_script())
+    stored = _script_input(graph).model_dump()
+    assert all(cell["code"].endswith("\n") for cell in stored["cells"])
+    body = _body(graph)
+    code = dict(body["cells"])[_cell_of(graph, _node_of_type(graph, "python_script").node_id)]
+    assert code.startswith('@ff.python_script(kernel="corpus_kernel", description="")\ndef _script_2():\n'), code
+    assert code.endswith("\n\n\npython_script_2 = _script_2(source_1)"), code
+
+    plan = client.post("/notebook/plan", json=body)
+    assert plan.status_code == 200 and plan.json()["operations"] == [], plan.text
+    undo_before = client.get("/editor/history_status/", params={"flow_id": graph.flow_id}).json()["undo_count"]
+    response = client.post("/editor/notebook/push/", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["history"]["undo_count"] == undo_before
+    assert _script_input(graph).model_dump() == stored
+
+
+def test_an_edited_drawer_script_is_one_update_that_keeps_its_kernel(runner_kind, request, open_as, client_as):
+    request.getfixturevalue("runner" if runner_kind == "interpreting" else "exec_runner")
+    client, graph = client_as(OWNER_ID), open_as(build_drawer_script())
+    script_id = _node_of_type(graph, "python_script").node_id
+    cell_id = _cell_of(graph, script_id)
+    body = _body(graph, lambda cells: {**cells, cell_id: cells[cell_id].replace("> 0", "> 5")}, changed=[cell_id])
+
+    plan = client.post("/notebook/plan", json=body)
+    assert plan.status_code == 200, plan.text
+    assert [(op["op"], op["settings"]["node_id"]) for op in plan.json()["operations"]] == [
+        ("update_settings", script_id)
+    ]
+    assert client.post("/editor/notebook/push/", json=body).status_code == 200
+    stored = _script_input(graph)
+    assert stored.kernel_id == "corpus_kernel"
+    assert [cell.code for cell in stored.cells] == [
+        "import polars as pl\n\ndf = flowfile_ctx.read_input()\n\n# Your transformation here",
+        "flowfile_ctx.publish_output(df.filter(pl.col('amount') > 5))",
+    ]
+    assert stored.code == "\n\n".join(cell.code for cell in stored.cells)
+    assert client.post("/notebook/plan", json=_body(graph)).json()["operations"] == []
+
+
+def test_an_unedited_script_the_render_keeps_as_cells_pushes_nothing(runner, open_as, client_as):
+    client, graph = client_as(OWNER_ID), open_as(build_python_script_cells())
+    stored = _script_input(graph).model_dump()
+    body = _body(graph)
+    assert "ff.PythonScript(" in dict(body["cells"])[_cell_of(graph, _node_of_type(graph, "python_script").node_id)]
+    plan = client.post("/notebook/plan", json=body)
+    assert plan.status_code == 200 and plan.json()["operations"] == [], plan.text
+    assert client.post("/editor/notebook/push/", json=body).status_code == 200
+    assert _script_input(graph).model_dump() == stored
 
 
 def test_push_refuses_a_stale_fingerprint_with_the_live_one(runner, orders_flow, client_as):

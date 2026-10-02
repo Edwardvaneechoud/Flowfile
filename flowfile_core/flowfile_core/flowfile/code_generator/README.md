@@ -33,7 +33,7 @@ express into `ff.canvas_node(...)` instead of failing. The round-trip tests (exe
 | `join_handlers.py` | `JoinHandlersMixin` — standard / semi-anti / cross joins, join-key transforms, post-join processing. |
 | `transform_handlers.py` | `TransformHandlersMixin` — row/column transforms (group_by, formula, pivot, sort, window, fuzzy match, record_id, …). |
 | `connector_handlers.py` | `ConnectorHandlersMixin` — external connectors (cloud storage, Kafka, database, REST API, catalog readers/writers). |
-| `native_handlers.py` | `NativeHandlersMixin` (FlowFrame export only) — gates, subflows, Python Scripts, flow ports and custom nodes as the frame's native classes (`ff.Gate`, `ff.RunFlow`, `ff.PythonScript`/`@ff.python_script`, `ff.FlowInput`, `.to_flow_output`, `ff.custom_nodes`). |
+| `native_handlers.py` | `NativeHandlersMixin` (FlowFrame export only) — gates, subflows, Python Scripts, flow ports and custom nodes as the frame's native classes (`ff.Gate`, `ff.RunFlow`, `ff.PythonScript`, `ff.FlowInput`, `.to_flow_output`, `ff.custom_nodes`). A Python Script is written as `@ff.python_script` only with `decorated_scripts=True` (the notebook render) and when its cells regenerate; a script written in the drawer regenerates as a function without a `return`. |
 | `custom_node_handlers.py` | `CustomNodeHandlersMixin` — user-defined node source registration and call emission. |
 | `expression_helpers.py` | `ExpressionHelpersMixin` — filter-expression parsing and Polars dtype / aggregation mapping. |
 | `chain_fusion.py` | Pure string/graph fusion pass (`render_pipeline`); no flow imports, unit-testable in isolation. |

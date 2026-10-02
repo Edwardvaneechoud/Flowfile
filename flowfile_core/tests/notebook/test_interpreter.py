@@ -165,6 +165,18 @@ SHAPES = {
         "@ff.python_script(outputs=['left', 'right'])\ndef split(frame):\n    return {'left': frame, 'right': frame}\n\n\n"
         "split_4 = split.node(src)\nleft = split_4['left']\nright = split_4['right']",
     ],
+    "python_script_raw": [
+        IMPORTS,
+        SOURCE,
+        "@ff.python_script(kernel='lite', description='')\ndef _script_3():\n    import polars as pl\n\n"
+        "    df = flowfile_ctx.read_input()\n\n    # %% Publish\n    flowfile_ctx.publish_output(df.head(1))\n\n\n"
+        "scripted = _script_3(src)",
+        "@ff.python_script(outputs=['left', 'right'])\ndef _script_4():\n    for name in ('left', 'right'):\n"
+        "        flowfile_ctx.publish_output(flowfile_ctx.read_input(), name)\n\n\n"
+        "split_4 = _script_4.node(src, scripted)\nleft = split_4['left']\nright = split_4['right']",
+        "@ff.python_script(kernel='lite')\ndef _script_5():\n"
+        "    flowfile_ctx.publish_output(pl.DataFrame({'a': [1]}))\n\n\nmade = _script_5()",
+    ],
     "python_script_prelude_constants": [
         IMPORTS,
         SOURCE,
@@ -244,6 +256,12 @@ ERRORS = {
     "method_name_above_its_arguments": "out = (df\n    .filter(ff.col('a') > 1)\n    .join(\n        df, on='nope'))",
     "polars_error": "out = df.unpivot(on=['nope'])",
     "python_script_decorator": "x = 1\n@ff.python_script(\n    kernel='k')\ndef s(df):\n    return helper(df)",
+    "python_script_with_parameters_and_no_return": (
+        "@ff.python_script(\n    kernel='k')\ndef s(df):\n    flowfile_ctx.publish_output(df)"
+    ),
+    "python_script_with_frames_it_cannot_take": (
+        "@ff.python_script\ndef s():\n    flowfile_ctx.publish_output(None)\n\n\nout = s(df, 1)"
+    ),
     "invalid_settings": "out = df.to_flow_output('')",
     "notebook_refusal": "ff.RunFlow(df)",
     "missing_custom_node": "x = ff.custom_nodes.nope_nope",
@@ -356,6 +374,35 @@ def test_a_node_reference_naming_a_builtin_renders_and_syncs():
     set_node_reference(graph, counted.node_id, "input")
     code = "\n".join(cell.code for cell in render(graph).cells)
     assert re.search(r"^sum = ", code, re.M) and re.search(r"^input = sum", code, re.M)
+    _assert_both_runners_build_it_alike(graph)
+
+
+def test_a_drawer_script_renders_as_a_function_without_a_return_and_both_runners_build_it_alike():
+    from tests.notebook.corpus import build_drawer_script
+
+    graph = build_drawer_script()
+    code = "\n".join(cell.code for cell in render(graph).cells)
+    assert "def _script_2():\n    import polars as pl\n" in code and "python_script_2 = _script_2(source_1)" in code
+    assert "ff.PythonScript(" not in code
+    _assert_both_runners_build_it_alike(graph)
+
+
+def test_a_script_using_a_builtin_a_node_is_named_after_keeps_its_cells_and_syncs():
+    """The notebook binds the node named ``sum`` as a variable, which a decorated body would read instead of the
+    builtin and fail the push on; the render keeps such a script as cells."""
+    from tests.notebook.corpus import build_drawer_script
+
+    graph = build_drawer_script()
+    script = graph.get_node(2).setting_input
+    script.python_script_input.cells[0].code += "total = sum([1])\n"
+    script.python_script_input.code = "\n\n".join(cell.code for cell in script.python_script_input.cells)
+    graph.add_python_script(script)
+    assert "def _script_2():" in "\n".join(cell.code for cell in render(graph).cells)
+    _assert_both_runners_build_it_alike(graph)
+
+    set_node_reference(graph, 1, "sum")
+    code = "\n".join(cell.code for cell in render(graph).cells)
+    assert "ff.PythonScript(\n    sum," in code and "@ff.python_script" not in code
     _assert_both_runners_build_it_alike(graph)
 
 

@@ -622,6 +622,92 @@ def test_a_node_on_another_kernel_still_runs(scripted_flow, locking_client, lock
     assert result["stdout"].strip() == "2" and took < locking_kernel_sim.LOCK_WAIT, result
 
 
+def _node_cells(flow) -> list:
+    from flowfile_core.notebook.render import render
+
+    return [cell for cell in render(flow).cells if cell.kind == "node"]
+
+
+def _script_cell(flow):
+    """The rendered cell of the flow's Python Script, and the name it binds to the script's output."""
+    script_id = _node_id(flow, "python_script")
+    cell = next(cell for cell in _node_cells(flow) if script_id in cell.node_ids)
+    return cell.code, cell.defines[-1]
+
+
+DRAWER_SCRIPT = (
+    'flowfile_ctx = globals().get("flowfile_ctx")\n'
+    "if flowfile_ctx is not None:\n"
+    "    flowfile_ctx.publish_output(flowfile_ctx.read_input())\n"
+)
+"""A script as the drawer stores one (it publishes itself, and ends in a newline) that also runs in the kernel
+sim, which has no ``flowfile_ctx`` and passes the input through."""
+
+
+@pytest.fixture
+def drawer_script_flow(open_as):
+    """``from_dict -> Python Script``, the script last, opened and run once on the canvas."""
+    import flowfile as ff
+
+    def _build(kernel: str):
+        orders = ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
+        flow = open_as(ff.PythonScript(orders, cells=[DRAWER_SCRIPT], kernel=kernel).output.flow_graph)
+        assert all(result.success for result in flow.run_graph().node_step_result)
+        return flow
+
+    return _build
+
+
+@pytest.mark.parametrize("own_kernel", [False, True], ids=["another-kernel", "the-sessions-own-kernel"])
+def test_rerunning_a_script_cell_unchanged_reads_the_canvas_rows(
+    drawer_script_flow, locking_client, locking_kernel_sim, own_kernel
+):
+    """The cell builds the script again under a new id; with the canvas node's settings and inputs it stands for
+    that node, so its rows are the canvas's (on the session's own kernel, the result the canvas already has)."""
+    flow = drawer_script_flow(locking_kernel_sim.kernel.id if own_kernel else OTHER_KERNEL)
+    code, name = _script_cell(flow)
+    assert code.startswith("@ff.python_script("), code
+    for _ in range(2):
+        assert _execute(locking_client, flow, locking_kernel_sim, code)["success"]
+        read = _execute(locking_client, flow, locking_kernel_sim, f"print({name}.collect().height)")
+        assert read["success"] and read["stdout"].strip() == "3", read
+    asked = [body["node_id"] for body in locking_kernel_sim.node_results]
+    assert asked == [_node_id(flow, "python_script")], "the second run reuses the path of the first"
+
+
+def test_run_all_of_a_scripted_flow_computes_below_the_script_on_its_canvas_rows(
+    scripted_flow, locking_client, locking_kernel_sim
+):
+    flow = scripted_flow(OTHER_KERNEL)
+    cells = _node_cells(flow)
+    for cell in cells:
+        result = _execute(locking_client, flow, locking_kernel_sim, cell.code)
+        assert result["success"], (cell.code, result)
+    read = _execute(locking_client, flow, locking_kernel_sim, f"print({cells[-1].defines[-1]}.collect().height)")
+    assert read["success"] and read["stdout"].strip() == "2", read
+    asked = [body["node_id"] for body in locking_kernel_sim.node_results]
+    assert asked == [_node_id(flow, "python_script")], "only the script's rows come from the canvas"
+
+
+@pytest.mark.parametrize("edited", ["script", "source"])
+def test_an_edited_script_or_source_cell_still_says_push_first(
+    scripted_flow, locking_client, locking_kernel_sim, edited
+):
+    flow = scripted_flow(OTHER_KERNEL)
+    code, name = _script_cell(flow)
+    if edited == "script":
+        assert "x = 1" in code
+        code = code.replace("x = 1", "x = 2")
+    else:
+        source = next(cell.code for cell in _node_cells(flow) if _node_id(flow, "manual_input") in cell.node_ids)
+        assert "30" in source
+        assert _execute(locking_client, flow, locking_kernel_sim, source.replace("30", "31"))["success"]
+    assert _execute(locking_client, flow, locking_kernel_sim, code)["success"]
+    read = _execute(locking_client, flow, locking_kernel_sim, f"{name}.collect()")
+    assert not read["success"] and "Push, then it runs on the canvas" in read["error"], read
+    assert not locking_kernel_sim.node_results
+
+
 def _interrupted_cell(client, flow, sim) -> tuple[dict, float]:
     """Collect the filter while the script's kernel is busy, Stop the cell once its canvas run started, and
     return its result: the run waits on ``OTHER_KERNEL``, whose lock this holds meanwhile."""

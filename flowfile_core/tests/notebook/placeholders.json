@@ -40,5 +40,6 @@
   "native_gate": [],
   "native_flow_io": [],
   "python_script_cells": [],
+  "drawer_script": [],
   "demo": []
 }

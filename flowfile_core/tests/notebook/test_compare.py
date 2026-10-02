@@ -1,7 +1,13 @@
 """The per-type settings normaliser a push compares a rebuilt node with its canvas twin through."""
 
 import flowfile_frame as ff
-from flowfile_core.notebook.compare import normalise, param_comparison_filter, parameters_equal, settings_equal
+from flowfile_core.notebook.compare import (
+    normalise,
+    param_comparison_filter,
+    parameters_equal,
+    script_cells,
+    settings_equal,
+)
 
 
 def test_normalise_drops_record_fields_and_compares_formulas_through_the_translator():
@@ -39,6 +45,48 @@ def test_python_script_cells_compare_by_code_and_gate_by_its_active_source():
     gate = {"gate_input": {"condition_source": "formula", "formula": "[a] > 1", "parameter": "p", "value": "v"}}
     fresh = {"gate_input": {"condition_source": "formula", "formula": "([a] > 1)", "parameter": "", "value": ""}}
     assert settings_equal(gate, fresh, "gate")
+
+
+def _script(cells: list[str], code: str | None = None) -> dict:
+    joined = "\n\n".join(cell for cell in cells if cell) if code is None else code
+    return {"python_script_input": {"code": joined, "cells": [{"id": str(i), "code": c} for i, c in enumerate(cells)]}}
+
+
+def test_blank_lines_around_a_script_cell_and_blank_cells_are_cosmetic():
+    """The drawer keeps a cell's trailing newline and its empty cells; the frame's cells have neither."""
+    drawer = _script(["\n  \nimport polars as pl\n\ndf = 1\n", "", " \n", "publish(df)\n\n"])
+    frame = _script(["import polars as pl\n\ndf = 1", "publish(df)"])
+    assert settings_equal(drawer, frame, "python_script")
+    code = normalise(drawer, "python_script")["python_script_input"]["code"]
+    assert code == "import polars as pl\n\ndf = 1\n\npublish(df)"
+
+    assert not settings_equal(_script(["a = 1\n\nb = 2"]), _script(["a = 1\nb = 2"]), "python_script")
+    assert not settings_equal(_script(["  a = 1"]), _script(["a = 1"]), "python_script"), "indentation is code"
+    assert not settings_equal(_script(["a", "b"]), _script(["a\n\nb"]), "python_script"), "the split is the cells"
+
+
+def test_a_scripts_code_follows_its_cells_only_while_it_is_their_join():
+    drawer, frame = _script(["x = 1\n"]), _script(["x = 1"])
+    assert drawer["python_script_input"]["code"] == "x = 1\n" and settings_equal(drawer, frame, "python_script")
+    stale = _script(["x = 1\n"], code="x = 2")
+    assert normalise(stale, "python_script")["python_script_input"]["code"] == "x = 2"
+    assert not settings_equal(stale, frame, "python_script")
+
+
+@ff.python_script
+def noted_script():
+    """A note."""
+    rows = flowfile_ctx.read_input()
+
+    # %% Publish
+
+    flowfile_ctx.publish_output(rows)
+
+
+def test_the_frames_cells_are_already_as_they_compare():
+    expected = ["# A note.", "rows = flowfile_ctx.read_input()", "# Publish\nflowfile_ctx.publish_output(rows)"]
+    assert script_cells(noted_script.cells) == noted_script.cells == expected
+    assert script_cells(["\n", "a\n", ""]) == ["a"]
 
 
 def test_output_directory_spelled_as_the_file_path_is_the_same_target():

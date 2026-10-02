@@ -487,6 +487,21 @@ While you build, the output is a placeholder. Without `returns=`, it has the fir
 
 The values are Polars dtypes (`ff.Int64`, `pl.Float64`); anything else raises, and so does an output that `outputs=` does not list. The declaration only shapes the placeholder: a run publishes whatever the function returns, and the declaration is not saved with the flow.
 
+### Scripts without a `return`
+
+A function with no `return` is a script: its body is the notebook as written, and it reads its inputs and publishes its outputs through [`flowfile_ctx`](../../visual-editor/kernel-api.md) itself. It takes no parameters; the frames go in the call. The [canvas notebook](../../visual-editor/notebook.md) shows a script written in the node's drawer this way.
+
+```python
+--8<-- "docs/examples/native_nodes.py:script-raw"
+```
+
+- `summarise(order_lines)` wires `order_lines` as the node's first input, and the body reads it with `flowfile_ctx.read_input()`. The call takes any number of frames, wired in order. With none, `flow_graph=` on the decorator names the graph.
+- The cells are the body, dedented and split at the same [markers](#cells-and-notes), with the docstring note and the prelude as above. There is no inputs cell and no outputs marker, since nothing is rewritten.
+- A script with several outputs lists them in `outputs=`, publishes each by name and is placed with `.node(...)`.
+- `summarise.fn` is the undecorated function. It runs locally only where a `flowfile_ctx` is defined.
+
+A function without a `return` has to name `flowfile_ctx.publish_output` somewhere in its body. Without one it raises the same error as a function whose `return` is missing. A script that declares parameters raises too.
+
 ### `PythonScript`
 
 The low-level form, one-to-one with what the node stores: the cells as strings. Use it for code that is not a function, such as a notebook copied from the designer.
@@ -592,7 +607,7 @@ Every build or materialisation failure raises `ff.NativeNodeError`, a subclass o
 - **`@ff.python_script` needs the function's source.** Files, notebook cells and PyCharm's Python console provide it; in the console, a definition run before flowfile was imported has to be run again. The plain `python` prompt before Python 3.13 keeps none.
 - **Notebook variables are shared across a flow's scripts.** The body runs at the top level of the kernel's namespace for the flow, so a name it assigns (even one that shadows a builtin, such as `max`) is visible to the flow's other Python Script nodes.
 - **An upstream node referenced as `main` fails a script's run.** `read_inputs()["main"]` holds every input in wiring order, so running the script refuses an input of that name. Give the node another reference.
-- **The FlowFrame export writes these classes back.** A gate becomes `ff.Gate(...)`, a SQL Query node `ff.sql(...)`, a custom node `ff.custom_nodes.<key>(...)`, and a Python Script node `@ff.python_script` when its cells regenerate byte for byte, else `ff.PythonScript(cells=...)`. The Polars export still writes gates as `if` blocks.
+- **The FlowFrame export writes these classes back.** A gate becomes `ff.Gate(...)`, a SQL Query node `ff.sql(...)`, a custom node `ff.custom_nodes.<key>(...)`, and a Python Script node `ff.PythonScript(cells=...)`. The canvas notebook writes a Python Script node as `@ff.python_script` when its cells regenerate unchanged from the function, and as `ff.PythonScript(cells=...)` otherwise. The Polars export still writes gates as `if` blocks.
 - **No typed class per built-in node.** Node types without a dedicated class above are placed with `ff.Node` and a settings dict or model.
 
 ---
