@@ -183,7 +183,13 @@ def test_a_notebook_session_on_a_real_kernel(smoke_flow, notebook_kernel, client
     assert pushed.status_code == 200, pushed.text
     new_nodes = [n for n in smoke_flow.nodes if n.node_id not in before]
     assert [n.node_type for n in new_nodes] == ["formula"], [n.node_type for n in new_nodes]
-    assert (Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID / "flowfile_catalog.db").exists()
+
+    copy = Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID / "flowfile_catalog.db"
+    assert not copy.exists(), "nothing above reads the catalog, so the kernel never asked for a copy"
+    code = "print('kernels', sorted(ff.kernels))"
+    catalog = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-catalog", "code": code})
+    assert catalog.status_code == 200 and catalog.json()["success"], catalog.text
+    assert KERNEL_ID in catalog.json()["stdout"] and copy.exists(), catalog.json()
 
 
 def test_a_cells_artifacts_and_display_order_outlive_the_calls_after_it(smoke_flow, notebook_kernel, client_as):
