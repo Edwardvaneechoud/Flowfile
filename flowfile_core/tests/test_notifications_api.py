@@ -15,6 +15,7 @@ from collections.abc import Iterator
 
 import pytest
 from fastapi import Request
+from fastapi.routing import iter_route_contexts
 from fastapi.testclient import TestClient
 
 from flowfile_core import main
@@ -758,7 +759,7 @@ def test_deleting_a_user_deletes_their_notification_config(authed_app: None) -> 
 
 def test_every_notification_route_is_mounted_and_authenticated() -> None:
     """The router must be reachable under /notifications and never open."""
-    paths = {route.path for route in main.app.routes if getattr(route, "path", "").startswith("/notifications")}
+    paths = {route.path for route in iter_route_contexts(main.app.routes) if getattr(route, "path", "").startswith("/notifications")}
     assert paths == {
         "/notifications/channels",
         "/notifications/channels/test-url",

@@ -85,7 +85,7 @@ def create_share(
 ):
     if share.permission == sharing.PERMISSION_MANAGE and share.resource_type in sharing.MANAGE_DISALLOWED_TYPES:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Secrets can only be shared at 'use' level",
         )
     _require_manageable(db, current_user, share.resource_type, share.resource_id)
@@ -149,7 +149,7 @@ def update_share(
     if share.permission == sharing.PERMISSION_MANAGE:
         if grant.resource_type in sharing.MANAGE_DISALLOWED_TYPES:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Secrets can only be shared at 'use' level",
             )
         if not (_is_resource_owner(db, current_user, grant.resource_type, grant.resource_id) or current_user.is_admin):
