@@ -4,8 +4,11 @@ a cell as real Python, reset, the mode gate, and an unedited corpus push through
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+import threading
 from contextlib import closing
+from pathlib import Path
 
 import pytest
 
@@ -39,10 +42,15 @@ def _body(flow, kernel_sim, **extra) -> dict:
     return {"flow_id": flow.flow_id, "kernel_id": kernel_sim.kernel.id, **extra}
 
 
-def _execute(client, flow, kernel_sim, code: str, cell_id: str = "cell-1") -> dict:
-    response = client.post("/notebook/session/execute", json=_body(flow, kernel_sim, cell_id=cell_id, code=code))
+def _execute(client, flow, kernel_sim, code: str, cell_id: str = "cell-1", **extra) -> dict:
+    body = _body(flow, kernel_sim, cell_id=cell_id, code=code, **extra)
+    response = client.post("/notebook/session/execute", json=body)
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def _op(request) -> str:
+    return re.search(r'"op": "(\w+)"', request.code).group(1)
 
 
 def test_a_cell_with_an_import_and_a_loop_runs_in_the_session(orders_flow, client, kernel_sim):
@@ -264,3 +272,103 @@ def test_an_unconfigured_node_on_the_canvas_keeps_the_session_usable(open_as, cl
         assert _execute(client, flow, kernel_sim, cell.code)["success"], cell.code
     result = _execute(client, flow, kernel_sim, "print(filtered_90.columns)")
     assert result["success"] and result["stdout"].strip() == "[]", result
+
+
+def test_a_cell_runs_as_its_own_node_and_every_other_op_as_node_0(orders_flow, client, kernel_sim):
+    """The kernel clears a node's artifacts before every call it runs as that node, so what a cell publishes must
+    outlive the calls that follow it, such as the editor's schemas refresh."""
+    assert _execute(client, orders_flow, kernel_sim, "x = 1", node_id=1234)["success"]
+    assert client.post("/notebook/session/schemas", json=_body(orders_flow, kernel_sim)).status_code == 200
+    ops = [(_op(request), request.node_id) for request in kernel_sim.requests]
+    assert ops == [("hello", 0), ("open", 0), ("execute", 1234), ("schemas", 0)], ops
+
+
+def test_a_kernel_whose_flowfile_has_another_schema_head_is_refused(orders_flow, client, kernel_sim, monkeypatch):
+    from flowfile_core.notebook import kernel_runner
+    from flowfile_frame import notebook_kernel
+
+    assert notebook_kernel._schema_head() == kernel_runner._schema_revision() is not None
+    monkeypatch.setattr(notebook_kernel, "_schema_head", lambda: "999")
+    response = client.post("/notebook/session/execute", json=_body(orders_flow, kernel_sim, cell_id="c", code="1"))
+    assert response.status_code == 409 and "999" in response.json()["detail"], response.text
+    assert not kernel_runner._verified
+
+
+class _KernelClient:
+    """The kernel runtime's ``flowfile_client`` as far as a session's displays use it: its own list of displays."""
+
+    def __init__(self) -> None:
+        self.shown: list[dict] = []
+
+    def _get_displays(self) -> list[dict]:
+        return self.shown
+
+    def display(self, obj, title: str = "") -> None:
+        self.shown.append({"mime_type": "text/plain", "data": str(obj), "title": title})
+
+    explore = display
+
+
+def test_displays_come_in_the_order_the_cell_made_them(orders_flow, client, kernel_sim, monkeypatch):
+    from flowfile_frame import notebook_kernel
+
+    kernel = _KernelClient()
+    monkeypatch.setattr(notebook_kernel, "_kernel_client", lambda: kernel)
+    code = (
+        'frames = sorted(n for n, v in list(globals().items()) if type(v).__name__ == "FlowFrame")\n'
+        "display('first', title='note')\n"
+        "display(globals()[frames[-1]])\n"
+        "explore('last')\n"
+    )
+    result = _execute(client, orders_flow, kernel_sim, code)
+    assert result["success"], result
+    shown = [
+        (out["mime_type"], out["data"] if out["mime_type"] == "text/plain" else None, out["title"])
+        for out in result["display_outputs"]
+    ]
+    assert shown == [("text/plain", "first", "note"), (TABLE_MIME, None, ""), ("text/plain", "last", "")], shown
+    assert kernel.shown == []
+
+
+def test_a_close_that_lands_after_the_flow_reopened_leaves_the_new_session(
+    orders_flow, client, kernel_sim, monkeypatch
+):
+    """Closing a flow closes its sessions in the background; the flow open again by the time the kernel takes the
+    close (the store runs the next cell without opening a session), the cell runs in a new session and the close
+    leaves it and the flow's canvas results be. A close of that new session then removes both."""
+    from flowfile_core.notebook import kernel_runner
+    from flowfile_frame import notebook_kernel
+
+    close = kernel_runner._close_in_kernels
+    queued, ready = [], threading.Event()
+    monkeypatch.setattr(kernel_runner, "_close_in_kernels", lambda *args: (queued.append(args), ready.set()))
+
+    def close_flow() -> tuple:
+        queued.clear()
+        ready.clear()
+        kernel_runner.close_flow_sessions(orders_flow.flow_id)
+        assert ready.wait(5)
+        return queued[0]
+
+    assert _execute(client, orders_flow, kernel_sim, "x = 1")["success"]
+    results = Path(kernel_runner._results_dir(kernel_sim, orders_flow.flow_id))
+    results.mkdir(parents=True)
+    (results / "canvas.parquet").touch()
+    stale = close_flow()
+
+    assert _execute(client, orders_flow, kernel_sim, "y = 2")["success"]
+    close(*stale)
+    assert _execute(client, orders_flow, kernel_sim, "print(y)")["stdout"].strip() == "2"
+    assert "NameError" in _execute(client, orders_flow, kernel_sim, "x")["error"]
+    assert (results / "canvas.parquet").exists()
+
+    close(*close_flow())
+    assert orders_flow.flow_id not in notebook_kernel._SESSIONS
+    assert not results.exists()
+
+
+def test_a_flows_session_namespace_is_apart_from_every_catalog_notebooks():
+    from flowfile_core.notebook.kernel_runner import kernel_flow_id
+
+    assert kernel_flow_id(7) == -(1 << 40) - 7
+    assert kernel_flow_id(0xFFFFFFFF) < -1_600_000_000

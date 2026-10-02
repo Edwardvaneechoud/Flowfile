@@ -74,7 +74,8 @@ class NotebookSessionRequest(BaseModel):
 
 
 class NotebookSessionExecuteRequest(NotebookSessionRequest):
-    """Body of ``POST /notebook/session/execute``; ``node_id`` is the cell's node, 0 for a cell without one."""
+    """Body of ``POST /notebook/session/execute``; ``node_id`` is the node the cell runs as in the kernel, which keeps
+    the cell's displays and artifacts under it until the cell runs again (0 for a cell without one)."""
 
     cell_id: str = Field(pattern=r"^[\w.:\-]{1,128}$")
     code: str
@@ -110,7 +111,7 @@ def execute_notebook_cell(
 ) -> kernel_runner.SessionExecuteResult:
     """Run one cell as Python in the flow's session on the kernel (opened first when there is none)."""
     flow = _session_flow(body, http, current_user)
-    return kernel_runner.run_cell(flow, current_user, body.kernel_id, body.cell_id, body.code)
+    return kernel_runner.run_cell(flow, current_user, body.kernel_id, body.cell_id, body.code, body.node_id)
 
 
 @router.post("/session/reset")

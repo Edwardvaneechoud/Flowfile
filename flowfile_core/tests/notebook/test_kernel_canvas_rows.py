@@ -610,7 +610,7 @@ def test_a_file_another_kernel_was_handed_is_kept_when_superseded(coded_flow, ke
     from flowfile_core.notebook import kernel_runner
 
     monkeypatch.setattr(kernel_sim, "get_kernel_owner", lambda kernel_id: kernel_sim.owner_id)
-    kernel_runner._sessions[coded_flow.flow_id] = {"kernel-a", "kernel-b"}
+    kernel_runner._sessions[coded_flow.flow_id] = {"kernel-a": None, "kernel-b": None}
     user = PydanticUser(username="nb_owner", id=kernel_sim.owner_id, disabled=False)
     node_id = _coded_id(coded_flow)
 

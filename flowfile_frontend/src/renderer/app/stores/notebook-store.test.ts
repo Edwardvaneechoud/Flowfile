@@ -68,6 +68,7 @@ import {
   useNotebookStore,
   cellNodeId,
   flowCellKind,
+  flowSessionId,
   flowCellSyncState,
   flowNeedsSync,
   flowPushBody,
@@ -109,6 +110,14 @@ describe("cellNodeId", () => {
     expect(cellNodeId(id)).toBe(cellNodeId(id));
     expect(cellNodeId(id)).toBeGreaterThanOrEqual(0);
     expect(cellNodeId("other")).not.toBe(cellNodeId(id));
+  });
+});
+
+describe("flowSessionId", () => {
+  it("puts a flow tab's namespace below every catalog notebook's", () => {
+    expect(flowSessionId(7)).toBe(-(2 ** 40) - 7);
+    expect(flowSessionId(0xffffffff)).toBeLessThan(-1_600_000_000);
+    expect(Number.isSafeInteger(flowSessionId(0xffffffff))).toBe(true);
   });
 });
 
@@ -917,7 +926,7 @@ describe("flow notebook", () => {
     const store = useNotebookStore();
     const nb = await store.openFlowNotebook(7, "flow");
     expect(nb.kernelId).toBeNull();
-    expect(nb.sessionFlowId).toBe(-7);
+    expect(nb.sessionFlowId).toBe(flowSessionId(7));
     expect(nb.cells.map((c) => [c.id, c.code])).toEqual([
       ["node-1", "# Not configured\na = ff.canvas_node(1)"],
       ["node-2", "b = a.filter(x)"],

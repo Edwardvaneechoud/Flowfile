@@ -97,6 +97,11 @@ function newEphemeralSessionId(): number {
   return -(1_500_000_000 + Math.floor(Math.random() * 100_000_000));
 }
 
+/** The kernel namespace a flow's session runs in (core's kernel_runner.kernel_flow_id), below both ranges above. */
+export function flowSessionId(flowId: number): number {
+  return -(2 ** 40) - flowId;
+}
+
 function newCell(cellType: CellType): NotebookCellModel {
   return {
     id: newCellId(),
@@ -822,8 +827,7 @@ export const useNotebookStore = defineStore("notebook", {
         this.openNotebooks.push({
           tabId: uid("tab"),
           persistedId: null,
-          // The kernel namespace a flow's session runs in (core's kernel_runner.kernel_flow_id).
-          sessionFlowId: -flowId,
+          sessionFlowId: flowSessionId(flowId),
           name,
           description: null,
           namespaceId: null,

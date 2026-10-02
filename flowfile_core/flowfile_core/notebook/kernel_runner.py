@@ -2,13 +2,16 @@
 
 A notebook kernel is one of the user's kernels with ``flowfile`` installed
 (``kernel.notebook_support.is_notebook_kernel_config``). Core never runs the cells: it sends the kernel one
-constant snippet through ``KernelManager.execute_sync`` (a flow id of ``-flow_id``, :func:`kernel_flow_id`, so
-the call never shares a namespace with the flow's Python Script nodes; the session keeps its variables in
+constant snippet through ``KernelManager.execute_sync`` (a flow id from :func:`kernel_flow_id`, so the call never
+shares a namespace with the flow's Python Script nodes or a catalog notebook; the session keeps its variables in
 that namespace, where the editor's code intelligence reads them), and the frame's ``notebook_kernel`` module in
 the kernel runs the op and prints its JSON result on a line starting with
 ``shared.notebook_display.KERNEL_RESULT_MARKER``, which is cut from the call's stdout here. Results
 come back in the kernel routes' own shapes (``ExecuteResult``, plus a failed cell's ``line``, and the
-``dataframe_schemas`` payload). The first call to a kernel checks its flowfile version against core's.
+``dataframe_schemas`` payload). A cell runs as its own node id, so the kernel keeps what it published until that
+cell runs again; every other op runs as node 0. The first call to a kernel checks its flowfile version against
+core's and the Alembic head its flowfile_core ships against the catalog's revision. Each open session is known by
+its generation, so closing a flow closes only the sessions it had, never one opened again since.
 The kernel's copy of the catalog database (``kernel.notebook_db``) is refreshed only when the kernel asks,
 before its first database connection in a call (:func:`refresh_database`).
 :class:`KernelCleanRunner` is the ``bridge.CleanRunner`` a push uses when it names a kernel; its result
@@ -45,7 +48,7 @@ SNIPPET = "from flowfile_frame import notebook_kernel as _nb\n_nb.handle({reques
 
 _lock = threading.Lock()
 _running: dict[tuple[str, int], str] = {}
-_sessions: dict[int, set[str]] = {}
+_sessions: dict[int, dict[str, str | None]] = {}
 _verified: set[tuple[str, str | None]] = set()
 _fingerprints: dict[tuple[str, int], str] = {}
 _results: dict[int, dict[tuple[int, str], tuple[weakref.ref, str, str]]] = {}
@@ -75,29 +78,42 @@ def _schema_revision() -> str | None:
 
 def kernel_flow_id(flow_id: int) -> int:
     """The flow id a flow's session runs under in the kernel: its namespace there, which the editor's code
-    intelligence reads too (the notebook store's ``sessionFlowId`` for a flow tab)."""
-    return -flow_id
+    intelligence reads too (the notebook store's ``flowSessionId`` for a flow tab).
+
+    It lies below ``-2**40``, apart from the catalog notebooks' namespaces (``-id`` when saved,
+    ``-(1.5e9 + ...)`` when not) and every real flow id.
+    """
+    return -(1 << 40) - flow_id
 
 
-def _call(manager, kernel_id: str, flow_id: int, op: str, **fields: Any) -> tuple[dict | None, ExecuteResult]:
-    """Run one op in the kernel; its result (``None`` when none came back) and the call with that line cut out."""
+def _call(
+    manager, kernel_id: str, flow_id: int, op: str, *, node_id: int = 0, track: bool = True, **fields: Any
+) -> tuple[dict | None, ExecuteResult]:
+    """Run one op in the kernel; its result (``None`` when none came back) and the call with that line cut out.
+
+    ``node_id`` is the node the kernel runs the call as, whose artifacts it clears first: a cell's own for
+    ``execute``, else 0. A ``track``ed call is the flow's running call on the kernel, for :func:`interrupt` and
+    :func:`dataframe_schemas`.
+    """
     request = ExecuteRequest(
-        node_id=0,
+        node_id=node_id,
         flow_id=kernel_flow_id(flow_id),
         code=SNIPPET.format(request=json.dumps({"op": op, "flow_id": flow_id, **fields}, default=str)),
         exec_token=uuid4().hex,
     )
     key = (kernel_id, flow_id)
-    with _lock:
-        _running[key] = request.exec_token
+    if track:
+        with _lock:
+            _running[key] = request.exec_token
     try:
         raw = manager.execute_sync(kernel_id, request)
     except Exception as exc:
         raise HTTPException(502, f"The notebook kernel call failed: {exc}") from exc
     finally:
-        with _lock:
-            if _running.get(key) == request.exec_token:
-                del _running[key]
+        if track:
+            with _lock:
+                if _running.get(key) == request.exec_token:
+                    del _running[key]
     head, marker, tail = raw.stdout.rpartition("\n" + KERNEL_RESULT_MARKER)
     if not marker:
         return None, raw
@@ -132,7 +148,9 @@ def _notebook_kernel(kernel_id: str, user):
 
 
 def _checked(kernel_id: str, user, flow_id: int):
-    """The manager, after :func:`_notebook_kernel` and (once per container) the kernel's version."""
+    """The manager, after :func:`_notebook_kernel` and (once per container) the kernel's flowfile version and the
+    Alembic head of its flowfile_core, which must be the catalog's revision (a dev image keeps the version string
+    across migrations)."""
     from shared._version import get_version
 
     manager, kernel = _notebook_kernel(kernel_id, user)
@@ -145,11 +163,11 @@ def _checked(kernel_id: str, user, flow_id: int):
                 f"Kernel '{kernel_id}' has flowfile {hello.get('version')} and this app is {get_version()}: "
                 "recreate the notebook kernel",
             )
-        revision, core_revision = hello.get("schema_revision"), _schema_revision()
-        if revision and core_revision and revision != core_revision:
+        head, core_revision = hello.get("schema_head"), _schema_revision()
+        if head and core_revision and head != core_revision:
             raise HTTPException(
                 409,
-                f"Kernel '{kernel_id}' sees database schema {revision}, core has {core_revision}: "
+                f"Kernel '{kernel_id}' has flowfile for database schema {head}, the catalog is at {core_revision}: "
                 "recreate the notebook kernel",
             )
         _verified.add(key)
@@ -174,9 +192,9 @@ def _open(manager, flow, user, kernel_id: str, op: str) -> None:
     from flowfile_core.notebook.render import code_fingerprint
 
     fingerprint = code_fingerprint(flow)
-    _succeeded(*_call(manager, kernel_id, flow.flow_id, op, user_id=user.id, snapshot=seed_snapshot(flow)))
+    opened = _succeeded(*_call(manager, kernel_id, flow.flow_id, op, user_id=user.id, snapshot=seed_snapshot(flow)))
     with _lock:
-        _sessions.setdefault(flow.flow_id, set()).add(kernel_id)
+        _sessions.setdefault(flow.flow_id, {})[kernel_id] = opened.get("namespace_generation")
         _fingerprints[(kernel_id, flow.flow_id)] = fingerprint
 
 
@@ -200,7 +218,8 @@ def _rows_hint(lazy_safe: bool, hint: str | None = None) -> str:
 
 
 def _displays(payload: dict[str, Any], title: str = "") -> list[DisplayOutput]:
-    """A session display payload as kernel display outputs: its MIME value, JSON-serialised unless text.
+    """A session display payload as kernel display outputs: its MIME value, JSON-serialised unless text, under the
+    payload's own ``title`` when it has one.
 
     A frame without rows becomes text: its schema, one column per line (none without columns), then where
     its rows come from.
@@ -210,7 +229,7 @@ def _displays(payload: dict[str, Any], title: str = "") -> list[DisplayOutput]:
     for key, value in payload.items():
         if "/" in key:
             data = value if isinstance(value, str) else json.dumps(value, default=str)
-            return [DisplayOutput(mime_type=key, data=data, title=title)]
+            return [DisplayOutput(mime_type=key, data=data, title=payload.get("title") or title)]
     columns = "".join(f"\n  {c['name']}: {c['data_type']}" for c in payload.get("schema") or [])
     hint = _rows_hint(bool(payload.get("lazy_safe")), payload.get("rows_hint"))
     text = f"Schema:{columns}\n\n{hint}" if columns else hint
@@ -223,16 +242,24 @@ class SessionExecuteResult(ExecuteResult):
     line: int | None = None
 
 
-def run_cell(flow, user, kernel_id: str, cell_id: str, code: str) -> SessionExecuteResult:
-    """Run one cell in the flow's session on the kernel, opening the session first when there is none.
+def run_cell(flow, user, kernel_id: str, cell_id: str, code: str, node_id: int = 0) -> SessionExecuteResult:
+    """Run one cell in the flow's session on the kernel as node ``node_id``, opening the session first when core
+    has none open there (the flow was closed since, or never opened) or the kernel has lost it.
 
-    A failure's ``error`` is the traceback from the cell down, as the editor shows a kernel error, with its ``line``.
+    So a cell never runs in a session a queued close is about to end. The displays come in the order the cell
+    made them (the session's one list), followed by what the kernel shows by itself: its end-of-cell figures and a
+    direct ``flowfile_ctx.display``. A failure's ``error`` is the traceback from the cell down, as the editor shows
+    a kernel error, with its ``line``.
     """
     manager = _checked(kernel_id, user, flow.flow_id)
-    payload, raw = _call(manager, kernel_id, flow.flow_id, "execute", cell_id=cell_id, code=code)
+    with _lock:
+        registered = kernel_id in _sessions.get(flow.flow_id, {})
+    if not registered:
+        _open(manager, flow, user, kernel_id, "open")
+    payload, raw = _call(manager, kernel_id, flow.flow_id, "execute", node_id=node_id, cell_id=cell_id, code=code)
     if payload is not None and payload.get("no_session"):
         _open(manager, flow, user, kernel_id, "open")
-        payload, raw = _call(manager, kernel_id, flow.flow_id, "execute", cell_id=cell_id, code=code)
+        payload, raw = _call(manager, kernel_id, flow.flow_id, "execute", node_id=node_id, cell_id=cell_id, code=code)
     if payload is None:
         error = raw.error or "The notebook kernel returned no result"
         return SessionExecuteResult(**{**raw.model_dump(), "success": False, "error": error})
@@ -304,25 +331,35 @@ def interrupt(flow, user, kernel_id: str) -> dict:
 def close_flow_sessions(flow_id: int) -> None:
     """Close the flow's sessions on every kernel that holds one, in the background; a no-op when there are none."""
     with _lock:
-        kernel_ids = _sessions.pop(flow_id, set())
+        sessions = _sessions.pop(flow_id, {})
         _results.pop(flow_id, None)
-        for kernel_id in kernel_ids:
+        for kernel_id in sessions:
             _fingerprints.pop((kernel_id, flow_id), None)
-    if not kernel_ids:
+    if not sessions:
         return
+    threading.Thread(
+        target=_close_in_kernels, args=(flow_id, sessions), name="notebook-session-close", daemon=True
+    ).start()
 
-    def close() -> None:
-        for kernel_id in kernel_ids:
-            try:
-                _call(_manager(), kernel_id, flow_id, "close")
-            except Exception:
-                logger.debug(f"notebook: could not close the session of flow {flow_id} on {kernel_id}", exc_info=True)
+
+def _close_in_kernels(flow_id: int, sessions: dict[str, str | None]) -> None:
+    """Close each kernel's session of the flow by its generation, then remove the flow's canvas results.
+
+    The flow may have been opened again by the time a kernel takes the call: that kernel keeps the newer session,
+    and the results stay while any session of the flow is open.
+    """
+    for kernel_id, generation in sessions.items():
         try:
-            shutil.rmtree(_results_dir(_manager(), flow_id), ignore_errors=True)
+            _call(_manager(), kernel_id, flow_id, "close", track=False, generation=generation)
         except Exception:
-            logger.debug(f"notebook: could not remove the canvas results of flow {flow_id}", exc_info=True)
-
-    threading.Thread(target=close, name="notebook-session-close", daemon=True).start()
+            logger.debug(f"notebook: could not close the session of flow {flow_id} on {kernel_id}", exc_info=True)
+    try:
+        results = _results_dir(_manager(), flow_id)
+        with _lock:
+            if flow_id not in _sessions:
+                shutil.rmtree(results, ignore_errors=True)
+    except Exception:
+        logger.debug(f"notebook: could not remove the canvas results of flow {flow_id}", exc_info=True)
 
 
 def _results_dir(manager, flow_id: int) -> str:
@@ -338,7 +375,7 @@ def forget_kernel(kernel_id: str, shared_dir: str) -> None:
             for flow_id, kernel_ids in list(_sessions.items()):
                 if kernel_id not in kernel_ids:
                     continue
-                kernel_ids.discard(kernel_id)
+                del kernel_ids[kernel_id]
                 _fingerprints.pop((kernel_id, flow_id), None)
                 if not kernel_ids:
                     del _sessions[flow_id]
@@ -461,7 +498,7 @@ def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle:
     if not kernel_sessions_allowed(user):
         raise HTTPException(403, DISABLED_DETAIL)
     with _lock:
-        open_here = kernel_id in _sessions.get(flow_id, set())
+        open_here = kernel_id in _sessions.get(flow_id, {})
     if not open_here:
         raise HTTPException(403, f"Kernel '{kernel_id}' has no notebook session open for flow {flow_id}")
     manager = _manager()

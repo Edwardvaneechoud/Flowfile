@@ -13,9 +13,11 @@ reads them. Every kernel call runs in a fresh context and notebook mode
 is context-local, so each op resumes the session's mode (``notebook.resumed``) and runs with file
 paths kept as written (``notebook.paths_as_written``); core recomputes them on the host.
 
-Ops: ``hello`` (flowfile version and the database's schema revision), ``open`` / ``reset`` (seed a
+Ops: ``hello`` (flowfile version and the Alembic head its flowfile_core ships), ``open`` / ``reset`` (seed a
 session from the canvas snapshot), ``execute`` (one cell as Python), ``clean_run`` (every cell in a
-fresh namespace, the push's run), ``schemas`` (the frames bound in the session) and ``close``.
+fresh namespace, the push's run), ``schemas`` (the frames bound in the session) and ``close`` (the session of
+the generation it names). A cell's ``display`` and ``explore`` go to the session's one list of outputs, in call
+order, whether the notebook or the kernel's own ``display`` renders the value.
 
 Rows the kernel cannot compute come from the canvas: a seeded canvas node that no cell replaced asks
 core's ``POST /notebook/session/node_result`` (through :data:`transport`), which runs it on the canvas
@@ -30,10 +32,8 @@ touch the catalog never copy it.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
-import sqlite3
 import sys
 import threading
 import traceback
@@ -58,6 +58,7 @@ from flowfile_frame.native import (
     materialise,
 )
 from flowfile_frame.notebook_cells import (
+    _CELL_OUTPUTS,
     _schema_entries,
     display,
     exec_cell,
@@ -227,18 +228,15 @@ def _database_path() -> Path | None:
     return sqlite_database_path()
 
 
-def _schema_revision() -> str | None:
-    """The Alembic revision of the catalog database copy, read-only; ``None`` when it cannot be read."""
-    _refresh_database()
-    path = _database_path()
-    if path is None or not path.exists():
-        return None
+def _schema_head() -> str | None:
+    """The Alembic head this kernel's flowfile_core ships, which core compares with the catalog's revision;
+    ``None`` when it cannot be read."""
+    from flowfile_core.database.migration import package_head
+
     try:
-        with contextlib.closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as conn:
-            row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
-    except sqlite3.Error:
+        return package_head()
+    except Exception:
         return None
-    return row[0] if row else None
 
 
 _database_lock = threading.Lock()
@@ -298,25 +296,57 @@ def _release_database() -> None:
 def _hello(request: dict[str, Any]) -> dict[str, Any]:
     from shared._version import get_version
 
-    return {"ok": True, "version": get_version(), "schema_revision": _schema_revision()}
+    return {"ok": True, "version": get_version(), "schema_head": _schema_head()}
 
 
-def _display(value: Any) -> Any:
-    """A cell's ``display``: frames and nodes as the notebook shows them, anything else through the kernel's own."""
-    if isinstance(value, FlowFrame | NativeNode):
-        return display(value)
+def _kernel_client() -> Any:
+    """The kernel runtime's ``flowfile_client``, or ``None`` outside a kernel."""
     try:
         from kernel_runtime import flowfile_client
     except ImportError:
+        return None
+    return flowfile_client
+
+
+def _through_kernel(name: str, value: Any, *args: Any, **kwargs: Any) -> Any:
+    """Show ``value`` through the kernel's own ``display`` or ``explore`` and move what it rendered onto the running
+    cell's outputs, so it keeps its place among the notebook's displays; outside a kernel, the notebook's
+    ``display``."""
+    client = _kernel_client()
+    if client is None:
         return display(value)
-    return flowfile_client.display(value)
+    start = len(client._get_displays())
+    getattr(client, name)(value, *args, **kwargs)
+    shown = client._get_displays()
+    outputs = _CELL_OUTPUTS.get()
+    if outputs is not None:
+        outputs.extend({entry["mime_type"]: entry["data"], "title": entry.get("title", "")} for entry in shown[start:])
+        del shown[start:]
+    return None
 
 
-def _close(flow_id: int) -> None:
-    session = _SESSIONS.pop(flow_id, None)
-    if session is not None:
-        session.namespace.clear()
-        session.mode.close()
+def _display(value: Any, *args: Any, **kwargs: Any) -> Any:
+    """A cell's ``display``: frames and nodes as the notebook shows them, anything else through the kernel's own."""
+    if isinstance(value, FlowFrame | NativeNode):
+        return display(value)
+    return _through_kernel("display", value, *args, **kwargs)
+
+
+def _explore(value: Any, *args: Any, **kwargs: Any) -> Any:
+    """A cell's ``explore``: frames and nodes as the notebook shows them, anything else through the kernel's own."""
+    if isinstance(value, FlowFrame | NativeNode):
+        return display(value)
+    return _through_kernel("explore", value, *args, **kwargs)
+
+
+def _close(flow_id: int, generation: str | None = None) -> None:
+    """Close the flow's session; with ``generation``, only when it is that session (not one opened since)."""
+    session = _SESSIONS.get(flow_id)
+    if session is None or (generation is not None and session.generation != generation):
+        return
+    del _SESSIONS[flow_id]
+    session.namespace.clear()
+    session.mode.close()
 
 
 def _adopt(session: _Session, namespace: dict[str, Any] | None) -> None:
@@ -352,6 +382,7 @@ def _open(flow_id: int, request: dict[str, Any], kernel_namespace: dict[str, Any
             namespace.update(new_namespace())
             namespace.update(bound)
             namespace["display"] = _display
+            namespace["explore"] = _explore
         finally:
             mode = notebook._deactivate()
     seeded = frozenset(node.node_id for node in mode.graph.nodes) if snapshot.get("flowfile_data") else frozenset()
@@ -432,7 +463,7 @@ def _dispatch(request: dict[str, Any], namespace: dict[str, Any] | None = None) 
     if op == "clean_run":
         return _clean_run(flow_id, request)
     if op == "close":
-        _close(flow_id)
+        _close(flow_id, request.get("generation"))
         return {"ok": True}
     session = _SESSIONS.get(flow_id)
     if op not in ("execute", "schemas"):

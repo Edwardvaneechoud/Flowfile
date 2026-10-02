@@ -186,6 +186,29 @@ def test_a_notebook_session_on_a_real_kernel(smoke_flow, notebook_kernel, client
     assert (Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID / "flowfile_catalog.db").exists()
 
 
+def test_a_cells_artifacts_and_display_order_outlive_the_calls_after_it(smoke_flow, notebook_kernel, client_as):
+    """A cell runs as its own node, so the schemas refresh and the next cell leave what it published; its text and
+    frame displays come back in the order it made them."""
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}
+    assert client.post("/notebook/session/open", json=key).status_code == 200
+
+    cell = _bind("filtered", _node_id(smoke_flow, "filter")) + (
+        "flowfile_ctx.publish_artifact('kept', {'a': 1})\ndisplay('first')\ndisplay(filtered)\ndisplay('last')\n"
+    )
+    first = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-a", "code": cell, "node_id": 1234})
+    assert first.status_code == 200 and first.json()["success"], first.text
+    shown = [(out["mime_type"], out["data"]) for out in first.json()["display_outputs"]]
+    assert [mime for mime, _ in shown] == ["text/plain", TABLE_MIME, "text/plain"], shown
+    assert (shown[0][1], shown[2][1]) == ("first", "last"), shown
+
+    assert client.post("/notebook/session/schemas", json=key).status_code == 200
+    code = "print([a.name for a in flowfile_ctx.list_artifacts()])"
+    listed = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-b", "code": code, "node_id": 5678})
+    assert listed.status_code == 200 and listed.json()["success"], listed.text
+    assert "kept" in listed.json()["stdout"], listed.json()
+
+
 def test_kernel_completions_see_the_session(smoke_flow, notebook_kernel, client_as):
     """The editor's Jedi completions, sent under the session's kernel flow id, read the session's variables."""
     from flowfile_core.notebook import kernel_runner
