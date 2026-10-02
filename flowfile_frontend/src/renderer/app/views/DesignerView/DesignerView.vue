@@ -56,15 +56,27 @@
         <span class="switch-spinner" />
         <span>Loading flow…</span>
       </div>
-      <aside
-        v-if="hasOpenFlow && editorStore.showCodeGenerator"
-        class="code-dock"
-        data-canvas-overlay
-        :style="{ width: `${codeDockWidth}px` }"
-      >
-        <div class="code-dock-resizer" @pointerdown="startResize" />
-        <code-generator :key="nodeStore.flow_id" />
-      </aside>
+      <transition name="code-dock">
+        <aside
+          v-if="hasOpenFlow && editorStore.showCodeGenerator"
+          :class="['code-dock', { 'is-resizing': isResizing }]"
+          data-canvas-overlay
+          :style="{ width: `${codeDockWidth}px`, '--code-dock-width': `${codeDockWidth}px` }"
+        >
+          <div class="code-dock-resizer" @pointerdown="startResize" />
+          <div class="code-dock-body">
+            <code-generator :key="nodeStore.flow_id" />
+          </div>
+          <transition name="code-dock-hint">
+            <div v-if="closeArmed" class="code-dock-close-hint" aria-live="polite">
+              <span class="code-dock-close-pill">
+                <span class="material-icons" aria-hidden="true">close</span>
+                Release to close
+              </span>
+            </div>
+          </transition>
+        </aside>
+      </transition>
     </div>
   </div>
 </template>
@@ -107,7 +119,14 @@ const editorStore = useEditorStore();
 const CodeGenerator = defineAsyncComponent(() => import("./CodeGenerator/CodeGenerator.vue"));
 
 const CODE_DOCK_WIDTH_KEY = "flowfile.codeDock.width.v1";
-const clampWidth = (w: number) => Math.round(Math.min(Math.max(w, 360), window.innerWidth - 360));
+const CODE_DOCK_MIN_WIDTH = 360;
+const CODE_DOCK_CLOSE_DRAG = 100;
+const CODE_DOCK_MAX_STRETCH = 48;
+const clampWidth = (w: number) =>
+  Math.round(Math.min(Math.max(w, CODE_DOCK_MIN_WIDTH), window.innerWidth - 360));
+/** How far the pane gives way when dragged `overshoot` px past its minimum. */
+const stretch = (overshoot: number) =>
+  CODE_DOCK_MAX_STRETCH * (1 - Math.exp(-overshoot / CODE_DOCK_MAX_STRETCH));
 const readWidth = () => {
   try {
     return Number(localStorage.getItem(CODE_DOCK_WIDTH_KEY)) || 600;
@@ -116,17 +135,41 @@ const readWidth = () => {
   }
 };
 const codeDockWidth = ref(clampWidth(readWidth()));
+const isResizing = ref(false);
+const closeArmed = ref(false);
 
-/** Drag the pane's left edge; the width is saved when the gesture ends. */
+/**
+ * Drag the pane's left edge; the width is saved when the gesture ends.
+ * Past the minimum width the pane only gives way a little; dragging
+ * CODE_DOCK_CLOSE_DRAG further arms a close, which a release then performs,
+ * keeping the pre-drag width for the next open. Released earlier, it springs back.
+ */
 const startResize = (down: PointerEvent) => {
   const target = down.target as HTMLElement;
   const startX = down.clientX;
   const startWidth = codeDockWidth.value;
   target.setPointerCapture(down.pointerId);
-  const move = (e: PointerEvent) =>
-    (codeDockWidth.value = clampWidth(startWidth + startX - e.clientX));
-  const up = () => {
+  isResizing.value = true;
+  const move = (e: PointerEvent) => {
+    const width = startWidth + startX - e.clientX;
+    const overshoot = CODE_DOCK_MIN_WIDTH - width;
+    closeArmed.value = overshoot >= CODE_DOCK_CLOSE_DRAG;
+    codeDockWidth.value =
+      overshoot > 0 ? Math.round(CODE_DOCK_MIN_WIDTH - stretch(overshoot)) : clampWidth(width);
+  };
+  const end = (e: PointerEvent) => {
     target.removeEventListener("pointermove", move);
+    target.removeEventListener("pointerup", end);
+    target.removeEventListener("pointercancel", end);
+    isResizing.value = false;
+    const close = closeArmed.value && e.type === "pointerup";
+    closeArmed.value = false;
+    if (close) {
+      codeDockWidth.value = startWidth;
+      editorStore.setCodeGeneratorVisibility(false);
+      return;
+    }
+    codeDockWidth.value = clampWidth(codeDockWidth.value);
     try {
       localStorage.setItem(CODE_DOCK_WIDTH_KEY, String(codeDockWidth.value));
     } catch {
@@ -134,7 +177,8 @@ const startResize = (down: PointerEvent) => {
     }
   };
   target.addEventListener("pointermove", move);
-  target.addEventListener("pointerup", up, { once: true });
+  target.addEventListener("pointerup", end);
+  target.addEventListener("pointercancel", end);
 };
 const { openFlow: openFlowFromPath } = useFlowOpener();
 
@@ -360,6 +404,72 @@ onMounted(async () => {
   height: 100%;
   border-left: 1px solid var(--color-border-primary);
   background: var(--color-background-primary);
+  transition: width var(--transition-normal) var(--transition-timing);
+}
+
+.code-dock.is-resizing {
+  transition: none;
+}
+
+/* Open and close slide the pane from the right edge; outranks .is-resizing on release. */
+.code-dock.code-dock-enter-active,
+.code-dock.code-dock-leave-active {
+  overflow: hidden;
+  transition: width var(--transition-normal) var(--transition-timing);
+}
+
+.code-dock-enter-from,
+.code-dock-leave-to {
+  width: 0 !important;
+}
+
+.code-dock-enter-active .code-dock-body,
+.code-dock-leave-active .code-dock-body {
+  width: var(--code-dock-width);
+}
+
+.code-dock-close-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--color-background-primary) 70%, transparent);
+  pointer-events: none;
+}
+
+.code-dock-close-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-4);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-full);
+  background: var(--color-background-primary);
+  box-shadow: var(--shadow-md);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+.code-dock-close-pill .material-icons {
+  font-size: 18px;
+}
+
+.code-dock-hint-enter-active,
+.code-dock-hint-leave-active {
+  transition: opacity var(--transition-base) var(--transition-timing);
+}
+
+.code-dock-hint-enter-from,
+.code-dock-hint-leave-to {
+  opacity: 0;
+}
+
+.code-dock-body {
+  height: 100%;
+  overflow: hidden;
 }
 
 .code-dock-resizer {
@@ -372,7 +482,8 @@ onMounted(async () => {
   cursor: col-resize;
 }
 
-.code-dock-resizer:hover {
+.code-dock-resizer:hover,
+.code-dock.is-resizing .code-dock-resizer {
   background: var(--color-primary);
   opacity: 0.4;
 }

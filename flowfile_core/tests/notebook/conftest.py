@@ -313,7 +313,7 @@ class KernelSimManager:
         self.node_results: list[dict] = []
         self.namespaces: dict[int, dict] = {}
 
-    def to_kernel_path(self, local_path, kernel_id=None):
+    def to_kernel_path(self, local_path):
         return local_path
 
     def host_folders(self, kernel_id):

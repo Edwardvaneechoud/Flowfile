@@ -667,7 +667,7 @@ class KernelManager:
             return f"http://flowfile-kernel-{kernel.id}:9999"
         return f"http://localhost:{kernel.port}"
 
-    def to_kernel_path(self, local_path: str, kernel_id: str | None = None) -> str:
+    def to_kernel_path(self, local_path: str) -> str:
         """Translate a local filesystem path to the path visible inside a kernel container.
 
         In Docker-in-Docker mode the volume is mounted at the same path in all
@@ -675,8 +675,7 @@ class KernelManager:
         bind-mounted at ``/shared`` and the host catalog_tables dir at
         ``/catalog_tables``; we swap whichever prefix matches, always producing
         a pure-POSIX path (Windows host paths contain backslashes the Linux
-        container would treat as literal filename characters). With ``kernel_id``
-        the kernel's mount table (``notebook_mounts``) is consulted next.
+        container would treat as literal filename characters).
         """
         if self._kernel_volume:
             # Same volume, same mount point — no translation needed
@@ -689,11 +688,6 @@ class KernelManager:
             rebased = _rebase_to_posix(local_path, host_prefix, container_prefix)
             if rebased is not None:
                 return rebased
-        kernel = self._kernels.get(kernel_id) if kernel_id else None
-        if kernel is not None:
-            translated = notebook_mounts.translate(local_path, notebook_mounts.build_mount_table(kernel))
-            if translated is not None:
-                return translated
         return local_path
 
     def host_folders(self, kernel_id: str) -> dict[str, str]:

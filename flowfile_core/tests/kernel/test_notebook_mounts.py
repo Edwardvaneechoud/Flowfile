@@ -116,8 +116,7 @@ def test_run_kwargs_and_env_for_a_folder_kernel(tmp_path, monkeypatch):
         (str(tmp_path / "home"), str(tmp_path / "home"), True)
     ]
     assert kwargs["tmpfs"] == {str(tmp_path / "home" / ".config" / "flowfile"): "ro"}
-    assert mgr.to_kernel_path(str(tmp_path / "home" / "f.csv"), kernel_id="k") == str(tmp_path / "home" / "f.csv")
-    assert mgr.to_kernel_path(str(tmp_path / "shared" / "a"), kernel_id="k") == "/shared/a"
+    assert mgr.to_kernel_path(str(tmp_path / "shared" / "a")) == "/shared/a"
 
     env = mgr._build_kernel_env("k", kernel)
     assert "FLOWFILE_SKIP_INIT_DB" not in env
