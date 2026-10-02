@@ -7722,6 +7722,8 @@ class FlowGraph:
                 ``None`` runs the whole graph.
             kernel_hold: Kernels whose execution lock the caller holds while it waits on this run; a kernel
                 node on one fails at once (``KernelBusyError``) instead of waiting, here and in subflows.
+                ``None`` keeps the hold of a run this one runs inside (``ambient_kernel_hold``), such as a
+                subflow of a virtual table's producer.
 
         Returns:
             A RunInformation object summarizing the execution results.
@@ -7731,6 +7733,8 @@ class FlowGraph:
         """
         if not self.try_claim_run():
             raise Exception("Flow is already running")
+        if kernel_hold is None:
+            kernel_hold = ambient_kernel_hold.get()
         self._kernel_hold = kernel_hold
         ambient = ambient_kernel_hold.set(kernel_hold)
         released = False

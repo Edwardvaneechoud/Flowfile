@@ -22,7 +22,9 @@ order, whether the notebook or the kernel's own ``display`` renders the value.
 Rows the kernel cannot compute come from the canvas: a seeded canvas node that no cell replaced asks
 core's ``POST /notebook/session/node_result`` (through :data:`transport`), which runs it on the canvas
 when needed and answers with a parquet path on the kernel's shared folder, read with ``pl.scan_parquet``
-and kept per node and output until the session is reset.
+and kept per node and output until the session is reset. A new frame computes here, a new pivot or Polars
+Code node too, unless a node above it needs the canvas. A push's clean run computes no rows: a cell that
+reads a frame's rows gets the canvas's, and only for a node the canvas already has.
 
 The catalog database is a copy core keeps in the kernel's shared folder (``FLOWFILE_DB_PATH``). A call that
 reads it asks core to refresh it first (``POST /notebook/session/database``, through
@@ -46,6 +48,7 @@ from uuid import uuid4
 import polars as pl
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_frame import notebook
 from flowfile_frame.flow_frame import FlowFrame
@@ -70,6 +73,9 @@ from shared.notebook_display import KERNEL_RESULT_MARKER
 
 CANVAS_CHANGED = "The canvas changed since this session started: Reset session to pick it up."
 PUSH_FIRST = "Push, then it runs on the canvas."
+
+COMPUTED_HERE_TYPES: frozenset[str] = frozenset({"pivot", "polars_code"})
+"""Types notebook mode defers that a session still computes here, when every node above them can be."""
 
 
 def _post_core(route: str, body: dict[str, Any], what: str) -> dict[str, Any]:
@@ -141,8 +147,9 @@ class _Session:
         return {"namespace_generation": self.generation, "revision": self.revision}
 
     def canvas_rows(self, frame: FlowFrame) -> pl.LazyFrame | None:
-        """The canvas's rows for a frame without rows here: a seeded node no cell replaced, the canvas twin of
-        a file read this kernel cannot open (``native._kernel_twin_id``), or a new frame computed here on those."""
+        """The rows of a frame without rows here: the canvas's for a seeded node no cell replaced or the canvas
+        twin of a file read this kernel cannot open (``native._kernel_twin_id``), else computed here
+        (:meth:`_computed_here`)."""
         if frame.flow_graph is not self.mode.graph:
             return None
         node_id, hidden = frame.node_id, False
@@ -162,50 +169,82 @@ class _Session:
     def _fetch(self, node_id: int, handle: str) -> pl.LazyFrame:
         key = (node_id, handle)
         if key not in self.rows:
-            body = {"flow_id": self.flow_id, "node_id": node_id, "output_handle": handle}
-            try:
-                answer = self.fetch(body)
-                self.rows[key] = answer["path"]
-            except NativeNodeError:
-                raise
-            except Exception as exc:
-                raise NativeNodeError(f"Could not get node {node_id}'s rows from the canvas: {exc}") from exc
-            if answer.get("canvas_changed"):
+            self.rows[key], changed = _canvas_answer(self.fetch, self.flow_id, node_id, handle)
+            if changed:
                 print(CANVAS_CHANGED)
         return pl.scan_parquet(self.rows[key])
 
     def _computed_here(self, frame: FlowFrame, created: set[int]) -> pl.LazyFrame | None:
-        """A new frame's rows computed here on its canvas ancestors' rows; ``None`` when another node above has none.
+        """A new frame's rows computed here; ``None`` when a node above it needs the canvas to run it.
 
-        Each canvas ancestor (a seeded node no cell replaced, or a read of a file this kernel cannot see)
-        then holds its canvas rows and the nodes below it compute again, so later frames compute here too.
+        The walk up from the frame stops at canvas nodes: a seeded node no cell replaced, or a read of a file
+        this kernel cannot see whose canvas twin was seeded. Such a node holds its canvas rows when it is
+        deferred or at or below a gate, else keeps its own. Every other node computes again here, a deferred
+        node of ``COMPUTED_HERE_TYPES`` too, so a new frame needs no canvas ancestor. A new gate, any other
+        deferred node (an external source, a subflow, a script, a writer) or a read of a file this kernel
+        cannot see without a seeded twin needs the canvas.
         """
-        lineage = ancestors(self.mode.graph.get_node(frame.node_id))
         canvas: dict[int, int] = {}
-        for node_id, node in lineage.items():
-            if node_id in self.seeded and node_id not in created:
-                if node.deferred_until_run:
-                    canvas[node_id] = node_id
-            elif _kernel_hidden_path(node) is not None and _kernel_twin_id(node) in self.seeded:
-                canvas[node_id] = _kernel_twin_id(node)
-            elif node.deferred_until_run:
+        computed: dict[int, FlowNode] = {}
+        stack = [self.mode.graph.get_node(frame.node_id)]
+        while stack:
+            node = stack.pop()
+            if node.node_id in canvas or node.node_id in computed:
+                continue
+            if node.node_id in self.seeded and node.node_id not in created:
+                if node.deferred_until_run or any(n.node_type == "gate" for n in ancestors(node).values()):
+                    canvas[node.node_id] = node.node_id
+                continue
+            if _kernel_hidden_path(node) is not None:
+                if _kernel_twin_id(node) not in self.seeded:
+                    return None
+                canvas[node.node_id] = _kernel_twin_id(node)
+                continue
+            if node.node_type == "gate" or (node.deferred_until_run and node.node_type not in COMPUTED_HERE_TYPES):
                 return None
-        if not canvas:
-            return None
-        edges = {(source.node_id, handle) for node in lineage.values() for source, handle in node._incoming_edges()}
-        for source_id, handle in edges:
-            if source_id in canvas:
-                engine = FlowDataEngine(self._fetch(canvas[source_id], handle))
-                if handle == DEFAULT_OUTPUT_HANDLE:
-                    lineage[source_id].results.resulting_data = engine
-                else:
-                    lineage[source_id]._named_outputs[handle] = engine
-        for node_id, node in lineage.items():
-            if node_id not in canvas and not (node_id in self.seeded and node_id not in created):
-                node.results.resulting_data, node.results.errors, node._named_outputs = None, None, {}
+            computed[node.node_id] = node
+            stack.extend(node.all_inputs)
+        for node in computed.values():
+            for source, handle in node._incoming_edges():
+                if source.node_id in canvas:
+                    engine = FlowDataEngine(self._fetch(canvas[source.node_id], handle))
+                    if handle == DEFAULT_OUTPUT_HANDLE:
+                        source.results.resulting_data = engine
+                    else:
+                        source._named_outputs[handle] = engine
+        for node in computed.values():
+            node.results.resulting_data, node.results.errors, node._named_outputs = None, None, {}
+            node.deferred_until_run = False
         handle = frame.output_handle
-        data = materialise(lineage[frame.node_id], None if handle == DEFAULT_OUTPUT_HANDLE else handle).data_frame
+        data = materialise(computed[frame.node_id], None if handle == DEFAULT_OUTPUT_HANDLE else handle).data_frame
         return data.lazy() if isinstance(data, pl.DataFrame) else data
+
+
+def _canvas_answer(
+    fetch: Callable[[dict[str, Any]], dict[str, Any]], flow_id: int, node_id: int, handle: str
+) -> tuple[str, bool]:
+    """Core's parquet path of canvas node ``node_id``'s output ``handle``, and whether the canvas changed since the
+    session was seeded; any failure is a ``NativeNodeError``."""
+    body = {"flow_id": flow_id, "node_id": node_id, "output_handle": handle}
+    try:
+        answer = fetch(body)
+        return answer["path"], bool(answer.get("canvas_changed"))
+    except NativeNodeError:
+        raise
+    except Exception as exc:
+        raise NativeNodeError(f"Could not get node {node_id}'s rows from the canvas: {exc}") from exc
+
+
+def _clean_run_rows(flow_id: int) -> Callable[[int, str], pl.LazyFrame]:
+    """A push's reader of canvas rows: a canvas node's output through :data:`transport`, asked once per clean run."""
+    paths: dict[tuple[int, str], str] = {}
+
+    def rows(node_id: int, handle: str) -> pl.LazyFrame:
+        if (node_id, handle) not in paths:
+            paths[node_id, handle], _ = _canvas_answer(transport, flow_id, node_id, handle)
+        return pl.scan_parquet(paths[node_id, handle])
+
+    return rows
 
 
 def _new_node_message(frame: FlowFrame) -> str:
@@ -420,13 +459,15 @@ def _execute(session: _Session, request: dict[str, Any]) -> dict[str, Any]:
 def _clean_run(flow_id: int, request: dict[str, Any]) -> dict[str, Any]:
     """The push's clean run: core's runner with cells run as Python, on a sync of the request's snapshot.
 
-    It runs in a mode of its own; a mode active in this context is set aside and put back afterwards.
+    It runs in a mode of its own; a mode active in this context is set aside and put back afterwards. A cell
+    that reads a frame's rows gets the canvas's, for a node the canvas already has (:func:`_clean_run_rows`).
     """
     from flowfile_core.notebook.bridge import CleanRunRequest
     from flowfile_core.notebook.runner import NotebookRunner
 
     class _PythonRunner(NotebookRunner):
         executor = staticmethod(lambda: exec_cell)
+        canvas_rows = staticmethod(_clean_run_rows(flow_id))
 
     previous = notebook._deactivate()
     try:

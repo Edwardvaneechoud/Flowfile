@@ -329,13 +329,14 @@ def interrupt(flow, user, kernel_id: str) -> dict:
 
 
 def close_flow_sessions(flow_id: int) -> None:
-    """Close the flow's sessions on every kernel that holds one, in the background; a no-op when there are none."""
+    """Close the flow's sessions on every kernel that holds one and remove its canvas results, in the background; a
+    no-op when there are neither."""
     with _lock:
         sessions = _sessions.pop(flow_id, {})
-        _results.pop(flow_id, None)
+        handed = _results.pop(flow_id, None)
         for kernel_id in sessions:
             _fingerprints.pop((kernel_id, flow_id), None)
-    if not sessions:
+    if not sessions and not handed:
         return
     threading.Thread(
         target=_close_in_kernels, args=(flow_id, sessions), name="notebook-session-close", daemon=True
@@ -482,7 +483,8 @@ def _write_result(flow, node_id: int, data, path: str) -> None:
 def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle: str | None) -> dict:
     """A canvas node's result for the flow's session on ``kernel_id``: ``{"path", "canvas_changed"}``.
 
-    Answers only the owner of a kernel that holds an open session for the flow. The node and its
+    Answers only the owner of a kernel that holds an open session for the flow or runs a call for it (a push's
+    clean run, which reads the rows of nodes the canvas already has). The node and its
     ancestors run on the canvas first unless the node holds a current result (:func:`_run_lineage`); the
     result is written as parquet under the kernel's shared folder and reused while the canvas holds that
     same result (a weak reference, so the cache never keeps a result alive). A file this kernel was handed
@@ -498,7 +500,7 @@ def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle:
     if not kernel_sessions_allowed(user):
         raise HTTPException(403, DISABLED_DETAIL)
     with _lock:
-        open_here = kernel_id in _sessions.get(flow_id, {})
+        open_here = kernel_id in _sessions.get(flow_id, {}) or (kernel_id, flow_id) in _running
     if not open_here:
         raise HTTPException(403, f"Kernel '{kernel_id}' has no notebook session open for flow {flow_id}")
     manager = _manager()

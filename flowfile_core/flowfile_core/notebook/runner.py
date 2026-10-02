@@ -63,11 +63,13 @@ class NotebookRunner:
     """The production clean runner: interprets a push's cells as the requesting user, executing none of them.
 
     ``executor`` builds the cell executor for one run (``notebook_cells.CellExecutor``); here it is
-    :class:`CellInterpreter`, built fresh per run because its bounds count per run. The runner holds no
-    state and owns no threads.
+    :class:`CellInterpreter`, built fresh per run because its bounds count per run. ``canvas_rows`` is the
+    frame ``clean_run``'s reader of canvas rows; core's runner has none, since core never collects. The
+    runner holds no state and owns no threads.
     """
 
     executor: ClassVar[Callable[[], Any]] = CellInterpreter
+    canvas_rows: ClassVar[Callable[[int, str], Any] | None] = None
 
     def clean_run(self, user_id: int, flow_id: int, request: CleanRunRequest) -> CleanRunResult:
         """Clean-run ``request``'s cells on a sync of its snapshot, as ``user_id``; a failure comes back in the result.
@@ -95,7 +97,14 @@ class NotebookRunner:
             try:
                 if snapshot.get("flowfile_data"):
                     enter_snapshot_session(snapshot, user_id=user_id)
-                payload = clean_run(cells, request.ceiling, provenance, user_id=user_id, executor=self.executor())
+                payload = clean_run(
+                    cells,
+                    request.ceiling,
+                    provenance,
+                    user_id=user_id,
+                    executor=self.executor(),
+                    canvas_rows=self.canvas_rows,
+                )
                 return result_from_payload(payload)
             except Exception as exc:
                 logger.exception(f"notebook clean run of flow {flow_id} failed")

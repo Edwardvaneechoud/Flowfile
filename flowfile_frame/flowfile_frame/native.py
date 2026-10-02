@@ -429,17 +429,18 @@ def _without_ids(value: Any) -> Any:
     return value
 
 
-def _twin_settings(settings: BaseModel, node_type: str) -> Any:
+def _twin_settings(settings: BaseModel, node_type: str, *, translate: bool = False) -> Any:
     """``settings`` as the twin lookups compare them: without ids, and normalised like a push compares them.
 
     The push's per-type normalisation (``flowfile_core.notebook.compare.normalise``: layout,
     labels, the node user, a read's display name, a script's cell ids) applies, except for the
     types whose rules translate formulas; those drop the same top-level fields and compare the
-    rest as is, so the seed never evaluates anything. A read's ``abs_file_path`` is dropped too:
-    it is derived from the path, and a notebook kernel resolves it through its own folders.
+    rest as is, so the seed never evaluates anything (``translate`` normalises them too, for a
+    caller that may evaluate). A read's ``abs_file_path`` is dropped too: it is derived from the
+    path, and a notebook kernel resolves it through its own folders.
     """
     dumped = _without_ids(settings.model_dump(mode="json"))
-    if node_type in _FORMULA_RULE_TYPES:
+    if node_type in _FORMULA_RULE_TYPES and not translate:
         return {key: value for key, value in dumped.items() if key not in DROPPED_FIELDS}
     normalised = normalise(dumped, node_type)
     if isinstance(normalised, dict) and isinstance(normalised.get("received_file"), dict):

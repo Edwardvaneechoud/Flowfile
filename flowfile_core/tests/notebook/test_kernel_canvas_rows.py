@@ -127,9 +127,9 @@ def test_a_new_frame_on_a_deferred_canvas_node_computes_here_on_the_canvas_rows(
     assert len(kernel_sim.node_results) == 1
 
 
-def test_new_deferred_work_says_push_first(coded_flow, client, kernel_sim):
+def test_new_work_only_the_canvas_runs_says_push_first(coded_flow, client, kernel_sim):
     node_id = _coded_id(coded_flow)
-    cell = _bind(node_id) + "new = coded.polars_code('input_df.head(1)')\ndisplay(new)"
+    cell = _bind(node_id) + "new = ff.PythonScript(coded, code='x = 1', kernel='other-kernel').output\ndisplay(new)"
     shown = _execute(client, coded_flow, kernel_sim, cell)
     assert shown["success"], shown
     text = [out["data"] for out in shown["display_outputs"] if out["mime_type"] == "text/plain"]
@@ -138,6 +138,48 @@ def test_new_deferred_work_says_push_first(coded_flow, client, kernel_sim):
     collected = _execute(client, coded_flow, kernel_sim, "new.collect()")
     assert not collected["success"] and "Push, then it runs on the canvas" in collected["error"]
     assert not kernel_sim.node_results
+
+
+@pytest.fixture
+def people_csv(tmp_path) -> Path:
+    path = tmp_path / "people.csv"
+    path.write_text("name,city,segment\na,x,s1\nb,x,s2\nc,y,s1\nd,y,s1\n")
+    return path
+
+
+def _pivot_cell(path: Path) -> str:
+    return (
+        f"df = ff.scan_csv({str(path)!r}, separator=',', has_header=True)\n"
+        "pivoted = df.pivot(values='name', index=['city'], on='segment', aggregate_function='count')\n"
+        "display(pivoted)"
+    )
+
+
+def test_a_new_pivot_over_a_file_the_kernel_reads_computes_here_without_a_canvas_ancestor(
+    coded_flow, client, kernel_sim, people_csv
+):
+    for _ in range(2):
+        shown = _execute(client, coded_flow, kernel_sim, _pivot_cell(people_csv))
+        assert shown["success"], shown
+        table = _table(shown)
+        assert table["columns"] == ["city", "s1", "s2"] and len(table["data"]) == 2, table
+    collected = _execute(client, coded_flow, kernel_sim, "print(pivoted.sort('city').collect().rows())")
+    assert collected["success"] and collected["stdout"].strip() == "[('x', 1, 1), ('y', 2, 0)]", collected
+    coded = _execute(client, coded_flow, kernel_sim, "display(df.polars_code('input_df.head(1)'))")
+    assert coded["success"] and len(_rows(coded)) == 1, coded
+    assert not kernel_sim.node_results
+
+
+def test_a_new_pivot_below_a_deferred_canvas_node_computes_here_on_its_rows(coded_flow, client, kernel_sim):
+    node_id = _coded_id(coded_flow)
+    cell = _bind(node_id) + (
+        "spread = coded.with_columns(g=ff.lit('all')).pivot(values='amount', index=['g'], on='id', "
+        "aggregate_function='sum')\ndisplay(spread)"
+    )
+    shown = _execute(client, coded_flow, kernel_sim, cell)
+    assert shown["success"], shown
+    assert _rows(shown) == [{"g": "all", "1": 100, "2": 200, "3": 300}], _table(shown)
+    assert [body["node_id"] for body in kernel_sim.node_results] == [node_id]
 
 
 def test_a_running_flow_is_refused_with_a_message(coded_flow, client, kernel_sim):
@@ -374,7 +416,8 @@ display(priced)
 """
 
 
-def _plan(flow, kernel_sim, *extra: str, rendered: bool = True):
+def _plan(flow, kernel_sim, *extra: str, rendered: bool = True, edit=lambda code: code):
+    """Plan a push of the rendered cells (each through ``edit``) plus ``extra``; without ``kernel_sim``, in core."""
     from flowfile_core.auth.models import User as PydanticUser
     from flowfile_core.notebook.push import NotebookPushRequest, plan_push
     from flowfile_core.notebook.render import render
@@ -382,14 +425,14 @@ def _plan(flow, kernel_sim, *extra: str, rendered: bool = True):
 
     owner = PydanticUser(username="nb_kernel", id=NOTEBOOK_OWNER_ID, disabled=False, is_admin=True)
     rendering = render(flow)
-    cells = [(cell.cell_id, cell.code) for cell in rendering.cells if rendered or cell.kind == "imports"]
+    cells = [(cell.cell_id, edit(cell.code)) for cell in rendering.cells if rendered or cell.kind == "imports"]
     request = NotebookPushRequest(
         flow_id=flow.flow_id,
         cells=cells + [(f"extra-{i}", code) for i, code in enumerate(extra)],
         provenance=cell_provenance(flow, rendering),
         code_fingerprint=rendering.code_fingerprint,
         client_max_node_id=max(node.node_id for node in flow.nodes),
-        kernel_id=kernel_sim.kernel.id,
+        kernel_id=kernel_sim.kernel.id if kernel_sim is not None else None,
     )
     plan, _ = plan_push(flow, owner, request)
     return plan
@@ -422,6 +465,64 @@ def test_a_seeded_name_no_cell_builds_adopts_its_canvas_node(editor_built_flow, 
     assert added[0]["node_id"] > 2 and plan.deletions == [2], plan
     connects = [op.connection.output_connection.node_id for op in plan.operations if op.op == "connect"]
     assert connects == [1], plan
+
+
+@pytest.fixture
+def pivoted_flow(open_as, people_csv):
+    """``CSV read -> pivot`` on the canvas, never run there."""
+    import flowfile as ff
+
+    source = ff.scan_csv(str(people_csv), separator=",", has_header=True)
+    return open_as(source.pivot(values="name", index=["city"], on="segment", aggregate_function="count").flow_graph)
+
+
+def _rendered_name(flow, call: str) -> str:
+    from flowfile_core.notebook.render import render
+
+    return next(cell for cell in render(flow).cells if call in cell.code).code.split("=", 1)[0].strip()
+
+
+def test_a_push_reads_the_rows_of_a_pivot_the_canvas_has_from_the_canvas(pivoted_flow, kernel_sim):
+    name = _rendered_name(pivoted_flow, ".pivot(")
+    shown = _plan(pivoted_flow, kernel_sim, f"display({name})")
+    assert not shown.operations and not kernel_sim.node_results, "a push's display reads no rows"
+
+    cell = f"rows = sorted({name}.collect().rows())\nassert rows == [('x', 1, 1), ('y', 2, 0)], rows"
+    plan = _plan(pivoted_flow, kernel_sim, cell)
+    assert not plan.operations and not plan.warnings, plan
+    assert [body["node_id"] for body in kernel_sim.node_results] == [_node_id(pivoted_flow, "pivot")]
+
+
+@pytest.mark.parametrize(
+    "cell, edit, line, node_type",
+    [
+        ("x_only = {name}.filter(ff.col('city') == 'x')\nx_only.collect()", None, 2, "filter"),
+        ("{name}.collect()", lambda code: code.replace("skip_rows=0", "skip_rows=1"), 1, "pivot"),
+    ],
+    ids=["new-node", "edited-above"],
+)
+def test_a_push_reading_rows_the_canvas_does_not_have_fails_on_that_cell(
+    pivoted_flow, kernel_sim, cell, edit, line, node_type
+):
+    from fastapi import HTTPException
+
+    name = _rendered_name(pivoted_flow, ".pivot(")
+    with pytest.raises(HTTPException) as failed:
+        _plan(pivoted_flow, kernel_sim, cell.format(name=name), edit=edit or (lambda code: code))
+    detail = failed.value.detail
+    assert failed.value.status_code == 422 and (detail["cell_id"], detail["line"]) == ("extra-0", line), detail
+    assert f"The canvas has no rows yet for this {node_type} node" in detail["message"], detail
+    assert not kernel_sim.node_results
+
+
+@pytest.mark.parametrize("read", ["{name}.collect()", "display({name})"])
+def test_a_push_without_a_kernel_never_computes_a_pivot(pivoted_flow, read):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as failed:
+        _plan(pivoted_flow, None, read.format(name=_rendered_name(pivoted_flow, ".pivot(")))
+    assert failed.value.detail["kind"] == "needs_kernel" and failed.value.detail["cell_id"] == "extra-0"
+    assert pivoted_flow.latest_run_info is None, "nothing ran on the canvas"
 
 
 OTHER_KERNEL = "other-kernel"
@@ -589,6 +690,35 @@ def test_a_virtual_table_producer_node_on_the_sessions_own_kernel_is_refused_at_
     orders = ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
     produced = ff.PythonScript(orders, code="x = 1", kernel=locking_kernel_sim.kernel.id).output
     producer = produced.write_catalog_table(table, schema=schema, write_mode="virtual")
+    assert all(result.success for result in producer.flow_graph.run_graph().node_step_result)
+    reader = ff.read_catalog_table(table, schema=schema)
+    flow = open_as(
+        ff.PythonScript(reader, code="x = 2", kernel=OTHER_KERNEL).output.filter(ff.col("amount") > 10).flow_graph
+    )
+
+    result, took = _collect_filter(locking_client, flow, locking_kernel_sim)
+    assert took < locking_kernel_sim.LOCK_WAIT and not result["success"], result
+    assert "deadlock" not in result["error"] and "a virtual table's producer" in result["error"], result
+
+
+def test_a_subflow_of_a_virtual_table_producer_on_the_sessions_own_kernel_is_refused_at_once(
+    open_as, locking_client, locking_kernel_sim
+):
+    """The producer runs outside ``run_graph``, so its subflow's run starts without a hold of its own and must
+    take the one of the fallback run around it."""
+    from uuid import uuid4
+
+    import flowfile as ff
+
+    catalog = ff.CatalogReference(f"NbHold_{uuid4().hex[:8]}", auto_create=True)
+    child = ff.create_flow_graph()
+    raw = ff.FlowInput("orders", schema={"id": ff.Int64, "amount": ff.Int64}, flow_graph=child)
+    ff.PythonScript(raw, code="x = 1", kernel=locking_kernel_sim.kernel.id).output.to_flow_output("kept")
+    ref = catalog.schema("flows", auto_create=True).register_flow(raw, name=f"child_{uuid4().hex[:8]}")
+    run = ff.RunFlow(ref, orders=ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]}))
+    schema = catalog.schema("tables", auto_create=True)
+    table = f"vt_{uuid4().hex[:8]}"
+    producer = run["kept"].write_catalog_table(table, schema=schema, write_mode="virtual")
     assert all(result.success for result in producer.flow_graph.run_graph().node_step_result)
     reader = ff.read_catalog_table(table, schema=schema)
     flow = open_as(

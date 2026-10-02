@@ -53,6 +53,7 @@ from flowfile_frame.native import (
     NativeNode,
     NativeNodeError,
     _placeholder_schema,
+    _twin_settings,
     ancestors,
     is_side_effect_node_type,
     materialise,
@@ -544,9 +545,12 @@ def _lazy_safe(frame: FlowFrame) -> bool:
 
 
 def _resolved_rows(frame: FlowFrame, payload: dict[str, Any]) -> pl.LazyFrame | None:
-    """The rows the mode's ``row_resolver`` finds for a frame without rows here; its refusal becomes ``rows_hint``."""
+    """The rows the mode's ``row_resolver`` finds for a frame without rows here; its refusal becomes ``rows_hint``.
+
+    A sync's displays are discarded, so a sync never asks.
+    """
     mode = notebook.current()
-    if mode is None or mode.row_resolver is None:
+    if mode is None or mode.row_resolver is None or mode.sync:
         return None
     try:
         return mode.row_resolver(frame)
@@ -859,13 +863,58 @@ class _SeededNames(dict):
             raise KeyError(name)
         return self._binding(self._canvas_ids[name])
 
-    def _rebuilt(self, canvas_id: int) -> FlowNode | None:
+    def _mapping(self) -> dict[int, int]:
+        """Every node built so far onto its canvas id, the relabel rule's (an id above the snapshot's when new)."""
         mode, graph = self._mode, self._mode.graph
         running = [(mode.cell_id, graph.get_node(n).node_type, n) for n in mode.cell_nodes if graph.get_node(n)]
         created = [entry for entry in (*mode.provenance, *running) if entry[2] not in self.adopted]
-        mapping = provenance_mapping(created, mode.expected, max(mode.snapshot, default=0))
-        matches = [n for n, c in (*mapping.items(), *self.adopted.items()) if c == canvas_id and graph.get_node(n)]
+        return {**provenance_mapping(created, mode.expected, max(mode.snapshot, default=0)), **self.adopted}
+
+    def _rebuilt(self, canvas_id: int) -> FlowNode | None:
+        graph = self._mode.graph
+        matches = [n for n, c in self._mapping().items() if c == canvas_id and graph.get_node(n)]
         return graph.get_node(matches[-1]) if matches else None
+
+    def canvas_id(self, node: FlowNode) -> int | None:
+        """The canvas node ``node`` stands for when the canvas already has it, else ``None``.
+
+        That is when ``node`` and every node above it map onto canvas nodes (:meth:`_mapping`) with the
+        same settings, as a push compares them, and the same incoming edges.
+        """
+        mapping, snapshot = self._mapping(), self._mode.snapshot
+        for upstream in ancestors(node).values():
+            twin = snapshot.get(mapping.get(upstream.node_id))
+            if twin is None or twin.node_type != upstream.node_type:
+                return None
+            if upstream.setting_input is None or twin.setting_input is None:
+                return None
+            node_type = upstream.node_type
+            mine = _twin_settings(upstream.setting_input, node_type, translate=True)
+            if mine != _twin_settings(twin.setting_input, node_type, translate=True):
+                return None
+            edges = sorted((mapping.get(source.node_id, 0), handle) for source, handle in upstream._incoming_edges())
+            if edges != sorted(twin.inputs):
+                return None
+        return mapping[node.node_id]
+
+    def canvas_rows(self, read: Callable[[int, str], pl.LazyFrame]) -> Callable[[FlowFrame], pl.LazyFrame | None]:
+        """A ``row_resolver`` that reads a frame's rows from the canvas through ``read`` (canvas id, output handle),
+        for a node the canvas already has (:meth:`canvas_id`), and raises for any other."""
+
+        def resolve(frame: FlowFrame) -> pl.LazyFrame | None:
+            if frame.flow_graph is not self._mode.graph:
+                return None
+            node = frame.flow_graph.get_node(frame.node_id)
+            canvas_id = self.canvas_id(node)
+            if canvas_id is None:
+                raise NativeNodeError(
+                    f"The canvas has no rows yet for this {node.node_type} node: this push adds or changes it, or "
+                    "a node above it, and a push reads rows only from the canvas. Push without reading its rows, "
+                    "then read them in a cell"
+                )
+            return read(canvas_id, frame.output_handle)
+
+        return resolve
 
     def _binding(self, canvas_id: int) -> FlowFrame | SeededNode:
         graph = self._mode.graph
@@ -907,10 +956,14 @@ def clean_run(
     *,
     user_id: int | None = None,
     executor: CellExecutor,
+    canvas_rows: Callable[[int, str], pl.LazyFrame] | None = None,
 ) -> dict[str, Any]:
     """Run every cell, in order, through ``executor`` on a fresh parameter-free session graph; return the push payload.
 
-    ``executor`` has no default, so every caller names it (:func:`execute_cell`). Runs as
+    ``executor`` has no default, so every caller names it (:func:`execute_cell`). With ``canvas_rows``
+    (canvas id, output handle -> the canvas's rows) a cell reading a deferred frame's rows (``collect()``)
+    gets the canvas's when the canvas already has the node, and fails on any other
+    (:meth:`_SeededNames.canvas_rows`); without it every such read fails. Nothing is computed either way. Runs as
     ``user_id``, else as the active (seeded) session's user; with neither it raises
     ``ValueError`` instead of running as anyone. Runs in a fresh namespace under its own notebook
     mode, a sync (``notebook.enter(sync=True)``), whose graph, flow logger and ``linecache``
@@ -943,6 +996,8 @@ def clean_run(
                 mode.snapshot.update(previous.snapshot)
             mode.expected = known
             namespace = _SeededNames(new_namespace(), mode)
+            if canvas_rows is not None:
+                mode.row_resolver = namespace.canvas_rows(canvas_rows)
             for cell_id, code in cells:
                 result = execute_cell(cell_id, code, namespace, executor=executor)
                 if not result.ok:
