@@ -48,7 +48,8 @@ TWO_INPUT_BUILDERS = {
 }
 
 
-def run(spec: dict) -> list[dict]:
+def build_frames(spec: dict) -> dict[int, pl.LazyFrame]:
+    """Every node's LazyFrame, keyed by node id, built in the order the spec lists the steps."""
     frames: dict[int, pl.LazyFrame] = {}
     for step in spec["steps"]:
         node_id = int(step["id"])
@@ -88,8 +89,11 @@ def run(spec: dict) -> list[dict]:
             frames[node_id] = frames[int(step["inputs"][0])]
         else:
             raise ValueError(f"engine_flow_runner has no case for node type {node_type!r}")
+    return frames
 
-    return frames[int(spec["output"])].collect().to_dicts()
+
+def run(spec: dict) -> list[dict]:
+    return build_frames(spec)[int(spec["output"])].collect().to_dicts()
 
 
 if __name__ == "__main__":

@@ -56,6 +56,7 @@ vi.mock('../../src/stores/file-storage', () => ({
 }))
 
 import { useFlowStore } from '../../src/stores/flow-store'
+import { useNotebookStore } from '../../src/stores/notebook-store'
 
 const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -123,6 +124,22 @@ describe('Execution is explicit-only: opening panels never runs the pipeline', (
     store.selectNode(id)
     await flushPromises()
 
+    expect(executeCalls()).toEqual([])
+    expect(previewCalls()).toEqual([])
+  })
+
+  it('rendering the notebook reads the flow and neither executes nor previews', async () => {
+    const store = useFlowStore()
+    const id = store.addNode('manual_input', 0, 0)
+    store.nodeResults.set(id, { success: true })
+    await flushPromises()
+
+    pyodideMock.runPythonWithResult.mockClear()
+
+    await useNotebookStore().render()
+    await flushPromises()
+
+    expect(bridgeStrings().filter((src) => src.includes('render_notebook('))).toHaveLength(1)
     expect(executeCalls()).toEqual([])
     expect(previewCalls()).toEqual([])
   })

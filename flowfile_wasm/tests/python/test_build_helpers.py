@@ -104,6 +104,7 @@ def test_formula_surfaces_do_not_evaluate_python(tmp_path):
     unescaped and ``Classifier.get_pl_func`` ``eval``'d the result). A hostile
     formula may raise; it may never run.
     """
+    from engine.notebook_formulas import translate_advanced_filter, translate_to_ff_code
     from polars_expr_transformer.process.polars_expr_transformer import to_flowframe_code, to_polars_code
 
     canary = tmp_path / "canary"
@@ -120,6 +121,8 @@ def test_formula_surfaces_do_not_evaluate_python(tmp_path):
         ).collect(),
         "to_polars_code": to_polars_code,
         "to_flowframe_code": to_flowframe_code,
+        "notebook formula": translate_to_ff_code,
+        "notebook advanced filter": translate_advanced_filter,
     }
     for expression in _hostile_formulas(canary):
         for surface, run in surfaces.items():

@@ -269,6 +269,39 @@ execute_formula(23, 1, json.loads(${j({
     console.error(`  [FAIL] execute_formula chained result: ${JSON.stringify(chainedRes)}`);
   }
 
+  // --- Canvas notebook: the notebook-store bridge call, then every golden flow and formula. ---
+  const golden = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../python/notebook_golden.json'), 'utf8'));
+  const sample = golden.flows.find((flow) => flow.name === 'notebook: polars code assigning output_df');
+  const notebookRes = await run('render_notebook (notebook-store bridge)', `
+import json
+from engine.notebook_render import render_notebook
+render_notebook(json.loads(${j(sample.flow)}), json.loads(${j(sample.schemas)}), json.loads(${j({ 2: 'locked until trusted' })}))
+`);
+  const notebookCells = (notebookRes && notebookRes.cells) || [];
+  if (
+    notebookCells.length !== sample.cells.length ||
+    notebookCells[2].status !== 'placeholder' ||
+    !notebookCells[2].code.includes('ff.canvas_node(2, source_1)') ||
+    notebookCells[3].code !== sample.cells[3].code
+  ) {
+    failed.push('render_notebook result');
+    console.error(`  [FAIL] render_notebook result: ${JSON.stringify(notebookRes)}`);
+  }
+  FS.writeFile('/notebook_golden.json', JSON.stringify(golden), { encoding: 'utf8' });
+  const goldenDiffs = await run('render_notebook (golden flows + formulas)', `
+import json
+from engine.notebook_formulas import translate_to_ff_code
+from engine.notebook_render import render_notebook
+_golden = json.load(open('/notebook_golden.json'))
+_diffs = [f["name"] for f in _golden["flows"] if render_notebook(f["flow"], f["schemas"], {})["cells"] != f["cells"]]
+_diffs += [formula for formula, code in _golden["formulas"].items() if translate_to_ff_code(formula) != code]
+_diffs
+`);
+  if (!Array.isArray(goldenDiffs) || goldenDiffs.length) {
+    failed.push('render_notebook golden');
+    console.error(`  [FAIL] render_notebook golden, differing: ${JSON.stringify(goldenDiffs)}`);
+  }
+
   // Parity executors.
   pyodide.globals.set('_temp_content', 'tag\nx\ny\n');
   await run('execute_read_csv (second input)', `

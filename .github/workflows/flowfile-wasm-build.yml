@@ -10,6 +10,11 @@ on:
       # schemas / save-load code changing must re-run them.
       - 'flowfile_core/flowfile_core/schemas/**'
       - 'flowfile_core/flowfile_core/flowfile/manage/**'
+      # The notebook is a port of core's render: what it is compared with.
+      - 'flowfile_core/flowfile_core/notebook/**'
+      - 'flowfile_core/flowfile_core/flowfile/code_generator/**'
+      - 'flowfile_core/flowfile_core/flowfile/share/filter_translation.py'
+      - 'flowfile_frame/**'
   pull_request:
     branches: [main]
     paths:
@@ -17,6 +22,10 @@ on:
       - '.github/workflows/flowfile-wasm-build.yml'
       - 'flowfile_core/flowfile_core/schemas/**'
       - 'flowfile_core/flowfile_core/flowfile/manage/**'
+      - 'flowfile_core/flowfile_core/notebook/**'
+      - 'flowfile_core/flowfile_core/flowfile/code_generator/**'
+      - 'flowfile_core/flowfile_core/flowfile/share/filter_translation.py'
+      - 'flowfile_frame/**'
   workflow_dispatch:
 
 # Explicit permissions for security
@@ -97,7 +106,7 @@ jobs:
         env:
           FLOWFILE_TEST_PYTHON: python
           FLOWFILE_REQUIRE_TEST_PYTHON: '1'
-        run: npx vitest run tests/unit/core-execution-parity.test.ts tests/unit/flowfile-core-export.test.ts tests/unit/core-to-wasm-import.test.ts
+        run: npx vitest run tests/unit/core-execution-parity.test.ts tests/unit/flowfile-core-export.test.ts tests/unit/core-to-wasm-import.test.ts tests/unit/notebook-render-parity.test.ts
 
   python-engine-tests:
     # Runs the in-browser Pyodide engine (src/pyodide/engine/) under CPython
