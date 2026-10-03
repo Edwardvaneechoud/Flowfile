@@ -40,6 +40,8 @@ export interface ToolbarConfig {
   showSaveLoad?: boolean
   /** Show Clear button (default: true) */
   showClear?: boolean
+  /** Show Undo/Redo buttons (default: true) */
+  showUndoRedo?: boolean
   /** Show Code Generator button (default: true) */
   showCodeGen?: boolean
   /** Show Demo button (default: false for embedded) */

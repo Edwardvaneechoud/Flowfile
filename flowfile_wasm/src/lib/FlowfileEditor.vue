@@ -95,6 +95,7 @@ const rootStyle = computed(() => ({
 
 const toolbarConfigMerged = computed<ToolbarConfig>(() => ({
   showRun: true,
+  showUndoRedo: true,
   showSaveLoad: true,
   showClear: true,
   showCodeGen: true,

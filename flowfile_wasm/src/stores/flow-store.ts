@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, shallowRef, watch } from 'vue'
+import { ref, computed, markRaw, shallowRef, watch, type Raw } from 'vue'
 import { usePyodideStore } from './pyodide-store'
 import yaml from 'js-yaml'
 import { toCoreCompatibleFlow, editorNodeType, editorNodeSettings } from '../utils/coreExport'
@@ -10,6 +10,18 @@ import { ipcStreamToParquet, parquetToIpcStream } from '../utils/parquet-bridge'
 import { fetchRemoteFile } from '../utils/remote-file'
 import { isPlaceholderNode as isPlaceholderNodeDef, placeholderLabel, placeholderReason } from '../utils/placeholder'
 import { EXPR_TRANSFORMER_PACKAGE } from '../composables/useFormulaTranslation'
+import { CONTINUOUS_EDIT_MS, FlowHistory } from './flow-history'
+import {
+  applyPatch,
+  cloneGraph,
+  cloneNode,
+  diffGraph,
+  linkEdge,
+  sameGraph,
+  unlinkEdge,
+  type FlowPatch,
+  type GraphState
+} from '../utils/flowPatch'
 import type {
   BlockedInfo,
   FlowNode,
@@ -84,7 +96,13 @@ export interface FlowStateSnapshot {
   snapshot: FlowfileData
   fileContents: Record<number, FileContent>
   nodeIdCounter: number
+  /** The flow's undo history. In memory only: a tab keeps it, a reload does not. */
+  history?: GraphHistory
 }
+
+/** Raw, so a tab holding one in reactive state does not proxy every stored graph. */
+type GraphHistory = Raw<FlowHistory<GraphState>>
+const newGraphHistory = (): GraphHistory => markRaw(new FlowHistory<GraphState>())
 
 // Preview cache limits to prevent memory bloat
 const PREVIEW_CACHE_MAX_SIZE = 20  // Max number of cached previews in TypeScript
@@ -245,6 +263,12 @@ export const useFlowStore = defineStore('flow', () => {
 
   // True while the flow came from a share link and its code nodes await the recipient's trust.
   const codeUntrusted = ref(false)
+
+  // Undo history of the open flow; replaced whenever another flow is loaded.
+  const history = shallowRef(newGraphHistory())
+  const historyRevision = ref(0)
+  // Bumped per node when its settings change from outside its panel, so an open panel reloads them.
+  const settingsEpochs = ref<Map<number, number>>(new Map())
 
   async function loadFromStorage() {
     try {
@@ -733,6 +757,124 @@ export const useFlowStore = defineStore('flow', () => {
     return nodeResults.value.get(inputId)?.schemaResolved !== false
   }
 
+  // Undo / redo and batch edits
+
+  function captureGraph(): GraphState {
+    return cloneGraph({
+      nodes: nodes.value,
+      edges: edges.value,
+      fileContents: fileContents.value,
+      nodeIdCounter: nodeIdCounter.value
+    })
+  }
+
+  /** Note that the flow is about to change, so the change can be undone. Same-key edits merge for `mergeMs`. */
+  function recordHistory(key: string, mergeMs = 0) {
+    if (history.value.record(captureGraph, { key, mergeMs })) historyRevision.value++
+  }
+
+  function resetHistory(next = newGraphHistory()) {
+    history.value = next
+    historyRevision.value++
+  }
+
+  const canUndo = computed(() => historyRevision.value >= 0 && history.value.canUndo)
+  const canRedo = computed(() => historyRevision.value >= 0 && history.value.canRedo)
+
+  function dropFileContent(id: number) {
+    fileContents.value.delete(id)
+    fileStorage.deleteFileContent(id).catch(err => {
+      // Silently ignore if file doesn't exist in IndexedDB
+      if (err && err.name !== 'NotFoundError') {
+        console.error(`Failed to delete file for node ${id} from IndexedDB:`, err)
+      }
+    })
+  }
+
+  /**
+   * Turn the live graph into `target`, in place. A node that is the same on both
+   * sides keeps its results; one whose type, settings or inputs differ is marked
+   * dirty. Never executes.
+   */
+  function morphGraph(target: GraphState) {
+    const diff = diffGraph({ nodes: nodes.value }, target)
+    const rerun = new Set([...diff.added, ...diff.changed])
+
+    for (const id of diff.removed) {
+      nodes.value.delete(id)
+      nodeResults.value.delete(id)
+      previewCache.value.delete(id)
+      dirtyNodes.value.delete(id)
+      settingsEpochs.value.delete(id)
+    }
+    for (const id of [...diff.added, ...diff.changed, ...diff.touched]) {
+      const node = target.nodes.get(id)!
+      // A result describes the node type that produced it.
+      if (nodes.value.get(id)?.type !== node.type) nodeResults.value.delete(id)
+      nodes.value.set(id, cloneNode(node))
+    }
+    // A node that came back was appended; exports and tie-breaks follow the map's order.
+    const order = [...target.nodes.keys()]
+    if (order.some((id, index) => id !== [...nodes.value.keys()][index])) {
+      nodes.value = new Map(order.map(id => [id, nodes.value.get(id)!]))
+    }
+    edges.value = target.edges.map(edge => ({ ...edge }))
+    nodeIdCounter.value = target.nodeIdCounter
+
+    for (const id of new Set([...fileContents.value.keys(), ...target.fileContents.keys()])) {
+      const wanted = target.fileContents.get(id)
+      if (fileContents.value.get(id) === wanted) continue
+      if (wanted && nodes.value.has(id)) {
+        writeFileContent(id, wanted)
+        rerun.add(id)
+      } else {
+        dropFileContent(id)
+      }
+    }
+
+    for (const id of rerun) {
+      if (!nodes.value.has(id)) continue
+      invalidatePreviewCache(id)
+      settingsEpochs.value.set(id, (settingsEpochs.value.get(id) ?? 0) + 1)
+    }
+    if (selectedNodeId.value !== null && !nodes.value.has(selectedNodeId.value)) {
+      selectedNodeId.value = null
+      showSettings.value = false
+      showTablePreview.value = false
+    }
+    debouncedPropagateSchemas()
+  }
+
+  function stepHistory(direction: 'undo' | 'redo'): boolean {
+    if (isExecuting.value) return false
+    const target = history.value[direction](captureGraph(), sameGraph)
+    historyRevision.value++
+    if (!target) return false
+    morphGraph(target)
+    return true
+  }
+
+  /** Go back one step. Returns false when there is nothing to undo. */
+  const undo = () => stepHistory('undo')
+  const redo = () => stepHistory('redo')
+
+  /**
+   * Apply a batch of node and edge changes as ONE undo step. Untouched nodes keep
+   * their id, position, description and results; changed ones are marked dirty.
+   * Never executes. Throws, having changed nothing, on a patch that cannot apply.
+   */
+  function applyFlowPatch(patch: FlowPatch) {
+    const before = captureGraph()
+    const target = applyPatch(before, patch)
+    if (history.value.record(() => before)) historyRevision.value++
+    morphGraph(target)
+  }
+
+  /** How often `nodeId`'s settings were replaced from outside its settings panel. */
+  function settingsEpoch(nodeId: number): number {
+    return settingsEpochs.value.get(nodeId) ?? 0
+  }
+
   // Actions
   function generateNodeId(): number {
     nodeIdCounter.value++
@@ -740,6 +882,7 @@ export const useFlowStore = defineStore('flow', () => {
   }
 
   function addNode(type: string, x: number, y: number): number {
+    recordHistory('graph')
     const id = generateNodeId()
     const defaultSettings = getDefaultSettings(type, id, x, y)
 
@@ -863,6 +1006,8 @@ export const useFlowStore = defineStore('flow', () => {
   function updateNode(id: number, updates: Partial<FlowNode>) {
     const node = nodes.value.get(id)
     if (node) {
+      const changes = (Object.keys(updates) as Array<keyof FlowNode>).some(key => node[key] !== updates[key])
+      if (changes) recordHistory('move', CONTINUOUS_EDIT_MS)
       nodes.value.set(id, { ...node, ...updates })
     }
   }
@@ -870,7 +1015,9 @@ export const useFlowStore = defineStore('flow', () => {
   function updateNodeSettings(id: number, settings: NodeSettings) {
     const node = nodes.value.get(id)
     if (node) {
-      node.settings = settings
+      recordHistory(`settings:${id}`, CONTINUOUS_EDIT_MS)
+      // A copy: the panel keeps editing the object it sent, and the flow must not change under an undo step.
+      node.settings = JSON.parse(JSON.stringify(settings))
       nodes.value.set(id, node)
 
       invalidatePreviewCache(id)
@@ -906,6 +1053,7 @@ export const useFlowStore = defineStore('flow', () => {
   function updateNodeDescription(id: number, description: string) {
     const node = nodes.value.get(id)
     if (node) {
+      if ((node.description ?? '') !== description) recordHistory(`meta:${id}`, CONTINUOUS_EDIT_MS)
       node.description = description
       // Also sync to settings for backward compatibility with flowfile_core
       if (node.settings) {
@@ -921,6 +1069,7 @@ export const useFlowStore = defineStore('flow', () => {
   function updateNodeReference(id: number, reference: string | undefined) {
     const node = nodes.value.get(id)
     if (node) {
+      if ((node.node_reference || undefined) !== (reference || undefined)) recordHistory(`meta:${id}`, CONTINUOUS_EDIT_MS)
       node.node_reference = reference || undefined
       if (node.settings) {
         (node.settings as NodeBase).node_reference = reference || undefined
@@ -962,18 +1111,12 @@ export const useFlowStore = defineStore('flow', () => {
   }
 
   function removeNode(id: number) {
+    if (nodes.value.has(id)) recordHistory('graph')
     nodes.value.delete(id)
     nodeResults.value.delete(id)
-    fileContents.value.delete(id)
     previewCache.value.delete(id)
     dirtyNodes.value.delete(id)
-
-    fileStorage.deleteFileContent(id).catch(err => {
-      // Silently ignore if file doesn't exist in IndexedDB
-      if (err && err.name !== 'NotFoundError') {
-        console.error(`Failed to delete file for node ${id} from IndexedDB:`, err)
-      }
-    })
+    dropFileContent(id)
 
     edges.value = edges.value.filter(
       e => e.source !== String(id) && e.target !== String(id)
@@ -995,25 +1138,14 @@ export const useFlowStore = defineStore('flow', () => {
     )
 
     if (!exists) {
+      recordHistory('graph')
       edges.value.push(edge)
 
       const targetId = parseInt(edge.target)
-      const sourceId = parseInt(edge.source)
       const targetNode = nodes.value.get(targetId)
 
       if (targetNode) {
-        if (edge.targetHandle === 'input-0' || !edge.targetHandle) {
-          // input-0 is the default/left input
-          if (!targetNode.inputIds.includes(sourceId)) {
-            targetNode.inputIds.push(sourceId)
-          }
-          // For join nodes, also set leftInputId
-          targetNode.leftInputId = sourceId
-        } else if (edge.targetHandle === 'input-1') {
-          // For join nodes, input-1 is the right input
-          targetNode.rightInputId = sourceId
-        }
-
+        linkEdge(targetNode, edge)
         invalidatePreviewCache(targetId)
       }
 
@@ -1024,14 +1156,12 @@ export const useFlowStore = defineStore('flow', () => {
   function removeEdge(edgeId: string) {
     const edge = edges.value.find(e => e.id === edgeId)
     if (edge) {
+      recordHistory('graph')
       const targetId = parseInt(edge.target)
-      const sourceId = parseInt(edge.source)
       const targetNode = nodes.value.get(targetId)
 
       if (targetNode) {
-        targetNode.inputIds = targetNode.inputIds.filter(id => id !== sourceId)
-        if (targetNode.leftInputId === sourceId) targetNode.leftInputId = undefined
-        if (targetNode.rightInputId === sourceId) targetNode.rightInputId = undefined
+        unlinkEdge(targetNode, edge)
 
         // Clear inferred schema for disconnected node (unless it has execution data)
         const existingResult = nodeResults.value.get(targetId)
@@ -1048,8 +1178,25 @@ export const useFlowStore = defineStore('flow', () => {
     }
   }
 
-  function setFileContent(nodeId: number, content: string | FileContent) {
+  /**
+   * `undoable` marks a user's own change of input data. Anything else is the flow's
+   * data arriving (an import, a re-pick, a refetch): not a step, and no earlier step
+   * may take it away again, so it is filled into the history where it was missing.
+   */
+  function setFileContent(nodeId: number, content: string | FileContent, options: { undoable?: boolean } = {}) {
     const fc = asFileContent(content)
+    if (options.undoable) {
+      // The settings key: a panel writes the data and its settings together, in either order.
+      recordHistory(`settings:${nodeId}`, CONTINUOUS_EDIT_MS)
+    } else {
+      history.value.amend(state => {
+        if (state.nodes.has(nodeId) && !state.fileContents.has(nodeId)) state.fileContents.set(nodeId, fc)
+      })
+    }
+    writeFileContent(nodeId, fc)
+  }
+
+  function writeFileContent(nodeId: number, fc: FileContent) {
     fileContents.value.set(nodeId, fc)
 
     // Binary always persists to IndexedDB; large text too (sessionStorage can't hold it)
@@ -3002,6 +3149,7 @@ result
 
     try {
       codeUntrusted.value = false
+      resetHistory()
       nodes.value.clear()
       edges.value = []
       nodeResults.value.clear()
@@ -3365,6 +3513,7 @@ result
     showTablePreview.value = false
     nodeIdCounter.value = 0
     codeUntrusted.value = false
+    resetHistory()
     currentFlowName.value = 'Untitled Flow'
     currentFlowId.value = null
     sessionStorage.removeItem(STORAGE_KEY)
@@ -3392,7 +3541,8 @@ result
       flowId: currentFlowId.value,
       snapshot: exportToFlowfile(currentFlowName.value),
       fileContents: fc,
-      nodeIdCounter: nodeIdCounter.value
+      nodeIdCounter: nodeIdCounter.value,
+      history: history.value
     }
   }
 
@@ -3412,6 +3562,7 @@ result
     currentFlowName.value = snap.name
     // importFromFlowfile cleared the id; restore the snapshot's library identity.
     currentFlowId.value = snap.flowId ?? null
+    if (snap.history) resetHistory(snap.history)
     return true
   }
 
@@ -3468,6 +3619,14 @@ result
     getBlockedInfo,
     untrustedCodeNodes,
     trustSharedCode,
+
+    // Undo / redo and batch edits
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    applyFlowPatch,
+    settingsEpoch,
 
     // Actions
     generateNodeId,

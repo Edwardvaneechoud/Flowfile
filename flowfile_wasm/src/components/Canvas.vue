@@ -85,6 +85,17 @@
           <span class="btn-text">{{ isExecuting ? 'Running...' : 'Run' }}</span>
         </button>
         <div v-if="effectiveToolbar.showRun" class="toolbar-divider"></div>
+        <template v-if="effectiveToolbar.showUndoRedo">
+          <button class="action-btn" :disabled="!flowStore.canUndo" title="Undo (Ctrl+Z)" @click="flowStore.undo()">
+            <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
+            <span class="btn-text">Undo</span>
+          </button>
+          <button class="action-btn" :disabled="!flowStore.canRedo" title="Redo (Ctrl+Shift+Z)" @click="flowStore.redo()">
+            <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13"/></svg>
+            <span class="btn-text">Redo</span>
+          </button>
+          <div class="toolbar-divider"></div>
+        </template>
         <button v-if="effectiveToolbar.showSaveLoad" class="action-btn" @click="handleSaveFlow" title="Save flow to the catalog">
           <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
           <span class="btn-text">{{ savedFlash ? 'Saved' : 'Save' }}</span>
@@ -198,9 +209,9 @@
         >
           <component
             :is="getSettingsComponent(selectedNode.type)"
-            :key="selectedNode.id"
+            :key="`${selectedNode.id}:${flowStore.settingsEpoch(selectedNode.id)}`"
             :node-id="selectedNode.id"
-            :settings="selectedNode.settings"
+            :settings="selectedNodeSettings"
             @update:settings="updateSettings"
           />
         </NodeSettingsWrapper>
@@ -515,6 +526,7 @@ const effectiveToolbar = computed<Required<ToolbarConfig>>(() => ({
   showRun: props.toolbarConfig?.showRun !== false,
   showSaveLoad: props.toolbarConfig?.showSaveLoad !== false,
   showClear: props.toolbarConfig?.showClear !== false,
+  showUndoRedo: props.toolbarConfig?.showUndoRedo !== false,
   showCodeGen: props.toolbarConfig?.showCodeGen !== false,
   showDemo: props.toolbarConfig?.showDemo ?? true
 }))
@@ -743,6 +755,11 @@ const selectedNode = computed(() => {
   if (selectedNodeId.value === null) return null
   return flowNodes.value.get(selectedNodeId.value) || null
 })
+
+// The panel's own copy: it may edit what it is given, and the flow only changes through updateSettings.
+const selectedNodeSettings = computed(() =>
+  selectedNode.value ? JSON.parse(JSON.stringify(selectedNode.value.settings ?? {})) : null
+)
 
 // Placeholder view-model for the settings panel (null for runnable nodes).
 const selectedNodePlaceholder = computed(() => {
@@ -1561,6 +1578,18 @@ function handleKeyDown(event: KeyboardEvent) {
   }
 
   if (isTyping) return
+
+  if ((event.ctrlKey || event.metaKey) && (event.key === 'z' || event.key === 'Z')) {
+    event.preventDefault()
+    if (event.shiftKey) flowStore.redo()
+    else flowStore.undo()
+    return
+  }
+  if (event.ctrlKey && (event.key === 'y' || event.key === 'Y')) {
+    event.preventDefault()
+    flowStore.redo()
+    return
+  }
 
   // Copy the selected node.
   if ((event.ctrlKey || event.metaKey) && (event.key === 'c' || event.key === 'C')) {

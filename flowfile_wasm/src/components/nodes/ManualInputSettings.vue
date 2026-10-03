@@ -302,7 +302,7 @@ function saveData() {
 
   emit('update:settings', newSettings)
 
-  flowStore.setFileContent(props.nodeId, csvData)
+  flowStore.setFileContent(props.nodeId, csvData, { undoable: true })
 
   flowStore.setSourceNodeSchema(props.nodeId, columnsData)
 
