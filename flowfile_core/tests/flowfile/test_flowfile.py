@@ -3558,3 +3558,19 @@ def test_run_graph_restricted_to_node_ids_fires_callbacks_whose_downstream_ran(t
     assert writer_callbacks == []
     assert graph.get_node(3)._on_flow_complete is not None
 
+
+
+def test_run_graph_without_commit_sources_keeps_callbacks_for_the_next_run(tmp_path):
+    graph = _record_count_and_csv_writer(str(tmp_path))
+    source_callbacks = []
+    graph.get_node(1)._on_flow_complete = source_callbacks.append
+
+    handle_run_info(graph.run_graph(commit_sources=False))
+
+    assert (tmp_path / "out.csv").exists()
+    assert source_callbacks == []
+    assert graph.get_node(1)._on_flow_complete is not None
+
+    handle_run_info(graph.run_graph())
+
+    assert source_callbacks == [True]

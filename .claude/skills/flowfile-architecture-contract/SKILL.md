@@ -410,6 +410,63 @@ lands:
 means merged or superseded) before assuming either the old inline-branch
 shape or the new backend/registry shape is current truth.
 
+### Notebook kernel: canvas fallback everywhere, no database copy (planned 2026-10-02)
+
+Agreed direction for the notebook kernel (`flowfile_frame/notebook_kernel.py`,
+`flowfile_core/notebook/kernel_runner.py`), **not built yet**. The kernel is
+a separate execution mode: node settings stay the contract that round-trips
+to the canvas on Push, the kernel runs natively what it can, and everything
+else goes to the canvas. The end state is a kernel that opens **no** catalog
+database connection, so the per-kernel SQLite copy (`kernel/notebook_db.py`,
+there because WAL does not cross the Docker Desktop VM) and the "electron +
+SQLite file" gate (`notebook/gate.py`) can go. Do not add SCD2, change-feed
+or SQL logic to `kernel_runtime/flowfile_client.py`, forward raw SQL to core,
+or swap the database to get there.
+
+Phase 0 landed with the plan: a lineage run that holds no output node
+passes `run_graph(commit_sources=False)` (`kernel_runner.lineage_commits`),
+and a session takes the schemas of canvas nodes that ran
+(`_Session.refresh`). The remaining phases, in order:
+
+1. **Held nodes run on the canvas from their settings.** Where
+   `_Session._computed_here` returns `None` today ("Push, then it runs on the
+   canvas"), the kernel hands core one node plus its inputs as parquet under
+   the shared folder: new `notebook/held_run.py` and `POST
+   /notebook/session/node_run`, bound like `node_result`. Core builds the
+   inputs with `add_dependency_on_polars_lazy_frame` plus the one node on a
+   per-session scratch graph (`_system_run`, the canvas flow's
+   `source_registration_id` copied, schema prefetch blocked), runs it under
+   `KernelHold` with `commit_sources=False`, and answers columns only for
+   `schema_only`. Closed allowlist of node types, writers refused; the
+   scratch graph's `FlowLogger`, log file and shared folder are removed when
+   the session closes.
+2. **Metadata lookups go through core.** First a census: log every database
+   connection the kernel opens and ratchet the count over the notebook
+   corpus. Then a `catalog_lookup` context hook around
+   `flow_graph._resolve_catalog_table_info` / `_resolve_catalog_sql_tables`
+   (the `placement_check` pattern), one private `flowfile_frame/_metadata.py`
+   behind the frame's `get_db_context()` calls, and one allowlisted
+   `POST /notebook/session/lookup` for what has no route (flow references,
+   saved kernels, connection names, `placement_refusal`). Secret-bearing
+   nodes become held in a kernel session and take phase 1's path.
+3. **Delete the copy.** A refusing engine in `notebook_kernel.handle()`,
+   then remove `notebook_db.py`, `/notebook/session/database`, `_rearm` and
+   `FLOWFILE_DB_PATH` from `_notebook_env`; drop the Alembic head check and
+   the SQLite requirement of the gate. Gate the deletion on a CI job that
+   builds `flowfile-kernel-notebook:dev` and runs
+   `tests/notebook/test_kernel_notebook_docker.py`, which no workflow runs
+   today.
+4. **Later, each with its own plan:** a Python Script on the notebook's own
+   kernel (`KernelHold` refuses it during a fallback), a push that keeps the
+   session's variables, a row-limited fallback for `display()`, Postgres
+   catalogs and docker-mode sessions (per-user access in the lookups, admin
+   gating on `node_run`), session artifacts visible to the canvas.
+
+Known gaps this leaves until then: a seeded canvas node below one that just
+ran keeps its seeded columns until it runs or the session is reset, and
+`FlowFrame.collect()` on a deferred frame in a script still commits sources
+(`flow_frame.py` calls `run_graph(node_ids=...)` with the default).
+
 ---
 
 ## 13. VISION (maintainer direction, 2026-07-03) — not implemented, do not foreclose

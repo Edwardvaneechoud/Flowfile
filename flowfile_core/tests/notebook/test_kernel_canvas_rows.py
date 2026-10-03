@@ -66,6 +66,33 @@ def test_display_and_collect_on_a_deferred_canvas_node_show_the_canvas_rows(code
     assert len(kernel_sim.node_results) == 1, "the second read in the session reuses the path"
 
 
+def test_showing_canvas_rows_commits_no_source_progress(coded_flow, client, kernel_sim):
+    """The canvas run behind a ``display`` leaves a source's commit callback (a change-feed cursor, a Kafka
+    offset) for the next run of the flow."""
+    node_id = _coded_id(coded_flow)
+    source = next(node for node in coded_flow.nodes if node.node_id != node_id)
+    committed = []
+    source._on_flow_complete = committed.append
+
+    assert _execute(client, coded_flow, kernel_sim, _bind(node_id) + "display(coded)")["success"]
+
+    assert len(kernel_sim.node_results) == 1
+    assert committed == [] and source._on_flow_complete is not None
+
+
+def test_rows_whose_file_is_gone_are_asked_again(coded_flow, client, kernel_sim):
+    """Core removes a file a newer result of the node superseded; the session then asks for the node's rows again."""
+    node_id = _coded_id(coded_flow)
+    assert _execute(client, coded_flow, kernel_sim, _bind(node_id) + "display(coded)")["success"]
+    for path in Path(_results_folder(kernel_sim, coded_flow)).iterdir():
+        path.unlink()
+
+    shown = _execute(client, coded_flow, kernel_sim, "display(coded)")
+
+    assert shown["success"] and len(_rows(shown)) == 3, shown
+    assert len(kernel_sim.node_results) == 2
+
+
 def test_a_reset_session_reuses_the_canvas_file(coded_flow, client, kernel_sim):
     from pathlib import Path
 

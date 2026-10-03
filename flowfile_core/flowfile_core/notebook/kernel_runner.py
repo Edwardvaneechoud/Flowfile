@@ -28,7 +28,7 @@ from flowfile_core.kernel.models import DisplayOutput, ExecuteRequest, ExecuteRe
 from flowfile_core.kernel.notebook_support import is_notebook_kernel_config
 from flowfile_core.notebook.bridge import CleanRunRequest, CleanRunResult
 from flowfile_core.notebook.gate import DISABLED_DETAIL, kernel_sessions_allowed
-from flowfile_core.notebook.push import seed_snapshot
+from flowfile_core.notebook.push import known_schemas, seed_snapshot
 from shared.notebook_display import KERNEL_RESULT_MARKER
 
 SNIPPET = "from flowfile_frame import notebook_kernel as _nb\n_nb.handle({request!r}, globals())\n"
@@ -38,6 +38,7 @@ _running: dict[tuple[str, int], str] = {}
 _sessions: dict[int, dict[str, str | None]] = {}
 _verified: set[tuple[str, str | None]] = set()
 _fingerprints: dict[tuple[str, int], str] = {}
+_schemas_sent: dict[tuple[str, int], dict[int, dict]] = {}
 _results: dict[int, dict[tuple[int, str], tuple[weakref.ref, str, str]]] = {}
 
 
@@ -172,14 +173,48 @@ def refresh_database(kernel_id: str, user) -> dict:
     return {"path": None if target is None else manager.to_kernel_path(str(target))}
 
 
+def _result_schemas(flow) -> dict[int, dict]:
+    """The output schemas of every canvas node that holds a current result, as its run left them
+    (``push.known_schemas``): nothing is predicted, so this is safe on every call and while the flow runs."""
+    found: dict[int, dict] = {}
+    for node in flow.nodes:
+        try:
+            schemas = known_schemas(node) if _has_result(flow, node) else None
+        except Exception:
+            continue
+        if schemas:
+            found[node.node_id] = schemas
+    return found
+
+
+def _session_call(manager, flow, kernel_id: str, op: str, **fields: Any) -> tuple[dict | None, ExecuteResult]:
+    """An ``execute`` or ``schemas`` op, carrying the schemas of the canvas nodes that ran since the session last
+    heard of them, so its frames know the columns the canvas found. A session is seeded before the canvas runs
+    what it builds: a script's columns are known only once the canvas has run it."""
+    key = (kernel_id, flow.flow_id)
+    current = _result_schemas(flow)
+    with _lock:
+        sent = _schemas_sent.get(key, {})
+        fresh = {node_id: schemas for node_id, schemas in current.items() if sent.get(node_id) != schemas}
+    if fresh:
+        fields["schemas"] = fresh
+    payload, raw = _call(manager, kernel_id, flow.flow_id, op, **fields)
+    if fresh and payload is not None and not payload.get("no_session"):
+        with _lock:
+            _schemas_sent.setdefault(key, {}).update(fresh)
+    return payload, raw
+
+
 def _open(manager, flow, user, kernel_id: str, op: str) -> None:
     from flowfile_core.notebook.render import code_fingerprint
 
     fingerprint = code_fingerprint(flow)
+    seeded_with = _result_schemas(flow)
     opened = _succeeded(*_call(manager, kernel_id, flow.flow_id, op, user_id=user.id, snapshot=seed_snapshot(flow)))
     with _lock:
         _sessions.setdefault(flow.flow_id, {})[kernel_id] = opened.get("namespace_generation")
         _fingerprints[(kernel_id, flow.flow_id)] = fingerprint
+        _schemas_sent[(kernel_id, flow.flow_id)] = seeded_with
 
 
 def open_session(flow, user, kernel_id: str) -> None:
@@ -237,10 +272,10 @@ def run_cell(flow, user, kernel_id: str, cell_id: str, code: str, node_id: int =
         registered = kernel_id in _sessions.get(flow.flow_id, {})
     if not registered:
         _open(manager, flow, user, kernel_id, "open")
-    payload, raw = _call(manager, kernel_id, flow.flow_id, "execute", node_id=node_id, cell_id=cell_id, code=code)
+    payload, raw = _session_call(manager, flow, kernel_id, "execute", node_id=node_id, cell_id=cell_id, code=code)
     if payload is not None and payload.get("no_session"):
         _open(manager, flow, user, kernel_id, "open")
-        payload, raw = _call(manager, kernel_id, flow.flow_id, "execute", node_id=node_id, cell_id=cell_id, code=code)
+        payload, raw = _session_call(manager, flow, kernel_id, "execute", node_id=node_id, cell_id=cell_id, code=code)
     if payload is None:
         error = raw.error or "The notebook kernel returned no result"
         return SessionExecuteResult(**{**raw.model_dump(), "success": False, "error": error})
@@ -266,7 +301,7 @@ def dataframe_schemas(flow, user, kernel_id: str) -> dict:
         if (kernel_id, flow.flow_id) in _running:
             return {**empty, "state": "busy"}
     manager = _checked(kernel_id, user, flow.flow_id)
-    payload, _ = _call(manager, kernel_id, flow.flow_id, "schemas")
+    payload, _ = _session_call(manager, flow, kernel_id, "schemas")
     if payload is None or not payload.get("ok"):
         return {**empty, "state": "unavailable"}
     frames = [
@@ -317,6 +352,7 @@ def close_flow_sessions(flow_id: int) -> None:
         handed = _results.pop(flow_id, None)
         for kernel_id in sessions:
             _fingerprints.pop((kernel_id, flow_id), None)
+            _schemas_sent.pop((kernel_id, flow_id), None)
     if not sessions and not handed:
         return
     threading.Thread(
@@ -359,6 +395,7 @@ def forget_kernel(kernel_id: str, shared_dir: str) -> None:
                     continue
                 del kernel_ids[kernel_id]
                 _fingerprints.pop((kernel_id, flow_id), None)
+                _schemas_sent.pop((kernel_id, flow_id), None)
                 if not kernel_ids:
                     del _sessions[flow_id]
                     _results.pop(flow_id, None)
@@ -381,6 +418,16 @@ def _has_result(flow, node) -> bool:
     return last is None or not any(r.node_id == node.node_id and r.skipped for r in last.node_step_result)
 
 
+def lineage_commits(flow, node_ids) -> bool:
+    """Whether a run of only ``node_ids`` commits its sources' progress (a change-feed cursor, a Kafka offset).
+
+    Only when it writes, which is when it holds an output node: rows written without the commit would be written
+    again by the flow's next run, and rows only looked at must leave the progress for that run.
+    """
+    templates = (node.node_template for node in map(flow.get_node, node_ids) if node is not None)
+    return any(t.node_group == "output" or (t.custom_node and t.node_type == "output") for t in templates)
+
+
 def _own_kernel_detail(node, kernel_id: str, needed: str) -> str:
     """The 409 detail when ``node``'s rows need ``needed`` to run on the session's own kernel, with the ways out.
 
@@ -400,7 +447,8 @@ def _run_lineage(flow, node, kernel_id: str) -> None:
     The session's kernel call holds ``kernel_id`` until this returns, so nothing in the run may execute on it: a
     node on it without a current result is refused up front, and one that runs anyway (Performance mode, a missing
     cache, a changed source, a subflow, a virtual table's producer) is refused at once by the run's ``KernelHold``,
-    which also marks the run for :func:`interrupt`.
+    which also marks the run for :func:`interrupt`. The run commits its sources' progress only when it writes
+    (:func:`lineage_commits`): showing rows never moves a change-feed cursor or a Kafka offset.
 
     409 while the flow runs, when the run needs this kernel, when it was cancelled, or when a gate routes the node
     away; 422 when the run fails.
@@ -423,7 +471,7 @@ def _run_lineage(flow, node, kernel_id: str) -> None:
         raise HTTPException(409, _own_kernel_detail(node, kernel_id, f"node(s) {', '.join(map(str, waiting))}"))
     hold = KernelHold({kernel_id})
     try:
-        run_info = flow.run_graph(node_ids=lineage, kernel_hold=hold)
+        run_info = flow.run_graph(node_ids=lineage, kernel_hold=hold, commit_sources=lineage_commits(flow, lineage))
     except Exception as exc:
         if "already running" in str(exc):
             raise HTTPException(409, running) from exc

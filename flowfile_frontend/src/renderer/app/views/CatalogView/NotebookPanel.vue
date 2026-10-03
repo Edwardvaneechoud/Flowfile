@@ -464,7 +464,10 @@ import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
 import { cellMoveAnnouncement } from "../../components/notebook/cellOperations";
 import { cellPresentation } from "../../components/notebook/cellPresentation";
 import { cellSelector, focusCell, ownerIdForNotebook } from "../../components/notebook/editorViews";
-import { attachDataframeSchemas } from "../../components/notebook/useDataframeSchemas";
+import {
+  attachDataframeSchemas,
+  refresh as refreshDataframeSchemas,
+} from "../../components/notebook/useDataframeSchemas";
 import { scanCatalogRefs } from "../../components/nodes/node-types/elements/pythonScript/dataframeSchemaInference";
 import { useCellDrag } from "../../components/notebook/useCellDrag";
 import { getCellHistory } from "../../components/notebook/useCellHistory";
@@ -1049,7 +1052,11 @@ async function onPush() {
 
 /** Run a node cell (syncing first when needed), then show its node in the canvas preview. */
 async function previewOnCanvas(cellId: string) {
+  const tabId = store.activeTabId;
+  const onKernel = !!store.active?.kernelId;
   if (!(await store.runFlowCell(cellId))) return;
+  // The canvas found the node's columns: a kernel session's frames take them with this call.
+  if (onKernel && tabId) void refreshDataframeSchemas(ownerIdForNotebook(tabId));
   // The user may have switched flows while the cell ran.
   if (store.active?.flowId !== props.flowId || useFlowStore().flowId !== props.flowId) return;
   const nodeId = store.active?.nodeIds?.[cellId]?.at(-1);

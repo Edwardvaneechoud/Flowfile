@@ -71,6 +71,12 @@ def _columns(columns) -> list[dict[str, str]]:
 
 def node_schemas(node: FlowNode) -> dict[str, list[dict[str, str]]]:
     """Per-handle schema of one node: the last run's, else the declared output schemas, else the predicted one."""
+    return known_schemas(node) or {DEFAULT_OUTPUT_HANDLE: _columns(node.schema)}
+
+
+def known_schemas(node: FlowNode) -> dict[str, list[dict[str, str]]] | None:
+    """Per-handle schema of one node as its last run or its settings give it; ``None`` when only a prediction
+    would tell, which this never makes."""
     if node._named_schemas:
         return {handle: _columns(columns) for handle, columns in node._named_schemas.items()}
     declared = getattr(node.setting_input, "output_schemas", None)
@@ -84,7 +90,7 @@ def node_schemas(node: FlowNode) -> dict[str, list[dict[str, str]]]:
     result = node.node_schema.result_schema
     if result:
         return {DEFAULT_OUTPUT_HANDLE: _columns(result)}
-    return {DEFAULT_OUTPUT_HANDLE: _columns(node.schema)}
+    return None
 
 
 def seed_snapshot(flow: FlowGraph) -> dict:

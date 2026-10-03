@@ -413,6 +413,7 @@ def _forget_kernel_sim() -> None:
     kernel_runner._sessions.clear()
     kernel_runner._verified.clear()
     kernel_runner._fingerprints.clear()
+    kernel_runner._schemas_sent.clear()
     kernel_runner._results.clear()
 
 

@@ -237,6 +237,43 @@ def test_a_cell_reads_the_catalog_right_after_core_wrote_it(smoke_flow, notebook
             db.commit()
 
 
+SUMMING_SCRIPT = (
+    "import polars as pl\n"
+    "df = flowfile_ctx.read_input()\n"
+    "flowfile_ctx.publish_output(df.select(pl.col('amount').sum().alias('column_0')))\n"
+)
+
+
+def test_a_script_on_the_sessions_kernel_has_its_columns_once_the_canvas_ran_it(
+    open_as, notebook_kernel, client_as, monkeypatch
+):
+    """A script's columns are known only once it ran: the canvas runs it while the kernel is free (Run and preview
+    on canvas), and the session's variable then knows them."""
+    import flowfile as ff
+    from flowfile_core.flowfile import flow_graph as flow_graph_module
+
+    monkeypatch.setattr(flow_graph_module, "get_kernel_manager", lambda: notebook_kernel)
+    orders = ff.from_dict({"id": [1, 2, 3, 4], "amount": [10, 20, 30, 40]})
+    flow = open_as(ff.PythonScript(orders, code=SUMMING_SCRIPT, kernel=KERNEL_ID).output.flow_graph)
+    script_id = _node_id(flow, "python_script")
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": flow.flow_id, "kernel_id": KERNEL_ID}
+    assert client.post("/notebook/session/open", json=key).status_code == 200
+    nodes = "(v for v in list(globals().values()) if type(v).__name__ == 'SeededNode')"
+    cell = f"script = next(v for v in {nodes} if v.node_id == {script_id})\nprint(script.columns)"
+    seeded = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-a", "code": cell})
+    assert seeded.status_code == 200 and seeded.json()["success"], seeded.text
+    assert "column_0" not in seeded.json()["stdout"], seeded.json()
+
+    ran = client.post("/editor/notebook/run_lineage/", json={"flow_id": flow.flow_id, "node_id": script_id})
+    assert ran.status_code == 200, ran.text
+    assert flow.get_run_info().success, flow.get_run_info()
+
+    known = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-b", "code": "print(script.columns)"})
+    assert known.status_code == 200 and known.json()["success"], known.text
+    assert known.json()["stdout"].strip() == "['column_0']", known.json()
+
+
 def test_a_cells_artifacts_and_display_order_outlive_the_calls_after_it(smoke_flow, notebook_kernel, client_as):
     """A cell runs as its own node, so the schemas refresh and the next cell leave what it published; its text and
     frame displays come back in the order it made them."""

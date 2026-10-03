@@ -7706,7 +7706,11 @@ class FlowGraph:
             self.flow_logger.info(f"Node {node.node_id}: source files changed; invalidating cached result")
 
     def run_graph(
-        self, *, node_ids: Collection[int | str] | None = None, kernel_hold: KernelHold | None = None
+        self,
+        *,
+        node_ids: Collection[int | str] | None = None,
+        kernel_hold: KernelHold | None = None,
+        commit_sources: bool = True,
     ) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
@@ -7724,6 +7728,9 @@ class FlowGraph:
                 node on one fails at once (``KernelBusyError``) instead of waiting, here and in subflows.
                 ``None`` keeps the hold of a run this one runs inside (``ambient_kernel_hold``), such as a
                 subflow of a virtual table's producer.
+            commit_sources: ``False`` for a run that only looks at rows (a notebook's lineage run that holds no
+                output node): no source's post-execution callback fires, so no change-feed cursor or Kafka
+                offset moves. The callbacks stay set and fire in the next run that commits.
 
         Returns:
             A RunInformation object summarizing the execution results.
@@ -7780,7 +7787,7 @@ class FlowGraph:
             failed_node_ids = self._execute_stages(
                 execution_plan, performance_mode, params, plan_skip_ids, deliberate_skip_ids, closed_gate_handles
             )
-            if not self.flow_settings.is_canceled:
+            if commit_sources and not self.flow_settings.is_canceled:
                 self._run_post_execution_callbacks(failed_node_ids, plan_skip_ids, deliberate_skip_ids, selected)
 
             self.latest_run_info.end_time = datetime.datetime.now()

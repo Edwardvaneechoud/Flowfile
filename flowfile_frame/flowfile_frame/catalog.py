@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 from flowfile_frame._identity import current_user_id
 from flowfile_frame.catalog_reference import WriteMode, _resolve_namespace_id
+from flowfile_frame.notebook import refuse
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph import FlowGraph
@@ -360,6 +361,7 @@ def register_flow_with_catalog(
     """
     from flowfile_core.flowfile.catalog_helpers import register_python_editor_flow
 
+    refuse("register_flow_with_catalog")
     if hasattr(flow_or_frame, "flow_graph"):
         graph = flow_or_frame.flow_graph
     else:

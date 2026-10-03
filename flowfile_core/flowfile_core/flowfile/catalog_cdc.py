@@ -3,9 +3,10 @@
 ``resolve_change_window`` is shared by the catalog reader and the cloud Delta reader; cursors are
 catalog-only. A cursor is the last Delta commit version one consumer fully processed, keyed by
 ``(table_id, consumer_key)``. Advancing it is **at-least-once**: the commit callback is stored on
-``FlowNode._on_flow_complete`` and only ``run_graph`` invokes those, after a full run in which the
-reader and everything downstream of it completed — so a preview, a single-node run or a cancel
-never moves a cursor, and a re-run after a downstream failure re-reads the same window.
+``FlowNode._on_flow_complete`` and only ``run_graph`` invokes those, after a run in which the
+reader and everything downstream of it completed — so a preview, a cancel or a notebook's lineage
+run that writes nothing (``commit_sources=False``) never moves a cursor, and a re-run after a
+downstream failure re-reads the same window.
 """
 
 from __future__ import annotations

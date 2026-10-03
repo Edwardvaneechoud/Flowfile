@@ -100,6 +100,7 @@ def test_sink_refuses_in_the_mode(mode, tmp_path):
     "call",
     [
         lambda g: ff.register_flow(g, name="nb_refused"),
+        lambda g: ff.register_flow_with_catalog(g, name="nb_refused"),
         lambda g: ff.RunFlow(g, name="nb_refused"),
         lambda g: ff.custom_nodes.install("does_not_exist.py"),
         lambda g: ff.create_database_connection("nb", database_type="sqlite", database=":memory:"),
@@ -112,6 +113,7 @@ def test_sink_refuses_in_the_mode(mode, tmp_path):
     ],
     ids=[
         "register_flow",
+        "register_flow_with_catalog",
         "run_flow_graph",
         "custom_nodes_install",
         "create_database_connection",

@@ -18,12 +18,13 @@ writes under a new name when a call first connects to it (:func:`_rearm`).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
 import threading
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -40,14 +41,18 @@ from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.native import (
     NativeNode,
     NativeNodeError,
+    _handles,
     _kernel_hidden_path,
     _kernel_twin_id,
+    _per_handle,
     _twin_settings,
     ancestors,
     materialise,
+    seed_deferred_node,
 )
 from flowfile_frame.notebook_cells import (
     _CELL_OUTPUTS,
+    _columns,
     _schema_entries,
     display,
     exec_cell,
@@ -75,6 +80,19 @@ def _rows_settings(settings: BaseModel, node_type: str) -> Any:
     if excluded and isinstance(compared, dict):
         return {key: value for key, value in compared.items() if key not in excluded}
     return compared
+
+
+def _column_types(schemas: Mapping[str, Any]) -> dict[str, list[tuple[str, str]]]:
+    return {handle: [(c.column_name, c.data_type) for c in columns or []] for handle, columns in schemas.items()}
+
+
+def _bound_frames(namespace: Mapping[str, Any]) -> Iterator[FlowFrame]:
+    """Every frame a session variable holds: a frame itself, or a node's outputs."""
+    for value in list(namespace.values()):
+        if isinstance(value, FlowFrame):
+            yield value
+        elif isinstance(value, NativeNode):
+            yield from value.__dict__.get("_frames", {}).values()
 
 
 def _post_core(route: str, body: dict[str, Any], what: str) -> dict[str, Any]:
@@ -167,9 +185,60 @@ class _Session:
             raise NativeNodeError(_new_node_message(frame))
         return self._fetch(node_id, frame.output_handle)
 
+    def refresh(self, schemas: Mapping[Any, Mapping[str, Any]] | None = None) -> None:
+        """Take over the columns the canvas found since the session was seeded.
+
+        ``schemas`` holds the outputs of canvas nodes that ran (core sends them with a call); where they differ
+        the snapshot takes them and the rows handed out for that node are asked again. Every deferred node
+        standing for a canvas node (:meth:`_twin`) whose seed differs from that node's schemas is then seeded
+        with them, a node a cell built since included. The nodes computed below it are read again, and the
+        deferred frames bound to any of them take the new placeholder; a frame whose read now fails keeps its
+        old one. A read of a file this kernel cannot see holds its canvas rows and is left alone; telling one
+        needs paths as written, which a ``schemas`` call does not run under, so they are kept here.
+        """
+        with notebook.paths_as_written():
+            self._refresh(schemas)
+
+    def _refresh(self, schemas: Mapping[Any, Mapping[str, Any]] | None) -> None:
+        for canvas_id, by_handle in (schemas or {}).items():
+            twin = self.mode.snapshot.get(int(canvas_id))
+            found = {handle: _columns(entries) for handle, entries in by_handle.items()}
+            if twin is None or _column_types(found) == _column_types(twin.schemas):
+                continue
+            twin.schemas = found
+            for key in [key for key in self.rows if key[0] == int(canvas_id)]:
+                del self.rows[key]
+        created = {entry[2] for entry in self.mode.provenance}
+        twins: dict[int, int | None] = {}
+        stale: dict[int, FlowNode] = {}
+        for node in self.mode.graph.nodes:
+            if not node.deferred_until_run or _kernel_hidden_path(node) is not None:
+                continue
+            twin = self.mode.snapshot.get(self._twin(node, created, twins))
+            if twin is None or not any(twin.schemas.values()):
+                continue
+            seed = _per_handle(twin.schemas, _handles(node))
+            if _column_types(seed) != _column_types(node._named_schemas):
+                seed_deferred_node(node, seed)
+                stale[node.node_id] = node
+        for node in list(stale.values()):
+            for below in node.get_all_dependent_nodes():
+                if not below.deferred_until_run and below.node_id not in stale:
+                    below.results.resulting_data, below.results.errors, below._named_outputs = None, None, {}
+                    stale[below.node_id] = below
+        for frame in _bound_frames(self.namespace):
+            node = stale.get(frame.node_id)
+            if node is None or not frame._deferred or frame.flow_graph is not self.mode.graph:
+                continue
+            handle = None if frame.output_handle == DEFAULT_OUTPUT_HANDLE else frame.output_handle
+            try:
+                frame.data = materialise(node, handle).data_frame
+            except Exception:
+                continue
+
     def _fetch(self, node_id: int, handle: str) -> pl.LazyFrame:
         key = (node_id, handle)
-        if key not in self.rows:
+        if key not in self.rows or not os.path.exists(self.rows[key]):
             self.rows[key], changed = _canvas_answer(self.fetch, self.flow_id, node_id, handle)
             if changed:
                 print(CANVAS_CHANGED)
@@ -481,11 +550,19 @@ def _error_line(text: str | None) -> str | None:
     return lines[-1] if lines else text
 
 
+def _refreshed(session: _Session, schemas: Mapping[Any, Mapping[str, Any]] | None = None) -> None:
+    """``session.refresh``, best effort: failing to take over the canvas's columns never fails the call."""
+    with contextlib.suppress(Exception):
+        session.refresh(schemas)
+
+
 def _execute(session: _Session, request: dict[str, Any]) -> dict[str, Any]:
     """Run one cell as Python in the session; its outputs, then the last expression's schema display."""
     session.revision += 1
     with notebook.resumed(session.mode), notebook.paths_as_written():
+        _refreshed(session, request.get("schemas"))
         result = execute_cell(str(request["cell_id"]), request["code"], session.namespace, executor=exec_cell)
+        _refreshed(session)
     displays = [*result.outputs, *([result.display] if result.display is not None else [])]
     return {
         "ok": result.ok,
@@ -526,9 +603,10 @@ def _clean_run(flow_id: int, request: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "result": result.model_dump(mode="json"), "traceback": result.traceback}
 
 
-def _schemas(session: _Session) -> dict[str, Any]:
+def _schemas(session: _Session, request: dict[str, Any]) -> dict[str, Any]:
     frames: dict[str, list[dict[str, str]]] = {}
     with notebook.resumed(session.mode):
+        _refreshed(session, request.get("schemas"))
         for name, value in list(session.namespace.items()):
             if name.startswith("_") or not isinstance(value, FlowFrame):
                 continue
@@ -557,7 +635,7 @@ def _dispatch(request: dict[str, Any], namespace: dict[str, Any]) -> dict[str, A
     if session is None:
         return {"ok": False, "no_session": True, "error": "No notebook session is open for this flow"}
     _adopt(session, namespace)
-    return _execute(session, request) if op == "execute" else _schemas(session)
+    return _execute(session, request) if op == "execute" else _schemas(session, request)
 
 
 def handle(request_json: str, namespace: dict[str, Any]) -> None:
