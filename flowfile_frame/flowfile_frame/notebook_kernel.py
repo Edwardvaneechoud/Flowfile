@@ -10,13 +10,15 @@ prints its JSON result on one ``shared.notebook_display.KERNEL_RESULT_MARKER`` l
 cell prints stays the call's stdout. A flow's session keeps its variables in the kernel's namespace for the call's
 flow id (the snippet's ``globals()``), where the kernel's Jedi reads them. Notebook mode is context-local and every
 kernel call runs in a fresh context, so an op on the session resumes its mode (``notebook.resumed``), and an op that
-builds nodes keeps file paths as written (``notebook.paths_as_written``); core turns them back into host paths on a
-push. Rows the kernel cannot compute come from the canvas (:meth:`_Session.canvas_rows`): a canvas node's own, or,
-for a node only the cells hold, a run core makes of that node from its settings (:meth:`_Session._run_held`). The
-catalog metadata a build reads (tables, flow references, connections, kernels) comes from core too: every op runs
-under ``_metadata.installed`` (``POST /notebook/session/lookup``), so the kernel opens no catalog connection. The
-kernel holds no catalog database at all: its catalog engine refuses every connection (:func:`_refuse_database`), so
-code in a cell that opens the database itself stops with a message naming the ``ff`` functions to use instead.
+builds nodes keeps file paths as written (``notebook.paths_as_written``): the kernel mounts no host folder, so every
+file a cell names is read by core and core recomputes the absolute paths on a push. Rows the kernel cannot compute
+come from the canvas (:meth:`_Session.canvas_rows`): a canvas node's own, or, for a node only the cells hold, a run
+core makes of that node from its settings (:meth:`_Session._run_held`). The catalog metadata a build reads (tables,
+flow references, connections, kernels) comes from core too, as do a flow file's interface, whether a path is a folder
+and the installed custom node files (:func:`_mirror_custom_nodes`): every op runs under ``_metadata.installed``
+(``POST /notebook/session/lookup``), so the kernel opens no catalog connection. The kernel holds no catalog database
+at all: its catalog engine refuses every connection (:func:`_refuse_database`), so code in a cell that opens the
+database itself stops with a message naming the ``ff`` functions to use instead.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ import sys
 import traceback
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -38,6 +41,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+from flowfile_core.flowfile.user_defined.registry import registry
 from flowfile_core.schemas.schemas import FlowfileNode
 from flowfile_frame import _metadata, notebook
 from flowfile_frame.flow_frame import FlowFrame
@@ -732,6 +736,39 @@ def _schemas(session: _Session, request: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "frames": frames, **session.stamp()}
 
 
+_MIRRORED: dict[str, Path] = {}
+"""The custom node files this kernel wrote from core's sources, by node key: the only files the mirror removes."""
+
+_MIRRORING_OPS = frozenset({"open", "reset", "execute", "clean_run"})
+
+
+def _mirror_custom_nodes() -> None:
+    """Give this kernel's registry the custom node files core has, so a cell places them as a script does.
+
+    The kernel mounts no host folder, so core lists its installed node files (``custom_node_sources``) and
+    every one the registry lacks, or holds with another hash, is written as ``<node_key>.py`` into the
+    kernel's own nodes folder; a mirrored file whose key core no longer lists is removed, and the registry
+    rescans once when anything changed. In the tests' kernel-sim that folder is core's own, so every hash
+    matches and nothing is written.
+    """
+    wanted = {entry.node_key: entry for entry in _metadata.custom_node_sources()}
+    changed = False
+    for key, entry in wanted.items():
+        held = registry.get(key)
+        if held is not None and held.source_hash == entry.source_hash:
+            continue
+        registry.directory.mkdir(parents=True, exist_ok=True)
+        path = registry.directory / f"{key}.py"
+        path.write_text(entry.source, encoding="utf-8")
+        _MIRRORED[key] = path
+        changed = True
+    for key in [key for key in _MIRRORED if key not in wanted]:
+        _MIRRORED.pop(key).unlink(missing_ok=True)
+        changed = True
+    if changed:
+        registry.scan()
+
+
 def _dispatch(request: dict[str, Any], namespace: dict[str, Any]) -> dict[str, Any]:
     op = request.get("op")
     if op == "hello":
@@ -742,7 +779,10 @@ def _dispatch(request: dict[str, Any], namespace: dict[str, Any]) -> dict[str, A
 
 
 def _dispatch_session(op: str | None, flow_id: int, request: dict[str, Any], namespace: dict[str, Any]) -> dict:
-    """One op on the flow's session, every catalog metadata lookup it makes answered by core."""
+    """One op on the flow's session, every catalog metadata lookup it makes answered by core; an op that builds
+    nodes first takes core's custom node files (:func:`_mirror_custom_nodes`)."""
+    if op in _MIRRORING_OPS:
+        _mirror_custom_nodes()
     if op in ("open", "reset"):
         return _open(flow_id, request, namespace)
     if op == "clean_run":

@@ -67,11 +67,10 @@ def _in_kernel(path: str) -> bool:
 
 
 def _kernel_storage() -> str:
-    """The kernel's ``FLOWFILE_STORAGE_DIR``: the host's storage folder as the kernel sees it."""
-    from flowfile_core.kernel.notebook_mounts import kernel_side
-    from shared.storage_config import storage
-
-    return kernel_side(str(storage.base_directory))
+    """The kernel's own storage folder (``~/.flowfile`` in the container): no host folder is mounted into it."""
+    code = "from shared.storage_config import storage; print(storage.base_directory)"
+    command = ["docker", "exec", f"flowfile-kernel-{KERNEL_ID}", "python", "-c", code]
+    return subprocess.run(command, capture_output=True, text=True, check=True).stdout.strip()
 
 
 def _free_port() -> int:
@@ -351,9 +350,10 @@ def test_kernel_completions_see_the_session(smoke_flow, notebook_kernel, client_
     assert "priced" not in labels("pri")
 
 
-def test_a_read_of_a_file_the_kernel_cannot_see_is_run_by_core(smoke_flow, notebook_kernel, client_as, tmp_path):
-    """A cell reads a host file outside the kernel's folders: the kernel cannot open it, so core predicts its columns
-    and reads it from the cell's settings (``POST /notebook/session/node_run``), without a push."""
+def test_a_file_a_cell_names_is_read_by_core(smoke_flow, notebook_kernel, client_as, tmp_path):
+    """A cell reads a file on this machine: the kernel mounts no host folder, so core predicts its columns and reads
+    it from the cell's settings (``POST /notebook/session/node_run``), without a push; plain Polars in the cell has
+    no such file."""
     path = tmp_path / "outside.csv"
     path.write_text("a,b\n1,x\n2,y\n")
     client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
@@ -364,3 +364,29 @@ def test_a_read_of_a_file_the_kernel_cannot_see_is_run_by_core(smoke_flow, noteb
     assert shown.status_code == 200 and shown.json()["success"], shown.text
     assert shown.json()["stdout"].strip() == "['a', 'b']", shown.json()
     assert _table_rows(shown.json()) == [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}], shown.json()
+
+    plain = f"import polars as pl\npl.read_csv({str(path)!r})"
+    missing = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-plain", "code": plain})
+    assert missing.status_code == 200 and not missing.json()["success"], missing.text
+    assert "No such file" in json.dumps(missing.json()), missing.json()
+    assert not _in_kernel(str(path))
+
+
+def test_an_installed_custom_node_is_mirrored_into_the_kernel(smoke_flow, notebook_kernel, client_as):
+    """Core's installed custom node files reach the kernel through the ``custom_node_sources`` lookup: a cell places
+    ``mood_emoji`` and the kernel runs it on its own copy of the file."""
+    from test_utils.notebook_demo import installed_mood_emoji
+
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}
+    cell = _bind("filtered", _node_id(smoke_flow, "filter")) + (
+        "mood = ff.custom_nodes.mood_emoji(filtered, source_column='amount', threshold_value=25, "
+        "emoji_column_name='mood', add_random_sparkle=False)\nprint(mood.columns)\ndisplay(mood)"
+    )
+    with installed_mood_emoji():
+        assert client.post("/notebook/session/open", json=key).status_code == 200
+        shown = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-node", "code": cell})
+    assert shown.status_code == 200 and shown.json()["success"], shown.text
+    assert "'mood'" in shown.json()["stdout"], shown.json()
+    assert len(_table_rows(shown.json())) == 3, shown.json()
+    assert _in_kernel(f"{_kernel_storage()}/user_defined_nodes/mood_emoji.py")

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 from cryptography.fernet import Fernet
@@ -168,6 +169,34 @@ def test_the_frame_lookups_answer_through_core(
     }, kinds
 
 
+def test_a_catalog_table_a_flow_file_and_a_custom_node_reach_the_kernel_through_core(
+    notebook_corpus, orders_flow, client, kernel_sim, kernel_db_opens
+):
+    """The kernel mounts no host folder: a catalog reader's columns and rows come from core (``node_run``), a flow
+    reference's interface and the installed custom node files through the lookups."""
+    from test_utils.notebook_demo import installed_mood_emoji
+
+    cell = (
+        f"schema = ff.get_catalog('Demo').get_schema({DEMO_SCHEMA.split('.')[1]!r})\n"
+        "sales = schema.read_table('sales')\n"
+        "print('columns', sales.columns)\n"
+        "print('rows', sales.collect().height)\n"
+        f"print('flow', ff.flow_ref({DEMO_SCHEMA!r}, 'Clean orders').name)\n"
+        "print('installed', 'mood_emoji' in ff.custom_nodes)\n"
+    )
+    with installed_mood_emoji():
+        result = _execute(client, orders_flow.flow_id, kernel_sim.kernel.id, "cell-files", cell)
+    assert result["success"], result
+    lines = dict(line.split(" ", 1) for line in result["stdout"].strip().splitlines())
+    assert lines["columns"] != "[]" and int(lines["rows"]) > 0, lines
+    assert lines["flow"] == "Clean orders" and lines["installed"] == "True", lines
+    runs = [(run["node"]["type"], run["schema_only"]) for run in kernel_sim.node_runs]
+    assert ("catalog_reader", True) in runs and ("catalog_reader", False) in runs, runs
+    kinds = {body["kind"] for body in kernel_sim.lookups}
+    assert {"catalog_table", "flow_registrations", "flow_interface", "custom_node_sources"} <= kinds, kinds
+    assert not kernel_db_opens, f"a kernel op opened the catalog database from {sorted(set(kernel_db_opens))}"
+
+
 def test_a_lookup_answers_metadata_only(notebook_corpus, database_connection, cloud_catalog, monkeypatch):
     """Every kind, answered for a catalog with a cloud-backed namespace, a database connection and a registered
     flow, carries no ciphertext and decrypts nothing."""
@@ -204,11 +233,22 @@ def test_a_lookup_answers_metadata_only(notebook_corpus, database_connection, cl
         "cloud_connections": {},
         "database_connection": {"name": database_connection},
         "database_connections": {},
+        "flow_interface": {
+            "registration_id": registration.id,
+            "flow_uuid": registration.flow_uuid,
+            "name": None,
+            "namespace": None,
+        },
+        "is_directory": {"path": str(Path(registration.flow_path).parent)},
+        "custom_node_sources": {},
     }
     assert set(asked) == set(lookup.KINDS), "every kind is covered here"
     answers = {kind: lookup.answer(kind, args, NOTEBOOK_OWNER_ID) for kind, args in asked.items()}
     text = json.dumps(answers)
     assert "$ffsec$" not in text and "census-secret" not in text, text
+    assert set(answers["flow_interface"]) == {"inputs", "outputs", "parameters"}, answers["flow_interface"]
+    assert answers["is_directory"] is True
+    assert all({"node_key", "source", "source_hash"} <= set(row) for row in answers["custom_node_sources"])
     assert decrypted == []
     assert answers["catalog_table"]["table_name"] == "sales" and answers["catalog_table"]["serialized_lf"] is None
     assert answers["catalog_storage"] == {

@@ -1,11 +1,13 @@
 """The frame's catalog metadata reads, and how a notebook kernel session answers them through core.
 
 Every public function here reads catalog metadata: namespaces, tables, flow registrations, the user's saved
-kernels, connections without their secrets. Outside a kernel session it opens the catalog database, as the
-frame always did. Inside one, ``flowfile_core.notebook.lookup.metadata_lookup`` is set for the op
-(:func:`installed`) and the function asks core instead (:class:`SessionLookup`), so the kernel opens no
-database connection and no secret, not even a ciphertext, reaches it. Core answers a kind by calling the
-``local_*`` twin of the same function, so both paths compute the same thing.
+kernels, connections without their secrets; the last three read the host's filesystem (a flow file's
+interface, whether a path is a folder, the installed custom node files), which a kernel mounts nothing of.
+Outside a kernel session it opens the catalog database or the file, as the frame always did. Inside one,
+``flowfile_core.notebook.lookup.metadata_lookup`` is set for the op (:func:`installed`) and the function asks
+core instead (:class:`SessionLookup`), so the kernel opens no database connection and no secret, not even a
+ciphertext, reaches it. Core answers a kind by calling the ``local_*`` twin of the same function, so both
+paths compute the same thing.
 """
 
 from __future__ import annotations
@@ -13,7 +15,8 @@ from __future__ import annotations
 import contextlib
 import json
 from collections.abc import Callable, Iterator
-from typing import Any, NamedTuple
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from pydantic import BaseModel
 
@@ -22,6 +25,9 @@ from flowfile_core.schemas.catalog_schema import CatalogTableOut
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionInterface
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
 from flowfile_frame._identity import current_user_id
+
+if TYPE_CHECKING:
+    from flowfile_core.flowfile.subflow import SubflowInterface
 
 _NEVER_ANSWERED: frozenset[str] = frozenset({"password"})
 
@@ -62,26 +68,18 @@ class SessionLookup:
     """The ``metadata_lookup`` a notebook kernel session installs for one op: every lookup goes to core.
 
     Answers are memoised for the op by kind and arguments (a cell that places the same table twice asks
-    once; the next op asks again, as the catalog may have changed). ``cloud_tables`` holds the node id of
-    every ``catalog_table`` answer whose data lives in cloud storage (:func:`is_cloud_table`): the kernel
-    holds no credentials, so notebook mode defers such a reader and core runs it.
+    once; the next op asks again, as the catalog may have changed).
     """
 
     def __init__(self, flow_id: int, transport: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
         self.flow_id = flow_id
         self.transport = transport
         self.answers: dict[tuple[str, str], Any] = {}
-        self.cloud_tables: set[int] = set()
 
     def __call__(self, kind: str, args: dict[str, Any]) -> Any:
         key = (kind, json.dumps(args, sort_keys=True, default=str))
         if key not in self.answers:
             self.answers[key] = self.transport({"flow_id": self.flow_id, "kind": kind, "args": args})["result"]
-            if kind == "catalog_table":
-                from flowfile_core.catalog.storage_backend import _is_cloud_uri
-
-                if _is_cloud_uri(self.answers[key].get("file_path") or ""):
-                    self.cloud_tables.add(int(args["node_id"]))
         return self.answers[key]
 
 
@@ -94,12 +92,6 @@ def installed(flow_id: int, transport: Callable[[dict[str, Any]], dict[str, Any]
         yield hook
     finally:
         metadata_lookup.reset(token)
-
-
-def is_cloud_table(node_id: int) -> bool:
-    """Whether core resolved catalog reader ``node_id``'s table to cloud storage in this op (a kernel session)."""
-    hook = metadata_lookup.get()
-    return isinstance(hook, SessionLookup) and node_id in hook.cloud_tables
 
 
 def dumped(value: Any) -> Any:
@@ -361,3 +353,73 @@ def local_database_connections(*, user_id: int) -> list[FullDatabaseConnectionIn
             )
             for row in rows
         ]
+
+
+def flow_interface(
+    registration_id: int, flow_uuid: str | None, name: str | None, namespace: str | None
+) -> SubflowInterface:
+    """The inputs, outputs and parameters of the registered flow a reference names, read from its flow file after
+    the access check; ``ValueError`` with the reason when the registration or the file is missing."""
+    from flowfile_core.flowfile.subflow import SubflowInterface
+
+    asked, answer = _ask(
+        "flow_interface", registration_id=registration_id, flow_uuid=flow_uuid, name=name, namespace=namespace
+    )
+    if asked:
+        if "error" in answer:
+            raise ValueError(answer["error"])
+        return SubflowInterface.model_validate(answer)
+    result = local_flow_interface(registration_id, flow_uuid, name, namespace, user_id=current_user_id())
+    if isinstance(result, dict):
+        raise ValueError(result["error"])
+    return result
+
+
+def local_flow_interface(
+    registration_id: int, flow_uuid: str | None, name: str | None, namespace: str | None, *, user_id: int
+) -> SubflowInterface | dict[str, str]:
+    from flowfile_core.flowfile.subflow import SubflowResolutionError, get_subflow_interface, resolve_subflow_path
+    from flowfile_core.schemas.input_schema import SubflowReference
+
+    ref = SubflowReference(registration_id=registration_id, flow_uuid=flow_uuid, name=name, namespace=namespace)
+    try:
+        return get_subflow_interface(resolve_subflow_path(ref, user_id).path)
+    except SubflowResolutionError as exc:
+        return {"error": str(exc)}
+
+
+def is_directory(path: str) -> bool:
+    """Whether ``path``, as a cell wrote it, is a folder on the user's machine."""
+    asked, answer = _ask("is_directory", path=path)
+    if asked:
+        return bool(answer)
+    return local_is_directory(path, user_id=current_user_id())
+
+
+def local_is_directory(path: str, *, user_id: int) -> bool:
+    return Path(path).expanduser().is_dir()
+
+
+class CustomNodeSource(NamedTuple):
+    """An installed custom node file: its node key, source text and sha256 (``registry.LoadedNode``)."""
+
+    node_key: str
+    source: str
+    source_hash: str
+
+
+def custom_node_sources() -> list[CustomNodeSource]:
+    """The installed custom node files that load (broken ones left out), as the registry holds them."""
+    asked, answer = _ask("custom_node_sources")
+    if asked:
+        return [CustomNodeSource(**row) for row in answer]
+    return local_custom_node_sources(user_id=current_user_id())
+
+
+def local_custom_node_sources(*, user_id: int) -> list[CustomNodeSource]:
+    from flowfile_core.flowfile.user_defined.registry import registry
+
+    return [
+        CustomNodeSource(entry.node_key, entry.source_text, entry.source_hash)
+        for entry in registry.all(include_broken=False)
+    ]

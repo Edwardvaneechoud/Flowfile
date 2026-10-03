@@ -1,6 +1,6 @@
 """Notebook build mode: one session graph, nothing runs, writes or registers while a cell builds."""
 
-import json
+import os
 
 import polars as pl
 import pytest
@@ -464,55 +464,46 @@ def test_a_user_less_mode_checks_a_placement_as_the_user_its_settings_carry():
         assert reader.output._deferred and reader.output.collect_schema().names() == ["x"]
 
 
-def test_kernel_path_translates_through_the_notebook_mount_table(monkeypatch):
-    monkeypatch.delenv(notebook.MOUNTS_ENV, raising=False)
-    assert notebook.kernel_path(r"C:\data\sales.csv") == r"C:\data\sales.csv"
-
-    table = {r"C:\Users\me\.flowfile": "/host/c/Users/me/.flowfile", r"C:\Users\me": "/host/c/Users/me"}
-    monkeypatch.setenv(notebook.MOUNTS_ENV, json.dumps(table))
-    assert notebook.kernel_path(r"C:\Users\me\data\sales.csv") == "/host/c/Users/me/data/sales.csv"
-    assert notebook.kernel_path(r"c:\users\ME\.flowfile\flows\a.yaml") == "/host/c/Users/me/.flowfile/flows/a.yaml"
-    assert notebook.kernel_path(r"D:\data\sales.csv") is None
-    assert notebook.kernel_path(r"C:\Users\meadow\x.csv") is None
-
-
-def test_paths_kept_as_written_still_glob_a_folder_and_join_a_name(tmp_path, monkeypatch):
+def test_paths_kept_as_written_still_glob_a_folder_and_join_a_name(tmp_path):
     from flowfile_core.schemas.input_schema import ReceivedTable
     from shared.path_utils import expand_glob_pattern
 
     folder = tmp_path / "sales"
     folder.mkdir()
     (folder / "a.csv").write_text("x\n1\n")
-    monkeypatch.delenv(notebook.MOUNTS_ENV, raising=False)
     with notebook.paths_as_written():
         directory = ReceivedTable(path=str(folder), file_type="csv", scan_mode="directory")
         assert expand_glob_pattern(directory.abs_file_path) == [str(folder / "a.csv")]
         assert ReceivedTable(path=str(folder), name="a.csv", file_type="csv").abs_file_path == str(folder / "a.csv")
-
-    monkeypatch.setenv(notebook.MOUNTS_ENV, json.dumps({r"C:\data": str(folder)}))
-    with notebook.paths_as_written():
-        directory = ReceivedTable(path=r"C:\data", file_type="csv", scan_mode="directory")
-        assert directory.path == r"C:\data"
-        assert expand_glob_pattern(directory.abs_file_path) == [str(folder / "a.csv")]
-        assert ReceivedTable(path=r"C:\data", name="a.csv", file_type="csv").abs_file_path == f"{folder}/a.csv"
-        assert ReceivedTable(path=r"C:\data\a.csv", name=r"C:\data\a.csv", file_type="csv").abs_file_path == (
-            f"{folder}/a.csv"
-        )
-        read = ff.read_csv(r"C:\data\a.csv")
-        assert read.collect().to_dicts() == [{"x": 1}]
+        windows = ReceivedTable(path=r"C:\data", name=r"C:\data\a.csv", file_type="csv")
+        assert windows.path == r"C:\data" and windows.abs_file_path == os.path.join(r"C:\data", "a.csv")
 
 
-def test_scan_mode_probes_the_folder_the_kernel_sees(tmp_path, monkeypatch):
+def test_scan_mode_asks_core_in_a_kernel_session(tmp_path):
+    """Under ``paths_as_written`` a bare path is probed through the ``is_directory`` lookup when one is installed (a
+    kernel session: the kernel sees no folder of this machine), else on this filesystem; the syntax rules come first."""
+    from flowfile_core.notebook.lookup import metadata_lookup
     from flowfile_frame.flow_frame_methods import _resolve_scan_mode
 
     folder = tmp_path / "sales"
     folder.mkdir()
-    monkeypatch.setenv(notebook.MOUNTS_ENV, json.dumps({r"C:\data": str(folder)}))
-    assert _resolve_scan_mode(r"C:\data") == "single_file"
+    asked: list[tuple[str, dict]] = []
+
+    def hook(kind, args):
+        asked.append((kind, args))
+        return args["path"] == r"C:\data"
+
     with notebook.paths_as_written():
-        assert _resolve_scan_mode(r"C:\data") == "directory"
-        assert _resolve_scan_mode("C:\\other\\") == "directory"
-        assert _resolve_scan_mode(r"C:\data\a.csv") == "single_file"
+        assert _resolve_scan_mode(str(folder)) == "directory", "without a hook the folder is probed here"
+        token = metadata_lookup.set(hook)
+        try:
+            assert _resolve_scan_mode(r"C:\data") == "directory"
+            assert _resolve_scan_mode(r"C:\data\a.csv") == "single_file"
+            assert _resolve_scan_mode("C:\\other\\") == "directory"
+        finally:
+            metadata_lookup.reset(token)
+    assert asked == [("is_directory", {"path": r"C:\data"}), ("is_directory", {"path": r"C:\data\a.csv"})]
+    assert _resolve_scan_mode(str(folder)) == "directory" and _resolve_scan_mode(r"C:\data") == "single_file"
 
 
 def test_a_schema_resolver_seeds_a_deferred_node_without_columns(mode):
@@ -650,8 +641,6 @@ def test_metadata_lookups_answer_from_the_installed_hook_and_read_the_catalog_wi
         assert _metadata.namespaces(None) == [_metadata.Namespace(5, "Remote", None)]
         assert _metadata.namespaces(None)[0].name == "Remote" and len(calls) == 1, "memoised for the op"
         hook("catalog_table", {"node_id": 9, "catalog_table_id": 3})
-        assert _metadata.is_cloud_table(9) and not _metadata.is_cloud_table(8)
         assert [kind for kind, _ in calls] == ["namespaces", "catalog_table"]
-    assert not _metadata.is_cloud_table(9)
     assert isinstance(_metadata.default_namespace_id(), int)
     assert "General" in {ns.name for ns in _metadata.namespaces(None)}

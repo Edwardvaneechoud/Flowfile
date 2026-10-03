@@ -295,3 +295,46 @@ def test_a_flows_session_namespace_is_apart_from_every_catalog_notebooks():
 
     assert kernel_flow_id(7) == -(1 << 40) - 7
     assert kernel_flow_id(0xFFFFFFFF) < -1_600_000_000
+
+
+def test_the_kernel_mirrors_cores_custom_node_files(tmp_path, monkeypatch):
+    """``_mirror_custom_nodes`` writes the node files core lists into the kernel's own nodes folder, rewrites one whose
+    hash changed, removes only the files it wrote, and leaves an unchanged file alone."""
+    import hashlib
+
+    from flowfile_core.flowfile.user_defined.registry import registry
+    from flowfile_frame import _metadata, notebook_kernel
+    from test_utils.notebook_demo import MOOD_EMOJI
+
+    def listed(source: str) -> list:
+        return [_metadata.CustomNodeSource("mood_emoji", source, hashlib.sha256(source.encode()).hexdigest())]
+
+    source = MOOD_EMOJI.read_text()
+    answer = listed(source)
+    monkeypatch.setattr(_metadata, "custom_node_sources", lambda: answer)
+    monkeypatch.setattr(notebook_kernel, "_MIRRORED", {})
+    original = registry._directory
+    monkeypatch.setattr(registry, "_directory", tmp_path / "nodes")
+    try:
+        registry.scan()
+        path = tmp_path / "nodes" / "mood_emoji.py"
+        notebook_kernel._mirror_custom_nodes()
+        assert path.read_text() == source and registry.get("mood_emoji") is not None
+        written = path.stat().st_mtime_ns
+        notebook_kernel._mirror_custom_nodes()
+        assert path.stat().st_mtime_ns == written, "an unchanged file is not rewritten"
+
+        changed = source + "\n# edited\n"
+        answer[:] = listed(changed)
+        notebook_kernel._mirror_custom_nodes()
+        assert path.read_text() == changed and registry.get("mood_emoji").source_text == changed
+
+        foreign = tmp_path / "nodes" / "foreign.py"
+        foreign.write_text("# not a node\n")
+        answer[:] = []
+        notebook_kernel._mirror_custom_nodes()
+        assert not path.exists() and foreign.exists(), "only mirrored files are removed"
+        assert registry.get("mood_emoji") is None
+    finally:
+        registry._directory = original
+        registry.scan()

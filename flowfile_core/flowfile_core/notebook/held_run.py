@@ -1,14 +1,14 @@
 """Run one node a notebook session built, in core, from its settings and its inputs' rows.
 
-The kernel computes what it can; a node it cannot run (a source that needs credentials, a subflow, a gate, a
-Python Script on another kernel, a read of a file the kernel cannot see) and that has no node on the canvas
-comes here, ``POST /notebook/session/node_run``. Core builds the node's inputs as ``flow_input`` nodes fed the
-parquet the kernel names (a typed empty frame from columns, for ``schema_only``), the way a subflow run feeds its
-child, and the node itself through the graph builder every flow opens with, on a graph that lives for the call;
-runs it as the canvas would, under the session's
-``KernelHold`` and without committing any source's progress; and hands the rows of every live output back as
-parquet in the session's results folder. Nothing writes from a cell: only :data:`HELD_NODE_TYPES` and installed
-custom nodes that are not outputs run, and the answer is never cached, so a cell run again reads again.
+The kernel computes what it can; a node it cannot run (a read of a file or a catalog table, a source that needs
+credentials, a subflow, a gate, a Python Script on another kernel: the kernel mounts no host folder) and that has
+no node on the canvas comes here, ``POST /notebook/session/node_run``. Core builds the node's inputs as
+``flow_input`` nodes fed the parquet the kernel names (a typed empty frame from columns, for ``schema_only``), the
+way a subflow run feeds its child, and the node itself through the graph builder every flow opens with, on a graph
+that lives for the call; runs it as the canvas would, under the session's ``KernelHold`` and without committing any
+source's progress; and hands the rows of every live output back as parquet in the session's results folder. Nothing
+writes from a cell: only :data:`HELD_NODE_TYPES` and installed custom nodes that are not outputs run, and the answer
+is never cached, so a cell run again reads again.
 """
 
 from __future__ import annotations
@@ -186,8 +186,7 @@ def run_held_node(kernel_id: str, user, body: NodeRunRequest) -> dict:
             "flowfile_name": f"notebook-held-{flow.flow_id}",
             "flowfile_settings": settings.model_dump(mode="json"),
             "nodes": [body.node],
-        },
-        manager.host_folders(kernel_id),
+        }
     )
     refused = refused_nodes(flow.get_flowfile_data().model_dump(mode="json"), data)
     message = "\n".join(dict.fromkeys(text for text, _ in refused)) or _refusal(data["nodes"][0])

@@ -1,10 +1,8 @@
 import os
-import posixpath
 import re
-from collections.abc import Callable
 from contextvars import ContextVar
 from datetime import datetime
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path, PureWindowsPath
 from typing import Annotated, Any, ClassVar, Literal, get_args
 
 import polars as pl
@@ -43,15 +41,8 @@ from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_ur
 keep_paths_as_written: ContextVar[bool] = ContextVar("keep_paths_as_written", default=False)
 """While set in a context, ``set_absolute_filepath`` keeps a path as written: no ``~``, working directory or links.
 
-A canvas notebook session in a kernel sets it, since the kernel's filesystem is not the host's; core recomputes
-the absolute path on the host when it checks a push.
-"""
-
-kernel_file_path: ContextVar[Callable[[str], str | None] | None] = ContextVar("kernel_file_path", default=None)
-"""While set together with ``keep_paths_as_written``, where a path kept as written is opened (``abs_file_path``).
-
-A notebook kernel sets it to its mount-table translation, so ``C:\\data\\x.csv`` is read from ``/host/c/data/x.csv``;
-``path`` stays as written, and a path it does not cover (``None``) is kept as written.
+A canvas notebook session in a kernel sets it: the kernel mounts no host folder and opens none of these paths
+(core reads the file for it), and core recomputes the absolute path on the host when it checks a push.
 """
 
 SecretRef = Annotated[
@@ -306,16 +297,11 @@ class ReceivedTable(BaseModel):
             self.abs_file_path = self.path
             return
         if keep_paths_as_written.get():
-            translate = kernel_file_path.get()
-            translated = translate(self.path) if translate is not None else None
-            # A translated path is the Linux kernel's, whatever the host's separators.
-            moved = translated is not None and translated != self.path
-            path_type, join = (PurePosixPath, posixpath.join) if moved else (Path, os.path.join)
-            resolved = translated or self.path
+            resolved = self.path
             # In the Linux kernel the frame's name of a Windows path is the whole path.
             name = PureWindowsPath(self.name).name if self.name else None
-            if self.scan_mode == "single_file" and name and name not in path_type(resolved).name:
-                resolved = join(resolved, name)
+            if self.scan_mode == "single_file" and name and name not in Path(resolved).name:
+                resolved = os.path.join(resolved, name)
             if self.scan_mode == "directory":
                 resolved = ensure_glob_pattern(resolved, default_scan_extension(self.file_type))
             self.abs_file_path = resolved

@@ -130,7 +130,6 @@ class Kernel(Base):
     gpu = Column(Boolean, default=False)
     image_flavour = Column(String, nullable=False, default="base")
     custom_image = Column(String, nullable=True)
-    mounted_folders = Column(Text, default="[]")  # JSON list: a path (read-only) or {"path", "writable": true}
     # Auto-created FlowRegistration that artifacts published from this kernel's
     # interactive cells are attributed to. Lives and dies with the kernel; see
     # ``KernelManager._provision_scratch_flow`` in

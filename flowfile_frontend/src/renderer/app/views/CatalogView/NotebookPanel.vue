@@ -566,7 +566,6 @@ const notebookKernelSuggestion: KernelSuggestion = {
     gpu: false,
     image_flavour: "lite",
     custom_image: null,
-    mounted_folders: [],
   },
   covered_by_flavour: [],
   flavour_image_available: null,

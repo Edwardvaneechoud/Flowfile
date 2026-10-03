@@ -110,17 +110,14 @@ def test_the_schemas_view_follows_the_canvas_too(scripted_flow, client, locking_
 def test_a_schemas_call_leaves_the_canvas_rows_of_a_file_the_kernel_cannot_see(
     open_as, tmp_path, monkeypatch, client, locking_kernel_sim
 ):
-    """A read the kernel cannot open holds its canvas rows, not a placeholder, so frames built on it compute here;
-    the canvas finding a new column must not swap those rows for an empty placeholder."""
-    import json
-
+    """A read of a file (the kernel opens none) holds its canvas rows, not a placeholder, so frames built on it
+    compute here; the canvas finding a new column must not swap those rows for an empty placeholder."""
     import flowfile as ff
 
     folder = tmp_path / "host_data"
     folder.mkdir()
     path = folder / "orders.csv"
     path.write_text("id,amount\n1,10\n2,20\n3,30\n")
-    monkeypatch.setenv("FLOWFILE_NOTEBOOK_MOUNTS", json.dumps({str(folder): str(tmp_path / "not_mounted")}))
     flow = open_as(ff.read_csv(str(path)).flow_graph)
     cell = f"src = ff.read_csv({str(path)!r})\nbig = src.filter(ff.col('amount') > 10)"
     assert _execute(client, flow, locking_kernel_sim, cell)["success"]

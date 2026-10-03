@@ -184,9 +184,11 @@ def _pivot_cell(path: Path) -> str:
     )
 
 
-def test_a_new_pivot_over_a_file_the_kernel_reads_computes_here_without_a_canvas_ancestor(
+def test_a_new_pivot_over_a_file_core_reads_computes_here_without_a_canvas_ancestor(
     coded_flow, client, kernel_sim, people_csv
 ):
+    """The kernel opens no file of this machine: core reads the CSV from the cell's settings (``node_run``) and the
+    pivot above it computes in the kernel on those rows."""
     for _ in range(2):
         shown = _execute(client, coded_flow, kernel_sim, _pivot_cell(people_csv))
         assert shown["success"], shown
@@ -197,6 +199,7 @@ def test_a_new_pivot_over_a_file_the_kernel_reads_computes_here_without_a_canvas
     coded = _execute(client, coded_flow, kernel_sim, "display(df.polars_code('input_df.head(1)'))")
     assert coded["success"] and len(_rows(coded)) == 1, coded
     assert not kernel_sim.node_results
+    assert {run["node"]["type"] for run in kernel_sim.node_runs} == {"read"}, kernel_sim.node_runs
 
 
 def test_a_new_pivot_below_a_deferred_canvas_node_computes_here_on_its_rows(coded_flow, client, kernel_sim):
@@ -223,15 +226,14 @@ def test_a_running_flow_is_refused_with_a_message(coded_flow, client, kernel_sim
 
 
 @pytest.fixture
-def hidden_csv(open_as, tmp_path, monkeypatch):
-    """Opens a flow built on a CSV the kernel cannot see: its folder maps to a kernel folder that does not exist."""
+def hidden_csv(open_as, tmp_path):
+    """Opens a flow built on a CSV on this machine: the kernel mounts no host folder, so it never opens the file."""
     import flowfile as ff
 
     folder = tmp_path / "host_data"
     folder.mkdir()
     path = folder / "orders.csv"
     path.write_text("id,amount\n1,10\n2,20\n3,30\n")
-    monkeypatch.setenv("FLOWFILE_NOTEBOOK_MOUNTS", json.dumps({str(folder): str(tmp_path / "not_mounted")}))
     return lambda build: open_as(build(ff.read_csv(str(path))).flow_graph)
 
 
@@ -290,39 +292,6 @@ def test_an_unedited_push_through_the_kernel_of_a_file_it_cannot_see_changes_not
     assert not plan.operations, [op.model_dump(mode="json") for op in plan.operations]
     assert any('"op": "clean_run"' in r.code for r in kernel_sim.requests)
 
-
-
-def test_a_push_through_the_kernel_stores_the_host_path_of_a_kernel_path(open_as, kernel_sim, tmp_path, monkeypatch):
-    import flowfile as ff
-
-    host, inside = (tmp_path / "host_data").resolve(), (tmp_path / "kernel_view").resolve()
-    for folder in (host, inside):
-        folder.mkdir()
-        (folder / "orders.csv").write_text("id,amount\n1,10\n2,20\n")
-    flow = open_as(ff.read_csv(str(host / "orders.csv")).flow_graph)
-    monkeypatch.setattr(kernel_sim, "host_folders", lambda kernel_id: {str(inside): str(host)})
-    from flowfile_core.auth.models import User as PydanticUser
-    from flowfile_core.notebook.push import NotebookPushRequest, plan_push
-    from flowfile_core.notebook.render import render
-    from tests.notebook.conftest import cell_provenance
-
-    rendering = render(flow)
-    cells = [(cell.cell_id, cell.code.replace("host_data", "kernel_view")) for cell in rendering.cells]
-    edited = [cell_id for (cell_id, code), cell in zip(cells, rendering.cells) if code != cell.code]
-    assert len(edited) == 1
-    request = NotebookPushRequest(
-        flow_id=flow.flow_id,
-        cells=cells,
-        changed_cell_ids=edited,
-        provenance=cell_provenance(flow, rendering),
-        code_fingerprint=rendering.code_fingerprint,
-        client_max_node_id=max(node.node_id for node in flow.nodes),
-        kernel_id=kernel_sim.kernel.id,
-    )
-    owner = PydanticUser(username="nb_kernel", id=NOTEBOOK_OWNER_ID, disabled=False, is_admin=True)
-    plan, _ = plan_push(flow, owner, request)
-    assert not plan.operations, [op.model_dump(mode="json") for op in plan.operations]
-    assert any('"op": "clean_run"' in r.code for r in kernel_sim.requests)
 
 
 def _rows(result: dict) -> list:
@@ -394,7 +363,6 @@ def editor_built_flow(open_as, tmp_path, monkeypatch):
             filter_input=transform_schema.FilterInput(mode="basic", basic_filter=basic),
         )
     )
-    monkeypatch.setenv("FLOWFILE_NOTEBOOK_MOUNTS", json.dumps({str(folder): str(tmp_path / "not_mounted")}))
     return open_as(graph)
 
 
@@ -428,11 +396,24 @@ def test_two_reads_of_files_the_kernel_cannot_see_each_take_their_own_canvas_row
     source = ff.read_csv(str(first))
     ff.read_csv(str(second), flow_graph=source.flow_graph)
     flow = open_as(source.flow_graph)
-    monkeypatch.setenv("FLOWFILE_NOTEBOOK_MOUNTS", json.dumps({str(folder): str(tmp_path / "not_mounted")}))
     cell = f"a = ff.read_csv({str(first)!r})\nb = ff.read_csv({str(second)!r})"
     assert _execute(client, flow, kernel_sim, cell)["success"]
     assert _table(_execute(client, flow, kernel_sim, "display(a)"))["columns"] == ["x"]
     assert len(_rows(_execute(client, flow, kernel_sim, "display(b)"))) == 2
+
+
+def test_a_read_of_a_bare_folder_asks_core_whether_it_is_a_folder(coded_flow, client, kernel_sim, tmp_path):
+    """The kernel sees no folder of this machine, so ``ff.read_csv(folder)`` asks core (``is_directory``) and core
+    reads the folder's files for it."""
+    folder = tmp_path / "many"
+    folder.mkdir()
+    (folder / "a.csv").write_text("x\n1\n")
+    (folder / "b.csv").write_text("x\n2\n3\n")
+    shown = _execute(client, coded_flow, kernel_sim, f"many = ff.read_csv({str(folder)!r})\ndisplay(many)")
+    assert shown["success"], shown
+    assert len(_rows(shown)) == 3, shown
+    asked = [body["args"]["path"] for body in kernel_sim.lookups if body["kind"] == "is_directory"]
+    assert asked == [str(folder)], kernel_sim.lookups
 
 
 LOOP_CELL = """import re

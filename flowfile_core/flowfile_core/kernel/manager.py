@@ -23,7 +23,6 @@ import httpx
 from flowfile_core.auth import sharing
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.events import publish
-from flowfile_core.kernel import notebook_mounts
 
 # Re-exported: the image tags moved to a docker-free module so matching.py can
 # read them, but manager stays their public home for existing callers/tests.
@@ -50,7 +49,6 @@ from flowfile_core.kernel.models import (
     KernelInfo,
     KernelMemoryInfo,
     KernelState,
-    MountedFolder,
     RecoveryStatus,
     ResolvedPackage,
 )
@@ -409,25 +407,18 @@ def _rebase_to_posix(local_path: str, host_prefix: str, container_prefix: str) -
 
 
 def _notebook_env(kernel: KernelInfo) -> dict[str, str]:
-    """A notebook kernel's flowfile reads the mounted Flowfile folders, never migrates, seeds or GCs anything, and
-    holds no catalog database: its engine refuses every connection (``flowfile_frame.notebook_kernel``) and the
-    catalog is read through core's lookups."""
-    env: dict[str, str] = {}
-    if not sharing.sharing_enabled() and is_notebook_kernel_config(kernel):
-        env.update(
-            {
-                "FLOWFILE_STORAGE_DIR": notebook_mounts.kernel_side(str(storage.base_directory)),
-                "FLOWFILE_SKIP_STARTUP_MIGRATION": "1",
-                "FLOWFILE_SKIP_INIT_DB": "1",
-                "FLOWFILE_KERNEL_GC": "0",
-                "FLOWFILE_TELEMETRY": "0",
-                "FLOWFILE_OFFLOAD_TO_WORKER": "0",
-            }
-        )
-    table = notebook_mounts.build_mount_table(kernel)
-    if table:
-        env["FLOWFILE_NOTEBOOK_MOUNTS"] = json.dumps(table)
-    return env
+    """A notebook kernel's flowfile never migrates, seeds or GCs anything and holds no catalog database: its engine
+    refuses every connection (``flowfile_frame.notebook_kernel``). Its storage folder is the container's own: the
+    kernel mounts no host folder, and reads files, catalog tables, flow files and custom node sources through core."""
+    if sharing.sharing_enabled() or not is_notebook_kernel_config(kernel):
+        return {}
+    return {
+        "FLOWFILE_SKIP_STARTUP_MIGRATION": "1",
+        "FLOWFILE_SKIP_INIT_DB": "1",
+        "FLOWFILE_KERNEL_GC": "0",
+        "FLOWFILE_TELEMETRY": "0",
+        "FLOWFILE_OFFLOAD_TO_WORKER": "0",
+    }
 
 
 def ordered_input_files(names: Iterable[str]) -> list[str]:
@@ -691,18 +682,6 @@ class KernelManager:
                 return rebased
         return local_path
 
-    def host_folders(self, kernel_id: str) -> dict[str, str]:
-        """Kernel folder -> host folder of ``kernel_id``'s mount table, to turn its paths back into host paths.
-
-        Folders mounted at their own path (every POSIX host folder) are left out, so a push never
-        rewrites a path there.
-        """
-        kernel = self._kernels.get(kernel_id)
-        if self._kernel_volume or kernel is None:
-            return {}
-        table = notebook_mounts.build_mount_table(kernel)
-        return {target: host for host, target in table.items() if target != host}
-
     def resolve_node_paths(self, request: "ExecuteRequest") -> None:
         """Populate ``input_paths`` and ``output_dir`` from ``flow_id``/``node_id``.
 
@@ -753,7 +732,8 @@ class KernelManager:
 
         Adapts volume mounts and networking for local vs Docker-in-Docker.
         Always mounts the catalog_tables directory so kernel cells can read
-        and write Delta-format catalog tables directly.
+        and write Delta-format catalog tables directly; no other host folder
+        is ever mounted (a notebook kernel reads files through core).
         """
         run_kwargs: dict = {
             "detach": True,
@@ -805,17 +785,6 @@ class KernelManager:
                 self._shared_volume: {"bind": "/shared", "mode": "rw"},
                 self._catalog_tables_dir: {"bind": "/catalog_tables", "mode": "rw"},
             }
-            # Separate Mount entries: a table folder may share a source with the binds above.
-            table = notebook_mounts.build_mount_table(kernel)
-            if table:
-                writable = notebook_mounts.writable_sources(kernel)
-                run_kwargs["mounts"] = [
-                    docker.types.Mount(target=target, source=source, type="bind", read_only=source not in writable)
-                    for source, target in table.items()
-                ]
-                masked = notebook_mounts.masked_paths(table)
-                if masked:
-                    run_kwargs["tmpfs"] = {path: "ro" for path in masked}
             run_kwargs["ports"] = {"9999/tcp": kernel.port}
             run_kwargs["extra_hosts"] = {"host.docker.internal": "host-gateway"}
 
@@ -854,7 +823,6 @@ class KernelManager:
                         gpu=config.gpu,
                         image_flavour=config.image_flavour,
                         custom_image=config.custom_image,
-                        mounted_folders=config.mounted_folders,
                     )
                     self._kernels[config.id] = kernel
                     self._kernel_owners[config.id] = user_id
@@ -945,7 +913,6 @@ class KernelManager:
                         gpu=config.gpu,
                         image_flavour=config.image_flavour,
                         custom_image=config.custom_image,
-                        mounted_folders=config.mounted_folders,
                     )
                     self._kernel_owners[kernel_id] = user_id
                 elif existing.state == KernelState.STOPPED and not self._has_active_flight(kernel_id):
@@ -957,7 +924,6 @@ class KernelManager:
                     existing.gpu = config.gpu
                     existing.image_flavour = config.image_flavour
                     existing.custom_image = config.custom_image
-                    existing.mounted_folders = config.mounted_folders
                     self._kernel_owners[kernel_id] = user_id
 
     def _persist_kernel(self, kernel: KernelInfo, user_id: int) -> None:
@@ -1610,9 +1576,6 @@ class KernelManager:
         try:
             _resolve_image(config.image_flavour, config.custom_image, self._docker)
             _validate_packages(config.packages)
-            config = config.model_copy(
-                update={"mounted_folders": notebook_mounts.validate_mounted_folders(config.mounted_folders)}
-            )
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
 
@@ -1637,7 +1600,6 @@ class KernelManager:
                 health_timeout=config.health_timeout,
                 image_flavour=config.image_flavour,
                 custom_image=config.custom_image,
-                mounted_folders=config.mounted_folders,
                 persistence_enabled=config.persistence_enabled,
                 recovery_mode=config.recovery_mode,
             )
@@ -1891,14 +1853,11 @@ class KernelManager:
         kernel_runner.forget_kernel(kernel_id, self._shared_volume)
         logger.info("Stopped kernel '%s'", kernel_id)
 
-    async def update_kernel(
-        self, kernel_id: str, packages: list[str], mounted_folders: list[str | MountedFolder] | None = None
-    ) -> KernelInfo:
-        """Update a kernel's package list and, when given, the folders it may read.
+    async def update_kernel(self, kernel_id: str, packages: list[str]) -> KernelInfo:
+        """Update a kernel's package list.
 
         The kernel must be stopped — package edits trigger a rebuild of the
         derived image and we don't want to surprise users with a hot restart.
-        New folders take effect on the next start, which creates a fresh container.
         """
         kernel = self._get_kernel_or_raise(kernel_id)
 
@@ -1914,23 +1873,10 @@ class KernelManager:
             )
 
         _validate_packages(packages)
-        folders = notebook_mounts.validate_mounted_folders(mounted_folders) if mounted_folders is not None else None
 
         old_packages = list(kernel.packages)
         old_resolved = list(kernel.resolved_packages)
-        old_folders = list(kernel.mounted_folders)
-        folders_changed = folders is not None and folders != kernel.mounted_folders
-        if folders_changed:
-            kernel.mounted_folders = folders
-            # A leftover container of the same image would be adopted with the old mounts.
-            await asyncio.to_thread(self._remove_container_by_id, f"flowfile-kernel-{kernel_id}")
-            kernel.container_id = None
         if packages == old_packages:
-            if folders_changed:
-                user_id = self._kernel_owners.get(kernel_id)
-                if user_id is not None:
-                    self._persist_kernel(kernel, user_id)
-                logger.info("Updated kernel '%s' folders → %s", kernel_id, folders)
             return kernel
 
         kernel.packages = packages
@@ -1948,7 +1894,6 @@ class KernelManager:
             except (RuntimeError, ValueError) as exc:
                 kernel.packages = old_packages
                 kernel.resolved_packages = old_resolved
-                kernel.mounted_folders = old_folders
                 # Rebuild the previous derived image so the kernel is startable.
                 if old_packages:
                     try:

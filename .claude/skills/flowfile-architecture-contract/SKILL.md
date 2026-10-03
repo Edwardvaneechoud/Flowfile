@@ -413,7 +413,7 @@ shape or the new backend/registry shape is current truth.
 ### Notebook kernel: canvas fallback everywhere, no database copy (planned 2026-10-02, landed 2026-10-03)
 
 Agreed direction for the notebook kernel (`flowfile_frame/notebook_kernel.py`,
-`flowfile_core/notebook/kernel_runner.py`), built in phases 0–3 below. The
+`flowfile_core/notebook/kernel_runner.py`), built in phases 0–4a below. The
 kernel is a separate execution mode: node settings stay the contract that
 round-trips to the canvas on Push, the kernel runs natively what it can, and
 everything else goes to the canvas. The end state, reached with phase 3, is a
@@ -421,8 +421,8 @@ kernel that opens **no** catalog database connection: the per-kernel SQLite
 copy (`kernel/notebook_db.py`, there because WAL did not cross the Docker
 Desktop VM) and the SQLite requirement of the gate (`notebook/gate.py`) are
 gone. Do not add SCD2, change-feed or SQL logic to
-`kernel_runtime/flowfile_client.py`, forward raw SQL to core, or bring a
-database back into the kernel.
+`kernel_runtime/flowfile_client.py`, forward raw SQL to core, bring a
+database back into the kernel, or mount a host folder into it.
 
 Phase 0 landed with the plan: a lineage run that holds no output node
 passes `run_graph(commit_sources=False)` (`kernel_runner.lineage_commits`),
@@ -501,9 +501,57 @@ shows in the next cell), which `.github/workflows/test-notebook-kernel.yml`
 now runs on every frame, notebook or kernel change
 (`FLOWFILE_REQUIRE_NOTEBOOK_KERNEL` makes a skip a failure).
 
+Phase 4a landed 2026-10-03: **no host folder is mounted.** A notebook
+kernel's container mounts what every kernel mounts, `/shared` and
+`/catalog_tables`, and nothing else: not the Flowfile folders (flows, custom
+nodes and their mount directories, catalog tables) and not a folder its owner
+lists. Deleted: `kernel/notebook_mounts.py`, `mounted_folders`
+(`models.MountedFolder`, the kernel form's folders field, migration 034's
+column, dropped by 035; a pydantic model ignores it from an older client),
+`FLOWFILE_NOTEBOOK_MOUNTS`, `notebook.kernel_path`,
+`input_schema.kernel_file_path`, `KernelManager.host_folders`, the
+`/host/<drive>/` Windows scheme, the key-store tmpfs, `FLOWFILE_STORAGE_DIR`
+in `_notebook_env` (the kernel's storage is its own `~/.flowfile`,
+`/root/.flowfile` in the image) and `_metadata.is_cloud_table` /
+`SessionLookup.cloud_tables`. What replaced each use: a file a cell names is
+never opened in the kernel (`notebook.paths_as_written` sets only
+`keep_paths_as_written`, under which `native._kernel_hidden_path` hides every
+local `read`/`list_files` path, `${param}` ones included) and core reads it
+(the canvas twin's rows, else a held run); whether a bare path is a folder is
+the `is_directory` lookup (`flow_frame_methods._resolve_scan_mode`); every
+catalog reader in a kernel session is deferred (`native.notebook_defers`) and
+its schema and rows come from core (`native._predicts_in_core`,
+`CORE_PREDICTED_TYPES = CONNECTION_SOURCE_TYPES | {"catalog_reader",
+"run_flow"}`); a `run_flow` reference's interface is the `flow_interface`
+lookup (`_metadata.flow_interface`, core-side `resolve_subflow_path` +
+`get_subflow_interface`); installed custom node files come through the
+`custom_node_sources` lookup, which `notebook_kernel._mirror_custom_nodes`
+writes as `<node_key>.py` into the kernel's own nodes folder before
+`open`/`reset`/`execute`/`clean_run` (it removes only files it wrote and
+rescans the registry once when anything changed; the kernel still runs a
+local node's `process()` itself); a push stores paths as written and
+`notebook/validate.host_file_paths` only recomputes `abs_file_path` on the
+host. Invariant: **a kernel mounts exactly `/shared` and `/catalog_tables`; a
+file path in a cell is a path on the user's machine that only core opens.**
+Plain Polars or `open()` on a host path in a cell finds no file, and a cell
+writes no file (an `ff` writer adds a writer node). Known cost: a catalog
+table a cell reads is handed over whole as parquet through `/shared`, even
+for `display()`. Proof: `tests/kernel/test_notebook_kernel_env.py` (exactly
+the two binds, no `mounts` or `tmpfs`, none of `FLOWFILE_STORAGE_DIR`,
+`FLOWFILE_NOTEBOOK_MOUNTS`, `FLOWFILE_DB_PATH`; an old client's
+`mounted_folders` ignored), the sim tests in
+`tests/notebook/test_kernel_canvas_rows.py` (a read is a held `read` run, a
+bare folder asks `is_directory`) and `test_kernel_database_census.py` (a
+catalog table, a flow file and a custom node reach the kernel through core;
+the three new kinds answer metadata only), and the real-kernel
+`test_kernel_notebook_docker.py::test_an_installed_custom_node_is_mirrored_into_the_kernel`
+(with `test_a_file_a_cell_names_is_read_by_core`, where `pl.read_csv` on the
+same path has no such file).
+
 Remaining, each with its own plan: a Python Script on the notebook's own
 kernel (`KernelHold` refuses it during a fallback), a push that keeps the
-session's variables, a row-limited fallback for `display()`, Postgres
+session's variables, a row-limited fallback for `display()` (which now also
+bounds a catalog table a cell reads, until then handed over whole), Postgres
 catalogs and docker-mode sessions (per-user access in the lookups, admin
 gating on `node_run`), session artifacts visible to the canvas.
 

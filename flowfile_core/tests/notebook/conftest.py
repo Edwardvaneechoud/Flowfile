@@ -374,9 +374,6 @@ class KernelSimManager:
     def to_kernel_path(self, local_path):
         return local_path
 
-    def host_folders(self, kernel_id):
-        return {}
-
     def _as_owner(self, call, *args):
         from fastapi import HTTPException
 

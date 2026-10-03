@@ -6737,10 +6737,6 @@ class FlowGraph:
         def schema_callback() -> list[FlowfileColumn]:
             return list_files_schema()
 
-        translate = input_schema.kernel_file_path.get() if input_schema.keep_paths_as_written.get() else None
-        walk_path = (translate(node_list_files.path) if translate is not None else None) or node_list_files.path
-        walked = node_list_files.model_copy(update={"path": walk_path})
-
         def _func() -> FlowDataEngine:
             # The walk runs here in core, so it must poll for cancellation itself —
             # there is no worker subprocess to kill (cf. add_database_reader).
@@ -6758,7 +6754,7 @@ class FlowGraph:
                 return False
 
             return FlowDataEngine(
-                scan_directory_to_frame(walked, cancel_check=is_cancelled),
+                scan_directory_to_frame(node_list_files, cancel_check=is_cancelled),
                 schema=schema_callback(),
                 number_of_records=None,
             )

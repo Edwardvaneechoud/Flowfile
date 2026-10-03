@@ -76,9 +76,7 @@
         <!-- Extra packages (editable) -->
         <section class="detail-section">
           <div class="detail-section__header">
-            <h4 class="detail-section__title">
-              {{ showFolders ? "Extra packages and folders" : "Extra packages" }}
-            </h4>
+            <h4 class="detail-section__title">Extra packages</h4>
             <button
               v-if="!editing && canEdit"
               type="button"
@@ -91,21 +89,10 @@
 
           <div v-if="!canEdit && !editing" class="lock-hint">
             <i class="fa-solid fa-lock"></i>
-            Stop the kernel to edit {{ showFolders ? "packages and folders" : "packages" }}.
+            Stop the kernel to edit packages.
           </div>
 
           <div v-if="!editing">
-            <div v-if="kernel.mounted_folders?.length" class="extra-pkg-list">
-              <span
-                v-for="f in kernel.mounted_folders"
-                :key="folderPath(f)"
-                class="extra-pkg"
-                :title="isWritable(f) ? 'Read and write' : 'Read-only'"
-              >
-                <i class="fa-regular fa-folder"></i> {{ folderPath(f) }}
-                <span v-if="isWritable(f)" class="folder-writable">(writable)</span>
-              </span>
-            </div>
             <p v-if="kernel.packages.length === 0" class="empty-line">No extra packages.</p>
             <template v-else>
               <!-- When the bake captured resolved versions, render them in the
@@ -162,7 +149,6 @@
               <code>name&gt;=1.0,&lt;2.0</code> work. Saving rebuilds the kernel image (~30 s) so
               transitive deps stay pinned against the flavour's constraints.
             </p>
-            <KernelFoldersField v-if="showFolders" v-model="editFolders" :disabled="saving" />
             <p v-if="saveError" class="form-error">{{ saveError }}</p>
             <div class="edit-actions">
               <button
@@ -204,20 +190,13 @@ import {
   type FlavourPackage,
   type ImageFlavour,
   type KernelInfo,
-  type MountedFolderEntry,
 } from "../../types";
 import KernelStatusBadge from "./KernelStatusBadge.vue";
-import KernelFoldersField from "../../components/kernel/KernelFoldersField.vue";
-import { cleanFolders, folderPath, isWritable } from "../../components/kernel/kernelFolders";
-import authService from "../../services/auth.service";
 
 const props = defineProps<{
   kernel: KernelInfo;
   flavourInfo: Map<ImageFlavour, FlavourInfo>;
-  onSave: (
-    kernelId: string,
-    update: { packages: string[]; mounted_folders?: MountedFolderEntry[] },
-  ) => Promise<void>;
+  onSave: (kernelId: string, update: { packages: string[] }) => Promise<void>;
 }>();
 
 const emit = defineEmits<{
@@ -227,9 +206,6 @@ const emit = defineEmits<{
 const editing = ref(false);
 const editPackages = ref<string[]>([]);
 const editNewPackage = ref("");
-// Core refuses mounted folders outside desktop mode.
-const showFolders = authService.isInDesktopMode();
-const editFolders = ref<MountedFolderEntry[]>([]);
 const saving = ref(false);
 const saveError = ref<string | null>(null);
 
@@ -298,7 +274,6 @@ const formattedCreatedAt = computed(() => {
 
 const startEdit = () => {
   editPackages.value = [...props.kernel.packages];
-  editFolders.value = [...(props.kernel.mounted_folders ?? [])];
   editNewPackage.value = "";
   saveError.value = null;
   editing.value = true;
@@ -345,10 +320,7 @@ const save = async () => {
   saving.value = true;
   saveError.value = null;
   try {
-    await props.onSave(props.kernel.id, {
-      packages: [...editPackages.value],
-      ...(showFolders ? { mounted_folders: cleanFolders(editFolders.value) } : {}),
-    });
+    await props.onSave(props.kernel.id, { packages: [...editPackages.value] });
     editing.value = false;
   } catch (err: any) {
     saveError.value = err?.message ?? "Failed to update packages.";
@@ -545,10 +517,6 @@ const save = async () => {
   border-radius: var(--border-radius-sm);
 }
 
-.folder-writable {
-  font-weight: var(--font-weight-semibold);
-}
-
 .empty-line {
   margin: 0;
   font-size: var(--font-size-xs);
@@ -581,9 +549,6 @@ const save = async () => {
   margin: 0;
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
-}
-.kernel-folders {
-  margin-top: var(--spacing-3);
 }
 
 .form-error {

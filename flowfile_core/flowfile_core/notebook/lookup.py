@@ -5,7 +5,9 @@ reference points at, the connection a cloud, database or Kafka node names, the n
 connections the frame's own helpers list. In core those reads open the catalog database. A kernel session
 sets :data:`metadata_lookup` for each op instead (``flowfile_frame._metadata.installed``), and every one of
 those reads asks it, so the kernel opens no database connection and nothing secret-bearing reaches it: not a
-plan, not a storage credential, not a ciphertext.
+plan, not a storage credential, not a ciphertext. The kernel mounts no host folder either, so what a build needs
+from the host's filesystem (a flow file's interface, whether a path is a folder, the custom node sources) is read
+by core the same way.
 
 Core answers a ``kind`` by calling the function the read calls when the hook is unset (the route's own
 context never sets it), so a kernel build sees exactly what core computes. :data:`KINDS` is closed; an
@@ -53,8 +55,15 @@ FRAME_KINDS: tuple[str, ...] = (
     "cloud_connections",
     "database_connection",
     "database_connections",
+    "flow_interface",
+    "is_directory",
+    "custom_node_sources",
 )
-"""The kinds ``flowfile_frame._metadata`` asks for its own helpers; each is answered by its ``local_*`` twin."""
+"""The kinds ``flowfile_frame._metadata`` asks for its own helpers; each is answered by its ``local_*`` twin.
+
+The last three read the host's filesystem, which the kernel mounts nothing of: a registered flow's interface
+(its file, after the access check), whether a path a cell names is a folder, and the installed custom node files.
+"""
 
 
 class LookupRequest(BaseModel):

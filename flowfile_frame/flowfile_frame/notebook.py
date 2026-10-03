@@ -19,10 +19,8 @@ module at import time, so every frame module can import :func:`current` at modul
 from __future__ import annotations
 
 import contextlib
-import json
 import linecache
 import logging
-import os
 import threading
 from collections.abc import Callable, Iterator
 from contextvars import ContextVar, Token
@@ -32,12 +30,11 @@ from flowfile_core.configs.flow_logger import FlowLogger, get_flow_log_file
 from flowfile_core.flowfile.flow_graph import FlowGraph, placement_check
 from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
 from flowfile_core.flowfile.utils import create_unique_id
-from flowfile_core.schemas.input_schema import keep_paths_as_written, kernel_file_path
+from flowfile_core.schemas.input_schema import keep_paths_as_written
 
 logger = logging.getLogger(__name__)
 
 KERNEL_REFUSAL = "kernel nodes run on the canvas: use Run on canvas"
-MOUNTS_ENV = "FLOWFILE_NOTEBOOK_MOUNTS"
 
 RUN_LOCK = threading.Lock()
 """Serializes notebook runs (a seed plus a clean run) that share a process, such as a server's.
@@ -338,10 +335,11 @@ def paths_as_written() -> contextlib.AbstractContextManager[None]:
     """Context manager under which node settings keep file paths as written (no ``~``, working directory or links).
 
     Sets ``flowfile_core.schemas.input_schema.keep_paths_as_written`` in this context: a file node's
-    ``abs_file_path`` is then its path as written (opened through :func:`kernel_path`), and the frame
-    readers and writers do not expand ``~``. A canvas notebook session in a kernel runs under it, since
-    the kernel's filesystem is not the host's; core recomputes the absolute paths on the host when it
-    checks a push. Off by default.
+    ``abs_file_path`` is then its path as written, and the frame readers and writers do not expand ``~``.
+    A canvas notebook session in a kernel runs under it: the kernel mounts no host folder, so the paths
+    are the host's and core opens them (a read becomes a held node, a folder is probed through the
+    ``is_directory`` lookup); core recomputes the absolute paths on the host when it checks a push. Off by
+    default.
     """
     return _paths_as_written()
 
@@ -349,36 +347,7 @@ def paths_as_written() -> contextlib.AbstractContextManager[None]:
 @contextlib.contextmanager
 def _paths_as_written() -> Iterator[None]:
     token = keep_paths_as_written.set(True)
-    translator = kernel_file_path.set(kernel_path)
     try:
         yield
     finally:
-        kernel_file_path.reset(translator)
         keep_paths_as_written.reset(token)
-
-
-def translate_path(path: str, table: dict[str, str]) -> str | None:
-    """The kernel-side path of host ``path`` under ``table`` (host folder -> kernel folder), or ``None``.
-
-    Core's ``kernel.notebook_mounts.translate``: the longest covering host folder wins; a Windows
-    folder (``C:\\...``) matches case-insensitively and with either slash.
-    """
-    from flowfile_core.kernel.notebook_mounts import translate
-
-    return translate(path, table)
-
-
-def kernel_path(path: str) -> str | None:
-    """Where this process opens host ``path``: unchanged outside a notebook kernel.
-
-    In a notebook kernel (``FLOWFILE_NOTEBOOK_MOUNTS``, host folder -> kernel folder, is set) the path
-    is translated through that table; ``None`` means no folder mounted in the kernel covers it.
-    """
-    raw = os.environ.get(MOUNTS_ENV)
-    if raw is None:
-        return path
-    try:
-        table = json.loads(raw)
-    except ValueError:
-        table = {}
-    return translate_path(path, table if isinstance(table, dict) else {})
