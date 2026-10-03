@@ -5,6 +5,11 @@
  * flow in flowfile_core's dialect, so the cells are the ones the full app shows
  * for the same flow. A render reads settings only; a node executes only when
  * `runCell` or `runAll` is called, which the Run buttons do and nothing else.
+ *
+ * A cell the user changed is a draft, kept in memory beside the rendered text.
+ * A sync (`push`, and Run when there are drafts) has the engine read the drafts
+ * (`engine/notebook_cells.py`), which never executes them, and lands what they
+ * change as one undo step.
  */
 
 import { defineStore } from 'pinia'
@@ -14,6 +19,7 @@ import { usePyodideStore } from './pyodide-store'
 import { EXPR_TRANSFORMER_PACKAGE } from '../composables/useFormulaTranslation'
 import { toCoreCompatibleFlow } from '../utils/coreExport'
 import { codeFingerprint } from '../utils/notebookFingerprint'
+import { isEmptyPatch, syncPatch, type NotebookSyncFailure, type NotebookSyncResult } from '../utils/notebookSync'
 import { placeholderReason } from '../utils/placeholder'
 import type { ColumnSchema, DataPreview, FlowNode, NodeResult } from '../types'
 
@@ -41,10 +47,36 @@ export type CellOutput =
   | { state: 'error'; message: string }
   | { state: 'blocked'; message: string }
 
+/** Why the last sync was refused, on the cell and line it happened. */
+export interface CellSyncError {
+  cellId: string
+  line: number | null
+  kind: NotebookSyncFailure['kind']
+  message: string
+  /** The text that was refused: the error stands while the cell still says it. */
+  code: string
+}
+
+export type CellSyncState = 'edited' | 'synced' | 'failed'
+
 /** What the notebook keeps for one open flow. In memory only: never saved, shared or persisted. */
 interface FlowNotebookState {
   outputs: Record<string, CellOutput>
+  /** Cells the user changed: cell id -> their text, while it differs from the rendered one. */
+  drafts: Record<string, string>
+  /** Cells the last sync pushed and that were not changed since. */
+  synced: string[]
+  syncError: CellSyncError | null
+  notice: string | null
 }
+
+/** The whole Python source of a sync: what it reads arrives as data, never as part of this text. */
+export const SYNC_SOURCE = `
+import json
+from engine.notebook_cells import sync_notebook
+sync_notebook(**json.loads(_notebook_sync_request))
+`
+const SYNC_REQUEST = '_notebook_sync_request'
 
 /** Rows a cell shows; the canvas preview reads the same cache, so an explore node asks for what it asks for. */
 export const CELL_ROW_LIMIT = 100
@@ -91,13 +123,20 @@ export const useNotebookStore = defineStore('notebook', () => {
     const key = flowStore.flowSessionKey
     let state = flowStates.get(key)
     if (!state) {
-      state = reactive({ outputs: {} })
+      state = reactive({ outputs: {}, drafts: {}, synced: [], syncError: null, notice: null })
       flowStates.set(key, state)
     }
     return state
   })
   const outputs = computed(() => flowState.value.outputs)
-  const canRun = computed(() => pyodideStore.isReady && !running.value && !flowStore.isExecuting)
+  const drafts = computed(() => flowState.value.drafts)
+  const syncError = computed(() => flowState.value.syncError)
+  const notice = computed(() => flowState.value.notice)
+  const syncing = ref(false)
+  const needsSync = computed(() => Object.keys(flowState.value.drafts).length > 0)
+  const idle = computed(() => pyodideStore.isReady && !running.value && !syncing.value && !flowStore.isExecuting)
+  const canRun = idle
+  const canPush = computed(() => idle.value && needsSync.value)
 
   /** Why the editor keeps a node out of code, or null. Such a node's settings never cross the bridge. */
   function lockReason(node: FlowNode): string | null {
@@ -120,6 +159,33 @@ export const useNotebookStore = defineStore('notebook', () => {
 
   const stale = computed(() => fingerprint.value !== liveFingerprint.value)
 
+  /** The flow a sync is read against: its nodes, wiring and locks. Schemas arriving do not make it another flow. */
+  const structure = computed(
+    () => `${codeFingerprint(flowStore.nodes, flowStore.edges)}|${flowStore.untrustedCodeNodes.map(node => node.nodeId).join(',')}`
+  )
+
+  /** What the engine reads of the flow: core's dialect, the known schemas, and locked nodes with no settings. */
+  function engineArguments() {
+    const flow = JSON.parse(JSON.stringify(toCoreCompatibleFlow(flowStore.exportToFlowfile(flowStore.currentFlowName))))
+    const locked: Record<number, string> = {}
+    const schemas: Record<number, ColumnSchema[]> = {}
+    let formulas = false
+    for (const node of flowStore.nodes.values()) {
+      const reason = lockReason(node)
+      if (reason) locked[node.id] = reason
+      else if (usesFormulas(node)) formulas = true
+      const schema = flowStore.nodeResults.get(node.id)?.schema
+      if (schema?.length) schemas[node.id] = schema
+    }
+    for (const node of flow.nodes) {
+      if (locked[node.id]) node.setting_input = {}
+    }
+    return { arguments: { flow, schemas, locked }, formulas }
+  }
+
+  /** Without the formula package every formula keeps its text form, which is still valid code. */
+  const loadFormulaPackage = () => pyodideStore.ensurePyPackages([EXPR_TRANSFORMER_PACKAGE]).catch(() => undefined)
+
   /** Render the open flow as cells. A no-op before Pyodide is ready; never initializes it. */
   async function render(): Promise<void> {
     if (!pyodideStore.isReady) return
@@ -128,24 +194,9 @@ export const useNotebookStore = defineStore('notebook', () => {
     loading.value = true
     error.value = null
     try {
-      const flow = JSON.parse(JSON.stringify(toCoreCompatibleFlow(flowStore.exportToFlowfile(flowStore.currentFlowName))))
-      const locked: Record<number, string> = {}
-      const schemas: Record<number, ColumnSchema[]> = {}
-      let formulas = false
-      for (const node of flowStore.nodes.values()) {
-        const reason = lockReason(node)
-        if (reason) locked[node.id] = reason
-        else if (usesFormulas(node)) formulas = true
-        const schema = flowStore.nodeResults.get(node.id)?.schema
-        if (schema?.length) schemas[node.id] = schema
-      }
-      for (const node of flow.nodes) {
-        if (locked[node.id]) node.setting_input = {}
-      }
-      if (formulas) {
-        // Without the package every formula keeps its text form, which is still valid code.
-        await pyodideStore.ensurePyPackages([EXPR_TRANSFORMER_PACKAGE]).catch(() => undefined)
-      }
+      const engine = engineArguments()
+      const { flow, schemas, locked } = engine.arguments
+      if (engine.formulas) await loadFormulaPackage()
       const rendering = (await pyodideStore.runPythonWithResult(`
 import json
 from engine.notebook_render import render_notebook
@@ -157,10 +208,17 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
       warnings.value = rendering.warnings ?? []
       varByNode.value = rendering.var_by_node ?? {}
       fingerprint.value = rendered
-      const shown = new Set(cells.value.map(cell => cell.cell_id))
-      for (const cellId of Object.keys(outputs.value)) {
-        if (!shown.has(cellId)) delete outputs.value[cellId]
+      const state = flowState.value
+      const shown = new Map(cells.value.map(cell => [cell.cell_id, cell.code]))
+      for (const cellId of Object.keys(state.outputs)) {
+        if (!shown.has(cellId)) delete state.outputs[cellId]
       }
+      // A draft stands while its cell does and still differs from what the canvas says.
+      for (const [cellId, draft] of Object.entries(state.drafts)) {
+        if (shown.get(cellId) === undefined || shown.get(cellId) === draft) delete state.drafts[cellId]
+      }
+      if (state.syncError && state.drafts[state.syncError.cellId] !== state.syncError.code) state.syncError = null
+      state.synced = state.synced.filter(cellId => shown.has(cellId))
     } catch (err) {
       if (epoch !== renderEpoch) return
       error.value = err instanceof Error ? err.message : String(err)
@@ -203,8 +261,106 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
     }
   }
 
+  /** A cell the user may change: one that is code. Imports are derived and placeholders stay on the canvas. */
+  function isEditable(cell: NotebookCell): boolean {
+    return cell.kind === 'node' && cell.status === 'code'
+  }
+
+  /** The text a cell shows: the user's while it is changed, else the rendered one. */
+  function cellCode(cell: NotebookCell): string {
+    return flowState.value.drafts[cell.cell_id] ?? cell.code
+  }
+
+  function setCellCode(cellId: string, code: string): void {
+    const cell = cells.value.find(each => each.cell_id === cellId)
+    if (!cell || !isEditable(cell)) return
+    const state = flowState.value
+    if (code === cell.code) delete state.drafts[cellId]
+    else state.drafts[cellId] = code
+    state.synced = state.synced.filter(each => each !== cellId)
+    if (state.syncError?.cellId === cellId && state.syncError.code !== code) state.syncError = null
+  }
+
+  function cellSyncState(cellId: string): CellSyncState | null {
+    const state = flowState.value
+    if (state.syncError?.cellId === cellId) return 'failed'
+    if (cellId in state.drafts) return 'edited'
+    return state.synced.includes(cellId) ? 'synced' : null
+  }
+
+  function dismissNotice(): void {
+    flowState.value.notice = null
+  }
+
+  /**
+   * Land the changed cells on the canvas as one undo step. The engine reads them and never
+   * executes them; the request crosses the bridge as data. True when the canvas now says
+   * what the cells say (also when nothing was changed).
+   */
+  async function sync(): Promise<boolean> {
+    if (!pyodideStore.isReady || syncing.value) return false
+    syncing.value = true
+    const state = flowState.value
+    try {
+      // Render first: the drafts are read against what the canvas says now.
+      await render()
+      if (error.value) return false
+      const sent = { ...state.drafts }
+      if (Object.keys(sent).length === 0) return true
+      const read = structure.value
+      const engine = engineArguments()
+      if (engine.formulas) await loadFormulaPackage()
+      const request = { ...engine.arguments, drafts: sent }
+      let result: NotebookSyncResult | NotebookSyncFailure
+      pyodideStore.setGlobal(SYNC_REQUEST, JSON.stringify(request))
+      try {
+        result = (await pyodideStore.runPythonWithResult(SYNC_SOURCE)) as NotebookSyncResult | NotebookSyncFailure
+      } finally {
+        pyodideStore.deleteGlobal(SYNC_REQUEST)
+      }
+      if (flowState.value !== state || structure.value !== read) {
+        state.notice = 'The canvas changed while the notebook was being read. Nothing was pushed; try again.'
+        return false
+      }
+      if (!result.ok) {
+        state.syncError = {
+          cellId: result.cell_id,
+          line: result.line ?? null,
+          kind: result.kind,
+          message: result.message,
+          code: sent[result.cell_id] ?? ''
+        }
+        return false
+      }
+      const patch = syncPatch({ nodes: flowStore.nodes, edges: flowStore.edges }, result)
+      if (!isEmptyPatch(patch)) flowStore.applyFlowPatch(patch)
+      // A cell changed again while this ran keeps its newer text.
+      for (const [cellId, code] of Object.entries(sent)) {
+        if (state.drafts[cellId] === code) delete state.drafts[cellId]
+      }
+      state.synced = Object.keys(sent).filter(cellId => !(cellId in state.drafts))
+      state.syncError = null
+      state.notice = result.warnings?.length ? result.warnings.join('\n') : null
+      await render()
+      return true
+    } catch (err) {
+      state.notice = `The notebook could not be pushed: ${err instanceof Error ? err.message : String(err)}`
+      return false
+    } finally {
+      syncing.value = false
+    }
+  }
+
+  /** Push the changed cells to the canvas without running anything. */
+  async function push(): Promise<boolean> {
+    if (!canPush.value) return false
+    return sync()
+  }
+
   /** Run one cell: its last node with whatever upstream still has to run, then show its rows. */
   async function runCell(cellId: string): Promise<void> {
+    if (!canRun.value) return
+    if (needsSync.value && !(await sync())) return
     const cell = cells.value.find(each => each.cell_id === cellId)
     const nodeId = cell ? runTarget(cell) : null
     if (nodeId === null) return
@@ -219,6 +375,8 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
 
   /** Run the whole flow, as the canvas Run does, then show every cell's rows. */
   async function runAll(): Promise<void> {
+    if (!canRun.value) return
+    if (needsSync.value && !(await sync())) return
     const targets = cells.value.flatMap(cell => {
       const nodeId = runTarget(cell)
       return nodeId === null ? [] : [{ cellId: cell.cell_id, nodeId }]
@@ -246,8 +404,20 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
     outputs,
     running,
     canRun,
+    drafts,
+    syncError,
+    notice,
+    syncing,
+    needsSync,
+    canPush,
     render,
     lockReason,
+    isEditable,
+    cellCode,
+    setCellCode,
+    cellSyncState,
+    dismissNotice,
+    push,
     runCell,
     runAll
   }

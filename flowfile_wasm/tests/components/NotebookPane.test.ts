@@ -54,13 +54,15 @@ vi.mock('../../src/stores/file-storage', () => ({
 vi.mock('vue-codemirror', () => ({
   Codemirror: {
     props: ['modelValue', 'disabled'],
+    emits: ['update:modelValue', 'ready'],
     template: '<pre class="cm-stub" :data-disabled="String(disabled)">{{ modelValue }}</pre>'
   }
 }))
 
+import { Codemirror } from 'vue-codemirror'
 import NotebookPane from '../../src/components/notebook/NotebookPane.vue'
 import { useFlowStore } from '../../src/stores/flow-store'
-import type { NotebookCell } from '../../src/stores/notebook-store'
+import { SYNC_SOURCE, type NotebookCell } from '../../src/stores/notebook-store'
 
 const RENDER_DELAY = 200
 
@@ -139,7 +141,7 @@ describe('NotebookPane', () => {
     expect(renderCalls()).toHaveLength(1)
   })
 
-  it('shows each cell read-only under the nodes it stands for', async () => {
+  it('shows each cell under the nodes it stands for; only a code cell can be changed', async () => {
     const { source, filter } = twoNodeFlow()
 
     const wrapper = await mountPane()
@@ -155,7 +157,7 @@ describe('NotebookPane', () => {
       'source_1 = ff.from_raw_data({})',
       'kept_2 = ff.canvas_node(2, source_1)'
     ])
-    for (const each of cells) expect(each.find('.cm-stub').attributes('data-disabled')).toBe('true')
+    expect(cells.map(each => each.find('.cm-stub').attributes('data-disabled'))).toEqual(['true', 'false', 'true'])
     expect(wrapper.find('.notebook-note--warning').text()).toBe('One warning')
   })
 
@@ -175,10 +177,14 @@ describe('NotebookPane', () => {
     const { flow, filter } = twoNodeFlow()
     const wrapper = await mountPane()
 
-    await wrapper.find('[data-cell-id="imports"]').trigger('click')
+    await wrapper.find('[data-cell-id="imports"] .cell-head').trigger('click')
     expect(wrapper.emitted('focus-node')).toBeUndefined()
 
-    await wrapper.find('[data-cell-id="cell-2"]').trigger('click')
+    // Clicking into the code places the caret; only the header picks the step.
+    await wrapper.find('[data-cell-id="cell-2"] .cm-stub').trigger('click')
+    expect(flow.selectedNodeId).toBeNull()
+
+    await wrapper.find('[data-cell-id="cell-2"] .cell-head').trigger('click')
     expect(flow.selectedNodeId).toBe(filter)
     expect(wrapper.emitted('focus-node')).toEqual([[filter]])
     expect(wrapper.find('[data-cell-id="cell-2"]').classes()).toContain('cell--selected')
@@ -360,6 +366,108 @@ describe('NotebookPane', () => {
         expect(wrapper.find('[data-cell-id="cell-2"] .output-note').text()).toBe('No rows. Columns: a, b')
       )
       expect(wrapper.find('[data-cell-id="cell-2"] table').exists()).toBe(false)
+    })
+  })
+
+  describe('editing', () => {
+    const EDITED = 'source_1 = ff.from_raw_data({"columns": [], "data": []})'
+
+    /** Type `code` into the editor of the cell at `index`. */
+    async function type(wrapper: ReturnType<typeof mount>, index: number, code: string) {
+      wrapper.findAllComponents(Codemirror)[index].vm.$emit('update:modelValue', code)
+      await vi.advanceTimersByTimeAsync(0)
+    }
+
+    /** Answer a sync with `answer`; everything else as the two-node flow does. */
+    function syncAnswers(answer: unknown) {
+      const { cells } = twoNodeFlow()
+      pyodideMock.runPythonWithResult.mockImplementation(async (source: string) => {
+        if (source === SYNC_SOURCE) return answer
+        if (source.includes('render_notebook(')) return { cells, warnings: [], var_by_node: {} }
+        return { success: true }
+      })
+    }
+
+    it('marks a changed cell, counts it on Push and drops the change on Revert', async () => {
+      twoNodeFlow()
+      const wrapper = await mountPane()
+      const push = wrapper.find('[data-action="push"]')
+      expect(push.text()).toBe('Push')
+      expect(push.attributes('disabled')).toBeDefined()
+      expect(wrapper.find('[data-sync-state]').exists()).toBe(false)
+
+      await type(wrapper, 1, EDITED)
+
+      const changed = wrapper.find('[data-cell-id="cell-1"]')
+      expect(changed.find('[data-sync-state]').text()).toBe('Edited')
+      expect(changed.find('.cm-stub').text()).toBe(EDITED)
+      expect(push.text()).toBe('Push (1)')
+      expect(push.attributes('disabled')).toBeUndefined()
+
+      await changed.find('[data-action="revert"]').trigger('click')
+
+      expect(changed.find('[data-sync-state]').exists()).toBe(false)
+      expect(changed.find('[data-action="revert"]').exists()).toBe(false)
+      expect(changed.find('.cm-stub').text()).toBe('source_1 = ff.from_raw_data({})')
+      expect(push.attributes('disabled')).toBeDefined()
+    })
+
+    it('copies what the cell says now', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+      twoNodeFlow()
+      const wrapper = await mountPane()
+      await type(wrapper, 1, EDITED)
+
+      await wrapper.find('[data-cell-id="cell-1"] [data-action="copy"]').trigger('click')
+
+      expect(writeText).toHaveBeenCalledWith(EDITED)
+    })
+
+    it('Push lands the change and marks the cell synced', async () => {
+      const raw = { columns: [{ name: 'a', data_type: 'Int64' }], data: [[1]] }
+      syncAnswers({ ok: true, nodes: { '1': { settings: { raw_data_format: raw } } }, inputs: {}, warnings: [] })
+      const flow = useFlowStore()
+      const wrapper = await mountPane()
+      await type(wrapper, 1, EDITED)
+
+      await wrapper.find('[data-action="push"]').trigger('click')
+      await vi.waitFor(() => expect(wrapper.find('[data-cell-id="cell-1"] [data-sync-state]').text()).toBe('Synced'))
+
+      expect((flow.getNode(1)!.settings as any).raw_data_format).toEqual(raw)
+      expect(wrapper.find('[data-action="push"]').text()).toBe('Push')
+      expect(wrapper.find('.cell-error').exists()).toBe(false)
+    })
+
+    it('shows a refused push on its cell, with the line', async () => {
+      syncAnswers({ ok: false, cell_id: 'cell-1', line: 3, kind: 'refused', message: 'This adds a step' })
+      const wrapper = await mountPane()
+      await type(wrapper, 1, EDITED)
+
+      await wrapper.find('[data-action="push"]').trigger('click')
+      await vi.waitFor(() => expect(wrapper.find('.cell-error').exists()).toBe(true))
+
+      const failed = wrapper.find('[data-cell-id="cell-1"]')
+      expect(failed.find('.cell-error').text()).toBe('Line 3: This adds a step')
+      expect(failed.find('[data-sync-state]').text()).toBe('Sync failed')
+      expect(failed.find('.cm-stub').text()).toBe(EDITED)
+
+      await type(wrapper, 1, `${EDITED} `)
+      expect(failed.find('.cell-error').exists()).toBe(false)
+      expect(failed.find('[data-sync-state]').text()).toBe('Edited')
+    })
+
+    it('shows a notice until it is dismissed', async () => {
+      syncAnswers({ ok: true, nodes: {}, inputs: {}, warnings: ['`Top` cannot be kept as a name'] })
+      const wrapper = await mountPane()
+      await type(wrapper, 1, EDITED)
+
+      await wrapper.find('[data-action="push"]').trigger('click')
+      await vi.waitFor(() => expect(wrapper.find('.notebook-note--notice').exists()).toBe(true))
+      expect(wrapper.find('.notebook-note--notice span').text()).toBe('`Top` cannot be kept as a name')
+
+      await wrapper.find('[data-action="dismiss-notice"]').trigger('click')
+      expect(wrapper.find('.notebook-note--notice').exists()).toBe(false)
     })
   })
 })

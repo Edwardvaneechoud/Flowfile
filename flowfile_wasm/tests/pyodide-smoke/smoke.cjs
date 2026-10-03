@@ -302,6 +302,43 @@ _diffs
     console.error(`  [FAIL] render_notebook golden, differing: ${JSON.stringify(goldenDiffs)}`);
   }
 
+  // --- Notebook sync: the store's bridge call (a constant source, the request as a global), then every golden flow. ---
+  const headFlow = golden.flows.find((flow) => flow.name === 'head takes the first rows');
+  const headCell = headFlow.cells.find((cell) => cell.cell_id === 'cell-1');
+  const syncRequest = { flow: headFlow.flow, schemas: headFlow.schemas, locked: {}, drafts: { 'cell-1': headCell.code.replace('.head(3)', '.head(7)') } };
+  pyodide.globals.set('_notebook_sync_request', JSON.stringify(syncRequest));
+  const syncRes = await run('sync_notebook (notebook-store bridge)', `
+import json
+from engine.notebook_cells import sync_notebook
+sync_notebook(**json.loads(_notebook_sync_request))
+`);
+  pyodide.globals.delete('_notebook_sync_request');
+  if (!syncRes || syncRes.ok !== true || JSON.stringify(syncRes.nodes) !== '{"2":{"settings":{"sample_size":7}}}' || Object.keys(syncRes.inputs).length) {
+    failed.push('sync_notebook result');
+    console.error(`  [FAIL] sync_notebook result: ${JSON.stringify(syncRes)}`);
+  }
+  const syncDiffs = await run('sync_notebook (golden cells left as written change nothing)', `
+import ast, json
+from engine.notebook_cells import sync_notebook
+def _touched(flow):
+    drafts = {}
+    for cell in flow["cells"]:
+        if cell["kind"] != "node" or cell["status"] != "code":
+            continue
+        try:
+            ast.parse(cell["code"])
+        except SyntaxError:
+            continue
+        drafts[cell["cell_id"]] = cell["code"] + "\\n# touched\\n"
+    return drafts
+_unchanged = {"ok": True, "nodes": {}, "inputs": {}, "warnings": []}
+[f["name"] for f in _golden["flows"] if sync_notebook(f["flow"], f["schemas"], {}, _touched(f)) != _unchanged]
+`);
+  if (!Array.isArray(syncDiffs) || syncDiffs.length) {
+    failed.push('sync_notebook golden');
+    console.error(`  [FAIL] sync_notebook golden, changed: ${JSON.stringify(syncDiffs)}`);
+  }
+
   // Parity executors.
   pyodide.globals.set('_temp_content', 'tag\nx\ny\n');
   await run('execute_read_csv (second input)', `

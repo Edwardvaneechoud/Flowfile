@@ -395,6 +395,8 @@ class NotebookRenderer:
         self._passthrough: dict[int, int] = {}
         self._placeholder_reasons: dict[int, str] = {}
         self._blocked: set[int] = set()
+        self._emissions: list[NodeEmission] = []
+        self._rename: dict[str, str] = {}
 
     def render(self) -> dict:
         for node in self._topological_order():
@@ -592,6 +594,7 @@ class NotebookRenderer:
             prefix, label = f"df_{em.node_id}", node_label(node_by_id[em.node_id].type, em.node_id)
             if em.var_name == prefix or em.var_name.startswith(f"{prefix}_"):
                 rename[em.var_name] = label + em.var_name[len(prefix) :]
+        self._emissions, self._rename = emissions, rename
         body = [line for em in fused for line in em.lines]
         if rename:
             body = _rename_tokens(body, rename) or _rename_regex(body, rename)
@@ -600,6 +603,30 @@ class NotebookRenderer:
             lines, body = body[: len(em.lines)], body[len(em.lines) :]
             out.append(replace(em, lines=lines, var_name=rename.get(em.var_name, em.var_name)))
         return out
+
+    def node_statements(self) -> dict[int, str]:
+        """Each node's own statements under the names the cells use, as they read before linear runs fuse."""
+        statements: dict[int, str] = {}
+        for em in self._emissions:
+            lines = em.lines
+            if self._rename:
+                lines = _rename_tokens(lines, self._rename) or _rename_regex(lines, self._rename)
+            statements[em.node_id] = "\n".join(lines)
+        return statements
+
+    def node_inputs(self, node: _Node) -> dict[str, tuple[str, int]]:
+        """Each input of ``node`` by its key: the name the cells give it and the node it comes from."""
+        producers: dict[str, int] = {}
+        if len(node.main_inputs) == 1:
+            producers["main"] = node.main_inputs[0]
+        else:
+            producers.update({f"main_{index}": producer for index, producer in enumerate(node.main_inputs)})
+        if node.right_input is not None:
+            producers["right"] = node.right_input
+        if node.left_input is not None:
+            producers["left"] = node.left_input
+        names = self._get_input_vars(node)
+        return {key: (self._rename.get(names[key], names[key]), producer) for key, producer in producers.items()}
 
     def _add_code(self, line: str) -> None:
         self.code_lines.append(line)
