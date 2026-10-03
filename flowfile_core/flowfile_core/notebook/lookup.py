@@ -57,12 +57,14 @@ FRAME_KINDS: tuple[str, ...] = (
     "database_connections",
     "flow_interface",
     "is_directory",
+    "custom_node_hashes",
     "custom_node_sources",
 )
 """The kinds ``flowfile_frame._metadata`` asks for its own helpers; each is answered by its ``local_*`` twin.
 
-The last three read the host's filesystem, which the kernel mounts nothing of: a registered flow's interface
-(its file, after the access check), whether a path a cell names is a folder, and the installed custom node files.
+The last four read the host's filesystem, which the kernel mounts nothing of: a registered flow's interface
+(its file, after the access check), whether a path a cell names is a folder, and the installed custom node files
+(their hashes, then the files of the keys the kernel asks for).
 """
 
 

@@ -322,7 +322,14 @@ def test_the_kernel_mirrors_cores_custom_node_files(tmp_path, monkeypatch):
 
     source = MOOD_EMOJI.read_text(encoding="utf-8")
     answer = listed(source)
-    monkeypatch.setattr(_metadata, "custom_node_sources", lambda: answer)
+    fetched: list = []
+
+    def sources(keys=None) -> list:
+        fetched.append(keys)
+        return [entry for entry in answer if keys is None or entry.node_key in keys]
+
+    monkeypatch.setattr(_metadata, "custom_node_hashes", lambda: {e.node_key: e.source_hash for e in answer})
+    monkeypatch.setattr(_metadata, "custom_node_sources", sources)
     monkeypatch.setattr(notebook_kernel, "_MIRRORED", {})
     original = registry._directory
     monkeypatch.setattr(registry, "_directory", tmp_path / "nodes")
@@ -331,14 +338,17 @@ def test_the_kernel_mirrors_cores_custom_node_files(tmp_path, monkeypatch):
         path = tmp_path / "nodes" / "mood_emoji.py"
         notebook_kernel._mirror_custom_nodes()
         assert path.read_text(encoding="utf-8") == source and registry.get("mood_emoji") is not None
+        assert registry.get("mood_emoji").source_hash == answer[0].source_hash, "written byte for byte"
         written = path.stat().st_mtime_ns
         notebook_kernel._mirror_custom_nodes()
         assert path.stat().st_mtime_ns == written, "an unchanged file is not rewritten"
+        assert fetched == [["mood_emoji"]], "the sources are fetched once, for the key the registry lacked"
 
         changed = source + "\n# edited\n"
         answer[:] = listed(changed)
         notebook_kernel._mirror_custom_nodes()
         assert path.read_text(encoding="utf-8") == changed and registry.get("mood_emoji").source_text == changed
+        assert fetched == [["mood_emoji"], ["mood_emoji"]]
 
         foreign = tmp_path / "nodes" / "foreign.py"
         foreign.write_text("# not a node\n", encoding="utf-8")

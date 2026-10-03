@@ -193,7 +193,8 @@ def test_a_catalog_table_a_flow_file_and_a_custom_node_reach_the_kernel_through_
     runs = [(run["node"]["type"], run["schema_only"]) for run in kernel_sim.node_runs]
     assert ("catalog_reader", True) in runs and ("catalog_reader", False) in runs, runs
     kinds = {body["kind"] for body in kernel_sim.lookups}
-    assert {"catalog_table", "flow_registrations", "flow_interface", "custom_node_sources"} <= kinds, kinds
+    assert {"catalog_table", "flow_registrations", "flow_interface", "custom_node_hashes"} <= kinds, kinds
+    assert "custom_node_sources" not in kinds, "the sim's nodes folder is core's own: every hash matched, no source travelled"
     assert not kernel_db_opens, f"a kernel op opened the catalog database from {sorted(set(kernel_db_opens))}"
 
 
@@ -240,6 +241,7 @@ def test_a_lookup_answers_metadata_only(notebook_corpus, database_connection, cl
             "namespace": None,
         },
         "is_directory": {"path": str(Path(registration.flow_path).parent)},
+        "custom_node_hashes": {},
         "custom_node_sources": {},
     }
     assert set(asked) == set(lookup.KINDS), "every kind is covered here"
@@ -249,6 +251,7 @@ def test_a_lookup_answers_metadata_only(notebook_corpus, database_connection, cl
     assert set(answers["flow_interface"]) == {"inputs", "outputs", "parameters"}, answers["flow_interface"]
     assert answers["is_directory"] is True
     assert all({"node_key", "source", "source_hash"} <= set(row) for row in answers["custom_node_sources"])
+    assert answers["custom_node_hashes"] == {row["node_key"]: row["source_hash"] for row in answers["custom_node_sources"]}
     assert decrypted == []
     assert answers["catalog_table"]["table_name"] == "sales" and answers["catalog_table"]["serialized_lf"] is None
     assert answers["catalog_storage"] == {

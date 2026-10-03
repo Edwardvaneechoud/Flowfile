@@ -28,7 +28,7 @@ import json
 import os
 import sys
 import traceback
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -99,6 +99,13 @@ def _bound_frames(namespace: Mapping[str, Any]) -> Iterator[FlowFrame]:
             yield value
         elif isinstance(value, NativeNode):
             yield from value.__dict__.get("_frames", {}).values()
+
+
+def _remove(paths: Iterable[str]) -> None:
+    """Delete files of the session's results folder only this session reaches; one already gone is fine."""
+    for path in paths:
+        with contextlib.suppress(OSError):
+            os.remove(path)
 
 
 def _post_core(route: str, body: dict[str, Any], what: str) -> dict[str, Any]:
@@ -345,7 +352,7 @@ class _Session:
             elif self._held_current(node):
                 self._take(node)
             else:
-                self._run_held(node, self._held_inputs(node, canvas, held))
+                self._run_held(node, *self._held_inputs(node, canvas, held))
 
         ready(root)
         handle = frame.output_handle
@@ -380,37 +387,41 @@ class _Session:
 
     def _held_inputs(
         self, node: FlowNode, canvas: Mapping[int, int], held: Mapping[int, FlowNode]
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         """One entry per distinct ``(source, output handle)`` edge into ``node``, with its rows as a parquet core can
-        read (:meth:`_input_path`): a keyed node fed both exits of a split sends each exit under its own handle."""
+        read (:meth:`_input_path`), and the files among them this kernel wrote for the run: a keyed node fed both
+        exits of a split sends each exit under its own handle."""
         inputs: list[dict[str, Any]] = []
+        written: list[str] = []
         seen: set[tuple[int, str]] = set()
         for source, handle in node._incoming_edges():
             if (source.node_id, handle) in seen:
                 continue
             seen.add((source.node_id, handle))
-            path = self._input_path(source, handle, canvas, held)
+            path, mine = self._input_path(source, handle, canvas, held)
             inputs.append({"node_id": source.node_id, "handle": handle, "path": path})
-        return inputs
+            if mine:
+                written.append(path)
+        return inputs, written
 
     def _input_path(
         self, source: FlowNode, handle: str, canvas: Mapping[int, int], held: Mapping[int, FlowNode]
-    ) -> str:
-        """Output ``handle`` of ``source`` as a parquet core can read: a canvas or held node's own file, rows this
-        kernel computed written to the session's results folder."""
+    ) -> tuple[str, bool]:
+        """Output ``handle`` of ``source`` as a parquet core can read, and whether this kernel wrote it for the run:
+        a canvas or held node's own file, else rows this kernel computed written to the session's results folder."""
         if source.node_id in canvas:
             self._fetch(canvas[source.node_id], handle)
-            return self.rows[(canvas[source.node_id], handle)]
+            return self.rows[(canvas[source.node_id], handle)], False
         if source.node_id in held:
             self._held_rows(source, handle)
-            return self.rows[(source.node_id, handle)]
+            return self.rows[(source.node_id, handle)], False
         if not self.results_dir:
             raise NativeNodeError("This session has no results folder the canvas can read: Reset session")
         os.makedirs(self.results_dir, exist_ok=True)
         path = os.path.join(self.results_dir, f"input_{uuid4().hex}.parquet")
         data = materialise(source, None if handle == DEFAULT_OUTPUT_HANDLE else handle).data_frame
         (data if isinstance(data, pl.DataFrame) else data.collect()).write_parquet(path)
-        return path
+        return path, True
 
     def _ask_core(self, node: FlowNode, inputs: list[dict[str, Any]], *, schema_only: bool) -> dict[str, Any]:
         body = {
@@ -427,12 +438,19 @@ class _Session:
         except Exception as exc:
             raise NativeNodeError(f"Could not run node {node.node_id} on the canvas: {exc}") from exc
 
-    def _run_held(self, node: FlowNode, inputs: list[dict[str, Any]]) -> None:
+    def _run_held(self, node: FlowNode, inputs: list[dict[str, Any]], written: Sequence[str] = ()) -> None:
         """Have core run ``node`` from its settings over ``inputs`` (:meth:`_held_inputs`) and take the rows of
-        every live output (:meth:`_take`); a gate's dead output gets none, an earlier run's rows for it included."""
-        answer = self._ask_core(node, inputs, schema_only=False)
-        for key in [key for key in self.rows if key[0] == node.node_id]:
-            del self.rows[key]
+        every live output (:meth:`_take`); a gate's dead output gets none, an earlier run's rows for it included.
+
+        The inputs this kernel wrote go once core answered, and a node run again loses its earlier run's files:
+        only what the session can still reach stays in its results folder.
+        """
+        try:
+            answer = self._ask_core(node, inputs, schema_only=False)
+        finally:
+            _remove(written)
+        stale = [key for key in self.rows if key[0] == node.node_id]
+        _remove(self.rows.pop(key) for key in stale)
         for handle, path in (answer.get("paths") or {}).items():
             self.rows[(node.node_id, handle)] = path
         self.ran.add(node.node_id)
@@ -764,22 +782,21 @@ _MIRRORING_OPS = frozenset({"open", "reset", "execute", "clean_run"})
 def _mirror_custom_nodes() -> None:
     """Give this kernel's registry the custom node files core has, so a cell places them as a script does.
 
-    The kernel mounts no host folder, so core lists its installed node files (``custom_node_sources``) and
-    every one the registry lacks, or holds with another hash, is written as ``<node_key>.py`` into the
-    kernel's own nodes folder; a mirrored file whose key core no longer lists is removed, and the registry
-    rescans once when anything changed. In the tests' kernel-sim that folder is core's own, so every hash
-    matches and nothing is written.
+    The kernel mounts no host folder, so core lists the hashes of its installed node files
+    (``custom_node_hashes``); only the files whose key the registry lacks, or holds with another hash, are
+    fetched (``custom_node_sources``) and written as ``<node_key>.py`` into the kernel's own nodes folder, byte
+    for byte as core hashed them (no newline translation). A mirrored file whose key core no longer lists is
+    removed, and the registry rescans once when anything changed. In the tests' kernel-sim that folder is
+    core's own, so every hash matches and nothing is fetched or written.
     """
-    wanted = {entry.node_key: entry for entry in _metadata.custom_node_sources()}
+    wanted = _metadata.custom_node_hashes()
+    stale = [key for key, digest in wanted.items() if (held := registry.get(key)) is None or held.source_hash != digest]
     changed = False
-    for key, entry in wanted.items():
-        held = registry.get(key)
-        if held is not None and held.source_hash == entry.source_hash:
-            continue
+    for entry in _metadata.custom_node_sources(stale) if stale else []:
         registry.directory.mkdir(parents=True, exist_ok=True)
-        path = registry.directory / f"{key}.py"
-        path.write_text(entry.source, encoding="utf-8")
-        _MIRRORED[key] = path
+        path = registry.directory / f"{entry.node_key}.py"
+        path.write_text(entry.source, encoding="utf-8", newline="\n")
+        _MIRRORED[entry.node_key] = path
         changed = True
     for key in [key for key in _MIRRORED if key not in wanted]:
         _MIRRORED.pop(key).unlink(missing_ok=True)

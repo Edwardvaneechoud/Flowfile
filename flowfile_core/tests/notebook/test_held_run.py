@@ -342,6 +342,42 @@ def test_a_node_payload_core_cannot_read_is_refused_not_a_crash(coded_flow, clie
     assert refused.value.status_code == 422
 
 
+def test_a_held_run_leaves_only_its_live_files_behind(coded_flow, client, kernel_sim):
+    """The input this kernel wrote for a held run goes once core answered, and a node run again drops the files of
+    its earlier run, so the session's results folder holds only what it can still reach."""
+    from uuid import uuid4
+
+    import flowfile as ff
+
+    catalog = ff.CatalogReference(f"NbFiles_{uuid4().hex[:8]}", auto_create=True)
+    child = ff.create_flow_graph()
+    orders = ff.FlowInput("orders", schema={"id": ff.Int64, "amount": ff.Int64}, flow_graph=child)
+    orders.to_flow_output("every")
+    orders.filter(ff.col("amount") > 150).to_flow_output("big")
+    ref = catalog.schema("flows", auto_create=True).register_flow(orders, name=f"child_{uuid4().hex[:8]}")
+
+    cell = _bind(_coded_id(coded_flow)) + (
+        f"ref = ff.flow_ref(registration_id={ref.registration_id})\n"
+        "run = ff.RunFlow(ref, orders=coded.filter(ff.col('amount') > 0))\n"
+        "display(run['every'])"
+    )
+    shown = _execute(client, coded_flow, kernel_sim, cell)
+    assert shown["success"] and len(_rows(shown)) == 3, shown
+    results = Path(kernel_sim.shared_volume_path, "notebook", str(coded_flow.flow_id))
+    [run] = [run for run in kernel_sim.node_runs if not run["schema_only"]]
+    [written] = run["inputs"]
+    assert Path(written["path"]).name.startswith("input_") and not Path(written["path"]).exists(), written
+    first = sorted(path.name for path in results.glob("held_*.parquet"))
+    assert len(first) == 2, first
+
+    (results / first[0]).unlink()
+    again = _execute(client, coded_flow, kernel_sim, "display(run['big'])")
+    assert again["success"] and len(_rows(again)) == 2, again
+    second = sorted(path.name for path in results.glob("held_*.parquet"))
+    assert len(second) == 2 and not set(first) & set(second), (first, second)
+    assert not list(results.glob("input_*.parquet"))
+
+
 def test_a_keyed_node_fed_both_exits_of_a_split_reads_each(coded_flow, client, kernel_sim):
     """Both exits of a split the kernel computed feed one held ``run_flow``: the session sends one input per edge
     (not per source), core serves each exit under its own handle, and the child sees them apart."""

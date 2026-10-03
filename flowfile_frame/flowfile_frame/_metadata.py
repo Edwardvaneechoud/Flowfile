@@ -408,18 +408,34 @@ class CustomNodeSource(NamedTuple):
     source_hash: str
 
 
-def custom_node_sources() -> list[CustomNodeSource]:
-    """The installed custom node files that load (broken ones left out), as the registry holds them."""
-    asked, answer = _ask("custom_node_sources")
+def custom_node_hashes() -> dict[str, str]:
+    """The installed custom node files that load (broken ones left out): node key -> sha256 of the file."""
+    asked, answer = _ask("custom_node_hashes")
     if asked:
-        return [CustomNodeSource(**row) for row in answer]
-    return local_custom_node_sources(user_id=current_user_id())
+        return dict(answer)
+    return local_custom_node_hashes(user_id=current_user_id())
 
 
-def local_custom_node_sources(*, user_id: int) -> list[CustomNodeSource]:
+def local_custom_node_hashes(*, user_id: int) -> dict[str, str]:
     from flowfile_core.flowfile.user_defined.registry import registry
 
+    return {entry.node_key: entry.source_hash for entry in registry.all(include_broken=False)}
+
+
+def custom_node_sources(keys: list[str] | None = None) -> list[CustomNodeSource]:
+    """The installed custom node files that load, as the registry holds them: those of ``keys``, else every one."""
+    asked, answer = _ask("custom_node_sources", keys=keys)
+    if asked:
+        return [CustomNodeSource(**row) for row in answer]
+    return local_custom_node_sources(keys, user_id=current_user_id())
+
+
+def local_custom_node_sources(keys: list[str] | None = None, *, user_id: int) -> list[CustomNodeSource]:
+    from flowfile_core.flowfile.user_defined.registry import registry
+
+    wanted = None if keys is None else set(keys)
     return [
         CustomNodeSource(entry.node_key, entry.source_text, entry.source_hash)
         for entry in registry.all(include_broken=False)
+        if wanted is None or entry.node_key in wanted
     ]
