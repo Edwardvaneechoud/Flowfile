@@ -370,7 +370,7 @@ events** and must call the cleanup explicitly.
 
 | Weak point | What it means in practice |
 |---|---|
-| **`flow_graph.py` god file** (~5977 lines) | Holds the DAG engine, ~46 `add_*` node builders, catalog Delta write helpers, ML train/apply plumbing, kernel execution, YAML serialization, groups, layout, history, and codegen entry all in one file. Navigate it with `grep -n "def add_" flowfile_core/flowfile_core/flowfile/flow_graph.py` — that's the practical index; don't try to read it top to bottom. |
+| **`flow_graph.py` god file** (largest module in the repo) | Holds the DAG engine, the `add_*` node builders, catalog Delta write helpers, ML train/apply plumbing, kernel execution, YAML serialization, groups, layout, history, and codegen entry all in one file. Navigate it with `grep -n "def add_" flowfile_core/flowfile_core/flowfile/flow_graph.py` — that's the practical index; don't try to read it top to bottom. |
 | **Skip-list shallowness** | The pre-run skip pass (`util/node_skipper.py`) only expands one transitive level of "leads to" from incorrectly-configured nodes. Correctness for deeper chains relies on `_execute_stages` re-checking dependents of every failed/skipped node at run time — a genuine belt-and-suspenders design, not a hole, but don't assume the skip pre-pass alone is a complete skip set. |
 | **`results_exists` swallows worker downtime** | Returns `False` on an HTTP connection error, same as a genuine cache miss. In Development mode this silently degrades "should skip, cached" decisions into full re-runs whenever the worker is briefly unreachable — no error surfaces, just unexpectedly slower runs. |
 | **HTTP 419 on add-node failure** | `POST /update_settings/` raises the non-standard status code `419` (not `422`/`500`) when the node's `add_<type>` function itself raises — handle it explicitly in frontend/AI tool wrappers. Full dispatch-trap mechanics: `flowfile-node-development` §1.6. |
@@ -406,7 +406,7 @@ lands:
   parity hazard) as derived views over one `NodeSpec` per type.
 
 **If asked to work near these seams**, check whether the branch has merged
-(`git log --oneline main..claude/core-abstraction-flowgraph-001hrn` — empty
+(`git log --oneline origin/main..origin/claude/core-abstraction-flowgraph-001hrn` — empty
 means merged or superseded) before assuming either the old inline-branch
 shape or the new backend/registry shape is current truth.
 
@@ -583,7 +583,7 @@ grep -n "419" flowfile_core/flowfile_core/routes/routes.py
 sed -n '1,40p' flowfile_core/flowfile_core/catalog/storage_backend.py
 
 # pending-branch status: has it merged / is it still distinct?
-git log --oneline main..claude/core-abstraction-flowgraph-001hrn 2>/dev/null \
+git log --oneline origin/main..origin/claude/core-abstraction-flowgraph-001hrn 2>/dev/null \
   || git log --oneline f6963c77..claude/core-abstraction-flowgraph-001hrn
 
 # app version

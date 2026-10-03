@@ -51,10 +51,10 @@ find flowfile_frontend/src/renderer/app/components/nodes/node-types/elements -in
 
 ### 1.1 The string-convention dispatch trap (read this before writing any code)
 
-Adding a node from the UI/API goes through `POST /update_settings/?node_type=<node_type>` → `add_generic_settings` (`flowfile_core/flowfile_core/routes/routes.py:1146`). It resolves **everything by string manipulation, at request time, with no import-time check**:
+Adding a node from the UI/API goes through `POST /update_settings/?node_type=<node_type>` → `add_generic_settings` (`flowfile_core/flowfile_core/routes/routes.py::add_generic_settings`). It resolves **everything by string manipulation, at request time, with no import-time check**:
 
 ```python
-# routes.py:1158-1189 (verified)
+# routes.py::add_generic_settings (verified)
 input_data["user_id"] = current_user.id
 node_type = camel_case_to_snake_case(node_type)                 # e.g. "fuzzyMatch" -> "fuzzy_match"
 add_func = getattr(flow, "add_" + node_type)                    # AttributeError if no add_fuzzy_match method
@@ -69,7 +69,7 @@ except Exception as e:
     raise HTTPException(419, str(f"error: {e}")) from e         # non-standard status code, verified
 ```
 
-`get_node_model` (`routes.py:111-118`) literally does `for ref_name, ref in inspect.getmodule(input_schema).__dict__.items(): if ref_name.lower() == setting_name_ref: return ref`.
+`get_node_model` (`routes.py`) literally does `for ref_name, ref in inspect.getmodule(input_schema).__dict__.items(): if ref_name.lower() == setting_name_ref: return ref`.
 
 **Consequences you must design around:**
 - Your settings class name MUST be exactly `Node` + the node_type with underscores stripped, case-insensitively: `text_to_rows` → class `NodeTextToRows` (lowercases to `nodetexttorows`, matches `"node" + "texttorows"`). Get one letter wrong and `get_node_model` silently returns `None` → the route responds `404 "could not find the interface"`.
@@ -91,7 +91,7 @@ except Exception as e:
    - Source-style nodes that need custom lifecycle (read/database_reader/manual_input) skip `add_node_step` and build/patch the `FlowNode` directly, registering via `self.add_node_to_starting_list(node)` + `self._node_db[...]` — see `add_read` (`flow_graph.py:4646`) as the template if you're building a source with special schema-callback logic.
 5. **If it's a network-source node**, read §1.3 below before writing `_func` — do not fetch from core.
 6. Frontend: node config component + path convention — §2.
-7. **Parity surfaces that silently lag** (each has its own registry, none cross-check at build time): the code generator (`flowfile_core/flowfile_core/flowfile/code_generator/`, may need a new handler for Export-to-Python), the `flowfile_frame` API method (§3, optional), the WASM node set (§4, optional — only the 23-node runnable palette + `available:false` teaser entries), the AI tools' node catalog (context for the AI agents to know the node exists — search `flowfile_core/flowfile_core/ai/` for existing node references if the node should be AI-discoverable).
+7. **Parity surfaces that silently lag** (each has its own registry, none cross-check at build time): the code generator (`flowfile_core/flowfile_core/flowfile/code_generator/`, may need a new handler for Export-to-Python), the `flowfile_frame` API method (§3, optional), the WASM node set (§4, optional — the runnable palette + `available:false` teaser entries in `flowfile_wasm/src/config/nodeCatalog.ts`), the AI tools' node catalog (context for the AI agents to know the node exists — search `flowfile_core/flowfile_core/ai/` for existing node references if the node should be AI-discoverable).
 8. **Tests** — `flowfile_core/tests/flowfile/` (e.g. `test_basic_filter.py`, `test_filter_expressions.py` are the pattern for a simple transform node). Assert: settings validate, the graph method adds a node with the right template counts, `.collect()`/execution produces correct data, and (if the node has a native vs polars-code split anywhere downstream) round-trip through save/reload.
 
 ### 1.3 Worked example — simple, single-input: `filter`
@@ -126,7 +126,7 @@ Read this to see the whole chain end to end for the simplest realistic case.
 
 ### 1.6 Traps specific to this layer
 
-- **HTTP 419** (nonstandard, not a typo) is the status code `add_generic_settings` returns when your `add_<type>` method raises for any reason (`routes.py:1189`). If a frontend network tab shows a bare "419" with no obvious cause, the bug is inside your node's `_func`/settings validation, not the transport.
+- **HTTP 419** (nonstandard, not a typo) is the status code `add_generic_settings` returns when your `add_<type>` method raises for any reason (`routes.py::add_generic_settings`). If a frontend network tab shows a bare "419" with no obvious cause, the bug is inside your node's `_func`/settings validation, not the transport.
 - **`add_node_step` deletes-then-recreates** a node whose `node_type` changed but keeps it (via `update_node`) if the type is unchanged — don't assume "the node with this id" is stable across settings edits that change the node's own type.
 - Nodes with `input > 2` or `multi=True` in their template use append-connection semantics; templates with `input <= 2` **replace** the main input on a new connection instead of appending (`flow_node.py:689-693`) — relevant if your node ever needs more than two ordered inputs.
 
@@ -227,14 +227,14 @@ FLOWFILE_DB_PATH=/tmp/stub_scratch.db make stubs
 
 ## 4. Layer 4 — flowfile_wasm (browser-only Pyodide build)
 
-**Only needed if the node must run standalone in the browser with no `flowfile_core` at all.** WASM is a fully separate, from-scratch implementation — it does not import or call the core node code; every node it supports has its own Python engine function and its own TS settings component. Check first whether the node even belongs there: WASM currently ships a **23-node runnable palette** (read, manual_input, external_data, read_from_catalog, filter, select, sort, group_by, unique, formula, record_id, dynamic_rename, sample/head, pivot, unpivot, join, cross_join, union, explore_data, output, external_output, write_to_catalog, polars_code) plus locked/greyed-out teaser entries (database_reader, cloud_storage_reader, rest_api_reader, kafka_source, google_analytics_reader, window_functions, sql_query, python_script, fuzzy_match, graph_solver, explode_hierarchy, gate, train_model, apply_model, evaluate_model, database_writer, cloud_storage_writer) that link out to the full-app docs instead of running. Anything needing a backend connection, secrets, or a Docker kernel is a **locked placeholder in WASM by design** — don't try to make it runnable there.
+**Only needed if the node must run standalone in the browser with no `flowfile_core` at all.** WASM is a fully separate, from-scratch implementation — it does not import or call the core node code; every node it supports has its own Python engine function and its own TS settings component. Check first whether the node even belongs there: WASM ships a runnable palette (`nodeCatalog.ts` is the source of truth: read, manual_input, external_data, read_from_catalog, filter, select, sort, group_by, unique, formula, record_id, dynamic_rename, sample/head, pivot, unpivot, join, cross_join, record_count, union, explore_data, output, external_output, write_to_catalog, polars_code) plus locked/greyed-out teaser entries (database_reader, cloud_storage_reader, rest_api_reader, kafka_source, google_analytics_reader, window_functions, sql_query, python_script, fuzzy_match, graph_solver, explode_hierarchy, gate, train_model, apply_model, evaluate_model, database_writer, cloud_storage_writer) that link out to the full-app docs instead of running. Anything needing a backend connection, secrets, or a Docker kernel is a **locked placeholder in WASM by design** — don't try to make it runnable there.
 
 ### 4.1 Add-a-node checklist (WASM)
 
 Touch, in order:
 1. `src/pyodide/engine/nodes_*.py` — add an `execute_<type>(...)` function in the right module by responsibility (`nodes_io.py`, `nodes_transform.py`, `nodes_combine.py`, `nodes_aggregate.py`, `nodes_formula.py`, `nodes_explore.py`, `nodes_polars_code.py`); re-export it via `__init__.py`, which has **two** places that must both list the new name: the `from .module import (...)` block per submodule, and an explicit `__all__ = [...]` list further down (grouped by submodule with comments) — the browser runs `from engine import *`, which honors `__all__`, so a name missing from `__all__` silently never reaches the JS bridge even though the plain Python import works fine under pytest.
 2. `src/stores/flow-store.ts` — add a `case` in `executeNode`'s dispatch to call the bridge string `execute_<type>(...)`.
-3. `src/components/Canvas.vue` — add the node to `nodeCategories` (palette entry) and to the `getSettingsComponent(type)` map (explicit map here, unlike the main app's convention-glob — every WASM node is a named case).
+3. `src/config/nodeCatalog.ts` — add the palette entry (`Canvas.vue` builds `nodeCategories` from it), then run `make wasm_node_manifest` (the share-link manifest is generated from this file; `make check_wasm_node_manifest` gates drift). In `src/components/Canvas.vue`, add the type to the `getSettingsComponent(type)` map (explicit map here, unlike the main app's convention-glob — every WASM node is a named case).
 4. `src/components/nodes/<X>Settings.vue` — new settings panel (flat file, not a per-node directory like the main app).
 5. `src/types/index.ts` — add the key to `NODE_TYPES`.
 6. `src/config/nodeDescriptions.ts` — add the palette description entry.
@@ -271,9 +271,9 @@ Any dependency that ships as a **compiled Rust extension for `polars`** (the cla
 
 | Symptom | Cause | Where to look |
 |---|---|---|
-| `POST /update_settings/` → HTTP 419 | Your `add_<type>` method raised an exception | `routes.py:1189`; add a try/except with a clearer message inside your `_func` or settings validator |
+| `POST /update_settings/` → HTTP 419 | Your `add_<type>` method raised an exception | `routes.py::add_generic_settings`; add a try/except with a clearer message inside your `_func` or settings validator |
 | `POST /update_settings/` → 404 "could not find the interface" | `get_node_model` couldn't match your settings class name | Class name must be exactly `"node" + node_type.replace("_","")` case-insensitively — §1.1 |
-| `POST /update_settings/` → `AttributeError` / unhandled 500 | No `add_<node_type>` method on `FlowGraph`, or a typo in it | `getattr(flow, "add_" + node_type)` in `routes.py:1168` — §1.1 |
+| `POST /update_settings/` → `AttributeError` / unhandled 500 | No `add_<node_type>` method on `FlowGraph`, or a typo in it | `getattr(flow, "add_" + node_type)` in `routes.py::add_generic_settings` — §1.1 |
 | Reloading a saved flow raises "Unknown node type" | Forgot `NODE_TYPE_TO_SETTINGS_CLASS` entry | `schemas.py:27` — §1.2 step 2 |
 | Node settings drawer never opens, only a browser console error | Settings component path doesn't match `elements/<camelCase>/<TitleCase>.vue` | §2.1 — check both globs (`useDragAndDrop.ts`, `GenericNode.vue`) resolve the same path |
 | `make check_stubs` fails in CI | Public `flow_frame.py`/`expr.py` surface changed without regenerating `.pyi` files | §3.3 |
@@ -316,5 +316,3 @@ grep -n "pyodide.js\|loadPackage" flowfile_wasm/src/stores/pyodide-store.ts
 # wasm: confirm the pyodide-smoke CI gate still exists (the only guard for wasm32-wheel gaps)
 grep -n "pyodide-smoke" .github/workflows/flowfile-wasm-build.yml
 ```
-
-Known drift already observed in this repo (don't propagate it further): the root `CLAUDE.md` describes WASM as "lightweight, 16 nodes" — stale; verified current runnable palette is 23 types. If you touch the WASM node count, update `flowfile_wasm/CLAUDE.md` and this file together rather than trusting either against the root doc.
