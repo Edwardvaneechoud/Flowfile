@@ -104,9 +104,7 @@ def is_side_effect_node_type(node_type: str) -> bool:
     if node_type in SIDE_EFFECT_NODE_TYPES:
         return True
     template = node_store.node_dict.get(node_type)
-    if template is None:
-        return False
-    return template.node_group == "output" or (template.custom_node and template.node_type == "output")
+    return template is not None and template.writes
 
 
 def notebook_defers(node_type: str, setting_input: Any = None) -> bool:
@@ -256,9 +254,7 @@ def seed_deferred_node(node: FlowNode, schemas: dict[str, list[FlowfileColumn]])
         node.placed_deferred = True
 
 
-def resolved_seed(
-    node: FlowNode, schemas: dict[str, list[FlowfileColumn]]
-) -> dict[str, list[FlowfileColumn]]:
+def resolved_seed(node: FlowNode, schemas: dict[str, list[FlowfileColumn]]) -> dict[str, list[FlowfileColumn]]:
     """``schemas``, or the columns the mode's ``schema_resolver`` finds for ``node`` when no handle of them has any.
 
     A notebook kernel session answers with the columns of the canvas node a deferred node stands for, else

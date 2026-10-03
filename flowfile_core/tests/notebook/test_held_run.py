@@ -301,6 +301,47 @@ def test_a_held_run_commits_no_source_progress(coded_flow, client, kernel_sim, m
     assert len(kernel_sim.node_runs) == 1 and committed == []
 
 
+def test_a_held_gate_run_again_drops_the_exit_it_closed(coded_flow, client, kernel_sim):
+    """A gate core ran once with one exit live, run again (its file gone) with the other exit live: the exit now
+    closed says so instead of serving the earlier run's rows."""
+    from flowfile_frame import notebook_kernel
+
+    cell = _bind(_coded_id(coded_flow)) + (
+        "env = ff.add_flow_parameter(flow, ff.Parameter('env', default='dev'))\n"
+        "g = ff.Gate(coded, parameter=env, operator='equals', value='dev')\n"
+        "display(g.then)"
+    )
+    shown = _execute(client, coded_flow, kernel_sim, cell)
+    assert shown["success"] and len(_rows(shown)) == 3, shown
+    [first] = kernel_sim.node_runs
+    session = notebook_kernel._SESSIONS[coded_flow.flow_id]
+    Path(session.rows[(first["node"]["id"], "output-0")]).unlink()
+
+    flipped = _execute(client, coded_flow, kernel_sim, "ff.set_flow_parameter(flow, 'env', 'prod')\ndisplay(g.otherwise)")
+    assert flipped["success"] and len(_rows(flipped)) == 3, flipped
+    assert len(kernel_sim.node_runs) == 2, "the gate ran again: its file was gone"
+    assert [handle for node_id, handle in session.rows if node_id == first["node"]["id"]] == ["output-1"]
+
+    dead = _execute(client, coded_flow, kernel_sim, "display(g.then)")
+    assert dead["success"] and "a gate routed it away" in _text(dead), dead
+
+
+def test_a_node_payload_core_cannot_read_is_refused_not_a_crash(coded_flow, client, kernel_sim):
+    """A node without an id or type, or a column without a type, is a 422 naming the problem, never a 500."""
+    from flowfile_core.notebook import held_run
+    from flowfile_frame.native import NativeNodeError
+
+    assert _execute(client, coded_flow, kernel_sim, "x = 1")["success"]
+    body = {"flow_id": coded_flow.flow_id, "node": {"setting_input": {}}, "inputs": [], "parameters": []}
+    with pytest.raises(NativeNodeError, match="cannot be read"):
+        kernel_sim.node_run(body)
+
+    untyped = held_run.HeldInput(node_id=1, columns=[{"name": "a"}])
+    with pytest.raises(held_run.HTTPException, match="without a name or data type") as refused:
+        held_run._input_frames(kernel_sim, coded_flow.flow_id, [untyped])
+    assert refused.value.status_code == 422
+
+
 def test_a_keyed_node_fed_both_exits_of_a_split_reads_each(coded_flow, client, kernel_sim):
     """Both exits of a split the kernel computed feed one held ``run_flow``: the session sends one input per edge
     (not per source), core serves each exit under its own handle, and the child sees them apart."""

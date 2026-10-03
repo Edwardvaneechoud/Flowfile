@@ -429,8 +429,10 @@ class _Session:
 
     def _run_held(self, node: FlowNode, inputs: list[dict[str, Any]]) -> None:
         """Have core run ``node`` from its settings over ``inputs`` (:meth:`_held_inputs`) and take the rows of
-        every live output (:meth:`_take`); a gate's dead output gets none."""
+        every live output (:meth:`_take`); a gate's dead output gets none, an earlier run's rows for it included."""
         answer = self._ask_core(node, inputs, schema_only=False)
+        for key in [key for key in self.rows if key[0] == node.node_id]:
+            del self.rows[key]
         for handle, path in (answer.get("paths") or {}).items():
             self.rows[(node.node_id, handle)] = path
         self.ran.add(node.node_id)
@@ -438,19 +440,26 @@ class _Session:
 
     def _take(self, node: FlowNode) -> None:
         """Make the rows core answered for ``node`` its results here, keep their schemas and give them to the
-        deferred frames bound to the node in the namespace, so ``.columns`` knows them."""
+        deferred frames bound to the node in the namespace, so ``.columns`` knows them. An output core answered
+        nothing for (a gate's exit closed in this run) goes back to its typed placeholder, here and on its frames,
+        so nothing reads the rows of an earlier run."""
         schemas = dict(node._named_schemas)
-        for (node_id, handle), path in list(self.rows.items()):
-            if node_id != node.node_id:
-                continue
-            rows = pl.scan_parquet(path)
+        live = {handle: path for (node_id, handle), path in self.rows.items() if node_id == node.node_id}
+
+        def rows_of(handle: str) -> pl.LazyFrame:
+            if handle in live:
+                return pl.scan_parquet(live[handle])
+            return FlowDataEngine.create_from_schema(list(schemas.get(handle) or [])).data_frame.lazy()
+
+        for handle in set(_handles(node)) | set(live):
+            rows = rows_of(handle)
+            if handle in live:
+                schemas[handle] = FlowDataEngine(rows).schema
             self._inject(node, handle, rows)
-            schemas[handle] = FlowDataEngine(rows).schema
         node._named_schemas = schemas
         for frame in _bound_frames(self.namespace):
-            path = self.rows.get((frame.node_id, frame.output_handle))
-            if frame.node_id == node.node_id and frame._deferred and path is not None:
-                frame.data = pl.scan_parquet(path)
+            if frame.node_id == node.node_id and frame._deferred:
+                frame.data = rows_of(frame.output_handle)
 
     def held_schemas(self, node: FlowNode) -> dict[str, list[FlowfileColumn]] | None:
         """The columns of a deferred node a cell built, for its seed (``native.resolved_seed``): its canvas twin's

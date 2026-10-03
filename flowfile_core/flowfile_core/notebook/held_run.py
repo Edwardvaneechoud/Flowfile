@@ -103,9 +103,7 @@ def _refusal(node: dict) -> str | None:
     settings = node.get("setting_input")
     custom = isinstance(settings, dict) and bool(settings.get("is_user_defined"))
     template = node_store.node_dict.get(node_type)
-    if template is not None and (
-        template.node_group == "output" or (template.custom_node and template.node_type == "output")
-    ):
+    if template is not None and template.writes:
         return f"Node {node_id} writes when the flow runs: Push, then run the flow on the canvas."
     if custom or node_type in HELD_NODE_TYPES:
         return None
@@ -130,9 +128,12 @@ def _input_frames(manager, flow_id: int, inputs: list[HeldInput]) -> dict[int, d
                 raise HTTPException(422, f"Input {entry.path} of node {entry.node_id} is not a file of this session")
             frame = pl.scan_parquet(host)
         elif entry.columns is not None:
-            columns = [
-                FlowfileColumn.from_input(c.get("name") or c["column_name"], c["data_type"]) for c in entry.columns
-            ]
+            try:
+                columns = [
+                    FlowfileColumn.from_input(c.get("name") or c["column_name"], c["data_type"]) for c in entry.columns
+                ]
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HTTPException(422, f"Input {entry.node_id} names a column without a name or data type") from exc
             frame = FlowDataEngine.create_from_schema(columns).data_frame.lazy()
         else:
             raise HTTPException(422, f"Input {entry.node_id} names neither rows nor columns")
@@ -225,16 +226,20 @@ def run_held_node(kernel_id: str, user, body: NodeRunRequest) -> dict:
             "nodes": [body.node],
         }
     )
+    try:
+        flowfile_data = FlowfileData.model_validate(data)
+    except ValidationError as exc:
+        raise HTTPException(422, f"The node cannot be read ({exc.error_count()} errors)") from exc
     refused = refused_nodes(flow.get_flowfile_data().model_dump(mode="json"), data)
     message = "\n".join(dict.fromkeys(text for text, _ in refused)) or _refusal(data["nodes"][0])
     if message:
         raise HTTPException(422, message)
     try:
-        flow_info = _flowfile_data_to_flow_information(FlowfileData.model_validate(data))
+        flow_info = _flowfile_data_to_flow_information(flowfile_data)
     except (ValidationError, ValueError) as exc:
         raise HTTPException(422, f"The node's settings cannot be read: {exc}") from exc
     flow_info.flow_settings.track_history = False
-    node_id = data["nodes"][0]["id"]
+    node_id = flowfile_data.nodes[0].id
     graph = FlowGraph(flow_settings=flow_info.flow_settings)
     graph._system_run = True
     graph._owner_user_id = user.id

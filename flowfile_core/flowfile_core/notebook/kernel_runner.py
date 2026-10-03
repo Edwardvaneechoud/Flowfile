@@ -171,11 +171,21 @@ def _session_call(manager, flow, kernel_id: str, op: str, **fields: Any) -> tupl
 
 
 def _open(manager, flow, user, kernel_id: str, op: str) -> None:
+    """Seed the session (``op`` is ``open`` or ``reset``) and record what it was seeded with.
+
+    Core makes the session's results folder first: on a Linux host, a folder the kernel (root in its container)
+    created on the bind mount would be one core cannot write its own files into.
+    """
     from flowfile_core.notebook.render import code_fingerprint
 
     fingerprint = code_fingerprint(flow)
     seeded_with = _result_schemas(flow)
-    results_dir = manager.to_kernel_path(_results_dir(manager, flow.flow_id))
+    results = _results_dir(manager, flow.flow_id)
+    try:
+        os.makedirs(results, exist_ok=True)
+    except OSError as exc:
+        raise HTTPException(502, f"Could not create the session's results folder: {exc}") from exc
+    results_dir = manager.to_kernel_path(results)
     opened = _succeeded(
         *_call(
             manager,
@@ -403,8 +413,7 @@ def lineage_commits(flow, node_ids) -> bool:
     Only when it writes, which is when it holds an output node: rows written without the commit would be written
     again by the flow's next run, and rows only looked at must leave the progress for that run.
     """
-    templates = (node.node_template for node in map(flow.get_node, node_ids) if node is not None)
-    return any(t.node_group == "output" or (t.custom_node and t.node_type == "output") for t in templates)
+    return any(node.node_template.writes for node in map(flow.get_node, node_ids) if node is not None)
 
 
 def _own_kernel_detail(node, kernel_id: str, needed: str) -> str:

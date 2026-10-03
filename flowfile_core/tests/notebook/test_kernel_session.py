@@ -51,6 +51,17 @@ def _op(request) -> str:
     return re.search(r'"op": "(\w+)"', request.code).group(1)
 
 
+def test_core_creates_the_sessions_results_folder_at_open(orders_flow, client, kernel_sim):
+    """Core makes the folder before the kernel can write into it: on a Linux host a folder the kernel (root in
+    its container) created on the bind mount would be one core cannot write its own files into."""
+    from flowfile_core.notebook import kernel_runner
+
+    results = Path(kernel_runner._results_dir(kernel_sim, orders_flow.flow_id))
+    assert not results.exists()
+    assert client.post("/notebook/session/open", json=_body(orders_flow, kernel_sim)).status_code == 200
+    assert results.is_dir()
+
+
 def test_a_cell_with_an_import_and_a_loop_runs_in_the_session(orders_flow, client, kernel_sim):
     opened = client.post("/notebook/session/open", json=_body(orders_flow, kernel_sim))
     assert opened.status_code == 200, opened.text
@@ -275,7 +286,7 @@ def test_a_close_that_lands_after_the_flow_reopened_leaves_the_new_session(
 
     assert _execute(client, orders_flow, kernel_sim, "x = 1")["success"]
     results = Path(kernel_runner._results_dir(kernel_sim, orders_flow.flow_id))
-    results.mkdir(parents=True)
+    results.mkdir(parents=True, exist_ok=True)
     (results / "canvas.parquet").touch()
     stale = close_flow()
 
@@ -309,7 +320,7 @@ def test_the_kernel_mirrors_cores_custom_node_files(tmp_path, monkeypatch):
     def listed(source: str) -> list:
         return [_metadata.CustomNodeSource("mood_emoji", source, hashlib.sha256(source.encode()).hexdigest())]
 
-    source = MOOD_EMOJI.read_text()
+    source = MOOD_EMOJI.read_text(encoding="utf-8")
     answer = listed(source)
     monkeypatch.setattr(_metadata, "custom_node_sources", lambda: answer)
     monkeypatch.setattr(notebook_kernel, "_MIRRORED", {})
@@ -319,7 +330,7 @@ def test_the_kernel_mirrors_cores_custom_node_files(tmp_path, monkeypatch):
         registry.scan()
         path = tmp_path / "nodes" / "mood_emoji.py"
         notebook_kernel._mirror_custom_nodes()
-        assert path.read_text() == source and registry.get("mood_emoji") is not None
+        assert path.read_text(encoding="utf-8") == source and registry.get("mood_emoji") is not None
         written = path.stat().st_mtime_ns
         notebook_kernel._mirror_custom_nodes()
         assert path.stat().st_mtime_ns == written, "an unchanged file is not rewritten"
@@ -327,10 +338,10 @@ def test_the_kernel_mirrors_cores_custom_node_files(tmp_path, monkeypatch):
         changed = source + "\n# edited\n"
         answer[:] = listed(changed)
         notebook_kernel._mirror_custom_nodes()
-        assert path.read_text() == changed and registry.get("mood_emoji").source_text == changed
+        assert path.read_text(encoding="utf-8") == changed and registry.get("mood_emoji").source_text == changed
 
         foreign = tmp_path / "nodes" / "foreign.py"
-        foreign.write_text("# not a node\n")
+        foreign.write_text("# not a node\n", encoding="utf-8")
         answer[:] = []
         notebook_kernel._mirror_custom_nodes()
         assert not path.exists() and foreign.exists(), "only mirrored files are removed"
