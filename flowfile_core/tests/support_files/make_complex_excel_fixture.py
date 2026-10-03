@@ -5,7 +5,7 @@ outside it, blank and duplicate headers, columns that change type partway down, 
 formulas with and without cached results. ``test_read_excel_tables.py`` pins what the reader does
 with each one.
 
-    poetry run python flowfile_core/tests/support_files/make_complex_excel_test.py
+    poetry run python flowfile_core/tests/support_files/make_complex_excel_fixture.py
 """
 
 import datetime
