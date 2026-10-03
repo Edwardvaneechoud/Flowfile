@@ -154,17 +154,19 @@ def test_a_new_frame_on_a_deferred_canvas_node_computes_here_on_the_canvas_rows(
     assert len(kernel_sim.node_results) == 1
 
 
-def test_new_work_only_the_canvas_runs_says_push_first(coded_flow, client, kernel_sim):
+def test_new_work_only_the_canvas_runs_is_run_by_core_from_the_cells_settings(coded_flow, client, kernel_sim):
+    """A script a cell built on another kernel has no canvas node: core runs it from its settings over the canvas
+    rows of its input (a script publishing nothing passes its input through), once per session."""
     node_id = _coded_id(coded_flow)
     cell = _bind(node_id) + "new = ff.PythonScript(coded, code='x = 1', kernel='other-kernel').output\ndisplay(new)"
     shown = _execute(client, coded_flow, kernel_sim, cell)
     assert shown["success"], shown
-    text = [out["data"] for out in shown["display_outputs"] if out["mime_type"] == "text/plain"]
-    assert any("Push, then it runs on the canvas" in t for t in text), shown["display_outputs"]
+    assert [row["amount"] for row in _rows(shown)] == [100, 200, 300], shown["display_outputs"]
 
-    collected = _execute(client, coded_flow, kernel_sim, "new.collect()")
-    assert not collected["success"] and "Push, then it runs on the canvas" in collected["error"]
-    assert not kernel_sim.node_results
+    collected = _execute(client, coded_flow, kernel_sim, "print(new.collect().height, new.columns)")
+    assert collected["success"] and collected["stdout"].strip() == "3 ['id', 'amount']", collected
+    assert [body["node_id"] for body in kernel_sim.node_results] == [node_id]
+    assert [body["node"]["type"] for body in kernel_sim.node_runs] == ["python_script"]
 
 
 @pytest.fixture
@@ -251,17 +253,18 @@ def test_an_unedited_read_of_a_file_the_kernel_cannot_see_shows_the_canvas_rows(
     assert [body["node_id"] for body in kernel_sim.node_results] == [read_id]
 
 
-def test_a_new_read_of_a_file_the_kernel_cannot_see_has_no_columns_and_names_the_folders(
-    hidden_csv_flow, client, kernel_sim, tmp_path
-):
+def test_a_new_read_of_a_file_the_kernel_cannot_see_is_read_by_core(hidden_csv_flow, client, kernel_sim, tmp_path):
+    """A read of a file outside the kernel's folders, without a canvas twin, knows its columns from core's
+    prediction as soon as it is built and shows the rows core reads on the host."""
     other = tmp_path / "host_data" / "other.csv"
-    other.write_text("a\n1\n")
-    result = _execute(client, hidden_csv_flow, kernel_sim, f"new = ff.read_csv({str(other)!r})\ndisplay(new)")
+    other.write_text("a,b\n1,x\n2,y\n")
+    cell = f"new = ff.read_csv({str(other)!r})\nprint(new.columns)\ndisplay(new)"
+    result = _execute(client, hidden_csv_flow, kernel_sim, cell)
     assert result["success"], result
-    text = next(out["data"] for out in result["display_outputs"] if out["mime_type"] == "text/plain")
-    assert "Folders this kernel can read" in text and "push, then it runs on the canvas" in text, text
-    assert not text.startswith("Schema:"), text
+    assert result["stdout"].strip() == "['a', 'b']", result
+    assert _rows(result) == [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}], _table(result)
     assert not kernel_sim.node_results
+    assert [body["schema_only"] for body in kernel_sim.node_runs] == [True, False]
 
 
 def test_an_unedited_push_through_the_kernel_of_a_file_it_cannot_see_changes_nothing(hidden_csv, kernel_sim):
@@ -700,6 +703,7 @@ def test_rerunning_a_script_cell_unchanged_reads_the_canvas_rows(
         assert read["success"] and read["stdout"].strip() == "3", read
     asked = [body["node_id"] for body in locking_kernel_sim.node_results]
     assert asked == [_node_id(flow, "python_script")], "the second run reuses the path of the first"
+    assert not locking_kernel_sim.node_runs, "a node with a canvas twin is never run from its settings"
 
 
 def test_run_all_of_a_scripted_flow_computes_below_the_script_on_its_canvas_rows(
@@ -717,9 +721,11 @@ def test_run_all_of_a_scripted_flow_computes_below_the_script_on_its_canvas_rows
 
 
 @pytest.mark.parametrize("edited", ["script", "source"])
-def test_an_edited_script_or_source_cell_still_says_push_first(
+def test_an_edited_script_or_source_cell_is_run_by_core_from_its_settings(
     scripted_flow, locking_client, locking_kernel_sim, edited
 ):
+    """An edited script cell, or one below an edited source, stands for no canvas node any more: core runs the
+    script from the cell's settings over the input this kernel computed."""
     flow = scripted_flow(OTHER_KERNEL)
     code, name = _script_cell(flow)
     if edited == "script":
@@ -730,9 +736,11 @@ def test_an_edited_script_or_source_cell_still_says_push_first(
         assert "30" in source
         assert _execute(locking_client, flow, locking_kernel_sim, source.replace("30", "31"))["success"]
     assert _execute(locking_client, flow, locking_kernel_sim, code)["success"]
-    read = _execute(locking_client, flow, locking_kernel_sim, f"{name}.collect()")
-    assert not read["success"] and "Push, then it runs on the canvas" in read["error"], read
+    read = _execute(locking_client, flow, locking_kernel_sim, f"print({name}.collect()['amount'].to_list())")
+    assert read["success"], read
+    assert read["stdout"].strip() == ("[10, 20, 30]" if edited == "script" else "[10, 20, 31]"), read
     assert not locking_kernel_sim.node_results
+    assert [body["node"]["type"] for body in locking_kernel_sim.node_runs] == ["python_script"]
 
 
 def _interrupted_cell(client, flow, sim) -> tuple[dict, float]:

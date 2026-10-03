@@ -68,7 +68,9 @@ class NotebookMode:
     one (node id -> ``(cell_id, node_type, error)``). ``row_resolver`` (``None`` unless a notebook kernel
     session sets it) is asked for the rows of a frame that has none in the session (deferred or below a
     gate): it returns a ``LazyFrame``, ``None`` to keep the default refusal, or raises ``NativeNodeError``
-    with the message to show.
+    with the message to show. ``schema_resolver`` (set by the same session) is asked for the columns of a
+    deferred node a cell built whose seed has none (``native.resolved_seed``): it returns the schemas per
+    output handle, or ``None`` to keep the empty seed.
     """
 
     graph: FlowGraph
@@ -86,6 +88,7 @@ class NotebookMode:
     column_less: set[int]
     unchecked: dict[int, tuple[str | None, str, str]]
     row_resolver: Callable[[Any], Any] | None
+    schema_resolver: Callable[[Any], dict[str, list] | None] | None
 
     def __init__(
         self, graph: FlowGraph, user_id: int | None = None, *, owns_graph: bool = False, sync: bool = False
@@ -105,6 +108,7 @@ class NotebookMode:
         self.column_less = set()
         self.unchecked = {}
         self.row_resolver = None
+        self.schema_resolver = None
 
     def close(self) -> None:
         """Release what the mode's run left: the snapshot, the cells' ``linecache`` entries and an owned graph's logger.

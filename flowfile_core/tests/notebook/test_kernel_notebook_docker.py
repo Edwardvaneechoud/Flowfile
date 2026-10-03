@@ -319,3 +319,18 @@ def test_kernel_completions_see_the_session(smoke_flow, notebook_kernel, client_
     assert "col" in labels("ff.co")
     assert client.post("/notebook/session/reset", json=key).status_code == 200
     assert "priced" not in labels("pri")
+
+
+def test_a_read_of_a_file_the_kernel_cannot_see_is_run_by_core(smoke_flow, notebook_kernel, client_as, tmp_path):
+    """A cell reads a host file outside the kernel's folders: the kernel cannot open it, so core predicts its columns
+    and reads it from the cell's settings (``POST /notebook/session/node_run``), without a push."""
+    path = tmp_path / "outside.csv"
+    path.write_text("a,b\n1,x\n2,y\n")
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}
+    assert client.post("/notebook/session/open", json=key).status_code == 200
+    cell = f"new = ff.read_csv({str(path)!r})\nprint(new.columns)\ndisplay(new)"
+    shown = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-outside", "code": cell})
+    assert shown.status_code == 200 and shown.json()["success"], shown.text
+    assert shown.json()["stdout"].strip() == "['a', 'b']", shown.json()
+    assert _table_rows(shown.json()) == [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}], shown.json()

@@ -23,6 +23,7 @@ class NotebookMode:
     column_less: set[int]
     unchecked: dict[int, tuple[str | None, str, str]]
     row_resolver: Callable[[Any], Any] | None
+    schema_resolver: Callable[[Any], dict[str, list] | None] | None
     def __init__(self, graph: FlowGraph, user_id: int | None=None, *, owns_graph: bool=False, sync: bool=False) -> None: ...
     def close(self) -> None: ...
 

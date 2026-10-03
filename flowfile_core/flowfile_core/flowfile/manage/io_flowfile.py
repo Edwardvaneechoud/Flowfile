@@ -412,10 +412,12 @@ def populate_graph_from_flow_information(
     dynamic-input nodes follow once every node is configured. Start nodes are not read
     from the file: each source's ``add_*`` marks itself, so a stale ``is_start_node``
     flag can never resurface. The caller holds ``graph.rebuilding()``, so nothing is
-    recorded.
+    recorded. The graph may already hold the nodes the information's edges read from
+    (a notebook's held run adds a node's inputs first); they are wired through their
+    default output.
 
     Args:
-        graph: An empty graph whose settings and identity are kept as-is.
+        graph: A graph holding at most the information's sources, whose settings and identity are kept as-is.
         flow_info: The flow to build.
         owner_of: Maps a node id to the ``user_id`` to stamp on its settings; None leaves
             ``user_id`` untouched.

@@ -426,20 +426,29 @@ or swap the database to get there.
 Phase 0 landed with the plan: a lineage run that holds no output node
 passes `run_graph(commit_sources=False)` (`kernel_runner.lineage_commits`),
 and a session takes the schemas of canvas nodes that ran
-(`_Session.refresh`). The remaining phases, in order:
+(`_Session.refresh`).
 
-1. **Held nodes run on the canvas from their settings.** Where
-   `_Session._computed_here` returns `None` today ("Push, then it runs on the
-   canvas"), the kernel hands core one node plus its inputs as parquet under
-   the shared folder: new `notebook/held_run.py` and `POST
-   /notebook/session/node_run`, bound like `node_result`. Core builds the
-   inputs with `add_dependency_on_polars_lazy_frame` plus the one node on a
-   per-session scratch graph (`_system_run`, the canvas flow's
-   `source_registration_id` copied, schema prefetch blocked), runs it under
-   `KernelHold` with `commit_sources=False`, and answers columns only for
-   `schema_only`. Closed allowlist of node types, writers refused; the
-   scratch graph's `FlowLogger`, log file and shared folder are removed when
-   the session closes.
+Phase 1 landed 2026-10-03: **held nodes run in core from their settings.**
+Where the kernel's `_Session._resolve` finds a gate or deferred node without
+a canvas twin (or a read of a file it cannot see), it hands core the node as
+`FlowfileData` lists it plus its inputs as parquet under the session's
+results folder: `notebook/held_run.py`, `POST /notebook/session/node_run`,
+bound like `node_result`. Core builds the inputs as `flow_input` nodes fed
+those files (not `add_dependency_on_polars_lazy_frame`: a `NodePromise` node
+is never `is_correct`, so the planner skips it) plus the one node through
+`populate_graph_from_flow_information`, on a `FlowGraph` that lives for the
+call (`_system_run`, Performance mode, the canvas flow's
+`source_registration_id` and the session's parameters), runs it under
+`KernelHold` with `commit_sources=False`, answers every live output's path
+(a gate's dead handles as `closed`) or, for `schema_only`, its columns, and
+releases the graph's `FlowLogger`, log file and exchange folder. Closed
+allowlist `HELD_NODE_TYPES` plus installed non-output custom nodes; writers
+and other types still say "Push". A cell-built deferred node whose seed has
+no columns asks core for them at build (`NotebookMode.schema_resolver`,
+`native.resolved_seed`). A Python Script on another kernel runs this way
+too, with its artifacts on the call's graph only. The remaining phases, in
+order:
+
 2. **Metadata lookups go through core.** First a census: log every database
    connection the kernel opens and ratchet the count over the notebook
    corpus. Then a `catalog_lookup` context hook around

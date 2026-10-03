@@ -298,9 +298,10 @@ class KernelSimManager:
     calling context and in ``namespaces[request.flow_id]`` (the kernel's per-flow namespace), with stdout and
     stderr captured, as the kernel runtime runs a call, and returns an
     ``ExecuteResult``; so ``notebook.kernel_runner`` and the frame's ``notebook_kernel`` session run for real.
-    The shared folder is ``shared_volume_path`` and paths are the same on both sides. :meth:`node_result`
-    is the session's transport to core: ``kernel_runner.node_result`` in a fresh context, as the kernel's
-    owner, with its ``HTTPException`` detail raised as the kernel would see it.
+    The shared folder is ``shared_volume_path`` and paths are the same on both sides. :meth:`node_result` and
+    :meth:`node_run` are the session's transports to core: ``kernel_runner.node_result`` and
+    ``held_run.run_held_node`` in a fresh context, as the kernel's owner, with their ``HTTPException`` detail
+    raised as the kernel would see it.
     """
 
     def __init__(
@@ -311,7 +312,9 @@ class KernelSimManager:
         self.requests = []
         self.shared_volume_path = str(shared)
         self.node_results: list[dict] = []
+        self.node_runs: list[dict] = []
         self.namespaces: dict[int, dict] = {}
+        self._docker_network = None
 
     def to_kernel_path(self, local_path):
         return local_path
@@ -319,19 +322,28 @@ class KernelSimManager:
     def host_folders(self, kernel_id):
         return {}
 
-    def node_result(self, body: dict) -> dict:
+    def _as_owner(self, call, *args):
         from fastapi import HTTPException
 
-        from flowfile_core.notebook import kernel_runner
         from flowfile_frame.native import NativeNodeError
 
-        self.node_results.append(body)
         user = PydanticUser(username="nb_kernel_owner", id=self.owner_id, disabled=False)
-        args = (self.kernel.id, user, body["flow_id"], body["node_id"], body.get("output_handle"))
         try:
-            return contextvars.Context().run(kernel_runner.node_result, *args)
+            return contextvars.Context().run(call, self.kernel.id, user, *args)
         except HTTPException as exc:
             raise NativeNodeError(str(exc.detail)) from exc
+
+    def node_result(self, body: dict) -> dict:
+        from flowfile_core.notebook import kernel_runner
+
+        self.node_results.append(body)
+        return self._as_owner(kernel_runner.node_result, body["flow_id"], body["node_id"], body.get("output_handle"))
+
+    def node_run(self, body: dict) -> dict:
+        from flowfile_core.notebook import held_run
+
+        self.node_runs.append(body)
+        return self._as_owner(held_run.run_held_node, held_run.NodeRunRequest.model_validate(body))
 
     def get_kernel_sync(self, kernel_id):
         return self.kernel if kernel_id == self.kernel.id else None
@@ -374,7 +386,6 @@ class LockingKernelSimManager(KernelSimManager):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._docker_network = None
         self._locks: dict[str, threading.Lock] = {}
         self._locks_lock = threading.Lock()
 
@@ -402,6 +413,7 @@ def _install_kernel_sim(monkeypatch, manager: KernelSimManager) -> None:
     monkeypatch.setattr(kernel_package, "get_kernel_manager", lambda: manager)
     monkeypatch.setattr(flow_graph_module, "get_kernel_manager", lambda: manager)
     monkeypatch.setattr(notebook_kernel, "transport", manager.node_result)
+    monkeypatch.setattr(notebook_kernel, "run_transport", manager.node_run)
 
 
 def _forget_kernel_sim() -> None:

@@ -513,3 +513,35 @@ def test_scan_mode_probes_the_folder_the_kernel_sees(tmp_path, monkeypatch):
         assert _resolve_scan_mode(r"C:\data") == "directory"
         assert _resolve_scan_mode("C:\\other\\") == "directory"
         assert _resolve_scan_mode(r"C:\data\a.csv") == "single_file"
+
+
+def test_a_schema_resolver_seeds_a_deferred_node_without_columns(mode):
+    """A kernel session sets ``schema_resolver``; a deferred node whose seed has no columns takes its answer, one
+    whose seed has columns (declared, or a script's passthrough) is never asked, and a node the resolver does not
+    know keeps its empty seed."""
+    from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+
+    asked: list[int] = []
+
+    def resolver(node):
+        asked.append(node.node_id)
+        if node.setting_input.rest_api_settings.url.endswith("/known"):
+            return {"output-0": [FlowfileColumn.from_input("predicted", "Int64")]}
+        return None
+
+    mode.schema_resolver = resolver
+    known = ff.read_api("https://example.test/known")
+    assert known.columns == ["predicted"]
+    unknown = ff.read_api("https://example.test/other")
+    assert unknown.columns == []
+    script = ff.PythonScript(ff.from_dict(DATA), code="x = 1", kernel="other")
+    assert script.output.columns == ["a", "g"]
+    declared = ff.PythonScript(ff.from_dict(DATA), code="x = 1", kernel="other", schemas={"main": {"n": ff.Int64}})
+    assert declared.output.columns == ["n"]
+    assert asked == [known.node_id, unknown.node_id], "only a seed without columns is asked for"
+
+
+def test_a_sync_never_asks_the_schema_resolver():
+    with notebook.notebook_mode(sync=True) as mode:
+        mode.schema_resolver = lambda node: pytest.fail("a sync asked the schema resolver")
+        assert ff.read_api("https://example.test/known").columns == []

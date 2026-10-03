@@ -227,6 +227,22 @@ def seed_deferred_node(node: FlowNode, schemas: dict[str, list[FlowfileColumn]])
         node.placed_deferred = True
 
 
+def resolved_seed(
+    node: FlowNode, schemas: dict[str, list[FlowfileColumn]]
+) -> dict[str, list[FlowfileColumn]]:
+    """``schemas``, or the columns the mode's ``schema_resolver`` finds for ``node`` when no handle of them has any.
+
+    A notebook kernel session answers with the columns of the canvas node a deferred node stands for, else
+    what core predicts from the node's settings; outside such a session, or when the seed already declares
+    columns, ``schemas`` is returned unchanged. A sync never asks.
+    """
+    mode = current()
+    if mode is None or mode.sync or mode.schema_resolver is None or any(schemas.values()):
+        return schemas
+    resolved = mode.schema_resolver(node)
+    return _per_handle(resolved, _handles(node)) if resolved else schemas
+
+
 def predicted_schema_without_running(node: FlowNode) -> list[FlowfileColumn]:
     """``node``'s predicted schema from its schema callback only, never from its function.
 
@@ -257,7 +273,7 @@ def seed_from_predicted_schema(node: FlowNode, declared: Mapping[str, list[Flowf
     if node.node_type == "polars_code" and node.all_inputs:
         seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: _placeholder_schema(node)})
         return
-    seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: predicted_schema_without_running(node)})
+    seed_deferred_node(node, resolved_seed(node, {DEFAULT_OUTPUT_HANDLE: predicted_schema_without_running(node)}))
 
 
 def source_frame(flow_graph: FlowGraph, node_id: int) -> FlowFrame:
@@ -274,7 +290,7 @@ def source_frame(flow_graph: FlowGraph, node_id: int) -> FlowFrame:
     if notebook_defers(node.node_type, node.setting_input):
         seed_from_predicted_schema(node)
     elif _kernel_hidden_path(node) is not None:
-        seed_deferred_node(node, _kernel_hidden_seed(node))
+        seed_deferred_node(node, resolved_seed(node, _kernel_hidden_seed(node)))
         rows = _canvas_rows_at_build(flow_graph, node)
         if rows is not None:
             return FlowFrame(data=rows, flow_graph=flow_graph, node_id=node_id)
@@ -1081,7 +1097,7 @@ class NativeNode:
         if self.deferred and _in_sync():
             seed_deferred_node(node, sync_seed_schemas(node, handles, self._declared_seed(node, frames, handles)))
         elif self.deferred:
-            seed_deferred_node(node, self._seed_schemas(node, frames, handles))
+            seed_deferred_node(node, resolved_seed(node, self._seed_schemas(node, frames, handles)))
         inherited = any(f._deferred for f in frames)
         self._frames = {
             handle: FlowFrame(

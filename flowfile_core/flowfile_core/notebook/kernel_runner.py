@@ -6,7 +6,8 @@ the session's variables. The frame's ``notebook_kernel`` module runs the op and 
 ``shared.notebook_display.KERNEL_RESULT_MARKER`` line, which :func:`_call` cuts from the call's stdout; results
 come back in the kernel routes' own shapes. Besides the session ops, :class:`KernelCleanRunner` runs a push that
 names a kernel (its result then goes through ``notebook.validate``), and the kernel calls back for canvas rows it
-cannot compute (:func:`node_result`) and for a fresh copy of the catalog database (:func:`refresh_database`).
+cannot compute (:func:`node_result`), for a run of a node only its cells hold (``held_run.run_held_node``, bound
+through :func:`_bound_flow` here) and for a fresh copy of the catalog database (:func:`refresh_database`).
 """
 
 from __future__ import annotations
@@ -210,7 +211,18 @@ def _open(manager, flow, user, kernel_id: str, op: str) -> None:
 
     fingerprint = code_fingerprint(flow)
     seeded_with = _result_schemas(flow)
-    opened = _succeeded(*_call(manager, kernel_id, flow.flow_id, op, user_id=user.id, snapshot=seed_snapshot(flow)))
+    results_dir = manager.to_kernel_path(_results_dir(manager, flow.flow_id))
+    opened = _succeeded(
+        *_call(
+            manager,
+            kernel_id,
+            flow.flow_id,
+            op,
+            user_id=user.id,
+            snapshot=seed_snapshot(flow),
+            results_dir=results_dir,
+        )
+    )
     with _lock:
         _sessions.setdefault(flow.flow_id, {})[kernel_id] = opened.get("namespace_generation")
         _fingerprints[(kernel_id, flow.flow_id)] = fingerprint
@@ -326,9 +338,11 @@ def interrupt(flow, user, kernel_id: str) -> dict:
     """Interrupt the call running for this flow on the kernel, if any, and cancel the canvas run it waits on.
 
     The kernel's interrupt cannot reach a cell blocked reading core's answer to its canvas fallback, so that
-    run, the one holding this kernel (:func:`_run_lineage`), is cancelled here; the fallback then answers and
-    the cell stops.
+    run, the one holding this kernel (:func:`_run_lineage`, or a held node's in ``held_run``), is cancelled here;
+    the fallback then answers and the cell stops.
     """
+    from flowfile_core.notebook import held_run
+
     if not kernel_sessions_allowed(user):
         raise HTTPException(403, DISABLED_DETAIL)
     manager = _manager()
@@ -340,6 +354,8 @@ def interrupt(flow, user, kernel_id: str) -> dict:
     hold = flow._kernel_hold
     if hold is not None and kernel_id in hold.kernel_ids:
         flow.cancel()
+        interrupted = True
+    if held_run.cancel(kernel_id, flow.flow_id):
         interrupted = True
     return {"status": "interrupted" if interrupted else "no_execution_running"}
 
@@ -476,6 +492,15 @@ def _run_lineage(flow, node, kernel_id: str) -> None:
         if "already running" in str(exc):
             raise HTTPException(409, running) from exc
         raise HTTPException(422, f"Running node {node.node_id} on the canvas failed: {exc}") from exc
+    _run_outcome(flow, node, lineage, kernel_id, hold, run_info)
+
+
+def _run_outcome(flow, node, lineage, kernel_id: str, hold, run_info) -> None:
+    """Raise when a run under ``hold`` (:func:`_run_lineage`, a held node's) left ``node`` without rows.
+
+    409 when the run was cancelled, when it needed ``kernel_id`` (the session's own kernel) or when a gate routed
+    the node away; 422 naming each node of ``lineage`` that failed, or the node when it did not run.
+    """
     if flow.flow_settings.is_canceled:
         raise HTTPException(409, f"The canvas run for node {node.node_id} was cancelled")
     if hold.refusals:
@@ -508,19 +533,13 @@ def _write_result(flow, node_id: int, data, path: str) -> None:
         raise HTTPException(422, f"Could not hand node {node_id}'s rows to the kernel: {exc}") from exc
 
 
-def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle: str | None) -> dict:
-    """A canvas node's rows for the flow's session on ``kernel_id``: ``{"path", "canvas_changed"}``.
+def _bound_flow(kernel_id: str, user, flow_id: int):
+    """The manager and the open flow behind a kernel's own call back (:func:`node_result`, a held node's run).
 
     Only for the kernel's owner while the kernel holds the flow's session or runs a call for it (a push's clean
-    run). ``path`` is the kernel's view of a parquet in its shared folder, written after :func:`_run_lineage`
-    when the node has no current result (409/422 as there, and 409 for a gate output routed away);
-    ``canvas_changed`` is whether the canvas changed since the session was seeded. The cache holds the result
-    weakly, so it never keeps one alive, and removes a superseded file only when this kernel was handed it:
-    another kernel's session may still read it.
+    run): 403 otherwise, 404 when the flow is not open.
     """
     from flowfile_core import flow_file_handler
-    from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
-    from flowfile_core.notebook.render import code_fingerprint
 
     if not kernel_sessions_allowed(user):
         raise HTTPException(403, DISABLED_DETAIL)
@@ -534,6 +553,22 @@ def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle:
     flow = flow_file_handler.get_flow(flow_id, user.id)
     if flow is None:
         raise HTTPException(404, "Flow not found")
+    return manager, flow
+
+
+def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle: str | None) -> dict:
+    """A canvas node's rows for the flow's session on ``kernel_id``: ``{"path", "canvas_changed"}``.
+
+    Bound as :func:`_bound_flow`. ``path`` is the kernel's view of a parquet in its shared folder, written after
+    :func:`_run_lineage` when the node has no current result (409/422 as there, and 409 for a gate output routed
+    away); ``canvas_changed`` is whether the canvas changed since the session was seeded. The cache holds the
+    result weakly, so it never keeps one alive, and removes a superseded file only when this kernel was handed
+    it: another kernel's session may still read it.
+    """
+    from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+    from flowfile_core.notebook.render import code_fingerprint
+
+    manager, flow = _bound_flow(kernel_id, user, flow_id)
     node = flow.get_node(node_id)
     if node is None:
         raise HTTPException(404, f"Node {node_id} is no longer on the canvas: Reset session to pick up the canvas")
