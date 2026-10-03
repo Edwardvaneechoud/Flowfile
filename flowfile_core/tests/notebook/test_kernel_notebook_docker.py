@@ -188,11 +188,16 @@ def test_a_notebook_session_on_a_real_kernel(smoke_flow, notebook_kernel, client
 
     copies = Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID
     assert not copies.exists(), "nothing above reads the catalog, so the kernel never asked for a copy"
-    code = "print('kernels', sorted(ff.kernels))"
+    code = (
+        "print('kernels', sorted(ff.kernels))\n"
+        "print('catalogs', sorted(c.name for c in ff.list_catalogs()))\n"
+        "print('default', ff.default_schema().name)\n"
+    )
     catalog = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-catalog", "code": code})
     assert catalog.status_code == 200 and catalog.json()["success"], catalog.text
-    assert KERNEL_ID in catalog.json()["stdout"], catalog.json()
-    assert [COPY_NAME.fullmatch(copy.name) is not None for copy in copies.iterdir()] == [True]
+    stdout = catalog.json()["stdout"]
+    assert KERNEL_ID in stdout and "General" in stdout and "default" in stdout, stdout
+    assert not copies.exists(), "the saved kernels and the catalog come from core, never from a database copy"
 
 
 def test_a_cell_reads_the_catalog_right_after_core_wrote_it(smoke_flow, notebook_kernel, client_as):
@@ -205,12 +210,9 @@ def test_a_cell_reads_the_catalog_right_after_core_wrote_it(smoke_flow, notebook
     client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
     key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}
     assert client.post("/notebook/session/open", json=key).status_code == 200
-    listed = client.post(
-        "/notebook/session/execute", json={**key, "cell_id": "cell-kernels", "code": "print(sorted(ff.kernels))"}
-    )
-    assert listed.status_code == 200 and listed.json()["success"], listed.text
     copies = Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID
-    seen = {copy.name for copy in copies.iterdir()}
+    assert not copies.exists(), "only a cell reading the database itself asks for a copy"
+    seen: set[str] = set()
     probe = (
         "from sqlalchemy import text\n"
         "from flowfile_core.database.connection import get_db_context\n"

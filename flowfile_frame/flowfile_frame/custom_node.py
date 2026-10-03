@@ -160,6 +160,14 @@ def _valid_settings(instance: CustomNodeBase) -> dict[str, list[str]]:
     }
 
 
+def _selects_secret(instance: CustomNodeBase) -> bool:
+    """Whether the node's settings hold a ``SecretSelector``: running it reads and decrypts a stored secret, which
+    notebook mode leaves to the canvas (a kernel session holds no key), so such a node is built deferred."""
+    if instance.settings_schema is None:
+        return False
+    return any(isinstance(c, SecretSelector) for c in instance.settings_schema.get_all_components().values())
+
+
 def _canonical_settings(
     cls: type[CustomNodeBase], base: dict[str, Any], settings: Mapping[str, Any] | None
 ) -> dict[str, dict[str, Any]]:
@@ -262,7 +270,7 @@ class CustomNode(NativeNode):
             or (instance.requires_data_for_prediction and not has_hook)
         ):
             deferred = True
-        if current() is not None and (self._on_kernel or instance.node_type == "output"):
+        if current() is not None and (self._on_kernel or instance.node_type == "output" or _selects_secret(instance)):
             deferred = True
 
         def make_settings(base_fields: dict[str, Any]) -> input_schema.UserDefinedNode:

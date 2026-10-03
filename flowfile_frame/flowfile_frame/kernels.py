@@ -6,9 +6,7 @@ import builtins
 from collections.abc import Iterator
 from typing import NamedTuple
 
-from flowfile_core.database.connection import get_db_context
-from flowfile_core.kernel import persistence
-from flowfile_frame._identity import current_user_id
+from flowfile_frame import _metadata
 from flowfile_frame.native import NativeNodeError
 
 
@@ -30,10 +28,11 @@ class KernelInfo(NamedTuple):
 
 
 def _saved_kernels() -> builtins.list[KernelInfo]:
-    """The current user's kernel rows in the catalog DB, sorted by id; no container state, so Docker need not run."""
-    with get_db_context() as db:
-        configs = persistence.get_kernels_for_user(db, current_user_id())
-    infos = [KernelInfo(c.id, c.name, c.image_flavour.value, builtins.list(c.packages)) for c in configs]
+    """The current user's saved kernels, sorted by id; no container state, so Docker need not run.
+
+    Read from the catalog database, or in a notebook kernel session from core (``_metadata.kernels``).
+    """
+    infos = [KernelInfo(k.id, k.name, k.flavour, builtins.list(k.packages)) for k in _metadata.kernels()]
     return sorted(infos, key=lambda info: info.id)
 
 
@@ -46,8 +45,9 @@ class Kernels:
     """The kernels you created in the Designer (``ff.kernels``): saved definitions by id, not running state.
 
     Look one up with ``ff.kernels["ml-kernel"]``; there is no attribute access because kernel ids
-    can contain hyphens. Every call reads the catalog DB, so a kernel created after import is
-    listed and Docker need not run. A :class:`KernelInfo` works as any ``kernel=`` argument.
+    can contain hyphens. Every call reads the saved kernels again (the catalog DB, or the app in a
+    notebook kernel session), so a kernel created after import is listed and Docker need not run. A
+    :class:`KernelInfo` works as any ``kernel=`` argument.
     """
 
     def list(self) -> builtins.list[KernelInfo]:

@@ -39,6 +39,7 @@ from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import GraphicWalkerInput
 from flowfile_core.schemas.schemas import NodeTemplate, get_settings_class_for_node_type
 from flowfile_frame._identity import current_user_id
+from flowfile_frame._metadata import is_cloud_table
 from flowfile_frame.enums import NodeType, NodeTypeLiteral, _literal
 from flowfile_frame.notebook import current
 from flowfile_frame.utils import _implicit_graph, generate_node_id, set_node_id
@@ -62,8 +63,23 @@ DEFERRED_NODE_TYPES: frozenset[str] = frozenset(
 SIDE_EFFECT_NODE_TYPES: frozenset[str] = frozenset({"train_model", "apply_model", "evaluate_model"})
 
 NOTEBOOK_DEFERRED_NODE_TYPES: frozenset[str] = frozenset(
-    {"database_reader", "rest_api_reader", "kafka_source", "api_response", "pivot", "polars_code"}
+    {
+        "database_reader",
+        "rest_api_reader",
+        "kafka_source",
+        "cloud_storage_reader",
+        "api_response",
+        "pivot",
+        "polars_code",
+    }
 )
+
+CONNECTION_SOURCE_TYPES: frozenset[str] = frozenset({"database_reader", "kafka_source", "cloud_storage_reader"})
+"""Sources whose schema callback or function resolves a stored connection (a database row and a secret).
+
+A notebook kernel session never predicts them itself (:func:`_predicts_in_core`): it asks its ``schema_resolver``,
+so core predicts the columns with the credentials and the kernel opens neither the database nor the connection.
+"""
 
 SYNC_HELD_NODE_TYPES: frozenset[str] = frozenset({"fuzzy_match", "random_split", "pivot"})
 """Transforms a sync holds: building them computes over their input's rows (a match, a shuffle, pivot values)."""
@@ -100,8 +116,10 @@ def notebook_defers(node_type: str, setting_input: Any = None) -> bool:
 
     The node types built without executing: ``DEFERRED_NODE_TYPES``, every side-effect
     type, the sources and transforms of ``NOTEBOOK_DEFERRED_NODE_TYPES`` (they do real I/O, or
-    may, when built in a local graph) and SQL-mode or virtual catalog readers (the latter
-    re-execute their producer); in a sync also every node :func:`held_in_sync` names. Always
+    may, when built in a local graph), SQL-mode or virtual catalog readers (the latter
+    re-execute their producer) and, in a kernel session, a catalog reader whose table core resolved
+    to cloud storage when it was placed (:func:`_metadata.is_cloud_table`: the kernel holds no
+    credentials, so core reads it); in a sync also every node :func:`held_in_sync` names. Always
     ``False`` outside notebook mode.
     """
     mode = current()
@@ -112,9 +130,23 @@ def notebook_defers(node_type: str, setting_input: Any = None) -> bool:
     if node_type == "catalog_reader" and setting_input is not None:
         if setting_input.sql_query or setting_input.is_virtual_optimized is not None:
             return True
+        if not mode.sync and is_cloud_table(setting_input.node_id):
+            return True
     if is_side_effect_node_type(node_type):
         return True
     return mode.sync and held_in_sync(node_type, setting_input)
+
+
+def _predicts_in_core(node: FlowNode) -> bool:
+    """Whether a kernel session leaves ``node``'s schema to core: a ``CONNECTION_SOURCE_TYPES`` source while a
+    ``schema_resolver`` is set (never in a sync, never in a script)."""
+    mode = current()
+    return (
+        node.node_type in CONNECTION_SOURCE_TYPES
+        and mode is not None
+        and not mode.sync
+        and mode.schema_resolver is not None
+    )
 
 
 def held_in_sync(node_type: str, setting_input: Any = None) -> bool:
@@ -263,15 +295,20 @@ def seed_from_predicted_schema(node: FlowNode, declared: Mapping[str, list[Flowf
     A ``polars_code`` transform (seeded only in notebook mode) has no schema callback, so it
     predicts lazily over its inputs the way the canvas does; the frame's own writer fallbacks, the
     only fluent code that writes, are refused in notebook mode. A ``polars_code`` source would
-    read to predict, so it gets the callback-only (empty) schema like any other source. In a sync
-    nothing is predicted: every handle takes :func:`sync_seed_schemas` with ``declared`` (the
-    columns a frame method's own lazy plan gives, ``FlowFrame._planned_seed``).
+    read to predict, so it gets the callback-only (empty) schema like any other source. A source
+    :func:`_predicts_in_core` names is not predicted here at all: its seed is what the mode's
+    ``schema_resolver`` answers. In a sync nothing is predicted: every handle takes
+    :func:`sync_seed_schemas` with ``declared`` (the columns a frame method's own lazy plan gives,
+    ``FlowFrame._planned_seed``).
     """
     if _in_sync():
         seed_deferred_node(node, sync_seed_schemas(node, _handles(node), declared))
         return
     if node.node_type == "polars_code" and node.all_inputs:
         seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: _placeholder_schema(node)})
+        return
+    if _predicts_in_core(node):
+        seed_deferred_node(node, resolved_seed(node, {DEFAULT_OUTPUT_HANDLE: []}))
         return
     seed_deferred_node(node, resolved_seed(node, {DEFAULT_OUTPUT_HANDLE: predicted_schema_without_running(node)}))
 
@@ -381,10 +418,13 @@ def _placeholder_schema(node: FlowNode) -> list[FlowfileColumn]:
     A deferred, side-effect or custom node type asks its schema callback only (a custom start
     node without a hook gets none: its fallback callback runs the node); any other type
     predicts lazily over its inputs' placeholders, the way the canvas does. In a sync it is
-    :func:`sync_seed_schemas`' output-0.
+    :func:`sync_seed_schemas`' output-0; a source :func:`_predicts_in_core` names keeps the
+    columns core gave its seed, so none here.
     """
     if _in_sync():
         return sync_seed_schemas(node, [DEFAULT_OUTPUT_HANDLE])[DEFAULT_OUTPUT_HANDLE]
+    if _predicts_in_core(node):
+        return []
     if isinstance(node.setting_input, input_schema.UserDefinedNode):
         if node.is_start and node.user_provided_schema_callback is None:
             return []

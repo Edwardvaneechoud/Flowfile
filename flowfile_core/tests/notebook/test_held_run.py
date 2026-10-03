@@ -1,18 +1,28 @@
 """Core runs a node only a kernel session's cells hold (``POST /notebook/session/node_run``) from the cell's
-settings and its inputs' rows, through the ``kernel-sim`` manager (no Docker)."""
+settings and its inputs' rows, through the ``kernel-sim`` manager (no Docker). A source that resolves a stored
+connection (a database or cloud read) is held too: the kernel opens no database and holds no key."""
 
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 import time
 from pathlib import Path
 
 import pytest
+from pydantic import SecretStr
 
 from flowfile_core.configs.flow_logger import FlowLogger, get_flow_log_file
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.flowfile.database_connection_manager.db_connections import (
+    get_database_connection,
+    store_database_connection,
+)
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.schemas import input_schema
 from shared.notebook_display import TABLE_MIME
-from tests.notebook.conftest import NOTEBOOK_OWNER_ID
+from tests.notebook.conftest import IN_KERNEL_OP, NOTEBOOK_OWNER_ID
 
 LOOPBACK = ("127.0.0.1", 50123)
 OTHER_KERNEL = "other-kernel"
@@ -222,6 +232,57 @@ def test_a_held_run_leaves_no_logger_log_file_or_folder(coded_flow, client, kern
         assert FlowLogger.get_instance(scratch_id) is None
         assert not get_flow_log_file(scratch_id).exists()
         assert not Path(kernel_sim.shared_volume_path, str(scratch_id)).exists()
+
+
+def test_a_database_read_a_cell_built_is_run_by_core_over_the_stored_connection(
+    coded_flow, client, kernel_sim, kernel_db_opens, tmp_path
+):
+    """The kernel holds neither the connection nor a key: the placement check, the columns (``schema_only``) and the
+    read itself are core's, and the kernel opens no catalog connection."""
+    path = tmp_path / "held.db"
+    with sqlite3.connect(path) as db:
+        db.execute("create table movies (id integer, title text)")
+        db.executemany("insert into movies values (?, ?)", [(1, "The Matrix"), (2, "Inception")])
+    connection = input_schema.FullDatabaseConnection(
+        connection_name="notebook_held_sqlite", database_type="sqlite", username="", password=SecretStr(""),
+        database=str(path),
+    )  # fmt: skip
+    with get_db_context() as db:
+        if get_database_connection(db, connection.connection_name, NOTEBOOK_OWNER_ID) is None:
+            store_database_connection(db, connection, user_id=NOTEBOOK_OWNER_ID)
+    cell = "rows = ff.read_database('notebook_held_sqlite', table_name='movies')\nprint(rows.columns)\ndisplay(rows)"
+    shown = _execute(client, coded_flow, kernel_sim, cell)
+    assert shown["success"], shown
+    assert shown["stdout"].strip() == "['id', 'title']", shown
+    assert [row["title"] for row in _rows(shown)] == ["The Matrix", "Inception"], shown["display_outputs"]
+    runs = [(run["node"]["type"], run["schema_only"]) for run in kernel_sim.node_runs]
+    assert runs == [("database_reader", True), ("database_reader", False)], runs
+    assert "placement_refusal" in {body["kind"] for body in kernel_sim.lookups}
+    assert not kernel_db_opens, f"a kernel op opened the catalog database from {sorted(set(kernel_db_opens))}"
+
+
+def test_a_cloud_read_a_cell_built_is_held_and_read_by_core(coded_flow, client, kernel_sim, kernel_db_opens, tmp_path, monkeypatch):
+    """A cloud reader is deferred in a kernel session (it resolves a stored connection), so core predicts its columns
+    and reads it; the kernel never opens the source itself."""
+    csv = tmp_path / "cloud.csv"
+    csv.write_text("a;b\n1;x\n2;y\n")
+    in_kernel: list[bool] = []
+    original = FlowDataEngine.from_cloud_storage_obj
+
+    def spied(*args, **kwargs):
+        in_kernel.append(IN_KERNEL_OP.get())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(FlowDataEngine, "from_cloud_storage_obj", spied)
+    cell = f"rows = ff.read_from_cloud_storage({str(csv)!r}, file_format='csv')\nprint(rows.columns)\ndisplay(rows)"
+    shown = _execute(client, coded_flow, kernel_sim, cell)
+    assert shown["success"], shown
+    assert shown["stdout"].strip() == "['a', 'b']", shown
+    assert _rows(shown) == [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}], shown["display_outputs"]
+    runs = [(run["node"]["type"], run["schema_only"]) for run in kernel_sim.node_runs]
+    assert runs == [("cloud_storage_reader", True), ("cloud_storage_reader", False)], runs
+    assert in_kernel and not any(in_kernel), "core opened the source, the kernel never did"
+    assert not kernel_db_opens, f"a kernel op opened the catalog database from {sorted(set(kernel_db_opens))}"
 
 
 def test_a_held_run_commits_no_source_progress(coded_flow, client, kernel_sim, monkeypatch):

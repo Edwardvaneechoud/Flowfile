@@ -172,6 +172,7 @@ from flowfile_core.kernel.execution import (
     write_inputs_to_parquet,
 )
 from flowfile_core.kernel.matching import verify_kernel_for_node
+from flowfile_core.notebook.lookup import metadata_lookup
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata, scd2_system_columns_missing
 from flowfile_core.schemas.cloud_storage_schemas import (
@@ -762,6 +763,14 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
     executing ``user_id`` may read, mirroring ``CatalogService.execute_sql_query``;
     a query referencing an inaccessible table simply finds it unregistered.
     """
+    remote = metadata_lookup.get()
+    if remote is not None:
+        answer = remote("catalog_sql_tables", {"node_id": node_id})
+        return CatalogSqlTables(
+            table_paths=dict(answer["table_paths"]),
+            virtual_tables={name: tuple(entry) for name, entry in answer["virtual_tables"].items()},
+            table_namespaces=dict(answer["table_namespaces"]),
+        )
     table_paths: dict[str, str] = {}
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]] = {}
     table_namespaces: dict[str, int | None] = {}
@@ -853,7 +862,25 @@ def _scd2_config_is_stale(cfg: dict, table_record) -> bool:
 
 
 def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogReader") -> CatalogTableInfo:
-    """Resolve a single catalog table (physical or virtual) for a table reader node."""
+    """Resolve a single catalog table (physical or virtual) for a table reader node.
+
+    In a notebook kernel session (``metadata_lookup`` set) core answers from the same function, without the
+    table's plan: the kernel opens no database connection and a virtual read is held there.
+    """
+    remote = metadata_lookup.get()
+    if remote is not None:
+        return CatalogTableInfo(
+            **remote(
+                "catalog_table",
+                {
+                    "node_id": node_catalog_reader.node_id,
+                    "catalog_table_id": node_catalog_reader.catalog_table_id,
+                    "catalog_full_table_name": node_catalog_reader.catalog_full_table_name,
+                    "catalog_table_name": node_catalog_reader.catalog_table_name,
+                    "catalog_namespace_id": node_catalog_reader.catalog_namespace_id,
+                },
+            )
+        )
     file_path: str | None = None
     table_type: str = "physical"
     serialized_lf: bytes | None = None

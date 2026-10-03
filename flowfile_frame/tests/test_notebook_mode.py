@@ -545,3 +545,113 @@ def test_a_sync_never_asks_the_schema_resolver():
     with notebook.notebook_mode(sync=True) as mode:
         mode.schema_resolver = lambda node: pytest.fail("a sync asked the schema resolver")
         assert ff.read_api("https://example.test/known").columns == []
+
+
+SECRET_NODE = """
+import polars as pl
+from shared.node_designer import CustomNodeBase, NodeSettings, Section, SecretSelector
+
+
+class NotebookSecretReader(CustomNodeBase):
+    node_name: str = "Notebook Secret Reader"
+    node_category: str = "Testing"
+    settings_schema: NodeSettings = NodeSettings(auth=Section(title="Auth", token=SecretSelector(label="Token")))
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0]
+"""
+
+
+@pytest.fixture
+def installed_secret_node():
+    """``notebook_secret_reader`` installed in the registry for the test, the node store restored afterwards."""
+    from flowfile_core.flowfile.user_defined.registry import registry
+
+    registry.directory.mkdir(parents=True, exist_ok=True)
+    node_file = registry.directory / "notebook_secret_reader.py"
+    saved = dict(node_store.node_dict), list(node_store.nodes_list), dict(node_store.CUSTOM_NODE_STORE._overrides)
+    node_file.write_text(SECRET_NODE)
+    registry.load_file(node_file)
+    try:
+        yield "notebook_secret_reader"
+    finally:
+        registry.remove_file(node_file)
+        node_file.unlink()
+        node_store.node_dict.clear()
+        node_store.node_dict.update(saved[0])
+        node_store.nodes_list[:] = saved[1]
+        node_store.CUSTOM_NODE_STORE.clear()
+        node_store.CUSTOM_NODE_STORE.update(saved[2])
+
+
+def test_notebook_mode_defers_a_cloud_reader_and_a_custom_node_that_selects_a_secret(installed_secret_node):
+    """Both resolve a stored connection or secret when built, which a kernel session cannot: they are seeded and
+    left to the canvas (a held run in a kernel session). In a script the custom node still builds."""
+    with notebook.notebook_mode() as mode:
+        cloud = ff.read_from_cloud_storage("/etc/hosts", file_format="csv")
+        assert cloud._deferred is True and mode.graph.get_node(cloud.node_id).deferred_until_run is True
+        node = ff.CustomNode(installed_secret_node, ff.from_dict(DATA), settings={"auth": {"token": "no_such"}})
+        assert node.deferred is True
+    built = ff.CustomNode(installed_secret_node, ff.from_dict(DATA), settings={"auth": {"token": "no_such"}})
+    assert built.deferred is False, "a script builds it as before"
+
+
+def test_a_kernel_session_leaves_connection_sources_to_core(mode, monkeypatch):
+    """With a ``schema_resolver`` set and the lookup hook installed (a kernel session), a database reader's placement
+    check goes to core and its seed comes from the resolver: its schema callback never runs here."""
+    from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+    from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+    from flowfile_frame import _metadata
+
+    asked: list[dict] = []
+
+    def transport(body):
+        asked.append(body)
+        return {"result": None}
+
+    predicted: list[str] = []
+    original = FlowNode.get_predicted_schema
+
+    def spied(self, *args, **kwargs):
+        predicted.append(self.node_type)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(FlowNode, "get_predicted_schema", spied)
+    mode.schema_resolver = lambda node: {"output-0": [FlowfileColumn.from_input("x", "Int64")]}
+    with _metadata.installed(0, transport):
+        rows = ff.read_database("some_connection", table_name="t")
+    assert rows.columns == ["x"] and rows._deferred is True
+    assert "database_reader" not in predicted
+    assert [(body["flow_id"], body["kind"], body["args"]["settings_type"]) for body in asked] == [
+        (0, "placement_refusal", "NodeDatabaseReader")
+    ]
+    node = mode.graph.get_node(rows.node_id)
+    assert native._predicts_in_core(node) is True
+    mode.schema_resolver = None
+    assert native._predicts_in_core(node) is False, "a script or a sync predicts as before"
+
+
+def test_metadata_lookups_answer_from_the_installed_hook_and_read_the_catalog_without_one():
+    from flowfile_frame import _metadata
+
+    calls: list[tuple[str, dict]] = []
+    answers = {
+        "namespaces": [{"id": 5, "name": "Remote", "parent_id": None}],
+        "catalog_table": {"file_path": "s3://bucket/catalog/t", "table_type": "physical", "serialized_lf": None,
+                          "is_optimized": False},
+    }  # fmt: skip
+
+    def transport(body):
+        assert body["flow_id"] == 42
+        calls.append((body["kind"], body["args"]))
+        return {"result": answers[body["kind"]]}
+
+    with _metadata.installed(42, transport) as hook:
+        assert _metadata.namespaces(None) == [_metadata.Namespace(5, "Remote", None)]
+        assert _metadata.namespaces(None)[0].name == "Remote" and len(calls) == 1, "memoised for the op"
+        hook("catalog_table", {"node_id": 9, "catalog_table_id": 3})
+        assert _metadata.is_cloud_table(9) and not _metadata.is_cloud_table(8)
+        assert [kind for kind, _ in calls] == ["namespaces", "catalog_table"]
+    assert not _metadata.is_cloud_table(9)
+    assert isinstance(_metadata.default_namespace_id(), int)
+    assert "General" in {ns.name for ns in _metadata.namespaces(None)}

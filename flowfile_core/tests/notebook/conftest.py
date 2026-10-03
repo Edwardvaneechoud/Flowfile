@@ -36,6 +36,60 @@ _RUN_MINTED_FIELDS = {"flow_id", "flowfile_id", "flowfile_name"}
 
 KERNEL_CALLS_DURING_CORPUS: list[str] = []
 
+IN_KERNEL_OP: contextvars.ContextVar[bool] = contextvars.ContextVar("in_kernel_op", default=False)
+"""Set in the thread a :class:`KernelSimManager` runs a kernel op on; the session's calls back to core run in a
+fresh context, so a listener that reads it tells the kernel's own work from core's (:func:`kernel_db_opens`)."""
+
+_DATA_LAYER = (
+    "/catalog/",
+    "/database/",
+    "/auth/",
+    "/secret_manager/",
+    "/kernel/persistence.py",
+    "/database_connection_manager/",
+    "/kafka/connection_manager.py",
+)
+_PACKAGES = ("flowfile_frame/flowfile_frame/", "flowfile_core/flowfile_core/", "flowfile/flowfile/")
+
+
+def _opened_from(stack) -> str:
+    """The nearest flowfile frame above the data layer that opened a connection, as ``module.py:function``."""
+    for frame in reversed(stack):
+        filename = frame.filename.replace("\\", "/")
+        if "/tests/" in filename or any(part in filename for part in _DATA_LAYER):
+            continue
+        for package in _PACKAGES:
+            if package in filename:
+                return f"{filename.split(package, 1)[1]}:{frame.name}"
+    return "?"
+
+
+@pytest.fixture
+def kernel_db_opens() -> list[str]:
+    """Every catalog connection a kernel op (``IN_KERNEL_OP``) checked out, by the flowfile call site that opened it.
+
+    The ``kernel-sim`` kernel shares core's engine, so a pool listener under the sim's marker sees exactly the
+    connections the kernel's own work would open in a container; core's answers to the session's calls back run in
+    a fresh context and are not counted.
+    """
+    import traceback
+
+    from sqlalchemy import event
+
+    from flowfile_core.database import connection
+
+    opened: list[str] = []
+
+    def checked_out(dbapi_connection, connection_record, connection_proxy):
+        if IN_KERNEL_OP.get():
+            opened.append(_opened_from(traceback.extract_stack()[:-1]))
+
+    event.listen(connection.engine, "checkout", checked_out)
+    try:
+        yield opened
+    finally:
+        event.remove(connection.engine, "checkout", checked_out)
+
 
 @contextmanager
 def no_kernel_manager():
@@ -313,6 +367,7 @@ class KernelSimManager:
         self.shared_volume_path = str(shared)
         self.node_results: list[dict] = []
         self.node_runs: list[dict] = []
+        self.lookups: list[dict] = []
         self.namespaces: dict[int, dict] = {}
         self._docker_network = None
 
@@ -345,6 +400,12 @@ class KernelSimManager:
         self.node_runs.append(body)
         return self._as_owner(held_run.run_held_node, held_run.NodeRunRequest.model_validate(body))
 
+    def lookup(self, body: dict) -> dict:
+        from flowfile_core.notebook import lookup
+
+        self.lookups.append(body)
+        return self._as_owner(lookup.answer_request, lookup.LookupRequest.model_validate(body))
+
     def get_kernel_sync(self, kernel_id):
         return self.kernel if kernel_id == self.kernel.id else None
 
@@ -359,6 +420,7 @@ class KernelSimManager:
         stdout, stderr, failure = io.StringIO(), io.StringIO(), []
 
         def run():
+            IN_KERNEL_OP.set(True)
             try:
                 with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                     namespace = self.namespaces.setdefault(request.flow_id, {})
@@ -414,6 +476,7 @@ def _install_kernel_sim(monkeypatch, manager: KernelSimManager) -> None:
     monkeypatch.setattr(flow_graph_module, "get_kernel_manager", lambda: manager)
     monkeypatch.setattr(notebook_kernel, "transport", manager.node_result)
     monkeypatch.setattr(notebook_kernel, "run_transport", manager.node_run)
+    monkeypatch.setattr(notebook_kernel, "lookup_transport", manager.lookup)
 
 
 def _forget_kernel_sim() -> None:

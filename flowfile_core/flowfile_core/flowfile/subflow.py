@@ -31,6 +31,7 @@ from flowfile_core.flowfile.param_types import (
     stringify_param_value,
 )
 from flowfile_core.flowfile.utils import create_unique_id
+from flowfile_core.notebook.lookup import metadata_lookup
 from flowfile_core.schemas import input_schema
 
 if TYPE_CHECKING:
@@ -142,22 +143,53 @@ def _find_registration(db: "Session", ref: input_schema.SubflowReference, user_i
     )
 
 
+def local_registration(ref: input_schema.SubflowReference, user_id: int | None) -> dict[str, Any]:
+    """The registration ``ref`` names, read from the catalog database, as the fields a reference stores.
+
+    Found as :func:`_find_registration` describes, then checked for ``user_id`` (``None`` is an internal/CLI
+    run and unrestricted); raises :class:`SubflowResolutionError` otherwise. ``namespace`` is the full
+    ``"catalog.schema"`` name. Core answers a notebook kernel's ``flow_registration`` lookup with it.
+    """
+    with get_db_context() as db:
+        registration = _find_registration(db, ref, user_id)
+        if user_id is not None and not sharing.user_id_can_use(db, user_id, "flow", registration.id):
+            raise SubflowResolutionError(f"No access to the referenced flow '{registration.name}'")
+        namespace = CatalogService(SQLAlchemyCatalogRepository(db)).resolve_namespace_full_name(
+            registration.namespace_id
+        )
+        return {
+            "registration_id": registration.id,
+            "flow_uuid": registration.flow_uuid,
+            "flow_path": registration.flow_path,
+            "namespace": namespace,
+            "name": registration.name,
+        }
+
+
+def _registration(ref: input_schema.SubflowReference, user_id: int | None) -> dict[str, Any]:
+    """:func:`local_registration`, or core's answer in a notebook kernel session (``metadata_lookup`` set)."""
+    remote = metadata_lookup.get()
+    if remote is None:
+        return local_registration(ref, user_id)
+    answer = remote("flow_registration", ref.model_dump(mode="json"))
+    if "error" in answer:
+        raise SubflowResolutionError(answer["error"])
+    return answer
+
+
 def resolve_subflow_path(ref: input_schema.SubflowReference, user_id: int | None) -> ResolvedSubflow:
     """Resolve a SubflowReference to an on-disk flow file, enforcing access.
 
     The registration is found as :func:`_find_registration` describes.
     ``user_id`` None means an internal/CLI run and is unrestricted.
     """
-    with get_db_context() as db:
-        registration = _find_registration(db, ref, user_id)
-        if user_id is not None and not sharing.user_id_can_use(db, user_id, "flow", registration.id):
-            raise SubflowResolutionError(f"No access to the referenced flow '{registration.name}'")
-        resolved = ResolvedSubflow(
-            path=Path(registration.flow_path),
-            registration_id=registration.id,
-            name=registration.name,
-            flow_uuid=registration.flow_uuid,
-        )
+    registration = _registration(ref, user_id)
+    resolved = ResolvedSubflow(
+        path=Path(registration["flow_path"]),
+        registration_id=registration["registration_id"],
+        name=registration["name"],
+        flow_uuid=registration["flow_uuid"],
+    )
     if not resolved.path.is_file():
         raise SubflowResolutionError(f"Flow file for '{resolved.name}' not found: {resolved.path}")
     return resolved
@@ -170,16 +202,12 @@ def stamp_flow_reference(settings: input_schema.NodeRunFlow) -> None:
     """
     ref = settings.flow_reference
     try:
-        with get_db_context() as db:
-            registration = _find_registration(db, ref, settings.user_id)
-            namespace = CatalogService(SQLAlchemyCatalogRepository(db)).resolve_namespace_full_name(
-                registration.namespace_id
-            )
-            ref.registration_id = registration.id
-            ref.flow_uuid = registration.flow_uuid
-            ref.flow_path = registration.flow_path
-            ref.namespace = namespace
-            ref.name = registration.name
+        registration = _registration(ref, settings.user_id)
+        ref.registration_id = registration["registration_id"]
+        ref.flow_uuid = registration["flow_uuid"]
+        ref.flow_path = registration["flow_path"]
+        ref.namespace = registration["namespace"]
+        ref.name = registration["name"]
     except SubflowResolutionError:
         return
     except Exception:  # noqa: BLE001 - purely informational stamping

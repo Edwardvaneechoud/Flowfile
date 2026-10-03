@@ -17,6 +17,7 @@ from flowfile_frame.run_flow import FlowOutput
 DEFERRED_NODE_TYPES: frozenset[str]
 SIDE_EFFECT_NODE_TYPES: frozenset[str]
 NOTEBOOK_DEFERRED_NODE_TYPES: frozenset[str]
+CONNECTION_SOURCE_TYPES: frozenset[str]
 SYNC_HELD_NODE_TYPES: frozenset[str]
 LITERAL_SOURCE_TYPES: frozenset[str]
 PROBED_FILE_TYPES: frozenset[str]

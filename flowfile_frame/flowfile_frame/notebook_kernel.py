@@ -13,7 +13,10 @@ kernel call runs in a fresh context, so an op on the session resumes its mode (`
 builds nodes keeps file paths as written (``notebook.paths_as_written``); core turns them back into host paths on a
 push. Rows the kernel cannot compute come from the canvas (:meth:`_Session.canvas_rows`): a canvas node's own, or,
 for a node only the cells hold, a run core makes of that node from its settings (:meth:`_Session._run_held`). The
-catalog database is a copy core writes under a new name when a call first connects to it (:func:`_rearm`).
+catalog metadata a build reads (tables, flow references, connections, kernels) comes from core too: every op runs
+under ``_metadata.installed`` (``POST /notebook/session/lookup``), so the kernel opens no catalog connection. The
+catalog database copy core writes under a new name when a call first connects to it (:func:`_rearm`) is only for
+code in a cell that reads the database itself.
 """
 
 from __future__ import annotations
@@ -38,7 +41,8 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import Flowfi
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.schemas.schemas import FlowfileNode
-from flowfile_frame import notebook
+from flowfile_frame import _metadata, notebook
+from flowfile_frame.config import logger
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.native import (
     NativeNode,
@@ -137,6 +141,11 @@ def post_node_run(body: dict[str, Any]) -> dict[str, Any]:
     return _post_core("/notebook/session/node_run", body, f"node {body['node']['id']}'s run")
 
 
+def post_lookup(body: dict[str, Any]) -> dict[str, Any]:
+    """Ask core for a catalog metadata lookup (``POST /notebook/session/lookup``) as this kernel."""
+    return _post_core("/notebook/session/lookup", body, f"the {body['kind']} lookup")
+
+
 def post_database_refresh() -> dict[str, Any]:
     """Ask core to bring this kernel's copy of the catalog database up to date (``POST /notebook/session/database``)."""
     return _post_core("/notebook/session/database", {}, "a fresh copy of the catalog database")
@@ -147,6 +156,9 @@ transport: Callable[[dict[str, Any]], dict[str, Any]] = post_node_result
 
 run_transport: Callable[[dict[str, Any]], dict[str, Any]] = post_node_run
 """How a session asks core to run a node only its cells hold; tests route it to core in-process."""
+
+lookup_transport: Callable[[dict[str, Any]], dict[str, Any]] = post_lookup
+"""How an op asks core for catalog metadata (``_metadata.installed``); tests route it to core in-process."""
 
 database_transport: Callable[[], dict[str, Any]] = post_database_refresh
 """How a call asks core to refresh the kernel's catalog copy; tests route it to core in-process."""
@@ -550,8 +562,24 @@ def _refresh_database() -> str | None:
         return _database_copy
 
 
+def _opened_from() -> str:
+    """The nearest flowfile frame of this stack, as ``module.py:function``; what opened the database copy."""
+    for frame in reversed(traceback.extract_stack()[:-2]):
+        filename = frame.filename.replace("\\", "/")
+        for package in ("flowfile_frame/", "flowfile_core/", "flowfile/"):
+            if package in filename and "/database/" not in filename:
+                return f"{filename.rsplit(package, 1)[1]}:{frame.name}"
+    return "a cell"
+
+
 def _refresh_before_connect(dialect, conn_rec, cargs, cparams) -> None:
-    """Point every new SQLite connection at the copy core named last (pysqlite's first argument is the file)."""
+    """Point every new SQLite connection at the copy core named last (pysqlite's first argument is the file).
+
+    Every lookup a build makes goes through core, so a connection here comes from code in a cell that reads the
+    database itself; the warning names where, for the day the copy goes.
+    """
+    if _refresh_pending:
+        logger.warning("Notebook kernel opened the catalog database from %s", _opened_from())
     copy = _refresh_database()
     if copy is not None and dialect.name == "sqlite" and cargs:
         cargs[0] = copy
@@ -766,6 +794,12 @@ def _dispatch(request: dict[str, Any], namespace: dict[str, Any]) -> dict[str, A
     if op == "hello":
         return _hello(request)
     flow_id = int(request["flow_id"])
+    with _metadata.installed(flow_id, lookup_transport):
+        return _dispatch_session(op, flow_id, request, namespace)
+
+
+def _dispatch_session(op: str | None, flow_id: int, request: dict[str, Any], namespace: dict[str, Any]) -> dict:
+    """One op on the flow's session, every catalog metadata lookup it makes answered by core."""
     if op in ("open", "reset"):
         return _open(flow_id, request, namespace)
     if op == "clean_run":

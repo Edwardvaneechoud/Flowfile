@@ -446,25 +446,43 @@ allowlist `HELD_NODE_TYPES` plus installed non-output custom nodes; writers
 and other types still say "Push". A cell-built deferred node whose seed has
 no columns asks core for them at build (`NotebookMode.schema_resolver`,
 `native.resolved_seed`). A Python Script on another kernel runs this way
-too, with its artifacts on the call's graph only. The remaining phases, in
-order:
+too, with its artifacts on the call's graph only.
 
-2. **Metadata lookups go through core.** First a census: log every database
-   connection the kernel opens and ratchet the count over the notebook
-   corpus. Then a `catalog_lookup` context hook around
-   `flow_graph._resolve_catalog_table_info` / `_resolve_catalog_sql_tables`
-   (the `placement_check` pattern), one private `flowfile_frame/_metadata.py`
-   behind the frame's `get_db_context()` calls, and one allowlisted
-   `POST /notebook/session/lookup` for what has no route (flow references,
-   saved kernels, connection names, `placement_refusal`). Secret-bearing
-   nodes become held in a kernel session and take phase 1's path.
+Phase 2 landed 2026-10-03: **metadata lookups go through core.** One hook,
+`notebook/lookup.py::metadata_lookup` (a `ContextVar`, the `placement_check`
+pattern), consulted by `flow_graph._resolve_catalog_table_info` /
+`_resolve_catalog_sql_tables`, `storage_backend.resolve_for_namespace`,
+`subflow._registration` (behind `stamp_flow_reference` and
+`resolve_subflow_path`), `prechecks.placement_refusal` and the frame's
+`flowfile_frame/_metadata.py` (behind `catalog_reference.py`, `run_flow.py`,
+`kernels.py` and the connection listings; every public function asks the hook
+when set, else runs its `local_*` twin on the database). The kernel installs a
+`_metadata.SessionLookup` for every op (`_metadata.installed`), which posts to
+`POST /notebook/session/lookup`, a closed `lookup.KINDS` each answered by the
+function the call site runs without the hook, as the kernel's owner, bound by
+`kernel_runner._bound_kernel` (the flow need not be open), metadata only: no
+plan, no storage credential, no password, no ciphertext. Secret-bearing nodes
+are held in a kernel session and take phase 1's path: every
+`cloud_storage_reader` (`NOTEBOOK_DEFERRED_NODE_TYPES`), a catalog reader of a
+cloud-backed table (`_metadata.is_cloud_table`, from the `catalog_table`
+answer), a custom node with a `SecretSelector` (`custom_node._selects_secret`);
+`native._predicts_in_core` keeps `CONNECTION_SOURCE_TYPES` from running their
+schema callback while a `schema_resolver` is set. The census is
+`tests/notebook/test_kernel_database_census.py`, at zero: a pool `checkout`
+listener under the sim's `IN_KERNEL_OP` marker over the whole corpus
+(`conftest.kernel_db_opens`), plus every kind answered without a `$ffsec$` or
+a decrypt. The copy machinery, `_rearm`, the `hello` schema-head handshake and
+the gate stay for phase 3; a first connection in the kernel now logs where it
+came from (`notebook_kernel._opened_from`), and only code in a cell reading the
+database itself makes one. The remaining phases, in order:
+
 3. **Delete the copy.** A refusing engine in `notebook_kernel.handle()`,
    then remove `notebook_db.py`, `/notebook/session/database`, `_rearm` and
    `FLOWFILE_DB_PATH` from `_notebook_env`; drop the Alembic head check and
    the SQLite requirement of the gate. Gate the deletion on a CI job that
    builds `flowfile-kernel-notebook:dev` and runs
    `tests/notebook/test_kernel_notebook_docker.py`, which no workflow runs
-   today.
+   today, and keep `test_kernel_database_census.py` green.
 4. **Later, each with its own plan:** a Python Script on the notebook's own
    kernel (`KernelHold` refuses it during a fallback), a push that keeps the
    session's variables, a row-limited fallback for `display()`, Postgres

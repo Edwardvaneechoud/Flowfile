@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 from pydantic import ValidationError
 
-from flowfile_core.auth import sharing
 from flowfile_core.catalog import (
     AmbiguousFlowError,
     CatalogError,
@@ -39,7 +38,9 @@ from flowfile_core.flowfile.flow_node.multi_output import output_handle
 from flowfile_core.flowfile.param_types import coerce_param_value
 from flowfile_core.flowfile.parameter_resolver import find_unresolved_in_model
 from flowfile_core.schemas import input_schema
+from flowfile_frame import _metadata
 from flowfile_frame._identity import current_user_id
+from flowfile_frame._metadata import Registration
 from flowfile_frame.catalog_reference import CatalogReference, SchemaReference
 from flowfile_frame.config import logger
 from flowfile_frame.custom_node import _warn_session_only_custom_nodes
@@ -57,9 +58,7 @@ from shared.storage_config import storage
 
 if TYPE_CHECKING:
     from polars._typing import PolarsDataType
-    from sqlalchemy.orm import Session
 
-    from flowfile_core.database.models import FlowRegistration
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
     from flowfile_core.flowfile.param_types import FlowParameter
     from flowfile_frame.flow_frame import FlowFrame
@@ -142,30 +141,28 @@ class FlowRef:
         )
 
 
-def _schema_reference(repo: SQLAlchemyCatalogRepository, namespace_id: int | None) -> SchemaReference | None:
+def _schema_reference(namespace_id: int | None) -> SchemaReference | None:
     """The ``SchemaReference`` of a level-1 namespace; ``None`` for no namespace or a catalog."""
-    namespace = repo.get_namespace(namespace_id) if namespace_id is not None else None
+    namespace = _metadata.namespace(namespace_id) if namespace_id is not None else None
     if namespace is None or namespace.parent_id is None:
         return None
-    parent = repo.get_namespace(namespace.parent_id)
+    parent = _metadata.namespace(namespace.parent_id)
     if parent is None:
         return None
     return SchemaReference._from_namespace(CatalogReference._from_namespace(parent), namespace)
 
 
-def _flow_ref_from_registration(repo: SQLAlchemyCatalogRepository, registration: FlowRegistration) -> FlowRef:
+def _flow_ref_from_registration(registration: Registration) -> FlowRef:
     return FlowRef(
         registration.id,
         registration.flow_uuid,
         registration.flow_path,
         registration.name,
-        _schema_reference(repo, registration.namespace_id),
+        _schema_reference(registration.namespace_id),
     )
 
 
-def _resolve_namespace(
-    service: CatalogService, namespace: str | SchemaReference | CatalogReference | None
-) -> tuple[int | None, str | None]:
+def _resolve_namespace(namespace: str | SchemaReference | CatalogReference | None) -> tuple[int | None, str | None]:
     """``(namespace id, "catalog.schema")`` of ``namespace``; ``(None, None)`` means every namespace.
 
     A string is a dotted ``"catalog.schema"`` name (a bare catalog name is the catalog itself);
@@ -174,33 +171,34 @@ def _resolve_namespace(
     if namespace is None:
         return None, None
     if isinstance(namespace, str):
-        namespace_id = service.resolve_namespace_id_by_full_name(namespace)
+        namespace_id = _metadata.namespace_id_by_full_name(namespace)
         if namespace_id is None:
             raise NativeNodeError(
                 f"There is no catalog or schema {namespace!r}; pass an existing 'catalog.schema' name"
             ) from NamespaceNotFoundError(name=namespace)
         return namespace_id, namespace
     if isinstance(namespace, SchemaReference | CatalogReference):
-        stored = service.repo.get_namespace(namespace.id)
+        stored = _metadata.namespace(namespace.id)
         if stored is None or stored.name != namespace.name:
             raise NativeNodeError(
                 f"{type(namespace).__name__} {namespace.name!r} (id={namespace.id}) no longer exists; "
                 "look it up again with ff.get_catalog(...)"
             ) from NamespaceNotFoundError(namespace_id=namespace.id)
-        return stored.id, service.resolve_namespace_full_name(stored.id)
+        return stored.id, _metadata.namespace_full_name(stored.id)
     raise NativeNodeError(
         f"namespace must be a 'catalog.schema' string, a SchemaReference or a CatalogReference, "
         f"got {type(namespace).__name__}"
     )
 
 
-def _ambiguous(service: CatalogService, name: str, matches: list[FlowRegistration]) -> AmbiguousFlowError:
+def _ambiguous(name: str, matches: Sequence[Any]) -> AmbiguousFlowError:
+    """``matches`` are registrations (rows or :class:`Registration`): ``id``, ``name`` and ``namespace_id``."""
     candidates = [
         {
             "id": r.id,
             "name": r.name,
             "namespace_id": r.namespace_id,
-            "namespace_name": service.resolve_namespace_full_name(r.namespace_id),
+            "namespace_name": _metadata.namespace_full_name(r.namespace_id),
         }
         for r in matches
     ]
@@ -219,27 +217,21 @@ def _not_found_message(name: str, namespace_name: str | None) -> str:
 
 
 def _find_registration(
-    db: Session,
-    service: CatalogService,
-    user_id: int,
     namespace: tuple[int | None, str | None],
     name: str | None,
     uuid: str | None,
     registration_id: int | None,
-) -> FlowRegistration:
+) -> Registration:
     """The one registration the arguments select; a uuid or id is cross-checked against name and namespace."""
-    repo = service.repo
     namespace_id, namespace_name = namespace
     if uuid is None and registration_id is None:
-        matches = [
-            r for r in repo.list_flows_by_name(name, namespace_id) if sharing.user_id_can_use(db, user_id, "flow", r.id)
-        ]
+        matches = [r for r in _metadata.flow_registrations(namespace_id=namespace_id, name=name) if r.usable]
         if not matches:
             raise NativeNodeError(_not_found_message(name, namespace_name)) from FlowNotFoundError(
                 name=f"{namespace_name}.{name}" if namespace_name else name
             )
         if len(matches) > 1:
-            error = _ambiguous(service, name, matches)
+            error = _ambiguous(name, matches)
             if namespace_id is not None:
                 fix = "pick one with registration_id= or uuid="
             else:
@@ -248,28 +240,30 @@ def _find_registration(
             raise NativeNodeError(f"{error}; {fix}") from error
         return matches[0]
     if uuid is not None:
-        registration = repo.get_flow_by_uuid(uuid)
-        if registration is None:
+        found = _metadata.flow_registrations(flow_uuid=uuid)
+        if not found:
             raise NativeNodeError(
                 f"No flow is registered with uuid {uuid!r}; look it up by name instead"
             ) from FlowNotFoundError(name=f"uuid={uuid}")
+        registration = found[0]
         if registration_id is not None and registration.id != registration_id:
             raise NativeNodeError(f"uuid {uuid} belongs to registration {registration.id}, not {registration_id}")
     else:
-        registration = repo.get_flow(registration_id)
-        if registration is None:
+        found = _metadata.flow_registrations(registration_id=registration_id)
+        if not found:
             raise NativeNodeError(
                 f"No flow registration has id {registration_id}; look it up by name instead"
             ) from FlowNotFoundError(registration_id=registration_id)
+        registration = found[0]
     if name is not None and registration.name != name:
         raise NativeNodeError(f"Flow registration {registration.id} is named {registration.name!r}, not {name!r}")
     if namespace_id is not None and registration.namespace_id != namespace_id:
         raise NativeNodeError(f"Flow {registration.name!r} ({registration.id}) is not in {namespace_name!r}")
-    if not sharing.user_id_can_use(db, user_id, "flow", registration.id):
+    if not registration.usable:
         raise NativeNodeError(
             f"Flow {registration.name!r} (registration {registration.id}) is not shared with you; "
             "ask its owner to share it with a group you are in"
-        ) from NotAuthorizedError(user_id, f"use flow '{registration.name}'")
+        ) from NotAuthorizedError(current_user_id(), f"use flow '{registration.name}'")
     return registration
 
 
@@ -293,12 +287,9 @@ def flow_ref(
     """
     if uuid is None and registration_id is None and not name:
         raise NativeNodeError("flow_ref needs a flow name, uuid= or registration_id=")
-    user_id = current_user_id()
-    with get_db_context() as db:
-        service = CatalogService(SQLAlchemyCatalogRepository(db))
-        resolved_namespace = _resolve_namespace(service, namespace)
-        registration = _find_registration(db, service, user_id, resolved_namespace, name, uuid, registration_id)
-        ref = _flow_ref_from_registration(service.repo, registration)
+    resolved_namespace = _resolve_namespace(namespace)
+    registration = _find_registration(resolved_namespace, name, uuid, registration_id)
+    ref = _flow_ref_from_registration(registration)
     path = _flow_file(ref)
     if not path.is_absolute() or not path.is_file():
         raise NativeNodeError(
@@ -310,15 +301,12 @@ def flow_ref(
 
 def _list_flow_refs(schema: SchemaReference) -> list[FlowRef]:
     """Every flow filed under ``schema`` that the current user (``_identity.current_user_id``) may use, by name."""
-    user_id = current_user_id()
-    with get_db_context() as db:
-        service = CatalogService(SQLAlchemyCatalogRepository(db))
-        namespace_id, _ = _resolve_namespace(service, schema)
-        return [
-            FlowRef(r.id, r.flow_uuid, r.flow_path, r.name, schema)
-            for r in service.repo.list_flows(namespace_id=namespace_id)
-            if sharing.user_id_can_use(db, user_id, "flow", r.id)
-        ]
+    namespace_id, _ = _resolve_namespace(schema)
+    return [
+        FlowRef(r.id, r.flow_uuid, r.flow_path, r.name, schema)
+        for r in _metadata.flow_registrations(namespace_id=namespace_id)
+        if r.usable
+    ]
 
 
 def _registration_path(
@@ -333,7 +321,7 @@ def _registration_path(
     """
     matches = service.repo.list_flows_by_name(name, namespace_id)
     if len(matches) > 1:
-        error = _ambiguous(service, name, matches)
+        error = _ambiguous(name, matches)
         raise NativeNodeError(f"{error}; register under another name or in another schema=") from error
     editor_dir = storage.python_editor_flows_directory.resolve()
     if matches:
@@ -382,7 +370,7 @@ def register_flow(
                 raise NativeNodeError("There is no 'General' catalog to hold the default schema; pass schema=")
             namespace_id = default.id
         else:
-            namespace_id, _ = _resolve_namespace(service, schema)
+            namespace_id, _ = _resolve_namespace(schema)
         namespace_name = service.resolve_namespace_full_name(namespace_id)
         path = _registration_path(service, namespace_id, namespace_name, name, overwrite)
     graph.apply_layout()

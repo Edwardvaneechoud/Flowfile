@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from shared.notebook_display import TABLE_MIME
-from tests.notebook.conftest import NOTEBOOK_OWNER_ID
+from tests.notebook.conftest import IN_KERNEL_OP, NOTEBOOK_OWNER_ID
 
 LOOPBACK = ("127.0.0.1", 50123)
 
@@ -883,3 +883,31 @@ def test_a_file_another_kernel_was_handed_is_kept_when_superseded(coded_flow, ke
     rerun()
     again_b = fetch("kernel-b")
     assert for_a.exists() and again_b.exists() and not for_b.exists()
+
+
+def test_a_canvas_cloud_reader_is_seeded_and_its_rows_come_from_the_canvas(
+    open_as, client, kernel_sim, kernel_db_opens, tmp_path, monkeypatch
+):
+    """A cloud reader resolves a stored connection, so a session never opens it: the canvas node is seeded at open
+    and its rows are fetched from the canvas, which reads the source."""
+    import flowfile as ff
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+
+    csv = tmp_path / "cloud.csv"
+    csv.write_text("a;b\n1;x\n2;y\n")
+    flow = open_as(ff.read_from_cloud_storage(str(csv), file_format="csv").flow_graph)
+    node_id = next(node.node_id for node in flow.nodes if node.node_type == "cloud_storage_reader")
+    in_kernel: list[bool] = []
+    original = FlowDataEngine.from_cloud_storage_obj
+
+    def spied(*args, **kwargs):
+        in_kernel.append(IN_KERNEL_OP.get())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(FlowDataEngine, "from_cloud_storage_obj", spied)
+    shown = _execute(client, flow, kernel_sim, _bind(node_id) + "display(coded)")
+    assert shown["success"], shown
+    assert _table(shown)["data"] == [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}], shown["display_outputs"]
+    assert [body["node_id"] for body in kernel_sim.node_results] == [node_id] and not kernel_sim.node_runs
+    assert in_kernel and not any(in_kernel), "the canvas opened the source, the kernel never did"
+    assert not kernel_db_opens, f"a kernel op opened the catalog database from {sorted(set(kernel_db_opens))}"

@@ -533,14 +533,9 @@ def _write_result(flow, node_id: int, data, path: str) -> None:
         raise HTTPException(422, f"Could not hand node {node_id}'s rows to the kernel: {exc}") from exc
 
 
-def _bound_flow(kernel_id: str, user, flow_id: int):
-    """The manager and the open flow behind a kernel's own call back (:func:`node_result`, a held node's run).
-
-    Only for the kernel's owner while the kernel holds the flow's session or runs a call for it (a push's clean
-    run): 403 otherwise, 404 when the flow is not open.
-    """
-    from flowfile_core import flow_file_handler
-
+def _bound_kernel(kernel_id: str, user, flow_id: int):
+    """The manager behind a kernel's own call back, for the kernel's owner while the kernel holds the flow's session
+    or runs a call for it (a push's clean run): 403 otherwise. A lookup (``notebook.lookup``) needs no more."""
     if not kernel_sessions_allowed(user):
         raise HTTPException(403, DISABLED_DETAIL)
     with _lock:
@@ -550,6 +545,17 @@ def _bound_flow(kernel_id: str, user, flow_id: int):
     manager = _manager()
     if manager.get_kernel_owner(kernel_id) != user.id:
         raise HTTPException(403, "Not authorized to access this kernel")
+    return manager
+
+
+def _bound_flow(kernel_id: str, user, flow_id: int):
+    """The manager and the open flow behind a kernel's own call back (:func:`node_result`, a held node's run).
+
+    :func:`_bound_kernel`, then 404 when the flow is not open.
+    """
+    from flowfile_core import flow_file_handler
+
+    manager = _bound_kernel(kernel_id, user, flow_id)
     flow = flow_file_handler.get_flow(flow_id, user.id)
     if flow is None:
         raise HTTPException(404, "Flow not found")

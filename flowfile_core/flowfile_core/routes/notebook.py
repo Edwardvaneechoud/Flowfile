@@ -2,9 +2,10 @@
 
 Mounted at ``/notebook``. The ``/notebook/session/*`` routes run cells on one of the caller's notebook
 kernels (``notebook.kernel_runner``); they are gated by ``notebook.gate`` (403) before the flow lookup (404).
-``/notebook/session/node_result``, ``/notebook/session/node_run`` and ``/notebook/session/database`` are the
-kernel's own call backs, for a canvas node's rows, a run of a node only the session's cells hold
-(``notebook.held_run``) and a fresh copy of the catalog database.
+``/notebook/session/node_result``, ``/notebook/session/node_run``, ``/notebook/session/lookup`` and
+``/notebook/session/database`` are the kernel's own call backs, for a canvas node's rows, a run of a node only
+the session's cells hold (``notebook.held_run``), a catalog metadata lookup (``notebook.lookup``) and a fresh
+copy of the catalog database.
 """
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -14,7 +15,7 @@ from flowfile_core import flow_file_handler
 from flowfile_core.auth import sharing
 from flowfile_core.auth.jwt import get_current_active_user, get_user_or_internal_service
 from flowfile_core.configs import logger
-from flowfile_core.notebook import held_run, kernel_runner
+from flowfile_core.notebook import held_run, kernel_runner, lookup
 from flowfile_core.notebook.gate import kernel_sessions_allowed, require_kernel_sessions
 from flowfile_core.notebook.push import NotebookPlanResponse, NotebookPushRequest, plan_push, plan_response
 from flowfile_core.notebook.render import NotebookRendering, render
@@ -182,6 +183,22 @@ def notebook_node_run(
     if not x_kernel_id:
         raise HTTPException(status_code=403, detail="Only a notebook kernel can ask for a node's run")
     return held_run.run_held_node(x_kernel_id, current_user, body)
+
+
+@router.post("/session/lookup")
+def notebook_session_lookup(
+    body: lookup.LookupRequest,
+    x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
+    current_user=Depends(get_user_or_internal_service),
+) -> dict:
+    """Answer a catalog metadata lookup for the notebook session on the calling kernel: ``{"result"}``.
+
+    Called by the kernel (``X-Internal-Token`` + ``X-Kernel-Id``, resolving to the kernel's owner) wherever
+    building a node would read the catalog database (``notebook.lookup.KINDS``); the kernel opens none.
+    """
+    if not x_kernel_id:
+        raise HTTPException(status_code=403, detail="Only a notebook kernel can ask for a lookup")
+    return lookup.answer_request(x_kernel_id, current_user, body)
 
 
 @router.post("/session/database")
