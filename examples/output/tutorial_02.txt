@@ -1,0 +1,20 @@
+● Read data (1)  Supermarket invoices
+│
+● Drop duplicates (2)
+│
+● Filter data (3)
+├─┐
+│ ● Formula (8)
+● Formula (6)
+│
+● Polars code (9)  Add columns: revenue, expected_income
+shape: (3, 3)
+┌────────────┬─────────┬─────────────────┐
+│ invoice_id ┆ revenue ┆ expected_income │
+│ ---        ┆ ---     ┆ ---             │
+│ str        ┆ f64     ┆ f64             │
+╞════════════╪═════════╪═════════════════╡
+│ INV-00001  ┆ 0.04041 ┆ 2.0205          │
+│ INV-00002  ┆ 0.6389  ┆ 31.945          │
+│ INV-00003  ┆ 0.39159 ┆ 19.5795         │
+└────────────┴─────────┴─────────────────┘
