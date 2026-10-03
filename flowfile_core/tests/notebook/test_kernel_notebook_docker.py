@@ -4,7 +4,8 @@ Run it on its own with a scratch storage folder, since the kernel mounts the Flo
 
     FLOWFILE_STORAGE_DIR=$(mktemp -d) poetry run pytest flowfile_core/tests/notebook/test_kernel_notebook_docker.py -m kernel
 
-Skipped without Docker, without the ``flowfile-kernel-notebook:dev`` image or without ``FLOWFILE_STORAGE_DIR``.
+Skipped without Docker, without the ``flowfile-kernel-notebook:dev`` image or without ``FLOWFILE_STORAGE_DIR``;
+with ``FLOWFILE_REQUIRE_NOTEBOOK_KERNEL`` set (the CI job that builds the image) those are failures instead.
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ import ast
 import asyncio
 import json
 import os
-import re
 import shutil
 import socket
 import subprocess
@@ -31,7 +31,7 @@ from tests.notebook.conftest import NOTEBOOK_OWNER_ID, cell_provenance
 IMAGE = "flowfile-kernel-notebook:dev"
 KERNEL_ID = "nb-smoke"
 LOOPBACK = ("127.0.0.1", 50123)
-COPY_NAME = re.compile(r"flowfile_catalog\.[0-9a-f]{32}\.db")
+REQUIRED = bool(os.environ.get("FLOWFILE_REQUIRE_NOTEBOOK_KERNEL"))
 
 
 def _image_present() -> bool:
@@ -41,11 +41,36 @@ def _image_present() -> bool:
         return False
 
 
-pytestmark = [
-    pytest.mark.kernel,
-    pytest.mark.skipif(not os.environ.get("FLOWFILE_STORAGE_DIR"), reason="needs a scratch FLOWFILE_STORAGE_DIR"),
-    pytest.mark.skipif(not _image_present(), reason=f"{IMAGE} not built (make notebook_kernel_dev)"),
-]
+def _missing() -> str | None:
+    if not os.environ.get("FLOWFILE_STORAGE_DIR"):
+        return "needs a scratch FLOWFILE_STORAGE_DIR"
+    if not _image_present():
+        return f"{IMAGE} not built (make notebook_kernel_dev)"
+    return None
+
+
+MISSING = _missing()
+pytestmark = [pytest.mark.kernel, pytest.mark.skipif(bool(MISSING) and not REQUIRED, reason=MISSING or "")]
+
+
+@pytest.fixture(autouse=True)
+def _required():
+    """Where the image and the folder are required (CI), their absence fails instead of skipping."""
+    if REQUIRED and MISSING:
+        pytest.fail(MISSING)
+
+
+def _in_kernel(path: str) -> bool:
+    """Whether ``path`` exists inside the kernel container."""
+    command = ["docker", "exec", f"flowfile-kernel-{KERNEL_ID}", "test", "-e", path]
+    return subprocess.run(command, capture_output=True).returncode == 0
+
+
+def _kernel_storage() -> str:
+    """The kernel's own storage folder (``~/.flowfile`` in the container): no host folder is mounted into it."""
+    code = "from shared.storage_config import storage; print(storage.base_directory)"
+    command = ["docker", "exec", f"flowfile-kernel-{KERNEL_ID}", "python", "-c", code]
+    return subprocess.run(command, capture_output=True, text=True, check=True).stdout.strip()
 
 
 def _free_port() -> int:
@@ -186,55 +211,96 @@ def test_a_notebook_session_on_a_real_kernel(smoke_flow, notebook_kernel, client
     new_nodes = [n for n in smoke_flow.nodes if n.node_id not in before]
     assert [n.node_type for n in new_nodes] == ["formula"], [n.node_type for n in new_nodes]
 
-    copies = Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID
-    assert not copies.exists(), "nothing above reads the catalog, so the kernel never asked for a copy"
-    code = "print('kernels', sorted(ff.kernels))"
+    database = f"{_kernel_storage()}/database/flowfile_catalog.db"
+    assert _in_kernel(os.path.dirname(database)), "the kernel imported flowfile, whose storage folders exist there"
+    assert not _in_kernel(database), "nothing above opens a catalog database in the kernel"
+    code = (
+        "print('kernels', sorted(ff.kernels))\n"
+        "print('catalogs', sorted(c.name for c in ff.list_catalogs()))\n"
+        "print('default', ff.default_schema().name)\n"
+    )
     catalog = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-catalog", "code": code})
     assert catalog.status_code == 200 and catalog.json()["success"], catalog.text
-    assert KERNEL_ID in catalog.json()["stdout"], catalog.json()
-    assert [COPY_NAME.fullmatch(copy.name) is not None for copy in copies.iterdir()] == [True]
+    stdout = catalog.json()["stdout"]
+    assert KERNEL_ID in stdout and "General" in stdout and "default" in stdout, stdout
+    assert not _in_kernel(database), "the saved kernels and the catalog come from core, never from a database here"
 
 
-def test_a_cell_reads_the_catalog_right_after_core_wrote_it(smoke_flow, notebook_kernel, client_as):
-    """Docker Desktop serves a replaced file's old entry for a few milliseconds, in which the file exists and
-    does not open; every copy core writes therefore has a new name, which a cell opens at once."""
-    from sqlalchemy import text
-
+def test_a_cell_that_opens_the_database_itself_is_refused_and_reads_the_catalog_live(
+    smoke_flow, notebook_kernel, client_as
+):
+    """The kernel holds no catalog database: a cell opening one through flowfile_core stops before pysqlite could
+    create a file, and what core writes to the catalog shows in the next cell through the lookups."""
+    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
     from flowfile_core.database.connection import get_db_context
 
     client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
     key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}
     assert client.post("/notebook/session/open", json=key).status_code == 200
-    listed = client.post(
-        "/notebook/session/execute", json={**key, "cell_id": "cell-kernels", "code": "print(sorted(ff.kernels))"}
-    )
-    assert listed.status_code == 200 and listed.json()["success"], listed.text
-    copies = Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID
-    seen = {copy.name for copy in copies.iterdir()}
+    database = f"{_kernel_storage()}/database/flowfile_catalog.db"
     probe = (
         "from sqlalchemy import text\n"
         "from flowfile_core.database.connection import get_db_context\n"
         "with get_db_context() as db:\n"
-        "    print('probe', db.execute(text('SELECT max(v) FROM nb_copy_probe')).scalar())\n"
+        "    print('probe', db.execute(text('SELECT 1')).scalar())\n"
     )
+    read = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-probe", "code": probe})
+    assert read.status_code == 200, read.text
+    result = read.json()
+    assert not result["success"] and "probe" not in result["stdout"], result
+    assert "no catalog database to open (a cell)" in result["error"], result["error"]
+    assert "ff.list_catalogs" in result["error"], result["error"]
+    assert not _in_kernel(database), "the refusal ran before pysqlite could create the file"
+
+    name = "nb_live_probe"
+    with get_db_context() as db:
+        namespace_id = CatalogService(SQLAlchemyCatalogRepository(db)).create_namespace(name, NOTEBOOK_OWNER_ID).id
     try:
-        with get_db_context() as db:
-            db.execute(text("CREATE TABLE IF NOT EXISTS nb_copy_probe (v INTEGER)"))
-            db.commit()
-        for value in range(1, 13):
-            with get_db_context() as db:
-                db.execute(text("INSERT INTO nb_copy_probe VALUES (:v)"), {"v": value})
-                db.commit()
-            read = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-probe", "code": probe})
-            assert read.status_code == 200 and read.json()["success"], read.text
-            assert f"probe {value}" in read.json()["stdout"], read.json()
-            left = [copy.name for copy in copies.iterdir()]
-            assert len(left) == 1 and COPY_NAME.fullmatch(left[0]) and left[0] not in seen, (left, seen)
-            seen.add(left[0])
+        code = "print(sorted(c.name for c in ff.list_catalogs()))"
+        listed = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-catalogs", "code": code})
+        assert listed.status_code == 200 and listed.json()["success"], listed.text
+        assert name in listed.json()["stdout"], listed.json()
     finally:
         with get_db_context() as db:
-            db.execute(text("DROP TABLE IF EXISTS nb_copy_probe"))
-            db.commit()
+            CatalogService(SQLAlchemyCatalogRepository(db)).delete_namespace(namespace_id)
+    assert not _in_kernel(database)
+
+
+SUMMING_SCRIPT = (
+    "import polars as pl\n"
+    "df = flowfile_ctx.read_input()\n"
+    "flowfile_ctx.publish_output(df.select(pl.col('amount').sum().alias('column_0')))\n"
+)
+
+
+def test_a_script_on_the_sessions_kernel_has_its_columns_once_the_canvas_ran_it(
+    open_as, notebook_kernel, client_as, monkeypatch
+):
+    """A script's columns are known only once it ran: the canvas runs it while the kernel is free (Run and preview
+    on canvas), and the session's variable then knows them."""
+    import flowfile as ff
+    from flowfile_core.flowfile import flow_graph as flow_graph_module
+
+    monkeypatch.setattr(flow_graph_module, "get_kernel_manager", lambda: notebook_kernel)
+    orders = ff.from_dict({"id": [1, 2, 3, 4], "amount": [10, 20, 30, 40]})
+    flow = open_as(ff.PythonScript(orders, code=SUMMING_SCRIPT, kernel=KERNEL_ID).output.flow_graph)
+    script_id = _node_id(flow, "python_script")
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": flow.flow_id, "kernel_id": KERNEL_ID}
+    assert client.post("/notebook/session/open", json=key).status_code == 200
+    nodes = "(v for v in list(globals().values()) if type(v).__name__ == 'SeededNode')"
+    cell = f"script = next(v for v in {nodes} if v.node_id == {script_id})\nprint(script.columns)"
+    seeded = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-a", "code": cell})
+    assert seeded.status_code == 200 and seeded.json()["success"], seeded.text
+    assert "column_0" not in seeded.json()["stdout"], seeded.json()
+
+    ran = client.post("/editor/notebook/run_lineage/", json={"flow_id": flow.flow_id, "node_id": script_id})
+    assert ran.status_code == 200, ran.text
+    assert flow.get_run_info().success, flow.get_run_info()
+
+    known = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-b", "code": "print(script.columns)"})
+    assert known.status_code == 200 and known.json()["success"], known.text
+    assert known.json()["stdout"].strip() == "['column_0']", known.json()
 
 
 def test_a_cells_artifacts_and_display_order_outlive_the_calls_after_it(smoke_flow, notebook_kernel, client_as):
@@ -282,3 +348,45 @@ def test_kernel_completions_see_the_session(smoke_flow, notebook_kernel, client_
     assert "col" in labels("ff.co")
     assert client.post("/notebook/session/reset", json=key).status_code == 200
     assert "priced" not in labels("pri")
+
+
+def test_a_file_a_cell_names_is_read_by_core(smoke_flow, notebook_kernel, client_as, tmp_path):
+    """A cell reads a file on this machine: the kernel mounts no host folder, so core predicts its columns and reads
+    it from the cell's settings (``POST /notebook/session/node_run``), without a push; plain Polars in the cell has
+    no such file."""
+    path = tmp_path / "outside.csv"
+    path.write_text("a,b\n1,x\n2,y\n")
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}
+    assert client.post("/notebook/session/open", json=key).status_code == 200
+    cell = f"new = ff.read_csv({str(path)!r})\nprint(new.columns)\ndisplay(new)"
+    shown = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-outside", "code": cell})
+    assert shown.status_code == 200 and shown.json()["success"], shown.text
+    assert shown.json()["stdout"].strip() == "['a', 'b']", shown.json()
+    assert _table_rows(shown.json()) == [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}], shown.json()
+
+    plain = f"import polars as pl\npl.read_csv({str(path)!r})"
+    missing = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-plain", "code": plain})
+    assert missing.status_code == 200 and not missing.json()["success"], missing.text
+    assert "No such file" in json.dumps(missing.json()), missing.json()
+    assert not _in_kernel(str(path))
+
+
+def test_an_installed_custom_node_is_mirrored_into_the_kernel(smoke_flow, notebook_kernel, client_as):
+    """Core's installed custom node files reach the kernel through the ``custom_node_sources`` lookup: a cell places
+    ``mood_emoji`` and the kernel runs it on its own copy of the file."""
+    from test_utils.notebook_demo import installed_mood_emoji
+
+    client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
+    key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}
+    cell = _bind("filtered", _node_id(smoke_flow, "filter")) + (
+        "mood = ff.custom_nodes.mood_emoji(filtered, source_column='amount', threshold_value=25, "
+        "emoji_column_name='mood', add_random_sparkle=False)\nprint(mood.columns)\ndisplay(mood)"
+    )
+    with installed_mood_emoji():
+        assert client.post("/notebook/session/open", json=key).status_code == 200
+        shown = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-node", "code": cell})
+    assert shown.status_code == 200 and shown.json()["success"], shown.text
+    assert "'mood'" in shown.json()["stdout"], shown.json()
+    assert len(_table_rows(shown.json())) == 3, shown.json()
+    assert _in_kernel(f"{_kernel_storage()}/user_defined_nodes/mood_emoji.py")

@@ -31,13 +31,14 @@ from flowfile_core.catalog import (
     SQLAlchemyCatalogRepository,
 )
 from flowfile_core.database.connection import get_db_context
+from flowfile_frame import _metadata
 from flowfile_frame._identity import current_user_id
+from flowfile_frame._metadata import Namespace
 from flowfile_frame.notebook import refuse
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from flowfile_core.database.models import CatalogNamespace
     from flowfile_core.flowfile.flow_graph import FlowGraph
     from flowfile_core.schemas.catalog_schema import CatalogTableOut
     from flowfile_frame.flow_frame import FlowFrame
@@ -116,7 +117,7 @@ class CatalogReference:
         object.__setattr__(self, "id", ns.id)
 
     @classmethod
-    def _from_namespace(cls, ns: CatalogNamespace) -> CatalogReference:
+    def _from_namespace(cls, ns: Namespace) -> CatalogReference:
         instance = object.__new__(cls)
         object.__setattr__(instance, "name", ns.name)
         object.__setattr__(instance, "id", ns.id)
@@ -178,9 +179,7 @@ class CatalogReference:
 
     def list_schemas(self) -> list[SchemaReference]:
         """Return all schemas (level-1 namespaces) under this catalog."""
-        with get_db_context() as db:
-            namespaces = _get_service(db).list_namespaces(parent_id=self.id)
-            return [SchemaReference._from_namespace(self, ns) for ns in namespaces]
+        return [SchemaReference._from_namespace(self, ns) for ns in _metadata.namespaces(self.id)]
 
     def list_tables(self) -> list[CatalogTableOut]:
         """Return tables across every schema in this catalog (flat list).
@@ -188,14 +187,10 @@ class CatalogReference:
         Each row's ``namespace_id`` identifies which schema it belongs to.
         Use :meth:`SchemaReference.list_tables` for a single-schema view.
         """
-        with get_db_context() as db:
-            service = _get_service(db)
-            schemas = service.list_namespaces(parent_id=self.id)
-            user_id = _get_current_user_id()
-            tables: list[CatalogTableOut] = []
-            for schema in schemas:
-                tables.extend(service.list_tables(namespace_id=schema.id, user_id=user_id))
-            return tables
+        tables: list[CatalogTableOut] = []
+        for schema in _metadata.namespaces(self.id):
+            tables.extend(_metadata.tables(schema.id))
+        return tables
 
 
 class SchemaReference:
@@ -256,7 +251,7 @@ class SchemaReference:
         object.__setattr__(self, "id", ns.id)
 
     @classmethod
-    def _from_namespace(cls, catalog: CatalogReference, ns: CatalogNamespace) -> SchemaReference:
+    def _from_namespace(cls, catalog: CatalogReference, ns: Namespace) -> SchemaReference:
         instance = object.__new__(cls)
         object.__setattr__(instance, "catalog", catalog)
         object.__setattr__(instance, "name", ns.name)
@@ -290,11 +285,7 @@ class SchemaReference:
 
     def list_tables(self) -> list[CatalogTableOut]:
         """Return tables registered in this schema."""
-        with get_db_context() as db:
-            return _get_service(db).list_tables(
-                namespace_id=self.id,
-                user_id=_get_current_user_id(),
-            )
+        return _metadata.tables(self.id)
 
     def get_flow(self, name: str) -> FlowRef:
         """Return the flow registered under ``name`` in this schema.
@@ -454,9 +445,7 @@ def get_catalog(name: str) -> CatalogReference:
 
 def list_catalogs() -> list[CatalogReference]:
     """Return every catalog (level-0 namespace) in the backend."""
-    with get_db_context() as db:
-        namespaces = _get_service(db).list_namespaces(parent_id=None)
-        return [CatalogReference._from_namespace(ns) for ns in namespaces]
+    return [CatalogReference._from_namespace(ns) for ns in _metadata.namespaces(None)]
 
 
 def default_schema() -> SchemaReference:
@@ -467,21 +456,18 @@ def default_schema() -> SchemaReference:
     LookupError
         If the default schema has not been initialized.
     """
-    with get_db_context() as db:
-        service = _get_service(db)
-        default_id = service.get_default_namespace_id()
-        if default_id is None:
-            raise LookupError(
-                "Default schema 'General/default' is not initialized. "
-                "Create it by running the catalog seeding routine, or pass an explicit "
-                "CatalogReference / SchemaReference."
-            )
-        schema_ns = service.get_namespace(default_id)
-        if schema_ns.parent_id is None:
-            raise LookupError("Default namespace has no parent catalog (data integrity issue).")
-        catalog_ns = service.get_namespace(schema_ns.parent_id)
-        catalog = CatalogReference._from_namespace(catalog_ns)
-        return SchemaReference._from_namespace(catalog, schema_ns)
+    default_id = _metadata.default_namespace_id()
+    schema_ns = _metadata.namespace(default_id) if default_id is not None else None
+    if schema_ns is None:
+        raise LookupError(
+            "Default schema 'General/default' is not initialized. "
+            "Create it by running the catalog seeding routine, or pass an explicit "
+            "CatalogReference / SchemaReference."
+        )
+    catalog_ns = _metadata.namespace(schema_ns.parent_id) if schema_ns.parent_id is not None else None
+    if catalog_ns is None:
+        raise LookupError("Default namespace has no parent catalog (data integrity issue).")
+    return SchemaReference._from_namespace(CatalogReference._from_namespace(catalog_ns), schema_ns)
 
 
 def _resolve_namespace_id(
@@ -505,30 +491,29 @@ def _resolve_catalog(
     *,
     auto_create: bool,
     description: str | None,
-) -> CatalogNamespace:
+) -> Namespace:
     from flowfile_core.catalog import NamespaceNotFoundError
 
+    existing = _metadata.namespace_by_name(name, None)
+    if existing is not None:
+        return existing
+    if not auto_create:
+        raise NamespaceNotFoundError(name=name)
+    refuse(f"Creating the catalog {name!r} (auto_create=True)", "writes to the catalog")
     with get_db_context() as db:
         service = _get_service(db)
-        repo = service.repo
-        existing = repo.get_namespace_by_name(name, parent_id=None)
-        if existing is not None:
-            return existing
-        if not auto_create:
-            raise NamespaceNotFoundError(name=name)
-        refuse(f"Creating the catalog {name!r} (auto_create=True)", "writes to the catalog")
         try:
-            return service.create_namespace(
+            created = service.create_namespace(
                 name=name,
                 owner_id=_get_current_user_id(),
                 parent_id=None,
                 description=description,
             )
         except NamespaceExistsError:
-            existing = repo.get_namespace_by_name(name, parent_id=None)
-            if existing is None:
+            created = service.repo.get_namespace_by_name(name, parent_id=None)
+            if created is None:
                 raise
-            return existing
+        return Namespace.from_row(created)
 
 
 def _resolve_schema(
@@ -537,27 +522,26 @@ def _resolve_schema(
     *,
     auto_create: bool,
     description: str | None,
-) -> CatalogNamespace:
+) -> Namespace:
     from flowfile_core.catalog import NamespaceNotFoundError
 
+    existing = _metadata.namespace_by_name(name, catalog.id)
+    if existing is not None:
+        return existing
+    if not auto_create:
+        raise NamespaceNotFoundError(name=f"{catalog.name}.{name}")
+    refuse(f"Creating the schema {catalog.name}.{name} (auto_create=True)", "writes to the catalog")
     with get_db_context() as db:
         service = _get_service(db)
-        repo = service.repo
-        existing = repo.get_namespace_by_name(name, parent_id=catalog.id)
-        if existing is not None:
-            return existing
-        if not auto_create:
-            raise NamespaceNotFoundError(name=f"{catalog.name}.{name}")
-        refuse(f"Creating the schema {catalog.name}.{name} (auto_create=True)", "writes to the catalog")
         try:
-            return service.create_namespace(
+            created = service.create_namespace(
                 name=name,
                 owner_id=_get_current_user_id(),
                 parent_id=catalog.id,
                 description=description,
             )
         except NamespaceExistsError:
-            existing = repo.get_namespace_by_name(name, parent_id=catalog.id)
-            if existing is None:
+            created = service.repo.get_namespace_by_name(name, parent_id=catalog.id)
+            if created is None:
                 raise
-            return existing
+        return Namespace.from_row(created)

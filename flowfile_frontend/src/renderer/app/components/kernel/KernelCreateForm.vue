@@ -155,8 +155,6 @@
       </p>
     </div>
 
-    <KernelFoldersField v-if="showFolders" v-model="folders" />
-
     <div class="form-grid form-grid--3col">
       <div class="form-field">
         <label for="kernel-memory" class="form-label">Memory (GB)</label>
@@ -211,9 +209,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { ElTag } from "element-plus";
-import authService from "../../services/auth.service";
-import KernelFoldersField from "./KernelFoldersField.vue";
-import { cleanFolders } from "./kernelFolders";
 import {
   KERNEL_FLAVOURS,
   type FlavourInfo,
@@ -221,7 +216,6 @@ import {
   type ImageFlavour,
   type KernelConfig,
   type KernelImageStatus,
-  type MountedFolderEntry,
 } from "../../types";
 
 const props = defineProps<{
@@ -249,9 +243,6 @@ const isSubmitting = ref(false);
 const submitError = ref<string | null>(null);
 const packages = ref<string[]>([]);
 const newPackage = ref("");
-// Core refuses mounted folders outside desktop mode.
-const showFolders = authService.isInDesktopMode();
-const folders = ref<MountedFolderEntry[]>([]);
 
 const form = ref({
   id: "",
@@ -274,7 +265,6 @@ watch(
     if (seed.name !== undefined) form.value.name = seed.name;
     if (seed.image_flavour !== undefined) form.value.image_flavour = seed.image_flavour;
     if (seed.packages !== undefined) packages.value = [...seed.packages];
-    if (seed.mounted_folders !== undefined) folders.value = [...seed.mounted_folders];
   },
   { immediate: true, deep: false },
 );
@@ -414,7 +404,6 @@ const handleSubmit = async () => {
     gpu: form.value.gpu,
     image_flavour: form.value.image_flavour,
     custom_image: form.value.image_flavour === "custom" ? form.value.custom_image.trim() : null,
-    ...(showFolders ? { mounted_folders: cleanFolders(folders.value) } : {}),
   };
 
   isSubmitting.value = true;
@@ -433,7 +422,6 @@ const handleSubmit = async () => {
     };
     packages.value = [];
     newPackage.value = "";
-    folders.value = [];
     emit("success");
   } catch (error) {
     // Kept inline beside the populated form: the tracker's toast disappears before a pip log can be read.

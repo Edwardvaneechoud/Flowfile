@@ -5,9 +5,7 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 import threading
-from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -20,7 +18,6 @@ from tests.notebook.conftest import NOTEBOOK_OWNER_ID, cell_provenance
 from tests.notebook.test_ledger import grade
 
 LOOPBACK = ("127.0.0.1", 50123)
-COPY_NAME = re.compile(r"flowfile_catalog\.[0-9a-f]{32}\.db")
 
 LOOP_CELL = """import re
 
@@ -52,6 +49,17 @@ def _execute(client, flow, kernel_sim, code: str, cell_id: str = "cell-1", **ext
 
 def _op(request) -> str:
     return re.search(r'"op": "(\w+)"', request.code).group(1)
+
+
+def test_core_creates_the_sessions_results_folder_at_open(orders_flow, client, kernel_sim):
+    """Core makes the folder before the kernel can write into it: on a Linux host a folder the kernel (root in
+    its container) created on the bind mount would be one core cannot write its own files into."""
+    from flowfile_core.notebook import kernel_runner
+
+    results = Path(kernel_runner._results_dir(kernel_sim, orders_flow.flow_id))
+    assert not results.exists()
+    assert client.post("/notebook/session/open", json=_body(orders_flow, kernel_sim)).status_code == 200
+    assert results.is_dir()
 
 
 def test_a_cell_with_an_import_and_a_loop_runs_in_the_session(orders_flow, client, kernel_sim):
@@ -136,131 +144,47 @@ def test_an_unedited_corpus_push_through_the_kernel_changes_nothing(notebook_cor
     assert sum('"op": "clean_run"' in r.code for r in kernel_sim.requests) == len(pushed)
 
 
-def _owner() -> PydanticUser:
-    return PydanticUser(username="nb_kernel_owner", id=NOTEBOOK_OWNER_ID, disabled=False)
+def test_a_notebook_kernel_refuses_to_open_a_catalog_database(tmp_path, monkeypatch):
+    """In a kernel (``FLOWFILE_KERNEL_ID`` set) the catalog engine fails every connection before pysqlite would
+    create the file; without the variable (a script, the kernel-sim) nothing is installed, and core's own engine
+    is never touched."""
+    from sqlalchemy import create_engine, event, text
+    from sqlalchemy.orm import sessionmaker
 
-
-def test_a_session_call_copies_the_database_only_when_the_kernel_asks(orders_flow, client, kernel_sim):
-    from flowfile_core.kernel import notebook_db
-    from flowfile_core.notebook import kernel_runner
-
-    directory = notebook_db.copy_dir(kernel_sim.shared_volume_path, kernel_sim.kernel.id)
-    assert _execute(client, orders_flow, kernel_sim, "x = 1")["success"]
-    assert client.post("/notebook/session/schemas", json=_body(orders_flow, kernel_sim)).status_code == 200
-    assert not directory.exists()
-
-    copy = Path(kernel_runner.refresh_database(kernel_sim.kernel.id, _owner())["path"])
-    assert copy.parent == directory and COPY_NAME.fullmatch(copy.name)
-    assert [entry.name for entry in directory.iterdir()] == [copy.name]
-    with closing(sqlite3.connect(f"{copy.as_uri()}?mode=ro", uri=True)) as conn:
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchone()
-
-
-def test_only_the_kernels_owner_in_desktop_mode_refreshes_its_copy(kernel_sim, monkeypatch):
-    from fastapi import HTTPException
-
-    from flowfile_core.notebook import kernel_runner
-
-    stranger = PydanticUser(username="stranger", id=NOTEBOOK_OWNER_ID + 1, disabled=False)
-    with pytest.raises(HTTPException) as refused:
-        kernel_runner.refresh_database(kernel_sim.kernel.id, stranger)
-    assert refused.value.status_code == 403
-    monkeypatch.setenv("FLOWFILE_MODE", "docker")
-    with pytest.raises(HTTPException) as refused:
-        kernel_runner.refresh_database(kernel_sim.kernel.id, _owner())
-    assert refused.value.status_code == 403
-
-
-def test_the_database_route_answers_only_a_kernel(client, kernel_sim):
-    from flowfile_core import main
-    from flowfile_core.auth.jwt import get_user_or_internal_service
-
-    main.app.dependency_overrides[get_user_or_internal_service] = _owner
-    try:
-        assert client.post("/notebook/session/database").status_code == 403
-        answer = client.post("/notebook/session/database", headers={"X-Kernel-Id": kernel_sim.kernel.id})
-        assert answer.status_code == 200, answer.text
-        assert COPY_NAME.fullmatch(Path(answer.json()["path"]).name)
-    finally:
-        main.app.dependency_overrides.pop(get_user_or_internal_service, None)
-
-
-def test_each_connection_opens_the_copy_core_named_last(tmp_path, monkeypatch):
-    """A call asks core once, before its first connection, and every connection opens the copy core answered
-    with, never the fixed ``FLOWFILE_DB_PATH`` name; a connection outside a call reuses the last copy."""
-    from sqlalchemy import create_engine, text
-
+    from flowfile_core.database import connection
     from flowfile_frame import notebook_kernel
+    from shared import database as shared_database
 
-    fixed = tmp_path / "flowfile_catalog.db"
-    asks = []
-
-    def core_refresh() -> dict:
-        asks.append(len(asks) + 1)
-        copy = tmp_path / f"flowfile_catalog.{asks[-1]}.db"
-        with closing(sqlite3.connect(copy)) as conn:
-            conn.execute("CREATE TABLE t (v INTEGER)")
-            conn.execute("INSERT INTO t VALUES (?)", (asks[-1],))
-            conn.commit()
-        return {"path": str(copy)}
-
-    def read() -> list[list[int]]:
-        with engine.connect() as first, engine.connect() as second:
-            return [conn.execute(text("SELECT v FROM t")).scalars().all() for conn in (first, second)]
-
-    monkeypatch.setattr(notebook_kernel, "database_transport", core_refresh)
-    monkeypatch.setattr(notebook_kernel, "_refresh_pending", False)
-    monkeypatch.setattr(notebook_kernel, "_database_copy", None)
-    engine = create_engine(f"sqlite:///{fixed}")
+    path = tmp_path / "flowfile_catalog.db"
+    engine = create_engine(f"sqlite:///{path}")
+    monkeypatch.setattr(shared_database, "get_catalog_engine", lambda url=None: engine)
     try:
-        notebook_kernel._rearm(engine)
-        assert asks == []
-        assert read() == [[1], [1]]
-        assert asks == [1]
+        monkeypatch.delenv("FLOWFILE_KERNEL_ID", raising=False)
+        notebook_kernel._refuse_database()
+        assert not event.contains(engine, "do_connect", notebook_kernel._refuse_connect)
 
-        notebook_kernel._rearm(engine)
-        assert read() == [[2], [2]]
-        assert asks == [1, 2]
-
-        engine.dispose()
-        assert read() == [[2], [2]]
-        assert asks == [1, 2]
-        assert not fixed.exists()
+        monkeypatch.setenv("FLOWFILE_KERNEL_ID", "k")
+        notebook_kernel._refuse_database()
+        notebook_kernel._refuse_database()
+        with pytest.raises(RuntimeError, match="no catalog database") as refused:
+            engine.connect()
+        assert "ff.list_catalogs" in str(refused.value)
+        with pytest.raises(RuntimeError, match="no catalog database"):
+            sessionmaker(bind=engine)().execute(text("SELECT 1"))
+        assert not path.exists()
     finally:
         engine.dispose()
+    assert not event.contains(connection.engine, "do_connect", notebook_kernel._refuse_connect)
 
 
-def test_a_copy_core_did_not_write_fails_the_connection_and_is_asked_for_again(tmp_path, monkeypatch):
-    from sqlalchemy import create_engine
-
-    from flowfile_frame import notebook_kernel
-
-    missing = str(tmp_path / "elsewhere" / "flowfile_catalog.0.db")
-    asks = []
-    monkeypatch.setattr(notebook_kernel, "database_transport", lambda: asks.append(1) or {"path": missing})
-    monkeypatch.setattr(notebook_kernel, "_refresh_pending", False)
-    monkeypatch.setattr(notebook_kernel, "_database_copy", None)
-    engine = create_engine(f"sqlite:///{tmp_path / 'flowfile_catalog.db'}")
-    try:
-        notebook_kernel._rearm(engine)
-        for _ in range(2):
-            with pytest.raises(RuntimeError, match="missing in this kernel"):
-                engine.connect()
-        assert asks == [1, 1]
-    finally:
-        engine.dispose()
-
-
-def test_stopping_the_kernel_forgets_its_sessions_and_database_copy(orders_flow, client, kernel_sim):
-    from flowfile_core.kernel import notebook_db
+def test_stopping_the_kernel_forgets_its_sessions(orders_flow, client, kernel_sim):
     from flowfile_core.notebook import kernel_runner
 
     assert client.post("/notebook/session/open", json=_body(orders_flow, kernel_sim)).status_code == 200
-    copy = Path(kernel_runner.refresh_database(kernel_sim.kernel.id, _owner())["path"])
-    assert copy.exists()
+    assert any(key[0] == kernel_sim.kernel.id for key in kernel_runner._verified)
     kernel_runner.forget_kernel(kernel_sim.kernel.id, kernel_sim.shared_volume_path)
     assert orders_flow.flow_id not in kernel_runner._sessions
-    assert not copy.parent.exists()
+    assert not any(key[0] == kernel_sim.kernel.id for key in kernel_runner._verified)
 
 
 def test_an_unconfigured_node_on_the_canvas_keeps_the_session_usable(open_as, client, kernel_sim):
@@ -294,14 +218,13 @@ def test_a_cell_runs_as_its_own_node_and_every_other_op_as_node_0(orders_flow, c
     assert ops == [("hello", 0), ("open", 0), ("execute", 1234), ("schemas", 0)], ops
 
 
-def test_a_kernel_whose_flowfile_has_another_schema_head_is_refused(orders_flow, client, kernel_sim, monkeypatch):
+def test_a_kernel_whose_flowfile_has_another_version_is_refused(orders_flow, client, kernel_sim, monkeypatch):
     from flowfile_core.notebook import kernel_runner
     from flowfile_frame import notebook_kernel
 
-    assert notebook_kernel._schema_head() == kernel_runner._schema_revision() is not None
-    monkeypatch.setattr(notebook_kernel, "_schema_head", lambda: "999")
+    monkeypatch.setattr(notebook_kernel, "_hello", lambda request: {"ok": True, "version": "0.0.0"})
     response = client.post("/notebook/session/execute", json=_body(orders_flow, kernel_sim, cell_id="c", code="1"))
-    assert response.status_code == 409 and "999" in response.json()["detail"], response.text
+    assert response.status_code == 409 and "0.0.0" in response.json()["detail"], response.text
     assert not kernel_runner._verified
 
 
@@ -363,7 +286,7 @@ def test_a_close_that_lands_after_the_flow_reopened_leaves_the_new_session(
 
     assert _execute(client, orders_flow, kernel_sim, "x = 1")["success"]
     results = Path(kernel_runner._results_dir(kernel_sim, orders_flow.flow_id))
-    results.mkdir(parents=True)
+    results.mkdir(parents=True, exist_ok=True)
     (results / "canvas.parquet").touch()
     stale = close_flow()
 
@@ -383,3 +306,56 @@ def test_a_flows_session_namespace_is_apart_from_every_catalog_notebooks():
 
     assert kernel_flow_id(7) == -(1 << 40) - 7
     assert kernel_flow_id(0xFFFFFFFF) < -1_600_000_000
+
+
+def test_the_kernel_mirrors_cores_custom_node_files(tmp_path, monkeypatch):
+    """``_mirror_custom_nodes`` writes the node files core lists into the kernel's own nodes folder, rewrites one whose
+    hash changed, removes only the files it wrote, and leaves an unchanged file alone."""
+    import hashlib
+
+    from flowfile_core.flowfile.user_defined.registry import registry
+    from flowfile_frame import _metadata, notebook_kernel
+    from test_utils.notebook_demo import MOOD_EMOJI
+
+    def listed(source: str) -> list:
+        return [_metadata.CustomNodeSource("mood_emoji", source, hashlib.sha256(source.encode()).hexdigest())]
+
+    source = MOOD_EMOJI.read_text(encoding="utf-8")
+    answer = listed(source)
+    fetched: list = []
+
+    def sources(keys=None) -> list:
+        fetched.append(keys)
+        return [entry for entry in answer if keys is None or entry.node_key in keys]
+
+    monkeypatch.setattr(_metadata, "custom_node_hashes", lambda: {e.node_key: e.source_hash for e in answer})
+    monkeypatch.setattr(_metadata, "custom_node_sources", sources)
+    monkeypatch.setattr(notebook_kernel, "_MIRRORED", {})
+    original = registry._directory
+    monkeypatch.setattr(registry, "_directory", tmp_path / "nodes")
+    try:
+        registry.scan()
+        path = tmp_path / "nodes" / "mood_emoji.py"
+        notebook_kernel._mirror_custom_nodes()
+        assert path.read_text(encoding="utf-8") == source and registry.get("mood_emoji") is not None
+        assert registry.get("mood_emoji").source_hash == answer[0].source_hash, "written byte for byte"
+        written = path.stat().st_mtime_ns
+        notebook_kernel._mirror_custom_nodes()
+        assert path.stat().st_mtime_ns == written, "an unchanged file is not rewritten"
+        assert fetched == [["mood_emoji"]], "the sources are fetched once, for the key the registry lacked"
+
+        changed = source + "\n# edited\n"
+        answer[:] = listed(changed)
+        notebook_kernel._mirror_custom_nodes()
+        assert path.read_text(encoding="utf-8") == changed and registry.get("mood_emoji").source_text == changed
+        assert fetched == [["mood_emoji"], ["mood_emoji"]]
+
+        foreign = tmp_path / "nodes" / "foreign.py"
+        foreign.write_text("# not a node\n", encoding="utf-8")
+        answer[:] = []
+        notebook_kernel._mirror_custom_nodes()
+        assert not path.exists() and foreign.exists(), "only mirrored files are removed"
+        assert registry.get("mood_emoji") is None
+    finally:
+        registry._directory = original
+        registry.scan()

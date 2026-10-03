@@ -577,6 +577,37 @@ def test_run_lineage_runs_only_the_ancestors(open_as, client_as):
         assert (run.success, run.nodes_completed, run.number_of_nodes) == (True, 2, 2)
 
 
+def test_run_lineage_commits_no_source_progress(open_as, client_as):
+    """A node cell's Run shows rows: a source's commit callback waits for a run of the whole flow."""
+    graph = open_as(ff.from_dict({"a": [1, 2, 3]}).filter(ff.col("a") > 1).flow_graph)
+    source = _node_of_type(graph, "manual_input")
+    committed = []
+    source._on_flow_complete = committed.append
+    response = client_as(OWNER_ID).post(
+        "/editor/notebook/run_lineage/",
+        json={"flow_id": graph.flow_id, "node_id": _node_of_type(graph, "filter").node_id},
+    )
+    assert response.status_code == 200, response.text
+    assert graph.get_run_info().success
+    assert committed == [] and source._on_flow_complete is not None
+
+
+def test_run_lineage_of_a_writer_commits_source_progress(open_as, client_as, tmp_path):
+    """A writer cell's Run writes, so the source's progress is committed with it: the flow's next run must not
+    write the same rows again."""
+    source = ff.from_dict({"a": [1, 2, 3]})
+    source.write_csv(str(tmp_path / "out.csv"))
+    graph = open_as(source.flow_graph)
+    committed = []
+    _node_of_type(graph, "manual_input")._on_flow_complete = committed.append
+    response = client_as(OWNER_ID).post(
+        "/editor/notebook/run_lineage/",
+        json={"flow_id": graph.flow_id, "node_id": _node_of_type(graph, "output").node_id},
+    )
+    assert response.status_code == 200, response.text
+    assert (tmp_path / "out.csv").exists() and committed == [True]
+
+
 def test_set_flow_parameters_applies_outside_undo_and_rolls_back_with_the_batch(orders_flow, client_as):
     client = client_as(OWNER_ID)
     graph = orders_flow

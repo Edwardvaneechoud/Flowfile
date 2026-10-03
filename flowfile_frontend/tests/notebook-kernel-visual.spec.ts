@@ -22,8 +22,8 @@ import { clickRun, minimizePalette, openFlow } from "./helpers/canvas";
  * results.json, for a maintainer to look at. Not part of CI: it needs Docker, the image
  * `flowfile-kernel-notebook:dev`, a core in electron mode, and these env vars:
  *   SHOTS_DIR  folder for the PNGs and results.json
- *   CSV_PATH   absolute path of a small CSV (id, quantity, amount, region) outside every
- *              folder the kernel mounts
+ *   CSV_PATH   absolute path of a small CSV (id, quantity, amount, region); core reads it,
+ *              never the kernel
  */
 
 const SHOTS_DIR = process.env.SHOTS_DIR ?? "";
@@ -247,30 +247,15 @@ test.describe("Notebook on a kernel, visual inspection", () => {
     const panel = page.locator(NOTEBOOK);
     const cellAt = (c: RenderedCell) => panel.locator(`[data-cell-id="${c.cell_id}"]`);
 
-    await check(page, "01", "Kernels page: folders field and relative-path refusal", async () => {
+    await check(page, "01", "Kernels page: create form", async () => {
       await openFlow(page, token, flowId, flowName);
       await page.goto(`${BASE_URL}/#/main/compute?tab=kernels`);
       const header = page.getByRole("button", { name: /Create new kernel/ });
       if ((await header.getAttribute("aria-expanded")) !== "true") await header.click();
-      await page.locator("#kernel-id").fill("relcheck");
-      await page.locator("#kernel-name").fill("Relative path check");
-      await page.getByRole("button", { name: "Add folder" }).click();
-      await page.getByLabel("Folder 1", { exact: true }).fill("data/relative");
-      await page.getByRole("button", { name: "Add folder" }).click();
-      await page.getByLabel("Folder 2", { exact: true }).fill(path.dirname(CSV_PATH));
-      const created = page.waitForResponse(
-        (r) => r.url().includes("/kernels/") && r.request().method() === "POST",
-      );
-      await page.locator(".km-form-card button[type=submit]").click();
-      const status = (await created).status();
-      const error = page.locator(".form-submit-error");
-      await expect(error).toBeVisible();
-      await error.scrollIntoViewIfNeeded();
-      const text = (await error.innerText()).trim();
-      const file = await shot(page, "01-kernel-create-folders");
-      expect(status).toBe(422);
-      expect(text).toContain("absolute path");
-      return { note: `POST /kernels/ -> ${status}; inline error: "${text}"`, shots: [file] };
+      await page.locator("#kernel-id").fill("formcheck");
+      await page.locator("#kernel-name").fill("Create form check");
+      const file = await shot(page, "01-kernel-create-form");
+      return { note: "create form expanded and filled, not submitted", shots: [file] };
     });
 
     await check(page, "13", "Create notebook kernel… dialog from a flow tab's picker", async () => {
@@ -342,7 +327,7 @@ test.describe("Notebook on a kernel, visual inspection", () => {
     expect(started.ok(), await started.text()).toBe(true);
     await waitKernelState(request, token, "idle");
 
-    await check(page, "02", "Kernel details modal with the folders field", async () => {
+    await check(page, "02", "Kernel details modal", async () => {
       await page.goto(`${BASE_URL}/#/main/compute?tab=kernels`);
       const card = page.locator(".kernel-card", { hasText: KERNEL_NAME });
       await card.getByRole("button", { name: "Details" }).click();
@@ -350,33 +335,7 @@ test.describe("Notebook on a kernel, visual inspection", () => {
       await expect(modal).toBeVisible();
       const running = await shot(page, "02a-kernel-details-running");
       await modal.locator(".modal-close").click();
-      await card.getByRole("button", { name: "Stop" }).click();
-      await waitKernelState(request, token, "stopped");
-      await page.reload();
-      await page
-        .locator(".kernel-card", { hasText: KERNEL_NAME })
-        .getByRole("button", { name: "Details" })
-        .click();
-      await expect(modal).toBeVisible();
-      await modal.getByRole("button", { name: "Edit" }).click();
-      await expect(modal.getByText("Folders this kernel can read")).toBeVisible();
-      await modal.getByRole("button", { name: "Add folder" }).click();
-      await modal.getByLabel("Folder 1", { exact: true }).fill("/Users/me/does-not-exist");
-      const editing = await shot(page, "02b-kernel-details-edit-folders");
-      await modal.getByRole("button", { name: "Save" }).click();
-      const err = modal.locator(".form-error");
-      await expect(err).toBeVisible();
-      const errText = (await err.innerText()).trim();
-      const refused = await shot(page, "02c-kernel-details-missing-folder-refused");
-      await modal.getByRole("button", { name: "Cancel" }).click();
-      await modal.locator(".modal-close").click();
-      const start = await api(request, token, "post", `/kernels/${KERNEL_ID}/start`);
-      expect(start.ok()).toBe(true);
-      await waitKernelState(request, token, "idle");
-      return {
-        note: `folders field in edit mode; missing folder refused: "${errText}"`,
-        shots: [running, editing, refused],
-      };
+      return { note: "details modal of the running kernel", shots: [running] };
     });
 
     await check(page, "04", "Kernel picker open in flow mode", async () => {
@@ -746,73 +705,6 @@ test.describe("Notebook on a kernel, visual inspection", () => {
         shots: r.shots,
       };
     });
-
-    await check(
-      page,
-      "12",
-      "Folder added to the kernel: display of an unpushed read shows rows",
-      async () => {
-        const shots: string[] = [];
-        await api(request, token, "post", `/kernels/${KERNEL_ID}/stop`);
-        await waitKernelState(request, token, "stopped");
-        await page.goto(`${BASE_URL}/#/main/compute?tab=kernels`);
-        await page
-          .locator(".kernel-card", { hasText: KERNEL_NAME })
-          .getByRole("button", { name: "Details" })
-          .click();
-        const modal = page.locator(".km-details-modal");
-        await modal.getByRole("button", { name: "Edit" }).click();
-        await modal.getByRole("button", { name: "Add folder" }).click();
-        await modal.getByLabel("Folder 1", { exact: true }).fill(path.dirname(CSV_PATH));
-        shots.push(await shot(page, "12a-kernel-edit-add-folder"));
-        const patched = responseTo(page, `/kernels/${KERNEL_ID}`);
-        await modal.getByRole("button", { name: "Save" }).click();
-        expect((await patched).status()).toBe(200);
-        await expect(modal.getByText(path.dirname(CSV_PATH))).toBeVisible();
-        shots.push(await shot(page, "12b-kernel-details-with-folder"));
-        await modal.locator(".modal-close").click();
-        const start = await api(request, token, "post", `/kernels/${KERNEL_ID}/start`);
-        expect(start.ok(), await start.text()).toBe(true);
-        await waitKernelState(request, token, "idle");
-        await openFlow(page, token, flowId, flowName);
-        await minimizePalette(page);
-        await openNotebook(page);
-        await expect(page.getByTestId("nb-kernel-select")).toContainText(KERNEL_NAME);
-        const code = [
-          `fresh = ff.read_csv(${JSON.stringify(CSV_PATH)})`,
-          'big = fresh.filter(ff.col("amount") > 60)',
-          "display(big)",
-        ].join("\n");
-        const cell = await addCell(page, code);
-        const exec = responseTo(page, "/notebook/session/execute");
-        await cell.locator(".nb-run").click();
-        const r = await exec;
-        await expect(cell.locator(".cell-output")).toBeVisible({ timeout: 60_000 });
-        await page.waitForTimeout(1000);
-        await scrollCellIntoView(cell);
-        shots.push(await shot(page, "12c-display-unpushed-read"));
-        expect(r.status(), (await r.text()).slice(0, 400)).toBe(200);
-        const out = (await cell.locator(".cell-output").innerText())
-          .replace(/\s+/g, " ")
-          .slice(0, 300);
-        const ok = (await cell.locator(".output-error").count()) === 0 && /85/.test(out);
-        await cell.locator(".nb-cell-menu").click();
-        await page.locator(".nb-cell-menu-popper:visible [data-action='delete']").click();
-        const priced = await addCell(page, PRICED_CODE());
-        const exec2 = responseTo(page, "/notebook/session/execute");
-        await priced.locator(".nb-run").click();
-        await exec2;
-        await expect(priced.locator(".cell-output")).toBeVisible({ timeout: 60_000 });
-        await page.waitForTimeout(1000);
-        await scrollCellIntoView(priced);
-        shots.push(await shot(page, "12d-priced-with-folder"));
-        const pricedOut = (await priced.locator(".cell-output").innerText())
-          .replace(/\s+/g, " ")
-          .slice(0, 300);
-        expect(ok, `display(big) shows rows: ${out}`).toBe(true);
-        return { note: `display(big): "${out}"; priced re-run: "${pricedOut}"`, shots };
-      },
-    );
 
     await check(page, "14", "Dark mode notebook with outputs", async () => {
       await page.emulateMedia({ colorScheme: "dark" });

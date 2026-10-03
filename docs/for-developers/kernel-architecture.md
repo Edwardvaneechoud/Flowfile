@@ -294,7 +294,7 @@ The internal token is passed per-request in the `ExecuteRequest` and also set as
 
 - **Process isolation** — Each kernel runs in its own Docker container
 - **Resource limits** — Memory (`mem_limit`) and CPU (`nano_cpus`) are enforced by Docker
-- **Filesystem isolation** — A kernel writes only to `/shared`, `/catalog_tables` and, in the desktop app, folders its owner marked **Writable**; its other mounted folders and a notebook kernel's Flowfile folders are read-only (`kernel/notebook_mounts.py`)
+- **Filesystem isolation** — A kernel writes only to `/shared` and `/catalog_tables` and mounts no other host folder; a notebook kernel reads files, catalog tables, flow files and custom node sources through core
 - **User ownership** — Each kernel is owned by the user who created it; other users cannot access it
 
 ### Trust Boundaries

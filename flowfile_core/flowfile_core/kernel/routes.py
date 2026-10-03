@@ -28,10 +28,8 @@ from flowfile_core.kernel.models import (
     KernelMemoryInfo,
     KernelSuggestion,
     KernelUpdate,
-    MountedFolder,
     RecoveryStatus,
 )
-from flowfile_core.kernel.notebook_mounts import validate_mounted_folders
 from flowfile_core.lsp.feature_flag import is_lsp_enabled
 from flowfile_core.lsp.models import (
     CompleteResponse,
@@ -63,14 +61,6 @@ async def _get_manager():
 router = APIRouter(prefix="/kernels", dependencies=[Depends(get_current_active_user)])
 
 
-def _validated_folders(folders: list[str | MountedFolder]) -> list[str | MountedFolder]:
-    """``notebook_mounts.validate_mounted_folders`` with its refusal as a 422."""
-    try:
-        return validate_mounted_folders(folders)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
 @router.get("/", response_model=list[KernelInfo])
 async def list_kernels(current_user=Depends(get_current_active_user)):
     manager = await _get_manager()
@@ -79,7 +69,6 @@ async def list_kernels(current_user=Depends(get_current_active_user)):
 
 @router.post("/", response_model=KernelInfo)
 async def create_kernel(config: KernelConfig, current_user=Depends(get_current_active_user)):
-    config = config.model_copy(update={"mounted_folders": _validated_folders(config.mounted_folders)})
     manager = await _get_manager()
     try:
         return await manager.create_kernel(config, user_id=current_user.id)
@@ -300,11 +289,10 @@ async def update_kernel(
     update: KernelUpdate,
     current_user=Depends(get_current_active_user),
 ):
-    """Update a kernel's editable fields: ``packages`` and, when sent, ``mounted_folders``.
+    """Update a kernel's editable fields: ``packages``.
 
     The kernel must be stopped (rebuild of the derived image happens here).
     """
-    folders = _validated_folders(update.mounted_folders) if update.mounted_folders is not None else None
     manager = await _get_manager()
     kernel = await manager.get_kernel(kernel_id)
     if kernel is None:
@@ -312,7 +300,7 @@ async def update_kernel(
     if manager.get_kernel_owner(kernel_id) != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to access this kernel")
     try:
-        return await manager.update_kernel(kernel_id, update.packages, mounted_folders=folders)
+        return await manager.update_kernel(kernel_id, update.packages)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

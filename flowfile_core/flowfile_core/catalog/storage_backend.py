@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import get_cloud_connection_schema
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
+from flowfile_core.notebook.lookup import metadata_lookup
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnectionWorkerInterface
 from shared.cloud_storage.uri import CLOUD_URI_SCHEMES as _CLOUD_URI_SCHEMES
 from shared.storage_config import storage
@@ -120,16 +121,50 @@ def _resolve_in_session(db: Session, namespace_id: int) -> CatalogStorageTarget:
     )
 
 
+def locate_for_namespace(namespace_id: int | None) -> CatalogStorageTarget:
+    """Where a namespace's tables live, without resolving the storage connection: no credential is read.
+
+    What a notebook kernel is told (``notebook.lookup``): ``is_cloud``, ``base`` and ``connection_name`` only,
+    by the rules of :func:`resolve_for_namespace` up to the connection.
+    """
+    if namespace_id is None:
+        return _local_target()
+    from flowfile_core.catalog.repository import SQLAlchemyCatalogRepository
+
+    with get_db_context() as db:
+        root = SQLAlchemyCatalogRepository(db).get_root_namespace(namespace_id)
+        if root is None or not root.storage_uri:
+            return _local_target()
+        if not root.storage_connection_name:
+            raise ValueError(
+                f"Catalog '{root.name}' has storage_uri set but no storage_connection_name; "
+                "a cloud connection is required to resolve catalog storage credentials."
+            )
+        return CatalogStorageTarget(
+            is_cloud=True, base=str(root.storage_uri).rstrip("/"), connection_name=root.storage_connection_name
+        )
+
+
 def resolve_for_namespace(namespace_id: int | None, *, db: Session | None = None) -> CatalogStorageTarget:
     """Resolve catalog storage for a namespace, inheriting from its level-0 root catalog.
 
     Credentials always resolve as the catalog owner, never the calling user. Pass *db* to
-    reuse the caller's session.
+    reuse the caller's session. In a notebook kernel session (``metadata_lookup`` set, never
+    with *db*) core answers where the data lives without any credential: a cloud-backed table
+    is held there and read by core.
     """
     if namespace_id is None:
         return _local_target()
     if db is not None:
         return _resolve_in_session(db, namespace_id)
+    remote = metadata_lookup.get()
+    if remote is not None:
+        answer = remote("catalog_storage", {"namespace_id": namespace_id})
+        if "error" in answer:
+            raise ValueError(answer["error"])
+        return CatalogStorageTarget(
+            is_cloud=answer["is_cloud"], base=answer["base"], connection_name=answer.get("connection_name")
+        )
     with get_db_context() as own_db:
         return _resolve_in_session(own_db, namespace_id)
 

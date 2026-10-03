@@ -1,6 +1,6 @@
 """Notebook build mode: one session graph, nothing runs, writes or registers while a cell builds."""
 
-import json
+import os
 
 import polars as pl
 import pytest
@@ -100,6 +100,7 @@ def test_sink_refuses_in_the_mode(mode, tmp_path):
     "call",
     [
         lambda g: ff.register_flow(g, name="nb_refused"),
+        lambda g: ff.register_flow_with_catalog(g, name="nb_refused"),
         lambda g: ff.RunFlow(g, name="nb_refused"),
         lambda g: ff.custom_nodes.install("does_not_exist.py"),
         lambda g: ff.create_database_connection("nb", database_type="sqlite", database=":memory:"),
@@ -112,6 +113,7 @@ def test_sink_refuses_in_the_mode(mode, tmp_path):
     ],
     ids=[
         "register_flow",
+        "register_flow_with_catalog",
         "run_flow_graph",
         "custom_nodes_install",
         "create_database_connection",
@@ -462,52 +464,183 @@ def test_a_user_less_mode_checks_a_placement_as_the_user_its_settings_carry():
         assert reader.output._deferred and reader.output.collect_schema().names() == ["x"]
 
 
-def test_kernel_path_translates_through_the_notebook_mount_table(monkeypatch):
-    monkeypatch.delenv(notebook.MOUNTS_ENV, raising=False)
-    assert notebook.kernel_path(r"C:\data\sales.csv") == r"C:\data\sales.csv"
-
-    table = {r"C:\Users\me\.flowfile": "/host/c/Users/me/.flowfile", r"C:\Users\me": "/host/c/Users/me"}
-    monkeypatch.setenv(notebook.MOUNTS_ENV, json.dumps(table))
-    assert notebook.kernel_path(r"C:\Users\me\data\sales.csv") == "/host/c/Users/me/data/sales.csv"
-    assert notebook.kernel_path(r"c:\users\ME\.flowfile\flows\a.yaml") == "/host/c/Users/me/.flowfile/flows/a.yaml"
-    assert notebook.kernel_path(r"D:\data\sales.csv") is None
-    assert notebook.kernel_path(r"C:\Users\meadow\x.csv") is None
-
-
-def test_paths_kept_as_written_still_glob_a_folder_and_join_a_name(tmp_path, monkeypatch):
+def test_paths_kept_as_written_still_glob_a_folder_and_join_a_name(tmp_path):
     from flowfile_core.schemas.input_schema import ReceivedTable
     from shared.path_utils import expand_glob_pattern
 
     folder = tmp_path / "sales"
     folder.mkdir()
     (folder / "a.csv").write_text("x\n1\n")
-    monkeypatch.delenv(notebook.MOUNTS_ENV, raising=False)
     with notebook.paths_as_written():
         directory = ReceivedTable(path=str(folder), file_type="csv", scan_mode="directory")
         assert expand_glob_pattern(directory.abs_file_path) == [str(folder / "a.csv")]
         assert ReceivedTable(path=str(folder), name="a.csv", file_type="csv").abs_file_path == str(folder / "a.csv")
-
-    monkeypatch.setenv(notebook.MOUNTS_ENV, json.dumps({r"C:\data": str(folder)}))
-    with notebook.paths_as_written():
-        directory = ReceivedTable(path=r"C:\data", file_type="csv", scan_mode="directory")
-        assert directory.path == r"C:\data"
-        assert expand_glob_pattern(directory.abs_file_path) == [str(folder / "a.csv")]
-        assert ReceivedTable(path=r"C:\data", name="a.csv", file_type="csv").abs_file_path == f"{folder}/a.csv"
-        assert ReceivedTable(path=r"C:\data\a.csv", name=r"C:\data\a.csv", file_type="csv").abs_file_path == (
-            f"{folder}/a.csv"
-        )
-        read = ff.read_csv(r"C:\data\a.csv")
-        assert read.collect().to_dicts() == [{"x": 1}]
+        windows = ReceivedTable(path=r"C:\data", name=r"C:\data\a.csv", file_type="csv")
+        assert windows.path == r"C:\data" and windows.abs_file_path == os.path.join(r"C:\data", "a.csv")
 
 
-def test_scan_mode_probes_the_folder_the_kernel_sees(tmp_path, monkeypatch):
+def test_scan_mode_asks_core_in_a_kernel_session(tmp_path):
+    """Under ``paths_as_written`` a bare path is probed through the ``is_directory`` lookup when one is installed (a
+    kernel session: the kernel sees no folder of this machine), else on this filesystem; the syntax rules come first."""
+    from flowfile_core.notebook.lookup import metadata_lookup
     from flowfile_frame.flow_frame_methods import _resolve_scan_mode
 
     folder = tmp_path / "sales"
     folder.mkdir()
-    monkeypatch.setenv(notebook.MOUNTS_ENV, json.dumps({r"C:\data": str(folder)}))
-    assert _resolve_scan_mode(r"C:\data") == "single_file"
+    asked: list[tuple[str, dict]] = []
+
+    def hook(kind, args):
+        asked.append((kind, args))
+        return args["path"] == r"C:\data"
+
     with notebook.paths_as_written():
-        assert _resolve_scan_mode(r"C:\data") == "directory"
-        assert _resolve_scan_mode("C:\\other\\") == "directory"
-        assert _resolve_scan_mode(r"C:\data\a.csv") == "single_file"
+        assert _resolve_scan_mode(str(folder)) == "directory", "without a hook the folder is probed here"
+        token = metadata_lookup.set(hook)
+        try:
+            assert _resolve_scan_mode(r"C:\data") == "directory"
+            assert _resolve_scan_mode(r"C:\data\a.csv") == "single_file"
+            assert _resolve_scan_mode("C:\\other\\") == "directory"
+        finally:
+            metadata_lookup.reset(token)
+    assert asked == [("is_directory", {"path": r"C:\data"}), ("is_directory", {"path": r"C:\data\a.csv"})]
+    assert _resolve_scan_mode(str(folder)) == "directory" and _resolve_scan_mode(r"C:\data") == "single_file"
+
+
+def test_a_schema_resolver_seeds_a_deferred_node_without_columns(mode):
+    """A kernel session sets ``schema_resolver``; a deferred node whose seed has no columns takes its answer, one
+    whose seed has columns (declared, or a script's passthrough) is never asked, and a node the resolver does not
+    know keeps its empty seed."""
+    from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+
+    asked: list[int] = []
+
+    def resolver(node):
+        asked.append(node.node_id)
+        if node.setting_input.rest_api_settings.url.endswith("/known"):
+            return {"output-0": [FlowfileColumn.from_input("predicted", "Int64")]}
+        return None
+
+    mode.schema_resolver = resolver
+    known = ff.read_api("https://example.test/known")
+    assert known.columns == ["predicted"]
+    unknown = ff.read_api("https://example.test/other")
+    assert unknown.columns == []
+    script = ff.PythonScript(ff.from_dict(DATA), code="x = 1", kernel="other")
+    assert script.output.columns == ["a", "g"]
+    declared = ff.PythonScript(ff.from_dict(DATA), code="x = 1", kernel="other", schemas={"main": {"n": ff.Int64}})
+    assert declared.output.columns == ["n"]
+    assert asked == [known.node_id, unknown.node_id], "only a seed without columns is asked for"
+
+
+def test_a_sync_never_asks_the_schema_resolver():
+    with notebook.notebook_mode(sync=True) as mode:
+        mode.schema_resolver = lambda node: pytest.fail("a sync asked the schema resolver")
+        assert ff.read_api("https://example.test/known").columns == []
+
+
+SECRET_NODE = """
+import polars as pl
+from shared.node_designer import CustomNodeBase, NodeSettings, Section, SecretSelector
+
+
+class NotebookSecretReader(CustomNodeBase):
+    node_name: str = "Notebook Secret Reader"
+    node_category: str = "Testing"
+    settings_schema: NodeSettings = NodeSettings(auth=Section(title="Auth", token=SecretSelector(label="Token")))
+
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+        return inputs[0]
+"""
+
+
+@pytest.fixture
+def installed_secret_node():
+    """``notebook_secret_reader`` installed in the registry for the test, the node store restored afterwards."""
+    from flowfile_core.flowfile.user_defined.registry import registry
+
+    registry.directory.mkdir(parents=True, exist_ok=True)
+    node_file = registry.directory / "notebook_secret_reader.py"
+    saved = dict(node_store.node_dict), list(node_store.nodes_list), dict(node_store.CUSTOM_NODE_STORE._overrides)
+    node_file.write_text(SECRET_NODE)
+    registry.load_file(node_file)
+    try:
+        yield "notebook_secret_reader"
+    finally:
+        registry.remove_file(node_file)
+        node_file.unlink()
+        node_store.node_dict.clear()
+        node_store.node_dict.update(saved[0])
+        node_store.nodes_list[:] = saved[1]
+        node_store.CUSTOM_NODE_STORE.clear()
+        node_store.CUSTOM_NODE_STORE.update(saved[2])
+
+
+def test_notebook_mode_defers_a_cloud_reader_and_a_custom_node_that_selects_a_secret(installed_secret_node):
+    """Both resolve a stored connection or secret when built, which a kernel session cannot: they are seeded and
+    left to the canvas (a held run in a kernel session). In a script the custom node still builds."""
+    with notebook.notebook_mode() as mode:
+        cloud = ff.read_from_cloud_storage("/etc/hosts", file_format="csv")
+        assert cloud._deferred is True and mode.graph.get_node(cloud.node_id).deferred_until_run is True
+        node = ff.CustomNode(installed_secret_node, ff.from_dict(DATA), settings={"auth": {"token": "no_such"}})
+        assert node.deferred is True
+    built = ff.CustomNode(installed_secret_node, ff.from_dict(DATA), settings={"auth": {"token": "no_such"}})
+    assert built.deferred is False, "a script builds it as before"
+
+
+def test_a_kernel_session_leaves_connection_sources_to_core(mode, monkeypatch):
+    """With a ``schema_resolver`` set and the lookup hook installed (a kernel session), a database reader's placement
+    check goes to core and its seed comes from the resolver: its schema callback never runs here."""
+    from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+    from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+    from flowfile_frame import _metadata
+
+    asked: list[dict] = []
+
+    def transport(body):
+        asked.append(body)
+        return {"result": None}
+
+    predicted: list[str] = []
+    original = FlowNode.get_predicted_schema
+
+    def spied(self, *args, **kwargs):
+        predicted.append(self.node_type)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(FlowNode, "get_predicted_schema", spied)
+    mode.schema_resolver = lambda node: {"output-0": [FlowfileColumn.from_input("x", "Int64")]}
+    with _metadata.installed(0, transport):
+        rows = ff.read_database("some_connection", table_name="t")
+    assert rows.columns == ["x"] and rows._deferred is True
+    assert "database_reader" not in predicted
+    assert [(body["flow_id"], body["kind"], body["args"]["settings_type"]) for body in asked] == [
+        (0, "placement_refusal", "NodeDatabaseReader")
+    ]
+    node = mode.graph.get_node(rows.node_id)
+    assert native._predicts_in_core(node) is True
+    mode.schema_resolver = None
+    assert native._predicts_in_core(node) is False, "a script or a sync predicts as before"
+
+
+def test_metadata_lookups_answer_from_the_installed_hook_and_read_the_catalog_without_one():
+    from flowfile_frame import _metadata
+
+    calls: list[tuple[str, dict]] = []
+    answers = {
+        "namespaces": [{"id": 5, "name": "Remote", "parent_id": None}],
+        "catalog_table": {"file_path": "s3://bucket/catalog/t", "table_type": "physical", "serialized_lf": None,
+                          "is_optimized": False},
+    }  # fmt: skip
+
+    def transport(body):
+        assert body["flow_id"] == 42
+        calls.append((body["kind"], body["args"]))
+        return {"result": answers[body["kind"]]}
+
+    with _metadata.installed(42, transport) as hook:
+        assert _metadata.namespaces(None) == [_metadata.Namespace(5, "Remote", None)]
+        assert _metadata.namespaces(None)[0].name == "Remote" and len(calls) == 1, "memoised for the op"
+        hook("catalog_table", {"node_id": 9, "catalog_table_id": 3})
+        assert [kind for kind, _ in calls] == ["namespaces", "catalog_table"]
+    assert isinstance(_metadata.default_namespace_id(), int)
+    assert "General" in {ns.name for ns in _metadata.namespaces(None)}

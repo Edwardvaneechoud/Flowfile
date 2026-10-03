@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from shared.notebook_display import TABLE_MIME
-from tests.notebook.conftest import NOTEBOOK_OWNER_ID
+from tests.notebook.conftest import IN_KERNEL_OP, NOTEBOOK_OWNER_ID
 
 LOOPBACK = ("127.0.0.1", 50123)
 
@@ -64,6 +64,33 @@ def test_display_and_collect_on_a_deferred_canvas_node_show_the_canvas_rows(code
     assert "[100, 200, 300]" in result["stdout"]
     assert "100" in json.dumps(_table(result))
     assert len(kernel_sim.node_results) == 1, "the second read in the session reuses the path"
+
+
+def test_showing_canvas_rows_commits_no_source_progress(coded_flow, client, kernel_sim):
+    """The canvas run behind a ``display`` leaves a source's commit callback (a change-feed cursor, a Kafka
+    offset) for the next run of the flow."""
+    node_id = _coded_id(coded_flow)
+    source = next(node for node in coded_flow.nodes if node.node_id != node_id)
+    committed = []
+    source._on_flow_complete = committed.append
+
+    assert _execute(client, coded_flow, kernel_sim, _bind(node_id) + "display(coded)")["success"]
+
+    assert len(kernel_sim.node_results) == 1
+    assert committed == [] and source._on_flow_complete is not None
+
+
+def test_rows_whose_file_is_gone_are_asked_again(coded_flow, client, kernel_sim):
+    """Core removes a file a newer result of the node superseded; the session then asks for the node's rows again."""
+    node_id = _coded_id(coded_flow)
+    assert _execute(client, coded_flow, kernel_sim, _bind(node_id) + "display(coded)")["success"]
+    for path in Path(_results_folder(kernel_sim, coded_flow)).iterdir():
+        path.unlink()
+
+    shown = _execute(client, coded_flow, kernel_sim, "display(coded)")
+
+    assert shown["success"] and len(_rows(shown)) == 3, shown
+    assert len(kernel_sim.node_results) == 2
 
 
 def test_a_reset_session_reuses_the_canvas_file(coded_flow, client, kernel_sim):
@@ -127,17 +154,19 @@ def test_a_new_frame_on_a_deferred_canvas_node_computes_here_on_the_canvas_rows(
     assert len(kernel_sim.node_results) == 1
 
 
-def test_new_work_only_the_canvas_runs_says_push_first(coded_flow, client, kernel_sim):
+def test_new_work_only_the_canvas_runs_is_run_by_core_from_the_cells_settings(coded_flow, client, kernel_sim):
+    """A script a cell built on another kernel has no canvas node: core runs it from its settings over the canvas
+    rows of its input (a script publishing nothing passes its input through), once per session."""
     node_id = _coded_id(coded_flow)
     cell = _bind(node_id) + "new = ff.PythonScript(coded, code='x = 1', kernel='other-kernel').output\ndisplay(new)"
     shown = _execute(client, coded_flow, kernel_sim, cell)
     assert shown["success"], shown
-    text = [out["data"] for out in shown["display_outputs"] if out["mime_type"] == "text/plain"]
-    assert any("Push, then it runs on the canvas" in t for t in text), shown["display_outputs"]
+    assert [row["amount"] for row in _rows(shown)] == [100, 200, 300], shown["display_outputs"]
 
-    collected = _execute(client, coded_flow, kernel_sim, "new.collect()")
-    assert not collected["success"] and "Push, then it runs on the canvas" in collected["error"]
-    assert not kernel_sim.node_results
+    collected = _execute(client, coded_flow, kernel_sim, "print(new.collect().height, new.columns)")
+    assert collected["success"] and collected["stdout"].strip() == "3 ['id', 'amount']", collected
+    assert [body["node_id"] for body in kernel_sim.node_results] == [node_id]
+    assert [body["node"]["type"] for body in kernel_sim.node_runs] == ["python_script"]
 
 
 @pytest.fixture
@@ -155,9 +184,11 @@ def _pivot_cell(path: Path) -> str:
     )
 
 
-def test_a_new_pivot_over_a_file_the_kernel_reads_computes_here_without_a_canvas_ancestor(
+def test_a_new_pivot_over_a_file_core_reads_computes_here_without_a_canvas_ancestor(
     coded_flow, client, kernel_sim, people_csv
 ):
+    """The kernel opens no file of this machine: core reads the CSV from the cell's settings (``node_run``) and the
+    pivot above it computes in the kernel on those rows."""
     for _ in range(2):
         shown = _execute(client, coded_flow, kernel_sim, _pivot_cell(people_csv))
         assert shown["success"], shown
@@ -168,6 +199,7 @@ def test_a_new_pivot_over_a_file_the_kernel_reads_computes_here_without_a_canvas
     coded = _execute(client, coded_flow, kernel_sim, "display(df.polars_code('input_df.head(1)'))")
     assert coded["success"] and len(_rows(coded)) == 1, coded
     assert not kernel_sim.node_results
+    assert {run["node"]["type"] for run in kernel_sim.node_runs} == {"read"}, kernel_sim.node_runs
 
 
 def test_a_new_pivot_below_a_deferred_canvas_node_computes_here_on_its_rows(coded_flow, client, kernel_sim):
@@ -194,15 +226,14 @@ def test_a_running_flow_is_refused_with_a_message(coded_flow, client, kernel_sim
 
 
 @pytest.fixture
-def hidden_csv(open_as, tmp_path, monkeypatch):
-    """Opens a flow built on a CSV the kernel cannot see: its folder maps to a kernel folder that does not exist."""
+def hidden_csv(open_as, tmp_path):
+    """Opens a flow built on a CSV on this machine: the kernel mounts no host folder, so it never opens the file."""
     import flowfile as ff
 
     folder = tmp_path / "host_data"
     folder.mkdir()
     path = folder / "orders.csv"
     path.write_text("id,amount\n1,10\n2,20\n3,30\n")
-    monkeypatch.setenv("FLOWFILE_NOTEBOOK_MOUNTS", json.dumps({str(folder): str(tmp_path / "not_mounted")}))
     return lambda build: open_as(build(ff.read_csv(str(path))).flow_graph)
 
 
@@ -224,17 +255,18 @@ def test_an_unedited_read_of_a_file_the_kernel_cannot_see_shows_the_canvas_rows(
     assert [body["node_id"] for body in kernel_sim.node_results] == [read_id]
 
 
-def test_a_new_read_of_a_file_the_kernel_cannot_see_has_no_columns_and_names_the_folders(
-    hidden_csv_flow, client, kernel_sim, tmp_path
-):
+def test_a_new_read_of_a_file_the_kernel_cannot_see_is_read_by_core(hidden_csv_flow, client, kernel_sim, tmp_path):
+    """A read of a file outside the kernel's folders, without a canvas twin, knows its columns from core's
+    prediction as soon as it is built and shows the rows core reads on the host."""
     other = tmp_path / "host_data" / "other.csv"
-    other.write_text("a\n1\n")
-    result = _execute(client, hidden_csv_flow, kernel_sim, f"new = ff.read_csv({str(other)!r})\ndisplay(new)")
+    other.write_text("a,b\n1,x\n2,y\n")
+    cell = f"new = ff.read_csv({str(other)!r})\nprint(new.columns)\ndisplay(new)"
+    result = _execute(client, hidden_csv_flow, kernel_sim, cell)
     assert result["success"], result
-    text = next(out["data"] for out in result["display_outputs"] if out["mime_type"] == "text/plain")
-    assert "Folders this kernel can read" in text and "push, then it runs on the canvas" in text, text
-    assert not text.startswith("Schema:"), text
+    assert result["stdout"].strip() == "['a', 'b']", result
+    assert _rows(result) == [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}], _table(result)
     assert not kernel_sim.node_results
+    assert [body["schema_only"] for body in kernel_sim.node_runs] == [True, False]
 
 
 def test_an_unedited_push_through_the_kernel_of_a_file_it_cannot_see_changes_nothing(hidden_csv, kernel_sim):
@@ -260,39 +292,6 @@ def test_an_unedited_push_through_the_kernel_of_a_file_it_cannot_see_changes_not
     assert not plan.operations, [op.model_dump(mode="json") for op in plan.operations]
     assert any('"op": "clean_run"' in r.code for r in kernel_sim.requests)
 
-
-
-def test_a_push_through_the_kernel_stores_the_host_path_of_a_kernel_path(open_as, kernel_sim, tmp_path, monkeypatch):
-    import flowfile as ff
-
-    host, inside = (tmp_path / "host_data").resolve(), (tmp_path / "kernel_view").resolve()
-    for folder in (host, inside):
-        folder.mkdir()
-        (folder / "orders.csv").write_text("id,amount\n1,10\n2,20\n")
-    flow = open_as(ff.read_csv(str(host / "orders.csv")).flow_graph)
-    monkeypatch.setattr(kernel_sim, "host_folders", lambda kernel_id: {str(inside): str(host)})
-    from flowfile_core.auth.models import User as PydanticUser
-    from flowfile_core.notebook.push import NotebookPushRequest, plan_push
-    from flowfile_core.notebook.render import render
-    from tests.notebook.conftest import cell_provenance
-
-    rendering = render(flow)
-    cells = [(cell.cell_id, cell.code.replace("host_data", "kernel_view")) for cell in rendering.cells]
-    edited = [cell_id for (cell_id, code), cell in zip(cells, rendering.cells) if code != cell.code]
-    assert len(edited) == 1
-    request = NotebookPushRequest(
-        flow_id=flow.flow_id,
-        cells=cells,
-        changed_cell_ids=edited,
-        provenance=cell_provenance(flow, rendering),
-        code_fingerprint=rendering.code_fingerprint,
-        client_max_node_id=max(node.node_id for node in flow.nodes),
-        kernel_id=kernel_sim.kernel.id,
-    )
-    owner = PydanticUser(username="nb_kernel", id=NOTEBOOK_OWNER_ID, disabled=False, is_admin=True)
-    plan, _ = plan_push(flow, owner, request)
-    assert not plan.operations, [op.model_dump(mode="json") for op in plan.operations]
-    assert any('"op": "clean_run"' in r.code for r in kernel_sim.requests)
 
 
 def _rows(result: dict) -> list:
@@ -364,7 +363,6 @@ def editor_built_flow(open_as, tmp_path, monkeypatch):
             filter_input=transform_schema.FilterInput(mode="basic", basic_filter=basic),
         )
     )
-    monkeypatch.setenv("FLOWFILE_NOTEBOOK_MOUNTS", json.dumps({str(folder): str(tmp_path / "not_mounted")}))
     return open_as(graph)
 
 
@@ -398,11 +396,24 @@ def test_two_reads_of_files_the_kernel_cannot_see_each_take_their_own_canvas_row
     source = ff.read_csv(str(first))
     ff.read_csv(str(second), flow_graph=source.flow_graph)
     flow = open_as(source.flow_graph)
-    monkeypatch.setenv("FLOWFILE_NOTEBOOK_MOUNTS", json.dumps({str(folder): str(tmp_path / "not_mounted")}))
     cell = f"a = ff.read_csv({str(first)!r})\nb = ff.read_csv({str(second)!r})"
     assert _execute(client, flow, kernel_sim, cell)["success"]
     assert _table(_execute(client, flow, kernel_sim, "display(a)"))["columns"] == ["x"]
     assert len(_rows(_execute(client, flow, kernel_sim, "display(b)"))) == 2
+
+
+def test_a_read_of_a_bare_folder_asks_core_whether_it_is_a_folder(coded_flow, client, kernel_sim, tmp_path):
+    """The kernel sees no folder of this machine, so ``ff.read_csv(folder)`` asks core (``is_directory``) and core
+    reads the folder's files for it."""
+    folder = tmp_path / "many"
+    folder.mkdir()
+    (folder / "a.csv").write_text("x\n1\n")
+    (folder / "b.csv").write_text("x\n2\n3\n")
+    shown = _execute(client, coded_flow, kernel_sim, f"many = ff.read_csv({str(folder)!r})\ndisplay(many)")
+    assert shown["success"], shown
+    assert len(_rows(shown)) == 3, shown
+    asked = [body["args"]["path"] for body in kernel_sim.lookups if body["kind"] == "is_directory"]
+    assert asked == [str(folder)], kernel_sim.lookups
 
 
 LOOP_CELL = """import re
@@ -673,6 +684,7 @@ def test_rerunning_a_script_cell_unchanged_reads_the_canvas_rows(
         assert read["success"] and read["stdout"].strip() == "3", read
     asked = [body["node_id"] for body in locking_kernel_sim.node_results]
     assert asked == [_node_id(flow, "python_script")], "the second run reuses the path of the first"
+    assert not locking_kernel_sim.node_runs, "a node with a canvas twin is never run from its settings"
 
 
 def test_run_all_of_a_scripted_flow_computes_below_the_script_on_its_canvas_rows(
@@ -690,9 +702,11 @@ def test_run_all_of_a_scripted_flow_computes_below_the_script_on_its_canvas_rows
 
 
 @pytest.mark.parametrize("edited", ["script", "source"])
-def test_an_edited_script_or_source_cell_still_says_push_first(
+def test_an_edited_script_or_source_cell_is_run_by_core_from_its_settings(
     scripted_flow, locking_client, locking_kernel_sim, edited
 ):
+    """An edited script cell, or one below an edited source, stands for no canvas node any more: core runs the
+    script from the cell's settings over the input this kernel computed."""
     flow = scripted_flow(OTHER_KERNEL)
     code, name = _script_cell(flow)
     if edited == "script":
@@ -703,9 +717,11 @@ def test_an_edited_script_or_source_cell_still_says_push_first(
         assert "30" in source
         assert _execute(locking_client, flow, locking_kernel_sim, source.replace("30", "31"))["success"]
     assert _execute(locking_client, flow, locking_kernel_sim, code)["success"]
-    read = _execute(locking_client, flow, locking_kernel_sim, f"{name}.collect()")
-    assert not read["success"] and "Push, then it runs on the canvas" in read["error"], read
+    read = _execute(locking_client, flow, locking_kernel_sim, f"print({name}.collect()['amount'].to_list())")
+    assert read["success"], read
+    assert read["stdout"].strip() == ("[10, 20, 30]" if edited == "script" else "[10, 20, 31]"), read
     assert not locking_kernel_sim.node_results
+    assert [body["node"]["type"] for body in locking_kernel_sim.node_runs] == ["python_script"]
 
 
 def _interrupted_cell(client, flow, sim) -> tuple[dict, float]:
@@ -848,3 +864,31 @@ def test_a_file_another_kernel_was_handed_is_kept_when_superseded(coded_flow, ke
     rerun()
     again_b = fetch("kernel-b")
     assert for_a.exists() and again_b.exists() and not for_b.exists()
+
+
+def test_a_canvas_cloud_reader_is_seeded_and_its_rows_come_from_the_canvas(
+    open_as, client, kernel_sim, kernel_db_opens, tmp_path, monkeypatch
+):
+    """A cloud reader resolves a stored connection, so a session never opens it: the canvas node is seeded at open
+    and its rows are fetched from the canvas, which reads the source."""
+    import flowfile as ff
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+
+    csv = tmp_path / "cloud.csv"
+    csv.write_text("a;b\n1;x\n2;y\n")
+    flow = open_as(ff.read_from_cloud_storage(str(csv), file_format="csv").flow_graph)
+    node_id = next(node.node_id for node in flow.nodes if node.node_type == "cloud_storage_reader")
+    in_kernel: list[bool] = []
+    original = FlowDataEngine.from_cloud_storage_obj
+
+    def spied(*args, **kwargs):
+        in_kernel.append(IN_KERNEL_OP.get())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(FlowDataEngine, "from_cloud_storage_obj", spied)
+    shown = _execute(client, flow, kernel_sim, _bind(node_id) + "display(coded)")
+    assert shown["success"], shown
+    assert _table(shown)["data"] == [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}], shown["display_outputs"]
+    assert [body["node_id"] for body in kernel_sim.node_results] == [node_id] and not kernel_sim.node_runs
+    assert in_kernel and not any(in_kernel), "the canvas opened the source, the kernel never did"
+    assert not kernel_db_opens, f"a kernel op opened the catalog database from {sorted(set(kernel_db_opens))}"

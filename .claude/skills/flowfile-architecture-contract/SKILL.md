@@ -410,6 +410,156 @@ lands:
 means merged or superseded) before assuming either the old inline-branch
 shape or the new backend/registry shape is current truth.
 
+### Notebook kernel: canvas fallback everywhere, no database copy (planned 2026-10-02, landed 2026-10-03)
+
+Agreed direction for the notebook kernel (`flowfile_frame/notebook_kernel.py`,
+`flowfile_core/notebook/kernel_runner.py`), built in phases 0–4a below. The
+kernel is a separate execution mode: node settings stay the contract that
+round-trips to the canvas on Push, the kernel runs natively what it can, and
+everything else goes to the canvas. The end state, reached with phase 3, is a
+kernel that opens **no** catalog database connection: the per-kernel SQLite
+copy (`kernel/notebook_db.py`, there because WAL did not cross the Docker
+Desktop VM) and the SQLite requirement of the gate (`notebook/gate.py`) are
+gone. Do not add SCD2, change-feed or SQL logic to
+`kernel_runtime/flowfile_client.py`, forward raw SQL to core, bring a
+database back into the kernel, or mount a host folder into it.
+
+Phase 0 landed with the plan: a lineage run that holds no output node
+passes `run_graph(commit_sources=False)` (`kernel_runner.lineage_commits`),
+and a session takes the schemas of canvas nodes that ran
+(`_Session.refresh`).
+
+Phase 1 landed 2026-10-03: **held nodes run in core from their settings.**
+Where the kernel's `_Session._resolve` finds a gate or deferred node without
+a canvas twin (or a read of a file it cannot see), it hands core the node as
+`FlowfileData` lists it plus its inputs as parquet under the session's
+results folder: `notebook/held_run.py`, `POST /notebook/session/node_run`,
+bound like `node_result`. Core builds the inputs as `flow_input` nodes fed
+those files (not `add_dependency_on_polars_lazy_frame`: a `NodePromise` node
+is never `is_correct`, so the planner skips it) plus the one node through
+`populate_graph_from_flow_information`, on a `FlowGraph` that lives for the
+call (`_system_run`, Performance mode, the canvas flow's
+`source_registration_id` and the session's parameters), runs it under
+`KernelHold` with `commit_sources=False`, answers every live output's path
+(a gate's dead handles as `closed`) or, for `schema_only`, its columns, and
+releases the graph's `FlowLogger`, log file and exchange folder. Closed
+allowlist `HELD_NODE_TYPES` plus installed non-output custom nodes; writers
+and other types still say "Push". A cell-built deferred node whose seed has
+no columns asks core for them at build (`NotebookMode.schema_resolver`,
+`native.resolved_seed`). A Python Script on another kernel runs this way
+too, with its artifacts on the call's graph only.
+
+Phase 2 landed 2026-10-03: **metadata lookups go through core.** One hook,
+`notebook/lookup.py::metadata_lookup` (a `ContextVar`, the `placement_check`
+pattern), consulted by `flow_graph._resolve_catalog_table_info` /
+`_resolve_catalog_sql_tables`, `storage_backend.resolve_for_namespace`,
+`subflow._registration` (behind `stamp_flow_reference` and
+`resolve_subflow_path`), `prechecks.placement_refusal` and the frame's
+`flowfile_frame/_metadata.py` (behind `catalog_reference.py`, `run_flow.py`,
+`kernels.py` and the connection listings; every public function asks the hook
+when set, else runs its `local_*` twin on the database). The kernel installs a
+`_metadata.SessionLookup` for every op (`_metadata.installed`), which posts to
+`POST /notebook/session/lookup`, a closed `lookup.KINDS` each answered by the
+function the call site runs without the hook, as the kernel's owner, bound by
+`kernel_runner._bound_kernel` (the flow need not be open), metadata only: no
+plan, no storage credential, no password, no ciphertext. Secret-bearing nodes
+are held in a kernel session and take phase 1's path: every
+`cloud_storage_reader` (`NOTEBOOK_DEFERRED_NODE_TYPES`), a catalog reader of a
+cloud-backed table (`_metadata.is_cloud_table`, from the `catalog_table`
+answer), a custom node with a `SecretSelector` (`custom_node._selects_secret`);
+`native._predicts_in_core` keeps `CONNECTION_SOURCE_TYPES` from running their
+schema callback while a `schema_resolver` is set. The census is
+`tests/notebook/test_kernel_database_census.py`, at zero: a pool `checkout`
+listener under the sim's `IN_KERNEL_OP` marker over the whole corpus
+(`conftest.kernel_db_opens`), plus every kind answered without a `$ffsec$` or
+a decrypt.
+
+Phase 3 landed 2026-10-03: **the copy is gone.** A notebook kernel holds no
+catalog database: `_notebook_env` sets no `FLOWFILE_DB_PATH` (the kernel's
+`get_database_url()` falls to the never-mounted `<storage>/database/`), and
+every `notebook_kernel.handle()` first installs `_refuse_database`, a
+`do_connect` listener on the one cached engine behind `connection.engine`,
+`SessionLocal` and `get_db_context` (gated on `FLOWFILE_KERNEL_ID`, which only
+a kernel container has), so a cell that opens the database itself stops with
+`NO_DATABASE`, naming where it was opened (`_opened_from`: `a cell`, else the
+frame module of a regression) and the `ff` functions to use, before pysqlite
+could create a file. Deleted: `kernel/notebook_db.py`,
+`POST /notebook/session/database`, `kernel_runner.refresh_database`, `_rearm`
+and the refresh listeners, the `hello` schema-head handshake
+(`migration.package_head`, `kernel_runner._schema_revision`; the flowfile
+version check stays) and the gate's SQLite requirement
+(`kernel_sessions_allowed` is now `not sharing_enabled()`, which admits an
+electron app on a Postgres catalog without proving it). An uncached
+`shared.database.create_catalog_engine()` a cell calls by hand is not
+refused and creates an empty file in the container layer, as in any kernel
+with `flowfile` installed. Proof: `test_kernel_database_census.py` (no op
+connects), `test_kernel_session.py::test_a_notebook_kernel_refuses_to_open_a_catalog_database`
+(scratch engine) and the real-kernel
+`test_kernel_notebook_docker.py` (the default database file never appears in
+the container; a `get_db_context()` cell is refused; a namespace core creates
+shows in the next cell), which `.github/workflows/test-notebook-kernel.yml`
+now runs on every frame, notebook or kernel change
+(`FLOWFILE_REQUIRE_NOTEBOOK_KERNEL` makes a skip a failure).
+
+Phase 4a landed 2026-10-03: **no host folder is mounted.** A notebook
+kernel's container mounts what every kernel mounts, `/shared` and
+`/catalog_tables`, and nothing else: not the Flowfile folders (flows, custom
+nodes and their mount directories, catalog tables) and not a folder its owner
+lists. Deleted: `kernel/notebook_mounts.py`, `mounted_folders`
+(`models.MountedFolder`, the kernel form's folders field, migration 034's
+column, dropped by 035; a pydantic model ignores it from an older client),
+`FLOWFILE_NOTEBOOK_MOUNTS`, `notebook.kernel_path`,
+`input_schema.kernel_file_path`, `KernelManager.host_folders`, the
+`/host/<drive>/` Windows scheme, the key-store tmpfs, `FLOWFILE_STORAGE_DIR`
+in `_notebook_env` (the kernel's storage is its own `~/.flowfile`,
+`/root/.flowfile` in the image) and `_metadata.is_cloud_table` /
+`SessionLookup.cloud_tables`. What replaced each use: a file a cell names is
+never opened in the kernel (`notebook.paths_as_written` sets only
+`keep_paths_as_written`, under which `native._kernel_hidden_path` hides every
+local `read`/`list_files` path, `${param}` ones included) and core reads it
+(the canvas twin's rows, else a held run); whether a bare path is a folder is
+the `is_directory` lookup (`flow_frame_methods._resolve_scan_mode`); every
+catalog reader in a kernel session is deferred (`native.notebook_defers`) and
+its schema and rows come from core (`native._predicts_in_core`,
+`CORE_PREDICTED_TYPES = CONNECTION_SOURCE_TYPES | {"catalog_reader",
+"run_flow"}`); a `run_flow` reference's interface is the `flow_interface`
+lookup (`_metadata.flow_interface`, core-side `resolve_subflow_path` +
+`get_subflow_interface`); installed custom node files come through the
+`custom_node_sources` lookup, which `notebook_kernel._mirror_custom_nodes`
+writes as `<node_key>.py` into the kernel's own nodes folder before
+`open`/`reset`/`execute`/`clean_run` (it removes only files it wrote and
+rescans the registry once when anything changed; the kernel still runs a
+local node's `process()` itself); a push stores paths as written and
+`notebook/validate.host_file_paths` only recomputes `abs_file_path` on the
+host. Invariant: **a kernel mounts exactly `/shared` and `/catalog_tables`; a
+file path in a cell is a path on the user's machine that only core opens.**
+Plain Polars or `open()` on a host path in a cell finds no file, and a cell
+writes no file (an `ff` writer adds a writer node). Known cost: a catalog
+table a cell reads is handed over whole as parquet through `/shared`, even
+for `display()`. Proof: `tests/kernel/test_notebook_kernel_env.py` (exactly
+the two binds, no `mounts` or `tmpfs`, none of `FLOWFILE_STORAGE_DIR`,
+`FLOWFILE_NOTEBOOK_MOUNTS`, `FLOWFILE_DB_PATH`; an old client's
+`mounted_folders` ignored), the sim tests in
+`tests/notebook/test_kernel_canvas_rows.py` (a read is a held `read` run, a
+bare folder asks `is_directory`) and `test_kernel_database_census.py` (a
+catalog table, a flow file and a custom node reach the kernel through core;
+the three new kinds answer metadata only), and the real-kernel
+`test_kernel_notebook_docker.py::test_an_installed_custom_node_is_mirrored_into_the_kernel`
+(with `test_a_file_a_cell_names_is_read_by_core`, where `pl.read_csv` on the
+same path has no such file).
+
+Remaining, each with its own plan: a Python Script on the notebook's own
+kernel (`KernelHold` refuses it during a fallback), a push that keeps the
+session's variables, a row-limited fallback for `display()` (which now also
+bounds a catalog table a cell reads, until then handed over whole), Postgres
+catalogs and docker-mode sessions (per-user access in the lookups, admin
+gating on `node_run`), session artifacts visible to the canvas.
+
+Known gaps this leaves until then: a seeded canvas node below one that just
+ran keeps its seeded columns until it runs or the session is reset, and
+`FlowFrame.collect()` on a deferred frame in a script still commits sources
+(`flow_frame.py` calls `run_graph(node_ids=...)` with the default).
+
 ---
 
 ## 13. VISION (maintainer direction, 2026-07-03) — not implemented, do not foreclose

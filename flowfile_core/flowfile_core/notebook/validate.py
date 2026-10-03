@@ -2,9 +2,9 @@
 
 The kernel ran the cells as Python in its own container, so its result is data from outside core: it
 must fit the size bounds, name only the request's cells, parse as a ``FlowfileData``, and its file
-paths were kept as written there (``input_schema.keep_paths_as_written``), so a path written as the kernel
-sees it is turned back into the host path and absolute paths are recomputed here, on the host.
-``plan_push`` then applies the same refusals as for any other runner.
+paths were kept as written there (``input_schema.keep_paths_as_written``: the kernel mounts no host folder
+and opens none of them), so the absolute paths are recomputed here, on the host. ``plan_push`` then applies
+the same refusals as for any other runner.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import json
 from pydantic import ValidationError
 
 from flowfile_core.configs import logger
-from flowfile_core.kernel.notebook_mounts import host_side
 from flowfile_core.notebook.allowlist import BOUNDS
 from flowfile_core.notebook.bridge import CleanRunRequest, CleanRunResult
 from flowfile_core.schemas.input_schema import OutputSettings, ReceivedTable
@@ -28,32 +27,17 @@ def _refused(message: str) -> CleanRunResult:
     return CleanRunResult(error=message, kind="refused")
 
 
-def _path_slots(node: dict, settings: dict) -> list[tuple[dict, str]]:
-    """(dict, key) of each local path ``node`` stores: a read's file, a write's target, a cloud path, a folder."""
-    slots = [
-        (settings.get("received_file"), "path"),
-        (settings.get("output_settings"), "directory"),
-        (settings.get("cloud_storage_settings"), "resource_path"),
-    ]
-    if node.get("type") == "list_files":
-        slots.append((settings, "path"))
-    return [(holder, key) for holder, key in slots if isinstance(holder, dict) and isinstance(holder.get(key), str)]
-
-
-def host_file_paths(flowfile_data: dict, folders: dict[str, str] | None = None) -> dict:
+def host_file_paths(flowfile_data: dict) -> dict:
     """A copy of ``flowfile_data`` whose file readers and writers carry the absolute path the host resolves.
 
-    A path under one of ``folders`` (kernel folder -> host folder, ``KernelManager.host_folders``) is
-    turned back into the host path first: the canvas derives ``abs_file_path`` from the stored path.
+    The stored paths stay as the kernel wrote them (paths on this machine); only ``abs_file_path``,
+    which the canvas derives from the stored path, is recomputed here.
     """
     data = copy.deepcopy(flowfile_data)
     for node in data.get("nodes") or []:
         settings = node.get("setting_input")
         if not isinstance(settings, dict):
             continue
-        if folders:
-            for holder, key in _path_slots(node, settings):
-                holder[key] = host_side(holder[key], folders) or holder[key]
         received = settings.get("received_file")
         output = settings.get("output_settings")
         try:
@@ -68,11 +52,9 @@ def host_file_paths(flowfile_data: dict, folders: dict[str, str] | None = None) 
     return data
 
 
-def validate_clean_run(
-    result: CleanRunResult, request: CleanRunRequest, folders: dict[str, str] | None = None
-) -> CleanRunResult:
-    """``result`` with host file paths (``folders`` as in :func:`host_file_paths`), or a ``refused`` result when
-    it is too large or malformed."""
+def validate_clean_run(result: CleanRunResult, request: CleanRunRequest) -> CleanRunResult:
+    """``result`` with host file paths (:func:`host_file_paths`), or a ``refused`` result when it is too large or
+    malformed."""
     if result.error is not None:
         return result
     if len(json.dumps(result.flowfile_data, default=str)) > MAX_PAYLOAD_BYTES:
@@ -85,4 +67,4 @@ def validate_clean_run(
         FlowfileData.model_validate(result.flowfile_data)
     except ValidationError as exc:
         return _refused(f"The kernel returned a flow that cannot be read ({exc.error_count()} errors)")
-    return result.model_copy(update={"flowfile_data": host_file_paths(result.flowfile_data, folders)})
+    return result.model_copy(update={"flowfile_data": host_file_paths(result.flowfile_data)})

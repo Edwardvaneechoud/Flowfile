@@ -172,6 +172,7 @@ from flowfile_core.kernel.execution import (
     write_inputs_to_parquet,
 )
 from flowfile_core.kernel.matching import verify_kernel_for_node
+from flowfile_core.notebook.lookup import metadata_lookup
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata, scd2_system_columns_missing
 from flowfile_core.schemas.cloud_storage_schemas import (
@@ -762,6 +763,14 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
     executing ``user_id`` may read, mirroring ``CatalogService.execute_sql_query``;
     a query referencing an inaccessible table simply finds it unregistered.
     """
+    remote = metadata_lookup.get()
+    if remote is not None:
+        answer = remote("catalog_sql_tables", {"node_id": node_id})
+        return CatalogSqlTables(
+            table_paths=dict(answer["table_paths"]),
+            virtual_tables={name: tuple(entry) for name, entry in answer["virtual_tables"].items()},
+            table_namespaces=dict(answer["table_namespaces"]),
+        )
     table_paths: dict[str, str] = {}
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]] = {}
     table_namespaces: dict[str, int | None] = {}
@@ -853,7 +862,25 @@ def _scd2_config_is_stale(cfg: dict, table_record) -> bool:
 
 
 def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogReader") -> CatalogTableInfo:
-    """Resolve a single catalog table (physical or virtual) for a table reader node."""
+    """Resolve a single catalog table (physical or virtual) for a table reader node.
+
+    In a notebook kernel session (``metadata_lookup`` set) core answers from the same function, without the
+    table's plan: the kernel opens no database connection and a virtual read is held there.
+    """
+    remote = metadata_lookup.get()
+    if remote is not None:
+        return CatalogTableInfo(
+            **remote(
+                "catalog_table",
+                {
+                    "node_id": node_catalog_reader.node_id,
+                    "catalog_table_id": node_catalog_reader.catalog_table_id,
+                    "catalog_full_table_name": node_catalog_reader.catalog_full_table_name,
+                    "catalog_table_name": node_catalog_reader.catalog_table_name,
+                    "catalog_namespace_id": node_catalog_reader.catalog_namespace_id,
+                },
+            )
+        )
     file_path: str | None = None
     table_type: str = "physical"
     serialized_lf: bytes | None = None
@@ -2188,8 +2215,9 @@ class FlowGraph:
         # execute on ThreadPoolExecutor threads.
         self._subflow_ancestry: frozenset[str] = frozenset()
         self._subflow_depth: int = 0
-        # The claimed run's kernel_hold (run_graph); release_run clears it.
+        # The claimed run's kernel_hold and commit_sources (run_graph); a subflow's run inherits both.
         self._kernel_hold: KernelHold | None = None
+        self._commit_sources: bool = True
         # Last user_id seen on any node settings (stamped by the editor routes /
         # open_flow). Lets restore_from_snapshot re-stamp the owner even when the
         # live graph is empty at undo time (snapshots intentionally omit user_id).
@@ -6710,10 +6738,6 @@ class FlowGraph:
         def schema_callback() -> list[FlowfileColumn]:
             return list_files_schema()
 
-        translate = input_schema.kernel_file_path.get() if input_schema.keep_paths_as_written.get() else None
-        walk_path = (translate(node_list_files.path) if translate is not None else None) or node_list_files.path
-        walked = node_list_files.model_copy(update={"path": walk_path})
-
         def _func() -> FlowDataEngine:
             # The walk runs here in core, so it must poll for cancellation itself —
             # there is no worker subprocess to kill (cf. add_database_reader).
@@ -6731,7 +6755,7 @@ class FlowGraph:
                 return False
 
             return FlowDataEngine(
-                scan_directory_to_frame(walked, cancel_check=is_cancelled),
+                scan_directory_to_frame(node_list_files, cancel_check=is_cancelled),
                 schema=schema_callback(),
                 number_of_records=None,
             )
@@ -6953,6 +6977,7 @@ class FlowGraph:
         """Release the single-run slot claimed by try_claim_run (idempotent)."""
         with self._run_claim_lock:
             self._kernel_hold = None
+            self._commit_sources = True
             self.flow_settings.is_running = False
 
     def trigger_fetch_node(
@@ -7706,7 +7731,11 @@ class FlowGraph:
             self.flow_logger.info(f"Node {node.node_id}: source files changed; invalidating cached result")
 
     def run_graph(
-        self, *, node_ids: Collection[int | str] | None = None, kernel_hold: KernelHold | None = None
+        self,
+        *,
+        node_ids: Collection[int | str] | None = None,
+        kernel_hold: KernelHold | None = None,
+        commit_sources: bool = True,
     ) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
@@ -7724,6 +7753,10 @@ class FlowGraph:
                 node on one fails at once (``KernelBusyError``) instead of waiting, here and in subflows.
                 ``None`` keeps the hold of a run this one runs inside (``ambient_kernel_hold``), such as a
                 subflow of a virtual table's producer.
+            commit_sources: ``False`` for a run that only looks at rows (a notebook's lineage run that holds no
+                output node): no source's post-execution callback fires, so no change-feed cursor or Kafka
+                offset moves. The callbacks stay set and fire in the next run that commits. A subflow this
+                run runs inherits it (``_commit_sources``), so its sources commit only when this run does.
 
         Returns:
             A RunInformation object summarizing the execution results.
@@ -7736,6 +7769,7 @@ class FlowGraph:
         if kernel_hold is None:
             kernel_hold = ambient_kernel_hold.get()
         self._kernel_hold = kernel_hold
+        self._commit_sources = commit_sources
         ambient = ambient_kernel_hold.set(kernel_hold)
         released = False
         try:
@@ -7780,7 +7814,7 @@ class FlowGraph:
             failed_node_ids = self._execute_stages(
                 execution_plan, performance_mode, params, plan_skip_ids, deliberate_skip_ids, closed_gate_handles
             )
-            if not self.flow_settings.is_canceled:
+            if commit_sources and not self.flow_settings.is_canceled:
                 self._run_post_execution_callbacks(failed_node_ids, plan_skip_ids, deliberate_skip_ids, selected)
 
             self.latest_run_info.end_time = datetime.datetime.now()

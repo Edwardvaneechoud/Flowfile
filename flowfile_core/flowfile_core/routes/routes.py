@@ -115,7 +115,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
 )
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
 from flowfile_core.notebook.gate import require_kernel_sessions
-from flowfile_core.notebook.kernel_runner import close_flow_sessions
+from flowfile_core.notebook.kernel_runner import close_flow_sessions, lineage_commits
 from flowfile_core.notebook.push import NotebookPushRequest, needs_confirmation, node_id_ceiling, plan_push
 from flowfile_core.notebook.render import code_fingerprint
 from flowfile_core.routes._connection_sharing import (
@@ -456,7 +456,8 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
     except Exception as exc:
         logger.error(f"Failed to create run record for flow '{flow_name}': {exc}", exc_info=True)
 
-    run_info = flow.run_graph(node_ids=node_ids)
+    # A lineage run that writes nothing only looks at rows: change-feed cursors and Kafka offsets stay put.
+    run_info = flow.run_graph(node_ids=node_ids, commit_sources=node_ids is None or lineage_commits(flow, node_ids))
     if run_info is None:
         logger.error(f"Flow '{flow_name}' returned no run_info - run tracking skipped")
         return
