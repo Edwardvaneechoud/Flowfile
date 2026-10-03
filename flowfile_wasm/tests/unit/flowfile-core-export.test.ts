@@ -292,6 +292,11 @@ describe('the downloaded flow file speaks flowfile_core', () => {
     expect(store.exportToFlowfile('Every Node Type').nodes.map(n => n.type)).toEqual(EDITOR_NODE_TYPES)
   })
 
+  it('keeps the share-link trust mark out of the file core opens', () => {
+    const exported = toCoreCompatibleFlow({ ...loadFixture(), untrusted_code: true })
+    expect('untrusted_code' in exported).toBe(false)
+  })
+
   it('reads its own core-shaped export back as the editor node types', () => {
     const exported = everyNodeTypeExported()
     setActivePinia(createPinia())

@@ -25,20 +25,33 @@ def _to_expr(expr_text: str) -> pl.Expr:
     return simple_function_to_expr(expr_text)
 
 
+def formula_entries(settings: dict) -> list[dict]:
+    """The ordered entries: ``functions`` when present (core omits ``function`` for 2+), else the legacy ``function``."""
+    functions = settings.get("functions")
+    if isinstance(functions, list):
+        return [fn for fn in functions if isinstance(fn, dict)]
+    fn = settings.get("function")
+    return [fn] if isinstance(fn, dict) else []
+
+
 def build_formula(input_lf: pl.LazyFrame, settings: dict) -> pl.LazyFrame:
-    """Build the formula LazyFrame: add (or replace) one column from an expression
-    string like ``[a] + [b] * 2`` (no store, no collect)."""
-    fn = settings.get("function") or {}
-    field = fn.get("field") or {}
-    name = field.get("name") or "new_column"
-    expr_text = (fn.get("function") or "").strip()
-    if not expr_text:
-        return input_lf
-    expr = _to_expr(expr_text)
-    dtype = _DTYPE_MAP.get(field.get("data_type"))
-    if dtype is not None:
-        expr = expr.cast(dtype)
-    return input_lf.with_columns(expr.alias(name))
+    """Build the formula LazyFrame: each entry adds (or replaces) one column from an expression
+    string like ``[a] + [b] * 2``, chained so entry N sees the columns entries 1..N-1 made.
+
+    Blank expressions are skipped, as in core (no store, no collect)."""
+    lf = input_lf
+    for fn in formula_entries(settings):
+        expr_text = (fn.get("function") or "").strip()
+        if not expr_text:
+            continue
+        field = fn.get("field") or {}
+        name = field.get("name") or "new_column"
+        expr = _to_expr(expr_text)
+        dtype = _DTYPE_MAP.get(field.get("data_type"))
+        if dtype is not None:
+            expr = expr.cast(dtype)
+        lf = lf.with_columns(expr.alias(name))
+    return lf
 
 
 @log_node

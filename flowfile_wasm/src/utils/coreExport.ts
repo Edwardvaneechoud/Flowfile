@@ -217,8 +217,10 @@ export function toCoreCompatibleFlow(data: FlowfileData): FlowfileData {
     right: columnsOf(node.right_input_id)
   })
 
+  // The share-link trust mark is this editor's own; core has no such field.
+  const { untrusted_code: _editorOnly, ...coreData } = data
   return {
-    ...data,
+    ...coreData,
     nodes: data.nodes.map(
       (node): FlowfileNode => ({
         ...node,

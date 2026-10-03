@@ -244,9 +244,9 @@ const statusClass = computed(() => {
 const statusTooltip = computed(() => {
   const blocked = props.data.blocked ?? props.data.result?.blocked
   if (blocked) {
-    return blocked.reason === 'placeholder'
-      ? `Not supported in the browser version — ${blocked.message}`
-      : `Blocked: ${blocked.message}`
+    if (blocked.reason === 'placeholder') return `Not supported in the browser version — ${blocked.message}`
+    if (blocked.reason === 'untrusted_code') return `Locked: ${blocked.message}`
+    return `Blocked: ${blocked.message}`
   }
 
   const isDirty = flowStore.isNodeDirty(props.data.id)

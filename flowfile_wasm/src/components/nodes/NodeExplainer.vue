@@ -75,9 +75,8 @@ import { useFlowStore } from '../../stores/flow-store'
 import { usePyodideStore } from '../../stores/pyodide-store'
 import { usePlainPythonGeneration } from '../../composables/usePlainPythonGeneration'
 import { useCodeGeneration } from '../../composables/useCodeGeneration'
-import { translateFormulaNodes } from '../../composables/useFormulaTranslation'
+import { formulaNodesKey, translateFormulaNodes } from '../../composables/useFormulaTranslation'
 import { glossaryTooltip } from '../../composables/usePythonGlossary'
-import type { NodeFormulaSettings } from '../../types'
 
 const props = defineProps<{ nodeId: number }>()
 
@@ -123,13 +122,8 @@ const explanation = computed(() =>
 // Polars expression, once Pyodide is ready (never triggers its initialization).
 // Whole-flow, not just this node: an untranslated formula stays multi-line,
 // which changes chain fusion and so the names in other nodes' snippets.
-const formulaCode = ref<Record<number, string>>({})
-const formulaKey = computed(() =>
-  [...flowStore.nodes.values()]
-    .filter(n => n.type === 'formula')
-    .map(n => `${n.id}:${(n.settings as NodeFormulaSettings)?.function?.function ?? ''}`)
-    .join('|')
-)
+const formulaCode = ref<Record<number, Array<string | undefined>>>({})
+const formulaKey = computed(() => formulaNodesKey(flowStore.nodes))
 let translatedKey: string | null = null
 watch(
   () => (isExpanded.value && pyodideStore.isReady ? formulaKey.value : null),

@@ -113,6 +113,8 @@ const props = defineProps<{
   nodeId: number
   modelValue: string
   placeholder?: string
+  // Columns made upstream inside the same node (a formula's earlier entries).
+  extraColumns?: ColumnSchema[]
 }>()
 
 const emit = defineEmits<{
@@ -151,7 +153,11 @@ const tab = ref<'fields' | 'functions'>('fields')
 const filterText = ref('')
 const openCategories = ref<Set<string>>(new Set())
 
-const columns = computed<ColumnSchema[]>(() => flowStore.getNodeInputSchema(props.nodeId))
+const columns = computed<ColumnSchema[]>(() => {
+  const input = flowStore.getNodeInputSchema(props.nodeId)
+  const extra = (props.extraColumns ?? []).filter(c => !input.some(i => i.name === c.name))
+  return extra.length ? [...input, ...extra] : input
+})
 
 // Placeholder built from the node's real input columns, unless the host gave one.
 const editorPlaceholder = computed(() => {

@@ -82,7 +82,7 @@ All commands run from the repo root through the single Poetry env; there is **no
 | frontend E2E orchestrated | `make test_e2e` / `make test_e2e_dev` | Builds/starts core + worker + preview(:4173) or dev(:8080), runs `web-flow.spec.ts` + `csp.spec.ts`, then stops whatever listens on 63578/63579/8080/4173. On macOS/Linux the target exits with Playwright's status; the **Windows** branch still ends in `\|\| true`, so read the Playwright output there. |
 | cloud storage E2E orchestrated | `make test_e2e_cloud` (or `cd flowfile_frontend && API_URL=… TEST_URL=… npm run test:cloud` against a disposable stack; it skips without `API_URL`) | macOS/Linux + Docker. Starts and seeds MinIO (`poetry run seed_cloud_e2e` → `s3://flowfile-test/cloud-e2e/source.parquet`), an isolated core/worker/vite-preview on free ports, then `tests/cloud_e2e` and `cloud-storage-flow.spec.ts`; kills only its own PIDs and fails if a server wrote into its working dir. The spec's "No connection" test runs only with `E2E_AWS_PROFILE_CONFIGURED=1`. |
 | wasm JS | `cd flowfile_wasm && npm run test:run` | Vitest, happy-dom, globals on. ~348 cases. |
-| wasm Python engine | `cd flowfile_wasm && pip install -r tests/python/requirements.txt && python -m pytest tests/python` | Own `pytest.ini`. **Pins polars==1.18.0 / pydantic==2.10.5 / polars-expr-transformer==0.6.0 — the exact Pyodide 0.27.7 versions.** Running through the monorepo Poetry env resolves a different Polars; use the pinned env for parity. ~85 test fns. |
+| wasm Python engine | `cd flowfile_wasm && pip install -r tests/python/requirements.txt && python -m pytest tests/python` | Own `pytest.ini`. **Pins polars==1.18.0 / pydantic==2.10.5 / polars-expr-transformer==0.6.4 — Polars and pydantic are the exact Pyodide 0.27.7 versions.** Running through the monorepo Poetry env resolves a different Polars; use the pinned env for parity. ~85 test fns. |
 | wasm Pyodide smoke | `cd flowfile_wasm && npm install --no-save pyodide@0.27.7 parquet-wasm@0.7.1 && node tests/pyodide-smoke/smoke.cjs` | The only guard for browser-namespace/bootstrap breakage — CPython tests can't catch it. |
 
 Worked example — run only core tests, isolated from any other pytest session, without needing a worker:
@@ -223,22 +223,17 @@ A green run is only as strong as what actually executed. Docker-gated suites **s
 
 ## 7. xfail / XPASS discipline
 
-Current inventory (verified live 2026-09-12 — **re-run before trusting**, see §9):
-
-| Location | What it claims | Live status |
-|---|---|---|
-| `flowfile_wasm/tests/python/test_build_helpers.py::test_filter_advanced_expr_does_not_evaluate_python` | polars-expr-transformer `eval`s a crafted formula (`standardize_quotes` requotes `'a"b'` unescaped, `Classifier.get_pl_func` evals it; `to_polars_code`'s `_validate_polars_code` is a second sink) | **xfail(strict) — real upstream bug.** Verified 2026-09-12 that 0.5.7 and 0.6.0 ship byte-identical `standardize_quotes` and the same `eval`, so a pin bump does not close it; the fix belongs in the upstream library (same maintainer). |
+The WASM engine suite carries no xfail any more (verified 2026-10-03 — **re-run the grep in §9 before trusting**; core has its own strict markers). Closed on 2026-10-03: the formula-parser escape (polars-expr-transformer ≤0.6.0 `eval`'d a crafted formula). The upstream fix arrived with the 0.6.4 pin, the strict marker went XPASS and was deleted, and the test became `test_formula_surfaces_do_not_evaluate_python`, a plain passing test over every formula surface.
 
 Closed on 2026-09-12 (markers deleted, root causes fixed, branch `fix/xfails`): the three codegen markers in `test_code_generator_edge_cases.py` — `test_in_operator_numeric` (stale XPASS), `test_unique_without_columns` (engine `make_unique` now treats `columns=[]` as all-columns and keeps `keep=strategy`), `test_groupby_with_concat_aggregation` (emitter emits `str.join(',')` via the shared `transform_schema.STRING_CONCAT_DELIMITER`) — plus the two `xfail(strict)` scanner evasions in `community_nodes/test_security_scan.py` (scanner hardened: cross-method `self.<attr>` decode taint, `operator.attrgetter`/`methodcaller` rule; fixtures promoted from `evade/` into `deny/`). The node-designer `TestNumericStringAliasBug` marker was already gone.
 
 **Rule for this repo: XPASS means the xfail is stale. Delete the marker (and the outdated bug description) — never leave it, never "celebrate" the pass.** When you add a new xfail for a real known bug, prefer `@pytest.mark.xfail(reason=..., strict=True)` so a future fix turns into a hard CI failure demanding the marker's removal, instead of a silent XPASS nobody notices.
 
-Verification recipe (the remaining marker lives in the DB-free WASM engine tests):
+Verification recipe (list the markers, then run one with `-rxX` to see whether it still fails):
 ```bash
-poetry run pytest \
-  "flowfile_wasm/tests/python/test_build_helpers.py::test_filter_advanced_expr_does_not_evaluate_python" \
-  -q -p no:cacheprovider -rX
-# → "1 xfailed"; an XPASS means the upstream fix landed — raise the pin everywhere and delete the marker
+grep -rn "pytest.mark.xfail" --include=*.py . | grep -v "/.claude/" | grep -v "/.venv/"
+poetry run pytest <path>::<test> -q -p no:cacheprovider -rxX
+# an XPASS means the bug is fixed: delete the marker
 ```
 
 Other skip inventory:
@@ -310,12 +305,7 @@ Volatile facts below need periodic re-verification — commands are copy-pasteab
 - **`SKIP_WORKER_TESTS` wiring**: `grep -n "SKIP_WORKER_TESTS\|def flowfile_worker" flowfile_core/tests/conftest.py`
 - **Docker fixture ports**: `grep -n "_PORT = int(os.environ.get" test_utils/*/fixtures.py`
 - **Test-utils Poetry scripts**: `grep -n '^start_\|^stop_' pyproject.toml`
-- **xfail inventory + live status** (re-run periodically — bugs get fixed and markers go stale silently, that's the whole point of §7; `grep -rn "pytest.mark.xfail" --include=*.py . | grep -v "/.claude/"` lists every marker):
-  ```bash
-  poetry run pytest \
-    "flowfile_wasm/tests/python/test_build_helpers.py::test_filter_advanced_expr_does_not_evaluate_python" \
-    -q -p no:cacheprovider -rX
-  ```
+- **xfail inventory + live status** (re-run periodically — bugs get fixed and markers go stale silently, that's the whole point of §7; `grep -rn "pytest.mark.xfail" --include=*.py . | grep -v "/.claude/"` lists every marker; run one with `-rxX`).
 - **Collect counts** (~5,079 core / ~311 worker / ~620 frame / ~13 scheduler as of 2026-07-03): `poetry run pytest flowfile_core/tests --collect-only -q | tail -3` (repeat per package)
 - **CI job list, concurrency block, matrix versions**: `sed -n '1,120p' .github/workflows/test.yaml` and `grep -n "python-version:" .github/workflows/test.yaml`
 - **Coverage job env/steps**: `sed -n '216,296p' .github/workflows/test.yaml`

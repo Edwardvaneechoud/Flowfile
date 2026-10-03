@@ -397,7 +397,8 @@ export interface NodeUniqueSettings extends NodeSingleInput {
 }
 
 export interface NodeFormulaSettings extends NodeSingleInput {
-  function?: FunctionInput  // Changed from 'function_input: FunctionInput[]' to match flowfile_core
+  function?: FunctionInput  // legacy single entry; mirrors functions[0] only when there is exactly one
+  functions?: FunctionInput[]  // ordered, chained entries (authoritative, as in flowfile_core)
 }
 
 export interface NodeCrossJoinSettings extends NodeMultiInput {
@@ -522,6 +523,7 @@ export interface FlowfileData {
   flowfile_settings: FlowfileSettings
   nodes: FlowfileNode[]
   connections?: NodeConnection[]  // Optional - flowfile_core derives connections from node relationships
+  untrusted_code?: boolean  // editor dialect only: arrived by share link, code nodes still await trust
 }
 
 // RUNTIME TYPES (for Vue Flow and execution)
@@ -605,11 +607,12 @@ export interface RowInfo {
   max_rows: number
 }
 
-/** Why a node cannot run in this build. `placeholder` = the node itself is a
- *  share-link placeholder / unsupported type; `upstream_placeholder` = an
- *  ancestor is. Not a failure: nothing was attempted. */
+/** Why a node cannot run. `placeholder` = the node itself is a share-link
+ *  placeholder / unsupported type; `untrusted_code` = it carries code from a
+ *  share link the recipient has not trusted yet; `upstream_*` = an ancestor is
+ *  one of those. Not a failure: nothing was attempted. */
 export interface BlockedInfo {
-  reason: 'placeholder' | 'upstream_placeholder'
+  reason: 'placeholder' | 'upstream_placeholder' | 'untrusted_code' | 'upstream_untrusted_code'
   message: string
   sourceNodeId: number
 }

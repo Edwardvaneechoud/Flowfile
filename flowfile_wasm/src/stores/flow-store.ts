@@ -67,6 +67,10 @@ const SINGLE_INPUT_PACKAGES: Record<string, (settings: any) => string[]> = {
   filter: (s) => (s?.filter_input?.mode === 'advanced' ? [EXPR_TRANSFORMER_PACKAGE] : []),
 }
 
+// Node types whose settings are Python the engine exec()s, on a run and during schema propagation.
+const CODE_NODE_TYPES = new Set(['polars_code'])
+const UNTRUSTED_CODE_MESSAGE = 'Custom code from a share link; trust the flow to run it'
+
 
 /**
  * A full, self-contained snapshot of a flow's live state — graph (FlowfileData),
@@ -239,6 +243,9 @@ export const useFlowStore = defineStore('flow', () => {
   // Track nodes that have been modified since last execution (dirty state)
   const dirtyNodes = ref<Set<number>>(new Set())
 
+  // True while the flow came from a share link and its code nodes await the recipient's trust.
+  const codeUntrusted = ref(false)
+
   async function loadFromStorage() {
     try {
       const saved = sessionStorage.getItem(STORAGE_KEY)
@@ -304,6 +311,7 @@ export const useFlowStore = defineStore('flow', () => {
 
           const maxId = Math.max(0, ...data.nodes.map(n => n.id))
           nodeIdCounter.value = state.nodeIdCounter ?? maxId
+          codeUntrusted.value = data.untrusted_code === true
 
           // Restore the active flow's library identity + name (safety net for a
           // page reload; the tabs store also carries these per tab).
@@ -375,47 +383,81 @@ export const useFlowStore = defineStore('flow', () => {
     return !!node && isPlaceholderNodeDef(node.type, node.settings)
   }
 
+  /** A code node the recipient of a share link has not trusted yet. */
+  function isUntrustedCodeNode(node: FlowNode): boolean {
+    return codeUntrusted.value && CODE_NODE_TYPES.has(node.type)
+  }
+
   /**
-   * Every node that cannot run in this build: placeholder nodes plus everything
-   * downstream of one. BFS over the edge list only (buildDownstreamGraph), never
-   * getExecutionOrder — that throws on a cycle and this must stay total.
+   * Every node that cannot run: placeholder nodes, untrusted code nodes, and
+   * everything downstream of either. BFS over the edge list only
+   * (buildDownstreamGraph), never getExecutionOrder — that throws on a cycle
+   * and this must stay total.
    */
   const blockedNodes = computed<Map<number, BlockedInfo>>(() => {
     const blocked = new Map<number, BlockedInfo>()
-    const roots: number[] = []
-    nodes.value.forEach((node, id) => {
-      if (isPlaceholderNodeDef(node.type, node.settings)) {
-        blocked.set(id, {
-          reason: 'placeholder',
-          message: placeholderReason(node.settings),
-          sourceNodeId: id
-        })
-        roots.push(id)
-      }
-    })
-    if (roots.length === 0) return blocked
+    let downstream: Record<number, number[]> | null = null
 
-    const downstream = buildDownstreamGraph()
-    const queue = [...roots]
-    const visited = new Set<number>(roots)
-    while (queue.length > 0) {
-      const current = queue.shift()!
-      const source = blocked.get(current)!
-      for (const next of downstream[current] || []) {
-        if (visited.has(next)) continue
-        visited.add(next)
-        const rootId = source.sourceNodeId
-        const rootNode = nodes.value.get(rootId)
-        blocked.set(next, {
-          reason: 'upstream_placeholder',
-          message: `Depends on "${rootNode ? placeholderLabel(rootNode.type, rootNode.settings) : `node ${rootId}`}" (#${rootId}), which can't run in the browser`,
-          sourceNodeId: rootId
-        })
-        queue.push(next)
+    const spread = (roots: number[], reason: BlockedInfo['reason'], why: string) => {
+      if (roots.length === 0) return
+      downstream ??= buildDownstreamGraph()
+      const queue = [...roots]
+      while (queue.length > 0) {
+        const current = queue.shift()!
+        const rootId = blocked.get(current)!.sourceNodeId
+        for (const next of downstream[current] || []) {
+          if (blocked.has(next)) continue
+          const rootNode = nodes.value.get(rootId)
+          blocked.set(next, {
+            reason,
+            message: `Depends on "${rootNode ? placeholderLabel(rootNode.type, rootNode.settings) : `node ${rootId}`}" (#${rootId}), ${why}`,
+            sourceNodeId: rootId
+          })
+          queue.push(next)
+        }
       }
     }
+
+    const placeholders: number[] = []
+    nodes.value.forEach((node, id) => {
+      if (!isPlaceholderNodeDef(node.type, node.settings)) return
+      blocked.set(id, { reason: 'placeholder', message: placeholderReason(node.settings), sourceNodeId: id })
+      placeholders.push(id)
+    })
+    spread(placeholders, 'upstream_placeholder', "which can't run in the browser")
+
+    // Placeholders spread first: their block is permanent, this one lifts on trust.
+    const untrusted: number[] = []
+    nodes.value.forEach((node, id) => {
+      if (blocked.has(id) || !isUntrustedCodeNode(node)) return
+      blocked.set(id, { reason: 'untrusted_code', message: UNTRUSTED_CODE_MESSAGE, sourceNodeId: id })
+      untrusted.push(id)
+    })
+    spread(untrusted, 'upstream_untrusted_code', 'which runs shared code you have not trusted yet')
+
     return blocked
   })
+
+  /** The code nodes awaiting trust, for the share-import banner. */
+  const untrustedCodeNodes = computed(() =>
+    Array.from(nodes.value.values())
+      .filter(isUntrustedCodeNode)
+      .map(node => ({ nodeId: node.id, label: placeholderLabel(node.type, node.settings) }))
+      .sort((a, b) => a.nodeId - b.nodeId)
+  )
+
+  /** Lift the share-link code lock: the recipient chose to run the sender's code. */
+  function trustSharedCode() {
+    if (!codeUntrusted.value) return
+    codeUntrusted.value = false
+    for (const [id, result] of nodeResults.value) {
+      if (!result.blocked || blockedNodes.value.has(id)) continue
+      const { blocked: _lifted, ...rest } = result
+      nodeResults.value.set(id, rest)
+    }
+    scheduleSave()
+    debouncedPropagateSchemas()
+  }
 
   function getBlockedInfo(nodeId: number): BlockedInfo | undefined {
     return blockedNodes.value.get(nodeId)
@@ -516,7 +558,8 @@ export const useFlowStore = defineStore('flow', () => {
         auto_save: true,
         show_detailed_progress: false
       },
-      nodes: flowfileNodes
+      nodes: flowfileNodes,
+      ...(codeUntrusted.value ? { untrusted_code: true } : {})
     }
 
     // Separate small and large files for hybrid storage. sessionStorage keeps
@@ -1542,9 +1585,10 @@ gc.collect()
       const node = nodes.value.get(nodeId)
       if (!node) continue
       // A placeholder's settings must never cross the bridge (they're stubs, or
-      // sender-authored content that must not be interpreted). Its downstream
-      // still travels and resolves loudly as "Upstream schema unavailable".
-      if (isPlaceholderNodeDef(node.type, node.settings)) continue
+      // sender-authored content that must not be interpreted), and neither may
+      // untrusted code: propagation exec()s it. Its downstream still travels and
+      // resolves loudly as "Upstream schema unavailable".
+      if (isPlaceholderNodeDef(node.type, node.settings) || isUntrustedCodeNode(node)) continue
       graphNodes[nodeId] = {
         type: node.type,
         input_ids: node.inputIds,
@@ -2489,11 +2533,13 @@ result
       }
 
       // Store result - success=true indicates data is available in Python
-      // Preserve existing data if schema unchanged (data might be stale otherwise)
+      // Rows fetched before this run stay valid only when the node was current: a
+      // propagation re-run of an unchanged node keeps them, an edited one (dirty) must not.
       const existingResult = nodeResults.value.get(nodeId)
       const schemaUnchanged = existingResult?.schema &&
                               result.schema &&
                               JSON.stringify(existingResult.schema) === JSON.stringify(result.schema)
+      const rowsStillValid = schemaUnchanged && !dirtyNodes.value.has(nodeId)
 
       const nodeResult: NodeResult = {
         success: result.success,
@@ -2502,8 +2548,7 @@ result
         download: result.download,
         graphic_walker_input: result.graphic_walker_input,
         row_info: result.row_info,
-        // Preserve data if schema unchanged (prevents data loss during schema propagation)
-        data: schemaUnchanged ? existingResult?.data : undefined
+        data: rowsStillValid ? existingResult?.data : undefined
       }
 
       nodeResults.value.set(nodeId, nodeResult)
@@ -2512,8 +2557,7 @@ result
         dirtyNodes.value.delete(nodeId)
       }
 
-      // Clear preview cache only if schema changed (prevents cache thrashing during schema propagation)
-      if (!schemaUnchanged) {
+      if (!rowsStillValid) {
         previewCache.value.delete(nodeId)
       }
 
@@ -2737,14 +2781,10 @@ result
           }
         } as any
 
-      case 'formula':
-        return {
-          ...base,
-          function: {
-            field: { name: '', data_type: 'Auto' },
-            function: ''
-          }
-        } as any
+      case 'formula': {
+        const entry = { field: { name: '', data_type: 'Auto' }, function: '' }
+        return { ...base, function: entry, functions: [entry] } as any
+      }
 
       case 'cross_join':
         return {
@@ -2938,7 +2978,8 @@ result
         auto_save: true,
         show_detailed_progress: false
       },
-      nodes: flowfileNodes
+      nodes: flowfileNodes,
+      ...(codeUntrusted.value ? { untrusted_code: true } : {})
     }
 
     return flowfileData
@@ -2951,10 +2992,16 @@ result
    * Supports two formats:
    * 1. WASM format with explicit connections array
    * 2. flowfile_core format with implicit connections (derived from node relationships)
+   *
+   * `untrustedCode` marks a flow that arrived by share link: its code nodes stay
+   * locked until trustSharedCode(). The mark is set before any propagation can
+   * start and rides in the editor-dialect file, so tabs, reloads and library
+   * entries keep it.
    */
-  function importFromFlowfile(data: FlowfileData): boolean {
+  function importFromFlowfile(data: FlowfileData, options: { untrustedCode?: boolean } = {}): boolean {
 
     try {
+      codeUntrusted.value = false
       nodes.value.clear()
       edges.value = []
       nodeResults.value.clear()
@@ -2987,6 +3034,8 @@ result
       }
 
       nodeIdCounter.value = maxId
+      codeUntrusted.value = (options.untrustedCode === true || data.untrusted_code === true)
+        && Array.from(nodes.value.values()).some(node => CODE_NODE_TYPES.has(node.type))
 
       // Import connections - support both explicit connections array and implicit derivation
       if (data.connections && data.connections.length > 0) {
@@ -3315,6 +3364,7 @@ result
     showSettings.value = false
     showTablePreview.value = false
     nodeIdCounter.value = 0
+    codeUntrusted.value = false
     currentFlowName.value = 'Untitled Flow'
     currentFlowId.value = null
     sessionStorage.removeItem(STORAGE_KEY)
@@ -3416,6 +3466,8 @@ result
     isPlaceholderNode,
     blockedNodes,
     getBlockedInfo,
+    untrustedCodeNodes,
+    trustSharedCode,
 
     // Actions
     generateNodeId,

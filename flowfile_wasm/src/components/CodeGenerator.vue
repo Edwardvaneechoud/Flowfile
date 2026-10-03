@@ -833,6 +833,16 @@ const generateCodeFromFlow = async (options?: { preserveStepNodeId?: number }) =
  */
 const runScript = async () => {
   if (!pyodideStore.isReady || running.value || loading.value) return
+  // The script inlines every Polars Code node, so running it would run the sender's code.
+  if (flowStore.untrustedCodeNodes.length) {
+    marginTab.value = 'output'
+    runResult.value = {
+      rows: [],
+      failed: true,
+      error: 'This shared flow contains custom code. Choose "Trust and run" above the canvas before running its script.'
+    }
+    return
+  }
   const epoch = buildEpoch.value
   running.value = true
   runResult.value = null

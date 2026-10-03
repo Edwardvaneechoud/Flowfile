@@ -164,7 +164,7 @@ describe('polars walkthrough line ranges', () => {
     const formula = makeNode(3, 'formula', { function: { field: { name: 'x' }, function: '[revenue] * 2' } }, [2])
     const { script, steps } = buildPolarsWalkthrough({
       ...flowWith(SOURCE, FILTER, formula),
-      formulaCode: { 3: 'pl.col("revenue") * 2' }
+      formulaCode: { 3: ['pl.col("revenue") * 2'] }
     })
     const step = steps.find(s => s.nodeId === 3)!
     expect(step.lineEnd).toBe(step.lineStart)

@@ -52,6 +52,49 @@ def test_build_formula_empty_expr_is_passthrough():
     assert engine.build_formula(lf, _formula_settings("c", "")).collect_schema().names() == ["a"]
 
 
+def _entry(name, expr, data_type="Auto"):
+    return {"field": {"name": name, "data_type": data_type}, "function": expr}
+
+
+def test_build_formula_entries_chain_in_order():
+    """Core's multi-entry shape (no `function` key): entry 2 reads entry 1's column."""
+    import polars as pl
+
+    out = engine.build_formula(
+        pl.LazyFrame({"a": [1, 2]}),
+        {"functions": [_entry("b", "[a] * 10"), _entry("c", "[b] + 1"), _entry("a", "[a] - 1")]},
+    ).collect()
+    assert out.columns == ["a", "b", "c"]
+    assert out.to_dict(as_series=False) == {"a": [0, 1], "b": [10, 20], "c": [11, 21]}
+
+
+def test_build_formula_skips_blank_entries_and_casts_each():
+    import polars as pl
+
+    out = engine.build_formula(
+        pl.LazyFrame({"a": [1, 2]}),
+        {"functions": [_entry("x", "   "), _entry("as_text", "[a] + 1", "String"), _entry("y", "[a] * 2")]},
+    ).collect()
+    assert out.columns == ["a", "as_text", "y"]
+    assert out.schema["as_text"] == pl.String
+
+
+def test_build_formula_functions_win_over_legacy_function():
+    import polars as pl
+
+    settings = {"function": _entry("old", "[a]"), "functions": [_entry("new", "[a] + 1")]}
+    out = engine.build_formula(pl.LazyFrame({"a": [1]}), settings).collect()
+    assert out.columns == ["a", "new"]
+
+
+def test_build_formula_no_entries_is_passthrough():
+    import polars as pl
+
+    lf = pl.LazyFrame({"a": [1]})
+    assert engine.build_formula(lf, {"functions": []}).collect_schema().names() == ["a"]
+    assert engine.build_formula(lf, {}).collect_schema().names() == ["a"]
+
+
 def test_execute_formula_chain_and_error():
     assert read_csv(1, "a,b\n1,10\n2,20\n")["success"] is True
     r = engine.execute_formula(2, 1, _formula_settings("total", "[a] + [b]"))

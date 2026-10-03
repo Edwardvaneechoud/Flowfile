@@ -70,6 +70,19 @@
         @focus-node="focusShareNode"
       />
 
+      <ShareImportNotice
+        v-if="route.name === 'designer' && untrustedCode.length"
+        variant="warning"
+        title="This shared flow contains custom code"
+        detail="Polars Code nodes run Python in your browser, so they stay locked until you trust the flow. Open one to read its code first."
+        :placeholders="untrustedCode"
+        :action-label="pyodideReady ? 'Trust and run' : 'Loading the runtime…'"
+        :action-disabled="!pyodideReady || isExecuting"
+        :closable="false"
+        @action="trustAndRunSharedFlow"
+        @focus-node="focusShareNode"
+      />
+
       <main class="app-page"><router-view /></main>
     </div>
 
@@ -103,7 +116,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import IconRail from '../components/layout/IconRail.vue'
@@ -143,8 +156,13 @@ const urlParams = new URLSearchParams(window.location.search)
 // A share link wins over ?demo=true when both are present.
 const shouldAutoLoadDemo = urlParams.get('demo') === 'true' && !hasShareHash(window.location.hash)
 
-const { importShareHash, autoRunSharedFlow } = useShareLink()
+const { importShareHash, autoRunSharedFlow, trustAndRunSharedFlow } = useShareLink()
 const showShareModal = ref(false)
+
+// Derived from the live flow, not the import event, so a reload or a tab switch keeps the prompt.
+const untrustedCode = computed<SharePlaceholderInfo[]>(() =>
+  flowStore.untrustedCodeNodes.map(node => ({ ...node, reason: 'runs Python its sender wrote' }))
+)
 
 // Share-import UI state (banner + missing-files modal).
 const shareNotice = ref<{

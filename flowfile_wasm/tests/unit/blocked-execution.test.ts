@@ -1,9 +1,11 @@
 /**
  * THE security invariant of share-link placeholders: a placeholder node's
  * settings must never cross the JS↔Python bridge — not during execution and
- * not during schema propagation (which execs polars_code / evals advanced
- * filters automatically). A malicious link that smuggles code into a stub must
- * find no path to exec.
+ * not during schema propagation (which execs polars_code automatically). A
+ * malicious link that smuggles code into a stub must find no path to exec.
+ *
+ * The same holds for a real Polars Code node that arrived by share link, until
+ * the recipient trusts the flow.
  *
  * Asserted the way no-auto-run.test.ts does: on the literal strings handed to
  * the mocked Pyodide bridge.
@@ -198,5 +200,133 @@ describe('placeholder settings never reach the Pyodide bridge', () => {
     const result = await store.executeNodeWithUpstream(3)
     expect(result.blocked).toBeTruthy()
     for (const src of bridgeStrings()) expect(src).not.toContain(CANARY)
+  })
+})
+
+/** A share payload whose Polars Code node is real, not a stub: manual_input → polars_code → select. */
+function codeFlow(): FlowfileData {
+  const flow = hostileFlow()
+  flow.nodes[1] = {
+    ...flow.nodes[1],
+    type: 'polars_code',
+    setting_input: { node_id: 2, is_setup: true, polars_code_input: { polars_code: CANARY } }
+  }
+  return flow
+}
+
+describe('untrusted shared code never reaches the Pyodide bridge', () => {
+  const expectNoCanary = () => {
+    for (const src of bridgeStrings()) expect(src).not.toContain(CANARY)
+    for (const payload of globalPayloads()) expect(payload).not.toContain(CANARY)
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    sessionStorage.clear()
+    vi.clearAllMocks()
+    pyodideMock.isReady = true
+    pyodideMock.runPython.mockResolvedValue(undefined)
+    pyodideMock.runPythonWithResult.mockResolvedValue({
+      success: true,
+      data: { columns: [], data: [], total_rows: 0 }
+    })
+  })
+
+  it('schema propagation omits the code node', async () => {
+    const store = useFlowStore()
+    store.importFromFlowfile(codeFlow(), { untrustedCode: true })
+    await flushPromises()
+
+    await store.propagateSchemas()
+
+    expect(bridgeStrings().some((src) => src.includes('propagate_schemas('))).toBe(true)
+    expectNoCanary()
+  })
+
+  it('the TypeScript fallback never lazily executes it', async () => {
+    const store = useFlowStore()
+    store.importFromFlowfile(codeFlow(), { untrustedCode: true })
+    await flushPromises()
+    await store.executeNode(1)
+    // A failing engine pass sends propagation down the TS path, which runs code nodes whose input has data.
+    pyodideMock.runPythonWithResult.mockImplementation(async (src: string) => {
+      if (String(src).includes('propagate_schemas(')) throw new Error('engine pass unavailable')
+      return { success: true, data: { columns: [], data: [], total_rows: 0 } }
+    })
+
+    await store.propagateSchemas()
+
+    expect(bridgeStrings().some((src) => src.includes('execute_polars_code'))).toBe(false)
+    expectNoCanary()
+  })
+
+  it('Run flow, Run now and an upstream run all stop at the lock', async () => {
+    const store = useFlowStore()
+    store.importFromFlowfile(codeFlow(), { untrustedCode: true })
+    await flushPromises()
+
+    await store.executeFlow()
+    const runNow = await store.executeNode(2)
+    const upstream = await store.executeNodeWithUpstream(3)
+
+    expectNoCanary()
+    expect(runNow.blocked?.reason).toBe('untrusted_code')
+    expect(runNow.success).toBeUndefined()
+    expect(upstream.blocked).toBeTruthy()
+    expect(store.nodeResults.get(1)?.success).toBe(true)
+    expect(store.nodeResults.get(3)?.blocked?.reason).toBe('upstream_untrusted_code')
+    expect(store.executionError).toBeNull()
+  })
+
+  it('stays out of the payload when a placeholder already blocks it', async () => {
+    const flow = codeFlow()
+    flow.nodes.splice(1, 0, {
+      ...hostileFlow().nodes[1],
+      id: 4,
+      input_ids: [1],
+      outputs: [2],
+      setting_input: { is_placeholder: true, original_type: 'sql_query', reason: 'Runs only in the full Flowfile app' }
+    })
+    flow.nodes[0].outputs = [4]
+    flow.nodes[2].input_ids = [4]
+    flow.connections = [
+      { from_node: 1, to_node: 4, from_handle: 'output-0', to_handle: 'input-0' },
+      { from_node: 4, to_node: 2, from_handle: 'output-0', to_handle: 'input-0' },
+      { from_node: 2, to_node: 3, from_handle: 'output-0', to_handle: 'input-0' }
+    ]
+    const store = useFlowStore()
+    store.importFromFlowfile(flow, { untrustedCode: true })
+    await flushPromises()
+
+    await store.propagateSchemas()
+    await store.executeFlow()
+
+    // The permanent block wins the label; the code is withheld either way.
+    expect(store.blockedNodes.get(2)?.reason).toBe('upstream_placeholder')
+    expectNoCanary()
+  })
+
+  it('trusting the flow lifts the lock, and only then does the code run', async () => {
+    const store = useFlowStore()
+    store.importFromFlowfile(codeFlow(), { untrustedCode: true })
+    await flushPromises()
+    await store.executeFlow()
+    expectNoCanary()
+
+    store.trustSharedCode()
+    expect(store.blockedNodes.size).toBe(0)
+    expect(store.nodeResults.get(2)?.blocked).toBeUndefined()
+    await store.executeFlow()
+
+    expect(bridgeStrings().some((src) => src.includes('execute_polars_code') && src.includes(CANARY))).toBe(true)
+  })
+
+  it('a flow that did not come from a share link is never locked', async () => {
+    const store = useFlowStore()
+    store.importFromFlowfile(codeFlow())
+    await flushPromises()
+
+    expect(store.untrustedCodeNodes).toEqual([])
+    expect(store.blockedNodes.size).toBe(0)
   })
 })

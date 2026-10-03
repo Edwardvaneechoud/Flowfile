@@ -105,10 +105,9 @@ def _select_reason(settings: dict) -> str | None:
 def _filter_reason(settings: dict) -> str | None:
     filter_input = _dict(settings.get("filter_input"))
     if filter_input.get("mode") == "advanced":
-        # The browser runs these correctly now (same parser core uses), but the
-        # parser still executes Python for a crafted formula — see the xfail in
-        # flowfile_wasm/tests/python/test_build_helpers.py. A sender-authored
-        # expression must not reach a recipient until that is fixed.
+        # The browser runs these correctly (same parser core uses), but browser builds
+        # pinned to polars-expr-transformer <=0.6.0 execute Python for a crafted formula.
+        # Relax this only once a build with the fixed parser is live on demo.flowfile.org.
         return "Advanced filter expressions are executable code and do not travel in share links"
     if settings.get("split_mode"):
         return "Two-output (pass/fail) filters are not available in the browser version"

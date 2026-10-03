@@ -253,6 +253,21 @@ execute_formula(20, 1, json.loads(${j({ function: { field: { name: 'age_plus', d
     failed.push('execute_formula result');
     console.error(`  [FAIL] execute_formula result: ${JSON.stringify(formulaRes)}`);
   }
+  // flowfile_core's multi-entry shape: `functions` only, each entry reading the one before it.
+  const chainedRes = await run('execute_formula (chained entries)', `
+import json
+execute_formula(23, 1, json.loads(${j({
+    functions: [
+      { field: { name: 'age_plus', data_type: 'Int64' }, function: '[age] + 10' },
+      { field: { name: 'age_double', data_type: 'Int64' }, function: '[age_plus] * 2' },
+    ],
+  })}))
+`);
+  const chainedColumns = ((chainedRes && chainedRes.schema) || []).map((c) => c.name);
+  if (!chainedRes || chainedRes.success !== true || !['age_plus', 'age_double'].every((c) => chainedColumns.includes(c))) {
+    failed.push('execute_formula chained result');
+    console.error(`  [FAIL] execute_formula chained result: ${JSON.stringify(chainedRes)}`);
+  }
 
   // Parity executors.
   pyodide.globals.set('_temp_content', 'tag\nx\ny\n');

@@ -67,8 +67,9 @@ export function useShareLink() {
 
     const ok = await flowTabsStore.openWith(async () => {
       // Same restore sequence as the saved-flows library, minus the library
-      // identity — a shared flow arrives unsaved.
-      if (!flowStore.importFromFlowfile(payload.flow)) return false
+      // identity — a shared flow arrives unsaved. Its code nodes stay locked
+      // until the recipient trusts the flow: the sender wrote that Python.
+      if (!flowStore.importFromFlowfile(payload.flow, { untrustedCode: true })) return false
       for (const [nid, content] of Object.entries(payload.files ?? {})) {
         flowStore.setFileContent(Number(nid), content)
       }
@@ -105,8 +106,9 @@ export function useShareLink() {
   /**
    * Run what this browser can run after a share import — the one documented
    * exception to the explicit-only execution rule (a share link is a deliberate
-   * "show me this flow" action). Blocked nodes are skipped by executeNode's own
-   * guard, so this is a plain run of a possibly-partly-blocked graph.
+   * "show me this flow" action). Blocked nodes — placeholders and code the
+   * recipient has not trusted — are skipped by executeNode's own guard, so this
+   * is a plain run of a possibly-partly-blocked graph.
    */
   async function autoRunSharedFlow(): Promise<void> {
     const pyodideStore = usePyodideStore()
@@ -115,5 +117,11 @@ export function useShareLink() {
     await flowStore.executeFlow()
   }
 
-  return { generateShareUrl, importShareHash, autoRunSharedFlow }
+  /** The recipient accepts the sender's code: unlock it, then run the flow. */
+  async function trustAndRunSharedFlow(): Promise<void> {
+    flowStore.trustSharedCode()
+    await autoRunSharedFlow()
+  }
+
+  return { generateShareUrl, importShareHash, autoRunSharedFlow, trustAndRunSharedFlow }
 }
