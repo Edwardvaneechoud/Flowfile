@@ -345,11 +345,7 @@ class _Session:
             elif self._held_current(node):
                 self._take(node)
             else:
-                paths = {
-                    source.node_id: self._input_path(source, handle, canvas, held)
-                    for source, handle in node._incoming_edges()
-                }
-                self._run_held(node, paths)
+                self._run_held(node, self._held_inputs(node, canvas, held))
 
         ready(root)
         handle = frame.output_handle
@@ -381,6 +377,21 @@ class _Session:
                 f"Node {node.node_id} has no rows for output {handle}: a gate routed it away in this run"
             )
         return pl.scan_parquet(path)
+
+    def _held_inputs(
+        self, node: FlowNode, canvas: Mapping[int, int], held: Mapping[int, FlowNode]
+    ) -> list[dict[str, Any]]:
+        """One entry per distinct ``(source, output handle)`` edge into ``node``, with its rows as a parquet core can
+        read (:meth:`_input_path`): a keyed node fed both exits of a split sends each exit under its own handle."""
+        inputs: list[dict[str, Any]] = []
+        seen: set[tuple[int, str]] = set()
+        for source, handle in node._incoming_edges():
+            if (source.node_id, handle) in seen:
+                continue
+            seen.add((source.node_id, handle))
+            path = self._input_path(source, handle, canvas, held)
+            inputs.append({"node_id": source.node_id, "handle": handle, "path": path})
+        return inputs
 
     def _input_path(
         self, source: FlowNode, handle: str, canvas: Mapping[int, int], held: Mapping[int, FlowNode]
@@ -416,10 +427,9 @@ class _Session:
         except Exception as exc:
             raise NativeNodeError(f"Could not run node {node.node_id} on the canvas: {exc}") from exc
 
-    def _run_held(self, node: FlowNode, paths: Mapping[int, str]) -> None:
-        """Have core run ``node`` from its settings over ``paths`` (source node id -> its rows as parquet) and take
-        the rows of every live output (:meth:`_take`); a gate's dead output gets none."""
-        inputs = [{"node_id": node_id, "path": path} for node_id, path in paths.items()]
+    def _run_held(self, node: FlowNode, inputs: list[dict[str, Any]]) -> None:
+        """Have core run ``node`` from its settings over ``inputs`` (:meth:`_held_inputs`) and take the rows of
+        every live output (:meth:`_take`); a gate's dead output gets none."""
         answer = self._ask_core(node, inputs, schema_only=False)
         for handle, path in (answer.get("paths") or {}).items():
             self.rows[(node.node_id, handle)] = path
@@ -454,7 +464,7 @@ class _Session:
             return _per_handle(twin.schemas, _handles(node))
         try:
             inputs = [
-                {"node_id": source.node_id, "columns": _entries(source, handle)}
+                {"node_id": source.node_id, "handle": handle, "columns": _entries(source, handle)}
                 for source, handle in node._incoming_edges()
             ]
             answer = self._ask_core(node, inputs, schema_only=True)

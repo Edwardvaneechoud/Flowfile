@@ -31,7 +31,12 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import schema_prefetch_blocked
-from flowfile_core.flowfile.flow_node.multi_output import output_handle
+from flowfile_core.flowfile.flow_node.multi_output import (
+    DEFAULT_OUTPUT_HANDLE,
+    NamedOutputs,
+    output_handle,
+    output_handle_index,
+)
 from flowfile_core.flowfile.manage.io_flowfile import (
     _flowfile_data_to_flow_information,
     populate_graph_from_flow_information,
@@ -69,10 +74,13 @@ _running: dict[tuple[str, int], FlowGraph] = {}
 
 
 class HeldInput(BaseModel):
-    """One source the held node reads: its session node id and its rows as a parquet in the session's results
-    folder (the kernel's view), or only its ``columns`` (``{"name", "data_type"}``) for ``schema_only``."""
+    """One edge into the held node: the source's session node id, the output ``handle`` it leaves through, and its
+    rows as a parquet in the session's results folder (the kernel's view), or only its ``columns``
+    (``{"name", "data_type"}``) for ``schema_only``. A source feeding a keyed node through several handles
+    (both exits of a split) sends one entry per handle."""
 
     node_id: int
+    handle: str = DEFAULT_OUTPUT_HANDLE
     path: str | None = None
     columns: list[dict[str, str]] | None = None
 
@@ -104,27 +112,56 @@ def _refusal(node: dict) -> str | None:
     return f"Node {node_id} ({node_type}) cannot run from a cell: Push, then it runs on the canvas."
 
 
-def _input_frames(manager, flow_id: int, inputs: list[HeldInput]) -> dict[int, pl.LazyFrame]:
-    """Source node id -> frame: a scan of the named parquet, which must be a file of the session's results folder,
-    or a typed empty frame from the columns."""
+def _input_frames(manager, flow_id: int, inputs: list[HeldInput]) -> dict[int, dict[str, pl.LazyFrame]]:
+    """Source node id -> output handle -> frame: a scan of the named parquet, which must be a file of the session's
+    results folder, or a typed empty frame from the columns."""
     results = _results_dir(manager, flow_id)
     kernel_results = manager.to_kernel_path(results).rstrip("/\\")
-    frames: dict[int, pl.LazyFrame] = {}
+    frames: dict[int, dict[str, pl.LazyFrame]] = {}
     for entry in inputs:
+        try:
+            output_handle_index(entry.handle)
+        except ValueError as exc:
+            raise HTTPException(422, f"Input {entry.node_id} names an unknown output {entry.handle!r}") from exc
         if entry.path is not None:
             folder, name = os.path.split(entry.path)
             host = os.path.join(results, name)
             if folder.rstrip("/\\") != kernel_results or not _FILE_NAME.match(name) or not os.path.isfile(host):
                 raise HTTPException(422, f"Input {entry.path} of node {entry.node_id} is not a file of this session")
-            frames[entry.node_id] = pl.scan_parquet(host)
+            frame = pl.scan_parquet(host)
         elif entry.columns is not None:
             columns = [
                 FlowfileColumn.from_input(c.get("name") or c["column_name"], c["data_type"]) for c in entry.columns
             ]
-            frames[entry.node_id] = FlowDataEngine.create_from_schema(columns).data_frame.lazy()
+            frame = FlowDataEngine.create_from_schema(columns).data_frame.lazy()
         else:
             raise HTTPException(422, f"Input {entry.node_id} names neither rows nor columns")
+        frames.setdefault(entry.node_id, {})[entry.handle] = frame
     return frames
+
+
+def _feed_source(node, by_handle: dict[str, pl.LazyFrame]) -> None:
+    """Give the ``flow_input`` standing for a source the rows the kernel sent, the way a subflow feeds its child.
+
+    One handle goes on the default output, whatever its name: a static consumer is wired through that output
+    (``io_flowfile._source_handle`` knows no handle of a node outside the information) and a keyed one falls back
+    to it. Several handles become a ``NamedOutputs`` in handle position, so a keyed consumer reading
+    ``get_output(handle)`` gets each exit's own rows; a position no edge named is an empty frame, and the schemas
+    are set up front for a ``schema_only`` build, which runs nothing.
+    """
+    if len(by_handle) == 1:
+        node.function = FlowDataEngine(next(iter(by_handle.values())))
+        return
+    count = 1 + max(output_handle_index(handle) for handle in by_handle)
+    engines = {
+        output_handle(index): FlowDataEngine(by_handle[output_handle(index)])
+        if output_handle(index) in by_handle
+        else FlowDataEngine()
+        for index in range(count)
+    }
+    outputs = NamedOutputs(engines)
+    node.function = lambda: outputs
+    node._named_schemas = {handle: engine.schema for handle, engine in engines.items()}
 
 
 def _free_flow_id() -> int:
@@ -202,12 +239,12 @@ def run_held_node(kernel_id: str, user, body: NodeRunRequest) -> dict:
     graph._system_run = True
     graph._owner_user_id = user.id
     try:
-        for source_id, frame in frames.items():
+        for source_id, by_handle in frames.items():
             port = input_schema.NodeFlowInput(
                 flow_id=graph.flow_id, node_id=source_id, input_name=f"in_{source_id}", is_setup=True
             )
             graph.add_flow_input(port)
-            graph.get_node(source_id).function = FlowDataEngine(frame)
+            _feed_source(graph.get_node(source_id), by_handle)
         token = schema_prefetch_blocked.set(not body.schema_only)
         try:
             with graph.rebuilding():

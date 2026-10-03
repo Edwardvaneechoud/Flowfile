@@ -2215,8 +2215,9 @@ class FlowGraph:
         # execute on ThreadPoolExecutor threads.
         self._subflow_ancestry: frozenset[str] = frozenset()
         self._subflow_depth: int = 0
-        # The claimed run's kernel_hold (run_graph); release_run clears it.
+        # The claimed run's kernel_hold and commit_sources (run_graph); a subflow's run inherits both.
         self._kernel_hold: KernelHold | None = None
+        self._commit_sources: bool = True
         # Last user_id seen on any node settings (stamped by the editor routes /
         # open_flow). Lets restore_from_snapshot re-stamp the owner even when the
         # live graph is empty at undo time (snapshots intentionally omit user_id).
@@ -6976,6 +6977,7 @@ class FlowGraph:
         """Release the single-run slot claimed by try_claim_run (idempotent)."""
         with self._run_claim_lock:
             self._kernel_hold = None
+            self._commit_sources = True
             self.flow_settings.is_running = False
 
     def trigger_fetch_node(
@@ -7753,7 +7755,8 @@ class FlowGraph:
                 subflow of a virtual table's producer.
             commit_sources: ``False`` for a run that only looks at rows (a notebook's lineage run that holds no
                 output node): no source's post-execution callback fires, so no change-feed cursor or Kafka
-                offset moves. The callbacks stay set and fire in the next run that commits.
+                offset moves. The callbacks stay set and fire in the next run that commits. A subflow this
+                run runs inherits it (``_commit_sources``), so its sources commit only when this run does.
 
         Returns:
             A RunInformation object summarizing the execution results.
@@ -7766,6 +7769,7 @@ class FlowGraph:
         if kernel_hold is None:
             kernel_hold = ambient_kernel_hold.get()
         self._kernel_hold = kernel_hold
+        self._commit_sources = commit_sources
         ambient = ambient_kernel_hold.set(kernel_hold)
         released = False
         try:

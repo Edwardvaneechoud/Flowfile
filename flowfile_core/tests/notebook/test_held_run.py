@@ -299,3 +299,32 @@ def test_a_held_run_commits_no_source_progress(coded_flow, client, kernel_sim, m
     cell = _bind(_coded_id(coded_flow)) + "g = ff.Gate(coded, formula='[amount] > 0')\ndisplay(g.then)"
     assert _execute(client, coded_flow, kernel_sim, cell)["success"]
     assert len(kernel_sim.node_runs) == 1 and committed == []
+
+
+def test_a_keyed_node_fed_both_exits_of_a_split_reads_each(coded_flow, client, kernel_sim):
+    """Both exits of a split the kernel computed feed one held ``run_flow``: the session sends one input per edge
+    (not per source), core serves each exit under its own handle, and the child sees them apart."""
+    from uuid import uuid4
+
+    import flowfile as ff
+
+    catalog = ff.CatalogReference(f"NbSplit_{uuid4().hex[:8]}", auto_create=True)
+    child = ff.create_flow_graph()
+    big = ff.FlowInput("big", schema={"id": ff.Int64, "amount": ff.Int64}, flow_graph=child)
+    small = ff.FlowInput("small", schema={"id": ff.Int64, "amount": ff.Int64}, flow_graph=child)
+    ff.concat([big, small]).to_flow_output("joined")
+    ref = catalog.schema("flows", auto_create=True).register_flow(big, name=f"child_{uuid4().hex[:8]}")
+
+    cell = _bind(_coded_id(coded_flow)) + (
+        f"ref = ff.flow_ref(registration_id={ref.registration_id})\n"
+        "big, small = coded.filter_split(ff.col('amount') > 150)\n"
+        "run = ff.RunFlow(ref, big=big, small=small)\n"
+        "display(run['joined'])"
+    )
+    shown = _execute(client, coded_flow, kernel_sim, cell)
+    assert shown["success"], shown
+    assert sorted(row["amount"] for row in _rows(shown)) == [100, 200, 300], shown["display_outputs"]
+    [run] = [run for run in kernel_sim.node_runs if not run["schema_only"]]
+    edges = sorted((entry["node_id"], entry["handle"]) for entry in run["inputs"])
+    assert len({source for source, _ in edges}) == 1, edges
+    assert [handle for _, handle in edges] == ["output-0", "output-1"], edges
