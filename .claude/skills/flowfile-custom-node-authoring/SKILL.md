@@ -142,7 +142,7 @@ Access: `self.settings_schema.<section_attr>.<component_attr>.value`. Gotchas:
 
 A **dry run** runs your real `process()` against `example_inputs`, but sandboxes its side effects. Two paths do this: the designer Test tab (`user_defined/dry_run.py`) and the community-node CI harness (`community_nodes/dry_run_local.py`, run by the registry's PR checks).
 
-**`example_inputs` must build a real frame.** Polars infers each column's dtype from its **first** value, so `"x1": [5, 6.5, 4.7, 6.9]` infers `Int64` and then rejects `6.5`. Write `5.0`. Bundle validation now constructs every entry and reports `EXAMPLES_INVALID` (`validation.py::_check_example_inputs_build`), so this fails at validate time rather than as a polars traceback mid-dry-run.
+**`example_inputs` must build a real frame.** Polars infers each column's dtype from its **first** value, so `"x1": [5, 6.5, 4.7, 6.9]` infers `Int64` and then rejects `6.5`. Write `5.0`. Bundle validation constructs every entry and reports `EXAMPLES_INVALID` (`validation.py::_check_example_inputs_build`), so this fails at validate time rather than as a polars traceback mid-dry-run.
 
 **`flowfile_ctx.is_dry_run() -> bool`** — `True` only in a dry run; `False` in a real flow run, a single-file export, and an exported project. Branch on it to skip work that only makes sense against real data:
 
@@ -177,11 +177,11 @@ def example_artifacts(self) -> dict:
 ### 3.1 Choosing
 
 - **`environment="local"` (default):** runs in the Flowfile process/worker. Full SDK + polars available; secrets resolve; no Docker. Use for pure-polars/stdlib transforms.
-- **`environment="kernel"`:** runs in an isolated Docker kernel. Use when you need heavy libs (sklearn, xgboost, lightgbm, statsmodels) or isolation. Declare `dependencies` (plain PyPI specs) — auto-installed **only** for kernel nodes. A kernel node **must be bound to a kernel** before it runs; the user picks the kernel (and image flavour) in the UI. Unbound → `KernelRequiredError` (`flow_graph.py:1915`).
+- **`environment="kernel"`:** runs in an isolated Docker kernel. Use when you need heavy libs (sklearn, xgboost, lightgbm, statsmodels) or isolation. Declare `dependencies` (plain PyPI specs) — auto-installed **only** for kernel nodes. A kernel node **must be bound to a kernel** before it runs; the user picks the kernel (and image flavour) in the UI. Unbound → `KernelRequiredError` (raised in `flow_graph.py`).
 
 ### 3.2 What is different inside a kernel (the real path)
 
-A kernel node's source **never runs directly**. Core AST-generates a self-contained script (`user_defined/kernel_codegen.py::generate_kernel_script`, invoked from `flow_graph.py:2169`). Consequences you must design around:
+A kernel node's source **never runs directly**. Core AST-generates a self-contained script (`user_defined/kernel_codegen.py::generate_kernel_script`, invoked from `flow_graph.py`). Consequences you must design around:
 
 - **SDK imports are stripped**; only the node's own third-party imports + `polars`/`json`/`logging`/`sys` survive. **Do not reference SDK types inside `process`.**
 - **Only `process` + nested/helper defs are kept**; **all class-level attribute assignments are dropped.** Put every bit of logic inside `process` — nothing computed at class-body scope exists at kernel runtime.
@@ -517,5 +517,3 @@ ls flowfile_core/tests/flowfile/node_designer/corpus/
 ```
 
 User-facing docs to cross-reference: `docs/users/visual-editor/creating-custom-nodes.md`, `node-designer.md`, `custom-node-tutorial.md`, `kmeans-kernel-node.md`, `kernels.md`, `kernel-api.md`, `community-nodes.md`.
-
-A portable, provider-agnostic version of this guidance (a single system prompt to paste into any LLM, no repo access assumed) lives at `prompts/generate-flowfile-node.md`. Keep the two in sync when the SDK changes.

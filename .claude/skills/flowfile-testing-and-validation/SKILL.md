@@ -121,7 +121,7 @@ Shared skip logic (every service's `is_docker_available()`):
 
 **One SQLite DB per mode, resolved by `shared/storage_config.py::get_database_url()`** (priority order, verified in code):
 
-1. `FLOWFILE_DB_PATH` env var (explicit override) → `sqlite:///$FLOWFILE_DB_PATH`
+1. `FLOWFILE_DATABASE_URL`, else `FLOWFILE_DB_PATH` (path → `sqlite:///…`, `://` values used as-is)
 2. `TESTING=True` env var (exact string) → `sqlite:///<storage.temp_directory>/test_flowfile_catalog.db` — a **fixed shared path**
 3. Default → `sqlite:///<storage.database_directory>/flowfile_catalog.db` (the live DB)
 
@@ -293,7 +293,7 @@ Without those prerequisites, naive `-n auto` reproduces exactly the "no such tab
 - Core suite is the long pole (~5k tests, serial) even post-fix; expect the 3.12 matrix job around 28–31 minutes as of the 2026-06-20 fixes.
 - Docker image builds dominate `-m kernel` (mitigate by presetting `FLOWFILE_KERNEL_IMAGE` to skip the ~30s build) and `-m docker_integration` (builds core+worker+kernel; conftest uses 600s build timeouts).
 - MySQL container start can take up to 60s; first-time image pull up to 300s.
-- Worker viz tests are tagged `@pytest.mark.slow` (`flowfile_worker/tests/test_catalog_visualize.py`) — not registered as a marker, so it just warns.
+- Worker viz tests are tagged `@pytest.mark.slow` (`flowfile_worker/tests/test_catalog_visualize.py`); deselect with `-m 'not slow'`.
 - Playwright: `retries: 2` in CI plus trace/video on first retry — this retry budget can mask genuine flakes; `workers: 1` avoids port conflicts, not a performance choice.
 - A trailing-slash axios/FastAPI mismatch has historically caused **silent** failures only in Docker (Vite's dev proxy and pytest's `TestClient` both mask a 307 redirect that Docker's real network path doesn't) — if a route "works locally but not in Docker," check for a slash mismatch in core logs, not test logic.
 

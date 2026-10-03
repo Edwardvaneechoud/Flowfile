@@ -19,7 +19,7 @@ Hand-authored, fully self-contained SVGs — no external refs (an SVG loaded via
 |---|---|---|
 | `docs/assets/images/concepts/` | concept (persona / what-is pages) | `flow-assembly-line`, `analyst-loop`, `catalog-ecosystem-loop` |
 | `docs/assets/images/architecture/` + `guides/catalog/` | technical (for-developers pages) | `process-map`, `access-resolution`, `trigger-cascade` |
-| `docs/assets/images/nodes/` | app node glyphs (source material, don't restyle) | `filter.svg`, `input_data.svg` — 31 files |
+| `docs/assets/images/nodes/` | app node glyphs (source material, don't restyle) | `filter.svg`, `input_data.svg`, one per node type |
 | `docs/assets/images/guides/sales_dashboard/` | labeled placeholders awaiting screenshots | `dashboard_overview.svg` |
 
 Healthy size is **5–17 KB**. The one 82 KB outlier (`concepts/positioning-spectrum.svg`) carries a ~44 KB base64 PNG of the logo in a 60×64 slot — a known anti-pattern, not a license. That file (and `recipe-to-flow`) also predates the house root-element pattern; **new files follow §2, not those two.**
