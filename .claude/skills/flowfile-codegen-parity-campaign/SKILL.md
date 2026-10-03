@@ -87,25 +87,17 @@ FLOWFILE_DB_PATH=$PARITY_DB poetry run pytest \
   -q -p no:cacheprovider -rX
 ```
 
-**Expected baseline as of 2026-07-03 (v0.12.7), re-verified by running (~1s):**
+**Expected baseline (2026-09-12):** `49 passed`, with no `xfailed` or `xpassed` lines.
 
-```
-XPASS ...::TestBasicFilterOperators::test_in_operator_numeric - BUG: Flow's IN filter quotes numeric values incorrectly. ...
-46 passed, 2 xfailed, 1 xpassed, 18 warnings in ~1s
-```
-
-- The **2 xfailed** are the two live divergences (Phase 2 rows X1, X2).
-- The **1 xpassed** is a **stale marker** — the bug it guards was already fixed. `-rX` prints it.
-  **The campaign rule: an XPASS in this repo means "delete the marker".** None of these markers are
-  `strict=True`, so CI stays green and nobody notices the rot.
+**The campaign rule: an XPASS in this repo means "delete the marker".** Non-strict markers keep CI
+green, so nobody notices the rot.
 
 Branches:
 - `no such table: users` (or similar OperationalError cascade) → `FLOWFILE_SKIP_STARTUP_MIGRATION=1`
   is set in your environment alongside a fresh DB. `unset FLOWFILE_SKIP_STARTUP_MIGRATION`, pick a new
   `$PARITY_DB`, re-run. Never combine that flag with a fresh test DB.
-- **More than 1 `xpassed`** → additional markers went stale since 2026-07-03; each one is a Phase 3.1
-  delete-the-marker row. `-rX` names them all.
-- **Any `failed` or fewer than 46 passed** → the tree drifted from this frozen baseline; re-verify the
+- **Any `xpassed`** → a marker went stale; each one is a delete-the-marker row. `-rX` names them all.
+- **Any `failed` or fewer than 49 passed** → the tree drifted from this frozen baseline; re-verify the
   Phase 2 anchors with the Provenance greps before touching anything.
 
 ### 1b. The full parity corpus (regression floor — must stay green)
@@ -114,20 +106,20 @@ Branches:
 FLOWFILE_DB_PATH=${PARITY_DB}.main poetry run pytest \
   flowfile_core/tests/flowfile/test_code_generator.py \
   -q -p no:cacheprovider
-# Expected baseline 2026-07-03 (v0.12.7), re-verified by running: 653 passed  (~77s, no skips locally)
+# Expected baseline (2026-09-12): 692 passed (no skips locally)
 ```
 
 The round-trip flow-builders are parameterized `@pytest.mark.parametrize("export_func",
-[export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])` — 88 parametrize
-sites producing the bulk of the 653 collected — so the corpus is the sample-flow set for round-trip
+[export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])` — the parametrize
+sites produce the bulk of the corpus — so the corpus is the sample-flow set for round-trip
 equivalence across *both* export frameworks. (The un-parameterized remainder are exporter-specific
-tests such as `test_flowframe_*` at `:1326+`.) **This 653 is your floor.** Any fix that drops it has
+tests such as `test_flowframe_*` at `:1326+`.) **That count is your floor.** Any fix that drops it has
 regressed parity.
 
 Branches:
 - Any `failed` → re-run with `-rf` to name them; a fix that breaks the corpus is a parity regression,
   full stop — revert or fix before proceeding.
-- **More than 653 passed, no failures** → a merge added parity tests; re-freeze the number in your
+- **More than 692 passed, no failures** → a merge added parity tests; re-freeze the number in your
   notes and use the observed count as the new floor.
 
 > There is no directory of `.flowfile` fixtures for parity — the corpus is these programmatic
@@ -152,9 +144,9 @@ Every known divergence, with a status column. Work top-down; each row links to a
 | D1 | Emitter emits deprecated `str.concat` (Polars → `str.join`; note default delim differs: `-` vs `""`) | emitter | `expression_helpers.py:152` | `test_groupby_concat_uses_deprecated_str_concat:1004` (asserts deprecated form; TODO@:1054) | **closed 2026-09-12** (emits `str.join(',')`) |
 | D2 | Emitter emits deprecated `with_row_count` (Polars → `with_row_index`) | emitter | `transform_handlers.py:370` | `test_record_id_uses_deprecated_with_row_count:960` (TODO@:1002) | **passing, documents debt** |
 | F1 | FlowFrame export: right joins emit `.collect().lazy()` → returns a `pl.LazyFrame`, breaks the FlowFrame chain | emitter (FlowFrame framework) | `join_handlers.py:477` `TODO(FlowFrame)` | (no dedicated round-trip guard) | **open** |
-| F2 | FlowFrame export: formula nodes emit `pl.col`/`pl.lit` without `import polars as pl` when `framework == "ff"` | emitter (FlowFrame framework) | `transform_handlers.py:54` `TODO(FlowFrame)` (+ `:326`) | (partial via `test_flowframe_formula_*`) | **open** |
+| F2 | FlowFrame export: formula nodes emit `pl.col`/`pl.lit` without `import polars as pl` when `framework == "ff"` | emitter (FlowFrame framework) | `transform_handlers.py:54` `TODO(FlowFrame)` (+ `:326`) | (partial via `test_flowframe_formula_*`) | **re-verify** — `TODO(FlowFrame)` marker no longer present |
 | F3 | FlowFrame export: fuzzy-match serializes Polars `Expr` via `repr` → invalid code `pl.lit(<Expr ['len()'] at 0x...>)` | emitter (FlowFrame framework) | `transform_handlers.py:259` `TODO(FlowFrame)` | (none) | **open** |
-| F4 | FlowFrame export: polars-code nodes reference `ff.LazyFrame`, which the `flowfile` package does not export | emitter (FlowFrame framework) | `code_generator.py:567` `TODO(FlowFrame)` | (none) | **open** |
+| F4 | FlowFrame export: polars-code nodes reference `ff.LazyFrame`, which the `flowfile` package does not export | emitter (FlowFrame framework) | `code_generator.py:567` `TODO(FlowFrame)` | (none) | **re-verify** — `TODO(FlowFrame)` marker no longer present |
 | S2 | **Stale XPASS (adjacent subsystem, not codegen)**: node-designer `"numeric"` string alias | (fixed) | marker `node_designer/test_node_designer.py:516` | `TestNumericStringAliasBug` | **closed** (marker already gone from `main`) |
 
 Two secondary emitter defects that are not yet guarded by a parity test (open, lower priority): param
@@ -302,7 +294,7 @@ Each `TODO(FlowFrame)` comment enumerates 2–3 sanctioned fix options; pick the
 Polars path untouched (see the framework-prefix trap in Phase 2).
 
 Verify per fix: run the new parity test (must go red→green) **and** the full corpus (Phase 1b, must
-stay 653+). Do not delete any `TODO(FlowFrame)` comment until its parity test is green and committed.
+stay 692+). Do not delete any `TODO(FlowFrame)` comment until its parity test is green and committed.
 
 ---
 
@@ -381,7 +373,7 @@ Do not open a PR until all of this passes. Success is the numbers, never a visua
    FLOWFILE_DB_PATH=${PARITY_DB}.main poetry run pytest \
      flowfile_core/tests/flowfile/test_code_generator.py \
      -q -p no:cacheprovider
-   # Must be ≥ 653 passed (baseline). A drop = parity regression; do not promote.
+   # Must be ≥ 692 passed (baseline). A drop = parity regression; do not promote.
    ```
 
 3. **Core engine suite** — mandatory whenever you took solution-menu option 2 (executor change; row
@@ -417,10 +409,10 @@ Do not open a PR until all of this passes. Success is the numbers, never a visua
    stage the diff and hand the maintainer the exact `git add`/`git commit` commands per
    `flowfile-change-control` §6). The PR body MUST carry a **baseline-vs-after table**:
 
-   | Suite | Baseline (2026-07-03) | After |
+   | Suite | Baseline (2026-09-12) | After |
    |-------|----------------------|-------|
-   | edge-case | 46 passed / 2 xfailed / 1 xpassed | (yours) |
-   | corpus | 653 passed | (yours) |
+   | edge-case | 49 passed / 0 xfailed / 0 xpassed | (yours) |
+   | corpus | 692 passed | (yours) |
 
    List each inventory ID you closed (S1, X2, D1…) and, for any deferred, the `xfail(strict=True)` +
    issue link you added.
@@ -447,9 +439,7 @@ commit `f6963c77`, branch `feature/claude-skills`). Re-verify volatile facts bef
 | Emitter emits agg names with no args (X2 mechanism) | `grep -n '_get_agg_function' -A4 flowfile_core/flowfile_core/flowfile/code_generator/transform_handlers.py` |
 | X1 executor fix site (`make_unique`, empty-list branch) | `grep -n 'def make_unique' flowfile_core/flowfile_core/flowfile/flow_data_engine/flow_data_engine.py; grep -n 'make_unique' flowfile_core/flowfile_core/flowfile/flow_graph.py` |
 | The 3 xfail markers (edge-case) at lines 201/459/766 | `grep -n 'pytest.mark.xfail' flowfile_core/tests/flowfile/test_code_generator_edge_cases.py` |
-| Stale XPASS = `test_in_operator_numeric` | `FLOWFILE_DB_PATH=/tmp/v3.db poetry run pytest 'flowfile_core/tests/flowfile/test_code_generator_edge_cases.py::TestBasicFilterOperators::test_in_operator_numeric' -q -rX` |
-| Node-designer stale XPASS (row S2) | `FLOWFILE_DB_PATH=/tmp/v4.db poetry run pytest 'flowfile_core/tests/flowfile/node_designer/test_node_designer.py::TestNumericStringAliasBug' -q -rX` |
-| 5 `TODO(FlowFrame)` markers (F1–F4 + `:326`) | `grep -rn 'TODO(FlowFrame)' flowfile_core/flowfile_core/flowfile/code_generator/` |
+| `TODO(FlowFrame)` markers (grep for the live set) | `grep -rn 'TODO(FlowFrame)' flowfile_core/flowfile_core/flowfile/code_generator/` |
 | Deprecated emissions: `str.concat` / `with_row_count` | `grep -rn 'str.concat\|with_row_count' flowfile_core/flowfile_core/flowfile/code_generator/` |
 | IN-filter fix that made S1 stale (splits on `,` first) | `sed -n '144,160p' flowfile_core/flowfile_core/flowfile/filter_expressions.py` |
 | Shared enum parser (#544 pattern) | `grep -n 'def is_descending\|def descending' flowfile_core/flowfile_core/schemas/transform_schema.py` |

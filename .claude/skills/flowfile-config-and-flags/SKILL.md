@@ -137,8 +137,8 @@ Non-env port facts: Tauri scans a free `(core, worker)` port pair starting at 63
 
 | Var | Read at | Default | Effect |
 |---|---|---|---|
-| `FLOWFILE_KERNEL_IMAGE` | `kernel/manager.py:64-68` via `_envvar_or_default` (`:48-55` — **empty string counts as unset**, deliberately, because compose writes `${VAR:-}` as `""`) | `edwardvaneechoud/flowfile-kernel-base:0.4.0` (manager.py:38) | Legacy/base-flavour image override; read at lookup time, not import. Docs (`docs/users/deployment/docker.md`) still say `0.3.0` — stale, code is `0.4.0`. |
-| `FLOWFILE_KERNEL_IMAGE_BASE` / `_ML` / `_LITE` | manager.py:65-76 | base/ml `...:0.4.0` (manager.py:38-39); lite `edwardvaneechoud/flowfile-kernel-lite:0.4.0` | Per-flavour pins; `_BASE` wins over the legacy `FLOWFILE_KERNEL_IMAGE`. |
+| `FLOWFILE_KERNEL_IMAGE` | `kernel/manager.py:64-68` via `_envvar_or_default` (`:48-55` — **empty string counts as unset**, deliberately, because compose writes `${VAR:-}` as `""`) | `_KERNEL_IMAGE_BASE_DEFAULT` in `kernel/images.py` | Legacy/base-flavour image override; read at lookup time, not import. |
+| `FLOWFILE_KERNEL_IMAGE_BASE` / `_ML` / `_LITE` | manager.py:65-76 | per-flavour defaults in `kernel/images.py` | Per-flavour pins; `_BASE` wins over the legacy `FLOWFILE_KERNEL_IMAGE`. |
 | `FLOWFILE_DOCKER_NETWORK` | manager.py:393 | auto-detected (`_detect_docker_network`) | Docker-in-Docker network that kernel containers join. |
 | `FLOWFILE_CORE_URL` | manager.py:1216 (core writes it into the kernel's env); `kernel_runtime/flowfile_client.py:219` (kernel reads it) | DinD: `http://flowfile-core:63578`; local: `http://host.docker.internal:63578` | How a kernel container dials core back. |
 
@@ -289,10 +289,7 @@ Corollary gotchas:
 ## 6. Drift report (both directions)
 
 ### Documented but missing or stale
-1. **`docker-remote/` does not exist.** Root `CLAUDE.md`'s Repository Structure table lists a `docker-remote/` directory ("Compose stack using published Docker Hub images"). Verified empty on both `git log --all -- docker-remote` and `git ls-files | grep -i docker-remote` — it never existed in tracked history. The only compose file in the repo is root `docker-compose.yml`.
-2. **`shared/crypto` listed in root `CLAUDE.md`'s Repository Structure** but `git ls-files -- shared/crypto` is empty; on disk it holds only `__pycache__`. `shared/CLAUDE.md` itself already flags this.
-3. **`docs/users/deployment/docker.md` pins kernel image `0.3.0`** while code defaults are `0.4.0` (`kernel/manager.py:38-39` and the lite default).
-4. `.env.example:57` calls the `/project` router "admin-only" in docker mode — unverified nuance (the router-level permission dependency itself is out of this skill's scope); treat as a flag, not a confirmed fact.
+1. `.env.example:57` calls the `/project` router "admin-only" in docker mode — unverified nuance (the router-level permission dependency itself is out of this skill's scope); treat as a flag, not a confirmed fact.
 
 ### Read in code but dead
 5. **`TEMP_DIR` env var** — `settings.get_temp_dir()` (settings.py:86-92) has zero callers repo-wide.
@@ -300,7 +297,7 @@ Corollary gotchas:
 7. **`DEBUG`** and **`FILE_LOCATION`** Starlette-Config keys — read into module constants with zero consumers.
 
 ### Read in code but absent from BOTH `.env.example` and root `CLAUDE.md`
-`FLOWFILE_LSP_ENABLED` (+ its admin flip endpoint) · `FLOWFILE_API_RUN_TIMEOUT_SECONDS` · `FLOWFILE_API_MAX_CONCURRENT_RUNS` · `FLOWFILE_ARTIFACT_STORAGE` / `FLOWFILE_S3_BUCKET` / `_PREFIX` / `_REGION` / `_ENDPOINT_URL` · `FLOWFILE_LOCAL_MODEL_CTX` · `FLOWFILE_DB_READ_HEDGE_DELAY` · `FLOWFILE_DOCKER_NETWORK` · `FLOWFILE_DB_PATH` / `TESTING` / `FLOWFILE_SKIP_STARTUP_MIGRATION` · `FLOWFILE_HOST` / `FLOWFILE_PORT` / `FLOWFILE_MODULE_NAME` / `FORCE_POETRY` / `POETRY_PATH` · `SECURE_STORAGE_PATH` · `GOOGLE_OAUTH_CLIENT_ID` / `_CLIENT_SECRET` / `_REDIRECT_URI` · `FLOWFILE_SECRET_*` placeholder prefix · `AVAILABLE_RAM` (Starlette key, live) · `FLOWFILE_INTERNAL_SERVICE_USER_ID` (documented only in `docs/for-developers/kernel-architecture.md`) · most of the kernel-container contract vars in §3.9 (`PERSISTENCE_*`, `RECOVERY_MODE`, `KERNEL_ID`, `MAX_NAMESPACES`, `MAX_DISPLAY_OUTPUTS`, `KERNEL_PACKAGES`, `KERNEL_CONSTRAINTS_FILE`, the `FLOWFILE_HOST_*`/`FLOWFILE_KERNEL_*` path-translation quartet — some appear in `docs/for-developers/kernel-architecture.md`, most don't anywhere).
+`FLOWFILE_LSP_ENABLED` (+ its admin flip endpoint) · `FLOWFILE_API_RUN_TIMEOUT_SECONDS` · `FLOWFILE_API_MAX_CONCURRENT_RUNS` · `FLOWFILE_ARTIFACT_STORAGE` / `FLOWFILE_S3_BUCKET` / `_PREFIX` / `_REGION` / `_ENDPOINT_URL` · `FLOWFILE_LOCAL_MODEL_CTX` · `FLOWFILE_DB_READ_HEDGE_DELAY` · `FLOWFILE_DOCKER_NETWORK` · `TESTING` / `FLOWFILE_SKIP_STARTUP_MIGRATION` · `FLOWFILE_HOST` / `FLOWFILE_PORT` / `FLOWFILE_MODULE_NAME` / `FORCE_POETRY` / `POETRY_PATH` · `SECURE_STORAGE_PATH` · `GOOGLE_OAUTH_CLIENT_ID` / `_CLIENT_SECRET` / `_REDIRECT_URI` · `FLOWFILE_SECRET_*` placeholder prefix · `AVAILABLE_RAM` (Starlette key, live) · `FLOWFILE_INTERNAL_SERVICE_USER_ID` (documented only in `docs/for-developers/kernel-architecture.md`) · most of the kernel-container contract vars in §3.9 (`PERSISTENCE_*`, `RECOVERY_MODE`, `KERNEL_ID`, `MAX_NAMESPACES`, `MAX_DISPLAY_OUTPUTS`, `KERNEL_PACKAGES`, `KERNEL_CONSTRAINTS_FILE`, the `FLOWFILE_HOST_*`/`FLOWFILE_KERNEL_*` path-translation quartet — some appear in `docs/for-developers/kernel-architecture.md`, most don't anywhere).
 
 ### `.env.example` ↔ `docker-compose.yml` divergences (trap-shaped, not bugs)
 - `.env.example` has **no** `FLOWFILE_SCHEDULER_ENABLED` line at all; compose hard-codes `true`; `docs/users/deployment/docker.md` says default is `false`. Net effect: local/pip runs never start the scheduler unless you set it yourself; a fresh `.env` copied from `.env.example` for a **non-compose** docker run also won't start it.
@@ -367,17 +364,13 @@ grep -n "MutableBool\|strip().lower() in" flowfile_core/flowfile_core/configs/se
 grep -n "feature_flags" flowfile_core/flowfile_core/ai/admin_routes.py flowfile_core/flowfile_core/lsp/admin_routes.py
 
 # Kernel image defaults + empty-string-is-unset guard
-grep -n "_KERNEL_IMAGE.*DEFAULT\|_envvar_or_default" flowfile_core/flowfile_core/kernel/manager.py
+grep -n "_KERNEL_IMAGE.*DEFAULT\|_envvar_or_default" flowfile_core/flowfile_core/kernel/images.py
 
 # Compose vs .env.example divergence re-check (scheduler / projects)
 grep -n "FLOWFILE_SCHEDULER_ENABLED\|FLOWFILE_ENABLE_PROJECTS" docker-compose.yml .env.example
 
-# Drift: docker-remote / shared/crypto never tracked
-git log --all --oneline -- docker-remote; git ls-files | grep -i docker-remote
-git ls-files -- shared/crypto
-
 # Kernel image version doc-drift re-check
-grep -n "flowfile-kernel-base:0\." docs/users/deployment/docker.md flowfile_core/flowfile_core/kernel/manager.py
+grep -n "flowfile-kernel-base:0\." flowfile_core/flowfile_core/kernel/images.py
 ```
 
 If a grep above turns up a line-number shift but the same variable name and semantics, just fix the file:line in this document — don't re-litigate the fact. If a variable disappears entirely, move its row to a "removed" note rather than silently deleting history from this table (this is the config record for the whole monorepo; treat entries as append-mostly).
