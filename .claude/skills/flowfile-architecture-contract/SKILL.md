@@ -410,18 +410,19 @@ lands:
 means merged or superseded) before assuming either the old inline-branch
 shape or the new backend/registry shape is current truth.
 
-### Notebook kernel: canvas fallback everywhere, no database copy (planned 2026-10-02)
+### Notebook kernel: canvas fallback everywhere, no database copy (planned 2026-10-02, landed 2026-10-03)
 
 Agreed direction for the notebook kernel (`flowfile_frame/notebook_kernel.py`,
-`flowfile_core/notebook/kernel_runner.py`), **not built yet**. The kernel is
-a separate execution mode: node settings stay the contract that round-trips
-to the canvas on Push, the kernel runs natively what it can, and everything
-else goes to the canvas. The end state is a kernel that opens **no** catalog
-database connection, so the per-kernel SQLite copy (`kernel/notebook_db.py`,
-there because WAL does not cross the Docker Desktop VM) and the "electron +
-SQLite file" gate (`notebook/gate.py`) can go. Do not add SCD2, change-feed
-or SQL logic to `kernel_runtime/flowfile_client.py`, forward raw SQL to core,
-or swap the database to get there.
+`flowfile_core/notebook/kernel_runner.py`), built in phases 0–3 below. The
+kernel is a separate execution mode: node settings stay the contract that
+round-trips to the canvas on Push, the kernel runs natively what it can, and
+everything else goes to the canvas. The end state, reached with phase 3, is a
+kernel that opens **no** catalog database connection: the per-kernel SQLite
+copy (`kernel/notebook_db.py`, there because WAL did not cross the Docker
+Desktop VM) and the SQLite requirement of the gate (`notebook/gate.py`) are
+gone. Do not add SCD2, change-feed or SQL logic to
+`kernel_runtime/flowfile_client.py`, forward raw SQL to core, or bring a
+database back into the kernel.
 
 Phase 0 landed with the plan: a lineage run that holds no output node
 passes `run_graph(commit_sources=False)` (`kernel_runner.lineage_commits`),
@@ -471,23 +472,40 @@ schema callback while a `schema_resolver` is set. The census is
 `tests/notebook/test_kernel_database_census.py`, at zero: a pool `checkout`
 listener under the sim's `IN_KERNEL_OP` marker over the whole corpus
 (`conftest.kernel_db_opens`), plus every kind answered without a `$ffsec$` or
-a decrypt. The copy machinery, `_rearm`, the `hello` schema-head handshake and
-the gate stay for phase 3; a first connection in the kernel now logs where it
-came from (`notebook_kernel._opened_from`), and only code in a cell reading the
-database itself makes one. The remaining phases, in order:
+a decrypt.
 
-3. **Delete the copy.** A refusing engine in `notebook_kernel.handle()`,
-   then remove `notebook_db.py`, `/notebook/session/database`, `_rearm` and
-   `FLOWFILE_DB_PATH` from `_notebook_env`; drop the Alembic head check and
-   the SQLite requirement of the gate. Gate the deletion on a CI job that
-   builds `flowfile-kernel-notebook:dev` and runs
-   `tests/notebook/test_kernel_notebook_docker.py`, which no workflow runs
-   today, and keep `test_kernel_database_census.py` green.
-4. **Later, each with its own plan:** a Python Script on the notebook's own
-   kernel (`KernelHold` refuses it during a fallback), a push that keeps the
-   session's variables, a row-limited fallback for `display()`, Postgres
-   catalogs and docker-mode sessions (per-user access in the lookups, admin
-   gating on `node_run`), session artifacts visible to the canvas.
+Phase 3 landed 2026-10-03: **the copy is gone.** A notebook kernel holds no
+catalog database: `_notebook_env` sets no `FLOWFILE_DB_PATH` (the kernel's
+`get_database_url()` falls to the never-mounted `<storage>/database/`), and
+every `notebook_kernel.handle()` first installs `_refuse_database`, a
+`do_connect` listener on the one cached engine behind `connection.engine`,
+`SessionLocal` and `get_db_context` (gated on `FLOWFILE_KERNEL_ID`, which only
+a kernel container has), so a cell that opens the database itself stops with
+`NO_DATABASE`, naming where it was opened (`_opened_from`: `a cell`, else the
+frame module of a regression) and the `ff` functions to use, before pysqlite
+could create a file. Deleted: `kernel/notebook_db.py`,
+`POST /notebook/session/database`, `kernel_runner.refresh_database`, `_rearm`
+and the refresh listeners, the `hello` schema-head handshake
+(`migration.package_head`, `kernel_runner._schema_revision`; the flowfile
+version check stays) and the gate's SQLite requirement
+(`kernel_sessions_allowed` is now `not sharing_enabled()`, which admits an
+electron app on a Postgres catalog without proving it). An uncached
+`shared.database.create_catalog_engine()` a cell calls by hand is not
+refused and creates an empty file in the container layer, as in any kernel
+with `flowfile` installed. Proof: `test_kernel_database_census.py` (no op
+connects), `test_kernel_session.py::test_a_notebook_kernel_refuses_to_open_a_catalog_database`
+(scratch engine) and the real-kernel
+`test_kernel_notebook_docker.py` (the default database file never appears in
+the container; a `get_db_context()` cell is refused; a namespace core creates
+shows in the next cell), which `.github/workflows/test-notebook-kernel.yml`
+now runs on every frame, notebook or kernel change
+(`FLOWFILE_REQUIRE_NOTEBOOK_KERNEL` makes a skip a failure).
+
+Remaining, each with its own plan: a Python Script on the notebook's own
+kernel (`KernelHold` refuses it during a fallback), a push that keeps the
+session's variables, a row-limited fallback for `display()`, Postgres
+catalogs and docker-mode sessions (per-user access in the lookups, admin
+gating on `node_run`), session artifacts visible to the canvas.
 
 Known gaps this leaves until then: a seeded canvas node below one that just
 ran keeps its seeded columns until it runs or the session is reset, and

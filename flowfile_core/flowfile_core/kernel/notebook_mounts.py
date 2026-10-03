@@ -128,7 +128,7 @@ def build_mount_table(kernel) -> dict[str, str]:
     """Host folder -> kernel folder for ``kernel`` (a ``KernelConfig``/``KernelInfo``), electron only.
 
     A notebook kernel gets the Flowfile folders (flows, custom nodes and their mounts, catalog
-    tables; the database is a copy in its shared folder, see ``notebook_db``); every kernel gets its
+    tables; never the database, which it reads through core's lookups); every kernel gets its
     ``mounted_folders``. Missing folders are skipped, and so is a folder saved before
     ``validate_mounted_folders`` refused one that holds Flowfile's storage folder.
     """

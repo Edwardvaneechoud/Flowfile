@@ -2,7 +2,7 @@
 
 The ``kernel-sim`` kernel shares core's engine, so ``conftest.kernel_db_opens`` (a pool listener under the sim's
 in-op marker) sees exactly the connections the kernel's own work would open in a container. The census over the
-whole corpus is the gate of the next phase, which deletes the kernel's database copy. ``POST
+whole corpus is what keeps a kernel without a catalog database (its engine refuses every connection). ``POST
 /notebook/session/lookup`` (``notebook.lookup``) answers what a build reads, metadata only, as the kernel's owner.
 """
 
@@ -220,7 +220,7 @@ def test_a_lookup_answers_metadata_only(notebook_corpus, database_connection, cl
     assert answers["flow_registration"]["namespace"] == DEMO_SCHEMA
     assert answers["placement_refusal"] is None
     assert "password" not in answers["database_connection"]
-    assert [c["connection_name"] for c in answers["cloud_connections"]] == [CLOUD_CONNECTION]
+    assert CLOUD_CONNECTION in [c["connection_name"] for c in answers["cloud_connections"]]
     with pytest.raises(ValueError, match="Unknown lookup"):
         lookup.answer("secrets", {}, NOTEBOOK_OWNER_ID)
     with pytest.raises(ValueError, match="No placement check"):

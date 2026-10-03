@@ -15,8 +15,8 @@ push. Rows the kernel cannot compute come from the canvas (:meth:`_Session.canva
 for a node only the cells hold, a run core makes of that node from its settings (:meth:`_Session._run_held`). The
 catalog metadata a build reads (tables, flow references, connections, kernels) comes from core too: every op runs
 under ``_metadata.installed`` (``POST /notebook/session/lookup``), so the kernel opens no catalog connection. The
-catalog database copy core writes under a new name when a call first connects to it (:func:`_rearm`) is only for
-code in a cell that reads the database itself.
+kernel holds no catalog database at all: its catalog engine refuses every connection (:func:`_refuse_database`), so
+code in a cell that opens the database itself stops with a message naming the ``ff`` functions to use instead.
 """
 
 from __future__ import annotations
@@ -25,11 +25,9 @@ import contextlib
 import json
 import os
 import sys
-import threading
 import traceback
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -42,7 +40,6 @@ from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
 from flowfile_core.schemas.schemas import FlowfileNode
 from flowfile_frame import _metadata, notebook
-from flowfile_frame.config import logger
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.native import (
     NativeNode,
@@ -146,11 +143,6 @@ def post_lookup(body: dict[str, Any]) -> dict[str, Any]:
     return _post_core("/notebook/session/lookup", body, f"the {body['kind']} lookup")
 
 
-def post_database_refresh() -> dict[str, Any]:
-    """Ask core to bring this kernel's copy of the catalog database up to date (``POST /notebook/session/database``)."""
-    return _post_core("/notebook/session/database", {}, "a fresh copy of the catalog database")
-
-
 transport: Callable[[dict[str, Any]], dict[str, Any]] = post_node_result
 """How a session asks core for a canvas node's result; tests route it to core in-process."""
 
@@ -159,9 +151,6 @@ run_transport: Callable[[dict[str, Any]], dict[str, Any]] = post_node_run
 
 lookup_transport: Callable[[dict[str, Any]], dict[str, Any]] = post_lookup
 """How an op asks core for catalog metadata (``_metadata.installed``); tests route it to core in-process."""
-
-database_transport: Callable[[], dict[str, Any]] = post_database_refresh
-"""How a call asks core to refresh the kernel's catalog copy; tests route it to core in-process."""
 
 
 @dataclass
@@ -528,99 +517,53 @@ def _entries(source: FlowNode, handle: str) -> list[dict[str, str]]:
 _SESSIONS: dict[int, _Session] = {}
 
 
-def _schema_head() -> str | None:
-    """The Alembic head this kernel's flowfile_core ships, which core compares with the catalog's revision;
-    ``None`` when it cannot be read."""
-    from flowfile_core.database.migration import package_head
-
-    try:
-        return package_head()
-    except Exception:
-        return None
-
-
-_database_lock = threading.Lock()
-_refresh_pending = False
-_database_copy: str | None = None
-
-
-def _refresh_database() -> str | None:
-    """The catalog copy to open, after having core refresh it if this call has not yet; a missing copy raises.
-
-    Core answers with the copy's path in this kernel. ``None`` until core has named one (no SQLite file catalog).
-    """
-    global _refresh_pending, _database_copy
-    with _database_lock:
-        if _refresh_pending:
-            path = database_transport().get("path")
-            if path is not None and not Path(path).exists():
-                raise RuntimeError(
-                    f"The Flowfile database copy {path} is missing in this kernel; recreate the notebook kernel"
-                )
-            _database_copy = path
-            _refresh_pending = False
-        return _database_copy
+NO_DATABASE = (
+    "A notebook kernel has no catalog database to open ({site}); the catalog is read through flowfile: "
+    "ff.read_catalog_table, ff.list_catalogs, ff.get_catalog, ff.flow_ref, ff.kernels, "
+    "ff.get_all_available_database_connections"
+)
 
 
 def _opened_from() -> str:
-    """The nearest flowfile frame of this stack, as ``module.py:function``; what opened the database copy."""
+    """Where this stack opened the catalog database: ``"a cell"``, else the nearest flowfile frame as
+    ``module.py:function`` (a build that opens it is a regression, and the message names its module)."""
     for frame in reversed(traceback.extract_stack()[:-2]):
         filename = frame.filename.replace("\\", "/")
+        if filename.startswith("<cell-"):
+            return "a cell"
         for package in ("flowfile_frame/", "flowfile_core/", "flowfile/"):
             if package in filename and "/database/" not in filename:
                 return f"{filename.rsplit(package, 1)[1]}:{frame.name}"
     return "a cell"
 
 
-def _refresh_before_connect(dialect, conn_rec, cargs, cparams) -> None:
-    """Point every new SQLite connection at the copy core named last (pysqlite's first argument is the file).
+def _refuse_connect(dialect, conn_rec, cargs, cparams) -> None:
+    """Fail a new connection of the kernel's catalog engine before pysqlite opens (and would create) the file."""
+    raise RuntimeError(NO_DATABASE.format(site=_opened_from()))
 
-    Every lookup a build makes goes through core, so a connection here comes from code in a cell that reads the
-    database itself; the warning names where, for the day the copy goes.
+
+def _refuse_database() -> None:
+    """In a notebook kernel (``FLOWFILE_KERNEL_ID`` set) make the catalog engine refuse every connection, once.
+
+    ``connection.engine``, ``SessionLocal``, ``get_db_context`` and ``get_catalog_engine()`` all share the one
+    cached engine (``shared.database._engines``), so one ``do_connect`` listener covers them; a script and the
+    tests' kernel-sim never set the variable and keep core's engine as it is.
     """
-    if _refresh_pending:
-        logger.warning("Notebook kernel opened the catalog database from %s", _opened_from())
-    copy = _refresh_database()
-    if copy is not None and dialect.name == "sqlite" and cargs:
-        cargs[0] = copy
-
-
-def _rearm(engine) -> None:
-    """Close ``engine``'s pooled connections and have its next new connection refresh the copy first.
-
-    Each copy is a plain rollback-journal file under a name of its own, so the engine's WAL switch is taken off,
-    and the refresh runs before the connection opens the file (``do_connect``), which then opens that copy
-    instead of ``FLOWFILE_DB_PATH``. Docker Desktop keeps serving a replaced file's old entry for a few
-    milliseconds, so a copy replaced in place would exist and fail to open.
-    """
-    global _refresh_pending
+    if not os.environ.get("FLOWFILE_KERNEL_ID"):
+        return
     from sqlalchemy import event
 
-    from shared.database import _enable_wal
-
-    if event.contains(engine, "connect", _enable_wal):
-        event.remove(engine, "connect", _enable_wal)
-    if not event.contains(engine, "do_connect", _refresh_before_connect):
-        event.listen(engine, "do_connect", _refresh_before_connect)
-    with _database_lock:
-        _refresh_pending = True
-    engine.dispose()
-
-
-def _release_database() -> None:
-    """In a notebook kernel (``FLOWFILE_KERNEL_ID`` and ``FLOWFILE_DB_PATH`` set), re-arm the catalog engine for
-    this call (:func:`_rearm`); elsewhere nothing happens."""
-    if not (os.environ.get("FLOWFILE_KERNEL_ID") and os.environ.get("FLOWFILE_DB_PATH")):
-        return
     from shared.database import get_catalog_engine
 
-    _rearm(get_catalog_engine())
+    engine = get_catalog_engine()
+    if not event.contains(engine, "do_connect", _refuse_connect):
+        event.listen(engine, "do_connect", _refuse_connect)
 
 
 def _hello(request: dict[str, Any]) -> dict[str, Any]:
     from shared._version import get_version
 
-    return {"ok": True, "version": get_version(), "schema_head": _schema_head()}
+    return {"ok": True, "version": get_version()}
 
 
 def _kernel_client() -> Any:
@@ -822,7 +765,7 @@ def handle(request_json: str, namespace: dict[str, Any]) -> None:
     ``namespace`` is the kernel's namespace the call runs in, where the flow's session keeps its variables.
     """
     try:
-        _release_database()
+        _refuse_database()
         result = _dispatch(json.loads(request_json), namespace)
     except BaseException as exc:
         text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))

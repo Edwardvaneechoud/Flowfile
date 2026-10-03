@@ -23,7 +23,7 @@ import httpx
 from flowfile_core.auth import sharing
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.events import publish
-from flowfile_core.kernel import notebook_db, notebook_mounts
+from flowfile_core.kernel import notebook_mounts
 
 # Re-exported: the image tags moved to a docker-free module so matching.py can
 # read them, but manager stays their public home for existing callers/tests.
@@ -408,19 +408,15 @@ def _rebase_to_posix(local_path: str, host_prefix: str, container_prefix: str) -
     return None
 
 
-def _notebook_env(kernel: KernelInfo, db_path: str) -> dict[str, str]:
-    """A notebook kernel's flowfile reads the mounted Flowfile folders and core's copy of the database, and never
-    migrates, seeds or GCs anything.
-
-    ``db_path`` (kernel side) only marks the catalog as a SQLite file in the copy folder: no file is written
-    there, and the kernel's session opens the copy core names on each refresh (``notebook_db.refresh``).
-    """
+def _notebook_env(kernel: KernelInfo) -> dict[str, str]:
+    """A notebook kernel's flowfile reads the mounted Flowfile folders, never migrates, seeds or GCs anything, and
+    holds no catalog database: its engine refuses every connection (``flowfile_frame.notebook_kernel``) and the
+    catalog is read through core's lookups."""
     env: dict[str, str] = {}
     if not sharing.sharing_enabled() and is_notebook_kernel_config(kernel):
         env.update(
             {
                 "FLOWFILE_STORAGE_DIR": notebook_mounts.kernel_side(str(storage.base_directory)),
-                "FLOWFILE_DB_PATH": db_path,
                 "FLOWFILE_SKIP_STARTUP_MIGRATION": "1",
                 "FLOWFILE_SKIP_INIT_DB": "1",
                 "FLOWFILE_KERNEL_GC": "0",
@@ -1605,8 +1601,7 @@ class KernelManager:
         env["PERSISTENCE_PATH"] = self.to_kernel_path(os.path.join(self._shared_volume, "artifacts"))
         env["RECOVERY_MODE"] = kernel.recovery_mode.value
         if not self._kernel_volume:
-            db_copy = str(notebook_db.copy_path(self._shared_volume, kernel_id))
-            env.update(_notebook_env(kernel, self.to_kernel_path(db_copy)))
+            env.update(_notebook_env(kernel))
         return env
 
     async def create_kernel(self, config: KernelConfig, user_id: int) -> KernelInfo:

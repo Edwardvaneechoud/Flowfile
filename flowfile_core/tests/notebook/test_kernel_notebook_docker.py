@@ -4,7 +4,8 @@ Run it on its own with a scratch storage folder, since the kernel mounts the Flo
 
     FLOWFILE_STORAGE_DIR=$(mktemp -d) poetry run pytest flowfile_core/tests/notebook/test_kernel_notebook_docker.py -m kernel
 
-Skipped without Docker, without the ``flowfile-kernel-notebook:dev`` image or without ``FLOWFILE_STORAGE_DIR``.
+Skipped without Docker, without the ``flowfile-kernel-notebook:dev`` image or without ``FLOWFILE_STORAGE_DIR``;
+with ``FLOWFILE_REQUIRE_NOTEBOOK_KERNEL`` set (the CI job that builds the image) those are failures instead.
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ import ast
 import asyncio
 import json
 import os
-import re
 import shutil
 import socket
 import subprocess
@@ -31,7 +31,7 @@ from tests.notebook.conftest import NOTEBOOK_OWNER_ID, cell_provenance
 IMAGE = "flowfile-kernel-notebook:dev"
 KERNEL_ID = "nb-smoke"
 LOOPBACK = ("127.0.0.1", 50123)
-COPY_NAME = re.compile(r"flowfile_catalog\.[0-9a-f]{32}\.db")
+REQUIRED = bool(os.environ.get("FLOWFILE_REQUIRE_NOTEBOOK_KERNEL"))
 
 
 def _image_present() -> bool:
@@ -41,11 +41,37 @@ def _image_present() -> bool:
         return False
 
 
-pytestmark = [
-    pytest.mark.kernel,
-    pytest.mark.skipif(not os.environ.get("FLOWFILE_STORAGE_DIR"), reason="needs a scratch FLOWFILE_STORAGE_DIR"),
-    pytest.mark.skipif(not _image_present(), reason=f"{IMAGE} not built (make notebook_kernel_dev)"),
-]
+def _missing() -> str | None:
+    if not os.environ.get("FLOWFILE_STORAGE_DIR"):
+        return "needs a scratch FLOWFILE_STORAGE_DIR"
+    if not _image_present():
+        return f"{IMAGE} not built (make notebook_kernel_dev)"
+    return None
+
+
+MISSING = _missing()
+pytestmark = [pytest.mark.kernel, pytest.mark.skipif(bool(MISSING) and not REQUIRED, reason=MISSING or "")]
+
+
+@pytest.fixture(autouse=True)
+def _required():
+    """Where the image and the folder are required (CI), their absence fails instead of skipping."""
+    if REQUIRED and MISSING:
+        pytest.fail(MISSING)
+
+
+def _in_kernel(path: str) -> bool:
+    """Whether ``path`` exists inside the kernel container."""
+    command = ["docker", "exec", f"flowfile-kernel-{KERNEL_ID}", "test", "-e", path]
+    return subprocess.run(command, capture_output=True).returncode == 0
+
+
+def _kernel_storage() -> str:
+    """The kernel's ``FLOWFILE_STORAGE_DIR``: the host's storage folder as the kernel sees it."""
+    from flowfile_core.kernel.notebook_mounts import kernel_side
+    from shared.storage_config import storage
+
+    return kernel_side(str(storage.base_directory))
 
 
 def _free_port() -> int:
@@ -186,8 +212,9 @@ def test_a_notebook_session_on_a_real_kernel(smoke_flow, notebook_kernel, client
     new_nodes = [n for n in smoke_flow.nodes if n.node_id not in before]
     assert [n.node_type for n in new_nodes] == ["formula"], [n.node_type for n in new_nodes]
 
-    copies = Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID
-    assert not copies.exists(), "nothing above reads the catalog, so the kernel never asked for a copy"
+    database = f"{_kernel_storage()}/database/flowfile_catalog.db"
+    assert _in_kernel(os.path.dirname(database)), "the kernel imported flowfile, whose storage folders exist there"
+    assert not _in_kernel(database), "nothing above opens a catalog database in the kernel"
     code = (
         "print('kernels', sorted(ff.kernels))\n"
         "print('catalogs', sorted(c.name for c in ff.list_catalogs()))\n"
@@ -197,46 +224,47 @@ def test_a_notebook_session_on_a_real_kernel(smoke_flow, notebook_kernel, client
     assert catalog.status_code == 200 and catalog.json()["success"], catalog.text
     stdout = catalog.json()["stdout"]
     assert KERNEL_ID in stdout and "General" in stdout and "default" in stdout, stdout
-    assert not copies.exists(), "the saved kernels and the catalog come from core, never from a database copy"
+    assert not _in_kernel(database), "the saved kernels and the catalog come from core, never from a database here"
 
 
-def test_a_cell_reads_the_catalog_right_after_core_wrote_it(smoke_flow, notebook_kernel, client_as):
-    """Docker Desktop serves a replaced file's old entry for a few milliseconds, in which the file exists and
-    does not open; every copy core writes therefore has a new name, which a cell opens at once."""
-    from sqlalchemy import text
-
+def test_a_cell_that_opens_the_database_itself_is_refused_and_reads_the_catalog_live(
+    smoke_flow, notebook_kernel, client_as
+):
+    """The kernel holds no catalog database: a cell opening one through flowfile_core stops before pysqlite could
+    create a file, and what core writes to the catalog shows in the next cell through the lookups."""
+    from flowfile_core.catalog import CatalogService, SQLAlchemyCatalogRepository
     from flowfile_core.database.connection import get_db_context
 
     client = client_as(NOTEBOOK_OWNER_ID, client=LOOPBACK)
     key = {"flow_id": smoke_flow.flow_id, "kernel_id": KERNEL_ID}
     assert client.post("/notebook/session/open", json=key).status_code == 200
-    copies = Path(notebook_kernel.shared_volume_path) / "notebook_db" / KERNEL_ID
-    assert not copies.exists(), "only a cell reading the database itself asks for a copy"
-    seen: set[str] = set()
+    database = f"{_kernel_storage()}/database/flowfile_catalog.db"
     probe = (
         "from sqlalchemy import text\n"
         "from flowfile_core.database.connection import get_db_context\n"
         "with get_db_context() as db:\n"
-        "    print('probe', db.execute(text('SELECT max(v) FROM nb_copy_probe')).scalar())\n"
+        "    print('probe', db.execute(text('SELECT 1')).scalar())\n"
     )
+    read = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-probe", "code": probe})
+    assert read.status_code == 200, read.text
+    result = read.json()
+    assert not result["success"] and "probe" not in result["stdout"], result
+    assert "no catalog database to open (a cell)" in result["error"], result["error"]
+    assert "ff.list_catalogs" in result["error"], result["error"]
+    assert not _in_kernel(database), "the refusal ran before pysqlite could create the file"
+
+    name = "nb_live_probe"
+    with get_db_context() as db:
+        namespace_id = CatalogService(SQLAlchemyCatalogRepository(db)).create_namespace(name, NOTEBOOK_OWNER_ID).id
     try:
-        with get_db_context() as db:
-            db.execute(text("CREATE TABLE IF NOT EXISTS nb_copy_probe (v INTEGER)"))
-            db.commit()
-        for value in range(1, 13):
-            with get_db_context() as db:
-                db.execute(text("INSERT INTO nb_copy_probe VALUES (:v)"), {"v": value})
-                db.commit()
-            read = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-probe", "code": probe})
-            assert read.status_code == 200 and read.json()["success"], read.text
-            assert f"probe {value}" in read.json()["stdout"], read.json()
-            left = [copy.name for copy in copies.iterdir()]
-            assert len(left) == 1 and COPY_NAME.fullmatch(left[0]) and left[0] not in seen, (left, seen)
-            seen.add(left[0])
+        code = "print(sorted(c.name for c in ff.list_catalogs()))"
+        listed = client.post("/notebook/session/execute", json={**key, "cell_id": "cell-catalogs", "code": code})
+        assert listed.status_code == 200 and listed.json()["success"], listed.text
+        assert name in listed.json()["stdout"], listed.json()
     finally:
         with get_db_context() as db:
-            db.execute(text("DROP TABLE IF EXISTS nb_copy_probe"))
-            db.commit()
+            CatalogService(SQLAlchemyCatalogRepository(db)).delete_namespace(namespace_id)
+    assert not _in_kernel(database)
 
 
 SUMMING_SCRIPT = (

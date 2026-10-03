@@ -2,10 +2,9 @@
 
 Mounted at ``/notebook``. The ``/notebook/session/*`` routes run cells on one of the caller's notebook
 kernels (``notebook.kernel_runner``); they are gated by ``notebook.gate`` (403) before the flow lookup (404).
-``/notebook/session/node_result``, ``/notebook/session/node_run``, ``/notebook/session/lookup`` and
-``/notebook/session/database`` are the kernel's own call backs, for a canvas node's rows, a run of a node only
-the session's cells hold (``notebook.held_run``), a catalog metadata lookup (``notebook.lookup``) and a fresh
-copy of the catalog database.
+``/notebook/session/node_result``, ``/notebook/session/node_run`` and ``/notebook/session/lookup`` are the
+kernel's own call backs, for a canvas node's rows, a run of a node only the session's cells hold
+(``notebook.held_run``) and a catalog metadata lookup (``notebook.lookup``).
 """
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -199,17 +198,3 @@ def notebook_session_lookup(
     if not x_kernel_id:
         raise HTTPException(status_code=403, detail="Only a notebook kernel can ask for a lookup")
     return lookup.answer_request(x_kernel_id, current_user, body)
-
-
-@router.post("/session/database")
-def notebook_session_database(
-    x_kernel_id: str | None = Header(None, alias="X-Kernel-Id"),
-    current_user=Depends(get_user_or_internal_service),
-) -> dict:
-    """Bring the calling notebook kernel's copy of the catalog database up to date: ``{"path"}``, as the kernel sees it.
-
-    Called by the kernel (``X-Internal-Token`` + ``X-Kernel-Id``) before its first database connection in a call.
-    """
-    if not x_kernel_id:
-        raise HTTPException(status_code=403, detail="Only a notebook kernel can refresh its database copy")
-    return kernel_runner.refresh_database(x_kernel_id, current_user)

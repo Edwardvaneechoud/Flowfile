@@ -132,8 +132,9 @@ def test_run_kwargs_and_env_for_a_folder_kernel(tmp_path, monkeypatch):
     assert "FLOWFILE_DB_PATH" not in env
     kernel.custom_image = "flowfile-kernel-notebook:dev"
     env = mgr._build_kernel_env("k", kernel)
-    assert env["FLOWFILE_SKIP_STARTUP_MIGRATION"] == "1" and env["FLOWFILE_STORAGE_DIR"]
-    assert env["FLOWFILE_DB_PATH"] == "/shared/notebook_db/k/flowfile_catalog.db"
+    assert env["FLOWFILE_SKIP_STARTUP_MIGRATION"] == "1" and env["FLOWFILE_SKIP_INIT_DB"] == "1"
+    assert env["FLOWFILE_STORAGE_DIR"]
+    assert "FLOWFILE_DB_PATH" not in env, "a notebook kernel holds no catalog database"
 
 
 def _storage_at(monkeypatch, base):

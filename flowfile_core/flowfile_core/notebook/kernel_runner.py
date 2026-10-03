@@ -7,7 +7,8 @@ the session's variables. The frame's ``notebook_kernel`` module runs the op and 
 come back in the kernel routes' own shapes. Besides the session ops, :class:`KernelCleanRunner` runs a push that
 names a kernel (its result then goes through ``notebook.validate``), and the kernel calls back for canvas rows it
 cannot compute (:func:`node_result`), for a run of a node only its cells hold (``held_run.run_held_node``, bound
-through :func:`_bound_flow` here) and for a fresh copy of the catalog database (:func:`refresh_database`).
+through :func:`_bound_flow` here) and for the catalog metadata a build reads (``lookup.answer_request``, bound
+through :func:`_bound_kernel`).
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from flowfile_core.configs import logger
-from flowfile_core.kernel import notebook_db
 from flowfile_core.kernel.models import DisplayOutput, ExecuteRequest, ExecuteResult
 from flowfile_core.kernel.notebook_support import is_notebook_kernel_config
 from flowfile_core.notebook.bridge import CleanRunRequest, CleanRunResult
@@ -50,19 +50,6 @@ def _manager():
         return kernel_package.get_kernel_manager()
     except Exception as exc:
         raise HTTPException(503, "Docker is not available. Please ensure Docker is installed and running.") from exc
-
-
-def _schema_revision() -> str | None:
-    try:
-        from sqlalchemy import text
-
-        from flowfile_core.database.connection import get_db_context
-
-        with get_db_context() as db:
-            row = db.execute(text("SELECT version_num FROM alembic_version")).first()
-        return row[0] if row else None
-    except Exception:
-        return None
 
 
 def kernel_flow_id(flow_id: int) -> int:
@@ -133,9 +120,8 @@ def _notebook_kernel(kernel_id: str, user):
 
 
 def _checked(kernel_id: str, user, flow_id: int):
-    """The manager, after :func:`_notebook_kernel` and (once per container) the kernel's flowfile version and the
-    Alembic head of its flowfile_core, which must be the catalog's revision (a dev image keeps the version string
-    across migrations)."""
+    """The manager, after :func:`_notebook_kernel` and (once per container) the kernel's flowfile version, which
+    must be this app's (409)."""
     from shared._version import get_version
 
     manager, kernel = _notebook_kernel(kernel_id, user)
@@ -148,30 +134,8 @@ def _checked(kernel_id: str, user, flow_id: int):
                 f"Kernel '{kernel_id}' has flowfile {hello.get('version')} and this app is {get_version()}: "
                 "recreate the notebook kernel",
             )
-        head, core_revision = hello.get("schema_head"), _schema_revision()
-        if head and core_revision and head != core_revision:
-            raise HTTPException(
-                409,
-                f"Kernel '{kernel_id}' has flowfile for database schema {head}, the catalog is at {core_revision}: "
-                "recreate the notebook kernel",
-            )
         _verified.add(key)
     return manager
-
-
-def refresh_database(kernel_id: str, user) -> dict:
-    """The kernel's own call before its first database connection in a call: its catalog copy brought up to date.
-
-    Answers ``{"path"}``, the copy as the kernel sees it (``None`` without a SQLite file catalog): a new file
-    whenever the catalog changed, which the kernel's next connections open. It never calls the kernel, so it is
-    safe while a session call holds the kernel's execution lock.
-    """
-    manager, _ = _notebook_kernel(kernel_id, user)
-    try:
-        target = notebook_db.refresh(manager.shared_volume_path, kernel_id)
-    except Exception as exc:
-        raise HTTPException(502, f"Could not copy the catalog database for the notebook kernel: {exc}") from exc
-    return {"path": None if target is None else manager.to_kernel_path(str(target))}
 
 
 def _result_schemas(flow) -> dict[int, dict]:
@@ -401,8 +365,8 @@ def _results_dir(manager, flow_id: int) -> str:
 
 
 def forget_kernel(kernel_id: str, shared_dir: str) -> None:
-    """Drop core's sessions on a kernel that stopped or was deleted, the canvas results only it used and its
-    database copy. Never raises: it runs inside the kernel's stop."""
+    """Drop core's sessions on a kernel that stopped or was deleted and the canvas results only it used. Never
+    raises: it runs inside the kernel's stop."""
     try:
         with _lock:
             emptied = []
@@ -419,7 +383,6 @@ def forget_kernel(kernel_id: str, shared_dir: str) -> None:
             _verified.difference_update({key for key in _verified if key[0] == kernel_id})
         for flow_id in emptied:
             shutil.rmtree(os.path.join(shared_dir, "notebook", str(flow_id)), ignore_errors=True)
-        notebook_db.remove(shared_dir, kernel_id)
     except Exception:
         logger.debug(f"notebook: could not forget the sessions on kernel {kernel_id}", exc_info=True)
 
