@@ -8,6 +8,18 @@
       <button class="note-action" @click="notebook.render()">Try again</button>
     </div>
     <template v-else>
+      <div v-if="hasNodeCells" class="notebook-bar">
+        <button
+          class="note-action"
+          data-action="run-all"
+          :disabled="!notebook.canRun"
+          title="Run the whole flow and show every cell's rows"
+          @click="notebook.runAll()"
+        >
+          Run all
+        </button>
+        <span v-if="notebook.running" class="bar-note">Running…</span>
+      </div>
       <p v-if="!hasNodeCells && !notebook.loading" class="notebook-note">
         Add a node to the canvas and it appears here as code.
       </p>
@@ -27,7 +39,17 @@
           <span v-if="cell.status === 'placeholder'" class="cell-badge" :title="cell.reason ?? ''">
             stays on the canvas
           </span>
-          <button class="cell-action" :title="`Copy this cell's code`" @click.stop="copyCell(cell)">
+          <button
+            v-if="cell.kind === 'node'"
+            class="cell-action"
+            data-action="run"
+            :disabled="!notebook.canRun"
+            title="Run this step and show its rows"
+            @click.stop="notebook.runCell(cell.cell_id)"
+          >
+            Run
+          </button>
+          <button class="cell-action" data-action="copy" :title="`Copy this cell's code`" @click.stop="copyCell(cell)">
             {{ copiedCell === cell.cell_id ? 'Copied' : 'Copy' }}
           </button>
         </header>
@@ -39,6 +61,7 @@
           :indent-with-tab="false"
           :style="{ fontSize: '13px' }"
         />
+        <CellOutput v-if="notebook.outputs[cell.cell_id]" :output="notebook.outputs[cell.cell_id]" @click.stop />
       </article>
     </template>
   </div>
@@ -54,6 +77,7 @@ import { useFlowStore } from '../../stores/flow-store'
 import { useNotebookStore, type NotebookCell } from '../../stores/notebook-store'
 import { usePyodideStore } from '../../stores/pyodide-store'
 import { getNodeDescription } from '../../config/nodeDescriptions'
+import CellOutput from './CellOutput.vue'
 
 const props = defineProps<{
   /** The Notebook tab is the one showing; nothing renders while it is not. */
@@ -177,10 +201,35 @@ async function copyCell(cell: NotebookCell) {
   cursor: pointer;
 }
 
-.note-action:hover,
-.cell-action:hover {
+.note-action:hover:not(:disabled),
+.cell-action:hover:not(:disabled) {
   color: var(--color-text-primary);
   border-color: var(--color-border-focus);
+}
+
+.note-action:disabled,
+.cell-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.notebook-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -12px -12px 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border-primary);
+  background: var(--color-background-primary);
+}
+
+.bar-note {
+  font-size: 12px;
+  color: var(--color-text-secondary);
 }
 
 .cell {

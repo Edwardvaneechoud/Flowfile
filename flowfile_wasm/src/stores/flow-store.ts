@@ -780,6 +780,8 @@ export const useFlowStore = defineStore('flow', () => {
 
   const canUndo = computed(() => historyRevision.value >= 0 && history.value.canUndo)
   const canRedo = computed(() => historyRevision.value >= 0 && history.value.canRedo)
+  /** An object that stays the same while this flow is the open one; a tab switch or an import swaps it. */
+  const flowSessionKey = computed<object>(() => history.value)
 
   function dropFileContent(id: number) {
     fileContents.value.delete(id)
@@ -3627,6 +3629,7 @@ result
     canRedo,
     applyFlowPatch,
     settingsEpoch,
+    flowSessionKey,
 
     // Actions
     generateNodeId,

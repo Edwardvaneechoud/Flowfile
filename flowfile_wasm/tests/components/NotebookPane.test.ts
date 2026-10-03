@@ -3,7 +3,8 @@
  *
  * The pane shows the open flow as read-only cells. It renders only while it is
  * the tab showing and Pyodide is ready, follows the flow as it changes, and a
- * picked cell selects its node on the canvas.
+ * picked cell selects its node on the canvas. A cell's Run shows its rows under
+ * it; nothing runs until Run or Run all is pressed.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -189,7 +190,7 @@ describe('NotebookPane', () => {
     const { flow } = twoNodeFlow()
     const wrapper = await mountPane()
 
-    const copy = wrapper.find('[data-cell-id="cell-1"] .cell-action')
+    const copy = wrapper.find('[data-cell-id="cell-1"] [data-action="copy"]')
     await copy.trigger('click')
     await vi.advanceTimersByTimeAsync(0)
 
@@ -239,5 +240,126 @@ describe('NotebookPane', () => {
     const wrapper = await mountPane()
 
     expect(wrapper.text()).toContain('Add a node to the canvas and it appears here as code.')
+  })
+
+  describe('running', () => {
+    const executeCalls = () =>
+      pyodideMock.runPythonWithResult.mock.calls.map(call => String(call[0])).filter(src => /execute_|fetch_preview\(/.test(src))
+
+    /** The two-node flow, connected and with rows in its source, and a bridge that answers runs and previews. */
+    function runnableFlow() {
+      const built = twoNodeFlow()
+      built.flow.addEdge({
+        id: 'e1-2',
+        source: String(built.source),
+        target: String(built.filter),
+        sourceHandle: 'output-0',
+        targetHandle: 'input-0'
+      })
+      built.flow.updateNodeSettings(built.source, {
+        ...built.flow.getNode(built.source)!.settings,
+        raw_data_format: { columns: [{ name: 'a', data_type: 'Int64' }], data: [[1, 2]] }
+      } as any)
+      pyodideMock.runPythonWithResult.mockImplementation(async (source: string) => {
+        if (source.includes('render_notebook(')) return { cells: built.cells, warnings: [], var_by_node: {} }
+        if (source.includes('_lazyframes.keys()')) return []
+        if (source.includes('fetch_preview(')) {
+          return { success: true, data: { columns: ['a', 'b'], data: [[1, 'x'], [2, null]], total_rows: 2 } }
+        }
+        return { success: true }
+      })
+      return built
+    }
+
+    it('offers Run on node cells and Run all above them, and runs nothing by showing them', async () => {
+      const { flow, filter } = runnableFlow()
+
+      const wrapper = await mountPane()
+      flow.updateNodeDescription(filter, 'Keep the small ones')
+      await vi.advanceTimersByTimeAsync(RENDER_DELAY)
+
+      expect(wrapper.find('[data-cell-id="imports"] [data-action="run"]').exists()).toBe(false)
+      expect(wrapper.findAll('[data-action="run"]')).toHaveLength(2)
+      expect(wrapper.find('[data-action="run-all"]').exists()).toBe(true)
+      expect(wrapper.find('.cell-output').exists()).toBe(false)
+      expect(executeCalls()).toEqual([])
+    })
+
+    it('has no Run all when the flow has no nodes', async () => {
+      pyodideMock.runPythonWithResult.mockResolvedValue({
+        cells: [cell('imports', [], 'import flowfile as ff', { kind: 'imports' })],
+        warnings: [],
+        var_by_node: {}
+      })
+
+      const wrapper = await mountPane()
+
+      expect(wrapper.find('[data-action="run-all"]').exists()).toBe(false)
+    })
+
+    it("shows a cell's rows under it without selecting the cell", async () => {
+      const { flow } = runnableFlow()
+      const wrapper = await mountPane()
+
+      await wrapper.find('[data-cell-id="cell-1"] [data-action="run"]').trigger('click')
+      await vi.waitFor(() => expect(wrapper.find('[data-cell-id="cell-1"] table').exists()).toBe(true))
+
+      const output = wrapper.find('[data-cell-id="cell-1"] .cell-output')
+      expect(output.attributes('data-output-state')).toBe('rows')
+      expect(output.findAll('th').map(th => th.text())).toEqual(['a', 'b'])
+      expect(output.findAll('tbody tr')).toHaveLength(2)
+      expect(output.find('.output-note').text()).toBe('2 rows')
+      expect(wrapper.find('[data-cell-id="cell-2"] .cell-output').exists()).toBe(false)
+      expect(flow.selectedNodeId).toBeNull()
+
+      await output.trigger('click')
+      expect(flow.selectedNodeId).toBeNull()
+    })
+
+    it("shows a failed node's error under its cell", async () => {
+      twoNodeFlow()
+      const wrapper = await mountPane()
+
+      await wrapper.find('[data-cell-id="cell-1"] [data-action="run"]').trigger('click')
+      await vi.waitFor(() => expect(wrapper.find('.output-error').exists()).toBe(true))
+
+      expect(wrapper.find('[data-cell-id="cell-1"] .output-error').text()).toBe('No data entered')
+    })
+
+    it('Run all fills every node cell and leaves the imports cell alone', async () => {
+      runnableFlow()
+      const wrapper = await mountPane()
+
+      await wrapper.find('[data-action="run-all"]').trigger('click')
+      await vi.waitFor(() => expect(wrapper.findAll('.cell-output--rows')).toHaveLength(2))
+
+      expect(wrapper.find('[data-cell-id="imports"] .cell-output').exists()).toBe(false)
+      expect(wrapper.find('[data-action="run-all"]').attributes('disabled')).toBeUndefined()
+    })
+
+    it('says how many rows there are beyond the ones shown, and names the columns of an empty result', async () => {
+      const { cells } = runnableFlow()
+      const wide = Array.from({ length: 100 }, (_, index) => [index, 'x'])
+      let preview: unknown = { columns: ['a', 'b'], data: wide, total_rows: 12345 }
+      pyodideMock.runPythonWithResult.mockImplementation(async (source: string) => {
+        if (source.includes('render_notebook(')) return { cells, warnings: [], var_by_node: {} }
+        if (source.includes('_lazyframes.keys()')) return []
+        if (source.includes('fetch_preview(')) return { success: true, data: preview }
+        return { success: true }
+      })
+      const wrapper = await mountPane()
+
+      await wrapper.find('[data-cell-id="cell-1"] [data-action="run"]').trigger('click')
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-cell-id="cell-1"] .output-note').text()).toBe('Showing 100 of 12,345 rows')
+      )
+
+      preview = { columns: ['a', 'b'], data: [], total_rows: 0 }
+      await wrapper.find('[data-cell-id="cell-2"] [data-action="run"]').trigger('click')
+      await vi.waitFor(() =>
+        expect(wrapper.find('[data-cell-id="cell-2"] .output-note').text()).toBe('No rows. Columns: a, b')
+      )
+      expect(wrapper.find('[data-cell-id="cell-2"] table').exists()).toBe(false)
+    })
   })
 })

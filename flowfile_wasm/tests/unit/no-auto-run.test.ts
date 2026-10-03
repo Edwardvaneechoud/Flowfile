@@ -1,7 +1,7 @@
 /**
  * Regression guard for the "Execution is explicit-only" rule (see
  * flowfile_wasm/CLAUDE.md). Data must run ONLY when the user clicks a Run action
- * (Run flow / Run Now / Apply / Fetch data). Selecting a node and opening the
+ * (Run flow / Run Now / Apply / Fetch data, or Run in the notebook). Selecting a node and opening the
  * Settings/Table panels must NEVER execute the pipeline — at most they may
  * materialize a *preview* of an already-computed node.
  *
@@ -142,5 +142,41 @@ describe('Execution is explicit-only: opening panels never runs the pipeline', (
     expect(bridgeStrings().filter((src) => src.includes('render_notebook('))).toHaveLength(1)
     expect(executeCalls()).toEqual([])
     expect(previewCalls()).toEqual([])
+  })
+
+  it('the notebook runs a cell only when its Run is pressed', async () => {
+    pyodideMock.runPython.mockResolvedValue(undefined)
+    const store = useFlowStore()
+    const id = store.addNode('manual_input', 0, 0)
+    store.updateNodeSettings(id, {
+      ...store.getNode(id)!.settings,
+      raw_data_format: { columns: [{ name: 'a', data_type: 'Int64' }], data: [[1, 2]] }
+    } as any)
+    const rendering = {
+      cells: [{ cell_id: 'cell-1', node_ids: [id], kind: 'node', code: '', defines: [], uses: [], status: 'code', reason: null }],
+      warnings: [],
+      var_by_node: {}
+    }
+    pyodideMock.runPythonWithResult.mockImplementation(async (src: string) => {
+      if (src.includes('render_notebook(')) return rendering
+      if (src.includes('_lazyframes.keys()')) return []
+      return { success: true, data: { columns: [], data: [], total_rows: 0 } }
+    })
+    await flushPromises()
+    pyodideMock.runPythonWithResult.mockClear()
+
+    const notebook = useNotebookStore()
+    await notebook.render()
+    store.updateNodeDescription(id, 'The source')
+    await notebook.render()
+    await flushPromises()
+
+    expect(executeCalls()).toEqual([])
+    expect(previewCalls()).toEqual([])
+
+    await notebook.runCell('cell-1')
+
+    expect(executeCalls()).toHaveLength(1)
+    expect(previewCalls()).toHaveLength(1)
   })
 })
