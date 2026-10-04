@@ -277,7 +277,8 @@ export const SYNC_NEEDS_ADMIN =
 export const CANVAS_CHANGED =
   "The canvas changed since these cells were rendered, so they were refreshed; run again to sync your edits.";
 export const RERENDER_FAILED = "The notebook could not be re-rendered from the canvas.";
-export const PICK_KERNEL_HINT = "Pick a notebook kernel in the toolbar to run this cell as Python.";
+export const PICK_KERNEL_HINT =
+  "Pick or create a notebook kernel in the toolbar to run this cell as Python.";
 export const NOTHING_TO_PUSH = "Nothing to push: the canvas already matches these cells.";
 export const SESSION_NOT_RESEEDED =
   "Pushed to the canvas, but the kernel session still holds the old frames; use Reset session.";

@@ -18,7 +18,7 @@ Kernels provide a sandboxed execution environment for Python Script nodes. Each 
 ## Prerequisites
 
 - **Docker** must be installed and running on the host machine
-- A kernel **image** must be installed — the Kernel Manager lists the standard images and pulls them for you with one click (see [Kernel images](#kernel-images)); no manual build needed
+- A kernel **image** must be installed — the Kernel Manager lists the standard images and pulls them for you with one click, and creating a kernel downloads a missing one (see [Kernel images](#kernel-images)); no manual build needed
 
 !!! tip "Desktop App"
     When running Flowfile as a desktop application, Docker must be available on your local machine. Verify with `docker info`.
@@ -48,7 +48,7 @@ Every kernel is created from an **image flavour** that decides which packages ar
 |---------|-------|---------|
 | **Base** | Polars, PyArrow, NumPy | Plain data work |
 | **ML** | Base + scikit-learn, XGBoost, LightGBM, statsmodels | Machine-learning nodes and scripts |
-| **Lite** | Same packages as Base, but only Polars and the kernel runtime are version-pinned | Installing large extra libraries whose own dependency trees need room to resolve |
+| **Lite** | Same packages as Base, but only Polars and the artifact libraries (cloudpickle, joblib) are version-pinned; NumPy, PyArrow, FastAPI and the rest resolve freely | Installing large extra libraries whose own dependency trees need room to resolve, such as `flowfile` |
 | **Custom image** | Whatever you put in it | Your own published Docker image URI |
 
 A kernel's flavour matters beyond notebooks: a [kernel-environment custom node](node-designer.md#execution-environment) declares the packages it needs, and those are **not installed automatically** — the node must run on a kernel whose image provides them. Flowfile does compare the two for you: the node's kernel picker marks kernels that have all the declared packages, offers **Add missing packages** on a near-miss (the kernel is stopped, rebuilt with the additions, and started again), and **Create kernel for this node** pre-fills a new kernel from the node's requirements. For scikit-learn and friends, that means an ML kernel (or a kernel with the package added — see below).
@@ -79,7 +79,9 @@ A kernel's flavour matters beyond notebooks: a [kernel-environment custom node](
 
 Extra packages are resolved against the flavour's version constraints and baked into a per-kernel image when the kernel is created — not installed on every start. Editing a stopped kernel's package list rebuilds its image.
 
-A kernel with the `flowfile` package installed can also run the [canvas notebook](notebook.md#running-on-a-kernel); that section lists its limits, including Apple Silicon Macs.
+A flavour whose image is not on this machine yet can still be picked: the form says so and the button reads **Download image and create kernel**. Creating the kernel then downloads the image first (several hundred MB) and installs the packages after.
+
+A kernel with the `flowfile` package installed can also run the [canvas notebook](notebook.md#running-on-a-kernel), whose toolbar creates one in one click; that section lists its limits.
 
 ### Kernel Cards
 

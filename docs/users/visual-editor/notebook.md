@@ -106,7 +106,7 @@ A sync is refused, with the reason on the failing cell or in a message, when:
 
 ## Running on a kernel
 
-In the desktop app, and with `pip install flowfile` in the default mode, the notebook toolbar has a kernel picker. Pick a **notebook kernel**, a [kernel](kernels.md) with the `flowfile` package installed, and the cells run as real Python in a session on that kernel: loops, `print`, other imports and `display(...)` work, as in a script. When you have no such kernel, **Create notebook kernel…** in the picker opens the kernel form with `flowfile` of this app's version already in its packages. Pick **No kernel** to go back to running on the canvas.
+In the desktop app, and with `pip install flowfile` in the default mode, the notebook toolbar has a kernel picker. Pick a **notebook kernel**, a [kernel](kernels.md) with the `flowfile` package installed, and the cells run as real Python in a session on that kernel: loops, `print`, other imports and `display(...)` work, as in a script. When you have no such kernel, **Create notebook kernel** in the toolbar sets one up in one click: a kernel on the Lite image with `flowfile` of this app's version, created, started and selected for this flow in about 2 minutes. When the Lite image is not on this machine yet, the button reads **Download image and create notebook kernel** and downloads it first. **Customise…** in the picker opens the kernel form with the same settings filled in. Pick **No kernel** to go back to running on the canvas.
 
 | Action | With a kernel picked |
 |---|---|
@@ -132,8 +132,7 @@ In cells, write file paths as they are on your machine (`C:\Users\me\data\sales.
 Limits:
 
 - Only in the desktop app and in a default `pip install flowfile` (`FLOWFILE_MODE` unset or `electron`), for a local connection. Docker deployments keep the notebook without a kernel.
-- The kernel's `flowfile` must have the same version as the app; after an update, recreate the notebook kernel.
-- On Apple Silicon Macs (Linux arm64 containers), installing `flowfile` on the lite kernel currently fails, because `polars-grouper` publishes no aarch64 Linux wheel.
+- The kernel's `flowfile` must have the same version as the app. When the picked kernel pins another version, for example after an app update, the toolbar shows **Update notebook kernel**: it stops the kernel, reinstalls `flowfile` of this app's version and starts it again, which drops what the kernel holds in memory.
 
 ## Kernels, Docker and deployments
 

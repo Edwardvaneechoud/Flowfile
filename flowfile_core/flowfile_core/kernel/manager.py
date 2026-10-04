@@ -18,6 +18,7 @@ from pathlib import Path
 import docker
 import docker.errors
 import docker.types
+import docker.utils
 import httpx
 
 from flowfile_core.auth import sharing
@@ -1256,14 +1257,15 @@ class KernelManager:
         return "pulling"
 
     def _do_pull(self, image_tag: str) -> None:
-        """Worker run on a background thread to fetch ``image_tag``.
+        """Fetch ``image_tag``: on a background thread for ``start_image_pull``, inline for ``_ensure_image``.
 
         On success clears the pull state (the image is now locally available,
         and a follow-up ``docker-status`` poll will reflect that). On failure
         stores ``error:<message>`` so the UI can show what went wrong.
         """
         try:
-            repo, _, tag = image_tag.partition(":")
+            # docker-py's parser keeps registry ports and @sha256 digests intact; a naive split on ":" does not.
+            repo, tag = docker.utils.parse_repository_tag(image_tag)
             self._docker.images.pull(repo, tag=tag or "latest")
             with self._pull_state_lock:
                 self._pull_state.pop(image_tag, None)
@@ -1273,6 +1275,41 @@ class KernelManager:
             with self._pull_state_lock:
                 self._pull_state[image_tag] = f"error:{msg}"
             logger.exception("Failed to pull image '%s'", image_tag)
+
+    def _image_present(self, image_tag: str) -> bool:
+        try:
+            self._docker.images.get(image_tag)
+            return True
+        except docker.errors.ImageNotFound:
+            return False
+
+    def _ensure_image(self, image_tag: str) -> None:
+        """Make sure ``image_tag`` is on the host, pulling it inline when it is not.
+
+        A background pull already running for the tag (``start_image_pull``) is
+        awaited instead of duplicated. The pull itself runs on the calling thread,
+        so callers must not hold ``_kernels_lock``. A failed pull raises
+        ``RuntimeError`` with the friendly message and leaves the ``error:<msg>``
+        state recorded, so docker-status shows it exactly as for background pulls.
+        """
+        if self._image_present(image_tag):
+            return
+        with self._pull_state_lock:
+            in_flight = self._pull_state.get(image_tag) == "pulling"
+            if not in_flight:
+                self._pull_state[image_tag] = "pulling"
+        if in_flight:
+            while self.get_pull_state(image_tag) == "pulling":
+                time.sleep(0.5)
+            if self._image_present(image_tag):
+                return
+        else:
+            self._do_pull(image_tag)
+        state = self.get_pull_state(image_tag) or ""
+        if state.startswith("error:"):
+            raise RuntimeError(state.removeprefix("error:"))
+        if in_flight:
+            raise RuntimeError(f"Image '{image_tag}' is still missing after the pull finished.")
 
     # Derived image build (per-kernel, packages baked in)
 
@@ -1302,18 +1339,8 @@ class KernelManager:
         except docker.errors.ImageNotFound:
             pass
 
-        # Make sure the FROM image is on the host before we start the build.
-        # docker build will otherwise reach for the registry and produce a
-        # confusing "manifest unknown" error when the image isn't pushed yet.
-        try:
-            self._docker.images.get(base_image)
-        except docker.errors.ImageNotFound:
-            raise RuntimeError(
-                f"Base image '{base_image}' is not available locally. "
-                f"Pull it first: docker pull {base_image} "
-                f"(or set FLOWFILE_KERNEL_IMAGE_{kernel.image_flavour.value.upper()} "
-                "to a tag you already have)."
-            ) from None
+        # Pull the FROM image ourselves: docker build would otherwise reach the registry with a confusing error.
+        self._ensure_image(base_image)
 
         # JSON exec form keeps each package as a discrete argv item — no shell
         # interpretation, no quoting bugs.
@@ -1572,9 +1599,9 @@ class KernelManager:
 
     async def create_kernel(self, config: KernelConfig, user_id: int) -> KernelInfo:
         # Validate image flavour and packages up-front so nothing invalid is
-        # ever registered or kicks off a long-running build.
+        # ever registered or kicks off a long-running pull or build.
         try:
-            _resolve_image(config.image_flavour, config.custom_image, self._docker)
+            base_image = _resolve_image(config.image_flavour, config.custom_image, self._docker)
             _validate_packages(config.packages)
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
@@ -1606,21 +1633,23 @@ class KernelManager:
             self._kernels[config.id] = kernel
             self._kernel_owners[config.id] = user_id
 
-        # Pre-bake packages into a derived image so subsequent kernel starts
-        # don't re-run pip in the entrypoint. Run in a thread to keep the
-        # event loop responsive — image builds can take 30–60 s.
+        # Download the base image if it is missing, then pre-bake packages into a
+        # derived image so subsequent kernel starts don't re-run pip in the
+        # entrypoint. Run in a thread to keep the event loop responsive — pulls
+        # and image builds can take 30–60 s.
         try:
-            if config.packages:
-                try:
-                    derived_tag = await asyncio.to_thread(self._build_derived_image, kernel)
-                except (RuntimeError, ValueError) as exc:
-                    raise ValueError(f"Failed to prepare kernel image: {exc}") from exc
+            try:
+                await asyncio.to_thread(self._ensure_image, base_image)
+                derived_tag = await asyncio.to_thread(self._build_derived_image, kernel) if config.packages else None
+            except (RuntimeError, ValueError) as exc:
+                raise ValueError(f"Failed to prepare kernel image: {exc}") from exc
 
+            if derived_tag is not None:
                 kernel.resolved_packages = await asyncio.to_thread(
                     self._resolve_installed_versions, derived_tag, config.packages
                 )
         except BaseException:
-            # Build failed or the request was cancelled — the kernel never existed.
+            # Pull or build failed or the request was cancelled — the kernel never existed.
             # Identity-checked so this can never remove a later re-create's entry.
             with self._kernels_lock:
                 if self._kernels.get(config.id) is kernel:

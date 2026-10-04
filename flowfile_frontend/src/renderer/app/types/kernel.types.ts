@@ -25,8 +25,8 @@ export const KERNEL_FLAVOURS: KernelFlavourMeta[] = [
     value: "lite",
     label: "Lite",
     description:
-      "Same image as Base, but only Polars and the kernel-runtime libs are pinned — " +
-      "numpy, pyarrow and other transitives float. Best for installing large libraries " +
+      "Same image as Base, but only Polars and the artifact libraries are pinned — " +
+      "numpy, pyarrow, fastapi and other transitives float. Best for installing large libraries " +
       "(e.g. flowfile) whose own dep trees need room to resolve. " +
       "flowfile_ctx is always available, regardless of flavour.",
   },

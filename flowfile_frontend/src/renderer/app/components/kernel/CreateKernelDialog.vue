@@ -18,15 +18,6 @@
     />
     <template v-else>
       <el-alert
-        v-if="suggestion && suggestion.flavour_image_available === false"
-        type="info"
-        :closable="false"
-        show-icon
-        class="flavour-hint"
-        :title="`The suggested ${suggestion.config.image_flavour} image isn't installed yet`"
-        description="Another flavour was selected below — you can install the suggested image from the Python Kernels page."
-      />
-      <el-alert
         v-if="pendingForSeed && !creationInFlight"
         type="info"
         :closable="false"
@@ -53,7 +44,6 @@ import { useKernelResources } from "@/composables/useKernelResources";
 import type { KernelConfig, KernelInfo, KernelSuggestion } from "@/types";
 
 import KernelCreateForm from "./KernelCreateForm.vue";
-import { mergePackages } from "./kernelMatch";
 
 const props = withDefaults(
   defineProps<{
@@ -85,11 +75,6 @@ const pendingForSeed = computed(() => {
 function buildSeed(): Partial<KernelConfig> | null {
   const s = props.suggestion;
   if (!s) return null;
-  // If the suggested flavour image may be missing, the form will downgrade
-  // the flavour — flavour-covered deps must then ride along as packages.
-  if (s.flavour_image_available !== true && s.covered_by_flavour.length) {
-    return { ...s.config, packages: mergePackages(s.config.packages, s.covered_by_flavour) };
-  }
   return { ...s.config };
 }
 

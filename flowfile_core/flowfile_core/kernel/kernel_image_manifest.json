@@ -1,5 +1,5 @@
 {
-  "kernel_version": "0.6.1",
+  "kernel_version": "0.6.2",
   "python_version": "3.12",
   "source": "kernel_runtime/{pyproject.toml,poetry.lock,Dockerfile}",
   "generator": "tools/generate_kernel_manifest.py",
@@ -94,10 +94,10 @@
       "cloudpickle": "3.1.2",
       "deltalake": null,
       "deprecated": null,
-      "fastapi": "0.142.2",
+      "fastapi": null,
       "h11": null,
       "httpcore": null,
-      "httpx": "0.28.1",
+      "httpx": null,
       "idna": null,
       "jedi": null,
       "joblib": "1.5.3",
@@ -113,7 +113,7 @@
       "starlette": null,
       "typing-extensions": null,
       "typing-inspection": null,
-      "uvicorn": "0.32.1",
+      "uvicorn": null,
       "wrapt": null
     }
   }

@@ -60,15 +60,9 @@ _ML_EXTRA_PACKAGE_NAMES: tuple[str, ...] = (
     "statsmodels",
     "polars-ds",
 )
-# Only the packages users actually import in flow code. The kernel image
-# also has fastapi/uvicorn/httpx (to serve the runtime HTTP API) and
-# cloudpickle/joblib (for artifact persistence) baked and pinned via the
-# SLIM_CONSTRAINTS whitelist in kernel_runtime/Dockerfile — but those are
-# kernel plumbing, not something users build on top of, so we don't surface
-# them as part of the lite "guarantee".
-_LITE_PACKAGE_NAMES: tuple[str, ...] = (
-    "polars",
-)
+# Only what flow code imports: the Dockerfile's SLIM_CONSTRAINTS also pins cloudpickle/joblib (kernel
+# plumbing, not surfaced), while fastapi/uvicorn/httpx float unpinned.
+_LITE_PACKAGE_NAMES: tuple[str, ...] = ("polars",)
 
 _WARNED_TAGS: set[str] = set()
 

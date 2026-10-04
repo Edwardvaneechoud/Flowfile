@@ -127,9 +127,7 @@ class TestValidateCustomImage:
         _validate_custom_image("registry.local:5000/team/kernel:1.0")
 
     def test_accepts_sha256_digest(self):
-        _validate_custom_image(
-            "myorg/kernel@sha256:abcdef0123456789abcdef0123456789abcdef0123"
-        )
+        _validate_custom_image("myorg/kernel@sha256:abcdef0123456789abcdef0123456789abcdef0123")
 
     def test_rejects_empty(self):
         with pytest.raises(ValueError, match="empty"):
@@ -210,9 +208,7 @@ class TestResolveLocalImage:
     def test_registry_default_wins_when_present(self):
         client = MagicMock()
         client.images.get.return_value = MagicMock()
-        result = _resolve_local_image(
-            ImageFlavour.BASE, client, "edwardvaneechoud/flowfile-kernel-base:0.3.0"
-        )
+        result = _resolve_local_image(ImageFlavour.BASE, client, "edwardvaneechoud/flowfile-kernel-base:0.3.0")
         assert result == "edwardvaneechoud/flowfile-kernel-base:0.3.0"
         client.images.list.assert_not_called()
 
@@ -226,9 +222,7 @@ class TestResolveLocalImage:
         older_img.tags = ["flowfile-kernel-base:dev-2025"]
         older_img.attrs = {"Created": "2025-01-01T00:00:00Z"}
         client.images.list.return_value = [older_img, local_img]
-        result = _resolve_local_image(
-            ImageFlavour.BASE, client, "edwardvaneechoud/flowfile-kernel-base:0.3.0"
-        )
+        result = _resolve_local_image(ImageFlavour.BASE, client, "edwardvaneechoud/flowfile-kernel-base:0.3.0")
         assert result == "flowfile-kernel-base:local"
 
     def test_skips_local_retag_of_older_release(self):
@@ -239,9 +233,7 @@ class TestResolveLocalImage:
         stale.tags = ["edwardvaneechoud/flowfile-kernel-lite:0.3.2", "flowfile-kernel-lite:local"]
         stale.attrs = {"Created": "2026-06-06T14:50:09Z"}
         client.images.list.return_value = [stale]
-        result = _resolve_local_image(
-            ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.6.0"
-        )
+        result = _resolve_local_image(ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.6.0")
         assert result is None
 
     def test_keeps_local_retag_of_newer_release(self):
@@ -251,9 +243,7 @@ class TestResolveLocalImage:
         fresh.tags = ["edwardvaneechoud/flowfile-kernel-lite:0.6.0", "flowfile-kernel-lite:local"]
         fresh.attrs = {"Created": "2026-09-01T00:00:00Z"}
         client.images.list.return_value = [fresh]
-        result = _resolve_local_image(
-            ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.6.0"
-        )
+        result = _resolve_local_image(ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.6.0")
         assert result == "flowfile-kernel-lite:local"
 
     def test_falls_back_to_newest_when_no_local_tag(self):
@@ -266,32 +256,20 @@ class TestResolveLocalImage:
         newer.tags = ["flowfile-kernel-base:dev-2026"]
         newer.attrs = {"Created": "2026-05-14T10:00:00Z"}
         client.images.list.return_value = [old, newer]
-        result = _resolve_local_image(
-            ImageFlavour.BASE, client, "edwardvaneechoud/flowfile-kernel-base:0.3.0"
-        )
+        result = _resolve_local_image(ImageFlavour.BASE, client, "edwardvaneechoud/flowfile-kernel-base:0.3.0")
         assert result == "flowfile-kernel-base:dev-2026"
 
     def test_returns_none_when_nothing_local(self):
         client = MagicMock()
         client.images.get.side_effect = docker.errors.ImageNotFound("nope")
         client.images.list.return_value = []
-        assert (
-            _resolve_local_image(
-                ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.3.0"
-            )
-            is None
-        )
+        assert _resolve_local_image(ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.3.0") is None
 
     def test_returns_none_on_docker_api_error(self):
         client = MagicMock()
         client.images.get.side_effect = docker.errors.APIError("docker down")
         # The first APIError on .get short-circuits to None without listing
-        assert (
-            _resolve_local_image(
-                ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.3.0"
-            )
-            is None
-        )
+        assert _resolve_local_image(ImageFlavour.LITE, client, "edwardvaneechoud/flowfile-kernel-lite:0.3.0") is None
 
 
 class TestImagePull:
@@ -326,6 +304,141 @@ class TestImagePull:
         assert state is not None
         assert state.startswith("error:")
         assert "registry exploded" in state
+
+
+_LITE_TAG = "edwardvaneechoud/flowfile-kernel-lite:0.6.1"
+
+
+def _missing_until_pulled(mgr: KernelManager):
+    """images.get side effect: every tag is absent until images.pull has run."""
+
+    def _images_get(tag):
+        if not mgr._docker.images.pull.called:
+            raise docker.errors.ImageNotFound(tag)
+        return MagicMock()
+
+    return _images_get
+
+
+class TestEnsureImage:
+    def test_noop_when_image_present(self):
+        mgr = _bare_manager()
+        mgr._ensure_image(_LITE_TAG)
+        mgr._docker.images.pull.assert_not_called()
+        assert mgr.get_pull_state(_LITE_TAG) is None
+
+    def test_pulls_missing_image_inline(self):
+        mgr = _bare_manager()
+        mgr._docker.images.get.side_effect = _missing_until_pulled(mgr)
+        mgr._ensure_image(_LITE_TAG)
+        mgr._docker.images.pull.assert_called_once_with("edwardvaneechoud/flowfile-kernel-lite", tag="0.6.1")
+        assert mgr.get_pull_state(_LITE_TAG) is None
+
+    def test_pulls_registry_port_ref_with_repo_and_tag_intact(self):
+        mgr = _bare_manager()
+        mgr._docker.images.get.side_effect = _missing_until_pulled(mgr)
+        mgr._ensure_image("localhost:5000/team/kernel:1.2.3")
+        mgr._docker.images.pull.assert_called_once_with("localhost:5000/team/kernel", tag="1.2.3")
+
+    def test_pulls_digest_ref_as_sha256_tag(self):
+        mgr = _bare_manager()
+        mgr._docker.images.get.side_effect = _missing_until_pulled(mgr)
+        digest = "sha256:" + "a" * 64
+        mgr._ensure_image(f"myorg/kernel@{digest}")
+        mgr._docker.images.pull.assert_called_once_with("myorg/kernel", tag=digest)
+
+    def test_pull_failure_raises_friendly_message_and_keeps_state(self):
+        mgr = _bare_manager()
+        mgr._docker.images.get.side_effect = docker.errors.ImageNotFound("nope")
+        mgr._docker.images.pull.side_effect = docker.errors.APIError("registry exploded")
+
+        with pytest.raises(RuntimeError) as excinfo:
+            mgr._ensure_image("x:1")
+
+        assert str(excinfo.value) == _friendly_pull_error(docker.errors.APIError("registry exploded"), "x:1")
+        assert not str(excinfo.value).startswith("error:")
+        assert mgr.get_pull_state("x:1") == f"error:{excinfo.value}"
+
+    def test_retries_after_an_earlier_failed_pull(self):
+        mgr = _bare_manager()
+        mgr._pull_state[_LITE_TAG] = "error:stale"
+        mgr._docker.images.get.side_effect = _missing_until_pulled(mgr)
+        mgr._ensure_image(_LITE_TAG)
+        mgr._docker.images.pull.assert_called_once()
+        assert mgr.get_pull_state(_LITE_TAG) is None
+
+    def test_waits_for_background_pull_instead_of_pulling(self):
+        mgr = _bare_manager()
+        mgr._pull_state[_LITE_TAG] = "pulling"
+
+        def _images_get(tag):
+            if mgr.get_pull_state(tag) == "pulling":
+                raise docker.errors.ImageNotFound(tag)
+            return MagicMock()
+
+        mgr._docker.images.get.side_effect = _images_get
+        sleeps: list[float] = []
+
+        def _background_pull_finishes(seconds):
+            sleeps.append(seconds)
+            with mgr._pull_state_lock:
+                mgr._pull_state.pop(_LITE_TAG, None)
+
+        fake_time = MagicMock()
+        fake_time.sleep.side_effect = _background_pull_finishes
+        with patch.object(kernel_manager, "time", fake_time):
+            mgr._ensure_image(_LITE_TAG)
+
+        assert sleeps == [0.5]
+        mgr._docker.images.pull.assert_not_called()
+
+    def test_surfaces_background_pull_failure_without_pulling(self):
+        mgr = _bare_manager()
+        mgr._pull_state[_LITE_TAG] = "pulling"
+        mgr._docker.images.get.side_effect = docker.errors.ImageNotFound("nope")
+
+        def _background_pull_fails(_seconds):
+            with mgr._pull_state_lock:
+                mgr._pull_state[_LITE_TAG] = "error:boom"
+
+        fake_time = MagicMock()
+        fake_time.sleep.side_effect = _background_pull_fails
+        with patch.object(kernel_manager, "time", fake_time):
+            with pytest.raises(RuntimeError, match="^boom$"):
+                mgr._ensure_image(_LITE_TAG)
+
+        mgr._docker.images.pull.assert_not_called()
+        assert mgr.get_pull_state(_LITE_TAG) == "error:boom"
+
+    def test_build_pulls_missing_base_image_before_building(self):
+        mgr = _bare_manager()
+        kernel = _kernel(packages=["xgboost"], flavour=ImageFlavour.LITE)
+        derived_tag = _derived_image_tag(kernel.id)
+        missing_until_pulled = _missing_until_pulled(mgr)
+
+        def _images_get(tag):
+            if tag == derived_tag:
+                raise docker.errors.ImageNotFound(tag)
+            return missing_until_pulled(tag)
+
+        mgr._docker.images.get.side_effect = _images_get
+
+        assert mgr._build_derived_image_locked(kernel, _LITE_TAG, derived_tag) == derived_tag
+
+        mgr._docker.images.pull.assert_called_once_with("edwardvaneechoud/flowfile-kernel-lite", tag="0.6.1")
+        mgr._docker.images.build.assert_called_once()
+        assert mgr._docker.images.build.call_args.kwargs["tag"] == derived_tag
+
+    def test_build_surfaces_pull_failure(self):
+        mgr = _bare_manager()
+        kernel = _kernel(packages=["xgboost"], flavour=ImageFlavour.LITE)
+        mgr._docker.images.get.side_effect = docker.errors.ImageNotFound("nope")
+        mgr._docker.images.pull.side_effect = docker.errors.APIError("registry exploded")
+
+        with pytest.raises(RuntimeError, match="^registry exploded$"):
+            mgr._build_derived_image_locked(kernel, _LITE_TAG, _derived_image_tag(kernel.id))
+
+        mgr._docker.images.build.assert_not_called()
 
 
 class TestSpecToName:
@@ -559,9 +672,7 @@ class TestUpdateKernel:
         mgr = _bare_manager()
         mgr._kernels["k1"] = _kernel("k1", packages=["pandas"])
         mgr._kernel_owners["k1"] = 42
-        mgr._build_derived_image = MagicMock(
-            return_value="flowfile-kernel-derived-k1:latest"
-        )
+        mgr._build_derived_image = MagicMock(return_value="flowfile-kernel-derived-k1:latest")
         mgr._resolve_installed_versions = MagicMock(
             return_value=[
                 ResolvedPackage(name="numpy", version="2.0.0"),
@@ -657,8 +768,52 @@ class TestCreateKernel:
         assert mgr._kernels["k1"] is kernel
         assert mgr._kernel_owners["k1"] == 42
         mgr._build_derived_image.assert_not_called()
+        mgr._docker.images.pull.assert_not_called()
         mgr._persist_kernel.assert_called_once()
         mgr._provision_scratch_flow.assert_called_once_with("k1", 42)
+
+    def test_create_without_packages_pulls_missing_image(self):
+        mgr = _create_manager()
+        mgr._docker.images.get.side_effect = _missing_until_pulled(mgr)
+        mgr._docker.images.list.return_value = []
+        image = kernel_manager._flavour_images()[ImageFlavour.BASE]
+
+        kernel = _run(mgr.create_kernel(_config(), user_id=42))
+
+        repo, _, tag = image.partition(":")
+        mgr._docker.images.pull.assert_called_once_with(repo, tag=tag)
+        assert kernel.state == KernelState.STOPPED
+        assert mgr._kernels["k1"] is kernel
+        assert mgr.get_pull_state(image) is None
+        mgr._persist_kernel.assert_called_once()
+
+    def test_create_custom_image_with_registry_port_pulls_exact_ref(self):
+        mgr = _create_manager()
+        mgr._docker.images.get.side_effect = _missing_until_pulled(mgr)
+        config = KernelConfig(
+            id="k1",
+            name="test-k1",
+            image_flavour=ImageFlavour.CUSTOM,
+            custom_image="localhost:5000/team/kernel:1.2.3",
+        )
+
+        kernel = _run(mgr.create_kernel(config, user_id=42))
+
+        mgr._docker.images.pull.assert_called_once_with("localhost:5000/team/kernel", tag="1.2.3")
+        assert kernel.state == KernelState.STOPPED
+
+    def test_create_without_packages_surfaces_pull_failure(self):
+        mgr = _create_manager()
+        mgr._docker.images.get.side_effect = docker.errors.ImageNotFound("nope")
+        mgr._docker.images.list.return_value = []
+        mgr._docker.images.pull.side_effect = docker.errors.APIError("registry exploded")
+
+        with pytest.raises(ValueError, match="^Failed to prepare kernel image: registry exploded$"):
+            _run(mgr.create_kernel(_config(), user_id=42))
+
+        assert mgr._kernels == {}
+        assert mgr._kernel_owners == {}
+        mgr._persist_kernel.assert_not_called()
 
     def test_kernel_is_listed_as_creating_during_build(self):
         mgr = _create_manager()
@@ -671,9 +826,7 @@ class TestCreateKernel:
             return "derived:tag"
 
         mgr._build_derived_image = MagicMock(side_effect=slow_build)
-        mgr._resolve_installed_versions = MagicMock(
-            return_value=[ResolvedPackage(name="xgboost", version="2.0.0")]
-        )
+        mgr._resolve_installed_versions = MagicMock(return_value=[ResolvedPackage(name="xgboost", version="2.0.0")])
 
         async def scenario():
             task = asyncio.ensure_future(mgr.create_kernel(_config(packages=["xgboost"]), user_id=42))
@@ -1071,9 +1224,7 @@ class TestExecuteSyncInternalTokenStamp:
         # A client-supplied token in the request body is overwritten, not forwarded.
         mgr.execute_sync(
             "k1",
-            ExecuteRequest(
-                node_id=1, code="", source_registration_id=1, internal_token="attacker-supplied"
-            ),
+            ExecuteRequest(node_id=1, code="", source_registration_id=1, internal_token="attacker-supplied"),
         )
         assert captured["request"].internal_token == expected
 
@@ -1211,9 +1362,7 @@ class TestStartupGcSafety:
 
         monkeypatch.setattr(kernel_manager.docker, "from_env", lambda **_: docker_client)
         monkeypatch.setattr(KernelManager, "_detect_docker_network", lambda self: None)
-        monkeypatch.setattr(
-            KernelManager, "_discover_volume_for_path", lambda self, path: (None, None, None)
-        )
+        monkeypatch.setattr(KernelManager, "_discover_volume_for_path", lambda self, path: (None, None, None))
         monkeypatch.setattr(KernelManager, "_remove_orphan_build_containers", lambda self: None)
         monkeypatch.setattr(KernelManager, "_restore_kernels_from_db", lambda self: True)
         return docker_client, container
@@ -1339,11 +1488,14 @@ class TestAdoptedOwnership:
     def test_dead_owner_transfers_shutdown_duty(self):
         mgr = _bare_manager()
         # pid 1 is init: alive. Use a pid that cannot be running.
-        self._adopted(mgr, labels={
-            "flowfile_core_instance": "test-core-id",
-            "flowfile_core_runtime": "a-previous-boot",
-            "flowfile_core_pid": "2147483646",
-        })
+        self._adopted(
+            mgr,
+            labels={
+                "flowfile_core_instance": "test-core-id",
+                "flowfile_core_runtime": "a-previous-boot",
+                "flowfile_core_pid": "2147483646",
+            },
+        )
 
         mgr._reclaim_running_containers()
 
@@ -1351,11 +1503,14 @@ class TestAdoptedOwnership:
 
     def test_live_owner_keeps_its_kernel(self):
         mgr = _bare_manager()
-        self._adopted(mgr, labels={
-            "flowfile_core_instance": "test-core-id",
-            "flowfile_core_runtime": "another-live-core",
-            "flowfile_core_pid": str(os.getpid()),
-        })
+        self._adopted(
+            mgr,
+            labels={
+                "flowfile_core_instance": "test-core-id",
+                "flowfile_core_runtime": "another-live-core",
+                "flowfile_core_pid": str(os.getpid()),
+            },
+        )
 
         mgr._reclaim_running_containers()
 
@@ -1363,10 +1518,13 @@ class TestAdoptedOwnership:
 
     def test_other_install_is_never_claimed(self):
         mgr = _bare_manager()
-        self._adopted(mgr, labels={
-            "flowfile_core_instance": "some-other-install",
-            "flowfile_core_pid": "2147483646",
-        })
+        self._adopted(
+            mgr,
+            labels={
+                "flowfile_core_instance": "some-other-install",
+                "flowfile_core_pid": "2147483646",
+            },
+        )
 
         mgr._reclaim_running_containers()
 
@@ -1382,10 +1540,13 @@ class TestAdoptedOwnership:
 
     def test_claimed_kernel_is_stopped_at_shutdown(self):
         mgr = _bare_manager()
-        container = self._adopted(mgr, labels={
-            "flowfile_core_instance": "test-core-id",
-            "flowfile_core_pid": "2147483646",
-        })
+        container = self._adopted(
+            mgr,
+            labels={
+                "flowfile_core_instance": "test-core-id",
+                "flowfile_core_pid": "2147483646",
+            },
+        )
         container.id = "c-1"
         mgr._reclaim_running_containers()
         mgr._cleanup_container = MagicMock()

@@ -8,8 +8,8 @@
     <p class="creating-overlay__hint">
       {{
         packages.length > 0
-          ? "Building a per-kernel Docker image with your extra packages — this can take ~30 s. " +
-            "Creation continues in the background — track it on the Python Kernels page."
+          ? "Downloading the image if needed, then building a per-kernel Docker image with your " +
+            "extra packages (about 2 minutes). Creation continues in the background."
           : "Provisioning kernel…"
       }}
     </p>
@@ -47,17 +47,10 @@
     <div class="form-field">
       <label for="kernel-flavour" class="form-label">Image flavour</label>
       <select id="kernel-flavour" v-model="form.image_flavour" class="form-input">
-        <option
-          v-for="flavour in KERNEL_FLAVOURS"
-          :key="flavour.value"
-          :value="flavour.value"
-          :disabled="!isFlavourAvailable(flavour.value)"
-        >
+        <option v-for="flavour in KERNEL_FLAVOURS" :key="flavour.value" :value="flavour.value">
           {{ flavour.label
           }}{{
-            isFlavourAvailable(flavour.value)
-              ? ""
-              : " — not installed (install it on the Python Kernels page)"
+            needsDownload(flavour.value) ? " — not installed yet, downloaded when you create" : ""
           }}
         </option>
       </select>
@@ -73,6 +66,10 @@
             local build
           </span>
         </span>
+      </p>
+      <p v-if="needsDownload(form.image_flavour)" class="form-help">
+        The {{ activeFlavour.label }} image isn't on this machine yet. Creating the kernel downloads
+        it first (several hundred MB), then installs the packages (about 2 minutes).
       </p>
     </div>
 
@@ -146,12 +143,12 @@
         so ranges like <code>name&gt;=1.0,&lt;2.0</code> work. Pin versions with
         <code>name==1.2.3</code> for reproducibility. Specifiers are validated against the flavour's
         constraints file — Base and ML lock the full transitive closure; Lite only pins
-        <code>polars</code> and the kernel-runtime libs, so transitives like <code>numpy</code> and
+        <code>polars</code> and the artifact libraries, so transitives like <code>numpy</code> and
         <code>pyarrow</code> can move to satisfy what you install.
       </p>
       <p class="form-help">
-        Baked into a per-kernel Docker image at creation (one-time, ~30 s). Subsequent kernel starts
-        reuse the image — no pip install at startup.
+        Baked into a per-kernel Docker image at creation (one-time, about 2 minutes). Subsequent
+        kernel starts reuse the image — no pip install at startup.
       </p>
     </div>
 
@@ -230,13 +227,17 @@ const emit = defineEmits<{
 }>();
 
 // Lookup set of baked flavours that are actually present locally. ``custom``
-// is always selectable because the user supplies their own image URI.
+// never needs a download because the user supplies their own image URI.
 const installedFlavours = computed<Set<ImageFlavour>>(
   () => new Set(props.imageStatuses.filter((i) => i.available).map((i) => i.flavour)),
 );
 
 const isFlavourAvailable = (flavour: ImageFlavour): boolean =>
   flavour === "custom" || installedFlavours.value.has(flavour);
+
+// Unknown until docker-status arrives, so nothing reads as a download before then.
+const needsDownload = (flavour: ImageFlavour): boolean =>
+  props.imageStatuses.length > 0 && !isFlavourAvailable(flavour);
 
 const isSubmitting = ref(false);
 // Why the last Create failed (core's summary), shown until the next attempt.
@@ -254,9 +255,7 @@ const form = ref({
   custom_image: "" as string,
 });
 
-// Seed the form from an optional partial config. Declared before the
-// flavour-availability snap watch so an unavailable seeded flavour still
-// downgrades on the snap watch's immediate run.
+// Seed the form from an optional partial config.
 watch(
   () => props.initial,
   (seed) => {
@@ -267,22 +266,6 @@ watch(
     if (seed.packages !== undefined) packages.value = [...seed.packages];
   },
   { immediate: true, deep: false },
-);
-
-// Snap the default to a flavour the user can actually pick: prefer base when
-// installed, else the first available baked flavour, else custom. Skipped
-// until docker-status arrives (otherwise the immediate first run sees an
-// empty image list, falls back to "custom", and gets stuck there because
-// custom is always available — so subsequent runs short-circuit).
-watch(
-  installedFlavours,
-  (set) => {
-    if (props.imageStatuses.length === 0) return;
-    if (isFlavourAvailable(form.value.image_flavour)) return;
-    const fallback = (["base", "lite", "ml"] as ImageFlavour[]).find((f) => set.has(f)) ?? "custom";
-    form.value.image_flavour = fallback;
-  },
-  { immediate: true },
 );
 
 const activeFlavour = computed(
@@ -347,7 +330,6 @@ const kernelIdError = computed<string>(() => {
 const isValid = computed(() => {
   if (form.value.id.trim() === "" || form.value.name.trim() === "") return false;
   if (kernelIdError.value !== "") return false;
-  if (!isFlavourAvailable(form.value.image_flavour)) return false;
   if (form.value.image_flavour === "custom") {
     if (form.value.custom_image.trim() === "") return false;
     if (customImageError.value !== "") return false;
@@ -356,7 +338,11 @@ const isValid = computed(() => {
 });
 
 const submitLabel = computed(() => {
-  if (!isSubmitting.value) return "Create Kernel";
+  if (!isSubmitting.value) {
+    return needsDownload(form.value.image_flavour)
+      ? "Download image and create kernel"
+      : "Create Kernel";
+  }
   // Building a derived image takes ~30 s; surface that so users don't think it hung.
   if (packages.value.length > 0) return "Baking packages…";
   return "Creating…";

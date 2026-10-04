@@ -30,7 +30,7 @@ The `KernelManager` is a singleton that runs inside the Core service. It manages
 
 | Operation | What Happens |
 |-----------|-------------|
-| **Create** | Allocates a `KernelInfo` record, persists config to the database |
+| **Create** | Allocates a `KernelInfo` record, pulls the flavour or custom image when it is missing (`_ensure_image`), bakes extra `packages` into a derived image, persists config to the database |
 | **Start** | Verifies the pinned kernel image (`flowfile-kernel-{base,ml,lite}:<tag>`) exists, runs `docker.containers.run()`, polls `/health` until ready (120s timeout) |
 | **Execute** | Serializes inputs to parquet, sends `ExecuteRequest` via HTTP, tracks kernel state |
 | **Stop** | Stops and removes the Docker container |
@@ -92,12 +92,16 @@ So the practical contract is "use the pinned tag." An older kernel image is **no
 
 ### Shipping a kernel change
 
-Because the app only re-pulls a kernel tag it doesn't already have locally (`images.get(tag)` pulls only on a miss), a fix to `kernel_runtime/` reaches users only when the image **tag changes**:
+Because the app only re-pulls a kernel tag it doesn't already have locally (`images.get(tag)` pulls only on a miss), a fix to `kernel_runtime/` reaches users only when the image **tag changes**. **Any change to an image input needs a kernel version bump**: `kernel_runtime/pyproject.toml`, `poetry.lock`, `Dockerfile`, `entrypoint.sh` or the runtime code under `kernel_runtime/kernel_runtime/`. Published tags are immutable and the publish workflow skips a tag that already exists, so a change merged under an already-published version never ships: the fastapi 0.142.2 lock bump never reached the published 0.6.1 images, whose constraints then made `pip install flowfile` fail on a fastapi conflict until 0.6.2.
+
+CI enforces this: the **Kernel release guard** step of `test.yaml`'s `check-kernel-data` job runs `tools/check_kernel_release_needed.py` against the PR base (or the push's previous commit). It fails only when an image input changed, the kernel version did not, and that version is already on Docker Hub; a Docker Hub it cannot reach fails the step too, asking for a re-run.
+
+To ship a change:
 
 1. Bump `version` in `kernel_runtime/pyproject.toml` (CI tags the published images from it).
 2. Bump the three `_KERNEL_IMAGE_{BASE,ML,LITE}_DEFAULT` tags in `images.py` to match. CI enforces this pairing: `tools/check_kernel_version_sync.py` hard-fails the publish run when the pins and the kernel version drift.
 3. Regenerate the image dependency manifest with `make kernel_manifest` (`make bump-version-kernel` does this for you) and commit it. `make check_kernel_manifest` fails CI otherwise, and a stale manifest makes core report the wrong packages as present.
-4. Merge — CI (`docker-publish.yml`) checks Docker Hub and builds/pushes `flowfile-kernel-{base,ml,lite}:<new>` only if that tag is absent, so published version tags stay immutable and a missed publish self-heals on the next kernel-path push. (A `workflow_dispatch` with `force_kernel` republishes an existing tag.) On the next kernel start the app requests the new tag, misses locally, and pulls it.
+4. Merge — CI (`docker-publish.yml`) checks Docker Hub and builds/pushes `flowfile-kernel-{base,ml,lite}:<new>` only if that tag is absent, so published version tags stay immutable and a missed publish self-heals on the next kernel-path push. (A `workflow_dispatch` with `force_kernel` republishes an existing tag, but a machine that already pulled that tag keeps its stale copy, so bump instead.) The app then asks for the new tag: creating a kernel pulls it when missing, and the Kernel Manager offers it as **Update available**; starting an existing kernel whose image is missing fails with a `docker pull` hint instead of pulling.
 
 For local development, build the image yourself (`docker build -t flowfile-kernel-base:local kernel_runtime/`); the `:local` tag is preferred by the resolver when the pinned registry tag isn't present, and is excluded from the version comparison (so it shows as a **local** build, not "up to date" or "update available").
 
