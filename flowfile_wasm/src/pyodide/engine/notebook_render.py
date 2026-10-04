@@ -379,11 +379,22 @@ class _JoinManager:
 class NotebookRenderer:
     """The FlowFrame export of one flow, with a placeholder for every node it cannot write as code."""
 
-    def __init__(self, flow: dict, schemas: dict | None = None, locked: dict | None = None) -> None:
+    def __init__(
+        self, flow: dict, schemas: dict | None = None, locked: dict | None = None, layout: list | None = None
+    ) -> None:
         self.nodes: dict[int, _Node] = {}
         for raw in flow.get("nodes") or []:
             node = _Node(raw)
             self.nodes[node.id] = node
+        # The cells a user wrote, each as its lines and the nodes each line holds: a node stays in the
+        # cell and on the line it was written.
+        self.group_of: dict[int, tuple[int, int]] = {
+            int(node_id): (cell, line)
+            for cell, lines in enumerate(layout or [])
+            for line, node_ids in enumerate(lines)
+            for node_id in node_ids
+            if int(node_id) in self.nodes
+        }
         self.schemas = {int(key): value or [] for key, value in (schemas or {}).items()}
         self.locked = {int(key): str(value) for key, value in (locked or {}).items()}
         self.code_lines: list[str] = []
@@ -404,11 +415,20 @@ class NotebookRenderer:
         fused = self._fuse()
         imports = ["import flowfile as ff", *(line for line in sorted(self.imports) if line != "import flowfile as ff")]
         cells = [self._cell(IMPORTS_CELL_ID, [], "imports", "\n".join(imports))]
+        written: dict[int, dict] = {}
         for em in fused:
             ids = em.node_ids or [em.node_id]
-            cell = self._cell(f"cell-{ids[0]}", ids, "node", em.code)
+            group = None if em.placeholder_reason else self.group_of.get(ids[0], (None, 0))[0]
+            if group in written:
+                # Another statement of a cell the user wrote: it stays in that cell.
+                written[group]["node_ids"] += ids
+                written[group]["code"] += f"\n{em.code}"
+                continue
+            cell = self._cell(f"cell-{ids[0]}", list(ids), "node", em.code)
             if em.placeholder_reason:
                 cell["status"], cell["reason"] = "placeholder", em.placeholder_reason
+            elif group is not None:
+                written[group] = cell
             cells.append(cell)
         _fill_names(cells)
         return {
@@ -584,6 +604,11 @@ class NotebookRenderer:
             for pid in {self._resolve_producer(p) for p in node_by_id[em.node_id].producer_ids()}:
                 if pid in consumers:
                     consumers[pid].append(em.node_id)
+        # A linear run does not fuse across the edge of a cell the user wrote.
+        for em in emissions:
+            reader = consumers[em.node_id][0] if len(consumers[em.node_id]) == 1 else None
+            if reader is not None and self.group_of.get(em.node_id) != self.group_of.get(reader):
+                em.is_boundary = True
 
         fused = render_pipeline(emissions, consumers)
         survivors = {em.node_id for em in fused}
@@ -1351,11 +1376,16 @@ def _agg_function(agg: str) -> str:
     }.get(agg, f"{agg}()")
 
 
-def render_notebook(flow: dict, schemas: dict | None = None, locked: dict | None = None) -> dict:
+def render_notebook(
+    flow: dict, schemas: dict | None = None, locked: dict | None = None, layout: list | None = None
+) -> dict:
     """Render ``flow`` (flowfile_core's dialect) as notebook cells.
 
     ``schemas`` maps a node id to its output columns (``[{name, data_type}]``), where known.
     ``locked`` maps a node id to the reason the editor keeps it out of code: it renders as a
-    placeholder and its settings are never read.
+    placeholder and its settings are never read. ``layout`` lists the cells a user wrote, each as
+    its lines and each line as the node ids it holds: those nodes render in one cell, a line stays
+    a statement of its own, and no other node is fused into it. Without it the cells are the ones
+    flowfile_core renders.
     """
-    return NotebookRenderer(flow, schemas, locked).render()
+    return NotebookRenderer(flow, schemas, locked, layout).render()

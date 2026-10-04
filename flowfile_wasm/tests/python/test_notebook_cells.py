@@ -42,6 +42,14 @@ SCHEMA = [
 ]
 
 
+UNCHANGED = {"ok": True, "nodes": {}, "added": [], "inputs": {}, "warnings": []}
+
+
+def changes(result: dict) -> dict:
+    """A sync's answer without the list of which cell holds which nodes."""
+    return {key: value for key, value in result.items() if key != "node_ids_by_cell"}
+
+
 def node(node_id: int, node_type: str, inputs: list[int], settings: dict, **extra) -> dict:
     return {
         "id": node_id,
@@ -90,6 +98,10 @@ def applied(flow: dict, result: dict) -> dict:
     """The flow after a sync, the way the editor lands it."""
     assert result["ok"], result
     flow = copy.deepcopy(flow)
+    for new in result["added"]:
+        flow["nodes"].append(node(new["id"], new["type"], [], new["settings"], description=new["description"]))
+        if new["node_reference"]:
+            flow["nodes"][-1]["node_reference"] = new["node_reference"]
     by_id = {each["id"]: each for each in flow["nodes"]}
     for node_id, change in result["nodes"].items():
         target = by_id[int(node_id)]
@@ -132,6 +144,17 @@ def named(*steps: tuple[str, dict]) -> dict:
 BASIC = {"mode": "basic", "basic_filter": {"field": "revenue", "operator": "greater_than", "value": "60"}}
 FILTER = ("filter", {"filter_input": {**BASIC, "advanced_filter": ""}})
 SORT = ("sort", {"sort_input": [{"column": "revenue", "how": "desc"}]})
+SELECT = (
+    "select",
+    {
+        "keep_missing": False,
+        "select_input": [
+            {"old_name": "product", "new_name": "item", "keep": True, "position": 0, "data_type": "String"},
+            {"old_name": "revenue", "new_name": "revenue", "keep": True, "position": 1, "data_type": "Int64"},
+            {"old_name": "sold", "new_name": "sold", "keep": False, "position": 2, "data_type": "Date"},
+        ],
+    },
+)
 
 
 # An unchanged notebook changes nothing
@@ -155,13 +178,19 @@ def test_cells_the_render_wrote_change_nothing_however_they_are_laid_out(name):
     reflowed = {cell_id: ast.unparse(ast.parse(code)) for cell_id, code in touched.items()}
     for drafts in ({}, touched, reflowed):
         result = sync_notebook(copy.deepcopy(golden["flow"]), golden["schemas"], {}, drafts)
-        assert result == {"ok": True, "nodes": {}, "inputs": {}, "warnings": []}, result
+        assert changes(result) == UNCHANGED, result
+        if drafts:
+            # Every cell that was read holds the nodes it held.
+            rendered = {cell["cell_id"]: cell for cell in golden["cells"]}
+            read = [cell_id for cell_id, text in drafts.items() if text != rendered[cell_id]["code"]]
+            held = {cell_id: sum(lines, []) for cell_id, lines in result["node_ids_by_cell"].items()}
+            assert held == {cell_id: rendered[cell_id]["node_ids"] for cell_id in read}
 
 
 def test_a_draft_equal_to_the_render_is_not_read_at_all():
     flow = chain(FILTER, SORT)
     cells = cells_of(flow)
-    assert sync(flow, dict(cells)) == {"ok": True, "nodes": {}, "inputs": {}, "warnings": []}
+    assert sync(flow, dict(cells)) == {**UNCHANGED, "node_ids_by_cell": {}}
 
 
 # A changed call becomes the settings it describes
@@ -438,6 +467,263 @@ def test_a_filter_that_was_not_set_takes_the_condition_written_on_it():
     assert result["inputs"] == {}
 
 
+# A call the cell did not have is a new node
+
+
+def test_a_call_added_to_a_chain_is_a_new_node_after_the_one_before_it():
+    flow = chain(SORT)
+    result, _ = edited(flow, "cell-1", "descending=[True])", "descending=[True]).head(5)")
+    assert result["nodes"] == {}
+    assert result["added"] == [
+        {"id": 3, "type": "sample", "settings": {"sample_size": 5}, "description": "", "node_reference": None}
+    ]
+    assert result["inputs"] == {"3": {"main": [2], "right": None, "left": None}}
+    after = cells_of(applied(flow, result))
+    assert list(after) == ["imports", "cell-1"]
+    assert after["cell-1"].startswith("sampled_3 = (") and ".sort([\"revenue\"], descending=[True])\n    .head(5)" in after["cell-1"]
+    assert changes(sync(applied(flow, result), {"cell-1": after["cell-1"] + "\n"})) == UNCHANGED
+
+
+def test_a_call_added_between_two_steps_is_read_by_the_one_after_it():
+    flow = chain(FILTER, SORT)
+    result, _ = edited(flow, "cell-1", ".sort(", ".head(3).sort(")
+    assert [(new["id"], new["type"]) for new in result["added"]] == [(4, "sample")]
+    assert {node_id: ports["main"] for node_id, ports in result["inputs"].items()} == {"3": [4], "4": [2]}
+    code = cells_of(applied(flow, result))["cell-1"]
+    assert code.index(".filter(") < code.index(".head(3)") < code.index(".sort(")
+
+
+def test_a_new_line_is_a_new_node_under_the_name_it_is_given():
+    flow = named(SORT)
+    draft = cells_of(flow)["cell-2"] + '\ntop = ordered_2.select(["product", ff.col("revenue").alias("rev").cast(ff.Float64)])'
+    result = sync(flow, {"cell-2": draft})
+    (new,) = result["added"]
+    assert (new["id"], new["type"], new["node_reference"]) == (3, "select", "top")
+    assert new["settings"] == {
+        "keep_missing": False,
+        "select_input": [
+            {"old_name": "product", "new_name": "product", "keep": True, "is_available": True, "position": 0, "data_type": None, "data_type_change": False, "is_altered": False},
+            {"old_name": "revenue", "new_name": "rev", "keep": True, "is_available": True, "position": 1, "data_type": "Float64", "data_type_change": True, "is_altered": True},
+            {"old_name": "sold", "new_name": "sold", "keep": False, "is_available": True, "position": 2, "data_type": None},
+        ],
+    }
+    assert result["inputs"] == {"3": {"main": [2], "right": None, "left": None}}
+    code = cells_of(applied(flow, result))["cell-2"]
+    assert code.startswith("top = (") and 'ff.col("product"),' in code and 'ff.col("revenue").alias("rev").cast(ff.Float64),' in code
+
+
+def test_new_nodes_of_every_kind_the_notebook_writes():
+    flow = named(SORT)
+    lines = [
+        cells_of(flow)["cell-2"],
+        'big = ordered_2.filter(ff.col("revenue") > 150)',
+        "both = ff.concat([sales, big], how='diagonal_relaxed')",
+        "counted = both.select(ff.len().alias('number_of_records'))",
+        "labelled = big.with_columns(flowfile_formulas=['[revenue] * 2'], output_column_names=['double'])"
+        ".with_columns(flowfile_formulas=['uppercase([product])'], output_column_names=['shout'], output_column_datatypes=['String'])",
+        'big.write_csv("big.csv", separator=";")',
+        "extra = ff.from_raw_data({'columns': [{'name': 'n', 'data_type': 'Int64'}], 'data': [[1, 2]]})",
+    ]
+    result = sync(flow, {"cell-2": "\n".join(lines)})
+    assert result["ok"], result
+    assert [(new["id"], new["type"], new["node_reference"]) for new in result["added"]] == [
+        (3, "filter", "big"),
+        (4, "union", "both"),
+        (5, "record_count", "counted"),
+        (6, "formula", "labelled"),
+        (7, "output", None),
+        (8, "manual_input", "extra"),
+    ]
+    assert {node_id: ports["main"] for node_id, ports in result["inputs"].items()} == {"3": [2], "4": [1, 3], "5": [4], "6": [3], "7": [3]}
+    settings = {new["id"]: new["settings"] for new in result["added"]}
+    assert [entry["field"]["name"] for entry in settings[6]["functions"]] == ["double", "shout"]
+    assert settings[7]["output_settings"] == {
+        "file_type": "csv",
+        "write_mode": "overwrite",
+        "polars_method": "sink_csv",
+        "table_settings": {"file_type": "csv", "delimiter": ";", "encoding": "utf-8"},
+        "directory": "",
+        "name": "big.csv",
+    }
+    after = applied(flow, result)
+    rendered = "\n".join(cells_of(after).values())
+    for written in ('big.csv', "ff.concat([", ".select(ff.len().alias('number_of_records'))", "output_column_names=['shout']"):
+        assert written in rendered
+    # Reading the notebook it made again changes nothing.
+    again = sync(after, {cell_id: code + "\n" for cell_id, code in cells_of(after).items() if cell_id != "imports"})
+    assert changes(again) == UNCHANGED
+
+
+def test_new_nodes_take_ids_from_the_one_given():
+    flow = chain(SORT)
+    draft = cells_of(flow)["cell-1"].replace("descending=[True])", "descending=[True]).head(5)")
+    result = sync_notebook(copy.deepcopy(flow), schemas_of(flow), {}, {"cell-1": draft}, 40)
+    assert [new["id"] for new in result["added"]] == [40]
+
+
+def test_readers_of_a_name_move_to_the_node_added_under_it():
+    flow = flow_of(
+        node(1, "manual_input", [], SOURCE, node_reference="sales"),
+        node(2, "sort", [1], SORT[1], node_reference="ranked"),
+        node(3, "sample", [2], {"sample_size": 5, "sample_method": "first"}),
+    )
+    cells = cells_of(flow)
+    result = sync(flow, {"cell-2": cells["cell-2"] + '.filter(ff.col("revenue") > 150)'})
+    # The name moves to the new last step, and the cell that reads it follows.
+    assert [(new["id"], new["type"], new["node_reference"]) for new in result["added"]] == [(4, "filter", "ranked")]
+    assert result["nodes"] == {"2": {"node_reference": None}}
+    assert {node_id: ports["main"] for node_id, ports in result["inputs"].items()} == {"3": [4], "4": [2]}
+    after = cells_of(applied(flow, result))
+    assert after["cell-2"].startswith("ranked = (") and "ranked.head(5)" in after["cell-3"]
+
+
+def test_a_select_names_every_column_it_leaves_out_so_the_editor_does_not_keep_them():
+    """The columns come through the new steps before it: a sort hands on what it reads, a formula adds one."""
+    flow = named(SORT)
+    draft = (
+        cells_of(flow)["cell-2"]
+        + "\npicked = ordered_2.head(3).with_columns(flowfile_formulas=['[revenue] * 2'], output_column_names=['double'])"
+        + '.select(["double", "product"])'
+    )
+    result = sync(flow, {"cell-2": draft})
+    rows = result["added"][-1]["settings"]["select_input"]
+    assert [(row["old_name"], row["keep"]) for row in rows] == [
+        ("double", True),
+        ("product", True),
+        ("revenue", False),
+        ("sold", False),
+    ]
+
+
+def test_a_select_needs_to_know_the_columns_and_takes_only_ones_that_are_there():
+    flow = named(SORT)
+    draft = cells_of(flow)["cell-2"] + '\npicked = ordered_2.select(["product"])'
+    unknown = sync_notebook(copy.deepcopy(flow), {}, {}, {"cell-2": draft})
+    assert (unknown["ok"], unknown["kind"], unknown["line"]) == (False, "refused", 2)
+    assert "not known yet" in unknown["message"]
+
+    missing = sync(flow, {"cell-2": draft.replace('"product"', '"prodcut"')})
+    assert (missing["ok"], missing["kind"], missing["line"]) == (False, "error", 2)
+    assert "`prodcut` is not one of product, revenue, sold" in missing["message"]
+
+
+# A cell the user wrote stays that cell
+
+
+def laid_out(flow: dict, layout: list[list[int]]) -> dict[str, dict]:
+    rendering = render_notebook(copy.deepcopy(flow), schemas_of(flow), {}, layout)
+    return {cell["cell_id"]: cell for cell in rendering["cells"]}
+
+
+def test_a_new_cell_is_read_where_it_stands_and_its_nodes_are_reported():
+    flow = named(SORT)
+    result = sync_notebook(
+        copy.deepcopy(flow),
+        schemas_of(flow),
+        {},
+        {},
+        None,
+        None,
+        ["imports", "cell-1", "cell-2", "new-1"],
+        {"new-1": 'top = ordered_2.head(3)\ntop.select(["product"])'},
+    )
+    assert [(new["id"], new["type"], new["node_reference"]) for new in result["added"]] == [
+        (3, "sample", "top"),
+        (4, "select", None),
+    ]
+    assert result["node_ids_by_cell"] == {"new-1": [[3], [4]]}
+    assert {node_id: ports["main"] for node_id, ports in result["inputs"].items()} == {"3": [2], "4": [3]}
+
+
+def test_a_new_cell_reads_only_the_names_of_the_cells_before_it():
+    flow = named(SORT)
+    early = sync_notebook(
+        copy.deepcopy(flow), schemas_of(flow), {}, {}, None, None, ["imports", "cell-1", "new-1", "cell-2"],
+        {"new-1": "top = ordered_2.head(3)"},
+    )
+    assert (early["ok"], early["cell_id"], early["kind"]) == (False, "new-1", "error")
+    assert "NameError" in early["message"]
+
+
+def test_the_render_keeps_the_nodes_of_a_written_cell_together_and_fuses_nothing_into_it():
+    """Without a layout the sample and the select fuse into the sort's cell; with one they are the user's cell."""
+    flow = flow_of(
+        node(1, "manual_input", [], SOURCE),
+        node(2, "sort", [1], SORT[1]),
+        node(3, "sample", [2], {"sample_size": 3, "sample_method": "first"}, node_reference="top"),
+        node(4, "select", [3], {"keep_missing": False, "select_input": [{"old_name": "product", "new_name": "product", "keep": True, "position": 0}]}),
+    )
+    assert list(cells_of(flow)) == ["imports", "cell-1", "cell-4"]
+
+    cells = laid_out(flow, [[[3], [4]]])
+    assert list(cells) == ["imports", "cell-1", "cell-3"]
+    assert cells["cell-1"]["node_ids"] == [1, 2] and cells["cell-3"]["node_ids"] == [3, 4]
+    assert cells["cell-3"]["code"].startswith("top = ordered_2.head(3)\nselected_4 = top.select([")
+    assert cells["cell-3"]["uses"] == ["ff", "ordered_2"]
+
+    # Two steps that do not read each other still share the cell they were written in.
+    apart = laid_out(flow_of(*flow["nodes"][:3], node(4, "unique", [2], {"unique_input": {"columns": None, "strategy": "any"}})), [[[3], [4]]])
+    assert apart["cell-3"]["node_ids"] == [3, 4]
+    assert apart["cell-3"]["code"] == "top = ordered_2.head(3)\ndeduped_4 = ordered_2.unique(keep='any')"
+
+    # Written on one line two steps are one statement; on two lines the second reads the first by its name.
+    plain = flow_of(*flow["nodes"][:2], node(3, "sample", [2], {"sample_size": 3, "sample_method": "first"}), flow["nodes"][3])
+    assert laid_out(plain, [[[3, 4]]])["cell-3"]["code"].startswith("selected_4 = (\n    ordered_2.head(3)\n    .select([")
+    assert laid_out(plain, [[[3], [4]]])["cell-3"]["code"].startswith("sampled_3 = ordered_2.head(3)\nselected_4 = sampled_3.select([")
+
+
+def test_a_written_cell_reads_back_as_itself():
+    flow = named(SORT)
+    first = sync_notebook(
+        copy.deepcopy(flow), schemas_of(flow), {}, {}, None, None, ["imports", "cell-1", "cell-2", "new-1"],
+        {"new-1": 'top = ordered_2.head(3)\npicked = top.select(["product"])'},
+    )
+    after = applied(flow, first)
+    layout = [first["node_ids_by_cell"]["new-1"]]
+    assert layout == [[[3], [4]]]
+    cells = laid_out(after, layout)
+    assert list(cells) == ["imports", "cell-1", "cell-2", "cell-3"]
+    again = sync_notebook(copy.deepcopy(after), schemas_of(after), {}, {"cell-3": cells["cell-3"]["code"] + "\n"}, None, layout)
+    assert changes(again) == UNCHANGED
+    assert again["node_ids_by_cell"] == {"cell-3": [[3], [4]]}
+
+
+def test_a_layout_naming_nodes_that_are_gone_or_locked_is_harmless():
+    flow = chain(FILTER, SORT)
+    assert laid_out(flow, [[[9, 10]], [], [[]]]).keys() == cells_of(flow).keys()
+    locked = render_notebook(copy.deepcopy(flow), schemas_of(flow), {3: "locked"}, [[[2, 3]]])["cells"]
+    assert [(cell["cell_id"], cell["status"]) for cell in locked] == [
+        ("imports", "code"),
+        ("cell-1", "code"),
+        ("cell-2", "code"),
+        ("cell-3", "placeholder"),
+    ]
+
+
+# An existing select
+
+
+def test_a_select_keeps_what_is_listed_in_that_order_and_drops_the_rest():
+    flow = chain(SELECT)
+    code = cells_of(flow)["cell-1"]
+    assert 'ff.col("product").alias("item").cast(ff.Utf8),' in code
+    draft = code.replace(
+        '        ff.col("product").alias("item").cast(ff.Utf8),\n        ff.col("revenue").cast(ff.Int64),\n',
+        '        ff.col("sold"),\n        ff.col("revenue").alias("amount").cast(ff.Float64),\n',
+    )
+    assert draft != code
+    result = sync(flow, {"cell-1": draft})
+    rows = result["nodes"]["2"]["settings"]["select_input"]
+    assert [(row["old_name"], row["new_name"], row["keep"], row["position"]) for row in rows] == [
+        ("sold", "sold", True, 0),
+        ("revenue", "amount", True, 1),
+        ("product", "item", False, 2),
+    ]
+    assert (rows[0]["data_type"], rows[0]["data_type_change"]) == (None, False)
+    assert (rows[1]["data_type"], rows[1]["data_type_change"]) == ("Float64", True)
+    assert ast.dump(ast.parse(cells_of(applied(flow, result))["cell-1"])) == ast.dump(ast.parse(draft))
+
+
 # Names and inputs
 
 
@@ -457,7 +743,7 @@ def test_a_call_reads_the_frame_it_is_written_on():
     cells = cells_of(flow)
     assert cells["cell-3"].startswith("filtered_3 = sales.filter(")
     result = sync(flow, {"cell-3": cells["cell-3"].replace("sales.filter", "returns.filter")})
-    assert result == {"ok": True, "nodes": {}, "inputs": {"3": {"main": [2], "right": None, "left": None}}, "warnings": []}
+    assert changes(result) == {**UNCHANGED, "inputs": {"3": {"main": [2], "right": None, "left": None}}}
     assert cells_of(applied(flow, result))["cell-3"].startswith("filtered_3 = returns.filter(")
 
 
@@ -540,9 +826,11 @@ def refusal(flow: dict, cell_id: str, old: str, new: str) -> tuple[str, int | No
 
 
 REFUSALS = [
-    ("an added step", chain(SORT), "descending=[True])", "descending=[True]).head(5)", "refused", "adds a step"),
     ("a removed step", chain(FILTER, SORT), '.sort(["revenue"], descending=[True])', "", "refused", "removes a step"),
-    ("a method with no handler yet", chain(SORT), '.sort(["revenue"], descending=[True])', '.select(["revenue"])', "refused", "`select`"),
+    ("a method with no handler yet", chain(SORT), '.sort(["revenue"], descending=[True])', '.drop(["revenue"])', "refused", "`drop`"),
+    ("a computed column in a select", chain(SELECT), 'ff.col("revenue").cast(ff.Int64)', 'ff.col("revenue") * 2', "refused", "with_columns()"),
+    ("a cast the select node cannot make", chain(SELECT), "cast(ff.Int64)", "cast(ff.Int16)", "refused", "casts to"),
+    ("a column listed twice", chain(SELECT), 'ff.col("revenue").cast(ff.Int64)', 'ff.col("product")', "refused", "listed twice"),
     ("a setting the node has no place for", chain(SORT), "descending=[True]", "descending=[True], nulls_last=True", "refused", "nulls_last"),
     ("an expression where names go", chain(SORT), 'sort(["revenue"]', 'sort([ff.col("revenue")]', "refused", "column names"),
     ("a condition over two columns", chain(FILTER), 'ff.col("revenue") > 60', '(ff.col("revenue") > 60) | (ff.col("product") == "x")', "refused", "single comparison"),

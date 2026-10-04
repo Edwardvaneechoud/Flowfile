@@ -7,6 +7,7 @@
  * this editor's dialect. Pure: no store, no Vue.
  */
 import type { FlowEdge, FlowNode, NodeSettings } from '../types'
+import { editorNodeType } from './coreExport'
 import type { FlowPatch, GraphState } from './flowPatch'
 
 export interface NotebookSyncChange {
@@ -21,11 +22,37 @@ export interface NotebookSyncPorts {
   left?: number | null
 }
 
+/** A node the cells call for and the flow does not have yet. Its type and settings are core's. */
+export interface NotebookSyncAddition extends NotebookSyncChange {
+  id: number
+  type: string
+}
+
 export interface NotebookSyncResult {
   ok: true
   nodes: Record<string, NotebookSyncChange>
+  added?: NotebookSyncAddition[]
   inputs: Record<string, NotebookSyncPorts>
+  /** The nodes each cell that was read holds now, line by line. */
+  node_ids_by_cell?: Record<string, number[][]>
   warnings: string[]
+}
+
+/** The settings a new node of `type` starts from (`flowStore.defaultSettings`). */
+export type DefaultSettings = (type: string, id: number, x: number, y: number) => NodeSettings
+
+const COLUMN_GAP = 250
+const ROW_GAP = 130
+
+/** Where a new node goes: right of its first input, moved down until it sits on nothing. */
+function placeNew(taken: Array<{ x: number; y: number }>, input: { x: number; y: number } | undefined) {
+  const spot = input
+    ? { x: input.x + COLUMN_GAP, y: input.y }
+    : { x: 50, y: taken.length ? Math.max(...taken.map(node => node.y)) + ROW_GAP + 40 : 50 }
+  while (taken.some(node => Math.abs(node.x - spot.x) < COLUMN_GAP - 50 && Math.abs(node.y - spot.y) < ROW_GAP - 10)) {
+    spot.y += ROW_GAP
+  }
+  return spot
 }
 
 export interface NotebookSyncFailure {
@@ -76,7 +103,36 @@ const incoming = (target: number, source: number, targetHandle: string): Omit<Fl
 })
 
 /** The patch that turns `graph` into what the sync describes; empty when the sync changed nothing. */
-export function syncPatch(graph: Pick<GraphState, 'nodes' | 'edges'>, result: NotebookSyncResult): FlowPatch {
+export function syncPatch(
+  graph: Pick<GraphState, 'nodes' | 'edges'>,
+  result: NotebookSyncResult,
+  defaults?: DefaultSettings
+): FlowPatch {
+  const addNodes: NonNullable<FlowPatch['addNodes']> = []
+  const placed = new Map<number, { x: number; y: number }>()
+  graph.nodes.forEach(node => placed.set(node.id, { x: node.x, y: node.y }))
+  for (const added of result.added ?? []) {
+    if (!defaults) throw new Error('The notebook adds a step, and this editor was given no defaults for one')
+    if (placed.has(added.id)) throw new Error(`The notebook adds node ${added.id}, an id that is already in use`)
+    const type = editorNodeType(added.type)
+    const input = placed.get(result.inputs?.[String(added.id)]?.main?.[0] ?? -1)
+    const { x, y } = placeNew([...placed.values()], input)
+    placed.set(added.id, { x, y })
+    const settings = mergeSettings(defaults(type, added.id, x, y) as Record<string, any>, added.settings ?? {})
+    alignEditorKeys(type, settings, added.settings ?? {})
+    settings.description = added.description ?? ''
+    if (added.node_reference) settings.node_reference = added.node_reference
+    addNodes.push({
+      id: added.id,
+      type,
+      x,
+      y,
+      settings: settings as unknown as NodeSettings,
+      description: added.description ?? '',
+      ...(added.node_reference ? { node_reference: added.node_reference } : {})
+    })
+  }
+
   const updateNodes: NonNullable<FlowPatch['updateNodes']> = []
   for (const [key, change] of Object.entries(result.nodes ?? {})) {
     const node = graph.nodes.get(Number(key))
@@ -104,7 +160,7 @@ export function syncPatch(graph: Pick<GraphState, 'nodes' | 'edges'>, result: No
   const addEdges: NonNullable<FlowPatch['addEdges']> = []
   for (const [key, ports] of Object.entries(result.inputs ?? {})) {
     const target = Number(key)
-    if (!graph.nodes.has(target)) throw new Error(`The notebook rewired node ${key}, which is no longer on the canvas`)
+    if (!placed.has(target)) throw new Error(`The notebook rewired node ${key}, which is no longer on the canvas`)
     if (ports.left != null) throw new Error(`Node ${key} has an input this editor cannot connect`)
     // Every input is laid again, in order: a union reads its inputs in the order they were connected.
     for (const edge of graph.edges) {
@@ -117,6 +173,7 @@ export function syncPatch(graph: Pick<GraphState, 'nodes' | 'edges'>, result: No
   }
 
   const patch: FlowPatch = {}
+  if (addNodes.length) patch.addNodes = addNodes
   if (updateNodes.length) patch.updateNodes = updateNodes
   if (removeEdges.length) patch.removeEdges = removeEdges
   if (addEdges.length) patch.addEdges = addEdges

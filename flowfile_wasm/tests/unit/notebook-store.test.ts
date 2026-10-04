@@ -74,12 +74,12 @@ const RENDERING = { cells: [cell(1, 'source_1 = ff.from_raw_data({})')], warning
 const bridgeStrings = () => pyodideMock.runPythonWithResult.mock.calls.map(call => String(call[0]))
 const renderCalls = () => bridgeStrings().filter(src => src.includes('render_notebook('))
 
-/** The three JSON arguments of the one render call: the flow, the schemas and the locked nodes. */
-function renderArguments(): [any, Record<string, unknown>, Record<string, string>] {
+/** The JSON arguments of the one render call: the flow, the schemas, the locked nodes and the written cells. */
+function renderArguments(): [any, Record<string, unknown>, Record<string, string>, number[][]] {
   const source = renderCalls().at(-1)!
   const args = [...source.matchAll(/json\.loads\(("(?:[^"\\]|\\.)*")\)/g)].map(match => JSON.parse(JSON.parse(match[1])))
-  expect(args).toHaveLength(3)
-  return args as [any, Record<string, unknown>, Record<string, string>]
+  expect(args).toHaveLength(4)
+  return args as [any, Record<string, unknown>, Record<string, string>, number[][]]
 }
 
 function sharedFlow(): FlowfileData {

@@ -7,7 +7,8 @@ here, so what counts as changed is decided against what the canvas says now:
 * inside a changed cell, a call that reads exactly as the render writes it for its node keeps
   that node untouched;
 * any other call is read by the handler for its method, which answers with the settings that
-  call describes, in flowfile_core's dialect, to be laid over the node's own.
+  call describes, in flowfile_core's dialect, to be laid over the node's own. A call the cell
+  did not have before is a new node.
 
 Inputs follow names: a node reads whatever its input's name is bound to where its cell stands, so
 a changed cell that binds a name to another node moves the readers of that name with it.
@@ -39,7 +40,7 @@ from .notebook_render import (
     _Node,
     node_label,
 )
-from .notebook_shim import Expr, Module, kind_of, register_kind
+from .notebook_shim import Dtype, Expr, Module, kind_of, register_kind
 
 _REFERENCE = re.compile(r"[a-z][a-z0-9_]*")
 _GENERATED = re.compile(rf"(?:df|{'|'.join(sorted(set(NODE_TYPE_VAR_LABEL.values())))})_\d+(?:_\w+)?")
@@ -55,6 +56,19 @@ _COMPARISONS = {
 }
 _TEXT_MATCHES = {"str.contains": "contains", "str.starts_with": "starts_with", "str.ends_with": "ends_with"}
 _NEGATED = {"contains": "not_contains", "in": "not_in"}
+# The types a Select node casts to, by the name a cell gives them.
+_SELECT_TYPES = {
+    "Utf8": "String",
+    "String": "String",
+    "Int64": "Int64",
+    "Int32": "Int32",
+    "Float64": "Float64",
+    "Float32": "Float32",
+    "Boolean": "Boolean",
+    "Date": "Date",
+    "Datetime": "Datetime",
+}
+_SINKS = {"csv": "sink_csv", "parquet": "sink_parquet"}
 
 
 class Frame:
@@ -83,6 +97,9 @@ class _Unit:
     helper_names: list[str]
     inputs: dict[str, tuple[str, int]]
     readable: bool = True
+    added: bool = False
+    columns: list[str] | None = None
+    """The columns of the frame the call being read is made on, where they are known."""
 
     @property
     def label(self) -> str:
@@ -374,7 +391,7 @@ def _rendered_path(output: dict) -> str:
 def _read_write(file_type: str, params: tuple[str, ...]) -> Callable:
     def read(unit: _Unit, args: list, kwargs: dict, line: int) -> dict:
         output = unit.node.settings.get("output_settings") or {}
-        if output.get("file_type") != file_type:
+        if not unit.added and output.get("file_type") != file_type:
             raise _refused(f"This node writes {output.get('file_type')}; change its file type on the canvas", line)
         bound = _arguments(f"write_{file_type}", params, args, kwargs, line)
         if "path" not in bound:
@@ -391,9 +408,14 @@ def _read_write(file_type: str, params: tuple[str, ...]) -> Callable:
         else:
             table["sheet_name"] = _text(bound.get("worksheet", "Sheet1"), "write_excel(worksheet=)", line)
             patch["write_mode"] = _text(bound.get("write_mode", "overwrite"), "write_excel(write_mode=)", line)
+        if unit.added:
+            patch["file_type"] = table["file_type"] = file_type
+            patch.setdefault("write_mode", "overwrite")
+            if file_type in _SINKS:
+                patch["polars_method"] = _SINKS[file_type]
         if table:
             patch["table_settings"] = table
-        if path != _rendered_path(output):
+        if unit.added or path != _rendered_path(output):
             patch["directory"], patch["name"] = posixpath.dirname(path), posixpath.basename(path)
             if output.get("abs_file_path"):
                 patch["abs_file_path"] = path
@@ -424,6 +446,119 @@ def _read_raw_data(unit: _Unit, args: list, kwargs: dict, line: int) -> dict:
     }
 
 
+def _selected(item: Any, line: int) -> tuple[str, str, str | None]:
+    """One item of a select: the column, the name it gets and the type it is cast to."""
+    if type(item) is str:
+        return item, item, None
+    name = cast = None
+    expr = item
+    while isinstance(expr, Expr) and expr.op in ("alias", "cast") and len(expr.args) == 2 and not expr.kwargs:
+        argument = expr.args[1]
+        if expr.op == "alias" and name is None and type(argument) is str:
+            name = argument
+        elif expr.op == "cast" and cast is None and isinstance(argument, Dtype) and not argument.args:
+            cast = argument.name
+        else:
+            break
+        expr = expr.args[0]
+    column = _column(expr)
+    if column is None:
+        raise _refused(
+            "select() takes columns here: a name or `ff.col(name)`, with `.alias(...)` and `.cast(...)`. "
+            "A computed column is made with with_columns()",
+            line,
+        )
+    if cast is not None and cast not in _SELECT_TYPES:
+        raise _refused(f"The Select node casts to {', '.join(sorted(set(_SELECT_TYPES.values())))} only", line)
+    return column, name or column, _SELECT_TYPES.get(cast or "")
+
+
+def _counts_records(args: list, kwargs: dict) -> bool:
+    """``select(ff.len().alias('number_of_records'))``, which is how a Count records node reads."""
+    if kwargs or len(args) != 1 or not isinstance(args[0], Expr) or args[0].op != "alias":
+        return False
+    counted, name = args[0].args
+    return isinstance(counted, Expr) and counted.op == "len" and name == "number_of_records"
+
+
+def _read_nothing(unit: _Unit, args: list, kwargs: dict, line: int) -> dict:
+    return {}
+
+
+def _read_select(unit: _Unit, args: list, kwargs: dict, line: int) -> dict:
+    """The columns listed are kept in that order; a column the node knew and the list leaves out is dropped."""
+    if kwargs:
+        raise _refused("select() takes its columns by position here", line)
+    items = args[0] if len(args) == 1 and isinstance(args[0], list | tuple) else args
+    if not items:
+        raise CellFailure("TypeError: select() needs at least one column", line)
+    known = {row.get("old_name"): row for row in unit.node.settings.get("select_input") or []}
+    if unit.columns is None and not known:
+        raise _refused(
+            "The columns of this frame are not known yet, so a select cannot say which ones it leaves out. "
+            "Push or run the steps before it first",
+            line,
+        )
+    rows: list[dict] = []
+    for item in items:
+        column, name, cast = _selected(item, line)
+        if any(row["old_name"] == column for row in rows):
+            raise _refused(f"The Select node takes each column once; `{column}` is listed twice", line)
+        if unit.columns is not None and column not in unit.columns:
+            raise CellFailure(f"ColumnNotFoundError: `{column}` is not one of {', '.join(unit.columns)}", line)
+        rows.append(
+            {
+                **known.get(column, {}),
+                "old_name": column,
+                "new_name": name,
+                "keep": True,
+                "is_available": True,
+                "position": len(rows),
+                # No cast written is no cast: a stored type would be one.
+                "data_type": cast,
+                "data_type_change": cast is not None,
+                "is_altered": cast is not None or name != column,
+            }
+        )
+    listed = {row["old_name"] for row in rows}
+    rows += [{**row, "keep": False} for column, row in known.items() if column not in listed]
+    # The editor keeps a column a Select node does not name, so every other column is named as dropped.
+    rows += [
+        {"old_name": column, "new_name": column, "keep": False, "is_available": True, "data_type": None}
+        for column in unit.columns or []
+        if column not in listed and column not in known
+    ]
+    for position, row in enumerate(rows):
+        row["position"] = position
+    return {"select_input": rows, "keep_missing": False}
+
+
+def _columns_after(node_type: str, columns: list[str] | None, settings: dict) -> list[str] | None:
+    """The columns a node hands on, for the node types where its settings and input say so; else None."""
+    if node_type == "manual_input":
+        raw = (settings.get("raw_data_format") or {}).get("columns") or []
+        return [column.get("name") for column in raw]
+    if node_type == "record_count":
+        return ["number_of_records"]
+    if columns is None:
+        return None
+    if node_type in ("sort", "filter", "sample", "unique", "output"):
+        return list(columns)
+    if node_type == "select":
+        rows = [
+            row for row in settings.get("select_input") or [] if row.get("keep", True) and row["old_name"] in columns
+        ]
+        return [
+            row.get("new_name") or row["old_name"] for row in sorted(rows, key=lambda row: row.get("position") or 0)
+        ]
+    if node_type == "record_id":
+        return [(settings.get("record_id_input") or {}).get("output_column_name", "record_id"), *columns]
+    if node_type == "formula":
+        names = [(entry.get("field") or {}).get("name") for entry in _formula_entries(settings)]
+        return [*columns, *(name for name in dict.fromkeys(names) if name not in columns)]
+    return None
+
+
 # (receiver kind, method) -> (the node types the call stands for, what reads its arguments into settings)
 _HANDLERS: dict[tuple[str, str], tuple[tuple[str, ...], Callable | None]] = {
     ("FlowFrame", "sort"): (("sort",), _read_sort),
@@ -433,6 +568,7 @@ _HANDLERS: dict[tuple[str, str], tuple[tuple[str, ...], Callable | None]] = {
     ("FlowFrame", "unpivot"): (("unpivot",), _read_unpivot),
     ("FlowFrame", "dynamic_rename"): (("dynamic_rename",), _read_dynamic_rename),
     ("FlowFrame", "filter"): (("filter",), _read_filter),
+    ("FlowFrame", "select"): (("select",), _read_select),
     ("FlowFrame", "with_columns"): (("formula",), None),
     ("FlowFrame", "write_csv"): (("output",), _read_write("csv", ("path", "separator", "encoding"))),
     ("FlowFrame", "write_parquet"): (("output",), _read_write("parquet", ("path", "compression"))),
@@ -450,6 +586,8 @@ class _CellReading:
         self.cell = cell
         self.reader = CellReader(draft, sync.namespace, self._nested_frame)
         self.pending = [sync.units[node_id] for node_id in cell["node_ids"] if node_id in sync.units]
+        self.nodes: list[int] = []
+        self.lines: list[list[int]] = []
         self.helper_names: dict[str, _Unit] = {}
         self.helpers_seen: dict[int, set[str]] = {}
         self.bound: set[str] = set()
@@ -496,7 +634,10 @@ class _CellReading:
             name = None
         else:
             raise needs_kernel(self.reader.text(statement), statement.lineno)
+        read = len(self.nodes)
         frame, unit = self._chain(statement.value)
+        if self.nodes[read:]:
+            self.lines.append(self.nodes[read:])
         if name is None:
             return
         self.sync.namespace[name] = frame
@@ -535,8 +676,11 @@ class _CellReading:
                 raise _refused(f"Changing `{call.func.attr}` from the notebook is not supported yet", line)
             else:
                 unit, desired, count = self._changed(calls, signatures, index, current, line)
-            self.pending.remove(unit)
+            if unit in self.pending:
+                self.pending.remove(unit)
             self.sync.wire(unit, desired)
+            self.sync.follow_columns(unit, desired)
+            self.nodes.append(unit.node.id)
             current, last = Frame(unit.node.id), unit
             index += count
         return current, last
@@ -552,6 +696,8 @@ class _CellReading:
                 return current, None
         self.pending.remove(unit)
         self.sync.wire(unit, {"main": current.node_id})
+        self.sync.follow_columns(unit, {"main": current.node_id})
+        self.nodes.append(unit.node.id)
         return Frame(unit.node.id), unit
 
     def _matching(self, signatures: list, index: int, source: bool, helper_base: str | None) -> _Unit | None:
@@ -586,7 +732,7 @@ class _CellReading:
     def _changed(
         self, calls: list, signatures: list, index: int, current: Frame | None, line: int
     ) -> tuple[_Unit, dict[str, int], int]:
-        """Read a call the render did not write: the node it changes, its inputs and how many calls it took."""
+        """Read a call the render did not write: the node it changes or makes, its inputs and the calls it took."""
         call = calls[index]
         attribute = call.func.attr
         kind = "ff" if current is None else "FlowFrame"
@@ -596,26 +742,27 @@ class _CellReading:
         types, handler = _HANDLERS.get((kind, attribute), ((), None))
         if not types:
             raise _refused(
-                f"Changing `{attribute}` from the notebook is not supported yet; change this step on the canvas", line
-            )
-        unit = next((candidate for candidate in self.pending if candidate.node.type in types), None)
-        if unit is None:
-            raise _refused(
-                f"This adds a step (`{attribute}`). Adding a step from the notebook is not supported yet; "
-                "add the node on the canvas",
-                line,
+                f"`{attribute}` cannot be written or changed from the notebook yet; use the canvas for this step", line
             )
         if attribute == "with_columns":
-            return self._formula(unit, calls, signatures, index, current)
+            return self._formula(self._unread(types), calls, signatures, index, current, line)
         args, kwargs = self.reader.arguments(call)
-        description = kwargs.pop("description", "")
+        description = _text(kwargs.pop("description", ""), "description=", line)
+        if attribute == "select" and _counts_records(args, kwargs):
+            types, handler = ("record_count",), _read_nothing
+        # The first node of this type the cell has not read yet; with none left, the call is a new node.
+        unit = self._unread(types) or self.sync.new_unit(types[0], line)
+        unit.columns = None if current is None else self.sync.columns_of(current.node_id)
         if handler is None:
             desired, patch = self._members(args, kwargs, line), {}
         else:
             desired = {} if current is None else {"main": current.node_id}
             patch = handler(unit, args, kwargs, line)
-        self.sync.change(unit, patch, _text(description, "description=", line))
+        self.sync.change(unit, patch, description)
         return unit, desired, 1
+
+    def _unread(self, types: tuple[str, ...]) -> _Unit | None:
+        return next((candidate for candidate in self.pending if candidate.node.type in types), None)
 
     def _members(self, args: list, kwargs: dict, line: int) -> dict[str, int]:
         bound = _arguments("concat", ("items", "how"), args, kwargs, line)
@@ -632,15 +779,21 @@ class _CellReading:
         )
 
     def _formula(
-        self, unit: _Unit, calls: list, signatures: list, index: int, current: Frame | None
+        self, unit: _Unit | None, calls: list, signatures: list, index: int, current: Frame | None, line: int
     ) -> tuple[_Unit, dict[str, int], int]:
-        """A Formula node is one ``with_columns`` per entry: read as many as the node had, each on its own."""
+        """A Formula node is one ``with_columns`` per entry: read as many as the node had, each on its own.
+
+        With no Formula node left to read, the run of ``with_columns`` calls is one new node.
+        """
         assert current is not None
-        kept = [entry for entry in _formula_entries(unit.node.settings) if (entry.get("function") or "").strip()]
         run = 0
         while index + run < len(calls) and calls[index + run].func.attr == "with_columns":
             run += 1
-        count = min(run, max(1, len(unit.calls)))
+        if unit is None:
+            unit, count = self.sync.new_unit("formula", line), run
+        else:
+            count = min(run, max(1, len(unit.calls)))
+        kept = [entry for entry in _formula_entries(unit.node.settings) if (entry.get("function") or "").strip()]
         aligned = len(unit.calls) == len(kept)
         entries: list[dict] = []
         description = ""
@@ -664,11 +817,29 @@ class _CellReading:
 class _Sync:
     """One reading of the notebook against the flow as it stands."""
 
-    def __init__(self, flow: dict, schemas: dict | None, locked: dict | None, drafts: dict[str, str]) -> None:
-        self.renderer = NotebookRenderer(flow, schemas, locked)
+    def __init__(
+        self,
+        flow: dict,
+        schemas: dict | None,
+        locked: dict | None,
+        drafts: dict[str, str],
+        next_id: int | None,
+        layout: list | None = None,
+        order: list[str] | None = None,
+        new_cells: dict[str, str] | None = None,
+    ) -> None:
+        self.renderer = NotebookRenderer(flow, schemas, locked, layout)
         self.rendering = self.renderer.render()
         self.units = _units(self.renderer)
         self.drafts = drafts
+        self.order = order or []
+        self.new_cells = new_cells or {}
+        self.node_ids_by_cell: dict[str, list[list[int]]] = {}
+        self.rendered_names = {name for cell in self.rendering["cells"] for name in cell["defines"]}
+        self.next_id = max([int(next_id or 0), *(node_id + 1 for node_id in self.renderer.nodes), 1])
+        self.added: list[_Unit] = []
+        # The columns of the nodes this reading changes: what they hand on now, or None when it cannot say.
+        self.columns: dict[int, list[str] | None] = {}
         # The render writes the imports a flow needs, so a cell may use the dialect's modules before it does.
         self.namespace: dict[str, Any] = {name: Module(name) for name in allowlist.IMPORTS.values()}
         self.settings: dict[int, dict] = {}
@@ -678,15 +849,21 @@ class _Sync:
         self.warnings: list[str] = []
 
     def run(self) -> dict:
-        cells = self.rendering["cells"]
-        known = {cell["cell_id"] for cell in cells}
-        stray = next((cell_id for cell_id in self.drafts if cell_id not in known), None)
+        rendered = {cell["cell_id"]: cell for cell in self.rendering["cells"]}
+        stray = next((cell_id for cell_id in self.drafts if cell_id not in rendered), None)
         if stray is not None:
             return _failure(stray, CellFailure("This cell no longer stands for a step of the flow", None))
-        if len(self.drafts) > allowlist.BOUNDS["cells_per_request"]:
+        if len(self.drafts) + len(self.new_cells) > allowlist.BOUNDS["cells_per_request"]:
             return _failure(next(iter(self.drafts)), _refused("The notebook has too many changed cells to read", None))
-        for cell in cells:
-            draft = self.drafts.get(cell["cell_id"])
+        # Cells are read in the order the notebook shows them; a new cell is one the flow has no node for yet.
+        fresh = {
+            cell_id: {"cell_id": cell_id, "node_ids": [], "kind": "node", "status": "code", "code": "", "defines": []}
+            for cell_id in self.new_cells
+        }
+        shown = [cell_id for cell_id in self.order if cell_id in rendered or cell_id in fresh]
+        sequence = [*shown, *(cell_id for cell_id in [*rendered, *fresh] if cell_id not in shown)]
+        for cell in ({**rendered, **fresh}[cell_id] for cell_id in sequence):
+            draft = self.new_cells.get(cell["cell_id"], self.drafts.get(cell["cell_id"]))
             try:
                 if cell["kind"] == "imports":
                     self._imports(cell["code"] if draft is None else draft)
@@ -699,8 +876,19 @@ class _Sync:
         taken = self._taken_reference()
         if taken is not None:
             return taken
+        new = {unit.node.id for unit in self.added}
+        added = [
+            {
+                "id": unit.node.id,
+                "type": unit.node.type,
+                "settings": self.settings.get(unit.node.id, {}),
+                "description": self.descriptions.get(unit.node.id, ""),
+                "node_reference": self.references.get(unit.node.id, (None,))[0],
+            }
+            for unit in self.added
+        ]
         nodes: dict[str, dict] = {}
-        for node_id in sorted({*self.settings, *self.descriptions, *self.references}):
+        for node_id in sorted({*self.settings, *self.descriptions, *self.references} - new):
             change: dict[str, Any] = {}
             if self.settings.get(node_id):
                 change["settings"] = self.settings[node_id]
@@ -713,9 +901,21 @@ class _Sync:
         return {
             "ok": True,
             "nodes": nodes,
+            "added": added,
             "inputs": {str(node_id): _ports(desired) for node_id, desired in sorted(self.inputs.items())},
+            "node_ids_by_cell": self.node_ids_by_cell,
             "warnings": self.warnings,
         }
+
+    def new_unit(self, node_type: str, line: int) -> _Unit:
+        """A node the cells call for and the flow does not have yet, under the next free id."""
+        if len(self.renderer.nodes) + len(self.added) >= allowlist.BOUNDS["nodes_per_request"]:
+            raise _refused("The flow would have too many steps", line)
+        node = _Node({"id": self.next_id, "type": node_type, "setting_input": {}})
+        self.next_id += 1
+        unit = _Unit(node, None, None, [], [], [], {}, added=True)
+        self.added.append(unit)
+        return unit
 
     def bind_import(self, statement: ast.Import) -> None:
         for alias in statement.names:
@@ -744,6 +944,7 @@ class _Sync:
                 if producer not in inside and isinstance(frame, Frame):
                     desired[key] = frame.node_id
             self.wire(unit, desired)
+            self.follow_columns(unit, desired)
         self._bind_rendered(cell, set())
 
     def _read(self, cell: dict, draft: str) -> None:
@@ -753,18 +954,43 @@ class _Sync:
             raise _refused("The cell is too large to read", 1)
         reading = _CellReading(self, cell, draft)
         reading.read(parse_cell(draft))
+        # A name the cell now gives to another node no longer names the node that had it.
+        for node_id in cell["node_ids"]:
+            node = self.renderer.nodes[node_id]
+            holder = self.namespace.get(node.reference) if node.reference in reading.bound else None
+            if isinstance(holder, Frame) and holder.node_id != node_id:
+                self.references[node_id] = (None, cell["cell_id"], 1)
+        self.node_ids_by_cell[cell["cell_id"]] = reading.lines
         self._bind_rendered(cell, reading.bound)
 
     def _bind_rendered(self, cell: dict, bound: set[str]) -> None:
         """Names the render gave this cell's nodes keep naming them, unless the cell bound them itself."""
         for node_id in cell["node_ids"]:
             unit = self.units.get(node_id)
-            if unit is None or unit.target is None or unit.target not in cell["defines"] or unit.target in bound:
+            if unit is None or unit.target is None or unit.target not in self.rendered_names or unit.target in bound:
                 continue
             if bound:
                 self.namespace.setdefault(unit.target, Frame(node_id))
             else:
                 self.namespace[unit.target] = Frame(node_id)
+
+    def columns_of(self, node_id: int) -> list[str] | None:
+        """The columns a node hands on: what this reading worked out, else what the editor last knew."""
+        if node_id in self.columns:
+            return self.columns[node_id]
+        schema = self.renderer.schemas.get(node_id)
+        return [column.get("name") for column in schema] if schema else None
+
+    def follow_columns(self, unit: _Unit, desired: dict[str, int]) -> None:
+        """A node that is new, changed, rewired or fed by one that is hands on other columns than before."""
+        node_id = unit.node.id
+        upstream = any(source in self.columns for source in desired.values())
+        if not (unit.added or upstream or node_id in self.settings or node_id in self.inputs):
+            return
+        settings = {**unit.node.settings, **self.settings.get(node_id, {})}
+        main = desired.get("main")
+        columns = None if main is None else self.columns_of(main)
+        self.columns[node_id] = _columns_after(unit.node.type, columns, settings)
 
     def wire(self, unit: _Unit, desired: dict[str, int]) -> None:
         if desired != {key: producer for key, (_, producer) in unit.inputs.items()}:
@@ -803,7 +1029,7 @@ class _Sync:
         for node_id, (reference, cell_id, line) in self.references.items():
             if reference is None:
                 continue
-            for other in self.renderer.nodes.values():
+            for other in [*self.renderer.nodes.values(), *(unit.node for unit in self.added)]:
                 named = self.references[other.id][0] if other.id in self.references else other.reference
                 if other.id != node_id and named == reference:
                     message = f"The name `{reference}` already names another step (#{other.id}); pick another name"
@@ -838,13 +1064,25 @@ def _failure(cell_id: str, failure: CellFailure) -> dict:
 
 
 def sync_notebook(
-    flow: dict, schemas: dict | None = None, locked: dict | None = None, drafts: dict[str, str] | None = None
+    flow: dict,
+    schemas: dict | None = None,
+    locked: dict | None = None,
+    drafts: dict[str, str] | None = None,
+    next_id: int | None = None,
+    layout: list | None = None,
+    order: list[str] | None = None,
+    new_cells: dict[str, str] | None = None,
 ) -> dict:
     """What the changed cells in ``drafts`` (cell id -> text) change in ``flow``, flowfile_core's dialect.
 
-    Answers ``{"ok": True, "nodes", "inputs", "warnings"}``: per node id the settings to lay over its
-    own, its description and its reference, and per node id the inputs it reads now
+    Answers ``{"ok": True, "nodes", "added", "inputs", "warnings"}``: per node id the settings to lay
+    over its own, its description and its reference; the new nodes (``id`` from ``next_id`` on,
+    ``type``, ``settings`` to lay over the type's defaults); and per node id the inputs it reads now
     (``{"main": [ids], "right": id, "left": id}``). A cell that cannot be read answers
     ``{"ok": False, "cell_id", "line", "kind", "message"}`` and changes nothing.
+
+    ``layout`` is the render's (the cells a user wrote). ``new_cells`` (cell id -> text) are cells the
+    flow has no node for yet, and ``order`` the cell ids as the notebook shows them: cells are read
+    in that order. ``node_ids_by_cell`` answers which nodes each cell that was read now holds, line by line.
     """
-    return _Sync(flow, schemas, locked, dict(drafts or {})).run()
+    return _Sync(flow, schemas, locked, dict(drafts or {}), next_id, layout, order, new_cells).run()

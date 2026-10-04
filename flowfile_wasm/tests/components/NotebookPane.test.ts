@@ -201,7 +201,8 @@ describe('NotebookPane', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(writeText).toHaveBeenCalledWith('source_1 = ff.from_raw_data({})')
-    expect(copy.text()).toBe('Copied')
+    expect(copy.attributes('data-copied')).toBe('true')
+    expect(copy.attributes('title')).toBe('Copied')
     expect(flow.selectedNodeId).toBeNull()
     expect(wrapper.emitted('focus-node')).toBeUndefined()
   })
@@ -245,7 +246,8 @@ describe('NotebookPane', () => {
 
     const wrapper = await mountPane()
 
-    expect(wrapper.text()).toContain('Add a node to the canvas and it appears here as code.')
+    expect(wrapper.text()).toContain('Add a node to the canvas and it appears here as code, or write the first step here.')
+    expect(wrapper.find('[data-action="add-cell"]').exists()).toBe(true)
   })
 
   describe('running', () => {
@@ -392,8 +394,9 @@ describe('NotebookPane', () => {
       twoNodeFlow()
       const wrapper = await mountPane()
       const push = wrapper.find('[data-action="push"]')
-      expect(push.text()).toBe('Push')
+      expect(push.find('.nb-btn-count').exists()).toBe(false)
       expect(push.attributes('disabled')).toBeDefined()
+      expect(wrapper.find('.nb-status').text()).toBe('In step with the canvas')
       expect(wrapper.find('[data-sync-state]').exists()).toBe(false)
 
       await type(wrapper, 1, EDITED)
@@ -401,8 +404,9 @@ describe('NotebookPane', () => {
       const changed = wrapper.find('[data-cell-id="cell-1"]')
       expect(changed.find('[data-sync-state]').text()).toBe('Edited')
       expect(changed.find('.cm-stub').text()).toBe(EDITED)
-      expect(push.text()).toBe('Push (1)')
+      expect(push.find('.nb-btn-count').text()).toBe('1')
       expect(push.attributes('disabled')).toBeUndefined()
+      expect(wrapper.find('.nb-status').text()).toBe('1 changed cell, not on the canvas yet')
 
       await changed.find('[data-action="revert"]').trigger('click')
 
@@ -435,7 +439,7 @@ describe('NotebookPane', () => {
       await vi.waitFor(() => expect(wrapper.find('[data-cell-id="cell-1"] [data-sync-state]').text()).toBe('Synced'))
 
       expect((flow.getNode(1)!.settings as any).raw_data_format).toEqual(raw)
-      expect(wrapper.find('[data-action="push"]').text()).toBe('Push')
+      expect(wrapper.find('[data-action="push"] .nb-btn-count').exists()).toBe(false)
       expect(wrapper.find('.cell-error').exists()).toBe(false)
     })
 
@@ -457,6 +461,94 @@ describe('NotebookPane', () => {
       expect(failed.find('[data-sync-state]').text()).toBe('Edited')
     })
 
+    it('adds a cell at the end or under a cell, marks it New and drops it again', async () => {
+      twoNodeFlow()
+      const wrapper = await mountPane()
+
+      await wrapper.find('[data-action="add-cell"]').trigger('click')
+      await wrapper.find('[data-cell-id="cell-1"] [data-action="add-below"]').trigger('click')
+
+      const ids = wrapper.findAll('.cell').map(each => each.attributes('data-cell-id'))
+      expect(ids).toEqual(['imports', 'cell-1', 'new-2', 'cell-2', 'new-1'])
+      const fresh = wrapper.find('[data-cell-id="new-1"]')
+      expect(fresh.find('.cell-label').text()).toBe('New cell')
+      expect(fresh.find('[data-sync-state]').text()).toBe('New')
+      expect(fresh.find('.cm-stub').attributes('data-disabled')).toBe('false')
+      // Every cell offers a cell under it, the imports cell too: a step can go at the very top.
+      expect(wrapper.findAll('[data-action="add-below"]')).toHaveLength(5)
+      await wrapper.find('[data-cell-id="imports"] [data-action="add-below"]').trigger('click')
+      expect(wrapper.findAll('.cell').map(each => each.attributes('data-cell-id'))).toEqual([
+        'imports',
+        'new-3',
+        'cell-1',
+        'new-2',
+        'cell-2',
+        'new-1'
+      ])
+      await wrapper.find('[data-cell-id="new-3"] [data-action="discard"]').trigger('click')
+      expect(wrapper.find('[data-action="push"]').attributes('disabled')).toBeDefined()
+
+      await type(wrapper, 4, 'top = source_1.head(3)')
+      expect(wrapper.find('[data-action="push"] .nb-btn-count').text()).toBe('1')
+
+      await fresh.find('[data-action="discard"]').trigger('click')
+      await wrapper.find('[data-cell-id="new-2"] [data-action="discard"]').trigger('click')
+      expect(wrapper.findAll('.cell')).toHaveLength(3)
+    })
+
+    it('asks the canvas to show a node a push put on it', async () => {
+      const { cells } = twoNodeFlow()
+      const flow = useFlowStore()
+      const added = flow.nextNodeId
+      pyodideMock.runPythonWithResult.mockImplementation(async (source: string) => {
+        if (source === SYNC_SOURCE) {
+          return {
+            ok: true,
+            nodes: {},
+            added: [{ id: added, type: 'sample', settings: { sample_size: 3 }, description: '', node_reference: null }],
+            inputs: { [added]: { main: [1] } },
+            node_ids_by_cell: { 'new-1': [[added]] },
+            warnings: []
+          }
+        }
+        if (source.includes('render_notebook(')) return { cells, warnings: [], var_by_node: {} }
+        return { success: true }
+      })
+      const wrapper = await mountPane()
+      await wrapper.find('[data-action="add-cell"]').trigger('click')
+      await type(wrapper, 3, 'source_1.head(3)')
+
+      await wrapper.find('[data-action="push"]').trigger('click')
+      await vi.waitFor(() => expect(wrapper.emitted('focus-node')).toEqual([[added]]))
+
+      expect(flow.getNode(added)?.type).toBe('head')
+    })
+
+    it('points to the full app for Python that is not flow code, and in its footnote', async () => {
+      syncAnswers({ ok: false, cell_id: 'cell-1', line: 1, kind: 'needs_kernel', message: '`print` is not flow code' })
+      const wrapper = await mountPane()
+      const footnote = wrapper.find('.nb-footnote [data-full-app]')
+      expect(footnote.attributes('href')).toContain('/users/visual-editor/notebook')
+      expect(footnote.attributes('target')).toBe('_blank')
+      expect(wrapper.find('.cell-error').exists()).toBe(false)
+
+      await type(wrapper, 1, 'print(1)')
+      await wrapper.find('[data-action="push"]').trigger('click')
+      await vi.waitFor(() => expect(wrapper.find('.cell-error').exists()).toBe(true))
+
+      expect(wrapper.find('.cell-error [data-full-app]').attributes('href')).toBe(footnote.attributes('href'))
+    })
+
+    it('does not point to the full app for a refusal that is not about Python', async () => {
+      syncAnswers({ ok: false, cell_id: 'cell-1', line: 1, kind: 'refused', message: 'This removes a step' })
+      const wrapper = await mountPane()
+      await type(wrapper, 1, 'x = 1')
+      await wrapper.find('[data-action="push"]').trigger('click')
+      await vi.waitFor(() => expect(wrapper.find('.cell-error').exists()).toBe(true))
+
+      expect(wrapper.find('.cell-error [data-full-app]').exists()).toBe(false)
+    })
+
     it('shows a notice until it is dismissed', async () => {
       syncAnswers({ ok: true, nodes: {}, inputs: {}, warnings: ['`Top` cannot be kept as a name'] })
       const wrapper = await mountPane()
@@ -464,7 +556,7 @@ describe('NotebookPane', () => {
 
       await wrapper.find('[data-action="push"]').trigger('click')
       await vi.waitFor(() => expect(wrapper.find('.notebook-note--notice').exists()).toBe(true))
-      expect(wrapper.find('.notebook-note--notice span').text()).toBe('`Top` cannot be kept as a name')
+      expect(wrapper.find('.notebook-note--notice .notice-text').text()).toBe('`Top` cannot be kept as a name')
 
       await wrapper.find('[data-action="dismiss-notice"]').trigger('click')
       expect(wrapper.find('.notebook-note--notice').exists()).toBe(false)

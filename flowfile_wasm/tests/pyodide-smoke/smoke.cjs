@@ -331,8 +331,10 @@ def _touched(flow):
             continue
         drafts[cell["cell_id"]] = cell["code"] + "\\n# touched\\n"
     return drafts
-_unchanged = {"ok": True, "nodes": {}, "inputs": {}, "warnings": []}
-[f["name"] for f in _golden["flows"] if sync_notebook(f["flow"], f["schemas"], {}, _touched(f)) != _unchanged]
+_unchanged = {"ok": True, "nodes": {}, "added": [], "inputs": {}, "warnings": []}
+def _changes(result):
+    return {key: value for key, value in result.items() if key != "node_ids_by_cell"}
+[f["name"] for f in _golden["flows"] if _changes(sync_notebook(f["flow"], f["schemas"], {}, _touched(f))) != _unchanged]
 `);
   if (!Array.isArray(syncDiffs) || syncDiffs.length) {
     failed.push('sync_notebook golden');

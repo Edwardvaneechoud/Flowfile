@@ -32,6 +32,8 @@ export interface NotebookCell {
   uses: string[]
   status: 'code' | 'placeholder'
   reason: string | null
+  /** A cell the user added that the flow has no node for yet. */
+  fresh?: boolean
 }
 
 export interface NotebookRendering {
@@ -57,7 +59,21 @@ export interface CellSyncError {
   code: string
 }
 
-export type CellSyncState = 'edited' | 'synced' | 'failed'
+export type CellSyncState = 'new' | 'edited' | 'synced' | 'failed'
+
+/** A cell the user wrote: the nodes each of its lines holds, and the node whose cell it stands after. */
+interface WrittenCell {
+  lines: number[][]
+  after: number | null
+}
+
+/** A cell the user added, until a push gives it nodes. */
+interface NewCell {
+  id: string
+  code: string
+  /** The cell it was added after; with that cell gone it goes to the end. */
+  after: string | null
+}
 
 /** What the notebook keeps for one open flow. In memory only: never saved, shared or persisted. */
 interface FlowNotebookState {
@@ -68,6 +84,12 @@ interface FlowNotebookState {
   synced: string[]
   syncError: CellSyncError | null
   notice: string | null
+  /** The cells the user wrote: their nodes stay together, in the place they were written. */
+  layout: WrittenCell[]
+  newCells: NewCell[]
+  newCellCount: number
+  /** The nodes the last push put on the canvas, and a count that moves with every such push. */
+  added: { nodes: number[]; pushes: number }
 }
 
 /** The whole Python source of a sync: what it reads arrives as data, never as part of this text. */
@@ -123,7 +145,17 @@ export const useNotebookStore = defineStore('notebook', () => {
     const key = flowStore.flowSessionKey
     let state = flowStates.get(key)
     if (!state) {
-      state = reactive({ outputs: {}, drafts: {}, synced: [], syncError: null, notice: null })
+      state = reactive({
+        outputs: {},
+        drafts: {},
+        synced: [],
+        syncError: null,
+        notice: null,
+        layout: [],
+        newCells: [],
+        newCellCount: 0,
+        added: { nodes: [], pushes: 0 }
+      })
       flowStates.set(key, state)
     }
     return state
@@ -132,8 +164,53 @@ export const useNotebookStore = defineStore('notebook', () => {
   const drafts = computed(() => flowState.value.drafts)
   const syncError = computed(() => flowState.value.syncError)
   const notice = computed(() => flowState.value.notice)
+  const added = computed(() => flowState.value.added)
   const syncing = ref(false)
-  const needsSync = computed(() => Object.keys(flowState.value.drafts).length > 0)
+  /** Which nodes each cell held after the last sync read it: a cell keeps its place under a new id. */
+  let lastRead: Record<string, number[][]> = {}
+  /** The first node of a cell the last sync read, or undefined. */
+  const firstRead = (cellId: string): number | undefined => lastRead[cellId]?.[0]?.[0]
+
+  /**
+   * The cells as the notebook shows them: the rendered ones, a written cell standing after the
+   * cell it was written after (while every name it uses is still defined above it), and the
+   * cells the user added that have no node yet.
+   */
+  const shownCells = computed<NotebookCell[]>(() => {
+    const state = flowState.value
+    const ordered = [...cells.value]
+    for (const written of state.layout) {
+      if (written.after === null) continue
+      const from = ordered.findIndex(cell => cell.node_ids.includes(written.lines[0][0]))
+      if (from < 0 || ordered[from].node_ids.includes(written.after)) continue
+      const [cell] = ordered.splice(from, 1)
+      const anchor = ordered.findIndex(each => each.node_ids.includes(written.after!))
+      const above = new Set(ordered.slice(0, anchor + 1).flatMap(each => each.defines))
+      const fits = anchor >= 0 && cell.uses.every(name => above.has(name))
+      ordered.splice(fits ? anchor + 1 : from, 0, cell)
+    }
+    for (const fresh of state.newCells) {
+      const anchor = ordered.findIndex(cell => cell.cell_id === fresh.after)
+      const cell: NotebookCell = {
+        cell_id: fresh.id,
+        node_ids: [],
+        kind: 'node',
+        code: '',
+        defines: [],
+        uses: [],
+        status: 'code',
+        reason: null,
+        fresh: true
+      }
+      if (anchor < 0) ordered.push(cell)
+      else ordered.splice(anchor + 1, 0, cell)
+    }
+    return ordered
+  })
+
+  const writtenNewCells = computed(() => flowState.value.newCells.filter(cell => cell.code.trim() !== ''))
+  const changedCount = computed(() => Object.keys(flowState.value.drafts).length + writtenNewCells.value.length)
+  const needsSync = computed(() => changedCount.value > 0)
   const idle = computed(() => pyodideStore.isReady && !running.value && !syncing.value && !flowStore.isExecuting)
   const canRun = idle
   const canPush = computed(() => idle.value && needsSync.value)
@@ -186,6 +263,27 @@ export const useNotebookStore = defineStore('notebook', () => {
   /** Without the formula package every formula keeps its text form, which is still valid code. */
   const loadFormulaPackage = () => pyodideStore.ensurePyPackages([EXPR_TRANSFORMER_PACKAGE]).catch(() => undefined)
 
+  /** A written cell without some nodes, and without the lines that leaves empty. */
+  const without = (written: WrittenCell, gone: (id: number) => boolean): WrittenCell => ({
+    ...written,
+    lines: written.lines.map(line => line.filter(id => !gone(id))).filter(line => line.length > 0)
+  })
+
+  /** The written cells as the engine takes them: node ids per line per cell, without nodes that are gone. */
+  function writtenLayout(): number[][][] {
+    const state = flowState.value
+    state.layout = state.layout
+      .map(written => without(written, id => !flowStore.nodes.has(id)))
+      .filter(written => written.lines.length > 0)
+    return state.layout.map(written => written.lines)
+  }
+
+  /** What a cell says now, when the user changed or added it. */
+  function currentText(cellId: string): string | undefined {
+    const state = flowState.value
+    return state.newCells.find(cell => cell.id === cellId)?.code ?? state.drafts[cellId]
+  }
+
   /** Render the open flow as cells. A no-op before Pyodide is ready; never initializes it. */
   async function render(): Promise<void> {
     if (!pyodideStore.isReady) return
@@ -200,7 +298,7 @@ export const useNotebookStore = defineStore('notebook', () => {
       const rendering = (await pyodideStore.runPythonWithResult(`
 import json
 from engine.notebook_render import render_notebook
-render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas)}), json.loads(${pythonJson(locked)}))
+render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas)}), json.loads(${pythonJson(locked)}), json.loads(${pythonJson(writtenLayout())}))
 `)) as NotebookRendering
       // A newer render started while this one ran: its result is the one to show.
       if (epoch !== renderEpoch) return
@@ -217,7 +315,7 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
       for (const [cellId, draft] of Object.entries(state.drafts)) {
         if (shown.get(cellId) === undefined || shown.get(cellId) === draft) delete state.drafts[cellId]
       }
-      if (state.syncError && state.drafts[state.syncError.cellId] !== state.syncError.code) state.syncError = null
+      if (state.syncError && currentText(state.syncError.cellId) !== state.syncError.code) state.syncError = null
       state.synced = state.synced.filter(cellId => shown.has(cellId))
     } catch (err) {
       if (epoch !== renderEpoch) return
@@ -268,14 +366,16 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
 
   /** The text a cell shows: the user's while it is changed, else the rendered one. */
   function cellCode(cell: NotebookCell): string {
-    return flowState.value.drafts[cell.cell_id] ?? cell.code
+    return currentText(cell.cell_id) ?? cell.code
   }
 
   function setCellCode(cellId: string, code: string): void {
-    const cell = cells.value.find(each => each.cell_id === cellId)
-    if (!cell || !isEditable(cell)) return
     const state = flowState.value
-    if (code === cell.code) delete state.drafts[cellId]
+    const fresh = state.newCells.find(each => each.id === cellId)
+    const cell = cells.value.find(each => each.cell_id === cellId)
+    if (fresh) fresh.code = code
+    else if (!cell || !isEditable(cell)) return
+    else if (code === cell.code) delete state.drafts[cellId]
     else state.drafts[cellId] = code
     state.synced = state.synced.filter(each => each !== cellId)
     if (state.syncError?.cellId === cellId && state.syncError.code !== code) state.syncError = null
@@ -284,8 +384,28 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
   function cellSyncState(cellId: string): CellSyncState | null {
     const state = flowState.value
     if (state.syncError?.cellId === cellId) return 'failed'
+    if (state.newCells.some(cell => cell.id === cellId)) return 'new'
     if (cellId in state.drafts) return 'edited'
     return state.synced.includes(cellId) ? 'synced' : null
+  }
+
+  /** Add an empty cell after `afterCellId`, or at the end. A push turns what is written in it into nodes. */
+  function addCell(afterCellId: string | null = null): string {
+    const state = flowState.value
+    const shown = shownCells.value
+    const id = `new-${++state.newCellCount}`
+    state.newCells.push({ id, code: '', after: afterCellId ?? shown[shown.length - 1]?.cell_id ?? null })
+    return id
+  }
+
+  /** Drop a cell the user added and did not push. */
+  function discardCell(cellId: string): void {
+    const state = flowState.value
+    const gone = state.newCells.find(cell => cell.id === cellId)
+    if (!gone) return
+    state.newCells = state.newCells.filter(cell => cell !== gone)
+    for (const cell of state.newCells) if (cell.after === cellId) cell.after = gone.after
+    if (state.syncError?.cellId === cellId) state.syncError = null
   }
 
   function dismissNotice(): void {
@@ -306,11 +426,21 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
       await render()
       if (error.value) return false
       const sent = { ...state.drafts }
-      if (Object.keys(sent).length === 0) return true
+      const fresh = Object.fromEntries(writtenNewCells.value.map(cell => [cell.id, cell.code]))
+      lastRead = {}
+      if (Object.keys(sent).length + Object.keys(fresh).length === 0) return true
       const read = structure.value
+      const shown = shownCells.value
       const engine = engineArguments()
       if (engine.formulas) await loadFormulaPackage()
-      const request = { ...engine.arguments, drafts: sent }
+      const request = {
+        ...engine.arguments,
+        drafts: sent,
+        next_id: flowStore.nextNodeId,
+        layout: writtenLayout(),
+        order: shown.map(cell => cell.cell_id),
+        new_cells: fresh
+      }
       let result: NotebookSyncResult | NotebookSyncFailure
       pyodideStore.setGlobal(SYNC_REQUEST, JSON.stringify(request))
       try {
@@ -328,20 +458,25 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
           line: result.line ?? null,
           kind: result.kind,
           message: result.message,
-          code: sent[result.cell_id] ?? ''
+          code: sent[result.cell_id] ?? fresh[result.cell_id] ?? ''
         }
         return false
       }
-      const patch = syncPatch({ nodes: flowStore.nodes, edges: flowStore.edges }, result)
+      const patch = syncPatch({ nodes: flowStore.nodes, edges: flowStore.edges }, result, flowStore.defaultSettings)
       if (!isEmptyPatch(patch)) flowStore.applyFlowPatch(patch)
       // A cell changed again while this ran keeps its newer text.
       for (const [cellId, code] of Object.entries(sent)) {
         if (state.drafts[cellId] === code) delete state.drafts[cellId]
       }
-      state.synced = Object.keys(sent).filter(cellId => !(cellId in state.drafts))
+      lastRead = result.node_ids_by_cell ?? {}
+      keepWritten(state, shown, lastRead, fresh)
       state.syncError = null
       state.notice = result.warnings?.length ? result.warnings.join('\n') : null
+      if (result.added?.length) state.added = { nodes: result.added.map(node => node.id), pushes: state.added.pushes + 1 }
       await render()
+      state.synced = [...Object.keys(sent), ...Object.keys(fresh)]
+        .map(cellId => cells.value.find(cell => cell.node_ids.includes(firstRead(cellId)!))?.cell_id ?? cellId)
+        .filter(cellId => !(cellId in state.drafts))
       return true
     } catch (err) {
       state.notice = `The notebook could not be pushed: ${err instanceof Error ? err.message : String(err)}`
@@ -349,6 +484,36 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
     } finally {
       syncing.value = false
     }
+  }
+
+  /**
+   * After a push, each cell that was read is a written cell: its nodes stay together and it stays
+   * after the cell it stood after. A new cell that got nodes is one of them from here on.
+   */
+  function keepWritten(
+    state: FlowNotebookState,
+    shown: NotebookCell[],
+    read: Record<string, number[][]>,
+    fresh: Record<string, string>
+  ): void {
+    const nodesOf = (cell: NotebookCell): number[] => read[cell.cell_id]?.flat() ?? cell.node_ids
+    for (const [cellId, lines] of Object.entries(read)) {
+      const nodes = lines.flat()
+      if (nodes.length === 0) continue
+      const index = shown.findIndex(cell => cell.cell_id === cellId)
+      const before = shown.slice(0, Math.max(index, 0)).reverse().find(cell => nodesOf(cell).length > 0)
+      const after = before ? nodesOf(before)[nodesOf(before).length - 1] : null
+      state.layout = state.layout
+        .map(written => without(written, id => nodes.includes(id)))
+        .filter(written => written.lines.length > 0)
+      state.layout.push({ lines: lines.map(line => [...line]), after })
+    }
+    // A new cell that got nodes is rendered from now on; one added after it follows the cell it became.
+    const first = (cellId: string | null) => (cellId ? read[cellId]?.flat()[0] : undefined)
+    const became = (cellId: string | null) => (first(cellId) === undefined ? cellId : `cell-${first(cellId)}`)
+    state.newCells = state.newCells
+      .filter(cell => !(cell.id in fresh && first(cell.id) !== undefined && cell.code === fresh[cell.id]))
+      .map(cell => ({ ...cell, after: became(cell.after) }))
   }
 
   /** Push the changed cells to the canvas without running anything. */
@@ -360,7 +525,12 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
   /** Run one cell: its last node with whatever upstream still has to run, then show its rows. */
   async function runCell(cellId: string): Promise<void> {
     if (!canRun.value) return
-    if (needsSync.value && !(await sync())) return
+    if (needsSync.value) {
+      if (!(await sync())) return
+      // The cell may show under another id now: it is the one that holds the nodes it was read into.
+      const first = firstRead(cellId)
+      if (first !== undefined) cellId = cells.value.find(each => each.node_ids.includes(first))?.cell_id ?? cellId
+    }
     const cell = cells.value.find(each => each.cell_id === cellId)
     const nodeId = cell ? runTarget(cell) : null
     if (nodeId === null) return
@@ -410,12 +580,17 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
     syncing,
     needsSync,
     canPush,
+    shownCells,
+    changedCount,
+    added,
     render,
     lockReason,
     isEditable,
     cellCode,
     setCellCode,
     cellSyncState,
+    addCell,
+    discardCell,
     dismissNotice,
     push,
     runCell,

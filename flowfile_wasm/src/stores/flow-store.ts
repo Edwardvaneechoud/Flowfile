@@ -782,6 +782,8 @@ export const useFlowStore = defineStore('flow', () => {
   const canRedo = computed(() => historyRevision.value >= 0 && history.value.canRedo)
   /** An object that stays the same while this flow is the open one; a tab switch or an import swaps it. */
   const flowSessionKey = computed<object>(() => history.value)
+  /** The id the next new node gets: past the counter and past every node there is. */
+  const nextNodeId = computed(() => Math.max(nodeIdCounter.value, ...nodes.value.keys()) + 1)
 
   function dropFileContent(id: number) {
     fileContents.value.delete(id)
@@ -3630,6 +3632,8 @@ result
     applyFlowPatch,
     settingsEpoch,
     flowSessionKey,
+    nextNodeId,
+    defaultSettings: getDefaultSettings,
 
     // Actions
     generateNodeId,
