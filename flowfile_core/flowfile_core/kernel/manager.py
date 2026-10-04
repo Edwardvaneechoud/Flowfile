@@ -445,6 +445,7 @@ _BUILD_NOISE = re.compile(
     r"Preparing metadata|Installing backend dependencies|Building wheels? for|Created wheel|Stored in directory|"
     r"\[notice\]|Looking in indexes)"
 )
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 _SUMMARY_LINES = 15
 _SUMMARY_CHARS = 1500
 
@@ -457,7 +458,7 @@ def bake_failure_summary(packages: list[str], log_lines: list[str]) -> str:
     """
     lines = []
     for raw in log_lines:
-        for line in str(raw).splitlines():
+        for line in _ANSI_ESCAPE.sub("", str(raw)).splitlines():
             text = line.strip()
             if text and "━" not in text and not _BUILD_NOISE.match(text):
                 lines.append(line.rstrip())

@@ -679,6 +679,7 @@ async function createNotebookKernel() {
     kernels.value.map((k) => k.id),
   );
   creatingKernelId.value = config.id;
+  pulling.value = liteImageInstalled.value === false;
   pullPollTimer = setInterval(async () => {
     const { images } = await KernelApi.getDockerStatus();
     pulling.value = images.find((i) => i.flavour === "lite")?.pull_state === "pulling";

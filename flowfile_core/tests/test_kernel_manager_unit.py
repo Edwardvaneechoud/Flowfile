@@ -1579,6 +1579,13 @@ def test_bake_failure_summary_keeps_the_last_meaningful_pip_lines():
     assert not any(noise in summary for noise in ("Step 1/4", "Downloading", "━", "Collecting"))
 
 
+def test_bake_failure_summary_strips_pip_colour_codes():
+    log = ["\x1b[91mERROR: ResolutionImpossible\x1b[0m\n"]
+    summary = kernel_manager.bake_failure_summary(["flowfile==0.22.0"], log)
+    assert "ERROR: ResolutionImpossible" in summary
+    assert "\x1b" not in summary
+
+
 def test_bake_failure_summary_caps_characters_and_handles_an_empty_log():
     assert kernel_manager.bake_failure_summary(["x"], []) == "Installing x into the kernel image failed."
     summary = kernel_manager.bake_failure_summary(["x"], ["E" * 5000])
