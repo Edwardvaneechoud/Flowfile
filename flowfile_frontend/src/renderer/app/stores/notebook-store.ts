@@ -192,6 +192,8 @@ export interface OpenNotebook {
   /** Per cell id, the rendered cell's kind; cells added in the notebook have none. */
   kinds?: Record<string, RenderedCell["kind"]>;
   fingerprint?: string;
+  /** Bumped per rendering fetch and per push: an older response landing later is dropped. */
+  renderSeq?: number;
   /** The last rendering's warnings, told once until they change. */
   renderWarnings?: string;
   /** A sync changed the parameters: re-render once the action that synced is over. */
@@ -843,20 +845,30 @@ export const useNotebookStore = defineStore("notebook", {
       }
       // Before the fetch: another tab must not show meanwhile, nor a late response re-activate this one.
       this.activeTabId = nb.tabId;
-      const rendering = await NotebookApi.renderFlowNotebook(flowId);
-      if (nb.fingerprint !== rendering.code_fingerprint) applyRendering(nb, rendering);
+      const rendering = await this._fetchRendering(nb);
+      if (rendering && nb.fingerprint !== rendering.code_fingerprint) applyRendering(nb, rendering);
       return nb;
+    },
+
+    /** Fetch the tab's rendering; `null` when a newer fetch or a push overtook it. */
+    async _fetchRendering(nb: OpenNotebook): Promise<NotebookRendering | null> {
+      const seq = (nb.renderSeq = (nb.renderSeq ?? 0) + 1);
+      const rendering = await NotebookApi.renderFlowNotebook(nb.flowId!);
+      return seq === nb.renderSeq ? rendering : null;
     },
 
     /** Re-render a flow tab after a canvas change; an unchanged fingerprint (a layout move) is a no-op. */
     async refreshFlowNotebook(flowId: number) {
-      const rendering = await NotebookApi.renderFlowNotebook(flowId);
       const nb = this.openNotebooks.find((n) => n.flowId === flowId);
-      if (nb && nb.fingerprint !== rendering.code_fingerprint) applyRendering(nb, rendering);
+      if (!nb) return;
+      const rendering = await this._fetchRendering(nb);
+      if (rendering && nb.fingerprint !== rendering.code_fingerprint) applyRendering(nb, rendering);
     },
 
     /** The canvas now holds the pushed `cells`: they count as unedited until the next rendering. */
     markFlowPushed(nb: OpenNotebook, result: NotebookPushResult, cells: [string, string][]) {
+      // A rendering fetched before the push describes the canvas it replaced: drop it when it lands.
+      nb.renderSeq = (nb.renderSeq ?? 0) + 1;
       nb.generated = Object.fromEntries(cells);
       nb.nodeIds = { ...nb.nodeIds, ...result.node_ids_by_cell };
       nb.fingerprint = result.code_fingerprint;

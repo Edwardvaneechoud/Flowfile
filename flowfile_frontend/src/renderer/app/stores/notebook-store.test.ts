@@ -903,6 +903,22 @@ describe("flow notebook", () => {
     warnings: [],
     code_fingerprint: fingerprint,
   });
+  /** The next render call stays open until the returned resolver is called. */
+  const pendingRender = () => {
+    let resolve!: (v: unknown) => void;
+    mocks.render.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    return (v: unknown) => resolve(v);
+  };
+  const pushResult = (fingerprint: string) => ({
+    history: { flow_id: 7 } as never,
+    code_fingerprint: fingerprint,
+    max_node_id: 1,
+    node_ids_by_cell: {},
+    warnings: [],
+    applied: true,
+    deletions: [],
+    parameter_changes: false,
+  });
 
   it("opens an ephemeral tab from the rendering with no kernel, never persisted", async () => {
     mocks.render.mockResolvedValue(
@@ -1090,6 +1106,35 @@ describe("flow notebook", () => {
     await openB2;
     expect(store.active!.tabId).toBe(b.tabId);
   });
+
+  it("an older render landing after a newer one is dropped", async () => {
+    mocks.render.mockResolvedValueOnce(rendering("f1", [cell(1, "a = 1")]));
+    const store = useNotebookStore();
+    const nb = await store.openFlowNotebook(7, "flow");
+    const first = pendingRender();
+    const r1 = store.refreshFlowNotebook(7);
+    const second = pendingRender();
+    const r2 = store.refreshFlowNotebook(7);
+    second(rendering("f3", [cell(1, "a = 3")]));
+    await r2;
+    first(rendering("f2", [cell(1, "a = 2")]));
+    await r1;
+    expect(nb.fingerprint).toBe("f3");
+    expect(nb.cells.map((c) => c.code)).toEqual(["a = 3"]);
+  });
+
+  it("a render in flight across a push is dropped", async () => {
+    mocks.render.mockResolvedValueOnce(rendering("f1", [cell(1, "a = 1")]));
+    const store = useNotebookStore();
+    const nb = await store.openFlowNotebook(7, "flow");
+    const stale = pendingRender();
+    const refresh = store.refreshFlowNotebook(7);
+    store.markFlowPushed(nb, pushResult("f2"), [["node-1", "a = 1"]]);
+    stale(rendering("f1b", [cell(1, "a = 0")]));
+    await refresh;
+    expect(nb.fingerprint).toBe("f2");
+    expect(nb.cells.map((c) => c.code)).toEqual(["a = 1"]);
+  });
 });
 
 describe("flow notebook run", () => {
@@ -1238,6 +1283,13 @@ describe("flow notebook run", () => {
     const cell = nb.cells.find((c) => c.id === "cell-2")!;
     expect(cell.execState).toBe("idle");
     expect(flowCellSyncState(nb, cell)).toBe("synced");
+  });
+
+  it("the sync's own re-render still applies before the push", async () => {
+    const { store } = await openFlow();
+    mocks.render.mockResolvedValueOnce(rendered("f1b"));
+    expect(await store.syncFlowNotebook()).toBe("synced");
+    expect(mocks.push.mock.calls[0][0].code_fingerprint).toBe("f1b");
   });
 
   it("shows the node's rows as a table and never a number for an unknown row count", async () => {

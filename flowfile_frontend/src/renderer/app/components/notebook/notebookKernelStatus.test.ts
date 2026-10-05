@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import type { KernelInfo, KernelState } from "@/types/kernel.types";
-import { kernelStatusNeedsAttention, resolveNotebookKernelStatus } from "./notebookKernelStatus";
+import {
+  kernelStatusNeedsAttention,
+  resolveNotebookKernelStatus,
+  sameKernelList,
+} from "./notebookKernelStatus";
 
 function kernel(id: string, state: KernelState): KernelInfo {
   return { id, name: id, state } as KernelInfo;
@@ -66,5 +70,21 @@ describe("resolveNotebookKernelStatus", () => {
         }),
       ),
     ).toBe(true);
+  });
+});
+
+describe("sameKernelList", () => {
+  const full = (id: string, state: KernelState, extra: Partial<KernelInfo> = {}): KernelInfo =>
+    ({ ...kernel(id, state), error_message: null, custom_image: null, packages: ["polars"], ...extra }) as KernelInfo;
+
+  it("is true for two polls that read the same", () => {
+    expect(sameKernelList([full("k1", "idle")], [full("k1", "idle")])).toBe(true);
+    expect(sameKernelList([], [])).toBe(true);
+  });
+
+  it("is false when a kernel changed state, lost a package or the list changed length", () => {
+    expect(sameKernelList([full("k1", "idle")], [full("k1", "stopped")])).toBe(false);
+    expect(sameKernelList([full("k1", "idle")], [full("k1", "idle", { packages: [] })])).toBe(false);
+    expect(sameKernelList([full("k1", "idle")], [])).toBe(false);
   });
 });

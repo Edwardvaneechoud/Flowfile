@@ -434,9 +434,14 @@ onBeforeUnmount(() => {
 .nb-cell.is-dragging .nb-drag-handle {
   cursor: grabbing;
 }
+/* Disabled during a run: unchanged on an idle card, dimmed only where the handle would show. */
 .nb-cell .nb-drag-handle:disabled {
-  opacity: 0.35;
   cursor: not-allowed;
+}
+.nb-cell:hover .nb-drag-handle:disabled,
+.nb-cell:focus-within .nb-drag-handle:disabled,
+.nb-cell--active .nb-drag-handle:disabled {
+  opacity: 0.35;
 }
 
 .nb-run {
