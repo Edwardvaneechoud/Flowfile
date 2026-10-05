@@ -3215,7 +3215,7 @@ class TestFlowInterfaceEndpoint:
 
 
 class TestFlowCode:
-    """``GET /catalog/flows/{id}/code``: a registered flow's export, read from its file, never opened."""
+    """``GET /catalog/flows/{id}/code``: a registered flow as text, read from its file, never opened."""
 
     @staticmethod
     def _make_namespace() -> int:
@@ -3248,41 +3248,53 @@ class TestFlowCode:
         assert created.status_code == 201, created.text
         return created.json()["id"]
 
-    def test_flowframe_code_by_default(self, tmp_path):
+    def _saved_registration(self, tmp_path: Path) -> int:
         flow_path = tmp_path / "code_src.yaml"
         self._save_flow(flow_path)
-        reg_id = self._register(flow_path)
+        return self._register(flow_path)
 
+    def test_flowframe_code_by_default(self, tmp_path):
+        reg_id = self._saved_registration(tmp_path)
         resp = client.get(f"/catalog/flows/{reg_id}/code")
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert body["dialect"] == "flowframe"
+        assert body["format"] == "flowframe"
         assert body["file_exists"] is True and body["error"] is None
-        assert "import flowfile as ff" in body["code"]
-        assert "from_raw_data" in body["code"]
+        assert "import flowfile as ff" in body["content"]
+        assert "from_raw_data" in body["content"]
 
-    def test_polars_dialect(self, tmp_path):
+    def test_polars_format(self, tmp_path):
+        reg_id = self._saved_registration(tmp_path)
+        body = client.get(f"/catalog/flows/{reg_id}/code", params={"format": "polars"}).json()
+        assert body["format"] == "polars"
+        assert "import polars as pl" in body["content"]
+
+    def test_yaml_format_is_the_file(self, tmp_path):
         flow_path = tmp_path / "code_src.yaml"
         self._save_flow(flow_path)
         reg_id = self._register(flow_path)
+        body = client.get(f"/catalog/flows/{reg_id}/code", params={"format": "yaml"}).json()
+        assert body["content"] == flow_path.read_text(encoding="utf-8")
 
-        body = client.get(f"/catalog/flows/{reg_id}/code", params={"dialect": "polars"}).json()
-        assert body["dialect"] == "polars"
-        assert "import polars as pl" in body["code"]
+    def test_notebook_format_is_the_cells_as_a_percent_script(self, tmp_path):
+        reg_id = self._saved_registration(tmp_path)
+        body = client.get(f"/catalog/flows/{reg_id}/code", params={"format": "notebook"}).json()
+        content = body["content"]
+        assert content.startswith("# %%\nimport flowfile as ff")
+        assert content.count("# %%") >= 2 and "from_raw_data" in content
+        assert content.endswith("\n") and "\n\n\n# %%" not in content
 
-    def test_unknown_dialect_is_rejected(self, tmp_path):
-        flow_path = tmp_path / "code_src.yaml"
-        self._save_flow(flow_path)
-        reg_id = self._register(flow_path)
-        assert client.get(f"/catalog/flows/{reg_id}/code", params={"dialect": "rust"}).status_code == 422
+    def test_unknown_format_is_rejected(self, tmp_path):
+        reg_id = self._saved_registration(tmp_path)
+        assert client.get(f"/catalog/flows/{reg_id}/code", params={"format": "rust"}).status_code == 422
 
     def test_missing_file_is_a_soft_result(self, tmp_path):
         reg_id = self._register(tmp_path / "gone.yaml")
         body = client.get(f"/catalog/flows/{reg_id}/code").json()
         assert body == {
             "registration_id": reg_id,
-            "dialect": "flowframe",
-            "code": None,
+            "format": "flowframe",
+            "content": None,
             "file_exists": False,
             "error": None,
         }
@@ -3313,7 +3325,7 @@ class TestFlowCode:
                 body = client.get(f"/catalog/flows/{reg_id}/code").json()
             finally:
                 ephemeral_graph.free_flow_id = original
-            assert "import flowfile as ff" in body["code"]
+            assert "import flowfile as ff" in body["content"]
             assert seen and seen[0] != open_id
             assert flow_file_handler.get_flow(open_id) is not None
             assert FlowLogger.get_instance(open_id) is not None

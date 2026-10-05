@@ -62,6 +62,35 @@
           <i class="fa-solid fa-book"></i>
           Modify in notebook
         </button>
+        <el-dropdown
+          v-if="flow.file_exists"
+          trigger="click"
+          placement="bottom-start"
+          @command="copyAs"
+        >
+          <button
+            class="btn btn-secondary btn-sm"
+            :disabled="copying"
+            data-testid="flow-copy"
+            title="Copy the flow as text"
+          >
+            <i :class="copying ? 'fa-solid fa-spinner fa-spin' : 'fa-regular fa-copy'"></i>
+            Copy
+            <i class="fa-solid fa-angle-down copy-caret"></i>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item
+                v-for="option in COPY_OPTIONS"
+                :key="option.format"
+                :command="option.format"
+                :data-testid="`flow-copy-${option.format}`"
+              >
+                {{ option.label }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <button
           class="action-btn-lg"
           :class="{ active: flow.is_favorite }"
@@ -144,13 +173,6 @@
         <span class="meta-value mono">{{ flow.flow_path }}</span>
       </div>
     </div>
-
-    <!-- Python code -->
-    <FlowCodeSection
-      :registration-id="flow.id"
-      :file-exists="flow.file_exists"
-      @modify-in-notebook="$emit('modifyInNotebook')"
-    />
 
     <!-- Run History -->
     <div ref="runHistorySection" class="section">
@@ -340,8 +362,9 @@ import { useCatalogStore } from "../../stores/catalog-store";
 import { CatalogApi } from "../../api/catalog.api";
 import type { FlowRegistration, FlowSchedule, GlobalArtifact } from "../../types";
 import { formatDate, formatSize, formatType } from "./catalog-formatters";
+import { copyTextEverywhere } from "../../utils/clipboardUtils";
+import type { FlowCodeFormat } from "../../types";
 import RunHistoryTable from "./RunHistoryTable.vue";
-import FlowCodeSection from "./FlowCodeSection.vue";
 import { CollapsibleSection, EmptyState } from "../../components/common";
 import ScheduleTable from "./components/ScheduleTable.vue";
 import ApiEndpointPanel from "./ApiEndpointPanel.vue";
@@ -380,6 +403,35 @@ const emit = defineEmits([
 ]);
 
 const runHistorySection = ref<HTMLElement | null>(null);
+
+const COPY_OPTIONS: { format: FlowCodeFormat; label: string }[] = [
+  { format: "yaml", label: "Flow file (YAML)" },
+  { format: "notebook", label: "Notebook cells (Python script)" },
+  { format: "flowframe", label: "Python (FlowFrame)" },
+  { format: "polars", label: "Python (Polars)" },
+];
+const copying = ref(false);
+
+/** Fetch the flow as `format` from its file (nothing is opened) and put it on the clipboard. */
+async function copyAs(format: FlowCodeFormat) {
+  copying.value = true;
+  try {
+    const result = await CatalogApi.getFlowCode(props.flow.id, format);
+    if (!result.file_exists) {
+      ElMessage.warning("The flow file is missing.");
+    } else if (result.content == null) {
+      ElMessage.error(`This flow cannot be copied as that: ${result.error ?? "unknown error"}`);
+    } else if (await copyTextEverywhere(result.content)) {
+      ElMessage.success(`Copied the ${COPY_OPTIONS.find((o) => o.format === format)?.label}`);
+    } else {
+      ElMessage.error("Couldn't copy to the clipboard.");
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail ?? e?.message ?? "Failed to fetch the flow");
+  } finally {
+    copying.value = false;
+  }
+}
 
 // One-shot scroll to Run History (flow context menu's "Run history" action).
 watch(
@@ -511,6 +563,11 @@ async function handleDeleteSchedule(id: number) {
 </script>
 
 <style scoped>
+.copy-caret {
+  font-size: 0.75em;
+  margin-left: 2px;
+}
+
 .flow-detail {
   max-width: 1000px;
   margin: 0 auto;
