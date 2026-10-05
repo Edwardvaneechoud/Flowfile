@@ -150,6 +150,17 @@ async function replaceCode(page: Page, cell: Locator, code: string) {
 const responseTo = (page: Page, path: string) =>
   page.waitForResponse((r) => r.url().includes(path));
 
+/** Mark a canvas node's element; the mark only survives if a reload reused the element. */
+const stampNode = (page: Page, nodeId: number) =>
+  page
+    .locator(`.vue-flow__node[data-id="${nodeId}"]`)
+    .evaluate((el) => ((el as unknown as { __ffKeep?: boolean }).__ffKeep = true));
+
+const nodeKept = (page: Page, nodeId: number) =>
+  page
+    .locator(`.vue-flow__node[data-id="${nodeId}"]`)
+    .evaluate((el) => (el as unknown as { __ffKeep?: boolean }).__ffKeep === true);
+
 /** Let the app apply a response it has read: its promise chain, a Vue flush, then a paint. */
 async function settle(page: Page) {
   await page.evaluate(
@@ -178,8 +189,13 @@ test.describe("Canvas notebook", () => {
 
   test.afterEach(async ({ request }) => {
     if (flowId) await closeFlow(request, token, flowId);
-    const kernelCalls = apiCalls.filter((u) => /\/kernels|notebook\/status|flow-session/.test(u));
-    expect(kernelCalls, "a flow tab never addresses a kernel").toEqual([]);
+    // The panel may list kernels and ask /notebook/status; with no kernel picked nothing runs on one.
+    const kernelCalls = apiCalls.filter((u) =>
+      /notebook\/session|\/kernels\/[^/?]+\/(execute_cell|clear_namespace|start|stop|display_outputs|artifact_preview|memory|artifacts)/.test(
+        u,
+      ),
+    );
+    expect(kernelCalls, "a flow tab with no kernel never runs on a kernel").toEqual([]);
   });
 
   const called = (path: string, since = 0) => apiCalls.slice(since).some((u) => u.includes(path));
@@ -206,7 +222,9 @@ test.describe("Canvas notebook", () => {
     }
     expect(cells.map((c) => c.kind)).toEqual(["imports", "parameters", "node", "node"]);
     await expect(panel.getByTestId("nb-session-status")).toHaveCount(0);
-    await expect(panel.locator(".nb-kernel-select")).toHaveCount(0);
+    // An electron-mode core allows kernel sessions: the picker shows, with nothing picked to flag.
+    await expect(panel.getByTestId("nb-kernel-select")).toBeVisible();
+    await expect(panel.locator(".nb-kernel-select--attention")).toHaveCount(0);
     const more = panel.getByRole("button", { name: "More actions" });
     await more.click();
     await expect(page.getByRole("menuitem", { name: "Clear outputs" })).toBeVisible();
@@ -307,6 +325,7 @@ test.describe("Canvas notebook", () => {
     await expect.poll(() => filterSettings(request)).toContain("80000");
     await shot(page, "03-ran-edited");
 
+    await stampNode(page, 2);
     await page.locator(".undo-redo-controls .control-btn").first().click();
     await expect.poll(() => filterSettings(request)).toContain("60000");
     const undone = cellOf(await renderedCells(request, token, flowId), 2);
@@ -317,6 +336,9 @@ test.describe("Canvas notebook", () => {
       "data-sync-state",
       "synced",
     );
+    // That re-render ran after the undo's canvas reload: the node under the pointer was never remounted.
+    expect(await nodeKept(page, 2)).toBe(true);
+    await expect(page.locator('.vue-flow__node[data-id="2"]')).toHaveCSS("visibility", "visible");
     await shot(page, "04-undone");
   });
 
@@ -403,12 +425,20 @@ test.describe("Canvas notebook", () => {
     const filter = cellAt(cellOf(cells, 2));
     await replaceCode(page, filter, cellOf(cells, 2).code.replace("60000", "80000"));
 
+    await stampNode(page, 2);
+    const sincePush = apiCalls.length;
     const pushed = responseTo(page, "/editor/notebook/push/");
     await panel.getByTestId("nb-push").click();
     expect((await pushed).status()).toBe(200);
     await expect(page.getByText("Pushed to the canvas")).toBeVisible();
     await expect(syncState(filter)).toHaveAttribute("data-sync-state", "synced");
     await expect.poll(() => filterSettings(request)).toContain("80000");
+    // The sync renders once before the push; the debounced render after the canvas reload is the second.
+    await expect
+      .poll(() => apiCalls.slice(sincePush).filter((u) => u.includes("/notebook/render")).length)
+      .toBeGreaterThanOrEqual(2);
+    expect(await nodeKept(page, 2)).toBe(true);
+    await expect(page.locator('.vue-flow__node[data-id="2"]')).toHaveCSS("visibility", "visible");
     await expect(filter.locator(".cell-output")).toHaveCount(0);
     expect(called("/editor/notebook/run_lineage/") || called("/flow/run/")).toBe(false);
     await shot(page, "08-pushed");
@@ -434,6 +464,40 @@ test.describe("Canvas notebook", () => {
     await expect(cellAt(cellOfKind(cells, "imports")).locator(".cell-output")).toHaveCount(0);
     expect(called("/editor/notebook/push/", runAllStart)).toBe(false);
     await shot(page, "09-run-all");
+  });
+
+  test("Backspace and Cmd+Z typed in the notebook never reach the canvas", async ({ page }) => {
+    await openNotebook(page);
+    await minimizePalette(page);
+    const node = page.locator('.vue-flow__node[data-id="1"]');
+    await node.click();
+    await expect(node).toHaveClass(/selected/);
+    const since = apiCalls.length;
+    await page.locator(NOTEBOOK).getByTestId("nb-push").focus();
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("ControlOrMeta+Z");
+    await settle(page);
+    await expect(node).toHaveCount(1);
+    expect(apiCalls.slice(since).filter((u) => u.includes("/editor/"))).toEqual([]);
+  });
+
+  test("the page behind the canvas never scrolls, at desktop and tablet widths", async ({
+    page,
+  }) => {
+    await openNotebook(page);
+    const overflow = () =>
+      page.evaluate(() => {
+        const p = document.querySelector(".app-layout__page")!;
+        return p.scrollHeight - p.clientHeight;
+      });
+    expect(await overflow()).toBe(0);
+    await page.setViewportSize({ width: 1000, height: 800 });
+    await settle(page);
+    expect(await overflow()).toBe(0);
+    await page.locator(`${NOTEBOOK} .nb-cell`).first().focus();
+    expect(await page.evaluate(() => document.querySelector(".app-layout__page")!.scrollTop)).toBe(
+      0,
+    );
   });
 
   test("moving a node keeps the cells; preview on canvas; a double-click closes the pane", async ({

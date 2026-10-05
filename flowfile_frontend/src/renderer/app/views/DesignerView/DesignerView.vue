@@ -35,7 +35,11 @@
         <p>Loading flows...</p>
       </div>
     </div>
-    <div v-else class="canvas-wrap">
+    <div
+      v-else
+      class="canvas-wrap"
+      :style="{ '--code-dock-offset': dockOpen ? `${codeDockWidth}px` : '0px' }"
+    >
       <canvas-flow
         ref="canvasFlow"
         class="canvas"
@@ -59,7 +63,7 @@
       <transition name="code-dock">
         <aside
           v-if="hasOpenFlow && editorStore.showCodeGenerator"
-          :class="['code-dock', { 'is-resizing': isResizing }]"
+          :class="['code-dock', 'nokey', { 'is-resizing': isResizing }]"
           data-canvas-overlay
           :style="{ width: `${codeDockWidth}px`, '--code-dock-width': `${codeDockWidth}px` }"
         >
@@ -82,7 +86,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch, defineAsyncComponent } from "vue";
+import {
+  ref,
+  computed,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+  watch,
+  defineAsyncComponent,
+} from "vue";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
 import RightActionCluster from "../../components/layout/Header/RightActionCluster.vue";
 import CanvasFlow from "./Canvas.vue";
@@ -97,6 +109,7 @@ import { useEditorStore } from "../../stores/editor-store";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import type { RecentFlow } from "../../composables/useRecentFlows";
 import { resolveBootFlowId, resolveNextFlowAfterClose } from "./flowSessionState";
+import { clampDockWidth, dragWidth } from "./codeDockResize";
 
 const getAllFlows = FlowApi.getAllFlows;
 const closeFlow = FlowApi.closeFlow;
@@ -119,14 +132,7 @@ const editorStore = useEditorStore();
 const CodeGenerator = defineAsyncComponent(() => import("./CodeGenerator/CodeGenerator.vue"));
 
 const CODE_DOCK_WIDTH_KEY = "flowfile.codeDock.width.v1";
-const CODE_DOCK_MIN_WIDTH = 360;
-const CODE_DOCK_CLOSE_DRAG = 100;
-const CODE_DOCK_MAX_STRETCH = 48;
-const clampWidth = (w: number) =>
-  Math.round(Math.min(Math.max(w, CODE_DOCK_MIN_WIDTH), window.innerWidth - 360));
-/** How far the pane gives way when dragged `overshoot` px past its minimum. */
-const stretch = (overshoot: number) =>
-  CODE_DOCK_MAX_STRETCH * (1 - Math.exp(-overshoot / CODE_DOCK_MAX_STRETCH));
+const clampWidth = (w: number) => clampDockWidth(w, window.innerWidth);
 const readWidth = () => {
   try {
     return Number(localStorage.getItem(CODE_DOCK_WIDTH_KEY)) || 600;
@@ -138,6 +144,7 @@ const codeDockWidth = ref(clampWidth(readWidth()));
 const isResizing = ref(false);
 const closeArmed = ref(false);
 
+let stopResize: (() => void) | null = null;
 /**
  * Drag the pane's left edge; the width is saved when the gesture ends.
  * Past the minimum width the pane only gives way a little; dragging
@@ -145,24 +152,33 @@ const closeArmed = ref(false);
  * keeping the pre-drag width for the next open. Released earlier, it springs back.
  */
 const startResize = (down: PointerEvent) => {
+  if (stopResize) return;
+  // Cancelling pointerdown keeps text selection and focus changes out of the drag.
+  down.preventDefault();
   const target = down.target as HTMLElement;
   const startX = down.clientX;
   const startWidth = codeDockWidth.value;
   target.setPointerCapture(down.pointerId);
   isResizing.value = true;
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
   const move = (e: PointerEvent) => {
-    const width = startWidth + startX - e.clientX;
-    const overshoot = CODE_DOCK_MIN_WIDTH - width;
-    closeArmed.value = overshoot >= CODE_DOCK_CLOSE_DRAG;
-    codeDockWidth.value =
-      overshoot > 0 ? Math.round(CODE_DOCK_MIN_WIDTH - stretch(overshoot)) : clampWidth(width);
+    const next = dragWidth(startWidth, startX - e.clientX, window.innerWidth);
+    closeArmed.value = next.closeArmed;
+    codeDockWidth.value = next.width;
   };
-  const end = (e: PointerEvent) => {
+  // Also runs on lostpointercapture and unmount: any end but a release springs back.
+  const end = (e?: PointerEvent) => {
+    if (!stopResize) return;
+    stopResize = null;
     target.removeEventListener("pointermove", move);
     target.removeEventListener("pointerup", end);
     target.removeEventListener("pointercancel", end);
+    target.removeEventListener("lostpointercapture", end);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
     isResizing.value = false;
-    const close = closeArmed.value && e.type === "pointerup";
+    const close = closeArmed.value && e?.type === "pointerup";
     closeArmed.value = false;
     if (close) {
       codeDockWidth.value = startWidth;
@@ -176,14 +192,21 @@ const startResize = (down: PointerEvent) => {
       // Private mode or blocked storage: the width just isn't remembered.
     }
   };
+  stopResize = end;
   target.addEventListener("pointermove", move);
   target.addEventListener("pointerup", end);
   target.addEventListener("pointercancel", end);
+  target.addEventListener("lostpointercapture", end);
+};
+// A window resize re-fits a settled width; a drag in progress keeps its own clamp.
+const reclampDock = () => {
+  if (!stopResize) codeDockWidth.value = clampWidth(codeDockWidth.value);
 };
 const { openFlow: openFlowFromPath } = useFlowOpener();
 
 // Hide undo/redo when no flow is loaded — same gating as the Save button.
 const hasOpenFlow = computed(() => !!nodeStore.flow_id && nodeStore.flow_id > 0);
+const dockOpen = computed(() => hasOpenFlow.value && editorStore.showCodeGenerator);
 
 // Spinner stays visible across the whole switch sequence: from "user clicked"
 // (isSwitching) through the Canvas watcher's async loadFlow (isLoadingFlow).
@@ -375,7 +398,13 @@ const initialSetup = async () => {
 
 onMounted(async () => {
   console.log("Component mounted, starting initialization");
+  window.addEventListener("resize", reclampDock);
   await initialSetup();
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", reclampDock);
+  stopResize?.();
 });
 </script>
 
@@ -389,7 +418,8 @@ onMounted(async () => {
 .canvas-wrap {
   position: relative;
   display: flex;
-  height: calc(100vh - 100px);
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .canvas {
@@ -491,7 +521,9 @@ onMounted(async () => {
 .switch-indicator {
   position: absolute;
   top: 12px;
-  right: 12px;
+  /* Stays over the canvas, not the code dock; moves with the dock's slide. */
+  right: calc(var(--code-dock-offset, 0px) + 12px);
+  transition: right var(--transition-normal) var(--transition-timing);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -562,11 +594,6 @@ onMounted(async () => {
     align-items: center;
     justify-content: flex-end;
   }
-
-  .canvas,
-  .code-dock {
-    height: calc(100vh - 50px);
-  }
 }
 
 /* Mobile/tablet layout - stacked */
@@ -609,11 +636,6 @@ onMounted(async () => {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-  }
-
-  .canvas,
-  .code-dock {
-    height: calc(100vh - 90px);
   }
 }
 

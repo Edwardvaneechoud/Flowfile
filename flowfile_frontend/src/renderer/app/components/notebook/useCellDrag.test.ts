@@ -164,8 +164,10 @@ describe("useCellDrag", () => {
     document.body.innerHTML = "";
   });
 
-  it("focuses the handle on pointerdown, despite preventDefault", () => {
+  it("focuses the handle on pointerdown, despite preventDefault, without scrolling", () => {
+    const focus = vi.spyOn(handle, "focus");
     down(50);
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     expect(document.activeElement).toBe(handle);
   });
 

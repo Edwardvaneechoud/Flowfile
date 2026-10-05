@@ -506,8 +506,8 @@ const loadFlow = async () => {
       if (generation !== mutationGeneration()) continue;
       // Seed before nodes mount so their description reads hit the cache.
       nodeStore.seedNodeDescriptions(flowIdAtStart, vueFlowInput.node_inputs);
-      await importFlow(vueFlowInput);
-      // importFlow already cleared the canvas; the newer run that bumped loadToken repopulates it.
+      await importFlow(vueFlowInput, { keepExisting: sameFlow });
+      // A same-flow reload kept the live nodes, a switch cleared them; a newer run repopulates.
       if (myToken !== loadToken) return;
       if (generation === mutationGeneration()) break;
     }

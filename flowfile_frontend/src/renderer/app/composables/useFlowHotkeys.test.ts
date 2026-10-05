@@ -100,6 +100,27 @@ describe("createFlowHotkeysHandler guard policy", () => {
   });
 
   it.each([
+    ["a", "selectAll"],
+    ["o", "openFile"],
+    ["k", "toggleAiDrawer"],
+  ] as const)("canvas-scoped Cmd+%s stays out of the code dock", (key, spy) => {
+    document.body.innerHTML = `<aside class="code-dock"><button id="dock-btn"></button></aside>`;
+    const { actions, spies } = makeActions();
+    const handler = createFlowHotkeysHandler(actions);
+    const { event, preventDefault } = makeEvent(key, document.getElementById("dock-btn"));
+    handler(event);
+    expect(spies[spy]).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("app-global Cmd+G still closes the pane from inside the code dock", () => {
+    document.body.innerHTML = `<aside class="code-dock"><button id="dock-btn"></button></aside>`;
+    const { actions, spies } = makeActions();
+    createFlowHotkeysHandler(actions)(makeEvent("g", document.getElementById("dock-btn")).event);
+    expect(spies.toggleCodeGenerator).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
     ["s", "save"],
     ["e", "run"],
     ["g", "toggleCodeGenerator"],
@@ -196,6 +217,10 @@ describe("historyShortcutFor", () => {
     ["a message box", `<div class="el-message-box"><button id="t"></button></div>`],
     ["a popper", `<div class="el-popper"><div id="t"></div></div>`],
     ["the context menu", `<div class="context-menu"><div id="t"></div></div>`],
+    [
+      "the code dock",
+      `<aside class="code-dock nokey"><div tabindex="-1"><button id="t"></button></div></aside>`,
+    ],
     ["a modal", `<div aria-modal="true"><button id="t"></button></div>`],
   ])("does not fire inside %s", (_, html) => {
     expect(press("z", mount(html, "t"))).toBeNull();

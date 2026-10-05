@@ -349,13 +349,16 @@ export default function useDragAndDrop() {
 
   const {
     addNodes,
+    setNodes,
     screenToFlowCoordinate,
     addEdges,
+    setEdges,
     removeEdges,
     findEdge,
     fromObject,
     getNodes,
     getEdges,
+    updateNodeInternals,
     viewport,
   } = useVueFlow();
 
@@ -754,8 +757,8 @@ export default function useDragAndDrop() {
     await nextTick();
   }
 
-  async function importFlow(flowData: VueFlowInput) {
-    await createEmptyFlow();
+  async function importFlow(flowData: VueFlowInput, { keepExisting = false } = {}) {
+    if (!keepExisting) await createEmptyFlow();
     const childNodes = await Promise.all(flowData.node_inputs.map((node) => getNodeToAdd(node)));
 
     // Build group container nodes, then reparent member nodes — converting each
@@ -822,7 +825,10 @@ export default function useDragAndDrop() {
       buildCommentNode(comment),
     );
     // Groups first so a parent exists before its children reference it.
-    addNodes([...groupNodes, ...childNodes, ...commentNodes]);
+    const allNodes = [...groupNodes, ...childNodes, ...commentNodes];
+    // A same-flow reload merges into the live GraphNode by id (VueFlow parseNode): a measured node keeps its DOM.
+    if (keepExisting) setNodes(allNodes.map((node) => ({ hidden: false, ...node })));
+    else addNodes(allNodes);
     seedNodeId(getMaxDataId(flowData.node_inputs));
 
     // Add labels to edges from source node output handles, node_reference, or df_{nodeId} default
@@ -844,7 +850,13 @@ export default function useDragAndDrop() {
       return { ...edge, label: `df_${sourceNode?.data?.id ?? edge.source}` };
     });
 
-    addEdges(edgesWithLabels);
+    if (keepExisting) setEdges(edgesWithLabels);
+    else addEdges(edgesWithLabels);
+    // Reused nodes keep stale handle bounds when settings changed their handles: re-measure in place.
+    if (keepExisting) {
+      await nextTick();
+      updateNodeInternals();
+    }
 
     // Re-create proxy edges for groups that load collapsed and are not themselves hidden
     // inside a collapsed ancestor.
