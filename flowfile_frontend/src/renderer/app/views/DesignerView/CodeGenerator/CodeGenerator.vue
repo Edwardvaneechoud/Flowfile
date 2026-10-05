@@ -96,7 +96,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
+import { computed, defineAsyncComponent, h, onBeforeUnmount, ref, watch } from "vue";
 import axios from "axios";
 import debounce from "lodash/debounce";
 import { Codemirror } from "vue-codemirror";
@@ -107,7 +107,11 @@ import ProjectExport from "./ProjectExport.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 
-const NotebookPanel = defineAsyncComponent(() => import("../../CatalogView/NotebookPanel.vue"));
+// The chunk loads once per session; an empty dock body meanwhile reads as a broken pane.
+const NotebookPanel = defineAsyncComponent({
+  loader: () => import("../../CatalogView/NotebookPanel.vue"),
+  loadingComponent: () => h("div", { class: "code-notebook-loading" }, "Loading the notebook…"),
+});
 
 import { CODE_MODE_KEY as MODE_KEY, CODE_MODES as MODES, type CodeMode } from "./codeMode";
 
@@ -293,6 +297,12 @@ const exportCode = () => {
   display: flex;
   flex-direction: column;
   cursor: auto;
+}
+
+.code-notebook-loading {
+  padding: 12px 16px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
 }
 
 .code-notebook > :deep(.notebook-panel) {

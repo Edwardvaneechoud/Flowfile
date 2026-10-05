@@ -314,8 +314,11 @@
       </span>
     </div>
 
-    <!-- Cells of the active notebook -->
-    <div v-if="store.active" ref="hostRef" class="nb-cells">
+    <!-- Cells of the active notebook; a flow tab shows a placeholder until its first rendering lands. -->
+    <div v-if="rendering" class="nb-cells nb-cells--rendering">
+      <i class="fa-solid fa-spinner fa-spin"></i> Rendering the notebook…
+    </div>
+    <div v-else-if="store.active && ownTab" ref="hostRef" class="nb-cells">
       <div
         v-if="drag.indicatorTop.value !== null"
         class="nb-drop-line"
@@ -515,6 +518,7 @@ import {
 import {
   kernelStatusNeedsAttention,
   resolveNotebookKernelStatus,
+  sameKernelList,
 } from "../../components/notebook/notebookKernelStatus";
 import type { CellOperation } from "../../components/notebook/cellOperations";
 import type { CellType, NotebookCellModel } from "../../components/notebook/types";
@@ -749,6 +753,18 @@ const showPrimer = computed(
   () => !props.flowId && !!store.active && store.active.cells.every((c) => !c.code.trim()),
 );
 
+// Flow mode shows only its own tab; until openFlowNotebook activates it, another tab is active.
+const ownTab = computed(
+  () =>
+    !!store.active &&
+    (props.flowId ? store.active.flowId === props.flowId : store.active.flowId == null),
+);
+const opening = ref(!!props.flowId);
+// A flow tab is created empty and filled by its first rendering; a re-opened tab keeps its cells.
+const rendering = computed(
+  () => opening.value && !(ownTab.value && store.active!.cells.length > 0),
+);
+
 function priorCodes(idx: number): string[] {
   return store.active ? store.active.cells.slice(0, idx).map((c) => c.code) : [];
 }
@@ -927,7 +943,8 @@ function onRedoCellAction() {
 
 async function loadKernels() {
   try {
-    kernels.value = await KernelApi.getAll();
+    const next = await KernelApi.getAll();
+    if (!sameKernelList(kernels.value, next)) kernels.value = next;
     kernelsLoaded.value = true;
   } catch {
     // Keep the last known list: a transient fetch failure must not flag every kernel as gone.
@@ -936,8 +953,12 @@ async function loadKernels() {
 
 onMounted(async () => {
   if (props.flowId) {
-    await store.loadFlowStatus();
-    await openFlow();
+    try {
+      await store.loadFlowStatus();
+      await openFlow();
+    } finally {
+      opening.value = false;
+    }
     if (!store.kernelSessions) return;
   } else {
     store.ensureHydrated();
@@ -1644,6 +1665,14 @@ async function onDelete() {
   overflow-y: auto;
   padding: var(--spacing-3) var(--spacing-3) var(--spacing-6);
   background: var(--color-background-primary);
+}
+.nb-cells--rendering {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
 }
 /* Drop indicator for a cell drag; the list itself never reorders mid-gesture. */
 .nb-drop-line {
