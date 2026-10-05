@@ -179,6 +179,26 @@ class TestResolveImage:
         monkeypatch.setenv("FLOWFILE_KERNEL_IMAGE_BASE", "specific:2.0")
         assert _resolve_image(ImageFlavour.BASE, None) == "specific:2.0"
 
+    def test_notebook_is_tagged_by_the_app_version(self, monkeypatch):
+        from shared._version import get_version
+
+        monkeypatch.delenv("FLOWFILE_KERNEL_IMAGE_NOTEBOOK", raising=False)
+        assert _resolve_image(ImageFlavour.NOTEBOOK, None) == f"edwardvaneechoud/flowfile-kernel-notebook:{get_version()}"
+
+    def test_notebook_env_override(self, monkeypatch):
+        monkeypatch.setenv("FLOWFILE_KERNEL_IMAGE_NOTEBOOK", "flowfile-kernel-notebook:local")
+        assert _resolve_image(ImageFlavour.NOTEBOOK, None) == "flowfile-kernel-notebook:local"
+
+    def test_notebook_falls_back_to_local_build(self, monkeypatch):
+        monkeypatch.delenv("FLOWFILE_KERNEL_IMAGE_NOTEBOOK", raising=False)
+        client = MagicMock()
+        client.images.get.side_effect = docker.errors.ImageNotFound("not here")
+        local_img = MagicMock()
+        local_img.tags = ["flowfile-kernel-notebook:local"]
+        local_img.attrs = {"Created": "2026-10-01T10:00:00Z"}
+        client.images.list.return_value = [local_img]
+        assert _resolve_image(ImageFlavour.NOTEBOOK, None, client) == "flowfile-kernel-notebook:local"
+
     def test_custom_requires_image(self):
         with pytest.raises(ValueError, match="custom_image must be provided"):
             _resolve_image(ImageFlavour.CUSTOM, None)
@@ -439,6 +459,42 @@ class TestEnsureImage:
             mgr._build_derived_image_locked(kernel, _LITE_TAG, _derived_image_tag(kernel.id))
 
         mgr._docker.images.build.assert_not_called()
+
+
+class TestDerivedImageBase:
+    """A derived image is reused only while it was baked on the base the pin names today."""
+
+    def _existing(self, mgr: KernelManager, base_label: str | None):
+        derived = MagicMock()
+        derived.labels = {} if base_label is None else {kernel_manager._IMAGE_LABEL_BASE_IMAGE: base_label}
+        mgr._docker.images.get.return_value = derived
+        return derived
+
+    def test_reused_when_built_on_the_same_base(self):
+        mgr = _bare_manager()
+        kernel = _kernel(packages=["xgboost"], flavour=ImageFlavour.LITE)
+        self._existing(mgr, _LITE_TAG)
+
+        assert mgr._build_derived_image_locked(kernel, _LITE_TAG, _derived_image_tag(kernel.id))
+        mgr._docker.images.build.assert_not_called()
+        mgr._docker.images.remove.assert_not_called()
+
+    @pytest.mark.parametrize("stale_label", ["edwardvaneechoud/flowfile-kernel-lite:0.6.0", None])
+    def test_rebuilt_when_the_pin_moved(self, stale_label):
+        mgr = _bare_manager()
+        kernel = _kernel(packages=["xgboost"], flavour=ImageFlavour.LITE)
+        derived_tag = _derived_image_tag(kernel.id)
+        self._existing(mgr, stale_label)
+        dockerfiles: list[str] = []
+        mgr._docker.images.build.side_effect = lambda path, **_: dockerfiles.append(
+            (open(os.path.join(path, "Dockerfile")).read())
+        )
+
+        assert mgr._build_derived_image_locked(kernel, _LITE_TAG, derived_tag) == derived_tag
+
+        mgr._docker.images.remove.assert_called_once_with(derived_tag, force=True)
+        assert len(dockerfiles) == 1
+        assert f'LABEL {kernel_manager._IMAGE_LABEL_BASE_IMAGE}="{_LITE_TAG}"' in dockerfiles[0]
 
 
 class TestSpecToName:

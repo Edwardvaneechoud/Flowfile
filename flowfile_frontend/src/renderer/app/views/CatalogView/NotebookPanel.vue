@@ -134,13 +134,13 @@
           </template>
         </el-select>
 
-        <!-- One click sets up the default notebook kernel; an outdated one gets an update. -->
+        <!-- One click sets up the default notebook kernel; one on an older image gets a restart. -->
         <button
           v-if="needsNotebookKernel || creatingKernelId"
           type="button"
           class="nb-tool-btn nb-kernel-action"
           data-testid="nb-create-notebook-kernel"
-          :title="createKernelTitle"
+          :title="CREATE_KERNEL_TITLE"
           :disabled="kernelActionBusy"
           @click="createNotebookKernel"
         >
@@ -148,18 +148,18 @@
           <span>{{ kernelActionLabel }}</span>
         </button>
         <button
-          v-else-if="outdatedNotebookKernel || updatingKernel"
+          v-else-if="outdatedNotebookKernel || restartingKernel"
           type="button"
           class="nb-tool-btn nb-kernel-action"
           data-testid="nb-update-notebook-kernel"
-          :title="updateKernelTitle"
-          :disabled="updatingKernel"
+          :title="UPDATE_KERNEL_TITLE"
+          :disabled="restartingKernel"
           @click="updateNotebookKernel"
         >
           <i
-            :class="updatingKernel ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-arrows-rotate'"
+            :class="restartingKernel ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-arrows-rotate'"
           ></i>
-          <span>{{ updatingKernel ? kernelActionLabel : "Update notebook kernel" }}</span>
+          <span>{{ restartingKernel ? kernelActionLabel : "Update notebook kernel" }}</span>
         </button>
 
         <div class="nb-tool-group">
@@ -481,6 +481,7 @@ import {
   cellErrorMark,
   RERENDER_FAILED,
   SYNC_NEEDS_ADMIN,
+  rememberedFlowKernel,
 } from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
@@ -497,7 +498,6 @@ import { flushPendingEdits } from "../../services/mutationChannel";
 import { currentNodeId, seedNodeId } from "../../composables/useDragAndDrop";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";
 import CreateKernelDialog from "../../components/kernel/CreateKernelDialog.vue";
-import { addPackagesToKernel } from "../../components/kernel/kernelActions";
 import { useKernelCreationTracker } from "../../composables/useKernelCreationTracker";
 import { useKernelResources } from "../../composables/useKernelResources";
 import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
@@ -521,7 +521,7 @@ import {
   resolveNotebookKernelStatus,
 } from "../../components/notebook/notebookKernelStatus";
 import {
-  flowfileVersionOf,
+  defaultNotebookKernel,
   notebookKernelActionLabel,
   notebookKernelConfig,
   notebookKernelOutdated,
@@ -534,12 +534,14 @@ import type { KernelInfo, KernelSuggestion } from "../../types/kernel.types";
 const KERNEL_POLL_MS = 5000;
 const PULL_POLL_MS = 2000;
 const NO_KERNEL = "__no_kernel__";
-const APP_VERSION: string = __APP_VERSION__ ?? "";
+const CREATE_KERNEL_TITLE =
+  "Creates a kernel on the Notebook image (this app's flowfile) and selects it. " +
+  "The first time, the image downloads first.";
+const UPDATE_KERNEL_TITLE =
+  "Restarts the kernel on this app's Notebook image. Anything held in its memory is lost.";
 
-/** A kernel can run the canvas notebook when it has flowfile installed or is a notebook image. */
-const runsNotebook = (k: KernelInfo): boolean =>
-  k.packages.some((p) => /^flowfile\s*($|[=<>!~[;@ ])/i.test(p.trim())) ||
-  (k.custom_image ?? "").includes("notebook");
+/** Only the Notebook image runs the canvas notebook. */
+const runsNotebook = (k: KernelInfo): boolean => k.image_flavour === "notebook";
 
 /** With `flowId` the panel is that flow's canvas notebook: one ephemeral tab rendered from the canvas. */
 const props = defineProps<{ flowId?: number }>();
@@ -617,20 +619,15 @@ const needsNotebookKernel = computed(
 
 const { createKernel, pendingCreations } = useKernelCreationTracker();
 const { imageStatuses, ensureLoaded } = useKernelResources();
-const liteImageInstalled = computed<boolean | null>(
-  () => imageStatuses.value.find((s) => s.flavour === "lite")?.available ?? null,
+const notebookImageStatus = computed(
+  () => imageStatuses.value.find((s) => s.flavour === "notebook") ?? null,
 );
-watch(needsNotebookKernel, (needed) => {
-  if (needed) void ensureLoaded();
-});
+const notebookImageInstalled = computed<boolean | null>(
+  () => notebookImageStatus.value?.available ?? null,
+);
 
 const notebookKernelSuggestion = computed<KernelSuggestion>(() => ({
-  config: notebookKernelConfig(
-    APP_VERSION,
-    kernels.value.map((k) => k.id),
-  ),
-  covered_by_flavour: [],
-  flavour_image_available: liteImageInstalled.value,
+  config: notebookKernelConfig(kernels.value.map((k) => k.id)),
 }));
 
 let unmounted = false;
@@ -643,26 +640,31 @@ async function selectCreatedKernel(kernel: KernelInfo) {
 
 const creatingKernelId = ref<string | null>(null);
 const pulling = ref(false);
-const updatingKernel = ref(false);
+const restartingKernel = ref(false);
 let pullPollTimer: ReturnType<typeof setInterval> | null = null;
 
 const kernelActionPhase = computed<NotebookKernelPhase>(() => {
-  if (updatingKernel.value) return "updating";
+  if (restartingKernel.value) return "restarting";
   if (!creatingKernelId.value) return "idle";
   return pendingCreations.value.find((p) => p.id === creatingKernelId.value)?.phase ?? "creating";
 });
 const kernelActionBusy = computed(() => creatingKernelId.value !== null);
 const kernelActionLabel = computed(() =>
   notebookKernelActionLabel({
-    imageInstalled: liteImageInstalled.value,
+    imageInstalled: notebookImageInstalled.value,
     phase: kernelActionPhase.value,
     pulling: pulling.value,
   }),
 );
-const createKernelTitle =
-  `Creates a kernel on the Lite image with flowfile ${APP_VERSION} and selects it. ` +
-  "Takes about 2 minutes, longer the first time while the image downloads.";
-const updateKernelTitle = `Reinstalls flowfile ${APP_VERSION} in this kernel; the kernel restarts`;
+
+/** Core pulls the Notebook image inline on create and start; docker-status says while it does. */
+function startPullPoll() {
+  pulling.value = notebookImageInstalled.value === false;
+  pullPollTimer = setInterval(async () => {
+    const { images } = await KernelApi.getDockerStatus();
+    pulling.value = images.find((i) => i.flavour === "notebook")?.pull_state === "pulling";
+  }, PULL_POLL_MS);
+}
 
 function stopPullPoll() {
   if (pullPollTimer) clearInterval(pullPollTimer);
@@ -674,16 +676,9 @@ function stopPullPoll() {
 async function createNotebookKernel() {
   if (creatingKernelId.value) return;
   kernelSelectRef.value?.blur();
-  const config = notebookKernelConfig(
-    APP_VERSION,
-    kernels.value.map((k) => k.id),
-  );
+  const config = notebookKernelConfig(kernels.value.map((k) => k.id));
   creatingKernelId.value = config.id;
-  pulling.value = liteImageInstalled.value === false;
-  pullPollTimer = setInterval(async () => {
-    const { images } = await KernelApi.getDockerStatus();
-    pulling.value = images.find((i) => i.flavour === "lite")?.pull_state === "pulling";
-  }, PULL_POLL_MS);
+  startPullPoll();
   try {
     const kernel = await createKernel(config, { autoStart: true });
     await selectCreatedKernel(kernel);
@@ -692,40 +687,45 @@ async function createNotebookKernel() {
   } finally {
     stopPullPoll();
     creatingKernelId.value = null;
+    void ensureLoaded(true);
   }
 }
 
-/** The selected kernel runs the notebook but pins a different flowfile than this app. */
+/** The selected notebook kernel runs an older release of the image than this app ships. */
 const outdatedNotebookKernel = computed<KernelInfo | null>(() => {
   const s = kernelStatus.value;
-  if (!props.flowId || !APP_VERSION || !("kernel" in s)) return null;
-  return runsNotebook(s.kernel) && notebookKernelOutdated(s.kernel, APP_VERSION) ? s.kernel : null;
+  if (!props.flowId || !("kernel" in s)) return null;
+  return notebookKernelOutdated(s.kernel, notebookImageStatus.value?.image) ? s.kernel : null;
 });
 
+/** Starting resolves the flavour's current image and pulls it, so a restart is the update. */
 async function updateNotebookKernel() {
   const kernel = outdatedNotebookKernel.value;
-  if (!kernel || updatingKernel.value) return;
+  if (!kernel || restartingKernel.value) return;
   try {
     await ElMessageBox.confirm(
-      `"${kernel.name}" will be stopped, rebuilt with flowfile ${APP_VERSION} (about a minute) ` +
-        "and started again. Anything held in the kernel's memory is lost.",
+      `"${kernel.name}" will be stopped and started again on this app's Notebook image ` +
+        "(downloaded first when missing). Anything held in the kernel's memory is lost.",
       "Update notebook kernel",
       { confirmButtonText: "Update", cancelButtonText: "Cancel", type: "warning" },
     );
   } catch {
     return;
   }
-  updatingKernel.value = true;
+  restartingKernel.value = true;
+  startPullPoll();
   try {
-    await addPackagesToKernel(kernel, [`flowfile==${APP_VERSION}`]);
+    if (kernel.state !== "stopped") await KernelApi.stop(kernel.id);
+    await KernelApi.start(kernel.id);
     await loadKernels();
   } catch (e) {
     ElMessage.error(
       `Failed to update "${kernel.name}": ${(e as Error).message}. ` +
-        "The kernel is stopped — retry here or from the Python Kernels page.",
+        "Retry here or start it from the Python Kernels page.",
     );
   } finally {
-    updatingKernel.value = false;
+    stopPullPoll();
+    restartingKernel.value = false;
   }
 }
 
@@ -755,8 +755,8 @@ const banner = computed<KernelBanner | null>(() => {
       tone: "warning",
       icon: "fa-solid fa-arrows-rotate",
       text:
-        `Kernel "${outdated.name}" has flowfile ${flowfileVersionOf(outdated)}; ` +
-        `this app is ${APP_VERSION}. Update it to run cells.`,
+        `Kernel "${outdated.name}" runs ${outdated.image}; this app ships ` +
+        `${notebookImageStatus.value?.image}. Update it to run cells.`,
     };
   }
   const name = "kernel" in s ? `"${s.kernel.name}"` : "";
@@ -1056,9 +1056,20 @@ async function loadKernels() {
   try {
     kernels.value = await KernelApi.getAll();
     kernelsLoaded.value = true;
+    pickDefaultKernel();
   } catch {
     // Keep the last known list: a transient fetch failure must not flag every kernel as gone.
   }
+}
+
+/** A flow the user never picked a kernel for runs on a notebook kernel as soon as one exists; an explicit
+ * **No kernel** is remembered as such and left alone. */
+function pickDefaultKernel() {
+  const nb = store.active;
+  if (!props.flowId || nb?.flowId !== props.flowId || nb.kernelId || !store.kernelSessions) return;
+  if (rememberedFlowKernel(props.flowId) !== undefined) return;
+  const kernel = defaultNotebookKernel(kernels.value);
+  if (kernel) store.setKernel(kernel.id);
 }
 
 onMounted(async () => {
@@ -1076,6 +1087,8 @@ onMounted(async () => {
     dockerAvailable.value = false;
   }
   if (dockerAvailable.value) {
+    // The image statuses tell whether the Notebook image is installed and which tag the app ships.
+    void ensureLoaded();
     await loadKernels();
     pollTimer = setInterval(loadKernels, KERNEL_POLL_MS);
   }

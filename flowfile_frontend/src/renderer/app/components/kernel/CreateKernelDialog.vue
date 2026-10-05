@@ -72,19 +72,15 @@ const pendingForSeed = computed(() => {
   return pendingCreations.value.find((p) => p.id === id) ?? null;
 });
 
-function buildSeed(): Partial<KernelConfig> | null {
-  const s = props.suggestion;
-  if (!s) return null;
-  return { ...s.config };
-}
-
 // @open never fires for a dialog mounted already-open — watch the model instead.
 // The seed is snapshotted per open (never mid-create) so nothing clobbers edits.
 watch(
   () => props.modelValue,
   (open) => {
     if (open) {
-      if (!creationInFlight.value) seedSnapshot.value = buildSeed();
+      if (!creationInFlight.value) {
+        seedSnapshot.value = props.suggestion ? { ...props.suggestion.config } : null;
+      }
       void ensureLoaded();
     }
   },

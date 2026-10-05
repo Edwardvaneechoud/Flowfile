@@ -106,7 +106,7 @@ A sync is refused, with the reason on the failing cell or in a message, when:
 
 ## Running on a kernel
 
-In the desktop app, and with `pip install flowfile` in the default mode, the notebook toolbar has a kernel picker. Pick a **notebook kernel**, a [kernel](kernels.md) with the `flowfile` package installed, and the cells run as real Python in a session on that kernel: loops, `print`, other imports and `display(...)` work, as in a script. When you have no such kernel, **Create notebook kernel** in the toolbar sets one up in one click: a kernel on the Lite image with `flowfile` of this app's version, created, started and selected for this flow in about 2 minutes. When the Lite image is not on this machine yet, the button reads **Download image and create notebook kernel** and downloads it first. **Customise…** in the picker opens the kernel form with the same settings filled in. Pick **No kernel** to go back to running on the canvas.
+In the desktop app, and with `pip install flowfile` in the default mode, the notebook toolbar has a kernel picker. Pick a **notebook kernel**, a [kernel](kernels.md) on the **Notebook** image (the Lite image with this app's `flowfile` installed, published for every Flowfile version), and the cells run as real Python in a session on that kernel: loops, `print`, other imports and `display(...)` work, as in a script. When you have no such kernel, **Create notebook kernel** in the toolbar sets one up in one click: created, started and selected for this flow; nothing is installed on your machine. When the Notebook image is not here yet, the button reads **Download image and create notebook kernel** and downloads it first (several hundred MB, once per Flowfile version). **Customise…** in the picker opens the kernel form with the same settings filled in. A flow you never picked a kernel for selects a notebook kernel by itself as soon as one exists (a running one first). Pick **No kernel** to run on the canvas instead; that choice is remembered for the flow.
 
 | Action | With a kernel picked |
 |---|---|
@@ -132,7 +132,7 @@ In cells, write file paths as they are on your machine (`C:\Users\me\data\sales.
 Limits:
 
 - Only in the desktop app and in a default `pip install flowfile` (`FLOWFILE_MODE` unset or `electron`), for a local connection. Docker deployments keep the notebook without a kernel.
-- The kernel's `flowfile` must have the same version as the app. When the picked kernel pins another version, for example after an app update, the toolbar shows **Update notebook kernel**: it stops the kernel, reinstalls `flowfile` of this app's version and starts it again, which drops what the kernel holds in memory.
+- The kernel's `flowfile` must have the same version as the app. After an app update the picked kernel still runs the previous Notebook image, so the toolbar shows **Update notebook kernel**: it stops the kernel and starts it again, which downloads this app's image and drops what the kernel holds in memory.
 
 ## Kernels, Docker and deployments
 

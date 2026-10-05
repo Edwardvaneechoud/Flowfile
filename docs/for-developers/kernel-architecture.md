@@ -31,7 +31,7 @@ The `KernelManager` is a singleton that runs inside the Core service. It manages
 | Operation | What Happens |
 |-----------|-------------|
 | **Create** | Allocates a `KernelInfo` record, pulls the flavour or custom image when it is missing (`_ensure_image`), bakes extra `packages` into a derived image, persists config to the database |
-| **Start** | Verifies the pinned kernel image (`flowfile-kernel-{base,ml,lite}:<tag>`) exists, runs `docker.containers.run()`, polls `/health` until ready (120s timeout) |
+| **Start** | Pulls the pinned kernel image (`flowfile-kernel-{base,ml,lite,notebook}:<tag>`) when it is missing, rebuilds a derived image whose base moved, runs `docker.containers.run()`, polls `/health` until ready (120s timeout) |
 | **Execute** | Serializes inputs to parquet, sends `ExecuteRequest` via HTTP, tracks kernel state |
 | **Stop** | Stops and removes the Docker container |
 | **Delete** | Stops if running, removes from in-memory registry and database |
@@ -78,13 +78,14 @@ Flowfile does **not** define compatibility *ranges* between app and kernel versi
 |---------|-------|------|
 | App / root | root `pyproject.toml` `version` | The Flowfile release |
 | Kernel **image** tag | `flowfile_core/flowfile_core/kernel/images.py` (`_KERNEL_IMAGE_{BASE,ML,LITE}_DEFAULT` — read the current value there) | The image the app pulls / runs |
+| **Notebook** image tag | `images.py` (`_KERNEL_IMAGE_NOTEBOOK_REPO` + the app version from `shared/_version.py`) | The notebook flavour's image: the lite image of the pinned kernel release with this app's `flowfile` installed |
 | Kernel **runtime API** | `kernel_runtime/__init__.py` (`__version__`) | The kernel's HTTP API version, reported by `/health` |
 
-Read each value from its source rather than assuming a number — the three are decoupled. They evolve **independently**: bumping the app does not require bumping the kernel image, and vice versa.
+Read each value from its source rather than assuming a number — the three are decoupled. They evolve **independently**: bumping the app does not require bumping the kernel image, and vice versa. The notebook image is the exception by design: it bakes `flowfile`, whose version must be the app's (core checks it when a session opens), so its tag *is* the app version and it publishes with every app release.
 
 ### How the pin works
 
-- Each Flowfile version hardcodes **one exact kernel tag per flavour** (e.g. `edwardvaneechoud/flowfile-kernel-ml:<version>`) in `manager.py`. That single tag — not a `>=x,<y` range — is the version the app is built and tested against.
+- Each Flowfile version hardcodes **one exact kernel tag per flavour** (e.g. `edwardvaneechoud/flowfile-kernel-ml:<version>`) in `images.py`. That single tag — not a `>=x,<y` range — is the version the app is built and tested against.
 - Core reads the running kernel's runtime version from `/health` into `KernelInfo.kernel_version` **for display only** (the "Kernel runtime" line in the Kernel Manager). There is no min/max gate and nothing that rejects or warns about an "out-of-range" kernel.
 - The only **hard** coupling is **polars**: `kernel_runtime` pins a polars (and the `polars-ds` plugin) compatible with the app's `polars >=1.39.0,<1.44`. These must be bumped together, but that compatibility is guaranteed at *image-build time* via the pinned tag — not by a runtime check.
 
@@ -101,9 +102,17 @@ To ship a change:
 1. Bump `version` in `kernel_runtime/pyproject.toml` (CI tags the published images from it).
 2. Bump the three `_KERNEL_IMAGE_{BASE,ML,LITE}_DEFAULT` tags in `images.py` to match. CI enforces this pairing: `tools/check_kernel_version_sync.py` hard-fails the publish run when the pins and the kernel version drift.
 3. Regenerate the image dependency manifest with `make kernel_manifest` (`make bump-version-kernel` does this for you) and commit it. `make check_kernel_manifest` fails CI otherwise, and a stale manifest makes core report the wrong packages as present.
-4. Merge — CI (`docker-publish.yml`) checks Docker Hub and builds/pushes `flowfile-kernel-{base,ml,lite}:<new>` only if that tag is absent, so published version tags stay immutable and a missed publish self-heals on the next kernel-path push. (A `workflow_dispatch` with `force_kernel` republishes an existing tag, but a machine that already pulled that tag keeps its stale copy, so bump instead.) The app then asks for the new tag: creating a kernel pulls it when missing, and the Kernel Manager offers it as **Update available**; starting an existing kernel whose image is missing fails with a `docker pull` hint instead of pulling.
+4. Merge — CI (`docker-publish.yml`) checks Docker Hub and builds/pushes `flowfile-kernel-{base,ml,lite}:<new>` only if that tag is absent, so published version tags stay immutable and a missed publish self-heals on the next kernel-path push. (A `workflow_dispatch` with `force_kernel` republishes an existing tag, but a machine that already pulled that tag keeps its stale copy, so bump instead.) The app then asks for the new tag: creating **and starting** a kernel pull it when missing (a start after an update therefore pulls the new release, and a derived image baked on the old base — labelled `flowfile_base_image` — is rebuilt), and the Kernel Manager offers it as **Update available**.
 
 For local development, build the image yourself (`docker build -t flowfile-kernel-base:local kernel_runtime/`); the `:local` tag is preferred by the resolver when the pinned registry tag isn't present, and is excluded from the version comparison (so it shows as a **local** build, not "up to date" or "update available").
+
+### The notebook image
+
+`flowfile-kernel-notebook:<app version>` is the fourth published flavour (`ImageFlavour.NOTEBOOK`) and the only one the canvas notebook runs on: `kernel_runtime/Dockerfile.notebook` installs a `flowfile` wheel on `flowfile-kernel-lite:<kernel version>` and then rewrites `/opt/constraints.txt` from `pip freeze`, so a kernel's extra packages cannot move flowfile's dependency tree. Nothing is built on the user's machine: the notebook toolbar's **Create notebook kernel** is a pull plus a start, and an app update is a restart (the start resolves the new tag and pulls it).
+
+- **Publishing:** `docker-publish.yml` builds it on every `v*` tag in its own `build-notebook`/`merge-notebook` jobs after the kernel images (its `FROM` may be a lite image the same run publishes), from a wheel `poetry build` makes in the run — never from PyPI. `tools/docker_publish_matrix.py` emits the `notebook_*` matrices; `base_image` carries no org, like every image name in the outputs.
+- **Contents:** `kernel/flavours.py` derives them at load time — the lite manifest entry plus `flowfile` at `get_version()` — so the manifest and its drift gate never see the app version. A `FLOWFILE_KERNEL_IMAGE_NOTEBOOK` override on another release makes the flavour `unknown`, as for the others.
+- **Locally:** `make notebook_kernel_dev` builds `flowfile-kernel-notebook:local` from the checkout on the published lite image of the pinned kernel release (pulled by `docker build`); the resolver prefers it while the app-version tag is absent, so the one-click setup works on an unreleased branch. With an unpublished kernel change, build lite first (`make rebuild_kernel KERNEL_FLAVOUR=lite`) and pass `NOTEBOOK_BASE_IMAGE=flowfile-kernel-lite:local`, as `test-notebook-kernel.yml` does before running `flowfile_core/tests/notebook/test_kernel_notebook_docker.py`.
 
 ---
 
@@ -315,7 +324,7 @@ Artifact serialization uses pickle/cloudpickle. This is acceptable because:
 
 ### Building the Kernel Image
 
-The resolver looks for `flowfile-kernel-{base,ml,lite}:local` when the pinned registry tag isn't present locally, so tag your local build to match the flavour you want to run:
+The resolver looks for `flowfile-kernel-{base,ml,lite,notebook}:local` when the pinned registry tag isn't present locally, so tag your local build to match the flavour you want to run (`make notebook_kernel_dev` does so for the notebook image):
 
 ```bash
 # Via docker compose (builds the base flavour as flowfile-kernel-base:local)

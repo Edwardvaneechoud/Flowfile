@@ -57,7 +57,7 @@ class TestContainment:
     def test_baseline_actually_loads(self):
         contents = matching._image_contents()
         assert contents is not None
-        assert {ImageFlavour.BASE, ImageFlavour.ML, ImageFlavour.LITE} <= set(contents)
+        assert {ImageFlavour.BASE, ImageFlavour.ML, ImageFlavour.LITE, ImageFlavour.NOTEBOOK} <= set(contents)
 
     def test_manifest_tracks_the_kernel_runtime_version(self):
         manifest = json.loads(flavours._MANIFEST_PATH.read_text(encoding="utf-8"))

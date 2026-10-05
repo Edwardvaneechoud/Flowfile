@@ -1,6 +1,6 @@
 """Who may run the canvas notebook on a kernel: the mode policy and the local-connection check.
 
-A kernel session runs the user's cells as Python in a notebook kernel (one with ``flowfile`` installed),
+A kernel session runs the user's cells as Python in a notebook kernel (the ``notebook`` image flavour),
 so it is offered only in ``electron`` mode (the desktop app and a default ``pip install flowfile``), and
 there only to a caller on the same machine. The mode is read per call through
 ``auth.sharing.sharing_enabled`` (false only in electron).

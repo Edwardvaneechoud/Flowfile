@@ -4,7 +4,7 @@ Run it on its own with a scratch storage folder, since the kernel mounts the Flo
 
     FLOWFILE_STORAGE_DIR=$(mktemp -d) poetry run pytest flowfile_core/tests/notebook/test_kernel_notebook_docker.py -m kernel
 
-Skipped without Docker, without the ``flowfile-kernel-notebook:dev`` image or without ``FLOWFILE_STORAGE_DIR``;
+Skipped without Docker, without the ``flowfile-kernel-notebook:local`` image or without ``FLOWFILE_STORAGE_DIR``;
 with ``FLOWFILE_REQUIRE_NOTEBOOK_KERNEL`` set (the CI job that builds the image) those are failures instead.
 """
 
@@ -28,7 +28,7 @@ from flowfile_core.notebook.render import render
 from shared.notebook_display import TABLE_MIME
 from tests.notebook.conftest import NOTEBOOK_OWNER_ID, cell_provenance
 
-IMAGE = "flowfile-kernel-notebook:dev"
+IMAGE = "flowfile-kernel-notebook:local"
 KERNEL_ID = "nb-smoke"
 LOOPBACK = ("127.0.0.1", 50123)
 REQUIRED = bool(os.environ.get("FLOWFILE_REQUIRE_NOTEBOOK_KERNEL"))
@@ -107,6 +107,8 @@ def notebook_kernel(core_url, monkeypatch):
     from flowfile_core.notebook import kernel_runner
 
     monkeypatch.setenv("FLOWFILE_MODE", "electron")
+    # Pin the checkout's image explicitly: a published tag on this machine would otherwise win.
+    monkeypatch.setenv("FLOWFILE_KERNEL_IMAGE_NOTEBOOK", IMAGE)
     shared = str(Path(tempfile.mkdtemp(prefix="nb_kernel_shared_")).resolve())
     manager = KernelManager(shared_volume_path=shared)
     monkeypatch.setattr(kernel_package, "get_kernel_manager", lambda: manager)
@@ -114,7 +116,7 @@ def notebook_kernel(core_url, monkeypatch):
     subprocess.run(["docker", "rm", "-f", f"flowfile-kernel-{KERNEL_ID}"], capture_output=True)
     if manager.get_kernel_sync(KERNEL_ID) is not None:
         loop.run_until_complete(manager.delete_kernel(KERNEL_ID))
-    config = KernelConfig(id=KERNEL_ID, name="Notebook smoke", image_flavour=ImageFlavour.CUSTOM, custom_image=IMAGE)
+    config = KernelConfig(id=KERNEL_ID, name="Notebook smoke", image_flavour=ImageFlavour.NOTEBOOK)
     loop.run_until_complete(manager.create_kernel(config, user_id=NOTEBOOK_OWNER_ID))
     try:
         loop.run_until_complete(manager.start_kernel(KERNEL_ID))

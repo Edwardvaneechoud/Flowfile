@@ -20,6 +20,7 @@ from pathlib import Path
 
 from flowfile_core.kernel.images import _flavour_images, parse_image_version
 from flowfile_core.kernel.models import ImageFlavour
+from shared._version import get_version
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +64,12 @@ _ML_EXTRA_PACKAGE_NAMES: tuple[str, ...] = (
 # Only what flow code imports: the Dockerfile's SLIM_CONSTRAINTS also pins cloudpickle/joblib (kernel
 # plumbing, not surfaced), while fastapi/uvicorn/httpx float unpinned.
 _LITE_PACKAGE_NAMES: tuple[str, ...] = ("polars",)
+_NOTEBOOK_PACKAGE_NAMES: tuple[str, ...] = ("flowfile", "polars")
 
 _WARNED_TAGS: set[str] = set()
 
+# Manifest keys. The notebook image is not in the manifest: it is the lite image of the same kernel
+# release plus this app's flowfile, so its contents are derived from lite in flavour_contents().
 _FLAVOUR_KEYS: dict[str, ImageFlavour] = {
     "base": ImageFlavour.BASE,
     "ml": ImageFlavour.ML,
@@ -99,13 +103,14 @@ def load_manifest() -> dict | None:
     return manifest
 
 
-def _describes_configured_image(flavour: ImageFlavour, manifest_version: str) -> bool:
-    """Whether the manifest describes the image tag this flavour actually launches.
+def _describes_configured_image(flavour: ImageFlavour, described_version: str) -> bool:
+    """Whether the known contents describe the image tag this flavour actually launches.
 
     An operator can repoint a flavour with ``FLOWFILE_KERNEL_IMAGE_*``. Only a
-    tag carrying a *different* dotted-numeric version disproves the manifest —
+    tag carrying a *different* dotted-numeric version disproves the baseline —
     a ``:local`` or digest tag is unparseable and stays trusted, since that is
-    the dev-built image from this same checkout.
+    the dev-built image from this same checkout. ``described_version`` is the
+    manifest's kernel version, or the app version for the notebook image.
     """
     tag = _flavour_images().get(flavour)
     if not tag:
@@ -113,7 +118,7 @@ def _describes_configured_image(flavour: ImageFlavour, manifest_version: str) ->
     tag_version = parse_image_version(tag)
     if tag_version is None:
         return True
-    expected = parse_image_version(f"kernel:{manifest_version}")
+    expected = parse_image_version(f"kernel:{described_version}")
     if expected is None:
         return True
     if tag_version != expected:
@@ -122,11 +127,11 @@ def _describes_configured_image(flavour: ImageFlavour, manifest_version: str) ->
         if tag not in _WARNED_TAGS:
             _WARNED_TAGS.add(tag)
             logger.warning(
-                "Kernel image %s is version %s but the shipped manifest describes %s; "
+                "Kernel image %s is version %s but the known contents describe %s; "
                 "treating that flavour's contents as unknown.",
                 tag,
                 ".".join(str(part) for part in tag_version),
-                manifest_version,
+                described_version,
             )
         return False
     return True
@@ -151,6 +156,9 @@ def flavour_contents() -> dict[ImageFlavour, dict[str, str | None]] | None:
         if not _describes_configured_image(flavour, version):
             continue
         contents[flavour] = dict(packages)
+    # Built FROM the lite image of this kernel release with this app's flowfile installed on top.
+    if ImageFlavour.LITE in contents and _describes_configured_image(ImageFlavour.NOTEBOOK, get_version()):
+        contents[ImageFlavour.NOTEBOOK] = {**contents[ImageFlavour.LITE], "flowfile": get_version()}
     return contents
 
 
@@ -165,9 +173,11 @@ def get_flavour_packages() -> dict[ImageFlavour, list[tuple[str, str]]]:
     base = curated(ImageFlavour.BASE, _BASE_PACKAGE_NAMES)
     ml = curated(ImageFlavour.ML, _BASE_PACKAGE_NAMES + _ML_EXTRA_PACKAGE_NAMES)
     lite = curated(ImageFlavour.LITE, _LITE_PACKAGE_NAMES)
+    notebook = curated(ImageFlavour.NOTEBOOK, _NOTEBOOK_PACKAGE_NAMES)
     return {
         ImageFlavour.BASE: base,
         ImageFlavour.ML: ml,
         ImageFlavour.LITE: lite,
+        ImageFlavour.NOTEBOOK: notebook,
         ImageFlavour.CUSTOM: [],
     }

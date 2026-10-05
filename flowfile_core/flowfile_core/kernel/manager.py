@@ -53,7 +53,6 @@ from flowfile_core.kernel.models import (
     RecoveryStatus,
     ResolvedPackage,
 )
-from flowfile_core.kernel.notebook_support import is_notebook_kernel_config
 from flowfile_core.kernel.urls import core_base_url
 from shared.run_completion import _pid_is_alive  # cross-platform; os.kill(pid, 0) kills on Windows
 from shared.storage_config import storage
@@ -247,6 +246,8 @@ _DIGEST_RE = re.compile(r"@sha256:[A-Fa-f0-9]{12,}$")
 # can coexist because GC only touches images carrying this Core's instance id.
 _IMAGE_LABEL_CORE_INSTANCE = "flowfile_core_instance"
 _IMAGE_LABEL_KERNEL_ID = "flowfile_kernel_id"
+# The FROM tag a derived image was baked on, so a moved pin rebuilds it instead of reusing a stale bake.
+_IMAGE_LABEL_BASE_IMAGE = "flowfile_base_image"
 # Which *process* started a container, as opposed to which install built an image.
 _CONTAINER_LABEL_CORE_RUNTIME = "flowfile_core_runtime"
 # That process's pid, so a later core can tell whether the owner is still alive.
@@ -411,7 +412,7 @@ def _notebook_env(kernel: KernelInfo) -> dict[str, str]:
     """A notebook kernel's flowfile never migrates, seeds or GCs anything and holds no catalog database: its engine
     refuses every connection (``flowfile_frame.notebook_kernel``). Its storage folder is the container's own: the
     kernel mounts no host folder, and reads files, catalog tables, flow files and custom node sources through core."""
-    if sharing.sharing_enabled() or not is_notebook_kernel_config(kernel):
+    if sharing.sharing_enabled() or kernel.image_flavour != ImageFlavour.NOTEBOOK:
         return {}
     return {
         "FLOWFILE_SKIP_STARTUP_MIGRATION": "1",
@@ -1334,11 +1335,16 @@ class KernelManager:
 
     def _build_derived_image_locked(self, kernel: KernelInfo, base_image: str, derived_tag: str) -> str:
         try:
-            self._docker.images.get(derived_tag)
-            logger.info("Reusing existing derived image '%s'", derived_tag)
-            return derived_tag
+            existing = self._docker.images.get(derived_tag)
         except docker.errors.ImageNotFound:
-            pass
+            existing = None
+        if existing is not None:
+            # The base pin moved (an app or kernel release): bake again on the new base.
+            if self._container_label(existing, _IMAGE_LABEL_BASE_IMAGE) == base_image:
+                logger.info("Reusing existing derived image '%s'", derived_tag)
+                return derived_tag
+            logger.info("Derived image '%s' was built on another base than '%s'; rebuilding", derived_tag, base_image)
+            self._remove_derived_image(kernel.id)
 
         # Pull the FROM image ourselves: docker build would otherwise reach the registry with a confusing error.
         self._ensure_image(base_image)
@@ -1353,6 +1359,7 @@ class KernelManager:
             f"FROM {base_image}\n"
             f"LABEL {_IMAGE_LABEL_CORE_INSTANCE}={self._core_instance_id}\n"
             f"LABEL {_IMAGE_LABEL_KERNEL_ID}={safe_kernel_id}\n"
+            f"LABEL {_IMAGE_LABEL_BASE_IMAGE}={json.dumps(base_image)}\n"
             f"RUN {json.dumps(pip_args)}\n"
         )
 
@@ -1743,19 +1750,15 @@ class KernelManager:
 
         base_image = _resolve_image(kernel.image_flavour, kernel.custom_image, self._docker)
 
-        # Verify the (base) kernel image exists before doing anything else.
+        # The pin moves with the app (notebook) or a kernel release: a start after an update pulls the new tag.
         try:
-            self._docker.images.get(base_image)
-        except docker.errors.ImageNotFound:
+            self._ensure_image(base_image)
+        except RuntimeError as exc:
             kernel.state = KernelState.ERROR
-            kernel.error_message = (
-                f"Docker image '{base_image}' not found. "
-                f"Pull it with: docker pull {base_image} "
-                "(or pick a different image flavour)."
-            )
+            kernel.error_message = f"Docker image '{base_image}' is not available: {exc}"
             if flow_logger:
                 flow_logger.error(kernel.error_message)
-            raise RuntimeError(kernel.error_message) from None
+            raise RuntimeError(kernel.error_message) from exc
 
         # If the kernel was created with extra packages, use the derived image
         # (built once at create_kernel time). Rebuild on the fly if a previous

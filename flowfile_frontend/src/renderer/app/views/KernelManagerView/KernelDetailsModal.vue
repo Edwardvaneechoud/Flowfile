@@ -34,7 +34,7 @@
               <span
                 v-if="updateInfo?.available"
                 class="km-update-badge"
-                :title="`Latest is ${updateInfo.latest}. Update the image and recreate this kernel to use it.`"
+                :title="`Latest is ${updateInfo.latest}. Restart this kernel to use it: a start downloads the current image and rebuilds the kernel's extra packages on it.`"
               >
                 <i class="fa-solid fa-circle-up"></i> Update available
               </span>
@@ -191,6 +191,7 @@ import {
   type ImageFlavour,
   type KernelInfo,
 } from "../../types";
+import { imageUpdateAvailable } from "../../components/kernel/imageVersion";
 import KernelStatusBadge from "./KernelStatusBadge.vue";
 
 const props = defineProps<{
@@ -219,40 +220,7 @@ const resolvedImage = computed(
   () => props.flavourInfo.get(props.kernel.image_flavour)?.image ?? null,
 );
 
-// Compare this kernel's own image tag against the flavour's latest registry tag
-// so the user can see whether the kernel is running an outdated image. Skips
-// non-version tags (e.g. :local dev builds) and mismatched/custom repos.
-function parseImageVersion(tag: string): number[] | null {
-  const idx = tag.lastIndexOf(":");
-  if (idx === -1) return null;
-  const nums = tag
-    .slice(idx + 1)
-    .split(".")
-    .map(Number);
-  return nums.some((n) => !Number.isInteger(n)) ? null : nums;
-}
-
-function isOlder(a: number[], b: number[]): boolean {
-  const len = Math.max(a.length, b.length);
-  for (let i = 0; i < len; i++) {
-    const av = a[i] ?? 0;
-    const bv = b[i] ?? 0;
-    if (av !== bv) return av < bv;
-  }
-  return false;
-}
-
-const updateInfo = computed<{ available: boolean; latest: string } | null>(() => {
-  const current = props.kernel.image;
-  const latest = resolvedImage.value;
-  if (!current || !latest) return null;
-  const repo = (t: string) => t.slice(0, t.lastIndexOf(":"));
-  if (repo(current) !== repo(latest)) return null;
-  const cv = parseImageVersion(current);
-  const lv = parseImageVersion(latest);
-  if (!cv || !lv) return null;
-  return { available: isOlder(cv, lv), latest };
-});
+const updateInfo = computed(() => imageUpdateAvailable(props.kernel.image, resolvedImage.value));
 
 const preinstalled = computed<FlavourPackage[]>(
   () => props.flavourInfo.get(props.kernel.image_flavour)?.packages ?? [],
@@ -458,6 +426,14 @@ const save = async () => {
 
 .kernel-card__flavour--ml {
   color: var(--color-success);
+}
+
+.kernel-card__flavour--lite {
+  color: var(--color-info);
+}
+
+.kernel-card__flavour--notebook {
+  color: var(--color-primary);
 }
 
 .kernel-card__flavour--custom {

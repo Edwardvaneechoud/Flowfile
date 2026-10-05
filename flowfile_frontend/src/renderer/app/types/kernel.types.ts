@@ -2,7 +2,7 @@
 
 export type KernelState = "creating" | "stopped" | "starting" | "idle" | "executing" | "error";
 
-export type ImageFlavour = "base" | "ml" | "lite" | "custom";
+export type ImageFlavour = "base" | "ml" | "lite" | "notebook" | "custom";
 
 export interface KernelFlavourMeta {
   value: ImageFlavour;
@@ -27,8 +27,15 @@ export const KERNEL_FLAVOURS: KernelFlavourMeta[] = [
     description:
       "Same image as Base, but only Polars and the artifact libraries are pinned — " +
       "numpy, pyarrow, fastapi and other transitives float. Best for installing large libraries " +
-      "(e.g. flowfile) whose own dep trees need room to resolve. " +
+      "whose own dep trees need room to resolve. " +
       "flowfile_ctx is always available, regardless of flavour.",
+  },
+  {
+    value: "notebook",
+    label: "Notebook",
+    description:
+      "Lite plus this app's flowfile: runs the canvas notebook. Published per app version, " +
+      "so an app update means a new image (restart the kernel to pull it).",
   },
   {
     value: "custom",
@@ -134,8 +141,6 @@ export interface KernelMatch {
 // Prefill seed for kernel creation, derived by the backend from a node's deps.
 export interface KernelSuggestion {
   config: KernelConfig;
-  covered_by_flavour: string[];
-  flavour_image_available: boolean | null; // null = Docker down / unknown
 }
 
 export interface KernelMatchResponse {

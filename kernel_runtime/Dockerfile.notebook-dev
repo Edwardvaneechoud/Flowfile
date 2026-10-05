@@ -1,7 +1,0 @@
-# Dev-only notebook kernel: this checkout's flowfile wheel on the local lite image (`make notebook_kernel_dev`).
-# Every dependency installs from a wheel (polars-grouper >= 0.6.1 ships linux/aarch64), so no toolchain stage.
-ARG BASE_IMAGE=flowfile-kernel-lite:local
-FROM ${BASE_IMAGE}
-COPY flowfile-*.whl /tmp/wheels/
-RUN pip install --no-cache-dir --constraint /opt/constraints.txt --find-links /tmp/wheels /tmp/wheels/flowfile-*.whl \
-    && rm -rf /tmp/wheels

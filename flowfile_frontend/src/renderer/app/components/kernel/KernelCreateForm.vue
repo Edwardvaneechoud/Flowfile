@@ -142,7 +142,7 @@
         Press Enter to add each package. Each chip is one full spec — commas inside a spec are fine,
         so ranges like <code>name&gt;=1.0,&lt;2.0</code> work. Pin versions with
         <code>name==1.2.3</code> for reproducibility. Specifiers are validated against the flavour's
-        constraints file — Base and ML lock the full transitive closure; Lite only pins
+        constraints file — Base, ML and Notebook lock the full transitive closure; Lite only pins
         <code>polars</code> and the artifact libraries, so transitives like <code>numpy</code> and
         <code>pyarrow</code> can move to satisfy what you install.
       </p>
@@ -226,18 +226,12 @@ const emit = defineEmits<{
   (e: "success"): void;
 }>();
 
-// Lookup set of baked flavours that are actually present locally. ``custom``
-// never needs a download because the user supplies their own image URI.
-const installedFlavours = computed<Set<ImageFlavour>>(
-  () => new Set(props.imageStatuses.filter((i) => i.available).map((i) => i.flavour)),
-);
-
-const isFlavourAvailable = (flavour: ImageFlavour): boolean =>
-  flavour === "custom" || installedFlavours.value.has(flavour);
-
-// Unknown until docker-status arrives, so nothing reads as a download before then.
+// Unknown until docker-status arrives, so nothing reads as a download before then;
+// ``custom`` never downloads because the user supplies their own image URI.
 const needsDownload = (flavour: ImageFlavour): boolean =>
-  props.imageStatuses.length > 0 && !isFlavourAvailable(flavour);
+  flavour !== "custom" &&
+  props.imageStatuses.length > 0 &&
+  !props.imageStatuses.some((i) => i.flavour === flavour && i.available);
 
 const isSubmitting = ref(false);
 // Why the last Create failed (core's summary), shown until the next attempt.
@@ -290,7 +284,8 @@ const activePackages = computed<FlavourPackage[]>(
 
 const extraPackagesPlaceholder = computed(() => {
   if (form.value.image_flavour === "ml") return "matplotlib==3.8.0";
-  if (form.value.image_flavour === "base") return "scikit-learn==1.7.2";
+  if (form.value.image_flavour === "base" || form.value.image_flavour === "notebook")
+    return "scikit-learn==1.7.2";
   return "opencv-python==4.10.0";
 });
 
