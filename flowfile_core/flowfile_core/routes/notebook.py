@@ -7,7 +7,7 @@ kernel's own call backs, for a canvas node's rows, a run of a node only the sess
 (``notebook.held_run``) and a catalog metadata lookup (``notebook.lookup``).
 """
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from flowfile_core import flow_file_handler
@@ -52,6 +52,22 @@ def render_notebook(flow_id: int = Query(...), current_user=Depends(get_current_
     except Exception as exc:
         logger.warning("Notebook render of flow %s failed: %s", flow_id, exc)
         raise HTTPException(status_code=422, detail=f"The flow could not be rendered as code: {exc}") from exc
+
+
+@router.post("/exported/py", status_code=204, response_class=Response)
+def confirm_notebook_py_export(current_user=Depends(get_current_active_user)) -> Response:
+    """Confirms the user exported the notebook as a ``.py`` script.
+
+    The export itself is a client-side download, so the deliberate action needs a signal of its own;
+    the telemetry middleware reads this route (``telemetry.ROUTE_EVENTS``), the handler stays a no-op.
+    """
+    return Response(status_code=204)
+
+
+@router.post("/exported/ipynb", status_code=204, response_class=Response)
+def confirm_notebook_ipynb_export(current_user=Depends(get_current_active_user)) -> Response:
+    """Confirms the user exported the notebook as an ``.ipynb``; see ``/exported/py``."""
+    return Response(status_code=204)
 
 
 @router.post("/plan", response_model=NotebookPlanResponse)

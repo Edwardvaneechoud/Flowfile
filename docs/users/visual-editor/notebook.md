@@ -141,6 +141,10 @@ With **No kernel** picked the notebook starts no Python process and needs no [ke
 
 Viewing and editing the cells, and running them while the notebook matches the canvas, work for every user, for their own flows, in the desktop app, with `pip install flowfile` and in a Docker deployment. Syncing works for every user in the default `electron` mode: the desktop app, and `pip install flowfile` unless you set `FLOWFILE_MODE`. With any other `FLOWFILE_MODE` (`docker` in a Docker deployment, or `package`) syncing needs an admin account, because the catalog lookups a cell can reach do not check each user's access. Other users keep editable cells; **Run** and **Run all** when the notebook no longer matches the canvas, and **Push**, leave the edits in the notebook, and a banner says that syncing needs an admin. The notebook has no settings of its own.
 
+## Exporting the notebook
+
+The **⋯** menu in the toolbar saves the cells as a file, so the code can leave Flowfile. **Export as Python script…** writes a `.py` file in which every cell opens with a `# %%` marker (`# %% [markdown]` for a Markdown cell, whose text becomes comments): VS Code, Spyder and Jupytext read the markers as cell boundaries, and a plain `python` runs the file top to bottom, since the imports cell comes first. **Export as Jupyter notebook…** writes an `.ipynb` that Jupyter, VS Code and Colab open, carrying the last output of every cell that ran in the panel. **Copy as Python script** puts the same script on the clipboard. The desktop app asks where to save; the browser downloads the file. The file is named after the flow, and nothing is sent anywhere: the export is built from the cells as they are in the panel, edits included.
+
 ## What is not saved with the flow
 
 The notebook is a view of the flow. Edits are kept in this browser window until a sync writes them to the canvas; reloading the page drops them. Saving the flow saves the canvas, not the notebook. A cell you add that places no node, such as `threshold = 8`, is not part of the flow: after a sync it stays in the panel only until the canvas next changes.
