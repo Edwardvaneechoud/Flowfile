@@ -3209,3 +3209,115 @@ class TestFlowInterfaceEndpoint:
         body = response.json()
         assert body["file_exists"] is False
         assert body["inputs"] == [] and body["outputs"] == []
+
+
+# Flow code tests
+
+
+class TestFlowCode:
+    """``GET /catalog/flows/{id}/code``: a registered flow's export, read from its file, never opened."""
+
+    @staticmethod
+    def _make_namespace() -> int:
+        cat = client.post("/catalog/namespaces", json={"name": "CodeCat"}).json()
+        return client.post("/catalog/namespaces", json={"name": "CodeSchema", "parent_id": cat["id"]}).json()["id"]
+
+    @staticmethod
+    def _save_flow(flow_path: Path) -> int:
+        """Write a manual-input flow to ``flow_path`` through the editor and close it; returns its flow id."""
+        from flowfile_core.schemas import input_schema
+
+        flow_id = flow_file_handler.add_flow(name="code_src", flow_path=str(flow_path), user_id=1)
+        flow = flow_file_handler.get_flow(flow_id)
+        flow.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=flow_id,
+                node_id=1,
+                raw_data_format=input_schema.RawData.from_pylist([{"a": 1, "b": "x"}, {"a": 2, "b": "y"}]),
+            )
+        )
+        flow.save_flow(str(flow_path))
+        flow_file_handler.delete_flow(flow_id)
+        return flow_id
+
+    def _register(self, flow_path: Path) -> int:
+        ns_id = self._make_namespace()
+        created = client.post(
+            "/catalog/flows", json={"name": "code_src", "flow_path": str(flow_path), "namespace_id": ns_id}
+        )
+        assert created.status_code == 201, created.text
+        return created.json()["id"]
+
+    def test_flowframe_code_by_default(self, tmp_path):
+        flow_path = tmp_path / "code_src.yaml"
+        self._save_flow(flow_path)
+        reg_id = self._register(flow_path)
+
+        resp = client.get(f"/catalog/flows/{reg_id}/code")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["dialect"] == "flowframe"
+        assert body["file_exists"] is True and body["error"] is None
+        assert "import flowfile as ff" in body["code"]
+        assert "from_raw_data" in body["code"]
+
+    def test_polars_dialect(self, tmp_path):
+        flow_path = tmp_path / "code_src.yaml"
+        self._save_flow(flow_path)
+        reg_id = self._register(flow_path)
+
+        body = client.get(f"/catalog/flows/{reg_id}/code", params={"dialect": "polars"}).json()
+        assert body["dialect"] == "polars"
+        assert "import polars as pl" in body["code"]
+
+    def test_unknown_dialect_is_rejected(self, tmp_path):
+        flow_path = tmp_path / "code_src.yaml"
+        self._save_flow(flow_path)
+        reg_id = self._register(flow_path)
+        assert client.get(f"/catalog/flows/{reg_id}/code", params={"dialect": "rust"}).status_code == 422
+
+    def test_missing_file_is_a_soft_result(self, tmp_path):
+        reg_id = self._register(tmp_path / "gone.yaml")
+        body = client.get(f"/catalog/flows/{reg_id}/code").json()
+        assert body == {
+            "registration_id": reg_id,
+            "dialect": "flowframe",
+            "code": None,
+            "file_exists": False,
+            "error": None,
+        }
+
+    def test_unknown_registration_is_404(self):
+        assert client.get("/catalog/flows/987654321/code").status_code == 404
+
+    def test_leaves_the_open_editor_flow_and_its_logger_alone(self, tmp_path):
+        """The file carries the editor's flow id; the read must not share or tear down that flow's logger."""
+        from flowfile_core.configs.flow_logger import FlowLogger, get_flow_log_file
+        from flowfile_core.flowfile.manage import ephemeral_graph
+
+        flow_path = tmp_path / "code_src.yaml"
+        self._save_flow(flow_path)
+        reg_id = self._register(flow_path)
+        open_id = flow_file_handler.import_flow(flow_path, user_id=1)
+        try:
+            assert FlowLogger.get_instance(open_id) is not None
+            seen: list[int] = []
+            original = ephemeral_graph.free_flow_id
+
+            def spy() -> int:
+                seen.append(original())
+                return seen[-1]
+
+            ephemeral_graph.free_flow_id = spy
+            try:
+                body = client.get(f"/catalog/flows/{reg_id}/code").json()
+            finally:
+                ephemeral_graph.free_flow_id = original
+            assert "import flowfile as ff" in body["code"]
+            assert seen and seen[0] != open_id
+            assert flow_file_handler.get_flow(open_id) is not None
+            assert FlowLogger.get_instance(open_id) is not None
+            assert FlowLogger.get_instance(seen[0]) is None
+            assert not get_flow_log_file(seen[0]).exists()
+        finally:
+            flow_file_handler.delete_flow(open_id)

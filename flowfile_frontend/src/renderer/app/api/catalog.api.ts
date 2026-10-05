@@ -25,6 +25,8 @@ import type {
   DashboardCreatePayload,
   DashboardUpdatePayload,
   DeltaTableHistory,
+  FlowCode,
+  FlowCodeDialect,
   FlowRegistration,
   FlowRegistrationCreate,
   FlowRegistrationUpdate,
@@ -134,6 +136,14 @@ export class CatalogApi {
 
   static async runFlow(flowId: number): Promise<FlowRun> {
     const response = await axios.post<FlowRun>(`/catalog/flows/${flowId}/run`);
+    return response.data;
+  }
+
+  /** The registered flow's generated Python, read from its file without opening it. */
+  static async getFlowCode(registrationId: number, dialect: FlowCodeDialect): Promise<FlowCode> {
+    const response = await axios.get<FlowCode>(`/catalog/flows/${registrationId}/code`, {
+      params: { dialect },
+    });
     return response.data;
   }
 

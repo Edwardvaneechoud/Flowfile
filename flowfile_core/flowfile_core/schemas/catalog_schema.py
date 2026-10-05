@@ -126,6 +126,23 @@ class FlowInterfaceOut(BaseModel):
     file_exists: bool = True
 
 
+FlowCodeDialect = Literal["flowframe", "polars"]
+
+
+class FlowCodeOut(BaseModel):
+    """A registered flow as generated Python, read from its file without opening it in the editor.
+
+    ``code`` is ``None`` with ``file_exists=False`` when the file is gone, or with ``error`` set when the
+    exporter cannot express the flow, so the catalog page shows a message instead of failing the request.
+    """
+
+    registration_id: int
+    dialect: FlowCodeDialect
+    code: str | None = None
+    file_exists: bool = True
+    error: str | None = None
+
+
 class CatalogTableSummary(BaseModel):
     """Lightweight reference to a catalog table (used in flow detail views)."""
 

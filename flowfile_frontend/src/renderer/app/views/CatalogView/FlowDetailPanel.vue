@@ -53,6 +53,16 @@
           Open in Designer
         </button>
         <button
+          v-if="flow.file_exists"
+          class="btn btn-secondary btn-sm"
+          title="Open in the designer with the notebook, where edits sync back to the canvas"
+          data-testid="flow-modify-in-notebook"
+          @click="$emit('modifyInNotebook')"
+        >
+          <i class="fa-solid fa-book"></i>
+          Modify in notebook
+        </button>
+        <button
           class="action-btn-lg"
           :class="{ active: flow.is_favorite }"
           @click="$emit('toggleFavorite', flow.id)"
@@ -134,6 +144,13 @@
         <span class="meta-value mono">{{ flow.flow_path }}</span>
       </div>
     </div>
+
+    <!-- Python code -->
+    <FlowCodeSection
+      :registration-id="flow.id"
+      :file-exists="flow.file_exists"
+      @modify-in-notebook="$emit('modifyInNotebook')"
+    />
 
     <!-- Run History -->
     <div ref="runHistorySection" class="section">
@@ -324,6 +341,7 @@ import { CatalogApi } from "../../api/catalog.api";
 import type { FlowRegistration, FlowSchedule, GlobalArtifact } from "../../types";
 import { formatDate, formatSize, formatType } from "./catalog-formatters";
 import RunHistoryTable from "./RunHistoryTable.vue";
+import FlowCodeSection from "./FlowCodeSection.vue";
 import { CollapsibleSection, EmptyState } from "../../components/common";
 import ScheduleTable from "./components/ScheduleTable.vue";
 import ApiEndpointPanel from "./ApiEndpointPanel.vue";
@@ -348,6 +366,7 @@ const emit = defineEmits([
   "viewScheduleRuns",
   "toggleFavorite",
   "openFlow",
+  "modifyInNotebook",
   "selectTable",
   "deleteFlow",
   "renameFlow",

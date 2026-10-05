@@ -124,6 +124,17 @@ export interface FlowRegistration {
   access?: AccessInfo | null;
 }
 
+export type FlowCodeDialect = "flowframe" | "polars";
+
+/** A registered flow as generated Python; `code` is null when the file is gone or `error` says why. */
+export interface FlowCode {
+  registration_id: number;
+  dialect: FlowCodeDialect;
+  code: string | null;
+  file_exists: boolean;
+  error: string | null;
+}
+
 export interface FlowRegistrationCreate {
   name: string;
   description?: string | null;

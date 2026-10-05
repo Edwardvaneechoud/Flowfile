@@ -134,7 +134,8 @@ Click a registered flow to see its detail panel:
 
 - **Name** (editable inline) and description
 - **Metrics**: total runs, success rate, last run time, artifact count
-- **Actions**: Open in Designer, Run Flow, Cancel Run, Favorite, Delete
+- **Actions**: Open in Designer, Modify in notebook, Run Flow, Cancel Run, Favorite, Delete
+- **Python code**: the flow as the designer's Code panel would export it, read from the flow file without opening it. Switch between the FlowFrame and Polars dialects, **Copy** the code, or click **Modify in notebook** to open the flow in the designer with the [canvas notebook](../notebook.md) already showing, where edits sync back to the canvas. A flow the exporter cannot express says why instead of showing code.
 - **Recent Runs** table with status, duration, and trigger type
 - **Schedules** section — manage schedules for this flow (see [Schedules](schedules.md))
 - **Produced Artifacts** list

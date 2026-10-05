@@ -61,6 +61,7 @@ from flowfile_core.catalog import (
 )
 from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.validators import validate_cron_expression, validate_cron_timezone
+from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import RunType, SchedulerLock
 from flowfile_core.fileExplorer import validate_path_under_cwd
@@ -92,6 +93,8 @@ from flowfile_core.schemas.catalog_schema import (
     DashboardUpdate,
     DeltaTableHistory,
     FavoriteOut,
+    FlowCodeDialect,
+    FlowCodeOut,
     FlowInterfaceOut,
     FlowInterfacePort,
     FlowRegistrationCreate,
@@ -449,6 +452,36 @@ def get_flow_interface(
         parameters=interface.parameters,
         file_exists=registration.file_exists,
     )
+
+
+@router.get("/flows/{flow_id}/code", response_model=FlowCodeOut)
+@handle_catalog_exceptions()
+def get_flow_code(
+    flow_id: int,
+    dialect: FlowCodeDialect = Query("flowframe"),
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """The registered flow as generated Python (the designer's Code pane export), read from its file.
+
+    The graph is built for this call only (``ephemeral_flow_graph``: a fresh id, released afterwards) and
+    never enters the editor sessions. A missing file or an exporter failure is a soft result, like
+    ``/interface``, so the catalog page can say why instead of toasting.
+    """
+    from flowfile_core.flowfile.code_generator import export_flow_to_flowframe, export_flow_to_polars
+    from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
+
+    registration = service.get_flow(registration_id=flow_id, user_id=current_user.id)
+    if not registration.file_exists:
+        return FlowCodeOut(registration_id=flow_id, dialect=dialect, file_exists=False)
+    export = export_flow_to_polars if dialect == "polars" else export_flow_to_flowframe
+    try:
+        with ephemeral_flow_graph(Path(registration.flow_path), current_user.id) as graph:
+            code = export(graph)
+    except Exception as exc:  # noqa: BLE001 - the page reports the reason, whatever it is
+        logger.warning("Code of registered flow %s could not be generated: %s", flow_id, exc)
+        return FlowCodeOut(registration_id=flow_id, dialect=dialect, error=str(exc))
+    return FlowCodeOut(registration_id=flow_id, dialect=dialect, code=code)
 
 
 @router.put("/flows/{flow_id}", response_model=FlowRegistrationOut)
