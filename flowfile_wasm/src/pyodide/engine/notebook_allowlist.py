@@ -34,6 +34,24 @@ FL_VERDICTS: dict[str, tuple[str, str]] = {
 }
 """Every name of ``import flowfile as ff`` a cell may use: ``(ALLOW, usage)``."""
 
+_FRAME_CONSTRUCTORS = ("LazyFrame", "DataFrame")
+
+INPUT_ONLY: dict[str, dict[str, str]] = {
+    "ff": {name: CALL for name in _FRAME_CONSTRUCTORS},
+}
+"""Receiver kind -> attribute -> usage a cell may call although the render never writes it:
+``ff.LazyFrame`` / ``ff.DataFrame`` (a Manual Input node, rendered back as ``ff.from_raw_data``).
+Only a sync reads it; the render's check (``interprets_expression``) never does."""
+
+DATA_ARGUMENTS: dict[tuple[str, str], frozenset[str]] = {
+    ("ff", name): frozenset(
+        {"data", "schema", "schema_overrides", "strict", "orient", "infer_schema_length", "nan_to_null"}
+    )
+    for name in _FRAME_CONSTRUCTORS
+}
+"""Calls that take only these keywords, Polars' frame constructor arguments, only literal data and dtypes in
+any argument (no frame or expression), and ``data`` that is not a string."""
+
 _WINDOW = ("rolling_sum", "rolling_mean", "rolling_min", "rolling_max", "rolling_std")
 _CUMULATIVE = ("cum_sum", "cum_count", "cum_min", "cum_max")
 _FORMULA_EXPR = (

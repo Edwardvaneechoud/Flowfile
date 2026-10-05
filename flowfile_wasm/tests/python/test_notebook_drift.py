@@ -39,6 +39,15 @@ def test_every_attribute_has_flowfile_cores_usage():
             assert core.ALLOWLIST.get(kind, {}).get(attribute) == usage, f"{kind}.{attribute}"
 
 
+def test_what_only_a_sync_reads_is_what_flowfile_core_reads():
+    core = _core_allowlist()
+    for kind, attributes in browser.INPUT_ONLY.items():
+        for attribute, usage in attributes.items():
+            assert core.INPUT_ONLY.get(kind, {}).get(attribute) == usage, f"{kind}.{attribute}"
+    for key, keywords in browser.DATA_ARGUMENTS.items():
+        assert core.DATA_ARGUMENTS.get(key) == keywords, key
+
+
 def test_the_expression_tables_are_flowfile_cores_own():
     core = _core_allowlist()
     for kind in ("Expr", "StringNS", "DateTimeNS"):

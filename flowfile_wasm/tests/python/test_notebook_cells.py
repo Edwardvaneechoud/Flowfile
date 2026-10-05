@@ -46,8 +46,8 @@ UNCHANGED = {"ok": True, "nodes": {}, "added": [], "inputs": {}, "warnings": []}
 
 
 def changes(result: dict) -> dict:
-    """A sync's answer without the list of which cell holds which nodes."""
-    return {key: value for key, value in result.items() if key != "node_ids_by_cell"}
+    """A sync's answer without what it says about the cells: which nodes each holds, which lines have no name."""
+    return {key: value for key, value in result.items() if key not in ("node_ids_by_cell", "unnamed_by_cell")}
 
 
 def node(node_id: int, node_type: str, inputs: list[int], settings: dict, **extra) -> dict:
@@ -190,7 +190,7 @@ def test_cells_the_render_wrote_change_nothing_however_they_are_laid_out(name):
 def test_a_draft_equal_to_the_render_is_not_read_at_all():
     flow = chain(FILTER, SORT)
     cells = cells_of(flow)
-    assert sync(flow, dict(cells)) == {**UNCHANGED, "node_ids_by_cell": {}}
+    assert sync(flow, dict(cells)) == {**UNCHANGED, "node_ids_by_cell": {}, "unnamed_by_cell": {}}
 
 
 # A changed call becomes the settings it describes
@@ -625,11 +625,11 @@ def test_a_new_cell_is_read_where_it_stands_and_its_nodes_are_reported():
         None,
         None,
         ["imports", "cell-1", "cell-2", "new-1"],
-        {"new-1": 'top = ordered_2.head(3)\ntop.select(["product"])'},
+        {"new-1": 'top = ordered_2.head(3)\npicked = top.select(["product"])'},
     )
     assert [(new["id"], new["type"], new["node_reference"]) for new in result["added"]] == [
         (3, "sample", "top"),
-        (4, "select", None),
+        (4, "select", "picked"),
     ]
     assert result["node_ids_by_cell"] == {"new-1": [[3], [4]]}
     assert {node_id: ports["main"] for node_id, ports in result["inputs"].items()} == {"3": [2], "4": [3]}
@@ -698,6 +698,204 @@ def test_a_layout_naming_nodes_that_are_gone_or_locked_is_harmless():
         ("cell-2", "code"),
         ("cell-3", "placeholder"),
     ]
+
+
+# A line that gives its frame no name is not a step
+
+
+def new_cell(flow: dict, text: str, next_id: int | None = None) -> dict:
+    """A sync with one new cell at the end of the notebook."""
+    order = [*cells_of(flow), "new-1"]
+    return sync_notebook(copy.deepcopy(flow), schemas_of(flow), {}, {}, next_id, None, order, {"new-1": text})
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'ordered_2.select(["product"])',
+        "ordered_2.head(3)",
+        'ordered_2.head(3).select(["product"])',
+        "ff.from_raw_data({'columns': [{'name': 'n', 'data_type': 'Int64'}], 'data': [[1, 2]]})",
+        'ff.DataFrame({"n": [1, 2]})',
+    ],
+)
+def test_a_line_with_no_name_adds_nothing_however_often_it_is_read(text):
+    flow = named(SORT)
+    for _ in range(2):
+        result = new_cell(flow, text)
+        assert changes(result) == UNCHANGED
+        assert result["node_ids_by_cell"] == {"new-1": []}
+        assert result["unnamed_by_cell"] == {"new-1": [text]}
+
+
+def test_only_the_lines_with_a_name_become_steps():
+    flow = named(SORT)
+    result = new_cell(flow, 'top = ordered_2.head(3)\ntop.select(["product"])\ntop')
+    assert [(new["id"], new["type"], new["node_reference"]) for new in result["added"]] == [(3, "sample", "top")]
+    assert result["inputs"] == {"3": {"main": [2], "right": None, "left": None}}
+    assert result["node_ids_by_cell"] == {"new-1": [[3]]}
+    # The line that is only a name made nothing, so there is nothing of it to keep.
+    assert result["unnamed_by_cell"] == {"new-1": ['top.select(["product"])']}
+
+
+def test_a_step_stays_when_a_name_holds_a_frame_built_on_it():
+    flow = named(SORT)
+    result = new_cell(flow, 'top = ordered_2.head(3).select(["product"])')
+    assert [(new["type"], new["node_reference"]) for new in result["added"]] == [("sample", None), ("select", "top")]
+    assert result["unnamed_by_cell"] == {}
+
+
+def test_a_writer_stays_without_a_name_and_keeps_what_it_reads():
+    flow = named(SORT)
+    result = new_cell(flow, 'ordered_2.head(2).write_csv("top.csv")')
+    assert [new["type"] for new in result["added"]] == ["sample", "output"]
+    assert result["node_ids_by_cell"] == {"new-1": [[3, 4]]}
+    assert result["unnamed_by_cell"] == {}
+
+
+def test_a_name_given_to_another_frame_no_longer_keeps_the_first():
+    flow = named(SORT)
+    result = new_cell(flow, "top = ordered_2.head(3)\ntop = ordered_2.head(4)")
+    assert result["ok"], result
+    assert [(new["id"], new["settings"], new["node_reference"]) for new in result["added"]] == [
+        (3, {"sample_size": 4}, "top")
+    ]
+    assert result["node_ids_by_cell"] == {"new-1": [[3]]}
+
+
+def test_what_is_left_out_takes_no_id():
+    """The steps that stay are numbered from the next free id on, whatever was looked at between them."""
+    flow = named(SORT)
+    text = 'ordered_2.head(1)\ntop = ordered_2.head(3)\ntop.select(["product"])\nfew = top.select(["product"])'
+    result = new_cell(flow, text, 10)
+    assert [(new["id"], new["type"], new["node_reference"]) for new in result["added"]] == [
+        (10, "sample", "top"),
+        (11, "select", "few"),
+    ]
+    assert result["inputs"] == {
+        "10": {"main": [2], "right": None, "left": None},
+        "11": {"main": [10], "right": None, "left": None},
+    }
+    assert result["node_ids_by_cell"] == {"new-1": [[10], [11]]}
+    assert result["unnamed_by_cell"] == {"new-1": ["ordered_2.head(1)", 'top.select(["product"])']}
+
+
+def test_a_step_the_flow_has_stays_when_its_line_loses_its_name():
+    flow = named(SORT)
+    code = cells_of(flow)["cell-2"]
+    assert code.startswith("ordered_2 = ")
+    result = sync(flow, {"cell-2": code.removeprefix("ordered_2 = ")})
+    assert changes(result) == UNCHANGED
+    assert result["node_ids_by_cell"] == {"cell-2": [[2]]}
+    assert result["unnamed_by_cell"] == {}
+
+
+# A frame written as data is a Manual Input
+
+FRAMES = [
+    (
+        "rows as dicts",
+        'df = ff.DataFrame([{"a": 1, "b": "x"}, {"a": 2, "b": "y"}])',
+        [("a", "Int64"), ("b", "String")],
+        [[1, 2], ["x", "y"]],
+    ),
+    (
+        "columns, lazily",
+        'df = ff.LazyFrame({"price": [1.5, None], "ok": [True, False], "none": [None, None]})',
+        [("price", "Float64"), ("ok", "Boolean"), ("none", "Null")],
+        [[1.5, None], [True, False], [None, None]],
+    ),
+    (
+        "rows as lists with names",
+        'df = ff.DataFrame([[1, "x"], [2, "y"]], schema=["n", "s"], orient="row")',
+        [("n", "Int64"), ("s", "String")],
+        [[1, 2], ["x", "y"]],
+    ),
+    (
+        "a schema of ff types",
+        'df = ff.DataFrame({"a": [1, 2]}, schema={"a": ff.Float64})',
+        [("a", "Float64")],
+        [[1.0, 2.0]],
+    ),
+    (
+        "one type overridden",
+        'df = ff.DataFrame([{"a": 1, "b": "x"}], schema_overrides={"a": ff.Int32})',
+        [("a", "Int32"), ("b", "String")],
+        [[1], ["x"]],
+    ),
+    ("no data", "df = ff.DataFrame()", [], []),
+]
+
+
+@pytest.mark.parametrize(("label", "text", "columns", "data"), FRAMES, ids=[each[0] for each in FRAMES])
+def test_a_frame_written_as_data_is_a_manual_input(label, text, columns, data):
+    flow = named(SORT)
+    result = new_cell(flow, text)
+    assert result["ok"], result
+    (new,) = result["added"]
+    assert (new["id"], new["type"], new["node_reference"]) == (3, "manual_input", "df")
+    assert new["settings"] == {
+        "raw_data_format": {"columns": [{"name": name, "data_type": dtype} for name, dtype in columns], "data": data}
+    }
+    assert result["inputs"] == {}
+    # It comes back as the render writes a Manual Input, and reading that changes nothing.
+    after = applied(flow, result)
+    code = laid_out(after, [[[3]]])["cell-3"]["code"]
+    assert code.startswith("df = ff.from_raw_data(")
+    assert changes(sync(after, {"cell-3": code + "\n"})) == UNCHANGED
+
+
+def test_a_frame_written_as_data_can_be_read_by_the_next_line():
+    flow = named(SORT)
+    result = new_cell(flow, 'df = ff.DataFrame({"a": [1, 2], "b": ["x", "y"]})\nfew = df.select(["b"])')
+    assert [(new["type"], new["node_reference"]) for new in result["added"]] == [("manual_input", "df"), ("select", "few")]
+    assert [(row["old_name"], row["keep"]) for row in result["added"][1]["settings"]["select_input"]] == [
+        ("b", True),
+        ("a", False),
+    ]
+
+
+def test_a_manual_input_takes_the_data_a_frame_is_written_with():
+    flow = named(SORT)
+    code = cells_of(flow)["cell-1"]
+    result = sync(flow, {"cell-1": 'sales = ff.DataFrame({"product": ["Nut"], "revenue": [7]})'})
+    assert code.startswith("sales = ff.from_raw_data(")
+    assert result["added"] == []
+    assert result["nodes"] == {
+        "1": {
+            "settings": {
+                "raw_data_format": {
+                    "columns": [{"name": "product", "data_type": "String"}, {"name": "revenue", "data_type": "Int64"}],
+                    "data": [["Nut"], [7]],
+                }
+            }
+        }
+    }
+
+
+FRAME_REFUSALS = [
+    ("text as data", 'ff.DataFrame("abc")', "needs_kernel", "with a string as data"),
+    ("an argument Polars' constructor does not have", 'ff.DataFrame({"a": [1]}, description="x")', "needs_kernel", "`description=`"),
+    ("a wrapping argument", 'ff.DataFrame({"a": [1]}, flow_graph=1)', "needs_kernel", "`flow_graph=`"),
+    ("a frame as data", 'ff.DataFrame({"a": [ordered_2]})', "refused", "the data written out here"),
+    ("an expression as data", 'ff.DataFrame({"a": [ff.col("x")]})', "refused", "the data written out here"),
+    ("a date column", 'ff.DataFrame({"d": [datetime.date(2024, 1, 2)]})', "refused", "A Date column (`d`)"),
+    ("a column of lists", 'ff.DataFrame({"a": [[1, 2], [3]]})', "refused", "A List column (`a`)"),
+    ("a type with arguments", 'ff.DataFrame({"a": [1]}, schema={"a": ff.Datetime("ms")})', "refused", "A Datetime column"),
+    ("a schema that is not one", 'ff.DataFrame({"a": [1]}, schema=3)', "error", "column names and `ff` data types"),
+    ("columns of different lengths", 'ff.DataFrame({"a": [1, 2], "b": [1]})', "error", "Could not convert data to a polars DataFrame"),
+    ("a number the canvas cannot hold", 'ff.DataFrame({"a": [9007199254740993]})', "refused", "this large"),
+    ("three values by position", 'ff.DataFrame({"a": [1]}, ["a"], {"a": ff.Int64})', "error", "by position"),
+]
+
+
+@pytest.mark.parametrize(("label", "call", "kind", "says"), FRAME_REFUSALS, ids=[each[0] for each in FRAME_REFUSALS])
+def test_a_frame_the_browser_cannot_hold_as_data_fails_on_its_line(label, call, kind, says):
+    flow = named(SORT)
+    result = new_cell(flow, f"ordered_2\ndf = {call}")
+    assert (result["ok"], result["cell_id"], result["line"]) == (False, "new-1", 2), result
+    assert result["kind"] == kind, result["message"]
+    assert says in result["message"], result["message"]
 
 
 # An existing select
@@ -897,6 +1095,9 @@ HOSTILE = [
     "ordered_3 = (lambda: open('{canary}', 'w'))()",
     "ordered_3 = sales.filter(ff.col('revenue') > 60).__class__",
     "ordered_3 = sales.filter(ff.col('revenue') > 60).sort(**{{'by': open('{canary}', 'w')}})",
+    "ordered_3 = ff.DataFrame([open('{canary}', 'w')])",
+    "ordered_3 = ff.DataFrame({{'a': [1]}}, schema=__import__('os').system('touch {canary}'))",
+    "ordered_3 = ff.LazyFrame(data=eval(\"open('{canary}', 'w')\"))",
 ]
 
 

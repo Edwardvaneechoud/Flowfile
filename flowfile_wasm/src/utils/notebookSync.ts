@@ -35,6 +35,8 @@ export interface NotebookSyncResult {
   inputs: Record<string, NotebookSyncPorts>
   /** The nodes each cell that was read holds now, line by line. */
   node_ids_by_cell?: Record<string, number[][]>
+  /** Per cell, the text of each line that gave its frame no name and so added no step. */
+  unnamed_by_cell?: Record<string, string[]>
   warnings: string[]
 }
 

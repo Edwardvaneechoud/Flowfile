@@ -217,11 +217,14 @@ class CellReader:
         args, kwargs = self.arguments(node)
         return self.call(receiver, attribute, args, kwargs, node)
 
-    def usage(self, receiver: Any, attribute: str, node: ast.Attribute) -> str:
+    def usage(self, receiver: Any, attribute: str, node: ast.Attribute, input_only: bool = False) -> str:
+        """How ``attribute`` may be used on ``receiver``; with ``input_only`` also what only a sync reads."""
         line = getattr(node, "end_lineno", None) or node.lineno
         if attribute.startswith("_"):
             raise needs_kernel(f"The attribute `{attribute}`", line)
         kind = kind_of(receiver)
+        if input_only and attribute in allowlist.INPUT_ONLY.get(kind or "", {}):
+            return allowlist.INPUT_ONLY[kind][attribute]
         if kind == "ff":
             verdict = allowlist.FL_VERDICTS.get(attribute)
             if verdict is None or verdict[0] != allowlist.ALLOW:

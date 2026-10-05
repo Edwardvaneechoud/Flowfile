@@ -155,17 +155,22 @@
             <svg class="nb-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16.5v.5" /></svg>
             <span>
               {{ syncErrorText(notebook.syncError) }}
-              <a
-                v-if="notebook.syncError.kind === 'needs_kernel'"
-                class="nb-link"
-                data-full-app
-                :href="FULL_APP_NOTEBOOK_URL"
-                target="_blank"
-                rel="noopener"
-              >
-                The full Flowfile app runs any Python cell
-                <svg class="nb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 16 16 8M9 8h7v7" /></svg>
-              </a>
+              <span v-if="notebook.syncError.kind === 'needs_kernel'" class="nb-links">
+                <a class="nb-link" data-full-app="kernel" :href="FULL_APP_KERNEL_URL" target="_blank" rel="noopener">
+                  The full version runs any Python cell on a kernel
+                  <svg class="nb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 16 16 8M9 8h7v7" /></svg>
+                </a>
+                <a class="nb-link" data-full-app="download" :href="FULL_APP_INSTALL_URL" target="_blank" rel="noopener">
+                  <svg class="nb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>
+                  Download the full version
+                </a>
+              </span>
+            </span>
+          </p>
+          <p v-else-if="notebook.cellSyncState(cell.cell_id) === 'plain'" class="cell-note" data-note="plain">
+            <svg class="nb-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7.5v.5" /></svg>
+            <span>
+              No frame here is given a name, so nothing is added to the flow. Write <code>name = …</code> to add a step.
             </span>
           </p>
           <CellOutput v-if="notebook.outputs[cell.cell_id]" :output="notebook.outputs[cell.cell_id]" />
@@ -187,14 +192,28 @@
       </button>
       <footer v-if="hasCells" class="nb-footnote">
         <svg class="nb-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 7.5v.5" /></svg>
-        <span>
-          Cells here describe the flow and are never run as Python. In the full Flowfile app a notebook can also
-          run on a kernel, where any Python cell works.
-          <a class="nb-link" data-full-app :href="FULL_APP_NOTEBOOK_URL" target="_blank" rel="noopener">
-            See the full notebook
-            <svg class="nb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 16 16 8M9 8h7v7" /></svg>
-          </a>
-        </span>
+        <div>
+          <p>
+            Cells here describe the flow and are never run as Python. In the full version of Flowfile a notebook can
+            also run on a kernel, where any Python cell works: loops, <code>print</code>, other imports.
+          </p>
+          <p class="nb-links">
+            <a class="nb-link" data-full-app="kernel" :href="FULL_APP_KERNEL_URL" target="_blank" rel="noopener">
+              Notebook kernels in the full version
+              <svg class="nb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 16 16 8M9 8h7v7" /></svg>
+            </a>
+            <a
+              class="nb-link nb-link--button"
+              data-full-app="download"
+              :href="FULL_APP_INSTALL_URL"
+              target="_blank"
+              rel="noopener"
+            >
+              <svg class="nb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>
+              Download the full version
+            </a>
+          </p>
+        </div>
       </footer>
     </template>
   </div>
@@ -237,10 +256,14 @@ const SYNC_LABELS: Record<CellSyncState, string> = {
   new: 'New',
   edited: 'Edited',
   synced: 'Synced',
-  failed: 'Sync failed'
+  failed: 'Sync failed',
+  plain: 'Not a step'
 }
-/** Where the full app's notebook is described: what the browser build points to for cells it cannot run. */
-const FULL_APP_NOTEBOOK_URL = 'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/notebook.html'
+/** Where the full app's kernel notebook is described: what the browser build points to for cells it cannot run. */
+const FULL_APP_KERNEL_URL =
+  'https://edwardvaneechoud.github.io/Flowfile/users/visual-editor/notebook.html#running-on-a-kernel'
+/** Where the full app is installed from, the link the rest of this build uses. */
+const FULL_APP_INSTALL_URL = 'https://flowfile.io/install/'
 
 const baseExtensions: Extension[] = [python(), notebookEditorLook, EditorView.lineWrapping, syncErrorLineField]
 const cellExtensions = new Map<string, Extension[]>()
@@ -282,6 +305,7 @@ function cellClasses(cell: NotebookCell): Record<string, boolean> {
     'cell--selected': isSelected(cell),
     'cell--editable': notebook.isEditable(cell),
     'cell--new': state === 'new',
+    'cell--plain': state === 'plain',
     'cell--edited': state === 'edited',
     'cell--failed': state === 'failed'
   }
@@ -785,6 +809,10 @@ async function copyCell(cell: NotebookCell) {
   border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
 }
 
+.cell--plain {
+  border-style: dashed;
+}
+
 /* Adding a cell: a plus between every two cells, always there and plain to see under the pointer,
    and a button at the end (so the last cell needs none). */
 .cell-add {
@@ -1029,6 +1057,7 @@ async function copyCell(cell: NotebookCell) {
 .cell:hover .cell-actions,
 .cell:focus-within .cell-actions,
 .cell--new .cell-actions,
+.cell--plain .cell-actions,
 .cell--edited .cell-actions,
 .cell--failed .cell-actions {
   opacity: 1;
@@ -1123,6 +1152,35 @@ async function copyCell(cell: NotebookCell) {
   margin-top: 1px;
 }
 
+.cell-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 8px 8px 0;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background: var(--nb-surface);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.cell-note .nb-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--color-text-muted);
+}
+
+.cell-note code {
+  padding: 1px 5px;
+  border-radius: var(--border-radius-sm);
+  background: var(--nb-card);
+  font-family: var(--font-family-mono);
+  font-size: 11.5px;
+  color: var(--color-text-primary);
+}
+
 .cell-error span {
   min-width: 0;
   white-space: pre-wrap;
@@ -1148,9 +1206,31 @@ async function copyCell(cell: NotebookCell) {
   height: 12px;
 }
 
-.cell-error .nb-link {
+.nb-link--button {
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  border-radius: var(--border-radius-md);
+  background: var(--nb-card);
+}
+
+.nb-link--button:hover {
+  border-color: var(--color-accent);
+  text-decoration: none;
+}
+
+.nb-link:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--border-radius-sm);
+}
+
+.nb-links {
   display: flex;
-  margin-top: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin: 4px 0 0;
 }
 
 .nb-footnote {
@@ -1168,5 +1248,18 @@ async function copyCell(cell: NotebookCell) {
 
 .nb-footnote > .nb-icon {
   margin-top: 2px;
+}
+
+.nb-footnote p {
+  margin: 0;
+}
+
+.nb-footnote .nb-links {
+  margin-top: 8px;
+}
+
+.nb-footnote code {
+  font-family: var(--font-family-mono);
+  font-size: 11.5px;
 }
 </style>

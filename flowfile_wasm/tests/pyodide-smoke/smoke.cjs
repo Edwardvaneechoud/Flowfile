@@ -333,12 +333,35 @@ def _touched(flow):
     return drafts
 _unchanged = {"ok": True, "nodes": {}, "added": [], "inputs": {}, "warnings": []}
 def _changes(result):
-    return {key: value for key, value in result.items() if key != "node_ids_by_cell"}
+    return {key: value for key, value in result.items() if key not in ("node_ids_by_cell", "unnamed_by_cell")}
 [f["name"] for f in _golden["flows"] if _changes(sync_notebook(f["flow"], f["schemas"], {}, _touched(f))) != _unchanged]
 `);
   if (!Array.isArray(syncDiffs) || syncDiffs.length) {
     failed.push('sync_notebook golden');
     console.error(`  [FAIL] sync_notebook golden, changed: ${JSON.stringify(syncDiffs)}`);
+  }
+
+  // A frame written as data is built by the wasm Polars; a line with no name adds nothing.
+  const frameRequest = {
+    flow: headFlow.flow,
+    schemas: headFlow.schemas,
+    locked: {},
+    drafts: {},
+    next_id: 50,
+    order: [...headFlow.cells.map((cell) => cell.cell_id), 'new-1'],
+    new_cells: { 'new-1': 'df = ff.DataFrame([{"a": 1, "b": "x"}, {"a": 2, "b": None}])\ndf.head(1)' }
+  };
+  pyodide.globals.set('_notebook_sync_request', JSON.stringify(frameRequest));
+  const frameRes = await run('sync_notebook (ff.DataFrame in a new cell)', `
+import json
+from engine.notebook_cells import sync_notebook
+sync_notebook(**json.loads(_notebook_sync_request))
+`);
+  pyodide.globals.delete('_notebook_sync_request');
+  const frameWanted = '[{"id":50,"type":"manual_input","settings":{"raw_data_format":{"columns":[{"name":"a","data_type":"Int64"},{"name":"b","data_type":"String"}],"data":[[1,2],["x",null]]}},"description":"","node_reference":"df"}]';
+  if (!frameRes || frameRes.ok !== true || JSON.stringify(frameRes.added) !== frameWanted || JSON.stringify(frameRes.unnamed_by_cell) !== '{"new-1":["df.head(1)"]}') {
+    failed.push('sync_notebook frame');
+    console.error(`  [FAIL] sync_notebook frame: ${JSON.stringify(frameRes)}`);
   }
 
   // Parity executors.

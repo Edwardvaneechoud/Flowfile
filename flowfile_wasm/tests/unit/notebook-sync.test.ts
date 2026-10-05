@@ -509,6 +509,138 @@ describe('syncing the notebook', () => {
       expect(notebook.outputs[`cell-${added}`].state).toBe('rows')
     })
 
+    it('a cell that names no frame adds nothing, stays as written and has nothing left to push', async () => {
+      const { flow, notebook } = await sourceAndSort()
+      const LOOK = 'ordered_2.head(3)'
+      const nothing = { ok: true, nodes: {}, added: [], inputs: {}, warnings: [] }
+      bridge({ ...nothing, node_ids_by_cell: { 'new-1': [] }, unnamed_by_cell: { 'new-1': [LOOK] } })
+      const written = notebook.addCell()
+      notebook.setCellCode(written, LOOK)
+      const nodes = flow.nodes.size
+      const undoable = flow.canUndo
+
+      await notebook.runCell(written)
+
+      expect([flow.nodes.size, flow.canUndo]).toEqual([nodes, undoable])
+      expect(notebook.shownCells.map(each => each.cell_id)).toEqual(['imports', 'cell-1', 'cell-2', written])
+      expect(notebook.cellCode(notebook.shownCells.at(-1)!)).toBe(LOOK)
+      expect(notebook.cellSyncState(written)).toBe('plain')
+      expect([notebook.needsSync, notebook.changedCount, notebook.canPush]).toEqual([false, 0, false])
+      expect(notebook.outputs).toEqual({})
+
+      // Run again, any number of times: nothing is read again and nothing is added.
+      await notebook.runCell(written)
+      await notebook.runCell(written)
+      expect(syncCalls()).toHaveLength(1)
+      expect(flow.nodes.size).toBe(nodes)
+
+      // It still rides along when another cell is pushed, so a name it binds is there for the cells below.
+      notebook.setCellCode('cell-2', SORT_DRAFT)
+      expect(notebook.changedCount).toBe(1)
+      bridge({ ...SORTED, node_ids_by_cell: { 'cell-2': [[2]], 'new-1': [] }, unnamed_by_cell: { 'new-1': [LOOK] } })
+      await notebook.push()
+      expect(requests().at(-1).new_cells).toEqual({ [written]: LOOK })
+      expect(notebook.cellSyncState(written)).toBe('plain')
+
+      // Changed, it is a new cell again.
+      notebook.setCellCode(written, `top = ${LOOK}`)
+      expect([notebook.cellSyncState(written), notebook.needsSync]).toEqual(['new', true])
+    })
+
+    it('lines that name no frame stay as a cell of their own under the cell their steps became', async () => {
+      const { flow, notebook, sort } = await sourceAndSort()
+      const added = pushesNewHead(sort)
+      const answer = await pyodideMock.runPythonWithResult(SYNC_SOURCE)
+      const after = [...CELLS, cell(added, HEAD, { defines: ['top'], uses: ['ordered_2'] })]
+      let pushed = false
+      pyodideMock.runPythonWithResult.mockImplementation(async (source: string) => {
+        if (source === SYNC_SOURCE) {
+          pushed = true
+          return { ...answer, unnamed_by_cell: { 'new-1': ['top.head(1)', 'top.head(2)'] } }
+        }
+        if (source.includes('render_notebook(')) return { cells: pushed ? after : CELLS, warnings: [], var_by_node: {} }
+        return { success: true }
+      })
+      const written = notebook.addCell()
+      notebook.setCellCode(written, `${HEAD}\ntop.head(1)\ntop.head(2)`)
+
+      expect(await notebook.push()).toBe(true)
+
+      expect(flow.getNode(added)?.type).toBe('head')
+      const shown = notebook.shownCells
+      expect(shown.map(each => each.cell_id)).toEqual(['imports', 'cell-1', 'cell-2', `cell-${added}`, 'new-2'])
+      expect(notebook.cellCode(shown.at(-1)!)).toBe('top.head(1)\ntop.head(2)')
+      expect(notebook.cellSyncState('new-2')).toBe('plain')
+      expect(notebook.needsSync).toBe(false)
+    })
+
+    it('keys pressed while a push runs change the cell it became, not a second cell that adds the node again', async () => {
+      const { flow, notebook, sort } = await sourceAndSort()
+      const added = pushesNewHead(sort)
+      const answer = await pyodideMock.runPythonWithResult(SYNC_SOURCE)
+      const after = [...CELLS, cell(added, HEAD, { defines: ['top'], uses: ['ordered_2'] })]
+      const written = notebook.addCell()
+      let pushes = 0
+      pyodideMock.runPythonWithResult.mockImplementation(async (source: string) => {
+        if (source === SYNC_SOURCE) {
+          if (++pushes > 1) return { ok: true, nodes: {}, added: [], inputs: {}, node_ids_by_cell: {}, warnings: [] }
+          notebook.setCellCode(written, 'top = ordered_2.head(4)')
+          return answer
+        }
+        if (source.includes('render_notebook(')) return { cells: pushes ? after : CELLS, warnings: [], var_by_node: {} }
+        return { success: true }
+      })
+      notebook.setCellCode(written, HEAD)
+      pyodideMock.setGlobal.mockClear()
+
+      expect(await notebook.push()).toBe(true)
+
+      expect(notebook.shownCells.map(each => each.cell_id)).toEqual(['imports', 'cell-1', 'cell-2', `cell-${added}`])
+      expect(notebook.shownCells.some(each => each.fresh)).toBe(false)
+      expect(notebook.drafts).toEqual({ [`cell-${added}`]: 'top = ordered_2.head(4)' })
+      expect(notebook.cellSyncState(`cell-${added}`)).toBe('edited')
+
+      const nodes = flow.nodes.size
+      await notebook.push()
+      expect(requests().at(-1)).toMatchObject({ new_cells: {}, drafts: { [`cell-${added}`]: 'top = ordered_2.head(4)' } })
+      expect(flow.nodes.size).toBe(nodes)
+    })
+
+    it('a cell written above every step stands right under the imports', async () => {
+      const { notebook, sort } = await sourceAndSort()
+      const added = sort + 1
+      const SOURCE = 'extra = ff.from_raw_data({})'
+      const answer = {
+        ok: true,
+        nodes: {},
+        added: [{ id: added, type: 'manual_input', settings: {}, description: '', node_reference: 'extra' }],
+        inputs: {},
+        node_ids_by_cell: { 'new-1': [[added]] },
+        warnings: []
+      }
+      const made = cell(added, SOURCE, { defines: ['extra'], uses: ['ff'] })
+      let pushed = false
+      pyodideMock.runPythonWithResult.mockImplementation(async (source: string) => {
+        if (source === SYNC_SOURCE) {
+          pushed = true
+          return answer
+        }
+        const imports = { ...IMPORTS, defines: ['ff'] }
+        if (source.includes('render_notebook(')) {
+          return { cells: pushed ? [imports, CELLS[1], CELLS[2], made] : [imports, CELLS[1], CELLS[2]], warnings: [], var_by_node: {} }
+        }
+        return { success: true }
+      })
+      await notebook.render()
+      const written = notebook.addCell('imports')
+      notebook.setCellCode(written, SOURCE)
+
+      expect(await notebook.push()).toBe(true)
+
+      expect(notebook.cells.map(each => each.cell_id)).toEqual(['imports', 'cell-1', 'cell-2', `cell-${added}`])
+      expect(notebook.shownCells.map(each => each.cell_id)).toEqual(['imports', `cell-${added}`, 'cell-1', 'cell-2'])
+    })
+
     it('a refused new cell keeps its text and shows the refusal on it', async () => {
       const { notebook } = await sourceAndSort()
       bridge({ ok: false, cell_id: 'new-1', line: 1, kind: 'error', message: "NameError: name 'x' is not defined" })

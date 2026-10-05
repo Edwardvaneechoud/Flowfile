@@ -29,6 +29,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+import polars as pl
+
 from . import notebook_allowlist as allowlist
 from .notebook_interpret import _BUILTIN_NAMES, _STORE_NAME, CellFailure, CellReader, needs_kernel, parse_cell
 from .notebook_render import (
@@ -69,6 +71,14 @@ _SELECT_TYPES = {
     "Datetime": "Datetime",
 }
 _SINKS = {"csv": "sink_csv", "parquet": "sink_parquet"}
+# A new node of these types stays although no name holds it: it writes, which is what it is for.
+_KEPT_UNNAMED = frozenset({"output"})
+# The column types of a frame written as data: the ones a Manual Input gives back as they were written.
+_FRAME_TYPES = frozenset(
+    {"String", "Boolean", "Null", "Float32", "Float64", "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64"}
+)  # fmt: skip
+_FRAME_VALUE_KINDS = frozenset({"none", "bool", "int", "float", "str", "date", "datetime_value"})
+_SAFE_INTEGER = 2**53 - 1
 
 
 class Frame:
@@ -446,6 +456,82 @@ def _read_raw_data(unit: _Unit, args: list, kwargs: dict, line: int) -> dict:
     }
 
 
+def _literal_data(value: Any, what: str, line: int) -> None:
+    """Data as a cell writes it: numbers, text, True, False, None, and lists, tuples and dicts of them."""
+    if isinstance(value, list | tuple):
+        for item in value:
+            _literal_data(item, what, line)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _literal_data(item, what, line)
+    elif kind_of(value) not in _FRAME_VALUE_KINDS:
+        raise _refused(
+            f"ff.{what}() takes the data written out here: numbers, text, True, False, None, "
+            "and lists and dicts of them",
+            line,
+        )
+
+
+def _polars_schema(value: Any, what: str, line: int) -> Any:
+    """A schema as Polars takes it: each ``ff`` data type as the Polars one of that name."""
+    if isinstance(value, Dtype):
+        if value.args or value.kwargs or value.name not in (*_FRAME_TYPES, "Utf8"):
+            raise _refused(_no_such_column(value.name), line)
+        return getattr(pl, value.name)
+    if isinstance(value, dict):
+        return {key: _polars_schema(item, what, line) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return type(value)(_polars_schema(item, what, line) for item in value)
+    if value is None or type(value) is str:
+        return value
+    raise CellFailure(f"TypeError: ff.{what}() takes column names and `ff` data types as its schema", line)
+
+
+def _no_such_column(type_name: str, column: str | None = None) -> str:
+    named = f" (`{column}`)" if column else ""
+    return (
+        f"A {type_name} column{named} cannot be written as data in the browser notebook; "
+        "write it as text or a number and convert it in a later step"
+    )
+
+
+def _read_frame(what: str) -> Callable:
+    """``ff.DataFrame(...)`` / ``ff.LazyFrame(...)``: the frame Polars builds from the data, as a Manual Input."""
+    params = ("data", "schema", "schema_overrides", "strict", "orient", "infer_schema_length", "nan_to_null")
+
+    def read(unit: _Unit, args: list, kwargs: dict, line: int) -> dict:
+        if len(args) > 2:
+            raise CellFailure(f"TypeError: ff.{what}() takes its data and schema by position, the rest by name", line)
+        bound = _arguments(what, params, args, kwargs, line)
+        data = bound.pop("data", None)
+        if isinstance(data, str):
+            raise needs_kernel(f"`ff.{what}` with a string as data", line)
+        _literal_data(data, what, line)
+        options: dict[str, Any] = {}
+        for key, value in bound.items():
+            if key in ("schema", "schema_overrides"):
+                options[key] = _polars_schema(value, what, line)
+            else:
+                _literal_data(value, what, line)
+                options[key] = value
+        try:
+            frame = pl.DataFrame(data, **options)
+        except Exception as exc:
+            raise CellFailure(f"ValueError: Could not convert data to a polars DataFrame: {exc}", line) from exc
+        columns = []
+        for name, dtype in frame.schema.items():
+            type_name = str(dtype).split("(")[0]
+            if type_name not in _FRAME_TYPES:
+                raise _refused(_no_such_column(type_name, name), line)
+            columns.append({"name": name, "data_type": type_name})
+        values = [frame.get_column(name).to_list() for name in frame.columns]
+        if any(type(value) is int and abs(value) > _SAFE_INTEGER for column in values for value in column):
+            raise _refused("A whole number this large cannot be written as data in the browser notebook", line)
+        return {"raw_data_format": {"columns": columns, "data": values}}
+
+    return read
+
+
 def _selected(item: Any, line: int) -> tuple[str, str, str | None]:
     """One item of a select: the column, the name it gets and the type it is cast to."""
     if type(item) is str:
@@ -574,6 +660,8 @@ _HANDLERS: dict[tuple[str, str], tuple[tuple[str, ...], Callable | None]] = {
     ("FlowFrame", "write_parquet"): (("output",), _read_write("parquet", ("path", "compression"))),
     ("FlowFrame", "write_excel"): (("output",), _read_write("excel", ("path", "worksheet", "write_mode"))),
     ("ff", "from_raw_data"): (("manual_input",), _read_raw_data),
+    ("ff", "DataFrame"): (("manual_input",), _read_frame("DataFrame")),
+    ("ff", "LazyFrame"): (("manual_input",), _read_frame("LazyFrame")),
     ("ff", "concat"): (("union",), None),
 }
 
@@ -588,6 +676,8 @@ class _CellReading:
         self.pending = [sync.units[node_id] for node_id in cell["node_ids"] if node_id in sync.units]
         self.nodes: list[int] = []
         self.lines: list[list[int]] = []
+        # Each line that gives its frame no name, with the nodes it read.
+        self.unnamed: list[tuple[str, list[int]]] = []
         self.helper_names: dict[str, _Unit] = {}
         self.helpers_seen: dict[int, set[str]] = {}
         self.bound: set[str] = set()
@@ -639,6 +729,7 @@ class _CellReading:
         if self.nodes[read:]:
             self.lines.append(self.nodes[read:])
         if name is None:
+            self.unnamed.append((self.reader.source(statement), self.nodes[read:]))
             return
         self.sync.namespace[name] = frame
         self.bound.add(name)
@@ -736,7 +827,8 @@ class _CellReading:
         call = calls[index]
         attribute = call.func.attr
         kind = "ff" if current is None else "FlowFrame"
-        usage = self.reader.usage(Module("ff") if current is None else current, attribute, call.func)
+        receiver = Module("ff") if current is None else current
+        usage = self.reader.usage(receiver, attribute, call.func, input_only=True)
         if usage not in (allowlist.CALL, allowlist.BOTH):
             raise needs_kernel(f"Calling {self.reader.text(call.func)}", line)
         types, handler = _HANDLERS.get((kind, attribute), ((), None))
@@ -747,6 +839,10 @@ class _CellReading:
         if attribute == "with_columns":
             return self._formula(self._unread(types), calls, signatures, index, current, line)
         args, kwargs = self.reader.arguments(call)
+        accepted = allowlist.DATA_ARGUMENTS.get((kind, attribute))
+        unaccepted = next((name for name in kwargs if accepted is not None and name not in accepted), None)
+        if unaccepted is not None:
+            raise needs_kernel(f"The argument `{unaccepted}=`", line)
         description = _text(kwargs.pop("description", ""), "description=", line)
         if attribute == "select" and _counts_records(args, kwargs):
             types, handler = ("record_count",), _read_nothing
@@ -835,9 +931,14 @@ class _Sync:
         self.order = order or []
         self.new_cells = new_cells or {}
         self.node_ids_by_cell: dict[str, list[list[int]]] = {}
+        self.unnamed: dict[str, list[tuple[str, list[int]]]] = {}
+        self.unnamed_by_cell: dict[str, list[str]] = {}
         self.rendered_names = {name for cell in self.rendering["cells"] for name in cell["defines"]}
         self.next_id = max([int(next_id or 0), *(node_id + 1 for node_id in self.renderer.nodes), 1])
+        self.first_new_id = self.next_id
         self.added: list[_Unit] = []
+        # The id each new node is answered under: the ones that stay are numbered without gaps.
+        self.final_ids: dict[int, int] = {}
         # The columns of the nodes this reading changes: what they hand on now, or None when it cannot say.
         self.columns: dict[int, list[str] | None] = {}
         # The render writes the imports a flow needs, so a cell may use the dialect's modules before it does.
@@ -873,13 +974,14 @@ class _Sync:
                     self._read(cell, draft)
             except CellFailure as failure:
                 return _failure(cell["cell_id"], failure)
+        self._prune()
         taken = self._taken_reference()
         if taken is not None:
             return taken
         new = {unit.node.id for unit in self.added}
         added = [
             {
-                "id": unit.node.id,
+                "id": self._final(unit.node.id),
                 "type": unit.node.type,
                 "settings": self.settings.get(unit.node.id, {}),
                 "description": self.descriptions.get(unit.node.id, ""),
@@ -902,10 +1004,55 @@ class _Sync:
             "ok": True,
             "nodes": nodes,
             "added": added,
-            "inputs": {str(node_id): _ports(desired) for node_id, desired in sorted(self.inputs.items())},
-            "node_ids_by_cell": self.node_ids_by_cell,
+            "inputs": {
+                str(self._final(node_id)): _ports({key: self._final(source) for key, source in desired.items()})
+                for node_id, desired in sorted(self.inputs.items())
+            },
+            "node_ids_by_cell": {
+                cell_id: [[self._final(node_id) for node_id in line] for line in lines]
+                for cell_id, lines in self.node_ids_by_cell.items()
+            },
+            "unnamed_by_cell": self.unnamed_by_cell,
             "warnings": self.warnings,
         }
+
+    def _prune(self) -> None:
+        """A new node stays only upstream of a named frame, a writer or a node the flow has: core's rule for a push.
+
+        What a line builds without giving it a name is looked at, not added. The names are the ones
+        bound once every cell is read, so a name given to another frame later no longer keeps the first.
+        """
+        new = {unit.node.id: unit for unit in self.added}
+        named = {frame.node_id for frame in self.namespace.values() if isinstance(frame, Frame)}
+        stack = [
+            *self.renderer.nodes,
+            *(node_id for node_id, unit in new.items() if node_id in named or unit.node.type in _KEPT_UNNAMED),
+        ]
+        kept: set[int] = set()
+        while stack:
+            node_id = stack.pop()
+            if node_id in kept:
+                continue
+            kept.add(node_id)
+            unit = self.units.get(node_id)
+            rendered = [producer for _, producer in unit.inputs.values()] if unit else []
+            stack.extend(self.inputs[node_id].values() if node_id in self.inputs else rendered)
+        dropped = set(new) - kept
+        self.added = [unit for unit in self.added if unit.node.id not in dropped]
+        self.final_ids = {unit.node.id: self.first_new_id + position for position, unit in enumerate(self.added)}
+        for table in (self.settings, self.descriptions, self.references, self.inputs, self.columns):
+            for node_id in dropped:
+                table.pop(node_id, None)
+        for cell_id, lines in self.node_ids_by_cell.items():
+            remaining = [[node_id for node_id in line if node_id not in dropped] for line in lines]
+            self.node_ids_by_cell[cell_id] = [line for line in remaining if line]
+        for cell_id, statements in self.unnamed.items():
+            sources = [source for source, made in statements if dropped.intersection(made)]
+            if sources:
+                self.unnamed_by_cell[cell_id] = sources
+
+    def _final(self, node_id: int) -> int:
+        return self.final_ids.get(node_id, node_id)
 
     def new_unit(self, node_type: str, line: int) -> _Unit:
         """A node the cells call for and the flow does not have yet, under the next free id."""
@@ -961,6 +1108,7 @@ class _Sync:
             if isinstance(holder, Frame) and holder.node_id != node_id:
                 self.references[node_id] = (None, cell["cell_id"], 1)
         self.node_ids_by_cell[cell["cell_id"]] = reading.lines
+        self.unnamed[cell["cell_id"]] = reading.unnamed
         self._bind_rendered(cell, reading.bound)
 
     def _bind_rendered(self, cell: dict, bound: set[str]) -> None:
@@ -1032,7 +1180,8 @@ class _Sync:
             for other in [*self.renderer.nodes.values(), *(unit.node for unit in self.added)]:
                 named = self.references[other.id][0] if other.id in self.references else other.reference
                 if other.id != node_id and named == reference:
-                    message = f"The name `{reference}` already names another step (#{other.id}); pick another name"
+                    step = self._final(other.id)
+                    message = f"The name `{reference}` already names another step (#{step}); pick another name"
                     return _failure(cell_id, CellFailure(message, line))
         return None
 
@@ -1080,6 +1229,10 @@ def sync_notebook(
     ``type``, ``settings`` to lay over the type's defaults); and per node id the inputs it reads now
     (``{"main": [ids], "right": id, "left": id}``). A cell that cannot be read answers
     ``{"ok": False, "cell_id", "line", "kind", "message"}`` and changes nothing.
+
+    A new node is added only when a name holds its frame, or a frame downstream of it, once every
+    cell is read; a writer and a node the flow has stay as they are. ``unnamed_by_cell`` answers,
+    per cell, the text of each line whose nodes were left out for that reason.
 
     ``layout`` is the render's (the cells a user wrote). ``new_cells`` (cell id -> text) are cells the
     flow has no node for yet, and ``order`` the cell ids as the notebook shows them: cells are read

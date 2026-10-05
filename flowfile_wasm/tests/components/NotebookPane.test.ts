@@ -524,19 +524,56 @@ describe('NotebookPane', () => {
       expect(flow.getNode(added)?.type).toBe('head')
     })
 
-    it('points to the full app for Python that is not flow code, and in its footnote', async () => {
+    it('says a cell that names no frame is not a step, and has nothing left to push', async () => {
+      syncAnswers({
+        ok: true,
+        nodes: {},
+        added: [],
+        inputs: {},
+        node_ids_by_cell: { 'new-1': [] },
+        unnamed_by_cell: { 'new-1': ['source_1.head(3)'] },
+        warnings: []
+      })
+      const flow = useFlowStore()
+      const nodes = flow.nodes.size
+      const wrapper = await mountPane()
+      await wrapper.find('[data-action="add-cell"]').trigger('click')
+      await type(wrapper, 3, 'source_1.head(3)')
+      const added = wrapper.find('[data-cell-id="new-1"]')
+      expect(added.find('[data-note="plain"]').exists()).toBe(false)
+
+      await added.find('[data-action="run"]').trigger('click')
+      await vi.waitFor(() => expect(added.find('[data-sync-state]').text()).toBe('Not a step'))
+
+      expect(added.find('[data-note="plain"]').text()).toContain('No frame here is given a name')
+      expect(added.classes()).toContain('cell--plain')
+      expect(flow.nodes.size).toBe(nodes)
+      expect(wrapper.find('[data-action="push"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('.nb-status').text()).toBe('In step with the canvas')
+      // It is still the user's cell: it can be changed or removed.
+      expect(added.find('[data-action="discard"]').exists()).toBe(true)
+    })
+
+    it('points to the kernel notebook and the download of the full version, in its footnote and on a Python cell', async () => {
       syncAnswers({ ok: false, cell_id: 'cell-1', line: 1, kind: 'needs_kernel', message: '`print` is not flow code' })
       const wrapper = await mountPane()
-      const footnote = wrapper.find('.nb-footnote [data-full-app]')
-      expect(footnote.attributes('href')).toContain('/users/visual-editor/notebook')
-      expect(footnote.attributes('target')).toBe('_blank')
+      const kernel = wrapper.find('.nb-footnote [data-full-app="kernel"]')
+      const download = wrapper.find('.nb-footnote [data-full-app="download"]')
+      expect(kernel.attributes('href')).toContain('/users/visual-editor/notebook.html#running-on-a-kernel')
+      expect(download.attributes('href')).toBe('https://flowfile.io/install/')
+      expect(download.text()).toBe('Download the full version')
+      for (const link of [kernel, download]) {
+        expect(link.attributes('target')).toBe('_blank')
+        expect(link.attributes('rel')).toBe('noopener')
+      }
       expect(wrapper.find('.cell-error').exists()).toBe(false)
 
       await type(wrapper, 1, 'print(1)')
       await wrapper.find('[data-action="push"]').trigger('click')
       await vi.waitFor(() => expect(wrapper.find('.cell-error').exists()).toBe(true))
 
-      expect(wrapper.find('.cell-error [data-full-app]').attributes('href')).toBe(footnote.attributes('href'))
+      expect(wrapper.find('.cell-error [data-full-app="kernel"]').attributes('href')).toBe(kernel.attributes('href'))
+      expect(wrapper.find('.cell-error [data-full-app="download"]').attributes('href')).toBe(download.attributes('href'))
     })
 
     it('does not point to the full app for a refusal that is not about Python', async () => {

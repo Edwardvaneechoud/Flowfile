@@ -59,7 +59,8 @@ export interface CellSyncError {
   code: string
 }
 
-export type CellSyncState = 'new' | 'edited' | 'synced' | 'failed'
+/** `plain`: a cell a push read and found no step in, unchanged since. */
+export type CellSyncState = 'new' | 'edited' | 'synced' | 'failed' | 'plain'
 
 /** A cell the user wrote: the nodes each of its lines holds, and the node whose cell it stands after. */
 interface WrittenCell {
@@ -73,6 +74,8 @@ interface NewCell {
   code: string
   /** The cell it was added after; with that cell gone it goes to the end. */
   after: string | null
+  /** The text a push read and found no step in: nothing in it names a frame, so it has nothing to push. */
+  read?: string
 }
 
 /** What the notebook keeps for one open flow. In memory only: never saved, shared or persisted. */
@@ -180,13 +183,14 @@ export const useNotebookStore = defineStore('notebook', () => {
     const state = flowState.value
     const ordered = [...cells.value]
     for (const written of state.layout) {
-      if (written.after === null) continue
+      const after = written.after
       const from = ordered.findIndex(cell => cell.node_ids.includes(written.lines[0][0]))
-      if (from < 0 || ordered[from].node_ids.includes(written.after)) continue
+      if (from < 0 || (after !== null && ordered[from].node_ids.includes(after))) continue
       const [cell] = ordered.splice(from, 1)
-      const anchor = ordered.findIndex(each => each.node_ids.includes(written.after!))
+      // Written above every step, a cell stands right under the imports.
+      const anchor = ordered.findIndex(each => (after === null ? each.kind === 'imports' : each.node_ids.includes(after)))
       const above = new Set(ordered.slice(0, anchor + 1).flatMap(each => each.defines))
-      const fits = anchor >= 0 && cell.uses.every(name => above.has(name))
+      const fits = (anchor >= 0 || after === null) && cell.uses.every(name => above.has(name))
       ordered.splice(fits ? anchor + 1 : from, 0, cell)
     }
     for (const fresh of state.newCells) {
@@ -209,7 +213,11 @@ export const useNotebookStore = defineStore('notebook', () => {
   })
 
   const writtenNewCells = computed(() => flowState.value.newCells.filter(cell => cell.code.trim() !== ''))
-  const changedCount = computed(() => Object.keys(flowState.value.drafts).length + writtenNewCells.value.length)
+  /** A new cell is plain once a push read it and found no step in it, for as long as it says the same. */
+  const isPlain = (cell: NewCell): boolean => cell.code.trim() !== '' && cell.code === cell.read
+  const changedCount = computed(
+    () => Object.keys(flowState.value.drafts).length + writtenNewCells.value.filter(cell => !isPlain(cell)).length
+  )
   const needsSync = computed(() => changedCount.value > 0)
   const idle = computed(() => pyodideStore.isReady && !running.value && !syncing.value && !flowStore.isExecuting)
   const canRun = idle
@@ -384,7 +392,8 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
   function cellSyncState(cellId: string): CellSyncState | null {
     const state = flowState.value
     if (state.syncError?.cellId === cellId) return 'failed'
-    if (state.newCells.some(cell => cell.id === cellId)) return 'new'
+    const fresh = state.newCells.find(cell => cell.id === cellId)
+    if (fresh) return isPlain(fresh) ? 'plain' : 'new'
     if (cellId in state.drafts) return 'edited'
     return state.synced.includes(cellId) ? 'synced' : null
   }
@@ -469,7 +478,7 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
         if (state.drafts[cellId] === code) delete state.drafts[cellId]
       }
       lastRead = result.node_ids_by_cell ?? {}
-      keepWritten(state, shown, lastRead, fresh)
+      keepWritten(state, shown, lastRead, fresh, result.unnamed_by_cell ?? {})
       state.syncError = null
       state.notice = result.warnings?.length ? result.warnings.join('\n') : null
       if (result.added?.length) state.added = { nodes: result.added.map(node => node.id), pushes: state.added.pushes + 1 }
@@ -488,13 +497,15 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
 
   /**
    * After a push, each cell that was read is a written cell: its nodes stay together and it stays
-   * after the cell it stood after. A new cell that got nodes is one of them from here on.
+   * after the cell it stood after. A new cell that got nodes is one of them from here on; one that
+   * got none is a plain cell, and lines that named no frame stay as a plain cell under their cell.
    */
   function keepWritten(
     state: FlowNotebookState,
     shown: NotebookCell[],
     read: Record<string, number[][]>,
-    fresh: Record<string, string>
+    fresh: Record<string, string>,
+    unnamed: Record<string, string[]>
   ): void {
     const nodesOf = (cell: NotebookCell): number[] => read[cell.cell_id]?.flat() ?? cell.node_ids
     for (const [cellId, lines] of Object.entries(read)) {
@@ -511,9 +522,20 @@ render_notebook(json.loads(${pythonJson(flow)}), json.loads(${pythonJson(schemas
     // A new cell that got nodes is rendered from now on; one added after it follows the cell it became.
     const first = (cellId: string | null) => (cellId ? read[cellId]?.flat()[0] : undefined)
     const became = (cellId: string | null) => (first(cellId) === undefined ? cellId : `cell-${first(cellId)}`)
-    state.newCells = state.newCells
-      .filter(cell => !(cell.id in fresh && first(cell.id) !== undefined && cell.code === fresh[cell.id]))
-      .map(cell => ({ ...cell, after: became(cell.after) }))
+    const kept: NewCell[] = []
+    for (const cell of state.newCells) {
+      const sent = fresh[cell.id]
+      if (sent === undefined) kept.push(cell)
+      else if (first(cell.id) === undefined) kept.push({ ...cell, read: sent })
+      // Typed while the push ran: a change to the cell it became, never a second cell that adds its nodes again.
+      else if (cell.code !== sent) state.drafts[became(cell.id)!] = cell.code
+    }
+    state.newCells = kept.map(cell => ({ ...cell, after: became(cell.after) }))
+    for (const [cellId, lines] of Object.entries(unnamed)) {
+      if (first(cellId) === undefined || lines.length === 0) continue
+      const code = lines.join('\n')
+      state.newCells.push({ id: `new-${++state.newCellCount}`, code, after: became(cellId), read: code })
+    }
   }
 
   /** Push the changed cells to the canvas without running anything. */
