@@ -56,8 +56,8 @@ export interface NotebookEditorOptions {
 
 const MONO = "var(--font-family-mono)";
 
+// No height cap: a cell grows with its code and the notebook list scrolls, never the cell.
 const cellEditorTheme = EditorView.theme({
-  "&": { maxHeight: "350px" },
   ".cm-content": { minHeight: "40px", padding: "6px 0" },
   ".cm-gutters": { minWidth: "2.5rem" },
   ".cm-scroller": { overflow: "auto" },
