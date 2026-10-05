@@ -20,7 +20,7 @@ from flowfile_core.auth.jwt import get_current_active_user, get_current_user
 from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
-from flowfile_core.kernel.models import ExecuteResult, KernelInfo, KernelState
+from flowfile_core.kernel.models import ExecuteResult, ImageFlavour, KernelInfo, KernelState
 from flowfile_core.notebook import bridge
 from flowfile_core.notebook.interpret import CellInterpreter
 from flowfile_core.notebook.push import seed_snapshot
@@ -361,7 +361,9 @@ class KernelSimManager:
     def __init__(
         self, kernel_id: str = "nb-kernel", owner_id: int = NOTEBOOK_OWNER_ID, shared: Path | None = None
     ) -> None:
-        self.kernel = KernelInfo(id=kernel_id, name="Notebook", state=KernelState.IDLE, packages=["flowfile"])
+        self.kernel = KernelInfo(
+            id=kernel_id, name="Notebook", state=KernelState.IDLE, image_flavour=ImageFlavour.NOTEBOOK
+        )
         self.owner_id = owner_id
         self.requests = []
         self.shared_volume_path = str(shared)

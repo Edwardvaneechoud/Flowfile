@@ -20,7 +20,7 @@ import { clickRun, minimizePalette, openFlow } from "./helpers/canvas";
 /**
  * Visual walk-through of the canvas notebook on a notebook kernel: one PNG per check, plus
  * results.json, for a maintainer to look at. Not part of CI: it needs Docker, the image
- * `flowfile-kernel-notebook:dev`, a core in electron mode, and these env vars:
+ * `flowfile-kernel-notebook:local` (`make notebook_kernel_dev`), a core in electron mode, and these env vars:
  *   SHOTS_DIR  folder for the PNGs and results.json
  *   CSV_PATH   absolute path of a small CSV (id, quantity, amount, region); core reads it,
  *              never the kernel
@@ -30,7 +30,6 @@ const SHOTS_DIR = process.env.SHOTS_DIR ?? "";
 const CSV_PATH = process.env.CSV_PATH ?? "";
 const KERNEL_ID = "nbvis";
 const KERNEL_NAME = "Notebook visual";
-const KERNEL_IMAGE = "flowfile-kernel-notebook:dev";
 
 const NOTEBOOK = ".code-dock .code-notebook .notebook-panel";
 
@@ -318,8 +317,7 @@ test.describe("Notebook on a kernel, visual inspection", () => {
     const created = await api(request, token, "post", "/kernels/", {
       id: KERNEL_ID,
       name: KERNEL_NAME,
-      image_flavour: "custom",
-      custom_image: KERNEL_IMAGE,
+      image_flavour: "notebook",
       packages: [],
     });
     expect(created.ok(), await created.text()).toBe(true);

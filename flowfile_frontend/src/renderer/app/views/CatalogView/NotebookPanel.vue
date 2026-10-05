@@ -112,18 +112,55 @@
           </el-option>
           <template #footer>
             <button
-              v-if="flowId && !pickerKernels.length"
+              v-if="needsNotebookKernel || creatingKernelId"
+              type="button"
+              class="nb-kernel-footer-link nb-kernel-footer-action"
+              :disabled="kernelActionBusy"
+              @click="createNotebookKernel"
+            >
+              <i class="fa-solid fa-plus"></i> {{ kernelActionLabel }}
+            </button>
+            <button
+              v-if="needsNotebookKernel"
               type="button"
               class="nb-kernel-footer-link nb-kernel-footer-create"
               @click="openCreateKernel"
             >
-              <i class="fa-solid fa-plus"></i> Create notebook kernel…
+              <i class="fa-solid fa-sliders"></i> Customise…
             </button>
             <router-link :to="kernelsRoute" class="nb-kernel-footer-link">
               <i class="fa-solid fa-microchip"></i> Manage kernels
             </router-link>
           </template>
         </el-select>
+
+        <!-- One click sets up the default notebook kernel; one on an older image gets a restart. -->
+        <button
+          v-if="needsNotebookKernel || creatingKernelId"
+          type="button"
+          class="nb-tool-btn nb-kernel-action"
+          data-testid="nb-create-notebook-kernel"
+          :title="CREATE_KERNEL_TITLE"
+          :disabled="kernelActionBusy"
+          @click="createNotebookKernel"
+        >
+          <i :class="kernelActionBusy ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-plus'"></i>
+          <span>{{ kernelActionLabel }}</span>
+        </button>
+        <button
+          v-else-if="outdatedNotebookKernel || restartingKernel"
+          type="button"
+          class="nb-tool-btn nb-kernel-action"
+          data-testid="nb-update-notebook-kernel"
+          :title="UPDATE_KERNEL_TITLE"
+          :disabled="restartingKernel"
+          @click="updateNotebookKernel"
+        >
+          <i
+            :class="restartingKernel ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-arrows-rotate'"
+          ></i>
+          <span>{{ restartingKernel ? kernelActionLabel : "Update notebook kernel" }}</span>
+        </button>
 
         <div class="nb-tool-group">
           <button
@@ -429,7 +466,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
       v-if="flowId"
       v-model="createKernelVisible"
       :suggestion="notebookKernelSuggestion"
-      @created="onKernelCreated"
+      @created="selectCreatedKernel"
     />
   </div>
 </template>
@@ -447,6 +484,7 @@ import {
   cellErrorMark,
   RERENDER_FAILED,
   SYNC_NEEDS_ADMIN,
+  rememberedFlowKernel,
 } from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
@@ -463,6 +501,8 @@ import { flushPendingEdits } from "../../services/mutationChannel";
 import { currentNodeId, seedNodeId } from "../../composables/useDragAndDrop";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";
 import CreateKernelDialog from "../../components/kernel/CreateKernelDialog.vue";
+import { useKernelCreationTracker } from "../../composables/useKernelCreationTracker";
+import { useKernelResources } from "../../composables/useKernelResources";
 import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
 import { cellMoveAnnouncement } from "../../components/notebook/cellOperations";
 import { cellPresentation } from "../../components/notebook/cellPresentation";
@@ -484,17 +524,28 @@ import {
   resolveNotebookKernelStatus,
   sameKernelList,
 } from "../../components/notebook/notebookKernelStatus";
+import {
+  defaultNotebookKernel,
+  notebookKernelActionLabel,
+  notebookKernelConfig,
+  notebookKernelOutdated,
+  type NotebookKernelPhase,
+} from "../../components/notebook/notebookKernelSetup";
 import type { CellOperation } from "../../components/notebook/cellOperations";
 import type { CellType, NotebookCellModel } from "../../components/notebook/types";
 import type { KernelInfo, KernelSuggestion } from "../../types/kernel.types";
 
 const KERNEL_POLL_MS = 5000;
+const PULL_POLL_MS = 2000;
 const NO_KERNEL = "__no_kernel__";
+const CREATE_KERNEL_TITLE =
+  "Creates a kernel on the Notebook image (this app's flowfile) and selects it. " +
+  "The first time, the image downloads first.";
+const UPDATE_KERNEL_TITLE =
+  "Restarts the kernel on this app's Notebook image. Anything held in its memory is lost.";
 
-/** A kernel can run the canvas notebook when it has flowfile installed or is a notebook image. */
-const runsNotebook = (k: KernelInfo): boolean =>
-  k.packages.some((p) => /^flowfile\s*($|[=<>!~[;@ ])/i.test(p.trim())) ||
-  (k.custom_image ?? "").includes("notebook");
+/** Only the Notebook image runs the canvas notebook. */
+const runsNotebook = (k: KernelInfo): boolean => k.image_flavour === "notebook";
 
 /** With `flowId` the panel is that flow's canvas notebook: one ephemeral tab rendered from the canvas. */
 const props = defineProps<{ flowId?: number }>();
@@ -560,24 +611,126 @@ function openCreateKernel() {
   kernelSelectRef.value?.blur();
   createKernelVisible.value = true;
 }
-const notebookKernelSuggestion: KernelSuggestion = {
-  config: {
-    id: "notebook",
-    name: "Notebook",
-    packages: [__APP_VERSION__ ? `flowfile==${__APP_VERSION__}` : "flowfile"],
-    cpu_cores: 2,
-    memory_gb: 4,
-    gpu: false,
-    image_flavour: "lite",
-    custom_image: null,
-  },
-  covered_by_flavour: [],
-  flavour_image_available: null,
-};
+/** A flow notebook with kernel sessions but no kernel that can run it: offer the one-click default. */
+const needsNotebookKernel = computed(
+  () =>
+    !!props.flowId &&
+    store.kernelSessions &&
+    dockerAvailable.value &&
+    kernelsLoaded.value &&
+    pickerKernels.value.length === 0,
+);
 
-async function onKernelCreated(kernel: KernelInfo) {
-  store.setKernel(kernel.id);
-  await loadKernels();
+const { createKernel, pendingCreations } = useKernelCreationTracker();
+const { imageStatuses, ensureLoaded } = useKernelResources();
+const notebookImageStatus = computed(
+  () => imageStatuses.value.find((s) => s.flavour === "notebook") ?? null,
+);
+const notebookImageInstalled = computed<boolean | null>(
+  () => notebookImageStatus.value?.available ?? null,
+);
+
+const notebookKernelSuggestion = computed<KernelSuggestion>(() => ({
+  config: notebookKernelConfig(kernels.value.map((k) => k.id)),
+}));
+
+let unmounted = false;
+
+/** Select a kernel that finished creating, unless the panel meanwhile shows another notebook. */
+async function selectCreatedKernel(kernel: KernelInfo) {
+  if (store.active?.flowId === props.flowId) store.setKernel(kernel.id);
+  if (!unmounted) await loadKernels();
+}
+
+const creatingKernelId = ref<string | null>(null);
+const pulling = ref(false);
+const restartingKernel = ref(false);
+let pullPollTimer: ReturnType<typeof setInterval> | null = null;
+
+const kernelActionPhase = computed<NotebookKernelPhase>(() => {
+  if (restartingKernel.value) return "restarting";
+  if (!creatingKernelId.value) return "idle";
+  return pendingCreations.value.find((p) => p.id === creatingKernelId.value)?.phase ?? "creating";
+});
+const kernelActionBusy = computed(() => creatingKernelId.value !== null);
+const kernelActionLabel = computed(() =>
+  notebookKernelActionLabel({
+    imageInstalled: notebookImageInstalled.value,
+    phase: kernelActionPhase.value,
+    pulling: pulling.value,
+  }),
+);
+
+/** Core pulls the Notebook image inline on create and start; docker-status says while it does. */
+function startPullPoll() {
+  pulling.value = notebookImageInstalled.value === false;
+  pullPollTimer = setInterval(async () => {
+    const { images } = await KernelApi.getDockerStatus();
+    pulling.value = images.find((i) => i.flavour === "notebook")?.pull_state === "pulling";
+  }, PULL_POLL_MS);
+}
+
+function stopPullPoll() {
+  if (pullPollTimer) clearInterval(pullPollTimer);
+  pullPollTimer = null;
+  pulling.value = false;
+}
+
+/** Create, start and select the default notebook kernel; the tracker reports the outcome. */
+async function createNotebookKernel() {
+  if (creatingKernelId.value) return;
+  kernelSelectRef.value?.blur();
+  const config = notebookKernelConfig(kernels.value.map((k) => k.id));
+  creatingKernelId.value = config.id;
+  startPullPoll();
+  try {
+    const kernel = await createKernel(config, { autoStart: true });
+    await selectCreatedKernel(kernel);
+  } catch {
+    // The creation tracker already notified; the button simply re-enables.
+  } finally {
+    stopPullPoll();
+    creatingKernelId.value = null;
+    void ensureLoaded(true);
+  }
+}
+
+/** The selected notebook kernel runs an older release of the image than this app ships. */
+const outdatedNotebookKernel = computed<KernelInfo | null>(() => {
+  const s = kernelStatus.value;
+  if (!props.flowId || !("kernel" in s)) return null;
+  return notebookKernelOutdated(s.kernel, notebookImageStatus.value?.image) ? s.kernel : null;
+});
+
+/** Starting resolves the flavour's current image and pulls it, so a restart is the update. */
+async function updateNotebookKernel() {
+  const kernel = outdatedNotebookKernel.value;
+  if (!kernel || restartingKernel.value) return;
+  try {
+    await ElMessageBox.confirm(
+      `"${kernel.name}" will be stopped and started again on this app's Notebook image ` +
+        "(downloaded first when missing). Anything held in the kernel's memory is lost.",
+      "Update notebook kernel",
+      { confirmButtonText: "Update", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  restartingKernel.value = true;
+  startPullPoll();
+  try {
+    if (kernel.state !== "stopped") await KernelApi.stop(kernel.id);
+    await KernelApi.start(kernel.id);
+    await loadKernels();
+  } catch (e) {
+    ElMessage.error(
+      `Failed to update "${kernel.name}": ${(e as Error).message}. ` +
+        "Retry here or start it from the Python Kernels page.",
+    );
+  } finally {
+    stopPullPoll();
+    restartingKernel.value = false;
+  }
 }
 
 /** A kernel session keeps the stale badges; the canvas sync state shows only when it failed. */
@@ -600,6 +753,16 @@ const banner = computed<KernelBanner | null>(() => {
     return { tone: "warning", icon: "fa-solid fa-lock", text: SYNC_NEEDS_ADMIN };
   }
   if (props.flowId && !store.active?.kernelId) return null;
+  const outdated = outdatedNotebookKernel.value;
+  if (outdated) {
+    return {
+      tone: "warning",
+      icon: "fa-solid fa-arrows-rotate",
+      text:
+        `Kernel "${outdated.name}" runs ${outdated.image}; this app ships ` +
+        `${notebookImageStatus.value?.image}. Update it to run cells.`,
+    };
+  }
   const name = "kernel" in s ? `"${s.kernel.name}"` : "";
   switch (s.kind) {
     case "docker-off":
@@ -910,9 +1073,20 @@ async function loadKernels() {
     const next = await KernelApi.getAll();
     if (!sameKernelList(kernels.value, next)) kernels.value = next;
     kernelsLoaded.value = true;
+    pickDefaultKernel();
   } catch {
     // Keep the last known list: a transient fetch failure must not flag every kernel as gone.
   }
+}
+
+/** A flow the user never picked a kernel for runs on a notebook kernel as soon as one exists; an explicit
+ * **No kernel** is remembered as such and left alone. */
+function pickDefaultKernel() {
+  const nb = store.active;
+  if (!props.flowId || nb?.flowId !== props.flowId || nb.kernelId || !store.kernelSessions) return;
+  if (rememberedFlowKernel(props.flowId) !== undefined) return;
+  const kernel = defaultNotebookKernel(kernels.value);
+  if (kernel) store.setKernel(kernel.id);
 }
 
 onMounted(async () => {
@@ -934,13 +1108,17 @@ onMounted(async () => {
     dockerAvailable.value = false;
   }
   if (dockerAvailable.value) {
+    // The image statuses tell whether the Notebook image is installed and which tag the app ships.
+    void ensureLoaded();
     await loadKernels();
     pollTimer = setInterval(loadKernels, KERNEL_POLL_MS);
   }
 });
 
 onBeforeUnmount(() => {
+  unmounted = true;
   if (pollTimer) clearInterval(pollTimer);
+  stopPullPoll();
   unregisterFlowHooks?.();
   for (const detach of schemaDetachers.values()) detach();
   schemaDetachers.clear();
@@ -1401,13 +1579,40 @@ async function onDelete() {
 .nb-kernel-footer-link:hover {
   text-decoration: underline;
 }
-.nb-kernel-footer-create {
+.nb-kernel-footer-create,
+.nb-kernel-footer-action {
   display: flex;
   margin-bottom: var(--spacing-1-5);
   padding: 0;
   border: none;
   background: none;
   cursor: pointer;
+}
+.nb-kernel-footer-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+  text-decoration: none;
+}
+/* Labelled kernel action beside the picker; it shrinks (ellipsised label) so a narrow dock never clips Push/Run all. */
+.nb-kernel-action {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  gap: var(--spacing-1-5);
+  padding: 0 var(--spacing-2);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+.nb-kernel-action > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nb-kernel-action:hover:not(:disabled) {
+  color: var(--color-primary);
+  background: var(--color-background-tertiary);
 }
 
 /* Canvas-style Save split-button (mirrors HeaderButtons .action-btn-split):

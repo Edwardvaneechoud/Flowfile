@@ -23,9 +23,8 @@ This node runs its Python in a **kernel** — a Docker container managed from th
 Set the kernel up once (Docker must be running):
 
 1. Open the **Kernel Manager**: **Settings → Execution → Python Kernels** in the sidebar.
-2. If the **ML** image isn't installed yet, click **Install** next to it in the images panel.
-3. Click **Create new kernel** and pick **Image flavour → ML**; name it something you'll recognize later, like `ml`.
-4. Click **Start** on the new kernel's card and wait for the green **Ready** badge.
+2. Click **Create new kernel** and pick **Image flavour → ML**; name it something you'll recognize later, like `ml`. If the ML image isn't on this machine yet the button reads **Download image and create kernel** and downloads it first.
+3. Click **Start** on the new kernel's card and wait for the green **Ready** badge.
 
 Everything else happens in the Node Designer.
 

@@ -279,7 +279,8 @@ export const SYNC_NEEDS_ADMIN =
 export const CANVAS_CHANGED =
   "The canvas changed since these cells were rendered, so they were refreshed; run again to sync your edits.";
 export const RERENDER_FAILED = "The notebook could not be re-rendered from the canvas.";
-export const PICK_KERNEL_HINT = "Pick a notebook kernel in the toolbar to run this cell as Python.";
+export const PICK_KERNEL_HINT =
+  "Pick or create a notebook kernel in the toolbar to run this cell as Python.";
 export const NOTHING_TO_PUSH = "Nothing to push: the canvas already matches these cells.";
 export const SESSION_NOT_RESEEDED =
   "Pushed to the canvas, but the kernel session still holds the old frames; use Reset session.";
@@ -297,17 +298,18 @@ function storedFlowKernels(): Record<string, string> {
   }
 }
 
-/** The kernel last picked for a flow's notebook, kept in this browser. */
-export function rememberedFlowKernel(flowId: number): string | null {
+/** The kernel last picked for a flow's notebook, kept in this browser: `null` is an explicit **No kernel**,
+ * `undefined` no pick yet (the panel then selects a notebook kernel when there is one). */
+export function rememberedFlowKernel(flowId: number): string | null | undefined {
   const id = storedFlowKernels()[String(flowId)];
-  return typeof id === "string" ? id : null;
+  if (typeof id !== "string") return undefined;
+  return id === "" ? null : id;
 }
 
 function rememberFlowKernel(flowId: number, kernelId: string | null): void {
   try {
     const kernels = storedFlowKernels();
-    if (kernelId) kernels[String(flowId)] = kernelId;
-    else delete kernels[String(flowId)];
+    kernels[String(flowId)] = kernelId ?? "";
     localStorage.setItem(FLOW_KERNELS_KEY, JSON.stringify(kernels));
   } catch {
     // Storage unavailable: the choice lasts for this page only.
@@ -833,7 +835,7 @@ export const useNotebookStore = defineStore("notebook", {
           description: null,
           namespaceId: null,
           cells: [],
-          kernelId: this.kernelSessions ? rememberedFlowKernel(flowId) : null,
+          kernelId: this.kernelSessions ? (rememberedFlowKernel(flowId) ?? null) : null,
           dirty: false,
           saving: false,
           executionCount: 0,

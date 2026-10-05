@@ -41,18 +41,21 @@ notebook rendering, and `log_info` / `log_warning` / `log_error`.
 
 ## Image flavours
 
-Core launches one of three images (published to Docker Hub, tagged with the kernel
-version from `pyproject.toml`, plus `:latest`):
+Core launches one of four images published to Docker Hub. Three are tagged with the
+kernel version from `pyproject.toml` (plus `:latest`); the notebook image is built from
+`Dockerfile.notebook` on the lite image and tagged with the **app** version, since it
+bakes that release's `flowfile`:
 
 | Image | Adds on top of base | Use for |
 |---|---|---|
 | `edwardvaneechoud/flowfile-kernel-base` | — | Polars / PyArrow / NumPy |
 | `edwardvaneechoud/flowfile-kernel-ml` | scikit-learn, xgboost, lightgbm, statsmodels | ML workloads |
 | `edwardvaneechoud/flowfile-kernel-lite` | slimmed constraints | smallest image |
+| `edwardvaneechoud/flowfile-kernel-notebook` | lite + this app's `flowfile` | the canvas notebook |
 
-Which tag core pulls is pinned per flavour in `manager.py`; override with
-`FLOWFILE_KERNEL_IMAGE_BASE` / `_ML` / `_LITE` (or the legacy `FLOWFILE_KERNEL_IMAGE`,
-base only).
+Which tag core pulls is pinned per flavour in `flowfile_core/flowfile_core/kernel/images.py`;
+override with `FLOWFILE_KERNEL_IMAGE_BASE` / `_ML` / `_LITE` / `_NOTEBOOK` (or the legacy
+`FLOWFILE_KERNEL_IMAGE`, base only).
 
 ## Local development
 
