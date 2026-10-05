@@ -98,6 +98,31 @@ def install_import_aliases() -> None:
         sys.meta_path.insert(0, _ForbiddenCoreImportFinder())
 
 
+def _alias_absent_flowfile_package() -> None:
+    """Resolve ``from flowfile import node_designer`` where no ``flowfile`` package exists.
+
+    The PyInstaller sidecars bundle ``flowfile_core`` and this SDK but not the
+    top-level ``flowfile`` distribution package, and ``install_import_aliases``
+    is a no-op inside core, so the canonical node header raised
+    ``ModuleNotFoundError`` the first time the frozen core exec'd a node file.
+    Only ``node_designer`` is aliased; any other ``flowfile`` attribute raises
+    the contract message. A process where the real package is importable is
+    left alone.
+    """
+    if "flowfile" in sys.modules:
+        return
+    try:
+        if importlib.util.find_spec("flowfile") is not None:
+            return
+    except ImportError:
+        pass
+    sdk_package = sys.modules[__package__]
+    flowfile_pkg = _make_alias_package("flowfile")
+    flowfile_pkg.node_designer = sdk_package
+    sys.modules["flowfile"] = flowfile_pkg
+    sys.modules["flowfile.node_designer"] = sdk_package
+
+
 def load_node_module(
     *, source: str | None = None, path: str | None = None, module_name: str | None = None
 ) -> types.ModuleType:
@@ -117,6 +142,7 @@ def load_node_module(
         with open(path, encoding="utf-8") as f:
             source = f.read()
 
+    _alias_absent_flowfile_package()
     spec = importlib.util.spec_from_loader(module_name, loader=None)
     module = importlib.util.module_from_spec(spec)
     module.__file__ = str(path) if path is not None else f"<{module_name}>"

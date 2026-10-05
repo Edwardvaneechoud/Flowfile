@@ -192,6 +192,26 @@ def test_a_drawer_script_is_a_function_without_a_return_only_where_the_export_as
     assert _script_statement(flow) == DRAWER_TEMPLATE_CELL
 
 
+def test_a_drawer_script_is_decorated_where_inspect_cannot_read_compiled_text(monkeypatch):
+    """A PyInstaller build patches ``inspect.getsourcefile`` to map a relative ``co_filename`` into the bundle, so
+    ``inspect.getsource`` fails for anything compiled from a string; the render regenerates from text and stays
+    decorated (the installed 0.22.0 app wrote every drawer script as ``ff.PythonScript``)."""
+    import inspect
+    import os
+
+    bundle = "/Applications/Flowfile.app/Contents/Resources/binaries/_internal"
+    original = inspect.getsourcefile
+
+    def frozen_getsourcefile(obj):
+        filename = os.path.normpath(inspect.getfile(obj))
+        if not os.path.isabs(filename):
+            return os.path.normpath(os.path.join(bundle, filename))
+        return filename if filename.startswith(bundle) else original(obj)
+
+    monkeypatch.setattr(inspect, "getsourcefile", frozen_getsourcefile)
+    assert _script_statement(_script_flow([DRAWER_TEMPLATE], flow_id=517)) == DRAWER_TEMPLATE_CELL
+
+
 def test_a_drawer_scripts_frames_go_in_the_call():
     cells = ["left, right = flowfile_ctx.read_inputs()['main']\n", "", "flowfile_ctx.publish_output(left, 'a')\n"]
     two = _script_statement(_script_flow(cells, inputs=2, outputs=["a", "b"], flow_id=511))
