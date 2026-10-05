@@ -1642,6 +1642,35 @@ def test_bake_failure_summary_strips_pip_colour_codes():
     assert "\x1b" not in summary
 
 
+def test_bake_failure_summary_ends_with_dockers_reason_after_a_successful_pip_run():
+    log = [
+        *[f"  noise line {i}" for i in range(40)],
+        "Successfully installed flowfile-0.22.0 polars-1.39.0",
+        "WARNING: Running pip as the 'root' user can result in broken permissions",
+    ]
+    reason = "failed to register layer: write /usr/local/lib/python3.12/site-packages/x.so: no space left on device"
+    summary = kernel_manager.bake_failure_summary(["flowfile==0.22.0"], log, reason)
+    lines = summary.splitlines()
+    assert lines[-1] == reason
+    assert lines[-2].startswith("WARNING: Running pip as the 'root' user")
+    assert len(lines) <= 16
+
+
+def test_derived_image_build_error_surfaces_dockers_reason():
+    mgr = _bare_manager()
+    reason = "failed to register layer: no space left on device"
+    mgr._docker.images.get.side_effect = [docker.errors.ImageNotFound("derived"), MagicMock()]
+    mgr._docker.images.build.side_effect = docker.errors.BuildError(
+        reason, iter([{"stream": "Successfully installed flowfile-0.22.0\n"}, {"error": reason}])
+    )
+    kernel = KernelInfo(id="k1", name="k1", packages=["flowfile==0.22.0"])
+
+    with pytest.raises(RuntimeError) as exc_info:
+        mgr._build_derived_image_locked(kernel, "flowfile-kernel-lite:local", "derived:k1")
+
+    assert str(exc_info.value).splitlines()[-1] == reason
+
+
 def test_bake_failure_summary_caps_characters_and_handles_an_empty_log():
     assert kernel_manager.bake_failure_summary(["x"], []) == "Installing x into the kernel image failed."
     summary = kernel_manager.bake_failure_summary(["x"], ["E" * 5000])

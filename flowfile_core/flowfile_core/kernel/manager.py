@@ -451,14 +451,16 @@ _SUMMARY_LINES = 15
 _SUMMARY_CHARS = 1500
 
 
-def bake_failure_summary(packages: list[str], log_lines: list[str]) -> str:
+def bake_failure_summary(packages: list[str], log_lines: list[str], reason: str = "") -> str:
     """A short account of a failed package bake: which packages, then the last meaningful lines of the build log.
 
     Blank lines, progress bars and Docker/pip progress chatter are dropped; at most ``_SUMMARY_LINES`` lines and
-    ``_SUMMARY_CHARS`` characters are kept, from the end. The full log goes to core's log instead.
+    ``_SUMMARY_CHARS`` characters are kept, from the end. The full log goes to core's log instead. ``reason`` is
+    Docker's own error, which the log stream does not carry (a full disk while committing the layer, after pip
+    succeeded), so it closes the summary.
     """
     lines = []
-    for raw in log_lines:
+    for raw in [*log_lines, reason]:
         for line in _ANSI_ESCAPE.sub("", str(raw)).splitlines():
             text = line.strip()
             if text and "━" not in text and not _BUILD_NOISE.match(text):
@@ -1386,7 +1388,8 @@ class KernelManager:
                     if isinstance(line, dict) and line.get("stream")
                 ]
                 logger.error("Baking packages into '%s' failed: %s\n%s", derived_tag, exc, "\n".join(log))
-                raise RuntimeError(bake_failure_summary(kernel.packages, log)) from exc
+                reason = exc.msg if isinstance(exc.msg, str) else ""
+                raise RuntimeError(bake_failure_summary(kernel.packages, log, reason)) from exc
         return derived_tag
 
     def _resolve_installed_versions(self, image_tag: str, package_specs: list[str]) -> list[ResolvedPackage]:
