@@ -288,7 +288,10 @@ def seed_from_predicted_schema(node: FlowNode, declared: Mapping[str, list[Flowf
     A ``polars_code`` transform (seeded only in notebook mode) has no schema callback, so it
     predicts lazily over its inputs the way the canvas does; the frame's own writer fallbacks, the
     only fluent code that writes, are refused in notebook mode. A ``polars_code`` source would
-    read to predict, so it gets the callback-only (empty) schema like any other source. A source
+    read to predict, so it gets the callback-only (empty) schema like any other source, except in a
+    kernel session: the kernel runs the cell's code anyway and computes the node itself
+    (``COMPUTED_HERE_TYPES``), so it predicts there too (a ``scan_csv`` of a URL reads its header,
+    as Polars would) and the nodes a cell builds on it see its columns. A source
     :func:`_predicts_in_core` names is not predicted here at all: its seed is what the mode's
     ``schema_resolver`` answers. In a sync nothing is predicted: every handle takes
     :func:`sync_seed_schemas` with ``declared`` (the columns a frame method's own lazy plan gives,
@@ -297,7 +300,7 @@ def seed_from_predicted_schema(node: FlowNode, declared: Mapping[str, list[Flowf
     if _in_sync():
         seed_deferred_node(node, sync_seed_schemas(node, _handles(node), declared))
         return
-    if node.node_type == "polars_code" and node.all_inputs:
+    if node.node_type == "polars_code" and (node.all_inputs or _in_kernel_session(current())):
         seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: _placeholder_schema(node)})
         return
     if _predicts_in_core(node):
