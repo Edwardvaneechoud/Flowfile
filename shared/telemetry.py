@@ -63,7 +63,7 @@ SEND_PERMANENT = "permanent"
 NODE_COUNT_BUCKETS = ("1-3", "4-7", "8-15", "16-30", "31+")
 DURATION_BUCKETS = ("<1s", "1-10s", "10-60s", "1-5m", "5-30m", "30m+")
 ROW_BUCKETS = ("0", "1-100", "101-10k", "10k-1M", "1M+")
-EXPORT_TARGETS = ("polars", "flowframe", "project_zip", "project_save")
+EXPORT_TARGETS = ("polars", "flowframe", "project_zip", "project_save", "notebook_py", "notebook_ipynb")
 
 MAX_IDENTIFIER_LENGTH = 64
 MAX_NODE_TYPES = 60

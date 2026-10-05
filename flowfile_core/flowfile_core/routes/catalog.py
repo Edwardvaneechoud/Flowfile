@@ -470,13 +470,14 @@ def get_flow_code(
     """
     from flowfile_core.flowfile.code_generator import export_flow_to_flowframe, export_flow_to_polars
     from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
+    from flowfile_core.flowfile.manage.io_flowfile import require_flow_in_storage
     from flowfile_core.notebook.render import render
 
     registration = service.get_flow(registration_id=flow_id, user_id=current_user.id)
     if not registration.file_exists:
         return FlowCodeOut(registration_id=flow_id, format=format, file_exists=False)
-    path = Path(registration.flow_path)
     try:
+        path = require_flow_in_storage(Path(registration.flow_path))
         if format == "yaml":
             if path.suffix.lower() not in (".yaml", ".yml", ".json"):
                 raise ValueError("the flow is stored in the legacy binary format; save it from the designer first")

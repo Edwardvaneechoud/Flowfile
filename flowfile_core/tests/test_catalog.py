@@ -3333,3 +3333,51 @@ class TestFlowCode:
             assert not get_flow_log_file(seen[0]).exists()
         finally:
             flow_file_handler.delete_flow(open_id)
+
+    @staticmethod
+    def _docker_mode(monkeypatch) -> None:
+        from flowfile_core.flowfile.manage import io_flowfile
+
+        monkeypatch.setattr(io_flowfile, "is_docker_mode", lambda: True)
+
+    @pytest.mark.parametrize("fmt", ["yaml", "notebook", "flowframe", "polars"])
+    def test_docker_mode_refuses_a_registered_path_outside_the_flow_folders(self, tmp_path, monkeypatch, fmt):
+        """A registration stores any path, so the read must not echo a server file it points at."""
+        secret = tmp_path / "server_config.json"
+        secret.write_text('{"token": "canary-7f3a"}', encoding="utf-8")
+        reg_id = self._register(secret)
+        self._docker_mode(monkeypatch)
+        resp = client.get(f"/catalog/flows/{reg_id}/code", params={"format": fmt})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["content"] is None
+        assert body["error"] == "the flow's file is outside the server's flow folders"
+        assert "canary-7f3a" not in resp.text
+
+    def test_docker_mode_refuses_a_symlink_out_of_the_flow_folders(self, tmp_path, monkeypatch):
+        secret = tmp_path / "server_config.yaml"
+        secret.write_text("token: canary-7f3a\n", encoding="utf-8")
+        link = storage.flows_directory / f"code_link_{os.getpid()}.yaml"
+        link.symlink_to(secret)
+        try:
+            reg_id = self._register(link)
+            self._docker_mode(monkeypatch)
+            resp = client.get(f"/catalog/flows/{reg_id}/code", params={"format": "yaml"})
+            assert resp.json()["content"] is None
+            assert "canary-7f3a" not in resp.text
+        finally:
+            link.unlink()
+
+    def test_docker_mode_reads_a_flow_in_the_flows_folder(self, monkeypatch):
+        flow_path = storage.flows_directory / f"code_src_{os.getpid()}.yaml"
+        self._save_flow(flow_path)
+        try:
+            reg_id = self._register(flow_path)
+            self._docker_mode(monkeypatch)
+            for fmt in ("yaml", "flowframe"):
+                body = client.get(f"/catalog/flows/{reg_id}/code", params={"format": fmt}).json()
+                assert body["error"] is None and body["content"], (fmt, body)
+            yaml_body = client.get(f"/catalog/flows/{reg_id}/code", params={"format": "yaml"}).json()
+            assert yaml_body["content"] == flow_path.read_text(encoding="utf-8")
+        finally:
+            flow_path.unlink(missing_ok=True)

@@ -830,6 +830,16 @@ def test_documented_export_targets_are_exactly_the_ones_routes_emit() -> None:
     assert documented == emitted
 
 
+def test_every_route_target_survives_the_client_allowlist() -> None:
+    """A route target missing from ``EXPORT_TARGETS`` is stripped before sending, leaving a targetless event."""
+    from shared import telemetry
+
+    emitted = {props["target"] for _, props in glue.ROUTE_EVENTS.values() if props and "target" in props}
+    assert emitted <= set(telemetry.EXPORT_TARGETS)
+    for target in emitted:
+        assert telemetry._sanitize_props("export_code_used", {"target": target}) == {"target": target}
+
+
 class TestErrorClassRecovery:
     """A worker-offloaded failure must keep whatever class signal is recoverable."""
 
