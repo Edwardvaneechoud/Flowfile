@@ -329,6 +329,50 @@ class TestWsErrorHandling:
         error_msgs = [m for m in json_msgs if m.get("type") == "error"]
         assert len(error_msgs) >= 1, f"Expected error message, got: {json_msgs}"
 
+    def test_task_failure_frame_is_marked_as_task_error(self):
+        """A plan that fails while collecting reports status "Error" so core fails the node."""
+        lf = pl.LazyFrame({"a": ["abc"]}).with_columns(pl.col("a").cast(pl.Int64))
+        metadata = {
+            "task_id": "ws-test-task-failure",
+            "operation": "store",
+            "flow_id": 1,
+            "node_id": -1,
+        }
+
+        json_msgs, _ = _ws_submit(metadata, lf.serialize())
+
+        error_msgs = [m for m in json_msgs if m.get("type") == "error"]
+        assert len(error_msgs) == 1, f"Expected one error message, got: {json_msgs}"
+        assert error_msgs[0]["status"] == "Error"
+        assert error_msgs[0]["error_kind"] == "task"
+        assert "InvalidOperationError" in error_msgs[0]["error_message"]
+
+    def test_plan_the_worker_cannot_load_is_an_environment_failure(self, unloadable_plan):
+        """A plan whose UDF can't be imported here says so, so core degrades instead of failing."""
+        task_id = "ws-test-unloadable-plan"
+        metadata = {"task_id": task_id, "operation": "store", "flow_id": 1, "node_id": -1}
+
+        json_msgs, _ = _ws_submit(metadata, unloadable_plan)
+
+        error_msgs = [m for m in json_msgs if m.get("type") == "error"]
+        assert len(error_msgs) == 1, f"Expected one error message, got: {json_msgs}"
+        assert error_msgs[0]["status"] == "Error"
+        assert error_msgs[0]["error_kind"] == "environment"
+        assert error_msgs[0]["error_message"].startswith("ModuleNotFoundError:"), "the marker must not leak to core"
+        assert "core_only_udf" in error_msgs[0]["error_message"]
+        with status_dict_lock:
+            assert status_dict[task_id].error_kind == "environment"
+
+    def test_result_write_failure_is_an_environment_failure(self):
+        """The plan evaluated fine but the IPC result file could not be written."""
+        metadata = {"task_id": "missing-subdir/ws-test-write", "operation": "store", "flow_id": 1, "node_id": -1}
+
+        json_msgs, _ = _ws_submit(metadata, pl.LazyFrame({"a": [1]}).serialize())
+
+        error_msgs = [m for m in json_msgs if m.get("type") == "error"]
+        assert len(error_msgs) == 1, f"Expected one error message, got: {json_msgs}"
+        assert error_msgs[0]["error_kind"] == "environment"
+
     def test_status_dict_updated_for_rest_compatibility(self):
         """After WebSocket completes, status_dict should also be updated."""
         task_id = "ws-test-status-compat"
@@ -488,6 +532,7 @@ class TestHandleTaskTerminalStatus:
                 status = status_dict[task_id]
             assert status.status == "Error", f"expected Error, got {status.status!r}"
             assert "time limit" in (status.error_message or "")
+            assert status.error_kind == "environment"
             assert not p.is_alive(), "wedged child should have been terminated"
         finally:
             if p.is_alive():
@@ -527,6 +572,7 @@ class TestWsMonitorTimeout:
                 if c.args and c.args[0].get("type") == "error"
             ]
             assert err_frames and "time limit" in err_frames[-1]["error_message"]
+            assert err_frames[-1]["error_kind"] == "environment"
             assert not p.is_alive(), "wedged child should have been terminated"
         finally:
             if p.is_alive():

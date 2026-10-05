@@ -80,6 +80,8 @@ def test_drop_selector_falls_back_to_polars_code():
         ((col("a").is_in([1, 3]),), "[a] in (1, 3)"),
         ((~col("name").is_in(["alex"]),), 'not([name] in ("alex"))'),
         ((col("a").is_null() | (col("g") == "x"),), '(is_empty([a]) or ([g] == "x"))'),
+        (((col("a") > 1) & (col("g") != "z"),), '(([a] > 1) and ([g] != "z"))'),
+        ((~(col("a") > 1),), "not(([a] > 1))"),
         ((col("a") > 1, col("g") != "z"), '([a] > 1) and ([g] != "z")'),
         (([col("a") >= 2, col("name").str.starts_with("a")],), '([a] >= 2) and starts_with([name], "a")'),
     ],
@@ -93,6 +95,22 @@ def test_filter_predicates_render_filter_node(predicates, formula):
     assert node.setting_input.get_default_description() == formula
     flat = [p for item in predicates for p in (item if isinstance(item, list) else [item])]
     assert_frame_equal(out.collect(), _pl().filter(*[p.expr for p in flat]).collect())
+
+
+@pytest.mark.parametrize(
+    "combine",
+    [
+        lambda: (col("a") > 1) and (col("g") != "z"),
+        lambda: (col("a") > 1) or (col("g") != "z"),
+        lambda: not (col("a") > 1),
+        lambda: bool(col("a")),
+    ],
+    ids=["and", "or", "not", "bool"],
+)
+def test_expression_truthiness_raises_instead_of_dropping_a_condition(combine):
+    """Python's `and`/`or`/`not` call `bool()`, which would silently keep one operand or yield a plain bool."""
+    with pytest.raises(TypeError, match="Use `&` instead of `and`"):
+        combine()
 
 
 def test_filter_keyword_constraints_render_filter_node():
@@ -235,7 +253,7 @@ def test_injected_lazyframe_method_refuses_a_parameter_argument(call):
     limit = ff.add_flow_parameter(frame, ff.Parameter("limit", default=2, type="integer"))
     node_count = len(frame.flow_graph.nodes)
 
-    with pytest.raises(ff.NativeNodeError, match=r"takes no fl.Parameter as an argument; pass a plain value"):
+    with pytest.raises(ff.NativeNodeError, match=r"takes no ff.Parameter as an argument; pass a plain value"):
         call(frame, limit)
 
     assert len(frame.flow_graph.nodes) == node_count

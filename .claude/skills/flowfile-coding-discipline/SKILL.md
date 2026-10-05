@@ -7,9 +7,6 @@ description: The four Karpathy behavioral principles — think before coding, si
 
 Behavioral guidelines to reduce common LLM coding mistakes, adapted for this
 monorepo from [multica-ai/andrej-karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills).
-The failure modes they target, in Karpathy's words: models "make wrong
-assumptions on your behalf and just run along with them without checking" and
-"really like to overcomplicate code and APIs, bloat abstractions."
 
 **Tradeoff:** these guidelines bias toward caution over speed. For trivial
 tasks (a typo, a one-line doc fix), use judgment.
@@ -48,7 +45,7 @@ assumptions already exists somewhere:
 - **Check `flowfile-failure-archaeology` before proposing a fix** that touches
   worker transport, kernel lifecycle, codegen, flow save/open, Tauri
   packaging, or CI ordering. Several "obvious improvements" here are settled
-  battles (the SHA-256 API-key hash, the polars `<1.43` ceiling, the
+  battles (the SHA-256 API-key hash, the polars `<1.44` ceiling and its 1.43.0/1.43.1 exclusions, the
   fastapi pin) — re-fighting one wastes a review cycle.
 - **Cross-service contracts are where silent wrong assumptions hurt most.**
   If your change touches the `$ffsec$` format, the worker offload protocol,
@@ -121,13 +118,7 @@ Transform tasks into verifiable goals:
 - "Fix the bug" → "Write a test that reproduces it, then make it pass."
 - "Refactor X" → "Ensure tests pass before and after."
 
-For multi-step tasks, state a brief plan:
-
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
+For multi-step tasks, give each step a check that proves it worked.
 
 Strong success criteria let you loop independently. Weak criteria ("make it
 work") require constant clarification.

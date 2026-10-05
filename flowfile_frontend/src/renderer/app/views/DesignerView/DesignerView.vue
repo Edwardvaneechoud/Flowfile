@@ -35,7 +35,11 @@
         <p>Loading flows...</p>
       </div>
     </div>
-    <div v-else class="canvas-wrap">
+    <div
+      v-else
+      class="canvas-wrap"
+      :style="{ '--code-dock-offset': dockOpen ? `${codeDockWidth}px` : '0px' }"
+    >
       <canvas-flow
         ref="canvasFlow"
         class="canvas"
@@ -56,12 +60,41 @@
         <span class="switch-spinner" />
         <span>Loading flow…</span>
       </div>
+      <transition name="code-dock">
+        <aside
+          v-if="hasOpenFlow && editorStore.showCodeGenerator"
+          :class="['code-dock', 'nokey', { 'is-resizing': isResizing }]"
+          data-canvas-overlay
+          :style="{ width: `${codeDockWidth}px`, '--code-dock-width': `${codeDockWidth}px` }"
+        >
+          <div class="code-dock-resizer" @pointerdown="startResize" />
+          <div class="code-dock-body">
+            <code-generator :key="nodeStore.flow_id" />
+          </div>
+          <transition name="code-dock-hint">
+            <div v-if="closeArmed" class="code-dock-close-hint" aria-live="polite">
+              <span class="code-dock-close-pill">
+                <span class="material-icons" aria-hidden="true">close</span>
+                Release to close
+              </span>
+            </div>
+          </transition>
+        </aside>
+      </transition>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from "vue";
+import {
+  ref,
+  computed,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+  watch,
+  defineAsyncComponent,
+} from "vue";
 import HeaderButtons from "../../components/layout/Header/HeaderButtons.vue";
 import RightActionCluster from "../../components/layout/Header/RightActionCluster.vue";
 import CanvasFlow from "./Canvas.vue";
@@ -76,6 +109,7 @@ import { useEditorStore } from "../../stores/editor-store";
 import { useFlowOpener } from "../../composables/useFlowOpener";
 import type { RecentFlow } from "../../composables/useRecentFlows";
 import { resolveBootFlowId, resolveNextFlowAfterClose } from "./flowSessionState";
+import { clampDockWidth, dragWidth } from "./codeDockResize";
 
 const getAllFlows = FlowApi.getAllFlows;
 const closeFlow = FlowApi.closeFlow;
@@ -95,10 +129,84 @@ const initialLoadComplete = ref(false);
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
+const CodeGenerator = defineAsyncComponent(() => import("./CodeGenerator/CodeGenerator.vue"));
+
+const CODE_DOCK_WIDTH_KEY = "flowfile.codeDock.width.v1";
+const clampWidth = (w: number) => clampDockWidth(w, window.innerWidth);
+const readWidth = () => {
+  try {
+    return Number(localStorage.getItem(CODE_DOCK_WIDTH_KEY)) || 600;
+  } catch {
+    return 600;
+  }
+};
+const codeDockWidth = ref(clampWidth(readWidth()));
+const isResizing = ref(false);
+const closeArmed = ref(false);
+
+let stopResize: (() => void) | null = null;
+/**
+ * Drag the pane's left edge; the width is saved when the gesture ends.
+ * Past the minimum width the pane only gives way a little; dragging
+ * CODE_DOCK_CLOSE_DRAG further arms a close, which a release then performs,
+ * keeping the pre-drag width for the next open. Released earlier, it springs back.
+ */
+const startResize = (down: PointerEvent) => {
+  if (stopResize) return;
+  // Cancelling pointerdown keeps text selection and focus changes out of the drag.
+  down.preventDefault();
+  const target = down.target as HTMLElement;
+  const startX = down.clientX;
+  const startWidth = codeDockWidth.value;
+  target.setPointerCapture(down.pointerId);
+  isResizing.value = true;
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+  const move = (e: PointerEvent) => {
+    const next = dragWidth(startWidth, startX - e.clientX, window.innerWidth);
+    closeArmed.value = next.closeArmed;
+    codeDockWidth.value = next.width;
+  };
+  // Also runs on lostpointercapture and unmount: any end but a release springs back.
+  const end = (e?: PointerEvent) => {
+    if (!stopResize) return;
+    stopResize = null;
+    target.removeEventListener("pointermove", move);
+    target.removeEventListener("pointerup", end);
+    target.removeEventListener("pointercancel", end);
+    target.removeEventListener("lostpointercapture", end);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    isResizing.value = false;
+    const close = closeArmed.value && e?.type === "pointerup";
+    closeArmed.value = false;
+    if (close) {
+      codeDockWidth.value = startWidth;
+      editorStore.setCodeGeneratorVisibility(false);
+      return;
+    }
+    codeDockWidth.value = clampWidth(codeDockWidth.value);
+    try {
+      localStorage.setItem(CODE_DOCK_WIDTH_KEY, String(codeDockWidth.value));
+    } catch {
+      // Private mode or blocked storage: the width just isn't remembered.
+    }
+  };
+  stopResize = end;
+  target.addEventListener("pointermove", move);
+  target.addEventListener("pointerup", end);
+  target.addEventListener("pointercancel", end);
+  target.addEventListener("lostpointercapture", end);
+};
+// A window resize re-fits a settled width; a drag in progress keeps its own clamp.
+const reclampDock = () => {
+  if (!stopResize) codeDockWidth.value = clampWidth(codeDockWidth.value);
+};
 const { openFlow: openFlowFromPath } = useFlowOpener();
 
 // Hide undo/redo when no flow is loaded — same gating as the Save button.
 const hasOpenFlow = computed(() => !!nodeStore.flow_id && nodeStore.flow_id > 0);
+const dockOpen = computed(() => hasOpenFlow.value && editorStore.showCodeGenerator);
 
 // Spinner stays visible across the whole switch sequence: from "user clicked"
 // (isSwitching) through the Canvas watcher's async loadFlow (isLoadingFlow).
@@ -290,7 +398,13 @@ const initialSetup = async () => {
 
 onMounted(async () => {
   console.log("Component mounted, starting initialization");
+  window.addEventListener("resize", reclampDock);
   await initialSetup();
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", reclampDock);
+  stopResize?.();
 });
 </script>
 
@@ -303,17 +417,113 @@ onMounted(async () => {
 
 .canvas-wrap {
   position: relative;
-  height: calc(100vh - 100px);
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .canvas {
+  flex: 1 1 auto;
+  min-width: 0;
   height: 100%;
+}
+
+.code-dock {
+  position: relative;
+  flex: 0 0 auto;
+  height: 100%;
+  border-left: 1px solid var(--color-border-primary);
+  background: var(--color-background-primary);
+  transition: width var(--transition-normal) var(--transition-timing);
+}
+
+.code-dock.is-resizing {
+  transition: none;
+}
+
+/* Open and close slide the pane from the right edge; outranks .is-resizing on release. */
+.code-dock.code-dock-enter-active,
+.code-dock.code-dock-leave-active {
+  overflow: hidden;
+  transition: width var(--transition-normal) var(--transition-timing);
+}
+
+.code-dock-enter-from,
+.code-dock-leave-to {
+  width: 0 !important;
+}
+
+.code-dock-enter-active .code-dock-body,
+.code-dock-leave-active .code-dock-body {
+  width: var(--code-dock-width);
+}
+
+.code-dock-close-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--color-background-primary) 70%, transparent);
+  pointer-events: none;
+}
+
+.code-dock-close-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-4);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-full);
+  background: var(--color-background-primary);
+  box-shadow: var(--shadow-md);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+.code-dock-close-pill .material-icons {
+  font-size: 18px;
+}
+
+.code-dock-hint-enter-active,
+.code-dock-hint-leave-active {
+  transition: opacity var(--transition-base) var(--transition-timing);
+}
+
+.code-dock-hint-enter-from,
+.code-dock-hint-leave-to {
+  opacity: 0;
+}
+
+.code-dock-body {
+  height: 100%;
+  overflow: hidden;
+}
+
+.code-dock-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 2;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.code-dock-resizer:hover,
+.code-dock.is-resizing .code-dock-resizer {
+  background: var(--color-primary);
+  opacity: 0.4;
 }
 
 .switch-indicator {
   position: absolute;
   top: 12px;
-  right: 12px;
+  /* Stays over the canvas, not the code dock; moves with the dock's slide. */
+  right: calc(var(--code-dock-offset, 0px) + 12px);
+  transition: right var(--transition-normal) var(--transition-timing);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -384,10 +594,6 @@ onMounted(async () => {
     align-items: center;
     justify-content: flex-end;
   }
-
-  .canvas {
-    height: calc(100vh - 50px);
-  }
 }
 
 /* Mobile/tablet layout - stacked */
@@ -430,10 +636,6 @@ onMounted(async () => {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-  }
-
-  .canvas {
-    height: calc(100vh - 90px);
   }
 }
 

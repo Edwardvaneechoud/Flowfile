@@ -7,7 +7,7 @@ from io import BytesIO
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
-from polars_grouper import graph_solver
+from polars_grouper import graph_solver, hierarchy_paths
 
 from flowfile_worker import main, models
 from flowfile_worker.external_sources.s3_source.models import (
@@ -158,10 +158,68 @@ def test_status_404s_when_the_result_file_is_gone(create_grouper_data):
     assert client.get(f'/status/{task_id}').status_code == 404
 
 
+def _store_and_wait(lf: pl.LazyFrame | bytes) -> models.Status:
+    """Submit a serialized plan as a store job and poll until it leaves the in-flight states."""
+    headers = {
+        "Content-Type": "application/octet-stream",
+        "X-Operation-Type": "store",
+        "X-Flow-Id": "1",
+        "X-Node-Id": "-1",
+    }
+    content = lf if isinstance(lf, bytes) else lf.serialize()
+    v = client.post('/submit_query/', content=content, headers=headers)
+    assert v.status_code == 200, v.text
+    task_id = models.Status.model_validate(v.json()).background_task_id
+    for _ in range(100):
+        status = models.Status.model_validate(client.get(f'/status/{task_id}').json())
+        if status.status not in ('Processing', 'Starting'):
+            return status
+        time.sleep(0.1)
+    raise AssertionError(f'task did not finish: {status.status}')
+
+
+def _exploded_bom(edges: dict) -> pl.LazyFrame:
+    return (
+        pl.LazyFrame(edges)
+        .select(hierarchy_paths(pl.col("parent"), pl.col("child"), pl.col("qty"), top_level_only=True).alias("h"))
+        .unnest("h")
+    )
+
+
+def test_hierarchy_plan_round_trips_through_the_worker():
+    """An explode_hierarchy plan serializes (plugin path included) and runs in a worker child."""
+    lf = _exploded_bom({
+        "parent": ["bike", "bike", "frame", "wheel", "wheel"],
+        "child": ["frame", "wheel", "screw", "spoke", "screw"],
+        "qty": [1.0, 2.0, 6.0, 32.0, 2.0],
+    })
+    status = _store_and_wait(lf)
+    assert status.error_message is None, status.error_message
+    result_df = pl.LazyFrame.deserialize(BytesIO(b64decode(status.results))).collect()
+    assert result_df.equals(lf.collect()), f'Expected:\n{lf.collect()}\n\nResult:\n{result_df}'
+    screws = result_df.filter(pl.col("descendant") == "screw")
+    assert screws["quantity"].sum() == 10.0
+
+
+def test_hierarchy_cycle_reports_the_cycle_from_the_worker():
+    lf = _exploded_bom({"parent": ["a", "b", "c", "c"], "child": ["b", "c", "a", "d"], "qty": [1.0] * 4})
+    status = _store_and_wait(lf)
+    assert status.status == 'Error'
+    assert "a -> b -> c -> a" in status.error_message
+    assert status.error_kind == 'task'
+
+
+def test_plan_the_worker_cannot_load_is_an_environment_failure_over_rest(unloadable_plan):
+    status = _store_and_wait(unloadable_plan)
+    assert status.status == 'Error'
+    assert status.error_kind == 'environment'
+    assert status.error_message.startswith('ModuleNotFoundError:'), status.error_message
+
+
 def test_add_fuzzy_join(create_fuzzy_data):
     load = create_fuzzy_data
     # Use model_dump_json() - Pydantic handles single base64 encoding for bytes in JSON
-    v = client.post('/add_fuzzy_join', data=load.model_dump_json())
+    v = client.post('/add_fuzzy_join', data=load.model_dump_json(), headers={"Content-Type": "application/json"})
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status: models.Status = models.Status.model_validate(v.json())
@@ -259,7 +317,7 @@ def test_write_output_csv():
         sheet_name='Sheet1',
         delimiter=','
     )
-    v = client.post('/write_results/', data=polars_script_write.model_dump_json())
+    v = client.post('/write_results/', data=polars_script_write.model_dump_json(), headers={"Content-Type": "application/json"})
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status: models.Status = models.Status.model_validate(v.json())

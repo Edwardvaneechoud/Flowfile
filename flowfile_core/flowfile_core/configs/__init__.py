@@ -16,13 +16,11 @@ if logger.hasHandlers():
     logger.handlers.clear()
 
 output_stream = None
-if hasattr(sys.stdout, "isatty") and sys.stdout.isatty():
-    output_stream = sys.stdout
-elif hasattr(sys.stderr, "isatty") and sys.stderr.isatty():
+if hasattr(sys.stderr, "isatty") and sys.stderr.isatty():
     output_stream = sys.stderr
 else:
-    # Use __stdout__ for debugger environments (PyDev, PyCharm, etc.)
-    output_stream = sys.__stdout__
+    # Use __stderr__ for debugger environments (PyDev, PyCharm, etc.)
+    output_stream = sys.__stderr__
 
 console_handler = logging.StreamHandler(output_stream)
 console_handler.setLevel(logging.INFO)

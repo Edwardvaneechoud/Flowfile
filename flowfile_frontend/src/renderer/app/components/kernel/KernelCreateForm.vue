@@ -191,6 +191,8 @@
       </div>
     </div>
 
+    <pre v-if="submitError" class="form-submit-error" role="alert">{{ submitError }}</pre>
+
     <div class="form-actions">
       <button
         type="submit"
@@ -237,6 +239,8 @@ const isFlavourAvailable = (flavour: ImageFlavour): boolean =>
   flavour === "custom" || installedFlavours.value.has(flavour);
 
 const isSubmitting = ref(false);
+// Why the last Create failed (core's summary), shown until the next attempt.
+const submitError = ref<string | null>(null);
 const packages = ref<string[]>([]);
 const newPackage = ref("");
 
@@ -403,6 +407,7 @@ const handleSubmit = async () => {
   };
 
   isSubmitting.value = true;
+  submitError.value = null;
   try {
     await props.onCreate(config);
     // Success: reset and notify the parent (e.g. to collapse the card).
@@ -418,8 +423,9 @@ const handleSubmit = async () => {
     packages.value = [];
     newPackage.value = "";
     emit("success");
-  } catch {
-    // The creation tracker has already notified. Keep form populated for retry.
+  } catch (error) {
+    // Kept inline beside the populated form: the tracker's toast disappears before a pip log can be read.
+    submitError.value = (error as Error)?.message || "Kernel creation failed";
   } finally {
     isSubmitting.value = false;
   }
@@ -586,6 +592,19 @@ const handleSubmit = async () => {
 
 .form-input--error {
   border-color: var(--color-danger);
+}
+
+.form-submit-error {
+  margin: 0 0 var(--spacing-3);
+  padding: var(--spacing-2) var(--spacing-3);
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--border-radius-md, 6px);
 }
 
 .creating-overlay {

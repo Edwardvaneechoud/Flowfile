@@ -463,7 +463,6 @@ const handleMainDblClick = async (event: MouseEvent) => {
   }
   window.getSelection()?.removeAllRanges();
   if (!(await releaseOpenSettings())) return;
-  // Hide every floating overlay (right-side + bottom). Left palette stays.
   editorStore.hideAllPanels();
   nodeStore.nodeId = -1;
 };
@@ -507,8 +506,8 @@ const loadFlow = async () => {
       if (generation !== mutationGeneration()) continue;
       // Seed before nodes mount so their description reads hit the cache.
       nodeStore.seedNodeDescriptions(flowIdAtStart, vueFlowInput.node_inputs);
-      await importFlow(vueFlowInput);
-      // importFlow already cleared the canvas; the newer run that bumped loadToken repopulates it.
+      await importFlow(vueFlowInput, { keepExisting: sameFlow });
+      // A same-flow reload kept the live nodes, a switch cleared them; a newer run repopulates.
       if (myToken !== loadToken) return;
       if (generation === mutationGeneration()) break;
     }
@@ -1241,7 +1240,6 @@ const handlePasteEvent = (event: ClipboardEvent) => {
 
 const closeContextMenu = () => {
   closeMenu();
-  nodeStore.setCodeGeneratorVisibility(false);
 };
 
 // Prevent text selection during shift+drag selection on canvas
@@ -1317,7 +1315,7 @@ onMounted(async () => {
       void flushNudges();
       // Switching flows: clear selection + overlays so a drawer/preview from the
       // previous flow can't leak (node ids collide across flows).
-      editorStore.hideAllPanels();
+      editorStore.hideAllPanels({ keepCodePane: !!id && id > 0 });
       nodeStore.nodeId = -1;
       nodeStore.nodeData = null;
       nodeStore.nodeDataFlowId = -1;

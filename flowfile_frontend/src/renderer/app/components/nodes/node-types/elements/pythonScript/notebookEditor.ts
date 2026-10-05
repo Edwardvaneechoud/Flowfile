@@ -3,16 +3,17 @@ import type { Extension } from "@codemirror/state";
 import { EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { globalCompletion, localCompletionSource, python } from "@codemirror/lang-python";
-import { oneDark } from "@codemirror/theme-one-dark";
 import { acceptCompletion, autocompletion, type CompletionSource } from "@codemirror/autocomplete";
 import { indentLess, indentMore } from "@codemirror/commands";
 import { bodyTooltips } from "@/utils/codemirrorTooltips";
+import { flowfileEditorTheme, hangingIndent } from "@/utils/codemirrorTheme";
 import { createDataframeColumnCompletions } from "./dataframeColumnCompletions";
 import {
   catalogRefChainCompletions,
   createNamedInputCompletions,
   createPolarsExprCompletions,
   createRefVariableCompletions,
+  flModuleCompletions,
   flowfileApiCompletions,
   globalIdentifierCompletions,
   polarsModuleCompletions,
@@ -47,16 +48,18 @@ export interface NotebookEditorOptions {
   getKernelId?: () => string | null;
   getFlowId?: () => number;
   getNodeId?: () => number;
+  // Takes precedence over the three getters above: the notebook's executor supplies it whole.
+  getLspContext?: () => LspContext;
+  // False where no kernel can be attached, so the "attach a kernel" hint never shows.
+  kernelHint?: boolean;
 }
 
+const MONO = "var(--font-family-mono)";
+
+// No height cap: a cell grows with its code and the notebook list scrolls, never the cell.
 const cellEditorTheme = EditorView.theme({
-  "&": { fontSize: "0.8rem", maxHeight: "350px" },
-  ".cm-content": {
-    minHeight: "40px",
-    padding: "0.4rem 0",
-    fontFamily: "'Fira Code', 'Monaco', 'Menlo', monospace",
-  },
-  ".cm-gutters": { fontSize: "0.7rem", minWidth: "2.5rem" },
+  ".cm-content": { minHeight: "40px", padding: "6px 0" },
+  ".cm-gutters": { minWidth: "2.5rem" },
   ".cm-scroller": { overflow: "auto" },
   // Completion dropdown height (default is ~10em): a moderate cap so a useful number of
   // suggestions show without the list dominating the cell.
@@ -72,7 +75,7 @@ const cellEditorTheme = EditorView.theme({
     whiteSpace: "pre-wrap",
   },
   ".cm-lsp-doc code": {
-    fontFamily: "'Fira Code', 'Monaco', 'Menlo', monospace",
+    fontFamily: MONO,
     fontSize: "0.95em",
     background: "rgba(127, 127, 127, 0.14)",
     borderRadius: "3px",
@@ -82,14 +85,14 @@ const cellEditorTheme = EditorView.theme({
   ".cm-lsp-doc-kind": { opacity: "0.6", fontStyle: "italic", marginRight: "6px" },
   ".cm-lsp-doc-name": { fontWeight: "600" },
   ".cm-lsp-doc-signature": {
-    fontFamily: "'Fira Code', 'Monaco', 'Menlo', monospace",
+    fontFamily: MONO,
     fontSize: "0.95em",
     opacity: "0.85",
     marginBottom: "6px",
     paddingBottom: "6px",
     borderBottom: "1px solid rgba(127, 127, 127, 0.25)",
   },
-  ".cm-lsp-doc-label": { fontFamily: "'Fira Code', 'Monaco', 'Menlo', monospace" },
+  ".cm-lsp-doc-label": { fontFamily: MONO },
   ".cm-lsp-doc-body": { opacity: "0.8", marginTop: "4px" },
   ".cm-lsp-doc-section": { fontWeight: "600", marginTop: "6px" },
   ".cm-lsp-doc-gap": { height: "0.5em" },
@@ -101,7 +104,7 @@ const cellEditorTheme = EditorView.theme({
     gap: "8px",
     padding: "2px 8px",
     fontSize: "0.68rem",
-    color: "#8b95a5",
+    color: "var(--color-text-tertiary)",
     background: "rgba(127, 127, 127, 0.08)",
     borderTop: "1px solid rgba(127, 127, 127, 0.18)",
   },
@@ -120,6 +123,7 @@ const cellEditorTheme = EditorView.theme({
 
 // Resolved fresh per request so a live kernel selection / flow change takes effect.
 function lspCtxGetter(opts: NotebookEditorOptions): () => LspContext {
+  if (opts.getLspContext) return opts.getLspContext;
   return () => ({
     kernelId: opts.getKernelId?.() ?? null,
     flowId: opts.getFlowId?.() ?? 0,
@@ -153,7 +157,11 @@ export function buildNotebookCompletionSources(opts: NotebookEditorOptions): Com
   // Catalog-ref chain entries ride inside the identifier source: Jedi resolves the same
   // chains from the kernel client's return annotations, and a separate override source
   // would render the overlap as duplicate rows.
-  const curated = [catalogRefChainCompletions, createRefVariableCompletions(getPrior)];
+  const curated = [
+    catalogRefChainCompletions,
+    createRefVariableCompletions(getPrior),
+    flModuleCompletions,
+  ];
 
   return [
     na(createIdentifierCompletionSource(getLspCtx, getPrior, curated)),
@@ -195,9 +203,11 @@ export function buildNotebookEditorExtensions(opts: NotebookEditorOptions): Exte
     createLspHover(getLspCtx),
     createLspSignature(getLspCtx),
     createLspDiagnostics(getLspCtx),
-    createNoKernelHint(getLspCtx),
-    oneDark,
+    opts.kernelHint === false ? [] : createNoKernelHint(getLspCtx),
+    flowfileEditorTheme(),
     cellEditorTheme,
+    EditorView.lineWrapping,
+    hangingIndent,
     EditorState.tabSize.of(4),
     autocompletion({
       override: buildNotebookCompletionSources(opts),

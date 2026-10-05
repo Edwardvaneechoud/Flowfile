@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import {
   computeDropSlot,
@@ -108,10 +108,10 @@ describe("useCellDrag", () => {
   let host: HTMLElement;
   let handle: HTMLElement;
   let drag: CellDragController;
-  let onCommit: ReturnType<typeof vi.fn>;
+  let onCommit: Mock<(cellId: string, targetIndex: number) => void>;
   let disabled: boolean;
-  let setCapture: ReturnType<typeof vi.fn>;
-  let releaseCapture: ReturnType<typeof vi.fn>;
+  let setCapture: Mock<(pointerId: number) => void>;
+  let releaseCapture: Mock<(pointerId: number) => void>;
 
   const down = (clientY = 50) =>
     handle.dispatchEvent(
@@ -164,8 +164,10 @@ describe("useCellDrag", () => {
     document.body.innerHTML = "";
   });
 
-  it("focuses the handle on pointerdown, despite preventDefault", () => {
+  it("focuses the handle on pointerdown, despite preventDefault, without scrolling", () => {
+    const focus = vi.spyOn(handle, "focus");
     down(50);
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     expect(document.activeElement).toBe(handle);
   });
 

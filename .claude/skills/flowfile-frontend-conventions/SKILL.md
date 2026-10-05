@@ -76,7 +76,7 @@ Files live in `app/stores/`, kebab-case `xxx-store.ts` (one legacy exception:
 | `results` | run results per flow/node, `resultVersion`. |
 | `auth`, `theme` | user/session; light/dark/system (localStorage `flowfile-theme-preference`). |
 | `column` | **deprecated shim** — re-exports `useNodeStore`; `Canvas.vue` still imports it under this name for back-compat. Don't add new state here. |
-| Feature stores | `fileBrowserStore`, `global-store`, `project-store`, `catalog-store` (829 LOC), `dashboards-store`, `sharing-store`, `tutorial-store`, `notebook-store`. |
+| Feature stores | `fileBrowserStore`, `global-store`, `project-store`, `catalog-store` (829 LOC), `dashboards-store`, `sharing-store`, `tutorial-store`, `notebook-store`, `community-nodes-store`, `node-designer-store`, `notifications-store`, `sql-editor-store`, `telemetry-store`, `update-store`, `drawer-store` (full list: `ls app/stores`). |
 | AI stores | `ai-store` (1666 LOC), `ai-agent-store`, `ai-diff-store`, `ai-command-palette-store`, `ai-ghost-node-store`, `ai-autocomplete-store`, `ai-code-generator-store` (+ `*-persistence.ts` siblings). These have colocated `*.test.ts` — Vitest picks up `src/**/*.test.ts` only. |
 
 **The signal-counter pattern** (flow-store): `pendingReloadCounter` +
@@ -134,9 +134,9 @@ on a relative base.
 trailing slash included.** FastAPI issues an **absolute** 307 redirect when
 the slash doesn't match. Verified pairs in this codebase:
 
-- `node.api.ts` posts `/update_settings/` ↔ `routes.py:1146 @router.post("/update_settings/")`
-- `node.api.ts` posts `/node/description/` ↔ `routes.py:1361 @router.post("/node/description/")`
-- `node.api.ts` posts `/node/reference/` ↔ `routes.py:1396 @router.post("/node/reference/")`
+- `node.api.ts` posts `/update_settings/` ↔ `routes.py @router.post("/update_settings/")`
+- `node.api.ts` posts `/node/description/` ↔ `routes.py @router.post("/node/description/")`
+- `node.api.ts` posts `/node/reference/` ↔ `routes.py @router.post("/node/reference/")`
 
 **Why this bites in production and nowhere else:** two proxy layers happen
 to paper over a mismatch during development, so the bug reaches Docker
@@ -250,12 +250,18 @@ split-output mode).
   `FlowApi.applyOperations` when it changes several things) and change the
   canvas only after core accepts it. Drags and arrow-key nudges send the
   whole moved selection; a failed mutation reloads instead of patching back.
-- The right-hand drawer (Settings/Results/Code tabs) is a **declarative
+- The right-hand drawer (Settings/Results tabs) is a **declarative
   registry**, `views/DesignerView/drawerRegistry.ts` — its own comment
   calls it "single source of truth... adding/moving a view is a one-entry
   edit here." Add new tabs there, not by hand-wiring a drawer component.
-  The Code tab defers CodeMirror instantiation until visible — it breaks if
-  constructed while hidden.
+  A tab that hosts CodeMirror must defer it until visible (gate it on an
+  `active` prop derived from `drawer.activeTab`) — it breaks if
+  constructed while hidden. The code dock needs no such gate: `DesignerView.vue`
+  `v-if`-mounts the `.code-dock` aside only while it is shown.
+  The code generator is **not** a drawer tab: it is the resizable
+  `code-dock` split pane in `DesignerView.vue` (toggled by
+  `editorStore.showCodeGenerator`), holding FlowFrame | Polars | Project |
+  Notebook.
 
 ---
 
@@ -287,9 +293,7 @@ behind this whole module: **privileged operations belong on the native
 not sprinkled through view code as direct browser/Tauri API calls.
 
 **To add a new native capability:** add the Rust command to `commands.rs`
-and list it in `lib.rs`'s `tauri::generate_handler![...]` (current exact
-set: `get_services_status`, `get_service_ports`, `get_app_version`,
-`quit_app`, `app_refresh`, `open_oauth`) — or, for a *plugin* command
+and list it in `lib.rs`'s `tauri::generate_handler![...]` (see the current set with the `generate_handler` grep in Provenance) — or, for a *plugin* command
 (opener, clipboard-manager) instead of a custom Rust command, add its
 permission string to `src-tauri/capabilities/main.json`'s `"permissions"`
 array (no Rust code needed, but the invoke silently fails without the
@@ -363,9 +367,9 @@ ps aux | grep -i flowfile | grep -v grep   # expect: no flowfile_core-*/flowfile
 
 ---
 
-## 8. God-component policy — 19 files, pre-written extraction plans
+## 8. God-component policy — pre-written extraction plans
 
-19 files in this package (as of 2026-07-03) carry a `TODO(refactor)` header
+A number of files in this package carry a `TODO(refactor)` header
 comment with a **pre-written extraction plan** (what to pull out, into
 what, at roughly which lines) — among them `views/DesignerView/Canvas.vue`,
 `composables/useDragAndDrop.ts`, `views/CatalogView/CatalogView.vue`
@@ -429,12 +433,13 @@ browser — **no backend, no axios; nothing in §1-§9 above applies here.**
   trigger an `execute_*` Python bridge call — regression-tested by
   `tests/unit/no-auto-run.test.ts`. Adding a new node-touching affordance?
   Ask "does this run data?" before wiring its handler.
-- **Node count:** root `CLAUDE.md`'s "lightweight, 16 nodes" is **stale** —
-  as of 2026-07-03 (v0.12.7) there are 23 runnable node types across 6
-  palette categories (Machine Learning exists but every node in it is
-  locked/greyed-out), plus 15 locked placeholder types visible only via
-  search. `flowfile_wasm`'s own `CLAUDE.md` still says "5 categories" —
-  also stale; re-verify both before quoting a number.
+- **Node count:** `flowfile_wasm/src/config/nodeCatalog.ts` is the source
+  of truth (the `counts` in core's generated `wasm_node_support.json` mirror
+  it) — re-verify before quoting a number. As of 2026-09 there are 24
+  runnable node types across 6 palette categories (Machine Learning exists
+  but every node in it is locked/greyed-out), plus 17 locked teaser types
+  (`available: false`) hidden from the default browse view and shown on
+  search or via the "Show full-app nodes" toggle.
 - **Pyodide is pinned to v0.27.7** (CDN script, not an npm dependency) —
   the last release shipping a Polars wheel. Bumping it breaks
   `loadPackage(['polars', 'pydantic'])`.
@@ -567,7 +572,7 @@ find flowfile_frontend/src/renderer/app/features/designer/nodes -maxdepth 0 2>/d
 grep -n "generate_handler" flowfile_frontend/src-tauri/src/lib.rs
 cat flowfile_frontend/src-tauri/capabilities/main.json
 
-# --- god-component TODO(refactor) file count + full current list (currently 19) ---
+# --- god-component TODO(refactor) file count + full current list ---
 grep -rl "TODO(refactor)" flowfile_frontend/src/ flowfile_frontend/src-tauri/ | grep -v node_modules
 
 # --- sharing UI rollout: which connection views still lack ShareDialog? ---
@@ -580,8 +585,8 @@ done
 grep -n "already-open\|modelValue.*immediate" flowfile_frontend/src/renderer/app/components/sharing/ShareDialog.vue
 grep -n "defineEmits" flowfile_frontend/src/renderer/app/views/CatalogView/StatsPanel.vue
 
-# --- wasm node/category count (root AND wasm CLAUDE.md are known-stale) + pyodide pin ---
-grep -n "16 nodes" CLAUDE.md; grep -n "categories" flowfile_wasm/CLAUDE.md
+# --- wasm node/category count (source of truth: nodeCatalog.ts) + pyodide pin ---
+grep -c "available: false" flowfile_wasm/src/config/nodeCatalog.ts
 grep -n "pyodide.js\|indexURL" flowfile_wasm/src/stores/pyodide-store.ts
 
 # --- versions ---

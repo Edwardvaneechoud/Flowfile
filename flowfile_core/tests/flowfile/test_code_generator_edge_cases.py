@@ -1311,3 +1311,108 @@ class TestTemporalFilterTypedLiteral:
         assert literal in code
         assert "import datetime" in code
         assert_flow_result_matches_generated(flow, output_node_id=2, code=code)
+
+
+def _people_flow() -> FlowGraph:
+    flow = create_basic_flow()
+    flow.add_manual_input(input_schema.NodeManualInput(
+        flow_id=1, node_id=1, raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                input_schema.MinimalFieldInfo(name="age", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="city", data_type="String"),
+            ],
+            data=[[1, 2, 3], ["a", "b", "c"], [30, 40, 50], ["x", "y", "z"]])))
+    return flow
+
+
+def _assert_same_columns_in_order(flow: FlowGraph, node_id: int, code: str) -> None:
+    expected = flow.get_node(node_id).get_resulting_data().data_frame.collect_schema().names()
+    result = get_result_from_generated_code(code)
+    result = result.collect() if hasattr(result, "collect") else result
+    assert result.columns == expected, code
+
+
+class TestSelectKeepMissingKeepsUnlistedColumns:
+    """A keep_missing select passes the columns it does not list through, in the canvas's order."""
+
+    def _select_flow(self) -> FlowGraph:
+        flow = _people_flow()
+        flow.add_select(input_schema.NodeSelect(
+            flow_id=1, node_id=2, depending_on_id=1, keep_missing=True,
+            select_input=[
+                transform_schema.SelectInput("name", "full_name"),
+                transform_schema.SelectInput("city", keep=False),
+                transform_schema.SelectInput("age", data_type="Float64", data_type_change=True),
+            ]))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        return flow
+
+    @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe],
+                             ids=["polars", "flowframe"])
+    def test_unlisted_column_survives_the_export(self, export_func):
+        flow = self._select_flow()
+        code = export_func(flow)
+        assert_flow_result_matches_generated(flow, output_node_id=2, code=code)
+        _assert_same_columns_in_order(flow, 2, code)
+
+    @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe],
+                             ids=["polars", "flowframe"])
+    def test_unknown_input_schema_exports_drop_rename_and_cast(self, export_func, monkeypatch):
+        from flowfile_core.flowfile.code_generator.code_generator import FlowGraphCodeConverter
+
+        monkeypatch.setattr(FlowGraphCodeConverter, "_input_column_names", lambda self, node_id: None)
+        flow = self._select_flow()
+        code = export_func(flow)
+        assert '.drop(["city"]).rename({"name": "full_name"}).with_columns(' in code
+        assert_flow_result_matches_generated(flow, output_node_id=2, code=code)
+
+
+class TestJoinSuffixForm:
+    """A join whose right-side renames are one suffix pattern exports as a single ``.join(..., suffix=...)``."""
+
+    def _join_flow(self, right_select: list, how: str = "left") -> FlowGraph:
+        flow = _people_flow()
+        flow.add_manual_input(input_schema.NodeManualInput(
+            flow_id=1, node_id=2, raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                    input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                ],
+                data=[["p", "q"], [1, 3]])))
+        flow.add_join(input_schema.NodeJoin(
+            flow_id=1, node_id=3, depending_on_ids=[1, 2],
+            join_input=transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("id", "id")],
+                left_select=[transform_schema.SelectInput(c) for c in ("id", "name", "age", "city")],
+                right_select=right_select,
+                how=how)))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3, "main"))
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
+        return flow
+
+    @pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe],
+                             ids=["polars", "flowframe"])
+    @pytest.mark.parametrize("how", ["left", "inner"])
+    @pytest.mark.parametrize("right_select,expected", [
+        ([transform_schema.SelectInput("name"), transform_schema.SelectInput("id", keep=False)], ""),
+        ([transform_schema.SelectInput("name", "name_r"), transform_schema.SelectInput("id", keep=False)],
+         'suffix="_r"'),
+        ([transform_schema.SelectInput("name"), transform_schema.SelectInput("id")], "coalesce=False"),
+    ], ids=["default_suffix", "user_suffix", "right_key_kept"])
+    def test_suffix_join_matches_the_canvas(self, export_func, how, right_select, expected):
+        flow = self._join_flow(right_select, how)
+        code = export_func(flow)
+        assert "__DROP__" not in code and ".rename(" not in code
+        if export_func is export_flow_to_flowframe and expected == "coalesce=False":
+            expected = "keep_right_keys=True"
+        assert expected in code
+        assert_flow_result_matches_generated(flow, output_node_id=3, code=code)
+        _assert_same_columns_in_order(flow, 3, code)
+
+    def test_right_key_before_other_right_columns_keeps_the_rename_form(self):
+        flow = self._join_flow([transform_schema.SelectInput("id"), transform_schema.SelectInput("name")])
+        code = export_flow_to_polars(flow)
+        assert "__DROP__" in code
+        assert_flow_result_matches_generated(flow, output_node_id=3, code=code)

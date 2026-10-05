@@ -1,4 +1,5 @@
 import type { Completion, CompletionSource } from "@codemirror/autocomplete";
+import flCompletions from "../../../../notebook/flCompletions.json";
 
 import {
   buildRefVarMap,
@@ -200,6 +201,19 @@ const POLARS_METHOD_ENTRIES: Completion[] = [
 ];
 
 // ─── Scoped completion sources ────────────────────────────────────────────────
+
+const FL_ENTRIES: Completion[] = flCompletions.ff.map((e) => ({
+  label: e.name,
+  type: e.kind,
+  detail: e.signature,
+  info: e.doc_first_line,
+}));
+
+/** `ff.<name>` from the generated `flowfile.__all__` listing (`make fl_completions`). */
+export const flModuleCompletions: CompletionSource = (context) => {
+  const match = context.matchBefore(/\bff\.\w*$/);
+  return match ? { from: match.from + 3, options: FL_ENTRIES, validFor: /^\w*$/ } : null;
+};
 
 /**
  * Completions after `pl.` — Polars module exports.

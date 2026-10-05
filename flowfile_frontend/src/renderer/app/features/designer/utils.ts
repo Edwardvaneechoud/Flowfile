@@ -17,6 +17,7 @@ const SVG_NODE_ICONS = [
   "database_writer.svg",
   "dynamic_rename.svg",
   "evaluate_model.svg",
+  "explode_hierarchy.svg",
   "explore_data.svg",
   "external_source.svg",
   "filter.svg",

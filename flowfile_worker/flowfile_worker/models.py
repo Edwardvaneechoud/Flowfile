@@ -201,6 +201,7 @@ class Status(BaseModel):
     file_ref: str
     progress: int | None = 0
     error_message: str | None = None
+    error_kind: Literal["task", "environment"] | None = None
     results: Any | None = None
     result_type: ResultType | None = "polars"
     number_of_records: int | None = None

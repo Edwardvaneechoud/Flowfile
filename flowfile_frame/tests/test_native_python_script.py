@@ -183,6 +183,62 @@ def test_round_trip_keeps_cells_code_kernel_and_outputs():
     assert reopened.get_node(out.node_id)._input_output_handles[script.node_id] == "output-1"
 
 
+def test_cells_given_as_id_pairs_keep_their_ids():
+    pairs = [("c-imports", "import polars as pl"), ("c-body", "df = flowfile_ctx.read_input()"), ("c-empty", "")]
+    script = ff.PythonScript(ff.from_dict(ORDERS), cells=pairs, kernel="ml-kernel")
+
+    stored = _script_input(script)
+    assert [(cell.id, cell.code) for cell in stored.cells] == pairs
+    assert script.cell_ids == ["c-imports", "c-body", "c-empty"]
+    assert script.cells == [code for _, code in pairs]
+    assert stored.code == script.code == "import polars as pl\n\ndf = flowfile_ctx.read_input()"
+
+
+def test_strings_and_id_pairs_give_the_same_cells_and_code():
+    codes = ["a = 1", "", "b = 2"]
+    from_strings = ff.PythonScript(ff.from_dict(ORDERS), cells=codes)
+    from_pairs = ff.PythonScript(ff.from_dict(ORDERS), cells=[(f"id{i}", c) for i, c in enumerate(codes)])
+    assert from_strings.cells == from_pairs.cells == codes
+    assert from_strings.code == from_pairs.code
+    assert from_pairs.cell_ids == ["id0", "id1", "id2"]
+    assert from_strings.cell_ids == [cell.id for cell in _script_input(from_strings).cells]
+    code_only = ff.PythonScript(ff.from_dict(ORDERS), code="x = 1")
+    assert code_only.cell_ids == [cell.id for cell in _script_input(code_only).cells]
+
+
+@pytest.mark.parametrize(
+    "cells, match",
+    [
+        (["a = 1", ("id", "b = 2")], "not a mix"),
+        ([("id", "a = 1", "extra")], r"\(id, code\) pairs of strings"),
+        ([("id",)], r"\(id, code\) pairs of strings"),
+        ([("id", 1)], r"\(id, code\) pairs of strings"),
+        ([(1, "a = 1")], r"\(id, code\) pairs of strings"),
+        ([["id", "a = 1"]], "not a mix"),
+        ([("", "a = 1")], "non-empty"),
+        ([("same", "a = 1"), ("other", "b"), ("same", "c = 3")], r"unique; repeated: \['same'\]"),
+        ("a = 1", "list of strings or of"),
+    ],
+)
+def test_invalid_cell_pairs_raise_and_leave_no_node(cells, match):
+    source = ff.from_dict(ORDERS)
+    with pytest.raises(ff.NativeNodeError, match=match):
+        ff.PythonScript(source, cells=cells)
+    assert [n.node_id for n in source.flow_graph.nodes] == [source.node_id]
+
+
+def test_round_trip_keeps_the_given_cell_ids():
+    pairs = [("cell-a", "a = 1"), ("cell-b", "flowfile_ctx.publish_output(flowfile_ctx.read_input())")]
+    script = ff.PythonScript(ff.from_dict(ORDERS), cells=pairs, kernel="ml-kernel")
+
+    reopened, first_doc = round_trip(script.output, "script_cell_ids.yaml")
+    stored = reopened.get_node(script.node_id).setting_input.python_script_input
+    assert [(cell.id, cell.code) for cell in stored.cells] == pairs
+    assert stored.code == script.code
+    saved = next(node for node in first_doc["nodes"] if node["id"] == script.node_id)
+    assert [(c["id"], c["code"]) for c in saved["setting_input"]["python_script_input"]["cells"]] == pairs
+
+
 # decorator: sample functions (module level: the decorator refuses nested functions)
 
 MONTHLY = {"month": [1, 2, 3], "revenue": [10.0, 20.0, 30.0]}
@@ -453,6 +509,73 @@ def body_class(orders):
     return orders.with_columns(pl.lit(cutoff).alias("cutoff"))
 
 
+# decorator: scripts (a function without a return reads and publishes through flowfile_ctx itself)
+
+
+@ff.python_script(kernel="lite")
+def drawer_template():
+    import polars as pl
+
+    df = flowfile_ctx.read_input()
+
+    # Your transformation here
+
+    flowfile_ctx.publish_output(df.count())
+
+
+DRAWER_TEMPLATE_CELLS = [
+    "import polars as pl\n\ndf = flowfile_ctx.read_input()\n\n# Your transformation here\n\n"
+    "flowfile_ctx.publish_output(df.count())"
+]
+
+
+@ff.python_script(outputs=["kept", "dropped"])
+def script_split():
+    """Split the orders at the growth rate."""
+    orders = flowfile_ctx.read_input().collect()
+
+    # %% [markdown]
+    # Amounts above GROWTH are kept.
+
+    # %% Publish
+    flowfile_ctx.publish_output(orders.filter(pl.col("amount") > GROWTH), "kept")
+    flowfile_ctx.publish_output(orders.filter(pl.col("amount") <= GROWTH), "dropped")
+
+
+SCRIPT_SPLIT_CELLS = [
+    "import polars as pl\nGROWTH = 1.05",
+    "# Split the orders at the growth rate.",
+    "orders = flowfile_ctx.read_input().collect()",
+    "# Amounts above GROWTH are kept.",
+    '# Publish\nflowfile_ctx.publish_output(orders.filter(pl.col("amount") > GROWTH), "kept")\n'
+    'flowfile_ctx.publish_output(orders.filter(pl.col("amount") <= GROWTH), "dropped")',
+]
+
+
+@ff.python_script()
+def publishes_in_a_helper():
+    def publish(df):
+        flowfile_ctx.publish_output(df)
+
+    publish(flowfile_ctx.read_input())
+
+
+@ff.python_script()
+def returns_only_in_a_helper():
+    def first(df):
+        return df.head(1)
+
+    flowfile_ctx.publish_output(first(flowfile_ctx.read_input()))
+
+
+def script_with_parameters(orders):
+    flowfile_ctx.publish_output(orders)
+
+
+def script_without_a_publish():
+    kept = 1
+
+
 # decorator: cells
 
 
@@ -501,7 +624,7 @@ def test_bare_decorator_uses_the_defaults_of_the_called_one():
     script = bare_first_rows.node(ff.from_dict(ORDERS))
     assert _script_input(script).kernel_id is None
     assert script.node.setting_input.output_names == ["main"]
-    assert script.node.setting_input.description == "bare_first_rows"
+    assert not script.node.setting_input.description
     assert bare_first_rows(ff.from_dict(ORDERS))._deferred is True
     with pytest.raises(ff.NativeNodeError, match="a lambda has no body"):
         ff.python_script(lambda orders: orders)
@@ -648,7 +771,7 @@ def test_decorated_function_places_a_python_script_node():
     assert stored.kernel_id == "lite"
     assert script.node.node_type == "python_script"
     assert script.node.setting_input.output_names == ["main"]
-    assert script.node.setting_input.description == "forecast"
+    assert not script.node.setting_input.description
     assert [n.node_id for n in script.node.node_inputs.main_inputs] == [monthly.node_id]
     assert script.node.deferred_until_run is True
     assert script.output._deferred is True
@@ -691,7 +814,8 @@ def test_decorated_node_round_trips():
     assert reopened_script.setting_input.python_script_input == _script_input(script)
     assert [cell.code for cell in reopened_script.setting_input.python_script_input.cells] == FORECAST_CELLS
     assert reopened_script.setting_input.output_names == ["main"]
-    assert reopened_script.setting_input.description == "forecast"
+    assert not reopened_script.setting_input.description
+    assert reopened_script.setting_input.output_schemas == script.node.setting_input.output_schemas
     assert reopened_script.node_inputs.main_inputs[0].node_id == monthly.node_id
 
 
@@ -753,6 +877,31 @@ def test_schemas_declare_an_outputs_columns_and_the_rest_keep_the_first_inputs()
     )
     assert script["main"].data.collect_schema() == orders.data.collect_schema()
     assert script["metrics"]._deferred is True
+    assert script.node.setting_input.model_dump()["output_schemas"] == {
+        "metrics": [
+            {"name": "rows", "data_type": "Int64"},
+            {"name": "total", "data_type": "Float64"},
+            {"name": "tags", "data_type": "List(String)"},
+        ]
+    }
+
+
+def test_without_schemas_no_output_schemas_are_saved():
+    script = ff.PythonScript(ff.from_dict(ORDERS), code="x = 1")
+    assert script.node.setting_input.output_schemas is None
+
+
+def test_returns_is_saved_as_output_schemas_keyed_by_output_name():
+    single = forecast.node(ff.from_dict(MONTHLY)).node.setting_input.model_dump()["output_schemas"]
+    assert single == {
+        "main": [{"name": "month", "data_type": "Int64"}, {"name": "revenue_forecast", "data_type": "Float64"}]
+    }
+    orders, customers = ff.from_dict(ORDERS), ff.from_dict(CUSTOMERS)
+    pair = split_pair.node(orders, customers).node.setting_input.model_dump()["output_schemas"]
+    assert pair == {
+        "a": [{"name": "order_id", "data_type": "Int64"}],
+        "b": [{"name": "name", "data_type": "String"}, {"name": "score", "data_type": "Float64"}],
+    }
 
 
 @pytest.mark.parametrize(
@@ -768,6 +917,75 @@ def test_invalid_schemas_raise_and_leave_no_node(schemas, match):
     with pytest.raises(ff.NativeNodeError, match=match):
         ff.PythonScript(source, code="x = 1", schemas=schemas)
     assert [n.node_id for n in source.flow_graph.nodes] == [source.node_id]
+
+
+# decorator: scripts
+
+
+def test_a_function_without_a_return_keeps_its_body_as_the_cells():
+    assert drawer_template.cells == DRAWER_TEMPLATE_CELLS
+    assert script_split.cells == SCRIPT_SPLIT_CELLS
+    assert publishes_in_a_helper.cells == [
+        "def publish(df):\n    flowfile_ctx.publish_output(df)\n\npublish(flowfile_ctx.read_input())"
+    ]
+    assert returns_only_in_a_helper.cells == [
+        "def first(df):\n    return df.head(1)\n\nflowfile_ctx.publish_output(first(flowfile_ctx.read_input()))"
+    ]
+
+
+def test_a_script_takes_its_frames_in_the_call_and_wires_them_in_order():
+    orders = ff.from_dict(ORDERS)
+    out = drawer_template(orders)
+    node = out.flow_graph.get_node(out.node_id)
+    assert node.node_type == "python_script" and out._deferred is True
+    assert [cell.code for cell in node.setting_input.python_script_input.cells] == DRAWER_TEMPLATE_CELLS
+    assert node.setting_input.python_script_input.kernel_id == "lite"
+    assert [n.node_id for n in node.node_inputs.main_inputs] == [orders.node_id]
+
+    left, right = ff.from_dict(ORDERS), ff.from_dict(CUSTOMERS)
+    script = publishes_in_a_helper.node(left, right)
+    assert [n.node_id for n in script.node.node_inputs.main_inputs] == [left.node_id, right.node_id]
+
+
+def test_a_script_without_frames_is_placed_on_the_given_graph():
+    flow = ff.create_flow_graph()
+    out = ff.python_script(flow_graph=flow)(drawer_template.fn)()
+    assert out.flow_graph is flow and out._deferred is True
+    assert not flow.get_node(out.node_id).node_inputs.main_inputs
+
+
+def test_a_script_with_several_outputs_is_placed_with_node():
+    orders = ff.from_dict(ORDERS)
+    with pytest.raises(ff.NativeNodeError, match=r"outputs \['kept', 'dropped'\]; place it with script_split\.node"):
+        script_split(orders)
+    assert [n.node_id for n in orders.flow_graph.nodes] == [orders.node_id]
+    script = script_split.node(orders)
+    assert script.node.setting_input.output_names == ["kept", "dropped"]
+    assert script["dropped"]._deferred is True
+
+
+def test_a_script_refuses_an_argument_that_is_no_frame():
+    with pytest.raises(ff.NativeNodeError, match="`drawer_template` takes FlowFrames; input 2 got LazyFrame"):
+        drawer_template(ff.from_dict(ORDERS), pl.LazyFrame(MONTHLY))
+
+
+def test_a_script_round_trips():
+    script = script_split.node(ff.from_dict(ORDERS))
+    reopened, _ = round_trip(script["kept"], "script.yaml")
+    stored = reopened.get_node(script.node_id).setting_input
+    assert stored.python_script_input == _script_input(script)
+    assert [cell.code for cell in stored.python_script_input.cells] == SCRIPT_SPLIT_CELLS
+    assert stored.output_names == ["kept", "dropped"]
+
+
+def test_a_scripts_function_runs_with_a_flowfile_ctx_where_it_is_defined(monkeypatch):
+    published = {}
+    ctx = SimpleNamespace(
+        read_input=lambda: pl.LazyFrame(ORDERS), publish_output=lambda df, name="main": published.update({name: df})
+    )
+    monkeypatch.setattr(sys.modules[__name__], "flowfile_ctx", ctx, raising=False)
+    assert script_split.fn() is None
+    assert published["kept"]["order_id"].to_list() == [1, 2, 3] and published["dropped"].height == 0
 
 
 # decorator: errors
@@ -792,6 +1010,13 @@ def test_nested_function_is_refused():
         (with_star_args, {}, r"`frames` is \*args"),
         (with_keyword_only, {}, "`limit` is keyword-only"),
         (no_return, {}, r"`no_return` must end with `return <frame>`"),
+        (script_without_a_publish, {}, r"`script_without_a_publish` must end with `return <frame>`"),
+        (
+            script_with_parameters,
+            {},
+            r"`script_with_parameters` has no `return`, so it is a script that reads its inputs with flowfile_ctx: "
+            r"drop its parameters and pass the frames when you call it, or end it with `return <frame>`",
+        ),
         (return_inside_if, {}, r"`return_inside_if` must return exactly once.*found 1 return"),
         (two_returns, {}, r"`two_returns` must return exactly once.*found 2 return"),
         (returns_a_dict, {}, r"`returns_a_dict` returns a dict; name its outputs with outputs="),

@@ -196,7 +196,7 @@ import KernelStatusBadge from "./KernelStatusBadge.vue";
 const props = defineProps<{
   kernel: KernelInfo;
   flavourInfo: Map<ImageFlavour, FlavourInfo>;
-  onSave: (kernelId: string, packages: string[]) => Promise<void>;
+  onSave: (kernelId: string, update: { packages: string[] }) => Promise<void>;
 }>();
 
 const emit = defineEmits<{
@@ -320,7 +320,7 @@ const save = async () => {
   saving.value = true;
   saveError.value = null;
   try {
-    await props.onSave(props.kernel.id, [...editPackages.value]);
+    await props.onSave(props.kernel.id, { packages: [...editPackages.value] });
     editing.value = false;
   } catch (err: any) {
     saveError.value = err?.message ?? "Failed to update packages.";

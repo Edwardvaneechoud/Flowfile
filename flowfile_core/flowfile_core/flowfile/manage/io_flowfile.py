@@ -2,7 +2,7 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
-from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, register_missing_node_template
+from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, node_dict, register_missing_node_template, registry
 from flowfile_core.configs.settings import is_docker_mode
 from flowfile_core.flowfile.flow_graph import FlowGraph, restore_dynamic_input_connections
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
@@ -333,7 +333,11 @@ def _source_handle(flow_info: schemas.FlowInformation, source_id: int, target_id
 
 
 def _add_node_promise(graph: FlowGraph, node_info: schemas.NodeInformation) -> None:
-    if getattr(node_info.setting_input, "is_user_defined", False) and node_info.type not in CUSTOM_NODE_STORE:
+    is_user_defined = getattr(node_info.setting_input, "is_user_defined", False)
+    if (is_user_defined and node_info.type not in CUSTOM_NODE_STORE) or node_info.type not in node_dict:
+        # Before wiring: a node file written since the last scan must lend its real template, not the placeholder.
+        registry.refresh()
+    if is_user_defined and node_info.type not in CUSTOM_NODE_STORE:
         register_missing_node_template(node_info.type)
     node_promise = input_schema.NodePromise(
         flow_id=graph.flow_id,
@@ -408,10 +412,12 @@ def populate_graph_from_flow_information(
     dynamic-input nodes follow once every node is configured. Start nodes are not read
     from the file: each source's ``add_*`` marks itself, so a stale ``is_start_node``
     flag can never resurface. The caller holds ``graph.rebuilding()``, so nothing is
-    recorded.
+    recorded. The graph may already hold the nodes the information's edges read from
+    (a notebook's held run adds a node's inputs first); they are wired through their
+    default output.
 
     Args:
-        graph: An empty graph whose settings and identity are kept as-is.
+        graph: A graph holding at most the information's sources, whose settings and identity are kept as-is.
         flow_info: The flow to build.
         owner_of: Maps a node id to the ``user_id`` to stamp on its settings; None leaves
             ``user_id`` untouched.

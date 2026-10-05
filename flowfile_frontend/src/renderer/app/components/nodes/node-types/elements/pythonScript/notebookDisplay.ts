@@ -26,3 +26,10 @@ export function parseTablePayload(data: string): TablePayload | null {
     return null;
   }
 }
+
+/** Execution time as shown next to a cell's execution count. */
+export function formatExecutionTime(ms: number): string {
+  if (ms < 1) return "<1ms";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}

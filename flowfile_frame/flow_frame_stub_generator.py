@@ -626,6 +626,9 @@ def generate_improved_type_stub(
                     except Exception:
                         pass
                 content.append(f"    def {name}(self) -> {return_type_str}: ...")
+                if getattr(member, "fset", None) is not None:
+                    content.append(f"    @{name}.setter")
+                    content.append(f"    def {name}(self, value: {return_type_str}) -> None: ...")
                 content.append("")
 
         except Exception as e:

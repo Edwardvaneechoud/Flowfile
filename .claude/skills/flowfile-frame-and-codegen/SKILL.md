@@ -246,11 +246,11 @@ All of these persist through `flowfile_core`'s storage layer (the shared SQLite 
 | `rename` | implemented via `select(..., _keep_missing=True)` | — |
 | everything else on `pl.LazyFrame` (`tail`, `slice`, `shift`, `reverse`, `fill_null`, `quantile`, …) | injected generic wrapper → polars-code | passthroughs (§5) add no node at all |
 
-**Flowfile-only extensions with no Polars equivalent:** `filter_split` (→ `(pass, fail)` frames on output handles 0/1), `random_split(splits, seed)` (→ N frames), the ML verbs `train_model`/`apply_model`/`evaluate_model`/`wait_for`, `fuzzy_join`, `text_to_rows`, `solve_graph` (graph connected-components), `dynamic_rename` (prefix/suffix/formula/first-row renaming), the visual-grouping context manager `with df.group("name"):` + `set_group` (organizational only, no data effect), `write_catalog_table`, the cloud/DB writers, `to_graph`/`save_graph`.
+**Flowfile-only extensions with no Polars equivalent:** `filter_split` (→ `(pass, fail)` frames on output handles 0/1), `random_split(splits, seed)` (→ N frames), the ML verbs `train_model`/`apply_model`/`evaluate_model`/`wait_for`, `fuzzy_join`, `text_to_rows`, `solve_graph` (graph connected-components), `explode_hierarchy` (parent→child transitive closure via `polars_grouper`'s `hierarchy_*` functions → `NodeExplodeHierarchy`; the result is a new table, not the input plus columns), `dynamic_rename` (prefix/suffix/formula/first-row renaming), the visual-grouping context manager `with df.group("name"):` + `set_group` (organizational only, no data effect), `write_catalog_table`, the cloud/DB writers, `to_graph`/`save_graph`.
 
 **Known parity deviations, not bugs:**
 - `GroupByFrame.sum/mean/median` aggregate `cs.numeric()` columns only (Polars aggregates everything it can).
-- Multiple `filter` predicates are AND-joined into a single polars-code node, not chained node-by-node.
+- Multiple `filter` predicates become one node (a native `NodeFilter` when every predicate has a formula form, else one polars-code node), not a chain.
 - `concat`'s default is graph-opaque polars-code, not the graph-friendly `NodeUnion`.
 - `Series` is a 65-line stub; there is no eager `DataFrame` type — `LazyFrame = DataFrame = FlowFrame` aliases in `__init__.py` exist purely "for compatibility with generated code" and **must not be removed** (contract stated in `flowfile_frame/CLAUDE.md`).
 
@@ -260,7 +260,7 @@ For a plan to close specific gaps in this table, see `flowfile-codegen-parity-ca
 
 ## 10. Stub generation — `make stubs` / `make check_stubs`
 
-Because `FlowFrame` and `Expr` get most of their methods **injected at runtime** (§4), static type checkers see almost nothing without stubs. The package ships committed `.pyi` files plus `py.typed` (PEP 561) for every module — **27 `.pyi` files** as of this writing, including `database/` and `cloud_storage/` submodules.
+Because `FlowFrame` and `Expr` get most of their methods **injected at runtime** (§4), static type checkers see almost nothing without stubs. The package ships committed `.pyi` files plus `py.typed` (PEP 561) for every module, including `database/` and `cloud_storage/` submodules.
 
 ```bash
 # Makefile:259 — regenerate all stubs
@@ -303,7 +303,7 @@ check_stubs: stubs
 
 ## 12. Tests layout
 
-`flowfile_frame/tests/` is flat — no package-specific pytest marker (root `pyproject.toml` registers only `worker`/`core`/`kernel`/`docker_integration`/`kafka`). `tests/conftest.py` sets `TESTING=True` at import and unconditionally deletes/recreates a cloud connection named `minio-flowframe-test` (s3, `http://localhost:9000`, `minioadmin`/`minioadmin`) in the catalog DB at collection time — this only *registers* the connection row; MinIO itself is needed only by the tests that actually read/write through it. Docker-gated tests use `tests/utils.py::is_docker_available()` with `@pytest.mark.skipif`.
+`flowfile_frame/tests/` is flat — no package-specific pytest marker (the root markers are listed in `flowfile-testing-and-validation` §1). `tests/conftest.py` sets `TESTING=True` at import and unconditionally deletes/recreates a cloud connection named `minio-flowframe-test` (s3, `http://localhost:9000`, `minioadmin`/`minioadmin`) in the catalog DB at collection time — this only *registers* the connection row; MinIO itself is needed only by the tests that actually read/write through it. Docker-gated tests use `tests/utils.py::is_docker_available()` with `@pytest.mark.skipif`.
 
 | File | Lines | Covers |
 |---|---|---|
@@ -327,7 +327,6 @@ CI runs `poetry run pytest flowfile_frame/tests --disable-warnings` in both the 
 1. **Multi-column pivot fallback is broken.** Verified: `df.pivot(on=["c", "c2"], index="k", values="v", aggregate_function="sum")` raises `TypeError: LazyFrame.pivot() got an unexpected keyword argument 'sort_columns'` at graph-*build* time. The fallback template passes `DataFrame`-only kwargs to a `LazyFrame` call and assigns to a bare `result` name instead of `output_df`. Single `on`/`values` pivots (the native path) work fine.
 2. **`from_dict` single-row-list quirk.** `ff.from_dict({"x": [1]})` produces a `list[i64]` column instead of `i64` (verified). Multi-row dicts behave normally; likely a `FlowDataEngine`-side raw-data inference edge case for 1-row inputs. If you see an unexpected `List` dtype on a single-row manual-input frame, this is why.
 3. **`rename(strict=...)` is accepted but silently ignored** — no error, no effect.
-4. **`Expr.over()` logs a broken f-string on failure**: `logger.warning("Could not create polars expression for over(): {e}")` — the `{e}` is never interpolated (missing `f` prefix). Cosmetic, but means the log line is useless for debugging an `over()` failure.
 5. **The serialization fallback for a non-`LazyFrame` result silently degrades the node** to `output_df = input_df` while injecting the real result out-of-band — the visual graph misrepresents the computation, and only a `logger.error` hints at it. If a saved `.flowfile` "does nothing" for a node that should transform data, check whether that node went through this path.
 6. `lazy_methods`' non-convertible-arg short-circuit passes a generator expression as a single call argument — looks structurally suspect; not exercised by the test suite as of this writing, treat as unverified rather than confirmed-safe.
 
@@ -349,7 +348,7 @@ grep -n "safe_globals\|_validate_code\|_wrap_in_function" flowfile_core/flowfile
 # confirm which connectors have an execution_location=="local" in-process branch
 grep -n 'execution_location == "local"' flowfile_core/flowfile_core/flowfile/flow_graph.py
 
-# .pyi file count (was 27)
+# current .pyi file count
 find flowfile_frame/flowfile_frame -name '*.pyi' | wc -l
 
 # stub pipeline still wired the same way
@@ -382,5 +381,3 @@ df.pivot(on=['c','c2'], index='k', values='v', aggregate_function='sum').collect
 # run the frame test suite in isolation
 FLOWFILE_DB_PATH=/tmp/frame_test.db poetry run pytest flowfile_frame/tests --disable-warnings
 ```
-
-Corrected-in-this-writing note: an earlier assumption that `read_api`/REST reads categorically "require a running `flowfile_worker`" does **not** hold for `flowfile_frame` graphs — see §8's verified counter-example. If you find code or docs elsewhere in the repo asserting otherwise, treat *this* skill's live-verified result as current and flag the other location as drift.

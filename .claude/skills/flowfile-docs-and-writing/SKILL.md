@@ -46,7 +46,7 @@ Every new page must be added to `mkdocs.yml`'s `nav:` block by hand — MkDocs d
 
 ## 2. How the docs site builds and deploys
 
-- **Engine**: MkDocs 1.6.1 + Material theme (deps come from the root Poetry **dev group** — `pyproject.toml`'s `mkdocs`, `mkdocs-material`, `mkdocstrings`, `mkdocstrings-python`, `griffe`, `griffe-pydantic`. `docs/requirements.txt` is a 0-byte leftover — nothing reads it).
+- **Engine**: MkDocs 1.6.1 + Material theme (deps come from the root Poetry **dev group** — `pyproject.toml`'s `mkdocs`, `mkdocs-material`, `mkdocstrings`, `mkdocstrings-python`, `griffe`, `griffe-pydantic`.).
 - **Plugins**: `search`; `mkdocstrings` (Python handler, `griffe_pydantic` extension with `schema: true` — this is what renders Pydantic "Fields"/"Validators" sections on `for-developers/python-api-reference.md`, which documents `flowfile_core` classes like `FlowGraph`/`FlowNode`/`FlowDataEngine` and the Pydantic schemas).
 - **Markdown extensions**: `attr_list`, `md_in_html`, `admonition`, `pymdownx.details` (the `<details markdown="1">` collapsibles you'll see all over `quickstart.md`), `pymdownx.superfences` with a custom `mermaid` fence, `footnotes`.
 - **CI**: `.github/workflows/documentation.yml`, triggered on push/PR to `main` touching `docs/**`, `mkdocs.yml`, `flowfile_frame/**/*.py`, or `tools/generate_formula_docs.py` (plus `workflow_dispatch`).
@@ -87,10 +87,6 @@ make check_formula_docs   # formula_docs + `git diff --exit-code` on that file �
 ```
 
 If you bump the `polars-expr-transformer` version pin (or edit `tools/generate_formula_docs.py`) and forget to run `make formula_docs`, `documentation.yml`'s `check-formula-docs` gate fails on a diff in a file you never touched by hand. This is CI-gate *mechanics* — for how the gate fits into the broader change-control picture (required checks, what blocks a merge), see `flowfile-change-control`.
-
-### 3.5 Sphinx leftovers are dead weight — the site is MkDocs only
-
-`docs/conf.py` (Sphinx config, `release = "0.1.2"`, `sphinx.ext.autodoc`/`napoleon`/`sphinx_rtd_theme`), `docs/MakeFile` (note the capital-F — a Sphinx makefile, not GNU Make's `Makefile`), and `docs/requirements.txt` (0 bytes) are all vestigial from before the project switched to MkDocs. Nothing in CI or the Makefile invokes `sphinx-build` or `docs/MakeFile`. Don't run them, don't "fix" `conf.py`'s stale version, and don't add Sphinx-flavor `.rst` files expecting them to build — they won't be picked up by anything.
 
 ---
 
@@ -159,11 +155,11 @@ Style: dense, imperative, bold-lead the load-bearing rules, cite exact symbols a
 
 **These files ARE actively maintained per feature** — this isn't a stale artifact. `git log -- '*/CLAUDE.md'` shows updates tied to real merges: RBAC (#502), explicit-only execution (#521), project git-tracking (#524), notebook environment (#538), object-storage-in-catalog (#555). When you land a feature that changes a package's contracts, patterns, or gotchas, update its CLAUDE.md in the same PR — that's the working norm here, not optional busywork.
 
-**What rots, and the fix:** exact literal counts and versions age out within weeks even with per-feature maintenance, because they require a *separate*, cross-cutting sweep that per-feature edits don't naturally trigger (root `CLAUDE.md`'s app version, workflow-file count, Alembic migration range, WASM node count, and several file line-counts were all stale as of 2026-07-03, some by months). When writing or editing a CLAUDE.md:
+**What rots, and the fix:** exact literal counts and versions age out within weeks even with per-feature maintenance, because they require a *separate*, cross-cutting sweep that per-feature edits don't naturally trigger. When writing or editing a CLAUDE.md:
 
 - **Prefer a pointer over a literal count.** "See `pyproject.toml` for the pinned version" beats "version 0.12.7." "`ls flowfile_core/flowfile_core/alembic/versions/`" beats "28 migrations." "See `.github/workflows/`" beats "15 workflow files."
 - If a literal count is genuinely useful inline (e.g. "6 pytest markers"), date-stamp it ("as of 2026-07-03") so a reader knows to re-verify rather than trust it silently.
-- Numbers that appear in **multiple places and disagree** are a strong signal something needs a pointer instead of a copy: this repo's WASM node count is quoted differently in four separate places (root `CLAUDE.md`, `docs/users/deployment/lite.md`, the top-level `README.md`, and `flowfile_wasm/CLAUDE.md`) — none of them agree, and an agent trusting any single one of them in isolation will be wrong. Verify counts against code (`grep`/`ls`/`wc -l`), never against another prose doc.
+- Numbers that appear in **multiple places and disagree** are a strong signal something needs a pointer instead of a copy: the Lite/WASM node count has diverged across docs before. Verify counts against code (`grep`/`ls`/`wc -l`), never against another prose doc.
 
 ---
 
@@ -171,7 +167,7 @@ Style: dense, imperative, bold-lead the load-bearing rules, cite exact symbols a
 
 Gaps worth knowing so you don't assume something is documented when it isn't, and don't accidentally treat an undocumented-but-real workflow as broken:
 
-- **No PR template, no feature-request issue template.** The only issue template (`.github/ISSUE_TEMPLATE/bug_report.md`) is GitHub's unmodified default — it still asks for "Smartphone… Device: [e.g. iPhone6]," which makes no sense for a desktop/server ETL tool. `CONTRIBUTING.md`'s prose ("what changed, why, how you tested it; screenshots for UI changes") is the only PR-description guidance that exists.
+- **No PR template.** `.github/ISSUE_TEMPLATE/` holds node-request forms plus GitHub's unmodified default `bug_report.md` — it still asks for "Smartphone… Device: [e.g. iPhone6]," which makes no sense for a desktop/server ETL tool. `CONTRIBUTING.md`'s prose ("what changed, why, how you tested it; screenshots for UI changes") is the only PR-description guidance that exists.
 - **No `SECURITY.md`** at the repo root or in `.github/`. The private-vulnerability-reporting policy (GitHub's private "Report a vulnerability" form) is documented only inside `CONTRIBUTING.md`'s "Reporting security issues" section.
 - **`claude.yml` and `claude-pr-review.yml`** (interactive `@claude`-mention agent, and an automatic Claude code review posted on every non-draft PR) are real, tracked workflow files in `.github/workflows/` but are not mentioned in any docs page or in `CONTRIBUTING.md`'s workflow list — a first-time contributor gets an automated review with no explanation of where it came from.
 - ~~Flow-in-flow, project git-tracking, group-based sharing undocumented~~ — closed by the 2026-07 rebuild: `users/visual-editor/subflows.md`, `users/projects.md`, `users/deployment/sharing.md`, plus `users/deployment/cli.md` (headless runs), `users/connect/{index,kafka,apis}.md`, and `users/coming-from-excel.md` now exist and are in nav.
@@ -196,9 +192,6 @@ make check_formula_docs                    # expect "Formula docs are in sync."
 # Confirm use_directory_urls and the raw-HTML home page are unchanged
 grep -n "use_directory_urls\|- Home:" mkdocs.yml
 
-# Confirm Sphinx leftovers are still untouched/unused
-grep -rn "sphinx-build\|docs/MakeFile\|docs/conf.py" Makefile .github/workflows/  # expect no hits
-
 # Re-check the comment-doctrine purge and current wording
 git show --shortstat 81322109                      # "Remove the comments (#492)"
 grep -n -A4 "^### Comments" CLAUDE.md
@@ -208,9 +201,8 @@ find . -maxdepth 2 -name CLAUDE.md | sort
 grep -n "^## " flowfile_worker/CLAUDE.md            # expect Role/Layout/Key patterns & conventions/Running / entry points/Testing/Gotchas/Key files
 
 # Re-check the docs contributor-facing gaps
-ls .github/ISSUE_TEMPLATE/                          # expect only bug_report.md (default template)
+ls .github/ISSUE_TEMPLATE/                          # bug_report.md is still the unmodified default
 find . -maxdepth 2 -iname SECURITY.md                # expect no hits
-grep -rli "flow-in-flow\|subflow" docs/              # expect no real hits (verify any match isn't a false positive)
 ```
 
 Facts that will rot fastest — re-check every time, don't trust a cached number: current app version, the exact `nav:`/orphan-page state (someone may have fixed §3.3's example), the CLAUDE.md file count if a new package is added, and any node/workflow/migration count quoted in prose anywhere in the repo (this repo's numbers disagree with each other more often than not — always verify against code, never against another doc).

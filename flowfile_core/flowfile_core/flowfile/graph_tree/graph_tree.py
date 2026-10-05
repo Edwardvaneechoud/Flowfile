@@ -1,230 +1,134 @@
+import heapq
+
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.flowfile.graph_tree.models import BranchInfo, InputInfo
+from flowfile_core.flowfile.flow_node.multi_output import output_handle_index
+
+_MAX_DESCRIPTION = 50
+
+Lane = tuple[int, str] | None
 
 
-def calculate_depth(node_id: int, node_info: dict[int, BranchInfo], visited: set = None) -> int:
-    """Calculates the depth of each node."""
-
-    if visited is None:
-        visited = set()
-    if node_id in visited:
-        return node_info[node_id].depth
-    visited.add(node_id)
-
-    max_input_depth = -1
-    inputs = node_info[node_id].inputs
-
-    for main_id in inputs.main:
-        max_input_depth = max(max_input_depth, calculate_depth(main_id, node_info, visited))
-    if inputs.left:
-        max_input_depth = max(max_input_depth, calculate_depth(inputs.left, node_info, visited))
-    if inputs.right:
-        max_input_depth = max(max_input_depth, calculate_depth(inputs.right, node_info, visited))
-
-    node_info[node_id].depth = max_input_depth + 1
-    return node_info[node_id].depth
+def _label(node: FlowNode) -> str:
+    """``Name (id)``, the node's canvas name, plus the first line of its description, truncated."""
+    name = getattr(node.node_template, "name", None) or node.node_type.replace("_", " ").title()
+    label = f"{name} ({node.node_id})"
+    lines = (getattr(node.setting_input, "description", None) or "").strip().splitlines()
+    if not lines:
+        return label
+    description = lines[0] if len(lines[0]) <= _MAX_DESCRIPTION else lines[0][: _MAX_DESCRIPTION - 3] + "..."
+    return f"{label}  {description}"
 
 
-def trace_path(
-    node_id: int,
-    node_info: dict[int, BranchInfo],
-    merge_points: dict[int, list[int]],
-    current_path: list[int] | None = None,
-):
-    """Define the trace of each node path"""
-    if current_path is None:
-        current_path = []
+def _exit_label(source: FlowNode, handle: str) -> str:
+    """The name of the output an edge leaves from, e.g. a Gate's ``then``/``else``; empty for a single output."""
+    names = getattr(source.setting_input, "output_names", None) or []
+    index = output_handle_index(handle)
+    if len(names) > 1 and index < len(names):
+        return names[index]
+    return "" if index == 0 else handle
 
-    current_path = current_path + [node_id]
-    outputs = node_info[node_id].outputs
 
-    if not outputs:
-        return [current_path]
+def _flow_order(outgoing: list[list[tuple[int, str]]]) -> list[int]:
+    """Topological order in creation order, so code prints in the order it was written; dead ends go first
+    among the nodes that are ready, which closes a side branch before the main line continues."""
+    waiting = [0] * len(outgoing)
+    for edges in outgoing:
+        for target, _ in edges:
+            waiting[target] += 1
+    ready = [(bool(outgoing[i]), i) for i, count in enumerate(waiting) if count == 0]
+    heapq.heapify(ready)
+    order = []
+    while ready:
+        _, i = heapq.heappop(ready)
+        order.append(i)
+        for target, _ in outgoing[i]:
+            waiting[target] -= 1
+            if waiting[target] == 0:
+                heapq.heappush(ready, (bool(outgoing[target]), target))
+    return order + sorted(set(range(len(outgoing))) - set(order))
 
-    all_paths = []
-    for output_id in outputs:
-        if output_id in merge_points and len(merge_points[output_id]) > 1:
-            all_paths.append(current_path + [output_id])
+
+def _connector(lanes: list[Lane], col: int, joined: list[int], corner: str) -> str:
+    """A row that merges lanes ``joined`` into column ``col`` (corner ``┘``) or branches them out of it (``┐``)."""
+    last = max(joined)
+    tee = "┴" if corner == "┘" else "┬"
+    cells = []
+    for c, lane in enumerate(lanes):
+        if c == col:
+            mark = "├"
+        elif c == last:
+            mark = corner
+        elif c in joined:
+            mark = tee
+        elif col < c < last:
+            mark = "┼" if lane is not None else "─"
         else:
-            all_paths.extend(trace_path(output_id, node_info, merge_points, current_path))
-    return all_paths
+            mark = "│" if lane is not None else " "
+        cells.append(mark + ("─" if col <= c < last else " "))
+    return "".join(cells).rstrip()
 
 
-def build_node_info(nodes: list[FlowNode]) -> dict[int, BranchInfo]:
-    """Builds node information used to construct the graph tree."""
+def render_flow(nodes: list[FlowNode]) -> str:
+    """Draw the graph top to bottom, one node per line, with lanes where it branches and merges.
 
-    node_info = {}
-    for node in nodes:
-        node_id = node.node_id
+    Reads like ``git log --graph``: each ``●`` is a node, ``│`` links it to the next node in its column,
+    ``├─┐`` opens a branch and ``├─┘`` joins one back.
+    A node fed from a named output (a Gate's ``then``/``else``) carries that name in brackets.
+    """
+    index = {str(node.node_id): i for i, node in enumerate(nodes)}
+    outgoing: list[list[tuple[int, str]]] = [[] for _ in nodes]
+    for i, node in enumerate(nodes):
+        for edge in node.get_edge_input():
+            source = index[str(edge.source)]
+            outgoing[source].append((i, _exit_label(nodes[source], edge.sourceHandle)))
+    order = _flow_order(outgoing)
+    position = {i: p for p, i in enumerate(order)}
+    downstream: list[set[int]] = [set() for _ in nodes]
+    for i in reversed(order):
+        for target, _ in outgoing[i]:
+            downstream[i] |= {target} | downstream[target]
 
-        operation = node.node_type.replace("_", " ").title() if node.node_type else "Unknown"
-        label = f"{operation} (id={node_id})"
-        if hasattr(node, "setting_input") and hasattr(node.setting_input, "description"):
-            if node.setting_input.description:
-                desc = node.setting_input.description
-                if len(desc) > 20:  # Truncate long descriptions
-                    desc = desc[:17] + "..."
-                label = f"{operation} ({node_id}): {desc}"
+    lanes: list[Lane] = []
+    rows = []
+    previous_col = None  # the column of the node on the last row, when that row is a node row
+    for i in order:
+        joined = [c for c, lane in enumerate(lanes) if lane is not None and lane[0] == i]
+        reached = bool(joined)
+        if not joined:
+            joined = [lanes.index(None) if None in lanes else len(lanes)]
+            if joined[0] == len(lanes):
+                lanes.append(None)
+        col = joined[0]
+        if len(joined) > 1:
+            rows.append(_connector(lanes, col, joined, "┘"))
+        elif reached and previous_col == col:
+            rows.append("".join(("│" if lane is not None else " ") + " " for lane in lanes))
+        exits = sorted({lanes[c][1] for c in joined if lanes[c] is not None and lanes[c][1]})
+        for c in joined:
+            lanes[c] = None
+        while len(lanes) > col + 1 and lanes[-1] is None:
+            lanes.pop()
+        marks = "".join(("●" if c == col else "│" if lane is not None else " ") + " " for c, lane in enumerate(lanes))
+        rows.append(marks + _label(nodes[i]) + (f"  [{', '.join(exits)}]" if exits else ""))
+        previous_col = col
 
-        inputs = InputInfo(
-            main=[n.node_id for n in (node.node_inputs.main_inputs or [])],
-            left=node.node_inputs.left_input.node_id if node.node_inputs.left_input else None,
-            right=node.node_inputs.right_input.node_id if node.node_inputs.right_input else None,
-        )
-        outputs = [n.node_id for n in node.leads_to_nodes]
-
-        node_info[node_id] = BranchInfo(
-            label=label, short_label=f"{operation} ({node_id})", inputs=inputs, outputs=outputs, depth=0
-        )
-
-    return node_info
-
-
-def group_nodes_by_depth(node_info: dict[int, BranchInfo]) -> tuple[dict[int, list[int]], int]:
-    """Groups each node by depth"""
-    depth_groups = {}
-    max_depth = 0
-    for node_id, info in node_info.items():
-        depth = info.depth
-        max_depth = max(max_depth, depth)
-        if depth not in depth_groups:
-            depth_groups[depth] = []
-        depth_groups[depth].append(node_id)
-
-    return depth_groups, max_depth
-
-
-def define_node_connections(node_info: dict[int, BranchInfo]) -> dict[int, list[int]]:
-    """Defines node connections to merge"""
-    merge_points = {}  # target_id -> list of source_ids
-    for node_id, info in node_info.items():
-        for output_id in info.outputs:
-            if output_id not in merge_points:
-                merge_points[output_id] = []
-            merge_points[output_id].append(node_id)
-
-    return merge_points
-
-
-def build_flow_paths(node_info: dict[int, BranchInfo], flow_starts: list[FlowNode], merge_points: dict[int, list[int]]):
-    """Build the flow paths to be drawn"""
-
-    root_nodes = [
-        nid
-        for nid, info in node_info.items()
-        if not info.inputs.main and not info.inputs.left and not info.inputs.right
-    ]
-
-    if not root_nodes and flow_starts:
-        root_nodes = [n.node_id for n in flow_starts]
-    paths = []
-
-    for root_id in root_nodes:
-        paths.extend(trace_path(root_id, node_info, merge_points))
-
-    return paths
-
-
-def group_paths(paths: list, merge_points: dict):
-    """Groups each node path."""
-    paths_by_merge = {}
-    standalone_paths = []
-
-    for path in paths:
-        if len(path) > 1 and path[-1] in merge_points and len(merge_points[path[-1]]) > 1:
-            merge_id = path[-1]
-            if merge_id not in paths_by_merge:
-                paths_by_merge[merge_id] = []
-            paths_by_merge[merge_id].append(path)
-        else:
-            standalone_paths.append(path)
-    return paths_by_merge, standalone_paths
-
-
-def draw_merged_paths(
-    node_info: dict[int, BranchInfo],
-    merge_points: dict[int, list[int]],
-    paths_by_merge: dict[int, list[list[int]]],
-    merge_drawn: set,
-    drawn_nodes: set,
-    lines: list[str],
-):
-    """Draws paths for each node that merges."""
-    for merge_id, merge_paths in paths_by_merge.items():
-        if merge_id in merge_drawn:
-            continue
-        merge_info = node_info[merge_id]
-        sources = merge_points[merge_id]
-
-        for i, source_id in enumerate(sources):
-            source_path = None
-            for path in merge_paths:
-                if source_id in path:
-                    source_path = path[: path.index(source_id) + 1]
-                    break
-
-            if source_path:
-                line_parts = []
-                for j, nid in enumerate(source_path):
-                    if j == 0:
-                        line_parts.append(node_info[nid].label)
-                    else:
-                        line_parts.append(f" ──> {node_info[nid].short_label}")
-
-                if i == 0:
-                    line = "".join(line_parts) + " ─────┐"
-                    lines.append(line)
-                elif i == len(sources) - 1:
-                    line = "".join(line_parts) + " ─────┴──> " + merge_info.label
-                    lines.append(line)
-
-                    remaining = node_info[merge_id].outputs
-                    while remaining:
-                        next_id = remaining[0]
-                        lines[-1] += f" ──> {node_info[next_id].label}"
-                        remaining = node_info[next_id].outputs
-                        drawn_nodes.add(next_id)
-                else:
-                    line = "".join(line_parts) + " ─────┤"
-                    lines.append(line)
-
-                for nid in source_path:
-                    drawn_nodes.add(nid)
-
-        drawn_nodes.add(merge_id)
-        merge_drawn.add(merge_id)
-        lines.append("")
-    return paths_by_merge
-
-
-def draw_standalone_paths(
-    drawn_nodes: set[int], standalone_paths: list[list[int]], lines: list[str], node_info: dict[int, BranchInfo]
-):
-    """Draws paths that do not merge."""
-    for path in standalone_paths:
-        if all(nid in drawn_nodes for nid in path):
-            continue
-
-        line_parts = []
-        for i, node_id in enumerate(path):
-            if node_id not in drawn_nodes:
-                if i == 0:
-                    line_parts.append(node_info[node_id].label)
-                else:
-                    line_parts.append(f" ──> {node_info[node_id].short_label}")
-                drawn_nodes.add(node_id)
-
-        if line_parts:
-            lines.append("".join(line_parts))
-
-
-def add_un_drawn_nodes(drawn_nodes: set[int], node_info: dict[int, BranchInfo], lines: list[str]):
-    """Adds isolated nodes if exists."""
-    for node_id in node_info:
-        if node_id not in drawn_nodes:
-            lines.append(node_info[node_id].label + " (isolated)")
-
-    lines.append("")
-    lines.append("=" * 80)
-    lines.append("Execution Order")
-    lines.append("=" * 80)
+        successors = sorted(outgoing[i], key=lambda edge: position[edge[0]])
+        # The branch with the most nodes below it keeps this column, so the main line stays straight.
+        trunk = max(successors, key=lambda edge: len(downstream[edge[0]]), default=None)
+        opened = []
+        for lane in successors:
+            if lane is trunk:
+                lanes[col] = lane
+                continue
+            free = next((c for c in range(col + 1, len(lanes)) if lanes[c] is None), None)
+            if free is None:
+                lanes.append(None)
+                free = len(lanes) - 1
+            lanes[free] = lane
+            opened.append(free)
+        if opened:
+            rows.append(_connector(lanes, col, [col, *opened], "┐"))
+            previous_col = None
+        while lanes and lanes[-1] is None:
+            lanes.pop()
+    return "\n".join(row.rstrip() for row in rows)

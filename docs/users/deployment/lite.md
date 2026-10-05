@@ -141,7 +141,7 @@ is ready.
 | Polars Code node | ✓ | ✓ |
 | Python Script / Kernels | ✓ | ✗ |
 | SQL Query node | ✓ | ✗ |
-| Fuzzy Match / Graph Solver | ✓ | ✗ |
+| Fuzzy Match / Graph Solver / Explode Hierarchy | ✓ | ✗ |
 | Machine Learning nodes | ✓ | ✗ |
 | Scheduler & automation | ✓ | ✗ |
 | AI assistant (BYOK) | ✓ | ✗ |

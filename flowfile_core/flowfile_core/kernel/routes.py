@@ -289,7 +289,7 @@ async def update_kernel(
     update: KernelUpdate,
     current_user=Depends(get_current_active_user),
 ):
-    """Update a kernel's editable fields. Currently: ``packages``.
+    """Update a kernel's editable fields: ``packages``.
 
     The kernel must be stopped (rebuild of the derived image happens here).
     """

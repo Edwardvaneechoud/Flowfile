@@ -30,8 +30,8 @@ flowfile [command] [component] [file_path] [--host H] [--port P] [--no-browser]
 
 | positional | choices | meaning |
 |---|---|---|
-| `command` | `run`, `seed-demo`, `remove-demo`, `project` | top-level verb |
-| `component` | `ui`, `core`, `worker`, `flow`, `init`, `open`, `save` | run target, or project sub-command |
+| `command` | `run`, `seed-demo`, `remove-demo`, `project`, `convert`, `import` | top-level verb |
+| `component` | `ui`, `core`, `worker`, `flow`, `init`, `open`, `save`, `yxdb` (convert), `alteryx` (import) | run target, project sub-command, or converter |
 | `file_path` | free | flow file path, project folder, or version message |
 
 | flag | default | applies to | notes |
@@ -55,11 +55,11 @@ flowfile [command] [component] [file_path] [--host H] [--port P] [--no-browser]
   - `save "<message>"`: projects the DB into the folder and `git commit`s; prints `Saved version <sha8>` or `(no changes)`.
 - **No args** → prints `FlowFile v<version>` + a usage block.
 
-Full multi-line usage/version output, verb list, and demo-seed summary shape are all worth re-reading directly from `flowfile/flowfile/__main__.py` — it is short (under 300 lines) and is the ground truth for every flag above.
+Full multi-line usage/version output, verb list, and demo-seed summary shape are all worth re-reading directly from `flowfile/flowfile/__main__.py` — read its argparse block; it is the ground truth for every flag above (including the `convert`/`import` flags `--out`, `--inspect`, `--format`, `--csv`, `--overwrite`).
 
 ---
 
-## 2. CRITICAL: import side effects
+## 2. Import side effects (they mutate the live catalog DB)
 
 `import flowfile` (`flowfile/flowfile/__init__.py`) unconditionally sets, at import time:
 
@@ -111,7 +111,7 @@ Implemented in `flowfile/flowfile/__main__.py:run_flow()`. `--param key=value` (
 python -m flowfile_core.main --run-flow <path> --run-id <id>   # --run-id is REQUIRED here
 ```
 
-`flowfile_core/main.py` dispatches `--run-flow` (only reachable via `if __name__ == "__main__"`) to `_run_flow_cli`, which duplicates `run_flow()`'s logic *inside* `flowfile_core` because the top-level `flowfile` package isn't bundled into the PyInstaller binary. Missing `--run-id` prints `Error: --run-id is required` and exits 1 — unlike path A, there is no optional-run-id fallback here.
+`flowfile_core/main.py` dispatches `--run-flow` (only reachable via `if __name__ == "__main__"`, checked at the top of the file before any router import or the storage sweep) to `flowfile_core/run_flow_cli.py:run_flow_cli`, which duplicates `run_flow()`'s logic *inside* `flowfile_core` because the top-level `flowfile` package isn't bundled into the PyInstaller binary. Missing `--run-id` prints `Error: --run-id is required` and exits 1 — unlike path A, there is no optional-run-id fallback here.
 
 ### C. Scheduler-spawned
 
@@ -155,10 +155,10 @@ Gotcha: the browser tab opens after `time.sleep(5)` but **before** uvicorn start
 
 ### Core startup/shutdown side effects worth knowing
 
-- Import-time: `storage.cleanup_directories()` runs (see §8 cleanup policy) — **starting core deletes cache files older than 1 hour**, every time.
-- Lifespan startup: `logging.basicConfig(INFO, ...)` to stdout only (no file handler — Electron/Tauri pipes this); starts the embedded scheduler iff `FLOWFILE_SCHEDULER_ENABLED`.
+- Import-time: `storage.cleanup_directories()` runs (see §8 cleanup policy) — **starting core deletes cache files older than 1 hour**, every time. The `--run-flow` verb dispatches above it, so headless run children never sweep (`flowfile run flow` never imports `main` at all).
+- Lifespan startup: `logging.basicConfig(INFO, ...)` to stderr, where the import-time `PipelineHandler` console handler (`configs/__init__.py`) also writes, keeping stdout clean for script output (no file handler — Tauri pipes both streams); starts the embedded scheduler iff `FLOWFILE_SCHEDULER_ENABLED`.
 - Lifespan startup also runs `shared.run_logs.cleanup_old_logs()` — age-based retention over `scheduled_run_*.log` and `flow_*.log` (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30, `0` disables).
-- Lifespan shutdown: stops the scheduler, stops **every** Docker kernel container, and shuts down the optional local LLM. It **no longer deletes logs** — the old `clear_all_flow_logs()` call wiped every `*.log`, run logs included, on every restart. Logs now expire only by age.
+- Lifespan shutdown: stops the scheduler, stops **every** Docker kernel container, and shuts down the optional local LLM. It does not delete logs; logs expire only by age.
 - `POST /shutdown` triggers a graceful uvicorn exit (used by the Tauri shutdown ladder).
 - CLI arg parsing (`--host`/`--port`/`--worker-port`) happens at **import** of `flowfile_core.configs.settings` via `parse_known_args()` against whatever `sys.argv` the importing process has — importing core inside a process with unrelated `--host`/`--port` flags on argv will silently repoint the server.
 
@@ -170,7 +170,7 @@ First-time setup (`.env` bootstrapping, kernel-image build profiles + `FLOWFILE_
 
 ### Published-images deployment ("docker-remote" — documented drift)
 
-Root `CLAUDE.md` lists a `docker-remote/` directory as "Compose stack using published Docker Hub images." **That directory does not exist** in the working tree or in any commit (as of 2026-07-03). The actual published-images deployment story lives in **`docs/users/deployment/docker.md`**: a sample compose file pulling `edwardvaneechoud/flowfile-{frontend,core,worker}:latest` plus versioned kernel images (`edwardvaneechoud/flowfile-kernel-base:0.3.0`, `-ml:0.3.0`), same env vars/volumes as the source compose (the storage volume is just named `flowfile-storage` there instead of `flowfile-internal-storage`). Ops commands: `docker compose up -d | down | pull | logs -f`. Treat any reference to `docker-remote/` elsewhere in the docs as stale — point people at `docs/users/deployment/docker.md` instead.
+There is no `docker-remote/` directory. The actual published-images deployment story lives in **`docs/users/deployment/docker.md`**: a sample compose file pulling `edwardvaneechoud/flowfile-{frontend,core,worker}:latest` plus versioned kernel images (`edwardvaneechoud/flowfile-kernel-base:0.3.0`, `-ml:0.3.0`), same env vars/volumes as the source compose (the storage volume is just named `flowfile-storage` there instead of `flowfile-internal-storage`). Ops commands: `docker compose up -d | down | pull | logs -f`. Treat any reference to `docker-remote/` elsewhere in the docs as stale — point people at `docs/users/deployment/docker.md` instead.
 
 ---
 
@@ -256,13 +256,13 @@ Two roots:
 **Cleanup policy** (`storage.cleanup_directories()`, runs at every core startup): `temp` > 24h, `cache` > 1h, `system_logs` > 168h, mtime-based. `logs` is deliberately **not** swept here — its retention is owned by `shared/run_logs.py` (`FLOWFILE_RUN_LOG_RETENTION_DAYS`); re-adding it would silently override the env var with a hardcoded 7 days.
 
 **Catalog DB resolution order** (`get_database_url()`):
-1. `FLOWFILE_DB_PATH` env → `sqlite:///<that path>` (always wins)
+1. `FLOWFILE_DATABASE_URL` (full SQLAlchemy URL), else `FLOWFILE_DB_PATH` (a path → `sqlite:///<path>`; a value containing `://` is used as-is) — always wins
 2. `TESTING=True` → `sqlite:///<base>/temp/test_flowfile_catalog.db` — **one shared file**; concurrent test sessions clobber each other, use `FLOWFILE_DB_PATH` per session instead
 3. default → `sqlite:///<base>/database/flowfile_catalog.db`
 
 Legacy one-time migration: if `<base>/database/flowfile.db` exists (and `FLOWFILE_DB_PATH` is unset), its data is copied into the new DB at startup.
 
-As of 2026-07-03 (v0.12.7) the schema has 34 tables + `alembic_version`, migration head **028**. Fresh non-docker DB seeds exactly one user: `local_user`.
+Current migration head: `ls flowfile_core/flowfile_core/alembic/versions/ | sort | tail -1`. Fresh non-docker DB seeds exactly one user: `local_user`.
 
 ---
 
@@ -299,7 +299,7 @@ Ciphertext format and HKDF derivation are owned by `flowfile-architecture-contra
 | docker logs | container stdout | `docker compose logs -f [service]` |
 
 Access:
-- Stream a flow's log live: `GET /logs/{flow_id}` (JWT via query param, `idle_timeout=300` default). Append: `POST /logs/{flow_id}`. Worker ingest: `POST /raw_logs`. Wipe all: `POST /clear-logs`.
+- Stream a flow's log live: `GET /logs/{flow_id}` (Bearer header, only flows open in the caller's session, `idle_timeout=300` default). Worker and kernel ingest: `POST /raw_logs` (signed with `X-Internal-Token`). Wipe all: `POST /clear-logs`.
 - Prompt-log CLI: `python -m flowfile_core.ai.prompt_log tail [N]` (default 10), `... grep PATTERN [SURFACE]`.
 - **Logs survive restarts and expire only by age** (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30d; swept at core startup and hourly on the scheduler tick). `POST /clear-logs` is scoped to `flow_*.log` and never touches run logs. Per-flow `flow_<id>.log` is still truncated at each run start, so it holds only the latest run.
 
@@ -310,7 +310,7 @@ Access:
 1. `flowfile run ui --host/--port` is dead — flags parsed, never used; `start_server` throws on non-default values.
 2. `import flowfile` mutates env and importing `flowfile_core` migrates + seeds the live DB (§2) — always isolate ad-hoc imports with `FLOWFILE_DB_PATH`.
 3. Run logs live under `storage.logs_directory` (`shared/run_logs.py`), so `FLOWFILE_STORAGE_DIR` / docker / `TESTING` move them — don't assume the real home dir.
-4. Flow logs survive core restarts (the shutdown wipe and hardcoded 7-day sweep were removed); both `flow_*.log` and `scheduled_run_*.log` are expired only by `shared.run_logs.cleanup_old_logs` (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30). Per-flow `flow_<id>.log` is still truncated at the start of each run, so only the run logs are true history.
+4. Flow logs survive core restarts; both `flow_*.log` and `scheduled_run_*.log` are expired only by `shared.run_logs.cleanup_old_logs` (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30). Per-flow `flow_<id>.log` is still truncated at the start of each run, so only the run logs are true history.
 5. Cache files older than 1h are deleted every time core starts — don't assume a `Status.file_ref` survives a restart.
 6. Opening a flow renames it in-app to the file's stem; renaming the YAML on disk renames the flow.
 7. Saving `.flowfile` raises `DeprecationWarning`; *loading* `.flowfile` still works via the legacy pickle path.
@@ -318,7 +318,6 @@ Access:
 9. `TESTING=True` uses one shared temp DB file — concurrent pytest sessions cross-drop tables; use per-session `FLOWFILE_DB_PATH` (see `flowfile-testing-and-validation`).
 10. Kernel-exchange dirs (`shared_directory`, `global_artifacts_directory`, `artifact_staging_directory`) must stay under the kernel-mounted volume — don't relocate them via ad-hoc env overrides.
 11. `flowfile_core.configs.settings` parses `sys.argv` at **import** time — importing core inside a process with unrelated `--host`/`--port`/`--worker-port` flags on argv silently repoints ports.
-12. Root `CLAUDE.md` documentation drift found as of this writing: version says 0.11.0 (actual 0.12.7 — `shared/_version.py`); migrations "001–021" (actual head is 028); `docker-remote/` listed as a directory that doesn't exist (§4).
 13. In zsh, `echo ===` breaks (`== not found`) if you paste separator lines from other shells — use `---` instead; unrelated to the app but easy to trip over when scripting diagnostics.
 
 ---
@@ -333,7 +332,7 @@ echo "${FLOWFILE_MODE:-electron (unset)}"
 
 # 2. Catalog DB: tables, migration head, recent runs, schedules, registrations
 sqlite3 ~/.flowfile/database/flowfile_catalog.db '.tables'
-sqlite3 ~/.flowfile/database/flowfile_catalog.db 'select * from alembic_version;'      # expect 028 as of 2026-07-03
+sqlite3 ~/.flowfile/database/flowfile_catalog.db 'select * from alembic_version;'      # expect the newest NNN_ in alembic/versions
 sqlite3 ~/.flowfile/database/flowfile_catalog.db \
   'select id,flow_name,started_at,ended_at,success,pid from flow_runs order by id desc limit 10;'
 sqlite3 ~/.flowfile/database/flowfile_catalog.db 'select * from flow_schedules;'
@@ -381,16 +380,16 @@ docker compose logs -f flowfile-worker
 
 Volatile facts above need periodic re-verification — commands are copy-pasteable, run from the repo root.
 
-- **App version** (as of 2026-07-03: `0.12.7`): `cat shared/_version.py` and `grep -m1 '^version' pyproject.toml`
-- **Alembic migration head** (as of 2026-07-03: `028`): `ls flowfile_core/flowfile_core/alembic/versions/ | sort | tail -3`
-- **CLI verbs/flags** (§1): `sed -n '196,293p' flowfile/flowfile/__main__.py`
+- **App version**: `cat shared/_version.py` and `grep -m1 '^version' pyproject.toml`
+- **Alembic migration head**: `ls flowfile_core/flowfile_core/alembic/versions/ | sort | tail -3`
+- **CLI verbs/flags** (§1): `grep -n "add_argument" flowfile/flowfile/__main__.py`
 - **Import side effects** (§2): `sed -n '1,20p' flowfile/flowfile/__init__.py`; `sed -n '1,20p' flowfile_core/flowfile_core/__init__.py`; `sed -n '20,30p' flowfile_core/flowfile_core/database/init_db.py`
-- **Headless run paths** (§3): `flowfile/flowfile/__main__.py:run_flow`, `flowfile_core/flowfile_core/main.py:_run_flow_cli`, `shared/subprocess_utils.py:spawn_flow_subprocess`
+- **Headless run paths** (§3): `flowfile/flowfile/__main__.py:run_flow`, `flowfile_core/flowfile_core/run_flow_cli.py:run_flow_cli`, `shared/subprocess_utils.py:spawn_flow_subprocess`
 - **Scheduler poll interval / launch guard**: `grep -n "DEFAULT_POLL_INTERVAL\|_maybe_launch" flowfile_scheduler/flowfile_scheduler/engine.py`
 - **`flowfile run ui` host/port rejection** (§1, §4): `grep -n "NotImplementedError" flowfile/flowfile/web/__init__.py`
 - **Single-file mode env coupling**: `grep -n "SINGLE_FILE_MODE\|get_default_worker_url" flowfile_core/flowfile_core/configs/settings.py`
 - **Core startup/shutdown side effects** (§4): `grep -n "cleanup_directories\|clear_all_flow_logs\|shutdown_handler" flowfile_core/flowfile_core/main.py`
-- **`docker-remote/` non-existence** (§4): `ls docker-remote 2>&1; git log --all --oneline -- docker-remote` (both should be empty) — cross-check against `grep -n docker-remote CLAUDE.md` and re-read `docs/users/deployment/docker.md` for the current published-images story
+- **`docker-remote/` non-existence** (§4): `ls docker-remote 2>&1; git log --all --oneline -- docker-remote` (both should be empty) — re-read `docs/users/deployment/docker.md` for the current published-images story
 - **Compose facts** (§4): `grep -n "shm_size\|FLOWFILE_SCHEDULER_ENABLED\|FLOWFILE_ENABLE_PROJECTS" docker-compose.yml`
 - **Flow save/load format** (§5): `grep -n "def save_flow" -A 40 flowfile_core/flowfile_core/flowfile/flow_graph.py`; `sed -n '1,50p' flowfile_core/flowfile_core/flowfile/manage/io_flowfile.py` (look for `_validate_flow_path`, `open_flow`)
 - **Storage directory table** (§6): `sed -n '1,280p' shared/storage_config.py` (every `@property` under `FlowfileStorage`)

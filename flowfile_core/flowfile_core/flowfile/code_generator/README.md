@@ -4,7 +4,7 @@ Converts a `FlowGraph` (the in-memory DAG behind a visual flow) into runnable,
 hand-written-looking Python. Two output shapes:
 
 - **a standalone script** — Polars (`export_flow_to_polars`) or FlowFrame
-  (`export_flow_to_flowframe`), one `run_etl_pipeline()` function.
+  (`export_flow_to_flowframe`, the `import flowfile as ff` dialect), one `run_etl_pipeline()` function.
 - **a multi-file project** — `export_flow_to_project` (zip via
   `project_to_zip_bytes`), with python-script nodes split into runnable modules.
 
@@ -18,7 +18,10 @@ then a **render pass** fuses linear single-use chains into one piped expression
 and renames the surviving boundary variables to operation labels
 (`source`/`filtered`/`joined`/…). The pass is conservative: anything it doesn't
 confidently recognize stays a named statement, so output degrades to "less
-pretty", never "wrong". The round-trip tests (exec the generated code,
+pretty", never "wrong". After `convert()`, `emissions()` returns those statements
+(each with the `node_ids` it contains) so the notebook can split the body into cells;
+`FlowGraphToFlowFrameConverter(graph, placeholders=True)` turns a node it cannot
+express into `ff.canvas_node(...)` instead of failing. The round-trip tests (exec the generated code,
 `assert_frame_equal` against the engine) are the correctness net.
 
 ## Files
@@ -30,15 +33,16 @@ pretty", never "wrong". The round-trip tests (exec the generated code,
 | `join_handlers.py` | `JoinHandlersMixin` — standard / semi-anti / cross joins, join-key transforms, post-join processing. |
 | `transform_handlers.py` | `TransformHandlersMixin` — row/column transforms (group_by, formula, pivot, sort, window, fuzzy match, record_id, …). |
 | `connector_handlers.py` | `ConnectorHandlersMixin` — external connectors (cloud storage, Kafka, database, REST API, catalog readers/writers). |
+| `native_handlers.py` | `NativeHandlersMixin` (FlowFrame export only) — gates, subflows, Python Scripts, flow ports and custom nodes as the frame's native classes (`ff.Gate`, `ff.RunFlow`, `ff.PythonScript`, `ff.FlowInput`, `.to_flow_output`, `ff.custom_nodes`). A Python Script is written as `@ff.python_script` only with `decorated_scripts=True` (the notebook render) and when its cells regenerate; a script written in the drawer regenerates as a function without a `return`. |
 | `custom_node_handlers.py` | `CustomNodeHandlersMixin` — user-defined node source registration and call emission. |
 | `expression_helpers.py` | `ExpressionHelpersMixin` — filter-expression parsing and Polars dtype / aggregation mapping. |
 | `chain_fusion.py` | Pure string/graph fusion pass (`render_pipeline`); no flow imports, unit-testable in isolation. |
 | `project_exporter.py` | `FlowGraphToProjectConverter` — emits a multi-file project tree (`pipeline.py`, `main.py`, per-node notebooks, custom-node modules, scaffolding) instead of one script. |
 | `project_shim.py` | Standalone `flowfile_ctx` shim shipped inside exported projects so python-script node code runs unchanged outside Flowfile's kernel. |
 
-The handler logic is split across mixins purely to keep files focused; all mixins
-compose into `FlowGraphCodeConverter`, so a handler can call any other handler or
-helper via `self`.
+The handler logic is split across mixins purely to keep files focused; every mixin
+except `NativeHandlersMixin` (FlowFrame converter only) composes into
+`FlowGraphCodeConverter`, so a handler can call any other handler or helper via `self`.
 
 ## Adding a node type
 

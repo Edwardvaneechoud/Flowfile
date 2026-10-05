@@ -1,29 +1,57 @@
 <template>
-  <div class="code-container">
+  <div
+    :class="[
+      'code-container',
+      { 'is-notebook': codeMode === 'notebook', 'has-toolbar': codeMode !== 'project' },
+    ]"
+  >
     <div class="code-header">
       <h4>Generated code</h4>
-      <div class="mode-toggle">
+      <div class="mode-toggle" role="group" aria-label="Code mode">
         <button
-          :class="['toggle-button', { active: codeMode === 'flowframe' }]"
+          :class="['mode-segment', { active: codeMode === 'flowframe' }]"
+          :aria-pressed="codeMode === 'flowframe'"
+          data-testid="code-mode-flowframe"
           @click="setMode('flowframe')"
         >
           FlowFrame
         </button>
         <button
-          :class="['toggle-button', { active: codeMode === 'polars' }]"
+          :class="['mode-segment', { active: codeMode === 'polars' }]"
+          :aria-pressed="codeMode === 'polars'"
+          data-testid="code-mode-polars"
           @click="setMode('polars')"
         >
           Polars
         </button>
         <button
-          :class="['toggle-button', { active: codeMode === 'project' }]"
+          :class="['mode-segment', { active: codeMode === 'project' }]"
+          :aria-pressed="codeMode === 'project'"
+          data-testid="code-mode-project"
           @click="setMode('project')"
         >
           Project
         </button>
+        <button
+          :class="['mode-segment', { active: codeMode === 'notebook' }]"
+          :aria-pressed="codeMode === 'notebook'"
+          data-testid="code-mode-notebook"
+          @click="setMode('notebook')"
+        >
+          Notebook
+        </button>
       </div>
+      <button
+        class="close-btn"
+        type="button"
+        aria-label="Close code pane"
+        title="Close (Ctrl/Cmd+G)"
+        @click="editorStore.setCodeGeneratorVisibility(false)"
+      >
+        <span class="material-icons" aria-hidden="true">close</span>
+      </button>
     </div>
-    <div v-if="codeMode !== 'project'" class="code-toolbar">
+    <div v-if="!ownsBody" class="code-toolbar">
       <button class="action-btn" :disabled="loading" @click="refreshCode">
         <svg
           v-if="!loading"
@@ -57,45 +85,61 @@
         Export Code
       </button>
     </div>
-    <template v-if="active">
-      <ProjectExport v-if="codeMode === 'project'" />
-      <codemirror v-else v-model="code" :extensions="extensions" :disabled="true" />
-    </template>
+    <div v-if="codeMode === 'project'" class="code-project">
+      <ProjectExport />
+    </div>
+    <div v-else-if="codeMode === 'notebook'" class="code-notebook">
+      <NotebookPanel :key="nodeStore.flow_id" :flow-id="nodeStore.flow_id" />
+    </div>
+    <codemirror v-else v-model="code" :extensions="extensions" :disabled="true" />
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, watch } from "vue";
+import { computed, defineAsyncComponent, h, onBeforeUnmount, ref, watch } from "vue";
 import axios from "axios";
+import debounce from "lodash/debounce";
 import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
-import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView } from "@codemirror/view";
+import { flowfileEditorTheme } from "@/utils/codemirrorTheme";
 import ProjectExport from "./ProjectExport.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 
-// `active` = this is the visible tab. CodeMirror must not be created while its
-// pane is display:none, so the editor renders (and code fetches) only when active.
-const props = defineProps<{ active?: boolean }>();
+// The chunk loads once per session; an empty dock body meanwhile reads as a broken pane.
+const NotebookPanel = defineAsyncComponent({
+  loader: () => import("../../CatalogView/NotebookPanel.vue"),
+  loadingComponent: () => h("div", { class: "code-notebook-loading" }, "Loading the notebook…"),
+});
 
-type CodeMode = "flowframe" | "polars" | "project";
+type CodeMode = "flowframe" | "polars" | "project" | "notebook";
+
+const MODE_KEY = "flowfile.codeGenerator.mode.v1";
+const MODES: readonly CodeMode[] = ["flowframe", "polars", "project", "notebook"];
+
+const readMode = (): CodeMode => {
+  try {
+    const saved = localStorage.getItem(MODE_KEY) as CodeMode | null;
+    return saved && MODES.includes(saved) ? saved : "flowframe";
+  } catch {
+    return "flowframe";
+  }
+};
 
 const code = ref("");
 const loading = ref(false);
-const codeMode = ref<CodeMode>("flowframe");
+const codeMode = ref<CodeMode>(readMode());
+// Project and notebook render their own component and fetch for themselves.
+const ownsBody = computed(() => codeMode.value === "project" || codeMode.value === "notebook");
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const lastLoadedFlowId = ref<number | null>(null);
 
 const extensions = [
   python(),
-  oneDark,
-  EditorView.theme({
-    "&": { fontSize: "11px" },
-    ".cm-content": { padding: "20px" },
-    ".cm-focused": { outline: "none" },
-  }),
+  flowfileEditorTheme(),
+  EditorView.theme({ ".cm-content": { padding: "8px 0" } }),
 ];
 
 const endpointMap: Partial<Record<CodeMode, string>> = {
@@ -108,16 +152,21 @@ const exportConfirmMap: Partial<Record<CodeMode, string>> = {
   polars: "/editor/code_to_polars/exported",
 };
 
+// Only the latest request writes the viewer, so a mode switch mid-fetch can't be overwritten.
+let fetchSeq = 0;
+
 const fetchCode = async () => {
-  // Project mode fetches its own manifest in ProjectExport.vue.
-  if (codeMode.value === "project") return;
+  if (ownsBody.value) return;
+  const seq = ++fetchSeq;
   loading.value = true;
   try {
     const endpoint = endpointMap[codeMode.value];
     const response = await axios.get(`${endpoint}?flow_id=${nodeStore.flow_id}`);
+    if (seq !== fetchSeq) return;
     code.value = response.data;
     lastLoadedFlowId.value = nodeStore.flow_id;
   } catch (error: any) {
+    if (seq !== fetchSeq) return;
     console.error("Failed to fetch code:", error);
     const detail = error?.response?.data?.detail;
     if (detail) {
@@ -126,38 +175,47 @@ const fetchCode = async () => {
       code.value = "# Failed to generate code. Please check your flow configuration.";
     }
   } finally {
-    loading.value = false;
+    if (seq === fetchSeq) loading.value = false;
   }
 };
 
 const setMode = (mode: CodeMode) => {
   if (codeMode.value !== mode) {
     codeMode.value = mode;
+    try {
+      localStorage.setItem(MODE_KEY, mode);
+    } catch {
+      // Storage unavailable: the mode just isn't remembered.
+    }
     if (nodeStore.flow_id > 0) {
       fetchCode();
     }
   }
 };
 
-// Fetch when the tab becomes visible (active) for a flow we haven't loaded yet.
 watch(
-  () => [props.active, nodeStore.flow_id] as const,
-  ([active, flowId]) => {
-    if (active && flowId > 0 && flowId !== lastLoadedFlowId.value) {
+  () => nodeStore.flow_id,
+  (flowId) => {
+    if (flowId > 0 && flowId !== lastLoadedFlowId.value) {
       fetchCode();
     }
   },
   { immediate: true },
 );
 
-// A graph edit invalidates the cached code; drop the cache so the next time the
-// Code tab opens it re-fetches (rather than regenerating on every hidden edit).
+// A graph edit invalidates the cached code; the open pane regenerates it once edits settle.
+const refetchSoon = debounce(() => {
+  if (nodeStore.flow_id > 0) fetchCode();
+}, 400);
 watch(
   () => editorStore.graphVersion,
   () => {
     lastLoadedFlowId.value = null;
+    refetchSoon();
   },
 );
+
+onBeforeUnmount(() => refetchSoon.cancel());
 
 const refreshCode = () => {
   if (nodeStore.flow_id > 0) {
@@ -189,88 +247,192 @@ const exportCode = () => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 20px;
   box-sizing: border-box;
 }
 
 .code-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: var(--spacing-3);
+  min-height: 44px;
+  padding: 0 var(--spacing-2) 0 var(--spacing-4);
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
   flex-shrink: 0;
 }
 
-/* The disabled CodeMirror viewer fills the remaining tab height and scrolls. */
-.code-container :deep(.cm-editor) {
+/* A toolbar continues the header, so the seam between them is lighter. */
+.code-container.has-toolbar .code-header {
+  border-bottom-color: var(--color-border-light);
+}
+
+/* The disabled CodeMirror viewer fills the remaining pane height and scrolls. */
+.code-container:not(.is-notebook) :deep(.cm-editor) {
+  flex: 1;
+  min-height: 0;
+  margin: var(--spacing-3) var(--spacing-4) var(--spacing-4);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  overflow: hidden;
+}
+
+.code-project {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px 16px;
+}
+
+.code-notebook {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  cursor: auto;
+}
+
+.code-notebook-loading {
+  padding: 12px 16px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.code-notebook > :deep(.notebook-panel) {
   flex: 1;
   min-height: 0;
 }
 
 .code-header h4 {
+  flex: 0 1 auto;
+  min-width: 0;
   margin: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+.close-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  border-radius: var(--border-radius-md);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.close-btn .material-icons {
+  font-size: 18px;
+}
+
+.close-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-background-tertiary);
+}
+
+/* Raised-segment control: tertiary track, the active mode lifts onto the surface. */
 .mode-toggle {
   display: flex;
+  flex: none;
   gap: 2px;
   padding: 2px;
-  background: var(--color-background-secondary);
+  background: var(--color-background-tertiary);
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
 }
 
-.toggle-button {
-  padding: 4px 12px;
+.mode-segment {
+  height: 24px;
+  padding: 0 10px;
   border: none;
   border-radius: var(--border-radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
+  font-family: inherit;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  transition: all var(--transition-fast);
+  white-space: nowrap;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
-.toggle-button.active {
-  background: var(--color-accent);
-  color: var(--color-text-inverse);
+.mode-segment.active {
+  background: var(--color-background-primary);
+  color: var(--color-primary);
+  box-shadow: var(--shadow-xs);
 }
 
-.toggle-button:not(.active):hover {
+/* The dark primary surface is darker than the tertiary track, so lift the active segment instead. */
+[data-theme="dark"] .mode-segment.active {
+  background: color-mix(in srgb, var(--color-background-tertiary) 78%, white);
+  color: var(--color-accent-dark);
+}
+
+.mode-segment:not(.active):hover {
   color: var(--color-text-primary);
-  background: var(--color-background-tertiary);
 }
 
+.mode-segment:focus-visible {
+  outline: 2px solid var(--color-focus-ring-accent-strong);
+  outline-offset: 1px;
+}
+
+/* Same chrome band and 28px buttons as the notebook toolbar. */
 .code-toolbar {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: var(--spacing-2);
+  min-height: 40px;
+  padding: 0 var(--spacing-3);
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
   flex-shrink: 0;
 }
 
 .action-btn {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 10px;
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
   cursor: pointer;
+  font-family: inherit;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
+  white-space: nowrap;
   box-shadow: var(--shadow-xs);
   transition: all var(--transition-fast);
 }
 
 .action-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
+  color: var(--color-text-secondary);
+}
+
+.action-btn.primary svg {
+  color: inherit;
 }
 
 .action-btn:hover:not(:disabled) {
@@ -291,7 +453,7 @@ const exportCode = () => {
 .action-btn.primary {
   background: var(--color-accent);
   border-color: var(--color-accent);
-  color: var(--color-text-inverse);
+  color: #fff;
 }
 
 .action-btn.primary:hover:not(:disabled) {

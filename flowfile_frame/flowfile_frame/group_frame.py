@@ -103,7 +103,6 @@ class GroupByFrame:
             can_be_converted = self._process_agg_expressions(agg_cols, agg_expressions)
         if can_be_converted:
             can_be_converted = self._process_named_agg_expressions(agg_cols, named_agg_exprs)
-        node_desc = self.description or f"Aggregate after grouping by {self.readable_group()}"
         return self._create_agg_node(
             self.node_id,
             can_be_converted,
@@ -111,7 +110,7 @@ class GroupByFrame:
             agg_expressions,
             named_agg_exprs,
             convertable_to_code=convertable_to_code,
-            description=node_desc,
+            description=self.description,
         )
 
     def _process_group_columns(self, agg_cols: list[transform_schema.AggColl]) -> bool:
@@ -196,9 +195,9 @@ class GroupByFrame:
         agg_expressions,
         named_agg_exprs,
         convertable_to_code: bool,
-        description: str,
+        description: str | None,
     ):
-        """Create node for explicit aggregations via self.agg()."""
+        """Create node for explicit aggregations via self.agg(); only the Polars-code fallback gets a derived label."""
 
         if can_be_converted:
             precomputed = None
@@ -221,7 +220,7 @@ class GroupByFrame:
             precomputed = self.parent._add_polars_code(
                 new_node_id=node_id_to_use,
                 code=code,
-                description=description,
+                description=description or f"Aggregate after grouping by {self.readable_group()}",
                 method_name="group_by",
                 convertable_to_code=convertable_to_code,
                 polars_expr=pl_agg_expressions,

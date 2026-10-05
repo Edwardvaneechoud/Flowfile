@@ -2,14 +2,17 @@
 
 The Code Generator exports a visually designed flow as executable Python. Use it to inspect the transformation logic behind a flow, integrate a Flowfile pipeline into an existing Python project, or extend a workflow with custom scripts.
 
-For pure transformation flows (filter, join, group by, etc.), the generated code is Polars — usually just `import polars as pl`, and never an `import flowfile`. A few nodes add a small standalone helper package instead of native Polars: formula and advanced-filter expressions that can't be lowered to native Polars pull in `polars_expr_transformer`, fuzzy match pulls in `pl_fuzzy_frame_match`, and the graph solver pulls in `polars_grouper` — each a lightweight PyPI package, not Flowfile. Flows that include I/O nodes (database, catalog, cloud storage, Kafka) additionally use `import flowfile as ff` for connection-aware operations. The transformation logic is Polars in every case.
+Press **Code** in the header (Ctrl/Cmd+G) to open the Code panel, a pane beside the canvas; the canvas narrows to make room, and dragging the pane's left edge resizes it. The panel has four modes: **FlowFrame** and **Polars** show the flow as a single script (**Export Code** downloads it, **Refresh** regenerates it; an edit on the canvas also regenerates it after a moment), **Project** exports a multi-file project (see [Project Export](#project-export)), and **Notebook** opens the [canvas notebook](../notebook.md). The panel remembers its width and the last mode you used. Press **Code** again, the panel's close button or Ctrl/Cmd+G to close it, or double-click an empty spot on the canvas.
+
+For pure transformation flows (filter, join, group by, etc.), the generated code is Polars — usually just `import polars as pl`, and never an `import flowfile`. A few nodes add a small standalone helper package instead of native Polars: formula and advanced-filter expressions that can't be lowered to native Polars pull in `polars_expr_transformer`, fuzzy match pulls in `pl_fuzzy_frame_match`, and the graph solver and explode hierarchy pull in `polars_grouper` — each a lightweight PyPI package, not Flowfile. Flows that include I/O nodes (database, catalog, cloud storage, Kafka) additionally use `import flowfile as ff` for connection-aware operations. The transformation logic is Polars in every case.
 
 ![code_generator](../../../assets/images/guides/code_generator/code_generator.gif)
 
 ## Key Characteristics of the Generated Code
 
 * Transformation nodes translate to Polars operations; I/O nodes (database, catalog, cloud storage, Kafka) translate to FlowFrame API calls (`ff.read_database()`, `ff.read_catalog_table()`, etc.).
-* The structure mirrors your visual flow. Pure transformation flows depend only on Polars (plus a small `polars_*` helper package for formula, fuzzy-match, or graph-solver nodes); flows with I/O nodes require `pip install flowfile`.
+* The structure mirrors your visual flow. Pure transformation flows depend only on Polars (plus a small `polars_*` helper package for formula, fuzzy-match, graph-solver, or explode-hierarchy nodes); flows with I/O nodes require `pip install flowfile`.
+* The **FlowFrame** export writes the same flow with the FlowFrame API instead (`import flowfile as ff`): every node becomes the frame call that adds that node type back — `write_csv`, `.polars_code(fn)`, `with_row_index`, `text_to_rows`, `ff.sql`, and so on — with a node's description as `description=`, so running the script rebuilds the flow as well as computing it. The [canvas notebook](../notebook.md), the Code panel's **Notebook** mode, shows this export split into cells, one per statement; a cell spans every node its statement chains together.
 
 ## Examples of Generated Code
 
@@ -162,7 +165,7 @@ if __name__ == "__main__":
 
 ### Example 5: A Gated If/Else Branch
 
-A [Gate](../nodes/combine.md#gate) node exports as a real `if` block. Flow parameters become keyword arguments of the generated function, so the exported script takes the same switch the flow does. With the **else output** enabled the two branches are exactly complementary, so the generator emits a genuine `if`/`else` pair — and the Union that re-converges them collapses to a plain conditional assignment: whichever side ran is the result.
+In the Polars export a [Gate](../nodes/combine.md#gate) node becomes a real `if` block. Flow parameters become keyword arguments of the generated function, so the exported script takes the same switch the flow does. With the **else output** enabled the two branches are exactly complementary, so the generator emits a genuine `if`/`else` pair — and the Union that re-converges them collapses to a plain conditional assignment: whichever side ran is the result.
 
 **Flowfile Pipeline:**
 
@@ -209,8 +212,8 @@ The `if`/`else` fusion applies only when the two guards are one gate's exactly-c
 
 A gate that routes on a **formula** instead emits a boolean flag — the formula applied as a row predicate to the control input (or the data input) via a small helper the generator adds to the script; the `if` blocks then read the flag.
 
-!!! note "All export modes"
-    The FlowFrame and Project exports emit the same `if`/`else` blocks and union assignment (and the same guarded list-appends where those still apply), with any no-branch-ran stand-in wrapped as an `ff.FlowFrame`, and a formula gate probes the frame's underlying LazyFrame via `.data`.
+!!! note "Gates in the FlowFrame and Project exports"
+    The `if` blocks, union assignment and list-appends above belong to the Polars export only. The FlowFrame and Project exports place a gate as `ff.Gate(...)`, and the nodes behind it read `gate.then` (and `gate.otherwise` when the else output is on), so the rebuilt flow holds a real Gate node that routes when a frame below it is collected, exactly as the canvas does.
 
 ## Project Export
 
@@ -231,13 +234,13 @@ my_flow/
 
 Key points:
 
-* **Notebook nodes are exported** (they are not supported by the single-file modes). Each one becomes its own module exposing a `run()` function that the pipeline calls with the node's input frames; the notebook code is preserved verbatim inside it (cell structure kept via `# %%` markers), and the bundled `flowfile_ctx.py` shim makes `read_input()` / `publish_output()` / artifacts / logging work standalone — inputs and outputs are exchanged in memory as Polars LazyFrames.
+* **Notebook nodes get their own modules** (the Polars export refuses them; the FlowFrame export inlines them as `ff.PythonScript(cells=...)`). Each one becomes its own module exposing a `run()` function that the pipeline calls with the node's input frames; the notebook code is preserved verbatim inside it (cell structure kept via `# %%` markers), and the bundled `flowfile_ctx.py` shim makes `read_input()` / `publish_output()` / artifacts / logging work standalone — inputs and outputs are exchanged in memory as Polars LazyFrames.
 * **Custom nodes get their own modules** under `custom_nodes/` instead of being inlined into the script.
-* The pipeline itself uses the **FlowFrame API** (`import flowfile as ff`).
-* **Gates land in `pipeline.py` as real `if` blocks** over the function's parameter arguments, exactly like the single-file exports.
+* The pipeline itself uses the **FlowFrame API** (`import flowfile as ff`), written like the FlowFrame export.
+* **Gates land in `pipeline.py` as `ff.Gate` nodes** read through `.then` / `.otherwise`, exactly like the FlowFrame export.
 * Server-backed `flowfile_ctx` APIs (global artifacts, catalog access) raise `NotImplementedError` in the exported project; the export panel and the generated README list these limitations per node.
 
 From the Code panel you can either **download the project as a .zip** or **save it directly into a folder** using the built-in file browser.
 
 !!! info "Editing exported code"
-    Exported code runs standalone; it does not round-trip back into the visual canvas. To keep editing a flow visually, work in the Designer and re-export.
+    Exported code runs standalone; it does not round-trip back into the visual canvas. To edit a flow as code and apply the changes to the canvas, use the [canvas notebook](../notebook.md), which pushes edited cells back onto the flow.

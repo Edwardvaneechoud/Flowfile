@@ -111,7 +111,7 @@
       v-if="detailsKernel"
       :kernel="detailsKernel"
       :flavour-info="flavourInfo"
-      :on-save="handleSavePackages"
+      :on-save="updateKernel"
       @close="closeDetails"
     />
 
@@ -183,11 +183,6 @@ const openDetails = (kernelId: string) => {
 
 const closeDetails = () => {
   detailsKernelId.value = null;
-};
-
-const handleSavePackages = async (kernelId: string, packages: string[]): Promise<void> => {
-  // Re-throws so the modal can surface the error inline; parent doesn't toast.
-  await updateKernel(kernelId, { packages });
 };
 
 // ---- stats derivations --------------------------------------------------

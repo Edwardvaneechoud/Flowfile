@@ -26,6 +26,8 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
 )
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.streaming import (
     WorkerStreamInterrupted,
+    WorkerTaskError,
+    error_code_for_kind,
     streaming_receive,
     streaming_start,
 )
@@ -63,6 +65,8 @@ class _WorkerAuth(requests.auth.AuthBase):
 
 _worker_session = requests.Session()
 _worker_session.auth = _WorkerAuth()
+
+_JSON_HEADERS = {"Content-Type": "application/json"}
 
 # (connect, read) timeout for the short worker control calls so a dead/wedged
 # worker surfaces promptly instead of hanging a request thread indefinitely.
@@ -137,7 +141,9 @@ def trigger_fuzzy_match_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = _worker_session.post(f"{WORKER_URL}/add_fuzzy_join", data=fuzzy_join_input.model_dump_json())
+    v = _worker_session.post(
+        f"{WORKER_URL}/add_fuzzy_join", data=fuzzy_join_input.model_dump_json(), headers=_JSON_HEADERS
+    )
     if not v.ok:
         raise Exception(f"trigger_fuzzy_match_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
@@ -147,7 +153,7 @@ def trigger_custom_node_operation(request: CustomNodeExecuteInput) -> Status:
     v = _worker_session.post(
         f"{WORKER_URL}/execute_custom_node",
         data=request.model_dump_json(),
-        headers={"Content-Type": "application/json"},
+        headers=_JSON_HEADERS,
     )
     if not v.ok:
         raise Exception(f"trigger_custom_node_operation: Could not start the custom node, {v.text}")
@@ -181,7 +187,7 @@ def trigger_train_model_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = _worker_session.post(f"{WORKER_URL}/train_ml_model", data=payload.model_dump_json())
+    v = _worker_session.post(f"{WORKER_URL}/train_ml_model", data=payload.model_dump_json(), headers=_JSON_HEADERS)
     if not v.ok:
         raise Exception(f"trigger_train_model_operation: Could not start training, {v.text}")
     return Status(**v.json())
@@ -204,7 +210,7 @@ def trigger_apply_model_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    v = _worker_session.post(f"{WORKER_URL}/apply_ml_model", data=payload.model_dump_json())
+    v = _worker_session.post(f"{WORKER_URL}/apply_ml_model", data=payload.model_dump_json(), headers=_JSON_HEADERS)
     if not v.ok:
         raise Exception(f"trigger_apply_model_operation: Could not start scoring, {v.text}")
     return Status(**v.json())
@@ -219,6 +225,7 @@ def trigger_create_operation(
     f = _worker_session.post(
         url=f"{WORKER_URL}/create_table/{file_type}",
         data=received_table.model_dump_json(),
+        headers=_JSON_HEADERS,
         params={"flowfile_flow_id": flow_id, "flowfile_node_id": node_id},
     )
     if not f.ok:
@@ -228,7 +235,9 @@ def trigger_create_operation(
 
 def trigger_database_read_collector(database_external_read_settings: DatabaseExternalReadSettings):
     f = _worker_session.post(
-        url=f"{WORKER_URL}/store_database_read_result", data=database_external_read_settings.model_dump_json()
+        url=f"{WORKER_URL}/store_database_read_result",
+        data=database_external_read_settings.model_dump_json(),
+        headers=_JSON_HEADERS,
     )
     if not f.ok:
         raise Exception(f"trigger_database_read_collector: Could not cache the data, {f.text}")
@@ -237,7 +246,9 @@ def trigger_database_read_collector(database_external_read_settings: DatabaseExt
 
 def trigger_kafka_read(kafka_read_settings) -> Status:
     """Send a Kafka read request to the worker service."""
-    f = _worker_session.post(url=f"{WORKER_URL}/store_kafka_read_result", data=kafka_read_settings.model_dump_json())
+    f = _worker_session.post(
+        url=f"{WORKER_URL}/store_kafka_read_result", data=kafka_read_settings.model_dump_json(), headers=_JSON_HEADERS
+    )
     if not f.ok:
         raise Exception(f"trigger_kafka_read: Could not read from Kafka, {f.text}")
     return Status(**f.json())
@@ -261,7 +272,9 @@ def fetch_kafka_offsets(task_id: str) -> dict | None:
 def trigger_google_analytics_read(ga_read_settings) -> Status:
     """Send a Google Analytics 4 read request to the worker service."""
     f = _worker_session.post(
-        url=f"{WORKER_URL}/store_google_analytics_read_result", data=ga_read_settings.model_dump_json()
+        url=f"{WORKER_URL}/store_google_analytics_read_result",
+        data=ga_read_settings.model_dump_json(),
+        headers=_JSON_HEADERS,
     )
     if not f.ok:
         raise Exception(f"trigger_google_analytics_read: Could not read from GA, {f.text}")
@@ -271,7 +284,10 @@ def trigger_google_analytics_read(ga_read_settings) -> Status:
 def trigger_rest_api_read(settings) -> Status:
     """Send a REST API read request to the worker service."""
     f = _worker_session.post(
-        url=f"{WORKER_URL}/store_rest_api_read_result", data=settings.model_dump_json(), timeout=_WORKER_TIMEOUT
+        url=f"{WORKER_URL}/store_rest_api_read_result",
+        data=settings.model_dump_json(),
+        headers=_JSON_HEADERS,
+        timeout=_WORKER_TIMEOUT,
     )
     if not f.ok:
         raise Exception(f"trigger_rest_api_read: Could not read from the REST API, {f.text}")
@@ -280,7 +296,9 @@ def trigger_rest_api_read(settings) -> Status:
 
 def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings):
     f = _worker_session.post(
-        url=f"{WORKER_URL}/store_database_write_result", data=database_external_write_settings.model_dump_json()
+        url=f"{WORKER_URL}/store_database_write_result",
+        data=database_external_write_settings.model_dump_json(),
+        headers=_JSON_HEADERS,
     )
     if not f.ok:
         raise Exception(f"trigger_database_write: Could not cache the data, {f.text}")
@@ -289,7 +307,9 @@ def trigger_database_write(database_external_write_settings: DatabaseExternalWri
 
 def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWriteSettingsWorkerInterface):
     f = _worker_session.post(
-        url=f"{WORKER_URL}/write_data_to_cloud", data=database_external_write_settings.model_dump_json()
+        url=f"{WORKER_URL}/write_data_to_cloud",
+        data=database_external_write_settings.model_dump_json(),
+        headers=_JSON_HEADERS,
     )
     if not f.ok:
         raise Exception(f"trigger_cloud_storage_write: Could not cache the data, {f.text}")
@@ -870,7 +890,7 @@ class BaseFetcher:
                             self._handle_completion(status)
                             return
                         elif status.status == "Error":
-                            self._handle_error(1, status.error_message)
+                            self._handle_error(error_code_for_kind(status.error_kind), status.error_message)
                             return
                         elif status.status == "Unknown Error":
                             self._handle_error(
@@ -1072,6 +1092,9 @@ class BaseFetcher:
                 self._started = True
             try:
                 result, status = streaming_receive(ws, self.file_ref, should_abort=self._stop_event.is_set)
+            except WorkerTaskError as e:
+                self._record_task_failure(str(e), e.error_code)
+                return
             except Exception:
                 # Reset to pristine: the caller's REST fallback (generic errors
                 # only) relies on `running = True` auto-starting its poll thread,
@@ -1106,6 +1129,19 @@ class BaseFetcher:
                 )
                 self._thread.start()
 
+    def _record_task_failure(self, description: str, error_code: int) -> None:
+        """Record a task the worker ran and reported failed, with the code the REST path would give it."""
+        with self._lock:
+            self._ws = None
+            self._running = False
+            self._error_code = error_code
+            self._error_description = description
+
+    def _raise_recorded_failure(self) -> None:
+        """Raise a recorded failure the way the REST path's blocking ``get_result()`` does."""
+        if self.has_error:
+            self.get_result()
+
     def _ws_receive_thread(self, ws) -> None:
         """Background thread that receives results over an open WebSocket."""
         try:
@@ -1117,7 +1153,10 @@ class BaseFetcher:
                 self.status = status
                 self._condition.notify_all()
         except Exception as e:
-            logger.exception("Error in WebSocket receive thread")
+            if isinstance(e, WorkerTaskError):
+                logger.warning("Worker task %s failed (%s): %s", self.file_ref, e.kind or "task", e)
+            else:
+                logger.exception("Error in WebSocket receive thread")
             with self._condition:
                 # -1 means "worker child died" and lets the node degrade
                 # gracefully; -2 means stalled-or-canceled and makes the node
@@ -1126,7 +1165,10 @@ class BaseFetcher:
                 # _stop_event disjunct catches cancel-time teardown exceptions
                 # that surface as types other than WorkerStreamInterrupted.
                 interrupted = isinstance(e, WorkerStreamInterrupted) or self._stop_event.is_set()
-                self._error_code = -2 if interrupted else -1
+                if interrupted:
+                    self._error_code = -2
+                else:
+                    self._error_code = e.error_code if isinstance(e, WorkerTaskError) else -1
                 self._error_description = str(e)
                 self._running = False
                 self._ws = None
@@ -1157,13 +1199,16 @@ class ExternalDfFetcher(BaseFetcher):
                 kwargs=kwargs,
                 blocking=wait_on_completion,
             )
-            return
         except WorkerStreamInterrupted:
             # The task already reached the worker; re-submitting via REST would
             # duplicate work against a wedged worker or a cancelled run.
             raise
         except Exception as e:
             logger.debug(f"WebSocket streaming unavailable ({e}), falling back to REST")
+        else:
+            if wait_on_completion:
+                self._raise_recorded_failure()
+            return
 
         # REST fallback (original behavior)
         r = trigger_df_operation(
@@ -1202,16 +1247,19 @@ class ExternalSampler(BaseFetcher):
                 kwargs={"sample_size": sample_size},
                 blocking=wait_on_completion,
             )
-            return
         except WorkerStreamInterrupted:
             # See ExternalDfFetcher: never re-submit after a successful submit.
             raise
         except Exception as e:
             logger.debug(f"WebSocket streaming unavailable ({e}), falling back to REST")
+        else:
+            if wait_on_completion:
+                self._raise_recorded_failure()
+            return
 
         # REST fallback (original behavior)
         r = trigger_sample_operation(
-            lf=lf, file_ref=file_ref, sample_size=sample_size, node_id=node_id, flow_id=flow_id
+            lf=lf, file_ref=self.file_ref, sample_size=sample_size, node_id=node_id, flow_id=flow_id
         )
         self.running = r.status == "Processing"
         if wait_on_completion:

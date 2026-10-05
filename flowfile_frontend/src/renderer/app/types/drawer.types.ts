@@ -20,7 +20,7 @@ export interface DrawerTabDef {
   component: Component; // registry markRaw()s it
   visibleWhen: (ctx: DrawerCtx) => boolean;
   // Pull focus to this tab when the signal goes true (for always-present tabs
-  // that never "appear", e.g. Code grabbing focus on Ctrl+G).
+  // that never "appear", e.g. Logs grabbing focus on a run).
   focusWhen?: (ctx: DrawerCtx) => boolean;
   props?: (ctx: DrawerCtx) => Record<string, unknown>;
   remountKey?: (ctx: DrawerCtx) => string | number; // omit ⇒ singleton (kept mounted)

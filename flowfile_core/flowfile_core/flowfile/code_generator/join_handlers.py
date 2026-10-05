@@ -88,6 +88,11 @@ class JoinHandlersMixin(ConverterMixinBase):
         join_input_manager = transform_schema.JoinInputManager(settings.join_input)
         join_input_manager.auto_rename()
         left_on, right_on = self._get_join_keys(join_input_manager)
+        suffix = self._join_suffix(join_input_manager)
+        if suffix is not None:
+            keep_right_keys = any(c.keep for c in join_input_manager.right_select.renames if c.join_key)
+            self._emit_suffix_join(settings, var_name, left_df, right_df, left_on, right_on, suffix, keep_right_keys)
+            return
 
         left_df, right_df = self._apply_pre_join_transformations(
             join_input_manager, left_df, right_df, settings.node_id
@@ -100,6 +105,70 @@ class JoinHandlersMixin(ConverterMixinBase):
         self._execute_join_with_post_processing(
             settings, var_name, left_df, right_df, left_on, right_on, after_join_drop_cols, reverse_action
         )
+
+    def _join_suffix(self, settings: transform_schema.JoinInputManager) -> str | None:
+        """The one suffix a left/inner join's right-side renames follow, when that is all the renaming there is.
+
+        Holds when every left column is kept under its own name, every right non-key column is kept,
+        the right join keys are all dropped or all kept after the other right columns (where the canvas
+        puts them), and each right column renamed away from a left name is that name plus one shared
+        suffix: exactly what Polars' ``suffix=`` does, with ``coalesce=False`` keeping the right keys.
+        The FlowFrame export skips the key-order condition: ``keep_right_keys=True`` rebuilds any order.
+        None keeps the explicit rename form.
+        """
+        if settings.how not in ("left", "inner"):
+            return None
+        left = settings.left_select.renames
+        if any(not column.keep or column.new_name != column.old_name for column in left):
+            return None
+        left_names = {column.old_name for column in left}
+        right = settings.right_select.renames
+        keys_kept = {column.keep for column in right if column.join_key}
+        if len(keys_kept) != 1:
+            return None
+        kept = [column.join_key for column in right if column.keep]
+        if self.framework == "pl" and True in keys_kept and kept != sorted(kept):
+            return None
+        suffixes = set()
+        for column in right:
+            if not column.keep:
+                if not column.join_key:
+                    return None
+                continue
+            if column.old_name in left_names:
+                if column.new_name == column.old_name or not column.new_name.startswith(column.old_name):
+                    return None
+                if column.new_name in left_names:
+                    return None
+                suffixes.add(column.new_name[len(column.old_name) :])
+            elif column.new_name != column.old_name:
+                return None
+        if len(suffixes) > 1:
+            return None
+        return suffixes.pop() if suffixes else "_right"
+
+    def _emit_suffix_join(
+        self,
+        settings: input_schema.NodeJoin,
+        var_name: str,
+        left_df: str,
+        right_df: str,
+        left_on: list[str],
+        right_on: list[str],
+        suffix: str,
+        keep_right_keys: bool,
+    ) -> None:
+        """``left.join(right, ..., suffix=...)``: one call, right-side clashes renamed by Polars itself."""
+        kwargs = [f"left_on={left_on}", f"right_on={right_on}", f'how="{settings.join_input.how}"']
+        if suffix != "_right":
+            kwargs.append(f"suffix={self._py_str(suffix)}")
+        if keep_right_keys:
+            kwargs.append("coalesce=False" if self.framework == "pl" else "keep_right_keys=True")
+        self._add_code(f"{var_name} = {left_df}.join(")
+        self._add_code(f"        {right_df},")
+        for index, kwarg in enumerate(kwargs):
+            self._add_code(f"        {kwarg}{',' if index < len(kwargs) - 1 else ''}")
+        self._add_code("    )")
 
     @staticmethod
     def _get_join_keys(settings: transform_schema.JoinInputManager) -> tuple[list[str], list[str]]:

@@ -1,12 +1,12 @@
 """Shared converter surface for the code-generator handler mixins.
 
 The node-type handlers are split across mixins (joins, transforms, connectors,
-custom nodes, expressions) that all run as part of the composed
-``FlowGraphCodeConverter``. Each handler reads converter state and calls a few
-shared primitives that the composed class provides. This base only *declares*
-that surface (under ``TYPE_CHECKING``) so cross-class ``self.*`` references in the
-mixins resolve for static analysis; the real state and methods live on
-``FlowGraphCodeConverter`` and win at runtime via the MRO.
+custom nodes, expressions) composed into ``FlowGraphCodeConverter``; the native
+mixin composes into ``FlowGraphToFlowFrameConverter`` only. Each handler reads
+converter state and calls a few shared primitives the composed class provides.
+This base only *declares* that surface (under ``TYPE_CHECKING``) so cross-class
+``self.*`` references in the mixins resolve for static analysis; the real state
+and methods live on ``FlowGraphCodeConverter`` and win at runtime via the MRO.
 """
 
 import json
@@ -66,6 +66,9 @@ class ConverterMixinBase:
 
     if typing.TYPE_CHECKING:
         framework: str
+        flowfile_alias: str
+        placeholders: bool
+        decorated_scripts: bool
         imports: set[str]
         custom_node_classes: dict[str, str]
         unsupported_nodes: list[tuple[int, str, str]]
@@ -75,3 +78,7 @@ class ConverterMixinBase:
         def _add_comment(self, comment: str) -> None: ...
 
         def _get_agg_function(self, agg: str) -> str: ...
+
+        def _settings_for(self, node: typing.Any) -> typing.Any: ...
+
+        def _gate_formula_arg(self, formula: str) -> str: ...

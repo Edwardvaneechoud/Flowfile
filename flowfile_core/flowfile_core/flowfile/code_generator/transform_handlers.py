@@ -89,11 +89,6 @@ class TransformHandlersMixin(ConverterMixinBase):
             logger.debug(f"Unhandled conversion of the formula to polars expression falling back to expression {e}")
             can_convert_to_pl_code = False
 
-        # TODO(FlowFrame): to_polars_code() generates pl.col/pl.lit expressions that require
-        # `import polars as pl`. When framework == "ff", either:
-        # (a) add `import polars as pl` to FlowFrame converter imports, or
-        # (b) post-process the expression to replace `pl.` with `{self.framework}.`, or
-        # (c) make to_polars_code() accept a framework prefix parameter.
         if can_convert_to_pl_code:
             self._register_expr_stdlib_imports(pl_code)
         else:
@@ -248,9 +243,7 @@ class TransformHandlersMixin(ConverterMixinBase):
                     # Every input is guarded and no pair is provably
                     # exhaustive (independent gates): all branches can be
                     # closed at run time, and concat needs ≥1 frame.
-                    empty = self._empty_frame_schema_expr(union_node)
-                    if empty is None:
-                        empty = "pl.LazyFrame()" if self.framework == "pl" else "ff.FlowFrame(pl.LazyFrame())"
+                    empty = self._empty_frame_schema_expr(union_node) or "pl.LazyFrame()"
                     self._add_code(f"if not {list_var}:")
                     self._add_code(f"    {list_var}.append({empty})")
                 self._add_code(f"{var_name} = {self.framework}.concat({list_var}, how='{how}')")
@@ -283,7 +276,7 @@ class TransformHandlersMixin(ConverterMixinBase):
         Mirrors ``FlowDataEngine.random_sample``: the random methods filter on a
         shuffled row rank rather than calling ``sample``, which only exists on
         eager DataFrames, so the generated script stays lazy like the flow does.
-        The ``ff`` converter overrides this with native ``.sample()`` calls.
+        The FlowFrame (``ff``) converter overrides this with native ``.sample()`` calls.
         """
         input_df = input_vars.get("main", "df")
         if settings.sample_method == "first":

@@ -113,7 +113,7 @@ def _save_settings(client, settings, node_type: str) -> None:
 
 def _connect(client, flow_id: int, from_id: int, to_id: int) -> None:
     connection = input_schema.NodeConnection.create_from_simple_input(from_id, to_id)
-    response = client.post("/editor/connect_node/", data=connection.model_dump_json(), params={"flow_id": flow_id})
+    response = client.post("/editor/connect_node/", data=connection.model_dump_json(), headers={"Content-Type": "application/json"}, params={"flow_id": flow_id})
     assert response.status_code == 200, response.text
 
 

@@ -1,8 +1,9 @@
 import os
 import re
+from contextvars import ContextVar
 from datetime import datetime
-from pathlib import Path
-from typing import Annotated, Any, Literal, get_args
+from pathlib import Path, PureWindowsPath
+from typing import Annotated, Any, ClassVar, Literal, get_args
 
 import polars as pl
 from pydantic import (
@@ -36,6 +37,13 @@ from flowfile_core.schemas.yaml_types import (
 from flowfile_core.types import DataTypeStr
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
 from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_url
+
+keep_paths_as_written: ContextVar[bool] = ContextVar("keep_paths_as_written", default=False)
+"""While set in a context, ``set_absolute_filepath`` keeps a path as written: no ``~``, working directory or links.
+
+A canvas notebook session in a kernel sets it: the kernel mounts no host folder and opens none of these paths
+(core reads the file for it), and core recomputes the absolute path on the host when it checks a push.
+"""
 
 SecretRef = Annotated[
     str, StringConstraints(min_length=1, max_length=100), Field(description="An ID referencing an encrypted secret.")
@@ -288,6 +296,16 @@ class ReceivedTable(BaseModel):
         if is_url(self.path):
             self.abs_file_path = self.path
             return
+        if keep_paths_as_written.get():
+            resolved = self.path
+            # In the Linux kernel the frame's name of a Windows path is the whole path.
+            name = PureWindowsPath(self.name).name if self.name else None
+            if self.scan_mode == "single_file" and name and name not in Path(resolved).name:
+                resolved = os.path.join(resolved, name)
+            if self.scan_mode == "directory":
+                resolved = ensure_glob_pattern(resolved, default_scan_extension(self.file_type))
+            self.abs_file_path = resolved
+            return
         base_path = Path(self.path).expanduser()
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path
@@ -451,6 +469,10 @@ class OutputSettings(BaseModel):
 
     def set_absolute_filepath(self):
         """Resolves the output directory and name into an absolute path."""
+        if keep_paths_as_written.get():
+            written = self.name and self.name not in Path(self.directory).name
+            self.abs_file_path = os.path.join(self.directory, self.name) if written else self.directory
+            return
         base_path = Path(self.directory)
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path
@@ -2121,6 +2143,22 @@ class NodeGraphSolver(NodeSingleInput):
         return f"{g.col_from} -> {g.col_to} as '{g.output_column_name}'"
 
 
+class NodeExplodeHierarchy(NodeSingleInput):
+    """Settings for a node that explodes a parent -> child hierarchy (bill of materials, chart of accounts).
+
+    Replaces the input with one row per ancestor and descendant anywhere below it, multiplying
+    quantities along each path.
+    """
+
+    explode_hierarchy_input: transform_schema.ExplodeHierarchyInput
+
+    def get_default_description(self) -> str:
+        """Describes the edge columns, the output detail and whether a quantity is rolled up."""
+        h = self.explode_hierarchy_input
+        qty = ", qty" if h.quantity_column else ""
+        return f"{h.parent_column} -> {h.child_column} ({h.output_detail}{qty})"
+
+
 class NodeUnique(NodeSingleInput):
     """Settings for a node that returns the unique rows from the data."""
 
@@ -2283,15 +2321,37 @@ def _validate_output_names(v: list[str]) -> list[str]:
 
 
 class NodePythonScript(NodeMultiInput):
-    """Node that executes Python code on a kernel container."""
+    """Node that executes Python code on a kernel container.
+
+    ``output_schemas`` optionally declares the columns of each named output (keyed by
+    an entry of ``output_names``), so schema prediction can report them without running
+    the kernel. It is excluded from the node hash: it describes the output rather than
+    changing it, so declaring or editing it never invalidates a cached kernel result.
+    """
+
+    hash_excluded_fields: ClassVar[frozenset[str]] = frozenset({"output_schemas"})
 
     python_script_input: PythonScriptInput = PythonScriptInput()
     output_names: list[str] = Field(default_factory=lambda: ["main"])
+    output_schemas: dict[str, list[MinimalFieldInfo]] | None = None
 
     @field_validator("output_names")
     @classmethod
     def validate_output_names(cls, v: list[str]) -> list[str]:
         return _validate_output_names(v)
+
+    @model_validator(mode="after")
+    def validate_output_schemas(self) -> "NodePythonScript":
+        if not self.output_schemas:
+            return self
+        unknown = sorted(set(self.output_schemas) - set(self.output_names))
+        if unknown:
+            raise ValueError(f"output_schemas declares unknown outputs {unknown}; outputs are {self.output_names}")
+        for output_name, fields in self.output_schemas.items():
+            names = [f.name for f in fields]
+            if len(names) != len(set(names)):
+                raise ValueError(f"output_schemas[{output_name!r}] has duplicate column names")
+        return self
 
 
 class UserDefinedNode(NodeMultiInput):

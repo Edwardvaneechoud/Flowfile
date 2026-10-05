@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "kernel-runtime"
-version = "0.6.0"
+version = "0.6.1"
 description = "FlowFile kernel runtime - executes Python code in isolated Docker containers"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
 readme = "README.md"
@@ -8,9 +8,10 @@ packages = [{include = "kernel_runtime"}]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.14"
-fastapi = "~0.115.2"
+fastapi = "~0.142.2"
+starlette = ">=1.3.1"  # security floor; fastapi no longer caps starlette
 uvicorn = "~0.32.0"
-polars = ">=1.17.0,!=1.43.0,!=1.43.1,<1.44"  # keep in lockstep with the root pin; 1.43.0/.1 SQLContext-over-delta deadlock
+polars = ">=1.17.0,!=1.43.0,!=1.43.1,<1.44"  # ceiling + 1.43.0/.1 exclusions (SQLContext-over-delta deadlock) track the root pin; its 1.39 floor is for plugins the kernel doesn't ship
 pyarrow = "^25.0.0"
 numpy = "1.26.4"
 httpx = "^0.28.1"

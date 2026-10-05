@@ -54,6 +54,9 @@ jobs:
           cache-dependency-path: flowfile_wasm/package-lock.json
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@^11.5.1
+
       - name: Install dependencies
         working-directory: flowfile_wasm
         run: npm ci
@@ -84,5 +87,3 @@ jobs:
       - name: Publish to npm
         working-directory: flowfile_wasm
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

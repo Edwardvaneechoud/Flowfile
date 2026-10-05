@@ -20,6 +20,7 @@ import docker.errors
 import docker.types
 import httpx
 
+from flowfile_core.auth import sharing
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.events import publish
 
@@ -51,6 +52,7 @@ from flowfile_core.kernel.models import (
     RecoveryStatus,
     ResolvedPackage,
 )
+from flowfile_core.kernel.notebook_support import is_notebook_kernel_config
 from flowfile_core.kernel.urls import core_base_url
 from shared.run_completion import _pid_is_alive  # cross-platform; os.kill(pid, 0) kills on Windows
 from shared.storage_config import storage
@@ -404,6 +406,21 @@ def _rebase_to_posix(local_path: str, host_prefix: str, container_prefix: str) -
     return None
 
 
+def _notebook_env(kernel: KernelInfo) -> dict[str, str]:
+    """A notebook kernel's flowfile never migrates, seeds or GCs anything and holds no catalog database: its engine
+    refuses every connection (``flowfile_frame.notebook_kernel``). Its storage folder is the container's own: the
+    kernel mounts no host folder, and reads files, catalog tables, flow files and custom node sources through core."""
+    if sharing.sharing_enabled() or not is_notebook_kernel_config(kernel):
+        return {}
+    return {
+        "FLOWFILE_SKIP_STARTUP_MIGRATION": "1",
+        "FLOWFILE_SKIP_INIT_DB": "1",
+        "FLOWFILE_KERNEL_GC": "0",
+        "FLOWFILE_TELEMETRY": "0",
+        "FLOWFILE_OFFLOAD_TO_WORKER": "0",
+    }
+
+
 def ordered_input_files(names: Iterable[str]) -> list[str]:
     """Order kernel input file names (``{name}_{index}.parquet``) by their integer index.
 
@@ -419,6 +436,35 @@ def ordered_input_files(names: Iterable[str]) -> list[str]:
         return 1, 0, file_name
 
     return sorted(names, key=_key)
+
+
+_BUILD_NOISE = re.compile(
+    r"^(Step \d+/\d+|---> |Running in |Removing intermediate|Successfully (built|tagged)|Collecting |Downloading |"
+    r"Using cached |Requirement already satisfied|Obtaining |Installing build dependencies|Getting requirements|"
+    r"Preparing metadata|Installing backend dependencies|Building wheels? for|Created wheel|Stored in directory|"
+    r"\[notice\]|Looking in indexes)"
+)
+_SUMMARY_LINES = 15
+_SUMMARY_CHARS = 1500
+
+
+def bake_failure_summary(packages: list[str], log_lines: list[str], reason: str = "") -> str:
+    """A short account of a failed package bake: which packages, then the last meaningful lines of the build log.
+
+    Blank lines, progress bars and Docker/pip progress chatter are dropped; at most ``_SUMMARY_LINES`` lines and
+    ``_SUMMARY_CHARS`` characters are kept, from the end. The full log goes to core's log instead. ``reason`` is
+    Docker's own error, which the log stream does not carry (a full disk while committing the layer, after pip
+    succeeded), so it closes the summary.
+    """
+    lines = []
+    for raw in [*log_lines, reason]:
+        for line in str(raw).splitlines():
+            text = line.strip()
+            if text and "━" not in text and not _BUILD_NOISE.match(text):
+                lines.append(line.rstrip())
+    tail = "\n".join(lines[-_SUMMARY_LINES:])[-_SUMMARY_CHARS:]
+    head = f"Installing {', '.join(packages)} into the kernel image failed."
+    return f"{head}\n{tail}" if tail else head
 
 
 class KernelManager:
@@ -688,7 +734,8 @@ class KernelManager:
 
         Adapts volume mounts and networking for local vs Docker-in-Docker.
         Always mounts the catalog_tables directory so kernel cells can read
-        and write Delta-format catalog tables directly.
+        and write Delta-format catalog tables directly; no other host folder
+        is ever mounted (a notebook kernel reads files through core).
         """
         run_kwargs: dict = {
             "detach": True,
@@ -1300,13 +1347,14 @@ class KernelManager:
                     pull=False,
                 )
             except docker.errors.BuildError as exc:
-                # Surface the failing pip output so the user can see why
-                tail = "\n".join(
+                log = [
                     line.get("stream", "").rstrip()
                     for line in (exc.build_log or [])
                     if isinstance(line, dict) and line.get("stream")
-                )[-20000:]
-                raise RuntimeError(f"Failed to bake packages into kernel image: {exc}\n{tail}") from exc
+                ]
+                logger.error("Baking packages into '%s' failed: %s\n%s", derived_tag, exc, "\n".join(log))
+                reason = exc.msg if isinstance(exc.msg, str) else ""
+                raise RuntimeError(bake_failure_summary(kernel.packages, log, reason)) from exc
         return derived_tag
 
     def _resolve_installed_versions(self, image_tag: str, package_specs: list[str]) -> list[ResolvedPackage]:
@@ -1521,6 +1569,8 @@ class KernelManager:
         env["PERSISTENCE_ENABLED"] = "true" if kernel.persistence_enabled else "false"
         env["PERSISTENCE_PATH"] = self.to_kernel_path(os.path.join(self._shared_volume, "artifacts"))
         env["RECOVERY_MODE"] = kernel.recovery_mode.value
+        if not self._kernel_volume:
+            env.update(_notebook_env(kernel))
         return env
 
     async def create_kernel(self, config: KernelConfig, user_id: int) -> KernelInfo:
@@ -1801,10 +1851,13 @@ class KernelManager:
         self._cleanup_container(kernel_id)
         kernel.state = KernelState.STOPPED
         kernel.container_id = None
+        from flowfile_core.notebook import kernel_runner  # lazy: kernel_runner imports this package
+
+        kernel_runner.forget_kernel(kernel_id, self._shared_volume)
         logger.info("Stopped kernel '%s'", kernel_id)
 
     async def update_kernel(self, kernel_id: str, packages: list[str]) -> KernelInfo:
-        """Update a kernel's package list (the only field we currently allow editing).
+        """Update a kernel's package list.
 
         The kernel must be stopped — package edits trigger a rebuild of the
         derived image and we don't want to surprise users with a hot restart.

@@ -1,15 +1,16 @@
 import asyncio
+import functools
 import json
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import aiofiles
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from flowfile_core import ServerRun, flow_file_handler
-from flowfile_core.auth.jwt import get_current_active_user, get_current_user_from_query
+from flowfile_core.auth.jwt import get_current_active_user, require_internal_token
 
 # Core modules
 from flowfile_core.configs import logger
@@ -32,19 +33,29 @@ async def format_sse_message(data: str) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
-@router.post("/logs/{flow_id}", tags=["flow_logging"])
-async def add_log(flow_id: int, log_message: str):
-    """Adds a log message to the log file for a given flow_id."""
-    flow = flow_file_handler.get_flow(flow_id)
-    if not flow:
-        raise HTTPException(status_code=404, detail="Flow not found")
-    flow.flow_logger.info(log_message)
-    return {"message": "Log added successfully"}
+@functools.cache
+def _warn_unsigned_raw_log() -> None:
+    """Say once per process why kernel output is missing from a flow log; the 401 alone is silent."""
+    logger.warning(
+        "Rejected a /raw_logs post without a valid X-Internal-Token: check that FLOWFILE_INTERNAL_TOKEN is "
+        "set for core; a kernel image built before log posts were signed must be rebuilt."
+    )
 
 
-@router.post("/raw_logs", tags=["flow_logging"])
+def _require_signed_raw_log(x_internal_token: str | None = Header(None, alias="X-Internal-Token")) -> None:
+    try:
+        require_internal_token(x_internal_token)
+    except HTTPException:
+        _warn_unsigned_raw_log()
+        raise
+
+
+@router.post("/raw_logs", tags=["flow_logging"], dependencies=[Depends(_require_signed_raw_log)])
 async def add_raw_log(raw_log_input: schemas.RawLogInput):
-    """Adds a log message to the log file for a given flow_id."""
+    """Adds a log message to the log file for a given flow_id.
+
+    Only the worker and kernels write here, signed with the internal token (``X-Internal-Token``).
+    """
     flow = flow_file_handler.get_flow(raw_log_input.flowfile_flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
@@ -107,10 +118,11 @@ async def stream_log_file(
 
 
 @router.get("/logs/{flow_id}", tags=["flow_logging"])
-async def stream_logs(flow_id: int, idle_timeout: int = 300, current_user=Depends(get_current_user_from_query)):
+async def stream_logs(flow_id: int, idle_timeout: int = 300, current_user=Depends(get_current_active_user)):
     """
     Streams logs for a given flow_id using Server-Sent Events.
-    Requires authentication via token in query parameter.
+    Requires a Bearer token header (the renderer reads the stream with fetch, not EventSource,
+    so the token never goes in the URL). Only flows open in the caller's session are served.
     The connection will close gracefully if the server shuts down.
     """
     logger.info(f"Starting log stream for flow_id: {flow_id} by user: {current_user.username}")

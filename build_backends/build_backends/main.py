@@ -27,8 +27,15 @@ def merge_directories(directories: list[str], target_dir: str, cleanup_after_mer
                 shutil.rmtree(directory)
 
 
-def create_spec_file(directory, script_name, output_name, hidden_imports):
-    """Create an optimized spec file for faster startup"""
+# The in-core notebook runner imports frame modules lazily, so collect them all.
+NOTEBOOK_COLLECTED_PACKAGES = ["flowfile_frame"]
+
+
+def create_spec_file(directory, script_name, output_name, hidden_imports, collected_packages=()):
+    """Create an optimized spec file for faster startup.
+
+    ``collected_packages`` are expanded with ``collect_submodules`` at spec time and added to the hiddenimports.
+    """
     spec_content = f'''
 import sys
 import os
@@ -280,6 +287,10 @@ for _pkg in ('tokenizers', 'tiktoken'):
         print(f"WARN: could not copy metadata {{_pkg}}: {{_e}}")
 ai_hiddenimports += ['tiktoken_ext', 'tiktoken_ext.openai_public']
 
+collected_hiddenimports = []
+for _pkg in {list(collected_packages)!r}:
+    collected_hiddenimports += collect_submodules(_pkg)
+
 # Create runtime hook file
 with open('connectorx_hook.py', 'w', encoding='utf-8') as f:
     f.write(create_runtime_hook())
@@ -291,7 +302,7 @@ a = Analysis(
     + code_generator_datas + demo_flows_datas + standard_icons_datas
     + kernel_manifest_datas + share_manifest_datas + plugin_datas + litellm_datas + ai_datas,
     hiddenimports={hidden_imports} + plugin_hiddenimports + polars_hiddenimports
-    + litellm_hiddenimports + ai_hiddenimports + [
+    + litellm_hiddenimports + ai_hiddenimports + collected_hiddenimports + [
         'numpy',
         'numpy.core._dtype_ctypes',
         'numpy.core._methods',
@@ -391,9 +402,9 @@ coll = COLLECT(
     return spec_path
 
 
-def build_backend(directory, script_name, output_name, hidden_imports=None):
+def build_backend(directory, script_name, output_name, hidden_imports=None, collected_packages=()):
     try:
-        spec_path = create_spec_file(directory, script_name, output_name, hidden_imports)
+        spec_path = create_spec_file(directory, script_name, output_name, hidden_imports, collected_packages)
 
         env = os.environ.copy()
         env["PYTHONOPTIMIZE"] = "1"
@@ -513,6 +524,7 @@ def main():
         script_name="main.py",
         output_name="flowfile_core",
         hidden_imports=common_imports,
+        collected_packages=NOTEBOOK_COLLECTED_PACKAGES,
     ):
         builds_successful = False
 

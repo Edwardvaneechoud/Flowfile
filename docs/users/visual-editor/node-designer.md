@@ -7,6 +7,9 @@ The node's `.py` file is the single source of truth. The designer writes it, and
 !!! info "Not in Flowfile Lite"
     The Node Designer requires the full desktop/server build and is not available in the browser-only [Flowfile Lite](../deployment/lite.md) edition. Use the **Polars Code** node for custom logic there.
 
+!!! note "Docker deployments: authoring is admin-only"
+    A saved node is one `.py` file shared by the whole install, and its code runs on the server once the node is placed in a flow. So in server/Docker mode saving, deleting and test-running nodes (the **Test** tab) require an **admin** account — the same gate as installing [community nodes](community-nodes.md) and [mounting extra node directories](#mounting-other-directories). Every user can still place and configure the installed nodes. On the desktop, where the default user is an admin, nothing changes.
+
 ![Node Designer Interface](../../assets/images/guides/node-designer/custom-node-designer.gif)
 
 ---

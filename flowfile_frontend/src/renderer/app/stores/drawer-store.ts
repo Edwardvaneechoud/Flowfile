@@ -30,7 +30,14 @@ export const useDrawerStore = defineStore("drawer", {
     selectNodeForPreview(nodeId: number) {
       this.setPreviewNode(nodeId);
       this.setActiveTab("bottomDock", "data");
-      useFlowStore().vueFlowInstance?.fitView?.({ nodes: [String(nodeId)] });
+      const vf = useFlowStore().vueFlowInstance;
+      // Centre on the node without zooming out from where the user is, nor past 1:1.
+      vf?.fitView?.({
+        nodes: [String(nodeId)],
+        padding: 0.3,
+        duration: 300,
+        maxZoom: Math.max(1, vf.getViewport?.().zoom ?? 1),
+      });
       useItemStore().bringToFront("bottomDock");
     },
   },

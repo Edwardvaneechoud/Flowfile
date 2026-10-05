@@ -54,6 +54,7 @@ export const NODE_DOC_PAGES: Readonly<Record<string, string>> = {
   fuzzy_match: "combine.html#fuzzy-match",
   union: "combine.html#union-data",
   graph_solver: "combine.html#graph-solver",
+  explode_hierarchy: "combine.html#explode-hierarchy",
   cross_join: "combine.html#cross-join",
   run_flow: "combine.html#run-flow",
   gate: "combine.html#gate",

@@ -53,7 +53,7 @@ coverage `parallel=true`, re-trying the FastAPI bump →
 
 ---
 
-## The 25 incidents
+## Incidents
 
 **1. Worker result-queue deadlock (#564) — the flagship.** Symptom: worker
 tasks hang forever, no timeout (wide-table `calculate_schema`, deep query
@@ -93,8 +93,8 @@ escalating hotfixes to `init_db.py:update_db_info` in ~36h: `ff2644d8`
 (2026-06-24, `importlib.metadata.version()` was returning **`None`**, no
 exception, in the PyInstaller Windows binary — added explicit `is None`
 guard). Root-cause fix same day: `b21f518c` "Centralize version management
-across all manifests (#547)" — `shared/_version.py` (`__version__ =
-"0.12.7"`, `get_version()`) is now the single source of truth, plus
+across all manifests (#547)" — `shared/_version.py` (`__version__`,
+`get_version()`) is now the single source of truth, plus
 `tools/bump_version.py` / `tools/check_version_sync.py` (CI drift gate).
 **Rule: never read app version via `importlib.metadata` in frozen
 builds — use `shared/_version.py::get_version()`.**
@@ -234,9 +234,9 @@ new `create_unnamed_flow_filename(flow_id)` produces
 `Unnamed_flow_<ts>_<flow_id>.yaml` for the on-disk path ("registration
 dedupes on path, not name"). On main today, unnamed flows already live
 under `storage.unnamed_flows_directory` — display name and path are
-already loosely coupled; the branch tightens it further. **Rule: check
-this branch before re-deriving a naming design; it isn't merged, don't
-treat its shape as final.**
+already loosely coupled; the branch tightens it further. **Status: landed** — `create_flow_name()` returns
+`"Untitled flow <ts>"` and `create_unnamed_flow_filename(flow_id)` gives the
+unique on-disk path; the branch is gone.
 
 **16. Save/open overwrite saga (still in flight).** `1133cc77` (#522,
 2026-06-16): Save-As handling, `SaveDialog`, `CatalogFlowPicker`,
@@ -247,37 +247,35 @@ branch has since walked part of it back**: `b85abc66` "Revert changes to
 only targeting the catalog" (deleted 81 lines of the dirty-state test,
 stripped handler/routes changes) and `dc9ff9bb` "Revert changes in
 routes.py", both 2026-07-03 — an ambitious dirty-state-tracking approach
-scoped back to a catalog-only fix. **Rule: diff against both the local and
-origin copy of `fix/overwrite-open-flow` before writing new save/open
-logic — it overlaps `handler.py` with #15, so landing either branch first
-changes the merge conflict the other hits.**
+scoped back to a catalog-only fix. **Status:** the branch is gone; read
+`handler.py`'s current save/open guards before writing new logic there.
 
-**17. FastAPI upgrade attempted and reverted — main never moved.**
+**17. FastAPI upgrade reverted in 2026-05, retried 2026-10.**
 `eff7287b` "Reverting upgrade Fastapi" (2026-05-11) exists only on branch
-`feature/LLM-security-patches`. `fastapi = "~0.115.2"` (`pyproject.toml`
-line 29) has been unchanged since the file's initial commit. The upgrade
+`feature/LLM-security-patches`; `fastapi = "~0.115.2"` stayed from the
+initial commit until the retry. The upgrade
 was tried during the LLM-safeguards work (which landed separately as
 `f55aa92c` #457) and abandoned before merge; **the revert message does not
-record why** — treat the cause as genuinely unknown, not solved. **Rule:
-treat the pin as deliberate; budget real investigation time if you attempt
-this again.**
+record why**. **Retried 2026-10-01** (`~0.142.2`, for the Starlette
+Dependabot alerts) with the most likely cause fixed: FastAPI 0.132 made
+`strict_content_type=True` the default, so a JSON body without a
+`Content-Type` header gets a 422 — and ~10 core→worker calls in
+`subprocess_operations.py` posted `data=model.model_dump_json()` with no
+header. They now pass `_JSON_HEADERS`. **Rule: any new JSON call to a
+Flowfile FastAPI app must send `Content-Type: application/json`** (or use
+`json=`); don't "fix" it by setting `strict_content_type=False`.
 
-**18. Database migrations: born from a production bug, now 28 revisions
-(root CLAUDE.md is stale).** Pre-history: `e2977f5c` (#422, ~2026-04-08) —
+**18. Database migrations: born from a production bug.** Pre-history: `e2977f5c` (#422, ~2026-04-08) —
 a run-type mismatch between local and docker DBs needed a downgrade
 mechanism, migration `006_normalize_run_type.py`, and two tries to align
 local/worker DBs. Alembic itself arrived in `0ded1ebf` (#403, 2026-04-08):
 `alembic.ini`, `env.py`, `001_initial_schema.py`, `database/migration.py`
 — its own PR body notes "Fix package building with alembic" (bundling it
-into PyInstaller needed a follow-up fix too). **Current count, verified
-today:** `flowfile_core/flowfile_core/alembic/versions/` runs
-`001_initial_schema.py` through `028_catalog_namespace_storage.py` — **28
-migrations**. Root CLAUDE.md still says "currently 001–021" — **stale by 7
-as of 2026-07-03 (v0.12.7)**. Import-time side effect
+into PyInstaller needed a follow-up fix too). Count/head:
+`ls flowfile_core/flowfile_core/alembic/versions/`. Import-time side effect
 (`database/init_db.py:24-27`): importing `flowfile_core` runs
 `run_startup_migration()` unless `FLOWFILE_SKIP_STARTUP_MIGRATION` is set —
 always set that before importing `flowfile_core` outside the running app.
-**Rule: don't trust CLAUDE.md's migration count without re-running `ls`.**
 
 **19. CI timing & flakiness arc.** `f8dbb470` "reverting the test order for
 now" (2025-04-12) — earliest CI-ordering churn, rolled back. Flaky-test
@@ -304,9 +302,8 @@ mode drops the sandbox entirely, `SecureFileExplorer` raises
 `PermissionError` instead of silently falling back. `b4e723f2` (#355,
 2026-03-16): hardened `flow_data_engine/polars_code_parser.py` — a
 sandbox-escape surface, since user-supplied Polars code runs through it.
-`f55aa92c` (#457, 2026-05-11): LLM safeguards + litellm bump; branch
-`feature/LLM-security-patches` still holds **unmerged follow-ups stalled
-since 2026-05-11** plus the FastAPI revert (#17). **Rule: security fix →
+`f55aa92c` (#457, 2026-05-11): LLM safeguards + litellm bump; follow-ups on
+the since-deleted `feature/LLM-security-patches` branch were never merged. **Rule: security fix →
 silent-fallback regression → explicit-error redesign already repeated once
 (#136→#280); prefer raising over silently falling back to a safer-looking
 default.**
@@ -387,11 +384,11 @@ threads can't even bootstrap (`Thread.start()` never returns). 1.40.1 /
 Silence explained: the hang sites emit nothing before the wedge (fixture
 `write_delta` line / `runpy` of a docs example) and pytest-timeout (1800s)
 exceeds the CI job timeouts, so no traceback ever printed. Fix: ceiling
-`<1.43` in root + kernel_runtime (lands 1.42.1); same change also caught
+`<1.43` (later relaxed to `!=1.43.0, !=1.43.1, <1.44` once 1.43.2 fixed it); same change also caught
 the kernel image pins in `kernel/manager.py` still at 0.5.1 after the
 0.5.2 bump (masked because CI never reached
 `test_kernel_image_pin_sync.py`). **Rule: before raising the polars
-ceiling past 1.42, run the SQLContext-over-scan_delta repro (root
+ceiling, run the SQLContext-over-scan_delta repro (root
 CLAUDE.md "Things to Avoid"); and treat a totally-silent CI timeout as "a
 test wedged before its first log line" — check what the *next* collected
 test would be, not the last one printed.**
@@ -414,9 +411,8 @@ naive `git tag | tail` or `git ls-remote --tags origin | tail` appears to
 end at `v0.9.4` (2026-05-07). This is plain-string alphabetical sort:
 `git tag` without `-V` sorts `"v0.10.0"` before `"v0.9.4"`
 character-by-character (`'1' < '9'`), so every `v0.10.x`–`v0.12.x` tag
-sorts *earlier* and gets truncated off a naive `tail`. Verified today:
-tags exist up to **`v0.12.7`** (`a3ae528e`, 2026-07-01) both locally and on
-`origin`, tracking the in-repo version closely. Correct check:
+sorts *earlier* and gets truncated off a naive `tail`. Tags track the
+in-repo version closely. Correct check:
 `git tag | sort -V | tail -5` (or `git ls-remote --tags origin | awk -F/
 '{print $3}' | sort -V | tail -5` for the remote). **Rule: if an unsorted
 `tail` on tags implies "releases stopped," re-check with `sort -V` before
@@ -433,10 +429,7 @@ work. Confirmed-live as of 2026-07-03:
 
 | Branch | Ahead | Status |
 |---|---|---|
-| `improvement/improve-naming-unnamed-flows` | 1 (`fa23a297`) | Live, unmerged. See 15. |
-| `fix/overwrite-open-flow` | 1 local; origin has extra scope-back reverts | Live, churning. See 16. Overlaps `handler.py` with the naming branch. |
 | `claude/core-abstraction-flowgraph-001hrn` | 7, active 2026-07-02 | Unmerged: `WorkerTransport`, `ExecutionBackend` seam, `NodeSpec` registry, declarative node builders. If merged, reshapes how nodes/execution are added — **pending direction**, not current truth. |
-| `feature/LLM-security-patches` | several | Stalled since 2026-05-11: softened LLM restrictions + the FastAPI revert (17, 20). |
 | `fix/ga-4-when-run-from-workflow` | 3 | Leftover — content landed via the #490 squash merge; ignore. |
 
 **Rule: unmerged `claude/*` branches are an idea graveyard, not authority.**
@@ -466,10 +459,9 @@ before reusing it.
   without both you get an **empty `coverage.xml`** — worse than not
   setting the flag. xdist itself was deliberately deferred (shared SQLite
   test DB needs per-worker isolation first) as part of incident 19.
-- **Upgrading FastAPI off `~0.115.2`.** Already tried on
-  `feature/LLM-security-patches` and reverted (`eff7287b`, incident 17).
-  Reason not recorded — budget real investigation time, don't assume it's
-  a trivial bump.
+- **Downgrading FastAPI back to `~0.115.2`.** It was raised to `~0.142.2`
+  on 2026-10-01 to clear Starlette CVEs (incident 17); a 422 on a JSON
+  call means a missing `Content-Type` header, not a reason to revert.
 
 ---
 
@@ -479,7 +471,7 @@ Re-run these before trusting a fact above that looks stale (verified
 2026-07-03 at `f6963c77`, v0.12.7):
 
 ```bash
-git rev-list --count HEAD                       # commit count (638)
+git rev-list --count HEAD                       # commit count
 git show-ref main                                # tag-named-main trap
 git tag | sort -V | tail -5                      # correct latest-tag check (not `tail` alone)
 git ls-remote --tags origin | awk -F/ '{print $3}' | sort -V | tail -5
@@ -487,10 +479,7 @@ git log -1 --format='%ad %s' --date=short <sha>  # spot-check any cited commit
 grep -n "def drain_result_queue" flowfile_worker/flowfile_worker/spawner.py    # incident 1
 grep -n "def is_descending" flowfile_core/flowfile_core/schemas/transform_schema.py  # 14
 cat shared/_version.py                           # incident 3
-ls flowfile_core/flowfile_core/alembic/versions/ | grep -c '^[0-9]'  # incident 18 (28)
-grep -n "currently 0" CLAUDE.md                  # is the migration-count staleness still there?
-git log refs/heads/main..improvement/improve-naming-unnamed-flows --oneline  # incident 15
-git log refs/heads/main..fix/overwrite-open-flow --oneline  # incident 16
+ls flowfile_core/flowfile_core/alembic/versions/ | grep -c '^[0-9]'  # incident 18
 grep -n "time.sleep(1.05)" flowfile_core/tests/test_catalog_dashboards.py  # verified-rejected
 grep -n '^fastapi' pyproject.toml                # incident 17
 ```

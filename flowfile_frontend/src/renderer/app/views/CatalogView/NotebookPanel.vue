@@ -1,11 +1,10 @@
 <template>
   <div class="notebook-panel">
-    <!-- One header row: the open-notebook tabs are the notebook selector (double-click
-         a tab to rename), "+" opens New / saved notebooks, controls sit on the right. -->
+    <!-- One header row: catalog tabs and "+" in catalog mode, then the tools. -->
     <div class="nb-header">
       <div class="nb-toolbar">
         <el-tabs
-          v-if="store.openNotebooks.length"
+          v-if="!flowId && catalogTabs.length"
           :model-value="store.activeTabId ?? undefined"
           type="card"
           closable
@@ -13,7 +12,7 @@
           @tab-change="onTabChange"
           @tab-remove="onTabRemove"
         >
-          <el-tab-pane v-for="nb in store.openNotebooks" :key="nb.tabId" :name="nb.tabId">
+          <el-tab-pane v-for="nb in catalogTabs" :key="nb.tabId" :name="nb.tabId">
             <template #label>
               <span class="nb-tab-label" @dblclick.stop="startRename(nb.tabId)">
                 <i class="fa-solid fa-book nb-tab-icon"></i>
@@ -38,7 +37,7 @@
         </el-tabs>
 
         <!-- "+" — New, or open a saved notebook -->
-        <el-dropdown trigger="click" placement="bottom-start" :hide-on-click="true">
+        <el-dropdown v-if="!flowId" trigger="click" placement="bottom-start" :hide-on-click="true">
           <button class="nb-tab-add" title="New or open notebook" aria-label="New or open notebook">
             <i class="fa-solid fa-plus"></i>
           </button>
@@ -65,15 +64,19 @@
         <div class="nb-toolbar-spacer"></div>
 
         <!-- Kernel selector (Python cells); state is polled live. The selected label
-             carries a state dot, and a stale/stopped selection turns the field amber. -->
+             carries a state dot, and a stale/stopped selection turns the field amber.
+             A flow tab lists only kernels that can run the notebook, plus "No kernel". -->
         <el-select
-          :model-value="store.active?.kernelId ?? null"
+          v-if="!flowId || store.kernelSessions"
+          ref="kernelSelectRef"
+          :model-value="store.active?.kernelId ?? (flowId ? NO_KERNEL : null)"
           placeholder="Select kernel"
           size="small"
           class="nb-kernel-select"
+          data-testid="nb-kernel-select"
           :class="{ 'nb-kernel-select--attention': needsAttention }"
-          clearable
-          @change="(v: string | null) => store.setKernel(v)"
+          :clearable="!flowId"
+          @change="onKernelChange"
         >
           <template #label>
             <span class="nb-kernel-label">
@@ -89,8 +92,14 @@
               <span class="nb-kernel-label__name">{{ selectedKernelLabel }}</span>
             </span>
           </template>
+          <el-option v-if="flowId" :value="NO_KERNEL" label="No kernel">
+            <span class="nb-kernel-option">
+              <span>No kernel</span>
+              <span class="nb-kernel-option__state">runs on the canvas</span>
+            </span>
+          </el-option>
           <el-option
-            v-for="k in kernels"
+            v-for="k in pickerKernels"
             :key="k.id"
             :label="`${k.name} (${k.state})`"
             :value="k.id"
@@ -102,74 +111,109 @@
             </span>
           </el-option>
           <template #footer>
+            <button
+              v-if="flowId && !pickerKernels.length"
+              type="button"
+              class="nb-kernel-footer-link nb-kernel-footer-create"
+              @click="openCreateKernel"
+            >
+              <i class="fa-solid fa-plus"></i> Create notebook kernel…
+            </button>
             <router-link :to="kernelsRoute" class="nb-kernel-footer-link">
               <i class="fa-solid fa-microchip"></i> Manage kernels
             </router-link>
           </template>
         </el-select>
 
-        <el-button
-          size="small"
-          class="nb-overflow-btn"
-          title="Undo cell action (insert, delete, move, duplicate)"
-          :disabled="structuralDisabled || !canUndo"
-          @click="onUndoCellAction"
+        <div class="nb-tool-group">
+          <button
+            type="button"
+            class="nb-tool-btn"
+            title="Undo cell action (insert, delete, move, duplicate)"
+            aria-label="Undo cell action"
+            :disabled="structuralDisabled || !canUndo"
+            @click="onUndoCellAction"
+          >
+            <i class="fa-solid fa-arrow-rotate-left"></i>
+          </button>
+          <button
+            type="button"
+            class="nb-tool-btn"
+            title="Redo cell action"
+            aria-label="Redo cell action"
+            :disabled="structuralDisabled || !canRedo"
+            @click="onRedoCellAction"
+          >
+            <i class="fa-solid fa-arrow-rotate-right"></i>
+          </button>
+          <button
+            type="button"
+            class="nb-tool-btn"
+            title="Notebook help"
+            aria-label="Notebook help"
+            @click="showHelp = true"
+          >
+            <i class="fa-regular fa-circle-question"></i>
+          </button>
+
+          <!-- Overflow: kernel / output maintenance -->
+          <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
+            <button
+              type="button"
+              class="nb-tool-btn"
+              title="More actions"
+              aria-label="More actions"
+            >
+              <i class="fa-solid fa-ellipsis"></i>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item :disabled="batchBusy" @click="store.clearOutputs()">
+                  <i class="fa-solid fa-eraser nb-menu-icon"></i> Clear outputs
+                </el-dropdown-item>
+                <el-dropdown-item
+                  v-if="!flowId || store.active?.kernelId"
+                  :disabled="batchBusy || resetPending"
+                  :title="
+                    flowId
+                      ? 'Re-seed the session from the canvas as it is now'
+                      : 'Clear this notebook\'s kernel variables; the kernel keeps running'
+                  "
+                  @click="onResetSession"
+                >
+                  <i class="fa-solid fa-rotate-right nb-menu-icon"></i> Reset session
+                </el-dropdown-item>
+                <el-dropdown-item
+                  v-if="kernelStatus.kind === 'stopped'"
+                  :disabled="startingKernel"
+                  @click="startKernel"
+                >
+                  <i class="fa-solid fa-play nb-menu-icon"></i> Start kernel
+                </el-dropdown-item>
+                <el-dropdown-item v-if="!flowId" divided @click="router.push(kernelsRoute)">
+                  <i class="fa-solid fa-microchip nb-menu-icon"></i> Manage kernels…
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+
+        <span class="nb-toolbar-divider" aria-hidden="true"></span>
+
+        <button
+          v-if="flowId"
+          type="button"
+          class="nb-btn"
+          data-testid="nb-push"
+          :title="pushTitle"
+          :disabled="batchBusy || editorStore.isRunning"
+          @click="onPush"
         >
-          <i class="fa-solid fa-arrow-rotate-left"></i>
-        </el-button>
-
-        <el-button
-          size="small"
-          class="nb-overflow-btn"
-          title="Redo cell action"
-          :disabled="structuralDisabled || !canRedo"
-          @click="onRedoCellAction"
-        >
-          <i class="fa-solid fa-arrow-rotate-right"></i>
-        </el-button>
-
-        <el-button
-          size="small"
-          class="nb-overflow-btn"
-          title="Notebook help"
-          @click="showHelp = true"
-        >
-          <i class="fa-solid fa-circle-question"></i>
-        </el-button>
-
-        <!-- Overflow: kernel / output maintenance -->
-        <el-dropdown trigger="click" placement="bottom-end" :hide-on-click="true">
-          <el-button size="small" class="nb-overflow-btn" title="More actions">
-            <i class="fa-solid fa-ellipsis"></i>
-          </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item :disabled="batchBusy" @click="store.clearOutputs()">
-                <i class="fa-solid fa-eraser nb-menu-icon"></i> Clear outputs
-              </el-dropdown-item>
-              <el-dropdown-item
-                :disabled="batchBusy || resetPending"
-                title="Clear this notebook's kernel variables; the kernel keeps running"
-                @click="onResetSession"
-              >
-                <i class="fa-solid fa-rotate-right nb-menu-icon"></i> Reset session
-              </el-dropdown-item>
-              <el-dropdown-item
-                v-if="kernelStatus.kind === 'stopped'"
-                :disabled="startingKernel"
-                @click="startKernel"
-              >
-                <i class="fa-solid fa-play nb-menu-icon"></i> Start kernel
-              </el-dropdown-item>
-              <el-dropdown-item divided @click="router.push(kernelsRoute)">
-                <i class="fa-solid fa-microchip nb-menu-icon"></i> Manage kernels…
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-
+          <i :class="pushing ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-upload'"></i>
+          <span>Push</span>
+        </button>
         <!-- Save split-button (canvas-style): Save + File menu (Save As / Rename / Delete) -->
-        <div class="nb-split" data-tutorial="save-btn">
+        <div v-else class="nb-split" data-tutorial="save-btn">
           <button
             class="nb-split-btn nb-split-btn--main"
             :disabled="store.active?.saving"
@@ -205,20 +249,21 @@
 
         <span v-if="batchLabel" class="nb-batch-progress">{{ batchLabel }}</span>
 
-        <el-button
-          size="small"
-          class="nb-run-all"
-          :loading="batchBusy"
+        <button
+          type="button"
+          class="nb-btn nb-btn--run nb-run-all"
+          data-testid="nb-run-all"
+          :title="runAllTitle"
           :disabled="batchBusy"
           @click="store.runAll()"
         >
-          <i v-if="!batchBusy" class="fa-solid fa-forward" style="margin-right: 4px"></i> Run All
-        </el-button>
+          <i :class="batchBusy ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-forward'"></i>
+          <span>Run all</span>
+        </button>
       </div>
     </div>
 
-    <!-- Kernel status banner: the one place that says why Python cells won't run
-         (no kernel, Docker off, kernel gone, stopped, starting, errored) and what to do. -->
+    <!-- Why Python cells won't run and what to do; in flow mode, why syncing is refused. -->
     <div v-if="banner" class="nb-banner" :class="`nb-banner--${banner.tone}`">
       <i :class="banner.icon"></i>
       <span class="nb-banner__text">{{ banner.text }}</span>
@@ -239,12 +284,17 @@
         >
           Clear selection
         </el-button>
-        <router-link :to="kernelsRoute" class="nb-banner__link">Manage kernels</router-link>
+        <router-link v-if="!flowId" :to="kernelsRoute" class="nb-banner__link">
+          Manage kernels
+        </router-link>
       </span>
     </div>
 
-    <!-- Cells of the active notebook -->
-    <div v-if="store.active" ref="hostRef" class="nb-cells">
+    <!-- Cells of the active notebook; a flow tab shows a placeholder until its first rendering lands. -->
+    <div v-if="rendering" class="nb-cells nb-cells--rendering">
+      <i class="fa-solid fa-spinner fa-spin"></i> Rendering the notebook…
+    </div>
+    <div v-else-if="store.active && ownTab" ref="hostRef" class="nb-cells">
       <div
         v-if="drag.indicatorTop.value !== null"
         class="nb-drop-line"
@@ -282,9 +332,14 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           :structural-disabled="structuralDisabled"
           :runtime="runtimeFor(cell.id)"
           :busy="batchBusy"
+          :type-in-menu="!!flowId"
+          :sync-state="flowId ? cellSyncState(cell) : null"
+          :sync-error="flowId ? cellErrorMark(store.active, cell) : null"
           :active="cell.id === store.active.focusedCellId"
           :dragging="drag.draggingId.value === cell.id"
+          :stoppable="!!flowId && !!store.active.kernelId"
           @run="store.runCell(cell.id)"
+          @stop="store.interruptSession()"
           @run-advance="onRunAdvance(cell.id)"
           @update:code="(code: string) => store.setCellCode(cell.id, code)"
           @update:type="(t: CellType) => store.setCellType(cell.id, t)"
@@ -298,7 +353,17 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           @insert-below="onInsertAt(idx + 1)"
           @activate="store.setFocusedCell(cell.id)"
           @cursor="(pos: number) => store.setCellCursor(cell.id, pos)"
-        />
+        >
+          <template v-if="flowId && store.active.nodeIds?.[cell.id]?.length" #menu-extra>
+            <el-dropdown-item
+              data-action="run-on-canvas"
+              :disabled="batchBusy || editorStore.isRunning"
+              @click="previewOnCanvas(cell.id)"
+            >
+              <i class="fa-solid fa-diagram-project nb-menu-icon"></i> Run and preview on canvas
+            </el-dropdown-item>
+          </template>
+        </CatalogNotebookCell>
 
         <!-- Hover-to-insert: a faint "+" appears between cells; click to add a
              Python cell at this position. -->
@@ -313,17 +378,17 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
         </div>
       </template>
 
-      <!-- Add cell (centered). Adds a Python cell by default; switch to
-           Markdown via the per-cell type selector. -->
+      <!-- Adds Python; switch type from the cell's selector or menu. -->
       <div class="nb-add-row">
-        <el-button
-          size="small"
+        <button
+          type="button"
           class="nb-add-btn"
           :disabled="structuralDisabled"
           @click="onAddCell('python')"
         >
-          <i class="fa-solid fa-plus" style="margin-right: 4px"></i> Add cell
-        </el-button>
+          <i class="fa-solid fa-plus"></i>
+          <span>Add cell</span>
+        </button>
       </div>
     </div>
 
@@ -354,25 +419,58 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
       </template>
     </el-dialog>
 
-    <NotebookHelp v-if="showHelp" @close="showHelp = false" />
+    <NotebookHelp
+      v-if="showHelp"
+      :flow-mode="!!flowId"
+      :kernel-mode="!!flowId && !!store.active?.kernelId"
+      @close="showHelp = false"
+    />
+    <CreateKernelDialog
+      v-if="flowId"
+      v-model="createKernelVisible"
+      :suggestion="notebookKernelSuggestion"
+      @created="onKernelCreated"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from "vue";
+import debounce from "lodash/debounce";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type TabPaneName } from "element-plus";
-import { useNotebookStore, cellNodeId } from "../../stores/notebook-store";
+import {
+  useNotebookStore,
+  cellNodeId,
+  flowCellSyncState,
+  registerFlowNotebookHooks,
+  cellErrorMark,
+  RERENDER_FAILED,
+  SYNC_NEEDS_ADMIN,
+} from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
-import { catalogSaveErrorMessage } from "../../composables/saveError";
+import { catalogSaveErrorMessage, detailMessage } from "../../composables/saveError";
 import { KernelApi } from "../../api/kernel.api";
+import { NotebookApi } from "../../api/notebook.api";
+import { useEditorStore } from "../../stores/editor-store";
+import { useNodeStore } from "../../stores/node-store";
+import { useDrawerStore } from "../../stores/drawer-store";
+import { useFlowStore } from "../../stores/flow-store";
+import { useResultsStore } from "../../stores/results-store";
+import { whenMutationsIdle } from "../../services/axios.config";
+import { flushPendingEdits } from "../../services/mutationChannel";
+import { currentNodeId, seedNodeId } from "../../composables/useDragAndDrop";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";
+import CreateKernelDialog from "../../components/kernel/CreateKernelDialog.vue";
 import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
 import { cellMoveAnnouncement } from "../../components/notebook/cellOperations";
 import { cellPresentation } from "../../components/notebook/cellPresentation";
 import { cellSelector, focusCell, ownerIdForNotebook } from "../../components/notebook/editorViews";
-import { attachDataframeSchemas } from "../../components/notebook/useDataframeSchemas";
+import {
+  attachDataframeSchemas,
+  refresh as refreshDataframeSchemas,
+} from "../../components/notebook/useDataframeSchemas";
 import { scanCatalogRefs } from "../../components/nodes/node-types/elements/pythonScript/dataframeSchemaInference";
 import { useCellDrag } from "../../components/notebook/useCellDrag";
 import { getCellHistory } from "../../components/notebook/useCellHistory";
@@ -384,14 +482,26 @@ import {
 import {
   kernelStatusNeedsAttention,
   resolveNotebookKernelStatus,
+  sameKernelList,
 } from "../../components/notebook/notebookKernelStatus";
 import type { CellOperation } from "../../components/notebook/cellOperations";
 import type { CellType, NotebookCellModel } from "../../components/notebook/types";
-import type { KernelInfo } from "../../types/kernel.types";
+import type { KernelInfo, KernelSuggestion } from "../../types/kernel.types";
 
 const KERNEL_POLL_MS = 5000;
+const NO_KERNEL = "__no_kernel__";
+
+/** A kernel can run the canvas notebook when it has flowfile installed or is a notebook image. */
+const runsNotebook = (k: KernelInfo): boolean =>
+  k.packages.some((p) => /^flowfile\s*($|[=<>!~[;@ ])/i.test(p.trim())) ||
+  (k.custom_image ?? "").includes("notebook");
+
+/** With `flowId` the panel is that flow's canvas notebook: one ephemeral tab rendered from the canvas. */
+const props = defineProps<{ flowId?: number }>();
 
 const store = useNotebookStore();
+const editorStore = useEditorStore();
+const catalogTabs = computed(() => store.openNotebooks.filter((n) => n.flowId == null));
 const catalogStore = useCatalogStore();
 const router = useRouter();
 const kernelsRoute = { name: "compute", query: { tab: "kernels" } } as const;
@@ -417,6 +527,7 @@ const dockerAvailable = ref(true);
 const startingKernel = ref(false);
 const resetPending = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let unregisterFlowHooks: (() => void) | null = null;
 
 const kernelStatus = computed(() =>
   resolveNotebookKernelStatus({
@@ -431,8 +542,50 @@ const selectedKernelLabel = computed(() => {
   const s = kernelStatus.value;
   if (s.kind === "missing") return "Kernel not found";
   if ("kernel" in s) return s.kernel.name;
-  return store.active?.kernelId ?? "";
+  return store.active?.kernelId ?? (props.flowId ? "No kernel" : "");
 });
+
+const pickerKernels = computed(() =>
+  props.flowId ? kernels.value.filter(runsNotebook) : kernels.value,
+);
+
+function onKernelChange(value: string | null | undefined) {
+  store.setKernel(!value || value === NO_KERNEL ? null : value);
+}
+
+const createKernelVisible = ref(false);
+const kernelSelectRef = ref<{ blur: () => void } | null>(null);
+function openCreateKernel() {
+  // The footer lives inside the dropdown, so close it or it floats above the dialog.
+  kernelSelectRef.value?.blur();
+  createKernelVisible.value = true;
+}
+const notebookKernelSuggestion: KernelSuggestion = {
+  config: {
+    id: "notebook",
+    name: "Notebook",
+    packages: [__APP_VERSION__ ? `flowfile==${__APP_VERSION__}` : "flowfile"],
+    cpu_cores: 2,
+    memory_gb: 4,
+    gpu: false,
+    image_flavour: "lite",
+    custom_image: null,
+  },
+  covered_by_flavour: [],
+  flavour_image_available: null,
+};
+
+async function onKernelCreated(kernel: KernelInfo) {
+  store.setKernel(kernel.id);
+  await loadKernels();
+}
+
+/** A kernel session keeps the stale badges; the canvas sync state shows only when it failed. */
+function cellSyncState(cell: NotebookCellModel) {
+  const nb = store.active!;
+  const state = flowCellSyncState(nb, cell);
+  return nb.kernelId && state !== "error" ? null : state;
+}
 
 interface KernelBanner {
   tone: "info" | "warning" | "danger";
@@ -443,6 +596,10 @@ interface KernelBanner {
 // Only the "no kernel" nudge waits for Python cells; a bad selection is always worth saying.
 const banner = computed<KernelBanner | null>(() => {
   const s = kernelStatus.value;
+  if (props.flowId && store.active?.syncForbidden) {
+    return { tone: "warning", icon: "fa-solid fa-lock", text: SYNC_NEEDS_ADMIN };
+  }
+  if (props.flowId && !store.active?.kernelId) return null;
   const name = "kernel" in s ? `"${s.kernel.name}"` : "";
   switch (s.kind) {
     case "docker-off":
@@ -497,6 +654,22 @@ const banner = computed<KernelBanner | null>(() => {
   }
 });
 
+const runAllTitle = computed(() => {
+  if (!props.flowId) return undefined;
+  if (store.active?.kernelId)
+    return "Run every cell in the kernel session; the canvas is unchanged";
+  return store.active?.syncForbidden
+    ? SYNC_NEEDS_ADMIN
+    : "Sync the cells, run the flow on the canvas and refresh every cell";
+});
+
+const pushTitle = computed(() => {
+  if (store.active?.syncForbidden) return SYNC_NEEDS_ADMIN;
+  return store.active?.kernelId
+    ? "Run the cells on the kernel and apply what they build to the canvas"
+    : "Sync the cells to the canvas without running them";
+});
+
 async function startKernel() {
   const s = kernelStatus.value;
   if (s.kind !== "stopped") return;
@@ -541,7 +714,19 @@ function cancelRename() {
 }
 // Primer shows only while the notebook has no code yet; it hides as soon as you type.
 const showPrimer = computed(
-  () => !!store.active && store.active.cells.every((c) => !c.code.trim()),
+  () => !props.flowId && !!store.active && store.active.cells.every((c) => !c.code.trim()),
+);
+
+// Flow mode shows only its own tab; until openFlowNotebook activates it, another tab is active.
+const ownTab = computed(
+  () =>
+    !!store.active &&
+    (props.flowId ? store.active.flowId === props.flowId : store.active.flowId == null),
+);
+const opening = ref(!!props.flowId);
+// A flow tab is created empty and filled by its first rendering; a re-opened tab keeps its cells.
+const rendering = computed(
+  () => opening.value && !(ownTab.value && store.active!.cells.length > 0),
 );
 
 function priorCodes(idx: number): string[] {
@@ -566,7 +751,11 @@ const schemaDetachers = new Map<string, () => void>();
 
 // One attachment per open tab: the schema cache is owner-keyed and the kernel is read live.
 watch(
-  () => store.openNotebooks.map((n) => n.tabId),
+  () =>
+    (props.flowId
+      ? store.openNotebooks.filter((n) => n.flowId === props.flowId)
+      : catalogTabs.value
+    ).map((n) => n.tabId),
   (tabIds) => {
     const live = new Set(tabIds);
     for (const [tabId, detach] of Array.from(schemaDetachers)) {
@@ -580,11 +769,17 @@ watch(
         tabId,
         attachDataframeSchemas(ownerIdForNotebook(tabId), () => {
           const nb = store.openNotebooks.find((n) => n.tabId === tabId);
+          const flowId = nb?.flowId;
+          const kernelId = nb?.kernelId ?? null;
           return {
-            kernelId: nb?.kernelId ?? null,
+            kernelId,
             flowId: nb?.sessionFlowId ?? 0,
             nodeId: 0,
             catalogRefs: () => pythonCellsOf(tabId).flatMap((c) => scanCatalogRefs(c.code)),
+            fetchSchemas:
+              flowId != null && kernelId
+                ? () => NotebookApi.sessionSchemas({ flow_id: flowId, kernel_id: kernelId })
+                : null,
           };
         }),
       );
@@ -712,7 +907,8 @@ function onRedoCellAction() {
 
 async function loadKernels() {
   try {
-    kernels.value = await KernelApi.getAll();
+    const next = await KernelApi.getAll();
+    if (!sameKernelList(kernels.value, next)) kernels.value = next;
     kernelsLoaded.value = true;
   } catch {
     // Keep the last known list: a transient fetch failure must not flag every kernel as gone.
@@ -720,8 +916,18 @@ async function loadKernels() {
 }
 
 onMounted(async () => {
-  store.ensureHydrated();
-  await store.loadList();
+  if (props.flowId) {
+    try {
+      await store.loadFlowStatus();
+      await openFlow();
+    } finally {
+      opening.value = false;
+    }
+    if (!store.kernelSessions) return;
+  } else {
+    store.ensureHydrated();
+    await store.loadList();
+  }
   try {
     dockerAvailable.value = (await KernelApi.getDockerStatus()).available;
   } catch {
@@ -735,10 +941,149 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (pollTimer) clearInterval(pollTimer);
+  unregisterFlowHooks?.();
   for (const detach of schemaDetachers.values()) detach();
   schemaDetachers.clear();
-  store.closeAllSessions();
+  if (!props.flowId) store.closeAllSessions();
+  refreshSoon.cancel();
 });
+
+// A catalog panel never shows a flow's tab: fall back to a catalog tab when one was active.
+watch(
+  () => [store.hydrated, store.active?.flowId] as const,
+  ([hydrated, activeFlowId]) => {
+    if (props.flowId) {
+      const own = store.openNotebooks.find((n) => n.flowId === props.flowId);
+      if (own && activeFlowId !== props.flowId) store.setActiveTab(own.tabId);
+    } else if (hydrated && activeFlowId != null) {
+      if (catalogTabs.value.length) store.setActiveTab(catalogTabs.value[0].tabId);
+      else store.newTab();
+    }
+  },
+  { immediate: true },
+);
+
+async function openFlow() {
+  const flowId = props.flowId!;
+  // A push or run can end after the user switched flows; the designer then shows another flow.
+  const onThisFlow = () => useFlowStore().flowId === flowId;
+  unregisterFlowHooks = registerFlowNotebookHooks(flowId, {
+    prepare: prepareFlowAction,
+    clientMaxNodeId: currentNodeId,
+    confirm: (plan, trigger) =>
+      ElMessageBox.confirm(
+        plan.warnings.join("\n"),
+        trigger === "push" ? "Push to the canvas?" : "Run deletes canvas nodes",
+        {
+          confirmButtonText: trigger === "push" ? "Push" : "Sync and run",
+          cancelButtonText: "Cancel",
+          type: "warning",
+          customClass: "nb-lines",
+        },
+      ).then(
+        () => true,
+        () => false,
+      ),
+    pushed: (result) => {
+      if (!onThisFlow()) return;
+      seedNodeId(result.max_node_id);
+      useFlowStore().requestReload();
+    },
+    runStarted: () => {
+      if (onThisFlow()) editorStore.isRunning = true;
+    },
+    runEnded: (info) => {
+      if (onThisFlow()) editorStore.isRunning = false;
+      if (info) useResultsStore().insertRunResult(info, onThisFlow());
+    },
+  });
+  try {
+    await store.openFlowNotebook(flowId, `Flow ${flowId}`);
+  } catch (e) {
+    ElMessage.error(detailMessage(e, "Could not render the notebook"));
+  }
+}
+
+const refreshSoon = debounce(async () => {
+  await whenMutationsIdle();
+  await store.refreshFlowNotebook(props.flowId!).catch((e) => {
+    ElMessage.warning(detailMessage(e, RERENDER_FAILED));
+  });
+}, 400);
+
+// Canvas edits re-render the cells once the edit queue settles; layout moves keep the fingerprint.
+watch(
+  () => editorStore.graphVersion,
+  () => {
+    if (!props.flowId) return;
+    refreshSoon();
+  },
+);
+
+const pushing = ref(false);
+
+/** Save and close the node settings drawer; false when its save was refused. */
+async function closeSettingsDrawer(): Promise<boolean> {
+  if (!(await editorStore.saveDrawerBeforeLeave())) return false;
+  useNodeStore().nodeId = -1;
+  editorStore.activeDrawerComponent = null;
+  return true;
+}
+
+/** Before a sync or canvas run: flush canvas edits and save the drawer; never during a run. */
+async function prepareFlowAction(): Promise<boolean> {
+  if (!editorStore.isRunning) {
+    await flushPendingEdits();
+    await whenMutationsIdle();
+    if (!(await closeSettingsDrawer())) return false;
+    await whenMutationsIdle();
+  }
+  if (!editorStore.isRunning) return true;
+  ElMessage.warning("The flow is running; try again when it finishes.");
+  return false;
+}
+
+// Flow actions report through the tab's notice; a refused sync also keeps the admin banner up.
+watch(
+  () => store.active?.notice,
+  (notice) => {
+    if (!props.flowId || !notice) return;
+    ElMessage({ type: notice.tone, message: notice.message, customClass: "nb-lines" });
+  },
+);
+
+// A refused sync can stop at a cell that is scrolled out of view.
+watch(
+  () => store.active?.syncError?.cell_id,
+  (cellId) => {
+    if (!props.flowId || !cellId) return;
+    hostRef.value?.querySelector(cellSelector(cellId))?.scrollIntoView({ block: "nearest" });
+  },
+);
+
+async function onPush() {
+  pushing.value = true;
+  try {
+    await store.syncFlowNotebook();
+  } finally {
+    pushing.value = false;
+  }
+}
+
+/** Run a node cell (syncing first when needed), then show its node in the canvas preview. */
+async function previewOnCanvas(cellId: string) {
+  const tabId = store.activeTabId;
+  const onKernel = !!store.active?.kernelId;
+  if (!(await store.runFlowCell(cellId))) return;
+  // The canvas found the node's columns: a kernel session's frames take them with this call.
+  if (onKernel && tabId) void refreshDataframeSchemas(ownerIdForNotebook(tabId));
+  // The user may have switched flows while the cell ran.
+  if (store.active?.flowId !== props.flowId || useFlowStore().flowId !== props.flowId) return;
+  const nodeId = store.active?.nodeIds?.[cellId]?.at(-1);
+  // The run can report the node gone, and the preview's data route 500s on a missing node.
+  if (nodeId == null || !useFlowStore().vueFlowInstance?.findNode?.(String(nodeId))) return;
+  useDrawerStore().selectNodeForPreview(nodeId);
+}
 
 async function onResetSession() {
   if (resetPending.value) return;
@@ -848,16 +1193,22 @@ async function onDelete() {
   flex: 0 0 auto;
   background: var(--color-background-secondary);
   border-bottom: 1px solid var(--color-border-primary);
-  box-shadow: var(--shadow-xs);
 }
 .nb-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px 0;
+  gap: var(--spacing-2);
+  min-height: 40px;
+  padding: 0 var(--spacing-3);
 }
 .nb-toolbar-spacer {
   flex: 1;
+}
+.nb-toolbar-divider {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  background: var(--color-border-primary);
 }
 /* "+" beside the tabs: New / Open saved notebook. */
 .nb-tab-add {
@@ -866,7 +1217,6 @@ async function onDelete() {
   justify-content: center;
   width: 26px;
   height: 26px;
-  margin-bottom: 4px;
   padding: 0;
   border: 1px solid var(--color-border-light);
   border-radius: var(--border-radius-md);
@@ -884,7 +1234,7 @@ async function onDelete() {
   height: 20px;
   padding: 0 4px;
   border: 1px solid var(--color-primary);
-  border-radius: var(--border-radius-sm, 4px);
+  border-radius: var(--border-radius-sm);
   background: var(--color-background-primary);
   color: var(--color-text-primary);
   font: inherit;
@@ -895,32 +1245,101 @@ async function onDelete() {
   margin-right: 6px;
   text-align: center;
 }
-.nb-overflow-btn {
-  padding-left: 9px;
-  padding-right: 9px;
+/* Items this panel adds to a cell's ⋯ menu line up with the menu's own. */
+.nb-cell-menu-popper .nb-menu-icon {
+  width: 18px;
+  margin-right: 0;
 }
-.nb-toolbar > .el-select,
-.nb-toolbar > .el-button,
-.nb-toolbar > .nb-split,
-.nb-toolbar > .el-dropdown {
-  margin-bottom: 6px;
+
+/* Ghost icon buttons for panel-local tools. */
+.nb-tool-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.nb-tool-group :deep(.el-dropdown) {
+  display: inline-flex;
+}
+.nb-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--border-radius-md);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+.nb-tool-btn:hover:not(:disabled),
+.nb-tool-btn[aria-expanded="true"] {
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+}
+.nb-tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Chrome buttons: the designer header's 28px recipe. */
+.nb-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
+  box-shadow: var(--shadow-xs);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.nb-btn > i {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.nb-btn:hover:not(:disabled) {
+  background: var(--color-background-tertiary);
+  border-color: var(--color-border-secondary);
+}
+.nb-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+.nb-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Run all mirrors the designer header's Run button (accent purple). */
+.nb-btn--run {
+  border-color: var(--color-accent-purple);
+  background: var(--color-accent-purple);
+  color: #fff;
+}
+.nb-btn--run > i {
+  color: inherit;
+}
+.nb-btn--run:hover:not(:disabled) {
+  border-color: var(--color-accent-purple-hover);
+  background: var(--color-accent-purple-hover);
 }
 .nb-batch-progress {
-  margin-bottom: 6px;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   white-space: nowrap;
-}
-/* Run All mirrors the designer header's Run button (accent purple). */
-.nb-run-all:not(:disabled) {
-  background-color: var(--color-accent-purple);
-  border-color: var(--color-accent-purple);
-  color: #fff;
-}
-.nb-run-all:not(:disabled):hover {
-  background-color: var(--color-accent-purple-hover);
-  border-color: var(--color-accent-purple-hover);
-  color: #fff;
 }
 
 /* Kernel picker: state dot in the field and in each option; amber when the
@@ -935,7 +1354,7 @@ async function onDelete() {
 .nb-kernel-option {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-1-5, 6px);
+  gap: var(--spacing-1-5);
   min-width: 0;
 }
 .nb-kernel-label__name {
@@ -949,14 +1368,14 @@ async function onDelete() {
 }
 .nb-kernel-option__state {
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted, #909399);
+  color: var(--color-text-muted);
 }
 .nb-kernel-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  background-color: var(--color-gray-400, #909399);
+  background-color: var(--color-gray-400);
 }
 .nb-kernel-dot--idle {
   background-color: var(--color-success);
@@ -974,13 +1393,21 @@ async function onDelete() {
 .nb-kernel-footer-link {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-1-5, 6px);
+  gap: var(--spacing-1-5);
   font-size: var(--font-size-xs);
   color: var(--color-primary);
   text-decoration: none;
 }
 .nb-kernel-footer-link:hover {
   text-decoration: underline;
+}
+.nb-kernel-footer-create {
+  display: flex;
+  margin-bottom: var(--spacing-1-5);
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
 }
 
 /* Canvas-style Save split-button (mirrors HeaderButtons .action-btn-split):
@@ -989,9 +1416,9 @@ async function onDelete() {
 .nb-split {
   display: inline-flex;
   align-items: stretch;
-  height: var(--el-component-size-small, 24px);
+  height: 28px;
   box-shadow: var(--shadow-xs);
-  border-radius: var(--border-radius-md, 6px);
+  border-radius: var(--border-radius-md);
 }
 .nb-split :deep(.el-dropdown) {
   display: inline-flex;
@@ -999,9 +1426,9 @@ async function onDelete() {
 .nb-split-btn {
   display: inline-flex;
   align-items: center;
-  gap: var(--spacing-1-5, 6px);
-  height: var(--el-component-size-small, 24px);
-  padding: 0 var(--spacing-3, 12px);
+  gap: var(--spacing-1-5);
+  height: 28px;
+  padding: 0 var(--spacing-3);
   background-color: var(--color-background-primary);
   border: 1px solid var(--color-border-light);
   color: var(--color-text-primary);
@@ -1026,16 +1453,16 @@ async function onDelete() {
   color: var(--color-text-primary);
 }
 .nb-split-btn--main {
-  border-top-left-radius: var(--border-radius-md, 6px);
-  border-bottom-left-radius: var(--border-radius-md, 6px);
+  border-top-left-radius: var(--border-radius-md);
+  border-bottom-left-radius: var(--border-radius-md);
   border-right: none;
 }
 .nb-split-btn--caret {
   justify-content: center;
   min-width: 22px;
-  padding: 0 var(--spacing-2, 8px);
-  border-top-right-radius: var(--border-radius-md, 6px);
-  border-bottom-right-radius: var(--border-radius-md, 6px);
+  padding: 0 var(--spacing-2);
+  border-top-right-radius: var(--border-radius-md);
+  border-bottom-right-radius: var(--border-radius-md);
 }
 .nb-saveas {
   display: flex;
@@ -1043,17 +1470,17 @@ async function onDelete() {
   gap: 6px;
 }
 .nb-saveas-label {
-  font-size: 12px;
-  color: var(--el-text-color-regular, #606266);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
   margin-top: 4px;
 }
 .nb-saveas-hint {
   font-size: 12px;
-  color: var(--el-color-warning, #e6a23c);
+  color: var(--color-warning-dark);
   margin: 4px 0 0;
 }
 .nb-dirty {
-  color: var(--el-color-warning, #e6a23c);
+  color: var(--color-warning-dark);
   margin-left: 2px;
 }
 /* Notebook tabs match the designer's flow-tabs (FlowSelectorView): top-rounded,
@@ -1111,27 +1538,35 @@ async function onDelete() {
   font-size: var(--font-size-xs);
   color: var(--color-primary);
 }
+/* Soft tinted strip, inset from the panel edges. */
 .nb-banner {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
+  gap: var(--spacing-2);
+  margin: var(--spacing-3) var(--spacing-3) 0;
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid color-mix(in srgb, var(--color-info) 25%, transparent);
+  border-radius: var(--border-radius-lg);
   background: var(--color-info-light);
-  color: var(--color-text-secondary);
-  border-bottom: 1px solid var(--color-border-light);
-  font-size: 13px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
 }
 .nb-banner > i {
+  flex: none;
   color: var(--color-info);
 }
 .nb-banner--warning {
+  border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
   background: var(--color-warning-light);
 }
 .nb-banner--warning > i {
   color: var(--color-warning);
 }
 .nb-banner--danger {
-  background: var(--color-danger-light, rgba(239, 68, 68, 0.12));
+  border-color: color-mix(in srgb, var(--color-danger) 25%, transparent);
+  background: var(--color-danger-light);
 }
 .nb-banner--danger > i {
   color: var(--color-danger);
@@ -1150,7 +1585,7 @@ async function onDelete() {
   height: 24px;
 }
 .nb-banner__link {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--color-primary);
   text-decoration: none;
   white-space: nowrap;
@@ -1162,7 +1597,16 @@ async function onDelete() {
   position: relative;
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: var(--spacing-3) var(--spacing-3) var(--spacing-6);
+  background: var(--color-background-primary);
+}
+.nb-cells--rendering {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
 }
 /* Drop indicator for a cell drag; the list itself never reorders mid-gesture. */
 .nb-drop-line {
@@ -1171,7 +1615,8 @@ async function onDelete() {
   right: 0;
   z-index: 2;
   height: 2px;
-  background: var(--el-color-primary, #409eff);
+  border-radius: 1px;
+  background: var(--color-accent);
   pointer-events: none;
 }
 .nb-sr-only {
@@ -1183,49 +1628,50 @@ async function onDelete() {
   white-space: nowrap;
 }
 .nb-primer {
-  margin-bottom: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--el-border-color-lighter, #ebeef5);
-  border-radius: 6px;
-  background: var(--el-fill-color-lighter, #fafafa);
+  margin-bottom: var(--spacing-3);
+  padding: var(--spacing-3) 14px;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg);
+  background: var(--color-background-secondary);
 }
 .nb-primer-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--el-text-color-primary, #303133);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
   margin-bottom: 4px;
 }
 .nb-primer-text {
-  font-size: 12px;
-  color: var(--el-text-color-regular, #606266);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
   margin: 0 0 8px;
   line-height: 1.5;
 }
 .nb-primer-text kbd {
-  font-family: inherit;
-  font-size: 11px;
-  padding: 0 4px;
-  border: 1px solid var(--el-border-color, #dcdfe6);
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border: 1px solid var(--color-border-secondary);
   border-bottom-width: 2px;
-  border-radius: 3px;
-  background: var(--el-bg-color, #fff);
+  border-radius: var(--border-radius-sm);
+  background: var(--color-background-tertiary);
 }
 .nb-primer-code {
   margin: 0 0 8px;
   padding: 8px 10px;
-  border-radius: 4px;
-  background: #282c34;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  background: var(--color-background-primary);
   overflow-x: auto;
 }
 .nb-primer-code code {
-  font-family: "Fira Code", monospace;
-  font-size: 12px;
-  color: #abb2bf;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
   white-space: pre;
 }
 .nb-primer-link {
-  font-size: 12px;
-  color: var(--el-color-primary, #409eff);
+  font-size: var(--font-size-sm);
+  color: var(--color-primary);
   cursor: pointer;
 }
 .nb-primer-link:hover {
@@ -1234,27 +1680,54 @@ async function onDelete() {
 .nb-add-row {
   display: flex;
   justify-content: center;
-  margin-top: 8px;
+  margin-top: var(--spacing-3);
+}
+.nb-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px dashed var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.nb-add-btn > i {
+  font-size: 10px;
+}
+.nb-add-btn:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent-dark);
+}
+.nb-add-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
-/* Hover-to-insert zone between cells: a thin gap that reveals a centered "+"
-   (with a faint connecting line) only on hover. */
+/* Hover-to-insert zone between cells: a hairline with a small ghost "+" chip. */
 .nb-insert-zone {
   position: relative;
-  height: 14px;
-  margin: 2px 0;
+  height: 16px;
   cursor: pointer;
 }
 .nb-insert-zone::before {
   content: "";
   position: absolute;
   top: 50%;
-  left: 0;
-  right: 0;
+  left: var(--spacing-3);
+  right: var(--spacing-3);
   height: 1px;
-  background: var(--el-color-primary, #409eff);
+  background: var(--color-accent);
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--transition-base) ease;
 }
 .nb-insert-plus {
   position: absolute;
@@ -1264,23 +1737,33 @@ async function onDelete() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--el-color-primary, #409eff);
-  color: #fff;
-  font-size: 10px;
+  width: 28px;
+  height: 18px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-full);
+  background: var(--color-background-primary);
+  box-shadow: var(--shadow-xs);
+  color: var(--color-accent-dark);
+  font-size: 9px;
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--transition-base) ease;
 }
 .nb-insert-zone:hover::before {
-  opacity: 0.35;
+  opacity: 0.4;
 }
 .nb-insert-zone:hover .nb-insert-plus {
-  opacity: 0.85;
+  opacity: 1;
 }
 .nb-insert-zone--disabled {
   pointer-events: none;
   opacity: 0;
+}
+</style>
+
+<style>
+/* Sync confirmations and notices list one reason per line. */
+.nb-lines .el-message-box__message p,
+.nb-lines .el-message__content {
+  white-space: pre-line;
 }
 </style>

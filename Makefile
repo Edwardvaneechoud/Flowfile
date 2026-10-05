@@ -366,6 +366,14 @@ rebuild_kernel:
 	docker build $(KERNEL_BUILD_ARG) -t flowfile-kernel-$(KERNEL_FLAVOUR):local kernel_runtime/
 	@echo "Built flowfile-kernel-$(KERNEL_FLAVOUR):local (reports __version__ via /health)."
 
+# Dev notebook kernel image on flowfile-kernel-lite:local (run `make rebuild_kernel KERNEL_FLAVOUR=lite` first).
+NOTEBOOK_KERNEL_WHEEL_DIR := build/notebook_kernel
+notebook_kernel_dev:
+	@rm -rf $(NOTEBOOK_KERNEL_WHEEL_DIR) && mkdir -p $(NOTEBOOK_KERNEL_WHEEL_DIR)
+	poetry build -f wheel -o $(NOTEBOOK_KERNEL_WHEEL_DIR)
+	docker build -f kernel_runtime/Dockerfile.notebook-dev -t flowfile-kernel-notebook:dev $(NOTEBOOK_KERNEL_WHEEL_DIR)
+	@echo "Built flowfile-kernel-notebook:dev (custom image for a notebook kernel)."
+
 clean_test:
 	@echo "Cleaning test artifacts..."
 	$(RMRF) $(FRONTEND_DIR)/test-results/ $(FRONTEND_DIR)/playwright-report/
@@ -405,6 +413,20 @@ check_stubs: stubs
 		exit 1; \
 	fi
 	@echo "Stubs are in sync."
+
+# Regenerate the static ff. completion source for the notebook cell editors.
+# Run after changing flowfile.__all__ or an exported name's signature or docstring.
+fl_completions:
+	@echo "Generating ff completions..."
+	$(POETRY_RUN) python tools/generate_fl_completions.py
+
+# Drift check: regenerate and fail if the committed completions changed.
+check_fl_completions: fl_completions
+	@if ! git diff --exit-code -- flowfile_frontend/src/renderer/app/components/notebook/flCompletions.json; then \
+		echo "ERROR: ff completions are out of sync. Run 'make fl_completions' and commit the result."; \
+		exit 1; \
+	fi
+	@echo "ff completions are in sync."
 
 # Regenerate the formula function reference (docs/users/formulas/functions.md)
 # and the counts snippet index.md includes, from the polars-expr-transformer
@@ -481,4 +503,4 @@ bump-version-kernel:
 	@$(MAKE) kernel_manifest
 
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev test_e2e_cloud stop_servers clean_kernels clean_kernel_images rebuild_kernel clean_test test_coverage stubs check_stubs formula_docs check_formula_docs kernel_manifest check_kernel_manifest check_kernel_data wasm_node_manifest check_wasm_node_manifest check_share_data bump-version check-version bump-version-kernel
+.PHONY: all update_lock force_lock install_python_deps build_python_services rename_sidecars services sign_sidecars clean_dmg_mounts build_tauri_app build_tauri_win build_tauri_mac build_tauri_mac_arm build_tauri_mac_intel build_tauri_linux measure_bundle test_built_services clean generate_key force_key install_e2e test_e2e test_e2e_dev test_e2e_cloud stop_servers clean_kernels clean_kernel_images rebuild_kernel notebook_kernel_dev clean_test test_coverage stubs check_stubs fl_completions check_fl_completions formula_docs check_formula_docs kernel_manifest check_kernel_manifest check_kernel_data wasm_node_manifest check_wasm_node_manifest check_share_data bump-version check-version bump-version-kernel

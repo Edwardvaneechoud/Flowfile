@@ -66,7 +66,7 @@ A kernel's flavour matters beyond notebooks: a [kernel-environment custom node](
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| **Kernel ID** | Unique identifier (alphanumeric) | — |
+| **Kernel ID** | Unique identifier: letters, numbers, hyphens and underscores | — |
 | **Name** | A human-readable display label | — |
 | **Image flavour** | Base, ML, Lite, or a custom image URI (see [Kernel images](#kernel-images)) | `Base` |
 | **Packages** | Extra pip packages baked into the kernel's image on top of the flavour (version pins encouraged) | *(none)* |
@@ -78,6 +78,8 @@ A kernel's flavour matters beyond notebooks: a [kernel-environment custom node](
 4. Click **Start** on the kernel card to launch the container
 
 Extra packages are resolved against the flavour's version constraints and baked into a per-kernel image when the kernel is created — not installed on every start. Editing a stopped kernel's package list rebuilds its image.
+
+A kernel with the `flowfile` package installed can also run the [canvas notebook](notebook.md#running-on-a-kernel); that section lists its limits, including Apple Silicon Macs.
 
 ### Kernel Cards
 
@@ -222,7 +224,7 @@ For details on building custom nodes, see [Node Designer](node-designer.md#how-k
 
 ## Current limitations
 
-- **Flow-to-code export** — Python Script nodes that use kernel execution are not included in the [Export to Python](tutorials/code-generator.md) code generator. Kernel nodes are skipped in the generated code.
+- **Flow-to-code export** — the Polars export refuses Python Script nodes; the FlowFrame export writes them as `ff.PythonScript(cells=...)`, the [canvas notebook](notebook.md) as `@ff.python_script` where the cells regenerate unchanged, and the Project export as their own modules (see [Export to Python](tutorials/code-generator.md)).
 - **Artifact state visibility** — There is no UI to browse or inspect the contents of stored artifacts. You can list artifacts via `flowfile_ctx.list_artifacts()` in code, but there is no visual artifact explorer.
 
 ---

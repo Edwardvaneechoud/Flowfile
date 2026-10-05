@@ -1,27 +1,31 @@
 # Python API Tutorials
 
-Worked, hands-on pipelines built with the Python API. Start with the code-to-flow walkthrough, then use the short patterns below as building blocks.
+Build one city sales report from supermarket invoices, then turn it into a reusable, parameterized flow. Each chapter extends the previous one, links to a complete runnable script, and shows what that script prints.
 
-## Tutorial
+<div class="grid cards" markdown>
 
-### [Building Flows with Code](flowfile_frame_api.md)
+- **Build the report**
 
-Build a pipeline programmatically and open it as a visual graph in the Designer. Covers `from_dict`, expressions, conditional logic, grouping, and `open_graph_in_editor`.
+    - [1. First steps](first-steps.md): read, transform, collect, and print the graph
+    - [2. Clean and shape](clean-and-shape.md): editable formulas and expression semantics
+    - [3. Combine](combine.md): union customer segments and join city targets
+    - [4. Aggregate](aggregate.md): summarize revenue without multiplying targets
 
-## Patterns
+- **Run the report repeatedly**
 
-### A complete pipeline
+    - [5. Flow parameters](flow-parameters.md): change the basket threshold between runs
+    - [6. Branching with Gate](branching.md): route the whole report when any city falls short
+    - [7. Write results](write-results.md): files, catalog tables, and cloud storage
+    - [8. Reusable flows](reusable-flows.md): extract a child flow and compare thresholds
+    - [9. Custom logic](custom-logic.md): a percentage score with SQL, a custom node, or Python
+    - [10. Ship it](ship-it.md): save, run headlessly, schedule, and open in the Designer
 
-This snippet is a repository file executed by CI — read, derive, filter, aggregate:
+</div>
 
-```python
---8<-- "docs/examples/first_pipeline.py:example"
-```
+Use the [Quick Start](../quickstart.md) for installation. Download a chapter script and run it with Python, for example `python tutorial_01.py`. The scripts fetch the public `supermarket_sales.csv`; they do not need a repository checkout. Chapters 7 and 10 write a `city_report` folder into the directory you run them from and a `tutorial_sales` catalog table; chapters 8–10 register flows in your catalog, and chapter 9 installs a custom node. The output shown on each page is checked against the script by the docs test suite.
 
-For the same shape with deduplication and multiple aggregations, see the [tested sales pipeline](../../visual-editor/tutorials/sales-pipeline.md#in-python); for grouped analytics, window functions, and selectors, the [aggregations reference](../reference/aggregations.md) opens with a CI-tested example.
+## Related walkthrough
 
-## Related
+[Building Flows with Code](flowfile_frame_api.md) is the shorter introduction to building and opening a graph. For individual operations, use the [API reference](../reference/index.md).
 
-- [API Reference](../reference/index.md) — method-by-method documentation
-- [Core Concepts](../concepts/index.md) — the FlowFrame and FlowGraph model
-- [Quick Start](../quickstart.md) — install and build a first pipeline
+**Next:** [First steps](first-steps.md)

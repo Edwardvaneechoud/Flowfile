@@ -31,7 +31,7 @@ Every change lands in one (or more) of these lanes. Know your lane before you to
 | `pyproject.toml` deps (fastapi, polars, litellm) | none automated — these are load-bearing pins, see §5 | — |
 | Anything else backend/frontend | `backend-tests` matrix / `test-web` / relevant path-filtered workflow | `.github/workflows/*.yml(.yaml)` |
 
-CI is 15 workflow files under `.github/workflows/` as of 2026-07-03 (v0.12.7) — root `CLAUDE.md`'s "12 workflows" table is stale; it's also missing `claude.yml` (interactive `@claude` agent) and `claude-pr-review.yml` (automatic Claude review posted on every non-draft PR — contributors are not told this happens anywhere in the docs). The root CLAUDE.md also claims the legacy `codeql.yaml` "was removed" — it is still tracked on `origin/main` and fails every Monday (references `.github/codeql/codeql-config.yml`, which does not exist; `.github/codeql/` is an empty dir). This is harmless noise, not a blocker: GitHub Advanced Security **default setup** is separately configured and live (`gh api repos/<org>/Flowfile/code-scanning/default-setup` → `"state":"configured"`, weekly, covers python/js-ts/actions/rust) and is what actually reports CodeQL results.
+CI is the workflow set under `.github/workflows/` (`ls` it for the current list). The legacy `codeql.yaml` fails every Monday because it references the missing `.github/codeql/codeql-config.yml`. This is harmless noise, not a blocker: GitHub Advanced Security **default setup** is separately configured and live (`gh api repos/<org>/Flowfile/code-scanning/default-setup` → `"state":"configured"`, weekly, covers python/js-ts/actions/rust) and is what actually reports CodeQL results.
 
 `test.yaml` (the primary CI gate, ~620 lines) is the only workflow with a `concurrency` group: PR runs cancel superseded runs of themselves, but **main-branch runs are never cancelled** — the file's own comment explains why: "docker-publish / release pipelines key off completed main builds."
 
@@ -69,8 +69,8 @@ python3 tools/check_version_sync.py --expect X.Y.Z
 ```
 
 Gotchas:
-- The bump script's own last line of output is **"Done. Refresh Cargo.lock (cargo update -p flowfile) and commit."** — it does NOT refresh `Cargo.lock` for you; run `cd flowfile_frontend/src-tauri && cargo update -p flowfile` as a manual follow-up before opening the PR.
-- **`kernel_runtime/pyproject.toml`** (currently `0.4.0`) and **`flowfile_wasm/package.json`** (currently `0.1.0`, the `flowfile-editor` npm package) are **deliberately NOT synced** to the app version — they have their own release cadence (kernel image version, `wasm-v*` npm tags). Don't "fix" them to match.
+- `make bump-version` also refreshes `Cargo.lock` (`cargo update -p flowfile`) when `cargo` is on PATH; calling `tools/bump_version.py` directly does not, so run that command yourself in that case.
+- **`kernel_runtime/pyproject.toml`** and **`flowfile_wasm/package.json`** (the `flowfile-editor` npm package) are **deliberately NOT synced** to the app version — they have their own release cadence (kernel image version, `wasm-v*` npm tags). Don't "fix" them to match.
 - The `version-sync` CI job runs unconditionally on every push/PR but is **not** in `test-summary`'s `needs` list and is **not** a required branch-protection check — a version-sync failure fails that job but won't by itself block a merge the way you'd expect. Don't rely on it as your only signal; run `make check-version` yourself before opening a version-touching PR.
 
 ### 2c. Stub drift gate (`make check_stubs`) — fails CI silently for newcomers
@@ -93,11 +93,11 @@ make formula_docs         # regenerate docs/users/formulas/functions.md
 make check_formula_docs   # formula_docs + `git diff --exit-code` on that file; CI runs exactly this
 ```
 
-Neither `CONTRIBUTING.md` nor root `CLAUDE.md` mentions this gate anywhere — a contributor bumping `polars-expr-transformer` for an unrelated reason will hit a red `documentation.yml` build with zero signposting outside the Makefile comment. If you see `check-formula-docs` fail, this is why; run `make formula_docs` and stage the regenerated page (agents: hand off the commit per §6).
+`CONTRIBUTING.md` doesn't mention this gate, so a contributor bumping `polars-expr-transformer` for an unrelated reason can hit a red `documentation.yml` build. If you see `check-formula-docs` fail, this is why; run `make formula_docs` and stage the regenerated page (agents: hand off the commit per §6).
 
 ### 2e. Alembic migrations: numeric prefix discipline
 
-`flowfile_core/flowfile_core/alembic/versions/` currently holds **28 migrations** (`001_initial_schema.py` … `028_catalog_namespace_storage.py`, as of 2026-07-03 / v0.12.7 — root `CLAUDE.md` still says "001–021"; that's stale by 7 revisions, don't trust the count in prose, `ls` the directory).
+`flowfile_core/flowfile_core/alembic/versions/` holds the numbered chain (`001_initial_schema.py` onward); `ls` the directory for the current head — never trust a count in prose.
 
 Rules, with the incident behind each:
 - **Add a new migration for any change to `flowfile_core/flowfile_core/database/models.py`**; never hand-edit a migration that has already merged to `main`. Alembic itself was retrofitted in response to a real bug (commit `0ded1ebf`, PR #403) after a run-type mismatch between local and Docker databases needed an undocumented downgrade path (`006_normalize_run_type.py`) — the whole migration system exists because "align local db and worker db" had to be attempted twice by hand before Alembic was added.
@@ -109,11 +109,12 @@ Rules, with the incident behind each:
 
 | Pin | Value | Why it's pinned | Evidence |
 |---|---|---|---|
-| `fastapi` | `~0.115.2` (`pyproject.toml`) | An upgrade was attempted and reverted; the reason wasn't recorded in the commit message. Treat the pin as **deliberate** — don't bump it casually. | Commit `eff7287b` "Reverting upgrade Fastapi" (2026-05-11) on branch `feature/LLM-security-patches`; the pin has otherwise been unchanged since the file's initial add. |
-| `polars` | `>=1.8.2, <1.43` (`pyproject.toml`; 1.43.0 deadlocks `SQLContext.execute` over `scan_delta` frames — catalog SQL readers/views hang) | Must move **together** with `kernel_runtime`'s own Polars pin, `flowfile_frame`, and the version-coupled `polars-*` plugin packages (e.g. `pl-fuzzy-frame-match`). Kernel containers read their own `poetry.lock` at startup to surface/detect drift. Bumping the root pin alone breaks the kernel/frame contract. | Root `CLAUDE.md` "Things to Avoid"; `CONTRIBUTING.md` additionally still claims a Windows-only `<=1.25.2` ceiling that was **removed** (single cross-platform pin now) — CONTRIBUTING is stale on this point, follow the `pyproject.toml` value, not the prose. |
+| `fastapi` / `starlette` | `~0.142.2` / `>=1.3.1` (root and `kernel_runtime/pyproject.toml`, kernel image 0.6.1) | Raised 2026-10-01 for the Starlette Dependabot alerts; the explicit `starlette` floor exists because FastAPI no longer caps it. FastAPI ≥0.132 422s a JSON body without `Content-Type`, so every JSON call into core/worker/kernel must send the header (incident 17 in `flowfile-failure-archaeology`). | The 2026-05 attempt (`eff7287b`, #457) was reverted without a recorded reason; the missing core→worker header is the likely cause. |
+| `cryptography` | `>=48.0.1,<49.0.0` | 49+ ships no x86_64 macOS wheels, which breaks the Intel desktop build (`release.yaml` `macos-15-intel`) and Intel pip installs. The Dependabot alerts fixed only in 49/50 (X.509 verifier, PKCS#7 decryption) are in APIs Flowfile does not call. | cryptography 49.0.0 changelog. |
+| `polars` | `>=1.39.0, !=1.43.0, !=1.43.1, <1.44` (`pyproject.toml`; floor set by `polars-grouper>=0.6.0` and `polars-simed` requiring `polars>=1.39`, guarded by `tools/tests/test_polars_pin_floor.py`; 1.43.0/.1 deadlock `SQLContext.execute` over `scan_delta` frames — catalog SQL readers/views hang) | Must move **together** with `kernel_runtime`'s own Polars pin, `flowfile_frame`, and the version-coupled `polars-*` plugin packages (e.g. `pl-fuzzy-frame-match`). Kernel containers read their own `poetry.lock` at startup to surface/detect drift. Bumping the root pin alone breaks the kernel/frame contract. | Root `CLAUDE.md` "Things to Avoid"; `CONTRIBUTING.md` additionally still claims a Windows-only `<=1.25.2` ceiling that was **removed** (single cross-platform pin now) — CONTRIBUTING is stale on this point, follow the `pyproject.toml` value, not the prose. |
 | API-key hash | SHA-256, `flowfile_core/flowfile_core/auth/api_key.py::hash_api_key` | Intentional for 256-bit random tokens (no password-guessing surface to slow down with a KDF). The CodeQL "weak hash" alert on this line is a **known false positive** — do not "fix" it with bcrypt/argon2/PBKDF2. | Root `CLAUDE.md`; verified in-file (`hashlib.sha256(...).hexdigest()`, one-way, "never recoverable" per the module docstring). |
 
-If an agent (or CodeQL, or a linter) flags any of these three, the correct action is to leave it alone and, if truly necessary, open a Discussion/issue to get the maintainer's sign-off first — not to "fix" it inline.
+If an agent (or CodeQL, or a linter) flags any of these pins, the correct action is to leave it alone and, if truly necessary, open a Discussion/issue to get the maintainer's sign-off first — not to "fix" it inline.
 
 ### 2g. Deliberate non-features — don't treat `NotImplementedError` as a TODO
 
@@ -126,7 +127,7 @@ The codebase has a set of intentional, by-design refusals — places where a fea
 ### 3a. The checklist
 
 1. `make bump-version VERSION=X.Y.Z`
-2. `cd flowfile_frontend/src-tauri && cargo update -p flowfile` (manual — the bump script tells you to but doesn't do it)
+2. Only if `cargo` was missing during the bump: `cd flowfile_frontend/src-tauri && cargo update -p flowfile`
 3. `make check-version` — must print "All versions in sync"
 4. **If this release adds a telemetry event or prop** (`shared/telemetry.py` `EVENTS` changed): redeploy `tools/telemetry_collector` *before* tagging — the deployed collector silently drops unknown events, and `curl -s https://events.flowfile.app/health | jq .schema` must already list them
 5. Open a PR (branch protection blocks direct pushes to `main`), get it merged
@@ -141,11 +142,11 @@ The codebase has a set of intentional, by-design refusals — places where a fea
 |---|---|---|
 | `pypi-release.yml` | Builds web frontend into `flowfile/flowfile/web/static/`, `poetry build`, publishes to PyPI via **Trusted Publishing (OIDC)** — no API token | `python3 tools/check_version_sync.py --expect "${GITHUB_REF#refs/tags/v}"` — dies instantly if tag ≠ manifest version |
 | `release.yaml` | Builds Tauri desktop installers on a 4-platform matrix (macOS arm64/x86_64, Windows, Linux), signs/notarizes macOS, publishes the GitHub Release | Same `check_version_sync.py --expect` gate, run per-platform before the Rust/PyInstaller build starts |
-| `docker-publish.yml` | Publishes app Docker images (`flowfile-core`/`-worker`/`-frontend`) as `:<version>` + `:latest` (no `latest` for `-`-suffixed prerelease tags); self-heals any unpublished kernel image version in the same run | Same `check_version_sync.py --expect` gate, plus `tools/check_kernel_version_sync.py` (manager.py kernel pins must match `kernel_runtime/pyproject.toml`) |
+| `docker-publish.yml` | Publishes app Docker images (`flowfile-core`/`-worker`/`-frontend`) as `:<version>` + `:latest` (no `latest` for `-`-suffixed prerelease tags); self-heals any unpublished kernel image version in the same run | Same `check_version_sync.py --expect` gate, plus `tools/check_kernel_version_sync.py` (`kernel/images.py` kernel pins must match `kernel_runtime/pyproject.toml`) |
 
 The shared gate means: **tag before bumping = all release pipelines fail fast**, which is the intended failure mode (better than shipping a mismatched artifact).
 
-`wasm-v*` tags separately fire `npm-publish-wasm.yml` (publishes `flowfile-editor` to npm with provenance). As of 2026-07-03 no `wasm-v*` tag has ever been pushed to this repo — all historical runs of that workflow were manual `workflow_dispatch`, and most failed. Treat the npm publish channel as stalled/experimental, not a proven path.
+`wasm-v*` tags separately fire `npm-publish-wasm.yml`, which publishes `flowfile-editor` to npm via trusted publishing.
 
 ### 3c. `docker-publish.yml` fires once per release, plus kernel-only runs from `main`
 
@@ -247,7 +248,7 @@ python3 tools/check_version_sync.py                               # should print
 grep -n "bump-version\|check-version\|^stubs:\|^check_stubs:\|^formula_docs:\|^check_formula_docs:" Makefile
 
 # Deliberate pins
-grep -n "^fastapi\|^polars " pyproject.toml                       # expect fastapi ~0.115.2, polars >=1.17.0,<1.44
+grep -n "^fastapi\|^polars \|^cryptography" pyproject.toml        # expect fastapi ~0.142.2, polars >=1.39.0,<1.44, cryptography <49
 sed -n '1,30p' flowfile_core/flowfile_core/auth/api_key.py        # expect hashlib.sha256(...).hexdigest()
 
 # Alembic migration count (root CLAUDE.md's number rots fast — trust this, not prose)
@@ -273,7 +274,6 @@ git tag | grep -viE "^v?[0-9]"                                    # expect stray
 # v*/wasm-v* release triggers
 grep -n "check_version_sync" .github/workflows/pypi-release.yml .github/workflows/release.yaml
 grep -n "on:" -A24 .github/workflows/docker-publish.yml           # confirm push(main kernel paths + v* tags) + dispatch(publish_app/force_kernel)
-git tag | grep -i "^wasm-v"                                       # expect empty (no wasm-v* tag ever pushed)
 
 # latest.json updater manifest (generated by the release job)
 grep -n "make_latest_json" .github/workflows/release.yaml                                      # expect the generate step + latest.json in files:

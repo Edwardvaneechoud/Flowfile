@@ -174,6 +174,8 @@ export interface ExecuteResult {
   // Namespace identity of the run; absent on kernel images older than 0.6.0.
   namespace_generation?: string | null;
   revision?: number | null;
+  /** A failed canvas-notebook session cell's 1-based failing line; absent elsewhere. */
+  line?: number | null;
 }
 
 export interface ExecuteCellRequest {

@@ -23,7 +23,20 @@ const defaultColDef = {
   filter: true,
   sortable: true,
   resizable: true,
+  flex: 1,
+  minWidth: 110,
 };
+
+const ROW_HEIGHT = 28;
+const HEADER_HEIGHT = 32;
+const MAX_VISIBLE_ROWS = 10;
+
+// Up to ten rows the grid sizes to its content; beyond that it scrolls inside a fixed height.
+const autoHeight = computed(() => (props.rows?.length ?? 0) <= MAX_VISIBLE_ROWS);
+const gridStyle = computed(() => ({
+  width: "100%",
+  height: autoHeight.value ? undefined : `${HEADER_HEIGHT + MAX_VISIBLE_ROWS * ROW_HEIGHT + 2}px`,
+}));
 
 const columnDefs = computed(() =>
   (props.columns ?? []).map((name) => ({
@@ -40,19 +53,43 @@ const columnDefs = computed(() =>
     :column-defs="columnDefs"
     :row-data="rows"
     :suppress-field-dot-notation="true"
+    :row-height="ROW_HEIGHT"
+    :header-height="HEADER_HEIGHT"
+    :dom-layout="autoHeight ? 'autoHeight' : 'normal'"
     row-selection="multiple"
     :rows-multi-select-with-click="true"
     class="ag-theme-balham notebook-data-table"
-    :style="{ width: '100%', height: '100%' }"
+    :style="gridStyle"
     @grid-ready="emit('selection-change', [])"
     @selection-changed="emit('selection-change', $event.api.getSelectedRows())"
   />
 </template>
 
 <style scoped>
+/* Token mapping lives here too: dataPreview.vue's global copy isn't loaded on every surface. */
 .notebook-data-table {
-  /* AG Grid balham defaults to a light surface; keep it readable in both
-     themes by letting the host container set the background. */
-  font-size: 0.8rem;
+  --ag-background-color: var(--color-background-primary);
+  --ag-odd-row-background-color: var(--color-background-primary);
+  --ag-row-background-color: var(--color-background-primary);
+  --ag-header-background-color: var(--color-background-secondary);
+  --ag-header-foreground-color: var(--color-text-secondary);
+  --ag-foreground-color: var(--color-text-primary);
+  --ag-border-color: var(--color-border-primary);
+  --ag-row-border-color: var(--color-border-light);
+  --ag-secondary-foreground-color: var(--color-text-secondary);
+  --ag-row-hover-color: var(--color-background-hover);
+  --ag-selected-row-background-color: var(--color-background-selected);
+  --ag-font-family: var(--font-family-base);
+  --ag-font-size: 12px;
+  font-size: 12px;
+}
+/* The host card already draws the frame. */
+.notebook-data-table :deep(.ag-root-wrapper) {
+  border: none;
+}
+/* AG Grid's 50px auto-height floor would pad a one-row result. */
+.notebook-data-table :deep(.ag-layout-auto-height .ag-center-cols-viewport),
+.notebook-data-table :deep(.ag-layout-auto-height .ag-center-cols-container) {
+  min-height: 28px;
 }
 </style>

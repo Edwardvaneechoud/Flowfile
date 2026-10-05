@@ -16,18 +16,20 @@ if TYPE_CHECKING:
 
 ExprT = TypeVar("ExprT", bound="Expr")
 PASSTHROUGH_METHODS = {"map_elements", "map_batches"}
+_BUILD_KEYWORDS = frozenset({"convertable_to_code", "ff_repr", "_repr_override"})
+"""Keywords of ``Expr._create_next_expr`` that no Polars method takes; a caller must not set them."""
 
 
 def refuse_parameter_argument(
-    method_name: str, args: tuple, kwargs: dict, hint: str = "pass it as an expression with fl.lit(parameter)"
+    method_name: str, args: tuple, kwargs: dict, hint: str = "pass it as an expression with ff.lit(parameter)"
 ) -> None:
-    """Raise when a ``fl.Parameter`` sits, at any nesting, in the arguments of an ``Expr`` method.
+    """Raise when a ``ff.Parameter`` sits, at any nesting, in the arguments of an ``Expr`` method.
 
     The method hands its arguments to Polars as they are, and a ``Parameter`` is no Polars value:
     Polars refuses it, or its repr lands in the node's code as an undefined name.
     """
     if contains_parameter(args) or contains_parameter(kwargs):
-        raise NativeNodeError(f"{method_name}() takes no fl.Parameter as an argument; {hint}")
+        raise NativeNodeError(f"{method_name}() takes no ff.Parameter as an argument; {hint}")
 
 
 def create_expr_method_wrapper(method_name: str, original_method: Callable) -> Callable:
@@ -52,6 +54,9 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
         if self.expr is None:
             raise ValueError(f"Cannot call '{method_name}' on Expr with no underlying polars expression.")
         refuse_parameter_argument(method_name, args, kwargs)
+        internal = sorted(_BUILD_KEYWORDS & kwargs.keys())
+        if internal:
+            raise TypeError(f"{method_name}() got an unexpected keyword argument {internal[0]!r}")
 
         processed = process_callable_args(args, kwargs)
 

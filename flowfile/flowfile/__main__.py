@@ -1,5 +1,6 @@
 #  flowfile/__main__.py
 
+import codecs
 import json
 import sys
 from pathlib import Path
@@ -373,12 +374,26 @@ def _run_project_command(action: str | None, arg: str | None) -> None:
         sys.exit(1)
 
 
+def _use_utf8_stdio() -> None:
+    """Switch stdout and stderr to UTF-8 when they are not already.
+
+    Windows encodes a redirected stream (a pipe, a file, ``DEVNULL``, a scheduled run's log) in the ANSI code page,
+    which cannot encode the glyphs ``FlowGraph.print_tree`` draws or a non-Latin flow or node name, so printing
+    them would end ``flowfile run flow`` with a ``UnicodeEncodeError``.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        encoding = getattr(stream, "encoding", None)
+        if hasattr(stream, "reconfigure") and encoding and codecs.lookup(encoding).name != "utf-8":
+            stream.reconfigure(encoding="utf-8", errors=stream.errors)
+
+
 def main():
     """
     Display information about FlowFile when run directly as a module.
     """
     import argparse
 
+    _use_utf8_stdio()
     parser = argparse.ArgumentParser(description="FlowFile: A visual ETL tool with a Polars-like API")
     parser.add_argument(
         "command",

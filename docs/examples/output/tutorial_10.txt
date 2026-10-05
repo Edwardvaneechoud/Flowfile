@@ -1,0 +1,42 @@
+● Read data (11)  Supermarket invoices
+│
+● Drop duplicates (12)
+│
+● Filter data (13)
+│
+● Formula (14)
+├─┐
+● │ Filter data (15)
+│ ● Filter data (16)
+├─┘
+● Union data (17)
+│ ● Manual input (18)
+├─┘
+● Join (19)
+│
+● Run Flow (27)
+│
+● SQL Query (28)  SELECT *, ROUND(100.0 * shortfall / target, 2) ...
+│
+● Gate (29)
+├─┐
+● │ Formula (31)  [then]
+│ ● Formula (33)  [else]
+├─┘
+● Union data (34)
+├─┬─┐
+● │ │ Write data (35)
+  ● │ Write data (36)
+    ● Write to Catalog (37)
+shape: (5, 7)
+┌───────────┬────────┬──────────┬─────────┬───────────┬───────────────┬───────┐
+│ city      ┆ orders ┆ revenue  ┆ target  ┆ shortfall ┆ shortfall_pct ┆ route │
+│ ---       ┆ ---    ┆ ---      ┆ ---     ┆ ---       ┆ ---           ┆ ---   │
+│ str       ┆ u32    ┆ f64      ┆ f64     ┆ f64       ┆ f64           ┆ str   │
+╞═══════════╪════════╪══════════╪═════════╪═══════════╪═══════════════╪═══════╡
+│ Bago      ┆ 204    ┆ 59064.26 ┆ 30000.0 ┆ -29064.26 ┆ -96.88        ┆ ready │
+│ Mandalay  ┆ 215    ┆ 68589.82 ┆ 35000.0 ┆ -33589.82 ┆ -95.97        ┆ ready │
+│ Naypyitaw ┆ 176    ┆ 48556.03 ┆ 25000.0 ┆ -23556.03 ┆ -94.22        ┆ ready │
+│ Taunggyi  ┆ 199    ┆ 67220.88 ┆ 30000.0 ┆ -37220.88 ┆ -124.07       ┆ ready │
+│ Yangon    ┆ 206    ┆ 64001.27 ┆ 35000.0 ┆ -29001.27 ┆ -82.86        ┆ ready │
+└───────────┴────────┴──────────┴─────────┴───────────┴───────────────┴───────┘

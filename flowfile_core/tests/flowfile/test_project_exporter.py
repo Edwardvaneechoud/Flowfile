@@ -751,15 +751,15 @@ def _build_gated_diamond(flow_id: int = 1) -> FlowGraph:
 
 
 def test_project_export_supports_parameter_gates(tmp_path):
-    """A gated flow exports as a runnable project with real if-blocks in pipeline.py."""
+    """A gated flow exports as a runnable project whose pipeline.py places ``ff.Gate`` nodes."""
     flow = _build_gated_diamond()
 
     manifest = export_flow_to_project(flow)
 
     pipeline = get_file(manifest, "pipeline.py")
-    assert "if env == 'prod':" in pipeline
-    assert "if env != 'prod':" in pipeline
-    assert "ff.FlowFrame(pl.LazyFrame(schema=" in pipeline
+    assert 'parameter=_flowfile_flow_parameter(source, "env", env), value="prod"' in pipeline
+    assert 'operator="not_equals"' in pipeline
+    assert "if env" not in pipeline
     ast.parse(pipeline)
 
     project_dir = write_project(manifest, tmp_path)
@@ -770,7 +770,7 @@ def test_project_export_supports_parameter_gates(tmp_path):
     assert "age_prod" in result.stdout
 
 
-def test_project_export_formula_gate_pipeline_contains_helper():
+def test_project_export_formula_gate_places_a_native_gate():
     flow = create_basic_flow(name="formula_gated_flow")
     add_sample_input(flow, node_id=1)
     flow.add_gate(
@@ -788,11 +788,10 @@ def test_project_export_formula_gate_pipeline_contains_helper():
     manifest = export_flow_to_project(flow)
 
     pipeline = get_file(manifest, "pipeline.py")
-    assert "import polars as pl" in pipeline
-    assert ".data, simple_function_to_expr" in pipeline
-    helper_pos = pipeline.index("_flowfile_gate_formula_matches")
-    assert helper_pos < pipeline.index("def run_etl_pipeline")
+    assert 'ff.Gate(source, "[age] > 20", else_output=False)' in pipeline
+    assert "_flowfile_gate_formula_matches" not in pipeline
     ast.parse(pipeline)
+    assert _run_pipeline_module(pipeline)["age_kept"].to_list() == [25, 30, 35]
 
 
 def _run_pipeline_module(code: str, **kwargs) -> pl.DataFrame:
@@ -843,20 +842,17 @@ def _build_split_diamond_flow(flow_id: int = 1) -> FlowGraph:
     return flow
 
 
-def test_project_export_else_output_split_renders_if_else_and_matches_engine():
-    """The complementary then/else pair exports as a real if/else in pipeline.py:
-    fused branch blocks and a direct union assignment — no list, no concat, no
-    empty-frame fallback — and the executed module matches the engine."""
+def test_project_export_else_output_split_reads_both_gate_exits_and_matches_engine():
+    """The then/else gate exports as one ``ff.Gate`` read through ``.then``/``.otherwise``, and the
+    executed module matches the engine for both parameter values."""
     flow = _build_split_diamond_flow()
 
     manifest = export_flow_to_project(flow)
 
     pipeline = get_file(manifest, "pipeline.py")
-    assert "if env == 'prod':" in pipeline
-    assert "else:" in pipeline
-    assert "if not (env == 'prod'):" not in pipeline
-    assert "_frames" not in pipeline
-    assert "concat" not in pipeline
+    assert "else_output=True" in pipeline
+    assert "gate.then.select(" in pipeline
+    assert "gate.otherwise.select(" in pipeline
     ast.parse(pipeline)
 
     for env, live, gated in [("prod", "a_prod", "a_dev"), ("dev", "a_dev", "a_prod")]:
@@ -1029,7 +1025,7 @@ class TestRunFlowProjectExport:
 
         module = _manifest_file(manifest, "subflows/head_subflow.py")
         assert "def run(customers: ff.FlowFrame | None = None, *, limit: int = 10) -> dict[str, ff.FlowFrame]:" in module
-        assert ".head(limit)" in module  # sentinel resolved to the kwarg
+        assert "head({limit})" in module  # sentinel resolved to the kwarg
         assert '"result":' in module and '"row_count":' in module
         assert "customers if customers is not None else" in module  # FlowFrame arg used directly
         ast.parse(module)
@@ -1046,9 +1042,8 @@ class TestRunFlowProjectExport:
         ast.parse(pipeline)
 
     def test_subflow_module_renders_else_output_split(self, tmp_path):
-        """A subflow with an else_output gate exports as a real if/else inside its
-        module — fused branch blocks and a direct union assignment, no guarded
-        list — and the executed module routes exactly one side per env value."""
+        """A subflow with an else_output gate exports as one ``ff.Gate`` read through
+        ``.then``/``.otherwise``, and the executed module routes exactly one side per env value."""
         sub = _build_split_subflow(tmp_path)
         flow = create_basic_flow(flow_id=53, name="parent_split")
         add_sample_input(flow, node_id=1)
@@ -1069,11 +1064,8 @@ class TestRunFlowProjectExport:
 
         module = _manifest_file(manifest, "subflows/split_subflow.py")
         assert "def run(customers: ff.FlowFrame | None = None, *, env: str = 'prod') -> dict[str, ff.FlowFrame]:" in module
-        assert "if env == 'prod':" in module
-        assert "else:" in module
-        assert "if not (env == 'prod'):" not in module
-        assert "_frames" not in module
-        assert "concat" not in module
+        assert "else_output=True" in module
+        assert "gate.then.select(" in module and "gate.otherwise.select(" in module
         ast.parse(module)
 
         namespace: dict = {}
@@ -1272,27 +1264,26 @@ class TestRunFlowProjectExport:
 
         pipeline = _manifest_file(export_flow_to_project(flow), "pipeline.py")
         assert "def run_etl_pipeline(*, n: int = 2, label: str = 'x y'):" in pipeline
-        assert ".head(n)" in pipeline
-        assert 'f"v {label}"' in pipeline
+        assert "head({n})" in pipeline and "v {label}" in pipeline
         assert "${" not in pipeline
         ast.parse(pipeline)
 
-    def test_plain_exports_still_unsupported(self, tmp_path):
+    def test_polars_export_rejects_run_flow_while_flowframe_places_it(self, tmp_path):
         from flowfile_core.flowfile.code_generator.code_generator import (
             FlowGraphToFlowFrameConverter,
             FlowGraphToPolarsConverter,
+            UnsupportedNodeError,
         )
 
         sub = _build_head_subflow(tmp_path)
         flow = create_basic_flow(flow_id=47, name="plain_export")
         flow.add_run_flow(_run_flow_settings(flow, sub["registration_id"]))
-        for converter_cls in (FlowGraphToFlowFrameConverter, FlowGraphToPolarsConverter):
-            converter = converter_cls(flow)
-            try:
-                converter.convert()
-            except Exception:
-                pass
-            assert any(node_type == "run_flow" for _, node_type, _ in converter.unsupported_nodes)
+        converter = FlowGraphToPolarsConverter(flow)
+        with pytest.raises(UnsupportedNodeError):
+            converter.convert()
+        assert any(node_type == "run_flow" for _, node_type, _ in converter.unsupported_nodes)
+        code = FlowGraphToFlowFrameConverter(flow).convert()
+        assert "ff.RunFlow(ff.flow_ref(" in code
 
     def test_project_with_subflow_executes_end_to_end(self, tmp_path):
         sub = _build_head_subflow(tmp_path)
@@ -1538,3 +1529,43 @@ def test_project_export_runs_a_multi_field_formula():
     result = _run_pipeline_module(pipeline)
     assert result.columns == ["id", "age", "dbl_id", "dbl_age"]
     assert result["dbl_age"].to_list() == [50, 60, 70]
+
+
+def test_project_export_runs_an_explode_hierarchy():
+    """The project exporter inherits the native FlowFrame call, so the node survives a project run."""
+    from polars.testing import assert_frame_equal
+
+    lines = [("bike", "frame", 1.0), ("bike", "wheel", 2.0), ("frame", "screw", 6.0), ("wheel", "screw", 2.0)]
+    flow = create_basic_flow(name="explode_hierarchy_project")
+    flow.add_manual_input(
+        input_schema.NodeManualInput(
+            flow_id=flow.flow_id,
+            node_id=1,
+            raw_data_format=input_schema.RawData.from_pylist(
+                [{"assembly": a, "component": c, "qty": q} for a, c, q in lines]
+            ),
+        )
+    )
+    flow.add_explode_hierarchy(
+        input_schema.NodeExplodeHierarchy(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            explode_hierarchy_input=transform_schema.ExplodeHierarchyInput(
+                parent_column="assembly", child_column="component", quantity_column="qty", top_level_only=True
+            ),
+        )
+    )
+    _connect(flow, 1, 2)
+
+    manifest = export_flow_to_project(flow)
+    pipeline = get_file(manifest, "pipeline.py")
+    assert '.explode_hierarchy("assembly", "component", quantity="qty", top_level_only=True)' in pipeline
+    assert "polars_grouper" not in pipeline
+    ast.parse(pipeline)
+
+    result = _run_pipeline_module(pipeline)
+    expected = flow.get_node(2).get_resulting_data().data_frame.collect()
+    assert_frame_equal(result, expected)
+    screws = result.filter(pl.col("descendant") == "screw")
+    assert screws.select("ancestor", "quantity").rows() == [("bike", 10.0)]

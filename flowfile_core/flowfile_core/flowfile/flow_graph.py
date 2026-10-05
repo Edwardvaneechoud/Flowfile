@@ -10,6 +10,7 @@ import threading
 from collections.abc import Callable, Collection, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from functools import partial
 from pathlib import Path
@@ -60,7 +61,11 @@ from flowfile_core.flowfile.database_connection_manager.ga_connections import (
     get_encrypted_credential,
     get_ga_connection,
 )
-from flowfile_core.flowfile.filter_expressions import build_filter_expression, resolve_filter_field_type
+from flowfile_core.flowfile.filter_expressions import (
+    build_filter_expression,
+    resolve_filter_field_type,
+    supports_native_membership,
+)
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import (
@@ -100,16 +105,7 @@ from flowfile_core.flowfile.flow_node.flow_node import (
 from flowfile_core.flowfile.flow_node.input_handles import input_handle, input_handle_index
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE, output_handle
 from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
-from flowfile_core.flowfile.graph_tree.graph_tree import (
-    add_un_drawn_nodes,
-    build_flow_paths,
-    build_node_info,
-    calculate_depth,
-    define_node_connections,
-    draw_merged_paths,
-    draw_standalone_paths,
-    group_nodes_by_depth,
-)
+from flowfile_core.flowfile.graph_tree.graph_tree import render_flow
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
 from flowfile_core.flowfile.param_types import ParamValue, typed_parameter_values
 from flowfile_core.flowfile.parameter_resolver import (
@@ -168,6 +164,7 @@ from flowfile_core.kafka.connection_manager import (
 )
 from flowfile_core.kernel import get_kernel_manager
 from flowfile_core.kernel.execution import (
+    KernelHold,
     build_execute_request,
     clear_stale_parquets,
     forward_kernel_logs,
@@ -175,6 +172,7 @@ from flowfile_core.kernel.execution import (
     write_inputs_to_parquet,
 )
 from flowfile_core.kernel.matching import verify_kernel_for_node
+from flowfile_core.notebook.lookup import metadata_lookup
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.catalog_schema import TableWriteMetadata, scd2_system_columns_missing
 from flowfile_core.schemas.cloud_storage_schemas import (
@@ -248,6 +246,19 @@ yaml.add_representer(list, represent_list_json)
 # How long a mutation waits for another in-flight mutation of the same flow before giving up.
 EDIT_LOCK_TIMEOUT_SECONDS = 30.0
 
+placement_check: ContextVar[Callable[[Any], None] | None] = ContextVar("placement_check", default=None)
+"""A check every decorated ``add_*`` runs on its settings before placing anything, in the context that set it.
+
+Notebook build mode sets it so a cell's source or writer is refused on its path and connection rules
+before a node exists; canvas requests and other threads never see it.
+"""
+
+ambient_kernel_hold: ContextVar[KernelHold | None] = ContextVar("ambient_kernel_hold", default=None)
+"""The ``kernel_hold`` of the run whose thread this is: ``run_graph`` sets it for its own thread and every node it
+executes, so a graph opened in-process during the run (a virtual table's producer) refuses the held kernels too.
+Schema prefetches copy their starting context, so they carry it as well.
+"""
+
 
 def with_history_capture(action_type: "HistoryActionType", description_template: str = "Update {node_type} settings"):
     """Decorator that runs a FlowGraph mutator inside :meth:`FlowGraph.transaction`.
@@ -255,6 +266,7 @@ def with_history_capture(action_type: "HistoryActionType", description_template:
     Standalone calls record one undo step when the graph changed; inside an outer
     transaction (an editor route, an AI batch) or a restore the call records nothing
     itself. With ``flow_settings.track_history`` off the method runs as a plain call.
+    A :data:`placement_check` set in the calling context runs first, whatever the history setting.
 
     Args:
         action_type: The type of history action (e.g., HistoryActionType.UPDATE_SETTINGS).
@@ -271,6 +283,9 @@ def with_history_capture(action_type: "HistoryActionType", description_template:
         @functools.wraps(func)
         def wrapper(self: "FlowGraph", *args, **kwargs):
             settings_input = args[0] if args else next(iter(kwargs.values()), None)
+            check = placement_check.get()
+            if check is not None:
+                check(settings_input)
 
             # Remember the session owner so restore_from_snapshot can re-stamp
             # user_id even when the live graph holds no nodes.
@@ -748,6 +763,14 @@ def _resolve_catalog_sql_tables(node_id: int | str, user_id: int | None = None) 
     executing ``user_id`` may read, mirroring ``CatalogService.execute_sql_query``;
     a query referencing an inaccessible table simply finds it unregistered.
     """
+    remote = metadata_lookup.get()
+    if remote is not None:
+        answer = remote("catalog_sql_tables", {"node_id": node_id})
+        return CatalogSqlTables(
+            table_paths=dict(answer["table_paths"]),
+            virtual_tables={name: tuple(entry) for name, entry in answer["virtual_tables"].items()},
+            table_namespaces=dict(answer["table_namespaces"]),
+        )
     table_paths: dict[str, str] = {}
     virtual_tables: dict[str, tuple[bool, bytes | None, int, str | None]] = {}
     table_namespaces: dict[str, int | None] = {}
@@ -839,7 +862,25 @@ def _scd2_config_is_stale(cfg: dict, table_record) -> bool:
 
 
 def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogReader") -> CatalogTableInfo:
-    """Resolve a single catalog table (physical or virtual) for a table reader node."""
+    """Resolve a single catalog table (physical or virtual) for a table reader node.
+
+    In a notebook kernel session (``metadata_lookup`` set) core answers from the same function, without the
+    table's plan: the kernel opens no database connection and a virtual read is held there.
+    """
+    remote = metadata_lookup.get()
+    if remote is not None:
+        return CatalogTableInfo(
+            **remote(
+                "catalog_table",
+                {
+                    "node_id": node_catalog_reader.node_id,
+                    "catalog_table_id": node_catalog_reader.catalog_table_id,
+                    "catalog_full_table_name": node_catalog_reader.catalog_full_table_name,
+                    "catalog_table_name": node_catalog_reader.catalog_table_name,
+                    "catalog_namespace_id": node_catalog_reader.catalog_namespace_id,
+                },
+            )
+        )
     file_path: str | None = None
     table_type: str = "physical"
     serialized_lf: bytes | None = None
@@ -2058,6 +2099,9 @@ class _NodeOwners(NamedTuple):
         return self.by_node_id.get(node_id, self.session_owner)
 
 
+NodeObserver = Callable[[int | str, str, Any, bool], None]
+
+
 class FlowGraph:
     """A class representing a Directed Acyclic Graph (DAG) for data processing pipelines.
 
@@ -2171,10 +2215,16 @@ class FlowGraph:
         # execute on ThreadPoolExecutor threads.
         self._subflow_ancestry: frozenset[str] = frozenset()
         self._subflow_depth: int = 0
+        # The claimed run's kernel_hold and commit_sources (run_graph); a subflow's run inherits both.
+        self._kernel_hold: KernelHold | None = None
+        self._commit_sources: bool = True
         # Last user_id seen on any node settings (stamped by the editor routes /
         # open_flow). Lets restore_from_snapshot re-stamp the owner even when the
         # live graph is empty at undo time (snapshots intentionally omit user_id).
         self._owner_user_id: int | None = None
+        self._node_observers: list[NodeObserver] = []
+        # Off only on a graph `notebook_cells.seed_session` seeded, where cells re-place the seeded ports.
+        self.unique_subflow_port_names = True
 
         from flowfile_core.flowfile.history_manager import HistoryManager
         from flowfile_core.schemas.history_schema import HistoryConfig
@@ -2797,6 +2847,41 @@ class FlowGraph:
 
     # ==================== End Comment Management Methods ====================
 
+    def add_node_observer(self, observer: NodeObserver) -> None:
+        """Register ``observer(node_id, node_type, settings, is_new)`` for every node add or update.
+
+        It fires once per ``add_<type>`` call (and ``add_node_promise``), after the node is in
+        the graph: ``is_new`` is True when the call created the node (a type change replaces it,
+        so that counts as new) and False when it updated one in place. A canvas drop therefore
+        fires twice (the ``NodePromise``, then the real settings), and undo/redo rebuilds fire
+        too; dedupe by node id when that matters. Observers are per graph instance, and an
+        exception from one is logged and swallowed so it can never corrupt the graph.
+        """
+        self._node_observers.append(observer)
+
+    def remove_node_observer(self, observer: NodeObserver) -> None:
+        """Unregister an observer added with ``add_node_observer``; unknown observers are ignored."""
+        if observer in self._node_observers:
+            self._node_observers.remove(observer)
+
+    @contextmanager
+    def observe_nodes(self, observer: NodeObserver) -> Iterator[None]:
+        """Register ``observer`` (see ``add_node_observer``) for the duration of the block."""
+        self.add_node_observer(observer)
+        try:
+            yield
+        finally:
+            self.remove_node_observer(observer)
+
+    def _notify_node_observers(self, node: FlowNode, is_new: bool) -> None:
+        if not self._node_observers:
+            return
+        for observer in list(self._node_observers):
+            try:
+                observer(node.node_id, node.node_type, node.setting_input, is_new)
+            except Exception:
+                logger.exception(f"Node observer {observer!r} failed for node {node.node_id}")
+
     def add_node_to_starting_list(self, node: FlowNode) -> None:
         """Adds a node to the list of starting nodes for the flow if not already present.
 
@@ -2823,6 +2908,8 @@ class FlowGraph:
                     return FlowDataEngine()
                 return n
 
+            if node_promise.is_user_defined and node_promise.node_type not in CUSTOM_NODE_STORE:
+                user_defined_registry.refresh()
             self.add_node_step(
                 node_id=node_promise.node_id,
                 node_type=node_promise.node_type,
@@ -2927,68 +3014,11 @@ class FlowGraph:
         return f"FlowGraph(\nNodes: {self._node_db}\n\nSettings:\n{settings_str}"
 
     def print_tree(self):
-        """Print flow_graph as a visual tree structure, showing the DAG relationships with ASCII art."""
+        """Print the graph top to bottom, one node per line, with lanes where it branches and merges."""
         if not self._node_db:
             self.flow_logger.info("Empty flow graph")
             return
-
-        node_info = build_node_info(self.nodes)
-
-        for node_id in node_info:
-            calculate_depth(node_id, node_info)
-
-        depth_groups, max_depth = group_nodes_by_depth(node_info)
-
-        for depth in depth_groups:
-            depth_groups[depth].sort()
-
-        lines = ["=" * 80, "Flow Graph Visualization", "=" * 80, ""]
-
-        merge_points = define_node_connections(node_info)
-
-        max_label_length = {}
-        for depth in range(max_depth + 1):
-            if depth in depth_groups:
-                max_len = max(len(node_info[nid].label) for nid in depth_groups[depth])
-                max_label_length[depth] = max_len
-
-        drawn_nodes = set()
-        merge_drawn = set()
-
-        paths_by_merge = {}
-        standalone_paths = []
-
-        paths = build_flow_paths(node_info, self._flow_starts, merge_points)
-
-        for path in paths:
-            if len(path) > 1 and path[-1] in merge_points and len(merge_points[path[-1]]) > 1:
-                merge_id = path[-1]
-                if merge_id not in paths_by_merge:
-                    paths_by_merge[merge_id] = []
-                paths_by_merge[merge_id].append(path)
-            else:
-                standalone_paths.append(path)
-
-        draw_merged_paths(node_info, merge_points, paths_by_merge, merge_drawn, drawn_nodes, lines)
-
-        draw_standalone_paths(drawn_nodes, standalone_paths, lines, node_info)
-
-        add_un_drawn_nodes(drawn_nodes, node_info, lines)
-
-        try:
-            execution_plan = compute_execution_plan(
-                nodes=self.nodes, flow_starts=self._flow_starts + self.get_implicit_starter_nodes()
-            )
-            ordered_nodes = execution_plan.all_nodes
-            if ordered_nodes:
-                for i, node in enumerate(ordered_nodes, 1):
-                    lines.append(f"  {i:3d}. {node_info[node.node_id].label}")
-        except Exception as e:
-            lines.append(f"  Could not determine execution order: {e}")
-
-        output = "\n".join(lines)
-
-        print(output)
+        print(render_flow(self.nodes))
 
     def get_nodes_overview(self):
         """Gets a list of dictionary representations for all nodes in the graph."""
@@ -3137,6 +3167,8 @@ class FlowGraph:
     ) -> None:
         """Place a custom node from the store, degrading to a missing-node placeholder when
         its type isn't installed. Shared by copy and both flow-restore paths."""
+        if node_type not in CUSTOM_NODE_STORE:
+            user_defined_registry.refresh()
         user_defined_node_class = CUSTOM_NODE_STORE.get(node_type)
         if user_defined_node_class is not None:
             self.add_user_defined_node(
@@ -3383,6 +3415,9 @@ class FlowGraph:
         Handles artifact context, directory setup, input writing, kernel execution,
         log forwarding, artifact recording, and output reading.
         """
+        hold = self._kernel_hold or ambient_kernel_hold.get()
+        if hold is not None:
+            hold.check(self.flow_id, node_id, kernel_id)
         manager = get_kernel_manager()
         if required_dependencies:
             # Fail fast with a clear message instead of a ModuleNotFoundError
@@ -3439,6 +3474,9 @@ class FlowGraph:
         if node is not None:
             node._kernel_cancel_context = (kernel_id, manager, request.exec_token)
             node._kernel_cancel_event = cancel_event
+        if self.flow_settings.is_canceled:
+            # A cancel that landed before the event was registered could not set it.
+            cancel_event.set()
         try:
             result = manager.execute_sync(kernel_id, request, self.flow_logger, cancel_event=cancel_event)
         finally:
@@ -3719,11 +3757,13 @@ class FlowGraph:
                     return fl
 
                 try:
-                    field_data_type = resolve_filter_field_type(fl.get_schema_column(basic_filter.field))
+                    column = fl.get_schema_column(basic_filter.field)
+                    field_data_type = resolve_filter_field_type(column)
+                    native_membership = supports_native_membership(column)
                 except Exception:
-                    field_data_type = None
+                    field_data_type, native_membership = None, False
 
-                expression = build_filter_expression(basic_filter, field_data_type)
+                expression = build_filter_expression(basic_filter, field_data_type, native_membership)
 
             if filter_settings.split_mode:
                 return fl.filter_split(expression)
@@ -3845,9 +3885,10 @@ class FlowGraph:
         def schema_callback():
             """Best-effort schema prediction for python_script nodes.
 
-            Returns the input node(s) schema as a reasonable default
-            (most python_script nodes transform and pass through).
-            If nothing is available, returns [] — never raises.
+            Declared ``output_schemas`` win; an output without a declaration (or a node
+            without any) predicts the first input's schema, since most python_script
+            nodes transform and pass through. If nothing is available, returns [] —
+            never raises.
             """
             try:
                 node = self.get_node(node_python_script.node_id)
@@ -3855,14 +3896,29 @@ class FlowGraph:
                     return []
 
                 main_inputs = node.node_inputs.main_inputs
-                if main_inputs:
-                    first_input = main_inputs[0]
-                    input_node_schema = first_input.schema
-                    if input_node_schema:
-                        return input_node_schema
-                return []
+                input_schema_: list[FlowfileColumn] = (main_inputs[0].schema or []) if main_inputs else []
+                declared = node_python_script.output_schemas
+                if not declared:
+                    return input_schema_
+                named = {
+                    output_handle(i): (
+                        [FlowfileColumn.from_input(f.name, f.data_type) for f in declared[name]]
+                        if name in declared
+                        else list(input_schema_)
+                    )
+                    for i, name in enumerate(node_python_script.output_names)
+                }
+                node._named_schemas = named
+                return named.get(DEFAULT_OUTPUT_HANDLE, [])
             except Exception:
                 return []
+
+        previous = self.get_node(node_python_script.node_id)
+        previous_declared = (
+            previous.setting_input.output_schemas
+            if previous is not None and isinstance(previous.setting_input, input_schema.NodePythonScript)
+            else None
+        )
 
         self.add_node_step(
             node_id=node_python_script.node_id,
@@ -3876,6 +3932,8 @@ class FlowGraph:
         node = self.get_node(node_python_script.node_id)
         if node is not None:
             node._executes_on_kernel = bool(node_python_script.python_script_input.kernel_id)
+            if previous is not None and previous_declared != node_python_script.output_schemas:
+                node.refresh_predicted_schema()
         output_names = node_python_script.output_names
         if len(output_names) > 1:
             if node is not None:
@@ -3944,6 +4002,34 @@ class FlowGraph:
             setting_input=graph_solver_settings,
             input_node_ids=[graph_solver_settings.depending_on_id],
         )
+
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+    def add_explode_hierarchy(self, settings: input_schema.NodeExplodeHierarchy) -> "FlowGraph":
+        """Adds a node that explodes a parent -> child hierarchy into its transitive closure.
+
+        The output is a new table (ancestor, descendant, level, quantity, ...) rather than the
+        input with extra columns. No schema callback is registered: prediction runs the lazy
+        plugin expression against a schema-only frame, which resolves the output columns and
+        their dtypes without reading data.
+
+        Args:
+            settings: The explode-hierarchy node configuration.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
+            return fl.explode_hierarchy(settings.explode_hierarchy_input)
+
+        self.add_node_step(
+            node_id=settings.node_id,
+            function=_func,
+            node_type="explode_hierarchy",
+            setting_input=settings,
+            input_node_ids=[settings.depending_on_id],
+        )
+        return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_formula(self, function_settings: input_schema.NodeFormula):
@@ -5111,6 +5197,7 @@ class FlowGraph:
             return typed_parameter_values(_graph.flow_settings.parameters)
 
         node._params_getter = _get_params
+        self._notify_node_observers(node, is_new=existing_node is None)
         return node
 
     def add_include_cols(self, include_columns: list[str]):
@@ -5213,16 +5300,21 @@ class FlowGraph:
         """Adds a named subflow-output sink (passthrough, always materialized).
 
         When this flow runs inside another flow via a run_flow node, the parent
-        reads this node's result as one of the subflow's outputs.
+        reads this node's result as one of the subflow's outputs. The name must be
+        unique among the graph's flow_output nodes unless ``unique_subflow_port_names``
+        is off.
         """
-        for other in self.nodes:
-            if (
-                other.node_type == "flow_output"
-                and other.node_id != settings.node_id
-                and isinstance(other.setting_input, input_schema.NodeFlowOutput)
-                and other.setting_input.output_name == settings.output_name
-            ):
-                raise ValueError(f"flow_output name '{settings.output_name}' is already used by node {other.node_id}")
+        if self.unique_subflow_port_names:
+            for other in self.nodes:
+                if (
+                    other.node_type == "flow_output"
+                    and other.node_id != settings.node_id
+                    and isinstance(other.setting_input, input_schema.NodeFlowOutput)
+                    and other.setting_input.output_name == settings.output_name
+                ):
+                    raise ValueError(
+                        f"flow_output name '{settings.output_name}' is already used by node {other.node_id}"
+                    )
 
         def _func(df: FlowDataEngine):
             return df
@@ -5806,6 +5898,7 @@ class FlowGraph:
             return sql_source.get_schema()
 
         node = self.get_node(node_database_reader.node_id)
+        is_new = node is None
         if node:
             # Persist so the lightweight callback survives the reset() that setting_input triggers.
             node.user_provided_schema_callback = schema_callback
@@ -5829,6 +5922,7 @@ class FlowGraph:
             self._node_db[node_database_reader.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_database_reader.node_id)
+        self._notify_node_observers(node, is_new=is_new)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_kafka_source(self, node_kafka_source: input_schema.NodeKafkaSource):
@@ -5970,6 +6064,7 @@ class FlowGraph:
             return result
 
         node = self.get_node(node_kafka_source.node_id)
+        is_new = node is None
         if node:
             node.user_provided_schema_callback = schema_callback
             node.schema_callback = schema_callback
@@ -5992,6 +6087,7 @@ class FlowGraph:
             self._node_db[node_kafka_source.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_kafka_source.node_id)
+        self._notify_node_observers(node, is_new=is_new)
 
     def add_sql_source(self, external_source_input: input_schema.NodeExternalSource):
         """Adds a node that reads data from a SQL source.
@@ -6125,6 +6221,7 @@ class FlowGraph:
             return derive_schema(metrics=ga_settings.metrics, dimensions=ga_settings.dimensions)
 
         node = self.get_node(node_ga_reader.node_id)
+        is_new = node is None
         if node:
             node.schema_callback = schema_callback
             node.user_provided_schema_callback = schema_callback
@@ -6148,6 +6245,7 @@ class FlowGraph:
             self._node_db[node_ga_reader.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_ga_reader.node_id)
+        self._notify_node_observers(node, is_new=is_new)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_rest_api_reader(self, node_rest_api_reader: input_schema.NodeRestApiReader) -> None:
@@ -6206,6 +6304,7 @@ class FlowGraph:
             return []
 
         node = self.get_node(node_rest_api_reader.node_id)
+        is_new = node is None
         if node:
             node.schema_callback = schema_callback
             node.user_provided_schema_callback = schema_callback
@@ -6229,6 +6328,7 @@ class FlowGraph:
             self._node_db[node_rest_api_reader.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_rest_api_reader.node_id)
+        self._notify_node_observers(node, is_new=is_new)
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:
@@ -6509,6 +6609,7 @@ class FlowGraph:
                 directory_schema_callback = get_directory_schema_callback(received_file)
 
         node = self.get_node(input_file.node_id)
+        is_new = node is None
         schema_callback = None
         if node:
             start_hash = node.hash
@@ -6574,6 +6675,7 @@ class FlowGraph:
         if schema_callback is not None:
             node.schema_callback = schema_callback
             node.user_provided_schema_callback = schema_callback
+        self._notify_node_observers(node, is_new=is_new)
         return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
@@ -6596,6 +6698,7 @@ class FlowGraph:
             input_data = FlowDataEngine(path_ref=input_file.file_ref)
             ref = "datasource"
         node = self.get_node(input_file.node_id)
+        is_new = node is None
         if node:
             node.node_type = ref
             node.name = ref
@@ -6616,6 +6719,7 @@ class FlowGraph:
             self._node_db[input_file.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(input_file.node_id)
+        self._notify_node_observers(node, is_new=is_new)
         return self
 
     @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
@@ -6657,6 +6761,7 @@ class FlowGraph:
             )
 
         node = self.get_node(node_list_files.node_id)
+        is_new = node is None
         if node:
             node.schema_callback = schema_callback
             node.user_provided_schema_callback = schema_callback
@@ -6680,6 +6785,7 @@ class FlowGraph:
             self._node_db[node_list_files.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(node_list_files.node_id)
+        self._notify_node_observers(node, is_new=is_new)
 
     def add_manual_input(self, input_file: input_schema.NodeManualInput):
         """Adds a node for manual data entry.
@@ -6696,21 +6802,25 @@ class FlowGraph:
         """Adds a named subflow-input placeholder source.
 
         Standalone runs serve the optional sample data (empty frame otherwise);
-        a parent run_flow node overwrites ``node.function`` with real data.
+        a parent run_flow node overwrites ``node.function`` with real data. The name
+        must be unique among the graph's flow_input nodes unless
+        ``unique_subflow_port_names`` is off.
         """
-        for other in self.nodes:
-            if (
-                other.node_type == "flow_input"
-                and other.node_id != settings.node_id
-                and isinstance(other.setting_input, input_schema.NodeFlowInput)
-                and other.setting_input.input_name == settings.input_name
-            ):
-                raise ValueError(f"flow_input name '{settings.input_name}' is already used by node {other.node_id}")
+        if self.unique_subflow_port_names:
+            for other in self.nodes:
+                if (
+                    other.node_type == "flow_input"
+                    and other.node_id != settings.node_id
+                    and isinstance(other.setting_input, input_schema.NodeFlowInput)
+                    and other.setting_input.input_name == settings.input_name
+                ):
+                    raise ValueError(f"flow_input name '{settings.input_name}' is already used by node {other.node_id}")
         if settings.raw_data_format is not None and settings.raw_data_format.columns:
             input_data = FlowDataEngine(settings.raw_data_format)
         else:
             input_data = FlowDataEngine()
         node = self.get_node(settings.node_id)
+        is_new = node is None
         if node:
             node.node_type = "flow_input"
             node.name = "flow_input"
@@ -6729,6 +6839,7 @@ class FlowGraph:
             self._node_db[settings.node_id] = node
             self.add_node_to_starting_list(node)
             self._node_ids.append(settings.node_id)
+        self._notify_node_observers(node, is_new=is_new)
         return self
 
     @property
@@ -6865,6 +6976,8 @@ class FlowGraph:
     def release_run(self) -> None:
         """Release the single-run slot claimed by try_claim_run (idempotent)."""
         with self._run_claim_lock:
+            self._kernel_hold = None
+            self._commit_sources = True
             self.flow_settings.is_running = False
 
     def trigger_fetch_node(
@@ -6909,7 +7022,8 @@ class FlowGraph:
             node_result.finish(success=errors is None, error="" if errors is None else str(errors))
             if self.flow_settings.is_canceled:
                 node_result.success = None
-            self.latest_run_info.nodes_completed += 1
+            if node_result.success:
+                self.latest_run_info.nodes_completed += 1
             self.latest_run_info.end_time = datetime.datetime.now()
             return self.get_run_info()
         except Exception as e:
@@ -7052,6 +7166,7 @@ class FlowGraph:
             self.latest_run_info.node_step_result.append(node_result)
 
         with ExitStack() as params_scope:
+            params_scope.callback(ambient_kernel_hold.reset, ambient_kernel_hold.set(self._kernel_hold))
             try:
                 params_scope.enter_context(node_parameters_resolved(node))
             except ValueError as e:
@@ -7080,8 +7195,9 @@ class FlowGraph:
             node_result.finish(success=False, error=str(e))
 
         node_logger.info(f"Completed node with success: {node_result.success}")
-        with run_info_lock:
-            self.latest_run_info.nodes_completed += 1
+        if node_result.success:
+            with run_info_lock:
+                self.latest_run_info.nodes_completed += 1
 
         return node_result, node
 
@@ -7251,6 +7367,7 @@ class FlowGraph:
                             except Exception as e:
                                 node_result.success = False
                                 node_result.error = f"Gate formula evaluation failed: {e}"
+                                self.latest_run_info.nodes_completed -= 1
                                 # The node itself ran fine; no stale class may describe this failure.
                                 node._last_exception_class = None
                                 statuses[node.node_id] = NodeRunStatus.FAILED
@@ -7613,7 +7730,13 @@ class FlowGraph:
             node.reset()
             self.flow_logger.info(f"Node {node.node_id}: source files changed; invalidating cached result")
 
-    def run_graph(self, *, node_ids: Collection[int | str] | None = None) -> RunInformation | None:
+    def run_graph(
+        self,
+        *,
+        node_ids: Collection[int | str] | None = None,
+        kernel_hold: KernelHold | None = None,
+        commit_sources: bool = True,
+    ) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
         Independent nodes within the same execution stage are run in parallel
@@ -7626,6 +7749,14 @@ class FlowGraph:
                 Only they are probed, routed, planned, executed and reported, and a source's
                 post-execution callback fires only when its whole downstream is among them.
                 ``None`` runs the whole graph.
+            kernel_hold: Kernels whose execution lock the caller holds while it waits on this run; a kernel
+                node on one fails at once (``KernelBusyError``) instead of waiting, here and in subflows.
+                ``None`` keeps the hold of a run this one runs inside (``ambient_kernel_hold``), such as a
+                subflow of a virtual table's producer.
+            commit_sources: ``False`` for a run that only looks at rows (a notebook's lineage run that holds no
+                output node): no source's post-execution callback fires, so no change-feed cursor or Kafka
+                offset moves. The callbacks stay set and fire in the next run that commits. A subflow this
+                run runs inherits it (``_commit_sources``), so its sources commit only when this run does.
 
         Returns:
             A RunInformation object summarizing the execution results.
@@ -7635,6 +7766,12 @@ class FlowGraph:
         """
         if not self.try_claim_run():
             raise Exception("Flow is already running")
+        if kernel_hold is None:
+            kernel_hold = ambient_kernel_hold.get()
+        self._kernel_hold = kernel_hold
+        self._commit_sources = commit_sources
+        ambient = ambient_kernel_hold.set(kernel_hold)
+        released = False
         try:
             self.flow_settings.is_canceled = False
             self.flow_logger.clear_log_file()
@@ -7677,13 +7814,14 @@ class FlowGraph:
             failed_node_ids = self._execute_stages(
                 execution_plan, performance_mode, params, plan_skip_ids, deliberate_skip_ids, closed_gate_handles
             )
-            if not self.flow_settings.is_canceled:
+            if commit_sources and not self.flow_settings.is_canceled:
                 self._run_post_execution_callbacks(failed_node_ids, plan_skip_ids, deliberate_skip_ids, selected)
 
             self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info("Flow completed!")
             self.end_datetime = datetime.datetime.now()
             self.release_run()
+            released = True
             if self.flow_settings.is_canceled:
                 self.flow_logger.info("Flow canceled")
             run_info = self.get_run_info()
@@ -7694,7 +7832,10 @@ class FlowGraph:
             publish("flow_run_crashed", graph=self, error=e)
             raise
         finally:
-            self.release_run()
+            ambient_kernel_hold.reset(ambient)
+            # Released once: a second release would end a run another caller claimed meanwhile.
+            if not released:
+                self.release_run()
 
     def get_run_info(self) -> RunInformation:
         """Gets a summary of the most recent graph execution.

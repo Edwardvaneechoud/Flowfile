@@ -212,61 +212,16 @@ Three seams are already in the right shape:
   byte-for-byte parallel). Sharing/decentralizing does **not** require re-encryption. (This contract
   is owned by flowfile-architecture-contract.)
 
-What is **open**: `get_database_url` only speaks SQLite, and there is no two-instance harmony test.
+Shipped (#738): `FLOWFILE_DATABASE_URL`/`FLOWFILE_DB_PATH` accept full SQLAlchemy URLs and `_catalog_db_exists` is Alembic-based for server URLs. What is **open**: no two-instance harmony test.
 The metadata DB is deliberately always-local today; migration 028 is forward-only with no backfill.
 Also open: **global components** — user-defined components today are per-instance `.py` files under
 `<user_data>/user_defined_nodes/` (`shared/storage_config.py:109-114`, loaded into
 `CUSTOM_NODE_STORE`); sharing them through the central catalog is a candidate follow-on to steps
 1–3 below, with no design yet.
 
-### What PostgreSQL actually needs (probed empirically, 2026-07-03)
+### PostgreSQL catalog support — shipped (#738)
 
-The full Alembic chain 001→028 **was run against a disposable PostgreSQL 16** (monkeypatching
-`shared.storage_config.get_database_url` to a `postgresql+psycopg2://` URL before importing
-`flowfile_core`, with `FLOWFILE_DB_PATH` pointed at a fresh scratch SQLite so the import side stays
-isolated — never set `FLOWFILE_SKIP_STARTUP_MIGRATION` for this). Results, so step 1 is honest:
-
-- **Migration 001 applies clean on Postgres.** The chain's verified first failure is **002**:
-  `ALTER TABLE catalog_tables ADD COLUMN is_optimized BOOLEAN DEFAULT 0` →
-  `psycopg2.errors.DatatypeMismatch: column "is_optimized" is of type boolean but default
-  expression is of type integer` (`002_virtual_flow_tables.py:26`, `server_default=sa.text("0")`).
-- **Exactly four migration files carry SQLite-isms**; with those shimmed, the chain reaches 028 and
-  `init_db()` even seeds the default user on Postgres (35 tables, `alembic_version` = `028`):
-  1. `002_virtual_flow_tables.py:26` — Boolean column with integer `server_default=sa.text("0")`.
-  2. `016_flow_api_endpoints.py:41,64` — same class, `server_default=sa.text("1")` on `enabled`.
-  3. `026_project_uniqueness_and_uuid_not_null.py` — **three** sites: the dedup SELECT/UPDATE
-     using integer booleans (`is_active = 1/0`, lines 46–51), a **hand-written SQLite
-     `CREATE TABLE _wp_new` rebuild** using `DATETIME` and `BOOLEAN DEFAULT 0/1` (lines 81–97 —
-     invisible to any type-level grep; Postgres fails with `type "datetime" does not exist`), and
-     the partial index `WHERE is_active = 1` (line 130).
-  4. `020_user_groups_sharing.py:45-48` — `SET is_public = 1` backfill. **Dormant on a fresh DB**
-     (it only runs when a `local_user` row and a 'General' namespace already exist), so it never
-     fires when bootstrapping Postgres from empty — fix it anyway for data-bearing paths.
-- **Everything else is already dialect-clean**, verified by the same run: every
-  `op.batch_alter_table` (degrades to plain ALTER off SQLite — do not rewrite them),
-  `render_as_batch=True` in `alembic/env.py:27,47` (harmless on Postgres — keep it), the raw
-  backfills in 006/010/012/018/024, and all model column types. Every downstream engine creator
-  already gates `connect_args={"check_same_thread": False}` on `"sqlite" in url`
-  (`flowfile_core/database/connection.py:25`, `flowfile_scheduler/flowfile_scheduler/engine.py:50-52`,
-  `shared/run_completion.py:29-30,49-50`), so consumers need no change.
-- **Seam changes beyond the migrations:**
-  - `get_database_url()` (`shared/storage_config.py:402`) wraps `FLOWFILE_DB_PATH` in `sqlite:///`
-    unconditionally — minimal change: pass values containing `://` through as full URLs.
-  - `database/migration.py:_catalog_db_exists()` (line 84) is a **file-existence** check that
-    returns `False` for any non-SQLite URL, so every Postgres boot takes the fresh/legacy branch.
-    Safe today only because `get_legacy_database_path()` returns `None` when `FLOWFILE_DB_PATH` is
-    set; if the legacy branch ever fired on Postgres, `migrate_data_from_legacy_db()` executes
-    `PRAGMA foreign_keys = OFF/ON` (lines 265, 280) → hard error. Make the existence check
-    `alembic_version`-based for server URLs.
-  - `psycopg2-binary` is **dev-group only** (`pyproject.toml:112`) — shipping Postgres support
-    needs a runtime dependency (or an optional extra); today no driver ships.
-- **The hand-edit tension:** flowfile_core doctrine forbids editing shipped migrations. A
-  dialect-portability edit is the narrow exception, and only with proof SQLite behavior is
-  unchanged — runnable check: run the chain on a fresh SQLite before and after the edit
-  (`FLOWFILE_DB_PATH=$(mktemp -d)/probe.db poetry run python -c "import flowfile_core"`) and diff
-  the two `sqlite3 <db> .schema` dumps; they must be byte-identical.
-- **Test assets already provisioned:** `test_utils/postgres/` fixture with poetry scripts
-  `start_postgres` / `stop_postgres`, and `testcontainers ^4.10.0` in the dev group.
+The catalog runs on PostgreSQL 16 via `FLOWFILE_DATABASE_URL`; `test-catalog-databases.yml` gates it.
 
 ### The one security wrinkle you must respect
 
@@ -326,18 +281,8 @@ State the hypothesis as a **quantity with a direction and a threshold**, written
 experiment: "the executor coercion in Pillar A/step 3 lifts benchmark success from X% to ≥Y%," or
 "the native handler in Pillar B/step 3 drops corpus `UnsupportedNodeError` count from N to 0." A
 hypothesis that can only be evaluated *after* seeing the output is not a hypothesis. Each pillar's
-milestone above is already written this way — copy that shape. Worked example: Pillar C's Postgres
-probe *predicted* (from a static grep) that the chain's first failure would be migration 002's
-boolean default; the live run against Postgres 16 confirmed exactly that failure, then surfaced
-026's hand-written DDL that no grep predicted — the prediction earned trust, the surprise got
-recorded.
-
-### 2. One mechanism must explain ALL observations — including the negatives
-
-A result is not "it got better on the cases I hoped for." The mechanism you propose must account for
-the **regressions and the no-ops too**. If your coercion helps 8 tasks and breaks 2, the *same*
-causal story must explain the 2 — otherwise you have two mechanisms and understand neither. Flowfile
-history rewards this: the VizSessionRegistry 504s were only truly fixed once one mechanism
+1. **Generalize the metadata seam — shipped (#738).** Server URLs pass through `get_database_url()`,
+   `_catalog_db_exists()` is Alembic-based for them, and migrations 002/016/020/026 are dialect-portable.
 (response-queue theft between two parents sharing a key) explained *every* symptom, not just the
 common one.
 
@@ -400,9 +345,7 @@ are stamped as of **2026-07-03 (v0.12.7)**.
 | `resolve_for_namespace` / owner-keyed creds / `resolve_catalog_storage` shim | `grep -n 'def resolve_for_namespace\|owner_id = root.owner_id\|def resolve_catalog_storage' flowfile_core/flowfile_core/catalog/storage_backend.py` |
 | Env vars are creation-time default only | `grep -n 'FLOWFILE_CATALOG_STORAGE_URI\|FLOWFILE_CATALOG_STORAGE_CONNECTION' flowfile_core/flowfile_core/configs/settings.py` |
 | Worker reads cloud catalog tables with its own compute | `grep -n 'def open_catalog_table' flowfile_worker/flowfile_worker/catalog_reader.py` |
-| `get_database_url` is the single catalog-DB seam (SQLite-only today; wraps `FLOWFILE_DB_PATH` in `sqlite:///`) | `sed -n '402,420p' shared/storage_config.py` |
-| The four Postgres-blocking migrations (002/016/026/020) | `grep -n 'server_default=sa.text' flowfile_core/flowfile_core/alembic/versions/0{02,16}_*.py; grep -n 'DATETIME\|is_active = 1' flowfile_core/flowfile_core/alembic/versions/026_*.py; grep -n 'is_public = 1' flowfile_core/flowfile_core/alembic/versions/020_*.py` |
-| `_catalog_db_exists` is file-based; legacy copy uses PRAGMAs | `grep -n 'def _catalog_db_exists\|PRAGMA foreign_keys' flowfile_core/flowfile_core/database/migration.py` |
+| `get_database_url` is the single catalog-DB seam (`FLOWFILE_DATABASE_URL` first) | `grep -n 'def get_database_url' -A12 shared/storage_config.py` |
 | Engine creators already dialect-gate `check_same_thread` | `grep -rn 'check_same_thread' flowfile_core/flowfile_core/database/connection.py flowfile_scheduler/flowfile_scheduler/engine.py shared/run_completion.py` |
 | Postgres driver is dev-group only; test fixture exists | `grep -n 'psycopg2-binary\|start_postgres' pyproject.toml && ls test_utils/postgres/` |
 | Components are per-instance files (global components open) | `grep -n 'def user_defined_nodes_directory' shared/storage_config.py` |

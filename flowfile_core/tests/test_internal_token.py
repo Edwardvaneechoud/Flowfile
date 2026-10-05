@@ -227,3 +227,27 @@ def test_cli_subprocess_agrees_with_parent_token(isolated_token, tmp_path):
     )
 
     assert out.stdout.strip().splitlines()[-1] == parent_token
+
+
+@pytest.mark.core
+def test_worker_process_resolves_the_token_core_persisted(isolated_token, tmp_path):
+    """The desktop worker sidecar inherits no token; it signs its /raw_logs posts with the persisted one."""
+    parent_token = isolated_token.get_internal_token()
+
+    env = {**os.environ, "FLOWFILE_SECURE_STORAGE_PATH": str(tmp_path / "store")}
+    env.pop("FLOWFILE_INTERNAL_TOKEN", None)
+
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from flowfile_worker.internal_token import resolve_internal_token; print(resolve_internal_token())",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=True,
+    )
+
+    assert out.stdout.strip().splitlines()[-1] == parent_token

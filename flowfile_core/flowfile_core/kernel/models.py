@@ -32,7 +32,7 @@ class ImageFlavour(str, Enum):
 
 
 class KernelUpdate(BaseModel):
-    """Mutable fields on an existing kernel (packages-only for now)."""
+    """Mutable fields on an existing kernel."""
 
     packages: list[str] = Field(default_factory=list)
 

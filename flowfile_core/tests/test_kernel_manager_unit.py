@@ -1169,6 +1169,23 @@ class TestCoreCallbackUrl:
         assert request.log_callback_url == f"{api_url}/raw_logs"
         assert "63580" in request.log_callback_url
 
+    def test_execute_request_carries_the_token_raw_logs_requires(self):
+        """The kernel signs its /raw_logs posts with this token; core refuses them without it."""
+        from flowfile_core.auth.jwt import verify_internal_token
+        from flowfile_core.kernel.execution import build_execute_request
+
+        request = build_execute_request(
+            node_id=1,
+            code="",
+            input_paths={},
+            output_dir="/tmp",
+            flow_id=1,
+            manager=_bare_manager(),
+            source_registration_id=1,
+        )
+
+        assert request.internal_token and verify_internal_token(request.internal_token)
+
 
 class TestStartupGcSafety:
     """A registry that failed to load must not be read as 'nothing should exist'.
@@ -1376,3 +1393,61 @@ class TestAdoptedOwnership:
         mgr.shutdown_all()
 
         mgr._cleanup_container.assert_called_once_with("k1")
+
+
+def test_bake_failure_summary_keeps_the_last_meaningful_pip_lines():
+    log = [
+        "Step 1/4 : FROM flowfile-kernel:lite",
+        " ---> 1234abcd",
+        "Collecting flowfile==0.21.0",
+        "  Downloading flowfile-0.21.0-py3-none-any.whl (5.1 MB)",
+        "     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.1/5.1 MB 9.0 MB/s eta 0:00:00",
+        "Collecting polars-grouper",
+        "",
+        *[f"  compile line {i}" for i in range(40)],
+        "  error: can't find Rust compiler",
+        "  ERROR: Failed building wheel for polars-grouper",
+        "ERROR: Could not build wheels for polars-grouper, which is required to install pyproject.toml-based projects",
+    ]
+    summary = kernel_manager.bake_failure_summary(["flowfile==0.21.0"], log)
+    lines = summary.splitlines()
+    assert lines[0] == "Installing flowfile==0.21.0 into the kernel image failed."
+    assert len(lines) <= 16 and len(summary) <= 1600
+    assert lines[-1].startswith("ERROR: Could not build wheels for polars-grouper")
+    assert "can't find Rust compiler" in summary
+    assert not any(noise in summary for noise in ("Step 1/4", "Downloading", "━", "Collecting"))
+
+
+def test_bake_failure_summary_ends_with_dockers_reason_after_a_successful_pip_run():
+    log = [
+        *[f"  noise line {i}" for i in range(40)],
+        "Successfully installed flowfile-0.22.0 polars-1.39.0",
+        "WARNING: Running pip as the 'root' user can result in broken permissions",
+    ]
+    reason = "failed to register layer: write /usr/local/lib/python3.12/site-packages/x.so: no space left on device"
+    summary = kernel_manager.bake_failure_summary(["flowfile==0.22.0"], log, reason)
+    lines = summary.splitlines()
+    assert lines[-1] == reason
+    assert lines[-2].startswith("WARNING: Running pip as the 'root' user")
+    assert len(lines) <= 16
+
+
+def test_derived_image_build_error_surfaces_dockers_reason():
+    mgr = _bare_manager()
+    reason = "failed to register layer: no space left on device"
+    mgr._docker.images.get.side_effect = [docker.errors.ImageNotFound("derived"), MagicMock()]
+    mgr._docker.images.build.side_effect = docker.errors.BuildError(
+        reason, iter([{"stream": "Successfully installed flowfile-0.22.0\n"}, {"error": reason}])
+    )
+    kernel = KernelInfo(id="k1", name="k1", packages=["flowfile==0.22.0"])
+
+    with pytest.raises(RuntimeError) as exc_info:
+        mgr._build_derived_image_locked(kernel, "flowfile-kernel-lite:local", "derived:k1")
+
+    assert str(exc_info.value).splitlines()[-1] == reason
+
+
+def test_bake_failure_summary_caps_characters_and_handles_an_empty_log():
+    assert kernel_manager.bake_failure_summary(["x"], []) == "Installing x into the kernel image failed."
+    summary = kernel_manager.bake_failure_summary(["x"], ["E" * 5000])
+    assert len(summary.splitlines()[1]) == 1500

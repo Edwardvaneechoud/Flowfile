@@ -723,6 +723,20 @@ export interface MultiFieldFormulaInput {
   output_data_type: string;
 }
 
+// Explode Hierarchy Types
+
+export type HierarchyOutputDetail = "totals" | "levels" | "paths";
+
+export interface ExplodeHierarchyInput {
+  parent_column: string;
+  child_column: string;
+  quantity_column: string | null;
+  output_detail: HierarchyOutputDetail;
+  top_level_only: boolean;
+  include_self: boolean;
+  max_depth: number | null;
+}
+
 // Graph Solver Types
 
 export interface GraphSolverInput {
@@ -746,6 +760,8 @@ export interface CellOutput {
   error: string | null;
   execution_time_ms: number;
   execution_count: number;
+  /** The failing line (1-based) when the run names one. */
+  line?: number | null;
 }
 
 export interface NotebookCell {
@@ -1218,6 +1234,10 @@ export interface NodeDataCleansing extends NodeSingleInput {
 
 export interface NodeGraphSolver extends NodeSingleInput {
   graph_solver_input: GraphSolverInput;
+}
+
+export interface NodeExplodeHierarchy extends NodeSingleInput {
+  explode_hierarchy_input: ExplodeHierarchyInput;
 }
 
 export interface NodeUserDefined extends NodeMultiInput {

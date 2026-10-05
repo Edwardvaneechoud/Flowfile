@@ -35,7 +35,7 @@ export const COLUMN_REF_FUNCTIONS: ReadonlySet<string> = new Set([
 ]);
 
 /** Module aliases under which the column-reference functions are recognised. */
-export const POLARS_MODULE_NAMES: ReadonlySet<string> = new Set(["pl"]);
+export const POLARS_MODULE_NAMES: ReadonlySet<string> = new Set(["pl", "ff"]);
 
 export type ColumnReceiver = { kind: "expr"; node: SyntaxNode } | { kind: "bare-col" };
 

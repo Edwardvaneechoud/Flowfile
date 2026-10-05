@@ -47,6 +47,7 @@ NODE_TYPE_TO_SETTINGS_CLASS = {
     "unpivot": input_schema.NodeUnpivot,
     "text_to_rows": input_schema.NodeTextToRows,
     "graph_solver": input_schema.NodeGraphSolver,
+    "explode_hierarchy": input_schema.NodeExplodeHierarchy,
     "python_script": input_schema.NodePythonScript,
     "polars_code": input_schema.NodePolarsCode,
     "sql_query": input_schema.NodeSqlQuery,
@@ -626,6 +627,13 @@ class NodeTag(str, Enum):
     CLUSTER = "cluster"
     CONNECTED_COMPONENTS = "connected components"
 
+    # Hierarchy
+    HIERARCHY = "hierarchy"
+    BOM = "bom"
+    BILL_OF_MATERIALS = "bill of materials"
+    ROLLUP = "rollup"
+    TREE = "tree"
+
     # Identifiers & ordering
     RECORD_ID = "record id"
     ROW_NUMBER = "row number"
@@ -722,6 +730,12 @@ class NodeTemplate(BaseModel):
     # handle instead of collapsing onto input-0. See flow_node/input_handles.py.
     dynamic_inputs: bool = False
     tags: list[NodeTag] = Field(default_factory=list)
+
+    @property
+    def writes(self) -> bool:
+        """Whether a node of this template writes when the flow runs: the ``output`` group, or a custom node whose
+        class declares ``node_type="output"`` whatever palette group its category gives it."""
+        return self.node_group == "output" or bool(self.custom_node and self.node_type == "output")
 
 
 class NodeInformation(BaseModel):
@@ -1061,6 +1075,21 @@ class InsertOnEdgeOperation(BaseModel):
     connection: input_schema.NodeConnection
 
 
+class UpdateUserDefinedSettingsOperation(BaseModel):
+    """Same as ``POST /user_defined_components/update_user_defined_node``: a custom node's settings."""
+
+    op: Literal["update_user_defined_settings"]
+    node_type: str
+    settings: dict[str, Any]
+
+
+class SetFlowParametersOperation(BaseModel):
+    """Replace the flow parameters, like ``POST /flow_settings``: applied in the batch, outside its undo step."""
+
+    op: Literal["set_flow_parameters"]
+    parameters: list[FlowParameter]
+
+
 EditorOperation = Annotated[
     AddNodeOperation
     | UpdateSettingsOperation
@@ -1070,7 +1099,9 @@ EditorOperation = Annotated[
     | UpdateLayoutOperation
     | CopyNodeOperation
     | DeleteCommentOperation
-    | InsertOnEdgeOperation,
+    | InsertOnEdgeOperation
+    | UpdateUserDefinedSettingsOperation
+    | SetFlowParametersOperation,
     Field(discriminator="op"),
 ]
 

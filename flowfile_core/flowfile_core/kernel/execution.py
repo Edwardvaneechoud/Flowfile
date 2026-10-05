@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import Iterable
 
 import polars as pl
 
@@ -69,6 +70,30 @@ def _write_parquet_locally(lf: pl.LazyFrame | pl.DataFrame, output_path: str) ->
         os.fsync(f.fileno())
 
 
+def write_parquet_for_kernel(
+    lf: pl.LazyFrame | pl.DataFrame, path: str, *, flow_id: int, node_id: int, local: bool, what: str
+) -> None:
+    """Write *lf* as parquet at *path* for a kernel to read.
+
+    In-process when *local* (a graph whose ``execution_location`` is ``"local"``) or worker offload is off,
+    else through the worker so core never collects it; a worker failure raises ``RuntimeError`` naming *what*.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if local or not OFFLOAD_TO_WORKER:
+        _write_parquet_locally(lf, path)
+        return
+    fetcher = ExternalDfFetcher(
+        flow_id=flow_id,
+        node_id=node_id,
+        lf=lf,
+        wait_on_completion=True,
+        operation_type="write_parquet",
+        kwargs={"output_path": path},
+    )
+    if fetcher.has_error:
+        raise RuntimeError(f"Failed to write parquet for {what}: {fetcher.error_description}")
+
+
 def write_inputs_to_parquet(
     flowfile_tables: tuple[FlowDataEngine, ...],
     manager: KernelManager,
@@ -95,25 +120,13 @@ def write_inputs_to_parquet(
 
     Returns the ``input_paths`` dict expected by :class:`ExecuteRequest`.
     """
-    use_local = local or not OFFLOAD_TO_WORKER
-
     if input_names is None:
         main_paths: list[str] = []
         for idx, ft in enumerate(flowfile_tables):
             local_path = os.path.join(input_dir, f"main_{idx}.parquet")
-            if use_local:
-                _write_parquet_locally(ft.data_frame, local_path)
-            else:
-                fetcher = ExternalDfFetcher(
-                    flow_id=flow_id,
-                    node_id=node_id,
-                    lf=ft.data_frame,
-                    wait_on_completion=True,
-                    operation_type="write_parquet",
-                    kwargs={"output_path": local_path},
-                )
-                if fetcher.has_error:
-                    raise RuntimeError(f"Failed to write parquet for input {idx}: {fetcher.error_description}")
+            write_parquet_for_kernel(
+                ft.data_frame, local_path, flow_id=flow_id, node_id=node_id, local=local, what=f"input {idx}"
+            )
             main_paths.append(manager.to_kernel_path(local_path))
         return {"main": main_paths}
 
@@ -122,25 +135,45 @@ def write_inputs_to_parquet(
     for idx, (ft, name) in enumerate(zip(flowfile_tables, input_names, strict=True)):
         _assert_safe_name(name)
         local_path = os.path.join(input_dir, f"{name}_{idx}.parquet")
-        if use_local:
-            _write_parquet_locally(ft.data_frame, local_path)
-        else:
-            fetcher = ExternalDfFetcher(
-                flow_id=flow_id,
-                node_id=node_id,
-                lf=ft.data_frame,
-                wait_on_completion=True,
-                operation_type="write_parquet",
-                kwargs={"output_path": local_path},
-            )
-            if fetcher.has_error:
-                raise RuntimeError(f"Failed to write parquet for input {idx} ({name}): {fetcher.error_description}")
+        write_parquet_for_kernel(
+            ft.data_frame, local_path, flow_id=flow_id, node_id=node_id, local=local, what=f"input {idx} ({name})"
+        )
         kernel_path = manager.to_kernel_path(local_path)
         result.setdefault(name, []).append(kernel_path)
         all_paths.append(kernel_path)
 
     result["main"] = all_paths
     return result
+
+
+class KernelBusyError(RuntimeError):
+    """A kernel node refused because the caller of its run holds the kernel's execution lock (:class:`KernelHold`)."""
+
+    def __init__(self, node_id: int, kernel_id: str) -> None:
+        super().__init__(
+            f"Kernel '{kernel_id}' is busy with the notebook cell waiting on this run, so node {node_id} cannot run "
+            "on it now"
+        )
+
+
+class KernelHold:
+    """The kernels whose execution lock the caller of a run holds while it waits on that run.
+
+    A notebook session's canvas fallback is such a caller: its kernel call holds the kernel while the kernel
+    waits on the run, so a node of the run executing on that kernel would wait forever. The run
+    (``FlowGraph.run_graph(kernel_hold=...)``, its subflows included) refuses it at once instead, through
+    :meth:`check`, which records ``(flow_id, node_id)`` in ``refusals``.
+    """
+
+    def __init__(self, kernel_ids: Iterable[str]) -> None:
+        self.kernel_ids = frozenset(kernel_ids)
+        self.refusals: list[tuple[int, int]] = []
+
+    def check(self, flow_id: int, node_id: int, kernel_id: str) -> None:
+        """Raise :class:`KernelBusyError` when *kernel_id* is held, recording the node."""
+        if kernel_id in self.kernel_ids:
+            self.refusals.append((flow_id, node_id))
+            raise KernelBusyError(node_id, kernel_id)
 
 
 def build_execute_request(
