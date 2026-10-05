@@ -166,7 +166,11 @@ def test_packaged_layout_still_detects_a_missing_dependency(tmp_path):
         cwd=tmp_path,
         env={
             # shared/storage_config resolves Path.home() on import, which on Windows needs USERPROFILE.
-            **{k: os.environ[k] for k in ("USERPROFILE", "HOMEDRIVE", "HOMEPATH", "HOME", "SYSTEMROOT") if k in os.environ},
+            **{
+                k: os.environ[k]
+                for k in ("USERPROFILE", "HOMEDRIVE", "HOMEPATH", "HOME", "SYSTEMROOT")
+                if k in os.environ
+            },
             "PYTHONPATH": str(staged),
             "PATH": "/usr/bin:/bin",
         },
