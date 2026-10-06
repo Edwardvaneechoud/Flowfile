@@ -31,7 +31,7 @@ export const isEditableKeydownTarget = (target: EventTarget | null): boolean => 
   return typeof el.closest === "function" && !!el.closest(".cm-editor");
 };
 
-// Focus inside any of these owns Cmd/Ctrl+Z itself (text/list controls and overlays).
+// Focus inside any of these owns Cmd/Ctrl+Z itself (text/list controls, overlays, the code dock).
 const HISTORY_SHORTCUT_EXCLUDED = [
   "select",
   "[role='listbox']",
@@ -43,6 +43,7 @@ const HISTORY_SHORTCUT_EXCLUDED = [
   ".el-message-box",
   ".el-popper",
   ".context-menu",
+  ".code-dock",
   "[role='dialog']",
   "[aria-modal='true']",
 ].join(",");
@@ -69,12 +70,16 @@ export const historyShortcutFor = (
   return action;
 };
 
+// The notebook and code viewers own their keys: canvas-scoped shortcuts stay out of the dock.
+const inCodeDock = (target: EventTarget | null): boolean =>
+  target instanceof Element && !!target.closest(".code-dock");
+
 export const createFlowHotkeysHandler = (actions: FlowHotkeyActions) => {
   return (event: KeyboardEvent): void => {
     if (!(event.ctrlKey || event.metaKey)) return;
     // Normalize to lowercase to handle Caps Lock being on.
     const key = event.key.toLowerCase();
-    const inEditable = isEditableKeydownTarget(event.target);
+    const inEditable = isEditableKeydownTarget(event.target) || inCodeDock(event.target);
 
     switch (key) {
       case "a":

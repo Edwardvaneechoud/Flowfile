@@ -352,7 +352,7 @@ endif
 clean_kernels:
 	$(POETRY_RUN) python tools/clean_kernels.py
 
-# Same as clean_kernels, but ALSO removes the kernel flavour images (base/ml/lite,
+# Same as clean_kernels, but ALSO removes the kernel flavour images (base/ml/lite/notebook,
 # local builds + pulled published tags). Core re-pulls/rebuilds them on demand.
 clean_kernel_images:
 	$(POETRY_RUN) python tools/clean_kernels.py --images
@@ -366,13 +366,18 @@ rebuild_kernel:
 	docker build $(KERNEL_BUILD_ARG) -t flowfile-kernel-$(KERNEL_FLAVOUR):local kernel_runtime/
 	@echo "Built flowfile-kernel-$(KERNEL_FLAVOUR):local (reports __version__ via /health)."
 
-# Dev notebook kernel image on flowfile-kernel-lite:local (run `make rebuild_kernel KERNEL_FLAVOUR=lite` first).
+# This checkout's notebook kernel image. The base is the published lite image of the pinned kernel release
+# (docker build pulls it); with an unpublished kernel change, build lite first (`make rebuild_kernel
+# KERNEL_FLAVOUR=lite`) and pass NOTEBOOK_BASE_IMAGE=flowfile-kernel-lite:local. Core prefers the :local tag
+# while the published app-version tag is absent, so the notebook flavour resolves to the result.
 NOTEBOOK_KERNEL_WHEEL_DIR := build/notebook_kernel
+NOTEBOOK_BASE_IMAGE ?= edwardvaneechoud/flowfile-kernel-lite:$(shell $(POETRY_RUN) python -c "import tomllib; print(tomllib.load(open('kernel_runtime/pyproject.toml','rb'))['tool']['poetry']['version'])" 2>/dev/null || sed -n 's/^version = "\(.*\)"/\1/p' kernel_runtime/pyproject.toml | head -1)
 notebook_kernel_dev:
 	@rm -rf $(NOTEBOOK_KERNEL_WHEEL_DIR) && mkdir -p $(NOTEBOOK_KERNEL_WHEEL_DIR)
 	poetry build -f wheel -o $(NOTEBOOK_KERNEL_WHEEL_DIR)
-	docker build -f kernel_runtime/Dockerfile.notebook-dev -t flowfile-kernel-notebook:dev $(NOTEBOOK_KERNEL_WHEEL_DIR)
-	@echo "Built flowfile-kernel-notebook:dev (custom image for a notebook kernel)."
+	docker build -f kernel_runtime/Dockerfile.notebook --build-arg BASE_IMAGE=$(NOTEBOOK_BASE_IMAGE) \
+		-t flowfile-kernel-notebook:local $(NOTEBOOK_KERNEL_WHEEL_DIR)
+	@echo "Built flowfile-kernel-notebook:local on $(NOTEBOOK_BASE_IMAGE) (the notebook flavour resolves to it)."
 
 clean_test:
 	@echo "Cleaning test artifacts..."

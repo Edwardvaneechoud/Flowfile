@@ -1,4 +1,5 @@
-"""Core's side of the canvas notebook session that runs in a notebook kernel (one with ``flowfile`` installed).
+"""Core's side of the canvas notebook session that runs in a notebook kernel (the ``notebook`` image flavour, which
+bakes this app's ``flowfile``).
 
 Core never runs the cells. Every op is one constant :data:`SNIPPET` sent through ``KernelManager.execute_sync``
 under the flow's own kernel namespace (:func:`kernel_flow_id`), where the editor's code intelligence also reads
@@ -6,7 +7,9 @@ the session's variables. The frame's ``notebook_kernel`` module runs the op and 
 ``shared.notebook_display.KERNEL_RESULT_MARKER`` line, which :func:`_call` cuts from the call's stdout; results
 come back in the kernel routes' own shapes. Besides the session ops, :class:`KernelCleanRunner` runs a push that
 names a kernel (its result then goes through ``notebook.validate``), and the kernel calls back for canvas rows it
-cannot compute (:func:`node_result`) and for a fresh copy of the catalog database (:func:`refresh_database`).
+cannot compute (:func:`node_result`), for a run of a node only its cells hold (``held_run.run_held_node``, bound
+through :func:`_bound_flow` here) and for the catalog metadata a build reads (``lookup.answer_request``, bound
+through :func:`_bound_kernel`).
 """
 
 from __future__ import annotations
@@ -23,12 +26,10 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from flowfile_core.configs import logger
-from flowfile_core.kernel import notebook_db
-from flowfile_core.kernel.models import DisplayOutput, ExecuteRequest, ExecuteResult
-from flowfile_core.kernel.notebook_support import is_notebook_kernel_config
+from flowfile_core.kernel.models import DisplayOutput, ExecuteRequest, ExecuteResult, ImageFlavour
 from flowfile_core.notebook.bridge import CleanRunRequest, CleanRunResult
 from flowfile_core.notebook.gate import DISABLED_DETAIL, kernel_sessions_allowed
-from flowfile_core.notebook.push import seed_snapshot
+from flowfile_core.notebook.push import known_schemas, seed_snapshot
 from shared.notebook_display import KERNEL_RESULT_MARKER
 
 SNIPPET = "from flowfile_frame import notebook_kernel as _nb\n_nb.handle({request!r}, globals())\n"
@@ -38,6 +39,7 @@ _running: dict[tuple[str, int], str] = {}
 _sessions: dict[int, dict[str, str | None]] = {}
 _verified: set[tuple[str, str | None]] = set()
 _fingerprints: dict[tuple[str, int], str] = {}
+_schemas_sent: dict[tuple[str, int], dict[int, dict]] = {}
 _results: dict[int, dict[tuple[int, str], tuple[weakref.ref, str, str]]] = {}
 
 
@@ -48,19 +50,6 @@ def _manager():
         return kernel_package.get_kernel_manager()
     except Exception as exc:
         raise HTTPException(503, "Docker is not available. Please ensure Docker is installed and running.") from exc
-
-
-def _schema_revision() -> str | None:
-    try:
-        from sqlalchemy import text
-
-        from flowfile_core.database.connection import get_db_context
-
-        with get_db_context() as db:
-            row = db.execute(text("SELECT version_num FROM alembic_version")).first()
-        return row[0] if row else None
-    except Exception:
-        return None
 
 
 def kernel_flow_id(flow_id: int) -> int:
@@ -116,7 +105,7 @@ def _succeeded(payload: dict | None, raw: ExecuteResult) -> dict:
 
 
 def _notebook_kernel(kernel_id: str, user):
-    """The manager and ``kernel_id``'s kernel, after the mode gate and the kernel's owner and packages."""
+    """The manager and ``kernel_id``'s kernel, after the mode gate and the kernel's owner and flavour."""
     if not kernel_sessions_allowed(user):
         raise HTTPException(403, DISABLED_DETAIL)
     manager = _manager()
@@ -125,15 +114,14 @@ def _notebook_kernel(kernel_id: str, user):
         raise HTTPException(404, f"Kernel '{kernel_id}' not found")
     if manager.get_kernel_owner(kernel_id) != user.id:
         raise HTTPException(403, "Not authorized to access this kernel")
-    if not is_notebook_kernel_config(kernel):
-        raise HTTPException(422, f"Kernel '{kernel_id}' has no flowfile package; pick or create a notebook kernel")
+    if kernel.image_flavour != ImageFlavour.NOTEBOOK:
+        raise HTTPException(422, f"Kernel '{kernel_id}' is not a notebook kernel; pick or create one")
     return manager, kernel
 
 
 def _checked(kernel_id: str, user, flow_id: int):
-    """The manager, after :func:`_notebook_kernel` and (once per container) the kernel's flowfile version and the
-    Alembic head of its flowfile_core, which must be the catalog's revision (a dev image keeps the version string
-    across migrations)."""
+    """The manager, after :func:`_notebook_kernel` and (once per container) the kernel's flowfile version, which
+    must be this app's (409)."""
     from shared._version import get_version
 
     manager, kernel = _notebook_kernel(kernel_id, user)
@@ -144,42 +132,75 @@ def _checked(kernel_id: str, user, flow_id: int):
             raise HTTPException(
                 409,
                 f"Kernel '{kernel_id}' has flowfile {hello.get('version')} and this app is {get_version()}: "
-                "recreate the notebook kernel",
-            )
-        head, core_revision = hello.get("schema_head"), _schema_revision()
-        if head and core_revision and head != core_revision:
-            raise HTTPException(
-                409,
-                f"Kernel '{kernel_id}' has flowfile for database schema {head}, the catalog is at {core_revision}: "
-                "recreate the notebook kernel",
+                "restart the notebook kernel to update its image",
             )
         _verified.add(key)
     return manager
 
 
-def refresh_database(kernel_id: str, user) -> dict:
-    """The kernel's own call before its first database connection in a call: its catalog copy brought up to date.
+def _result_schemas(flow) -> dict[int, dict]:
+    """The output schemas of every canvas node that holds a current result, as its run left them
+    (``push.known_schemas``): nothing is predicted, so this is safe on every call and while the flow runs."""
+    found: dict[int, dict] = {}
+    for node in flow.nodes:
+        try:
+            schemas = known_schemas(node) if _has_result(flow, node) else None
+        except Exception:
+            continue
+        if schemas:
+            found[node.node_id] = schemas
+    return found
 
-    Answers ``{"path"}``, the copy as the kernel sees it (``None`` without a SQLite file catalog): a new file
-    whenever the catalog changed, which the kernel's next connections open. It never calls the kernel, so it is
-    safe while a session call holds the kernel's execution lock.
-    """
-    manager, _ = _notebook_kernel(kernel_id, user)
-    try:
-        target = notebook_db.refresh(manager.shared_volume_path, kernel_id)
-    except Exception as exc:
-        raise HTTPException(502, f"Could not copy the catalog database for the notebook kernel: {exc}") from exc
-    return {"path": None if target is None else manager.to_kernel_path(str(target))}
+
+def _session_call(manager, flow, kernel_id: str, op: str, **fields: Any) -> tuple[dict | None, ExecuteResult]:
+    """An ``execute`` or ``schemas`` op, carrying the schemas of the canvas nodes that ran since the session last
+    heard of them, so its frames know the columns the canvas found. A session is seeded before the canvas runs
+    what it builds: a script's columns are known only once the canvas has run it."""
+    key = (kernel_id, flow.flow_id)
+    current = _result_schemas(flow)
+    with _lock:
+        sent = _schemas_sent.get(key, {})
+        fresh = {node_id: schemas for node_id, schemas in current.items() if sent.get(node_id) != schemas}
+    if fresh:
+        fields["schemas"] = fresh
+    payload, raw = _call(manager, kernel_id, flow.flow_id, op, **fields)
+    if fresh and payload is not None and not payload.get("no_session"):
+        with _lock:
+            _schemas_sent.setdefault(key, {}).update(fresh)
+    return payload, raw
 
 
 def _open(manager, flow, user, kernel_id: str, op: str) -> None:
+    """Seed the session (``op`` is ``open`` or ``reset``) and record what it was seeded with.
+
+    Core makes the session's results folder first: on a Linux host, a folder the kernel (root in its container)
+    created on the bind mount would be one core cannot write its own files into.
+    """
     from flowfile_core.notebook.render import code_fingerprint
 
     fingerprint = code_fingerprint(flow)
-    opened = _succeeded(*_call(manager, kernel_id, flow.flow_id, op, user_id=user.id, snapshot=seed_snapshot(flow)))
+    seeded_with = _result_schemas(flow)
+    results = _results_dir(manager, flow.flow_id)
+    try:
+        os.makedirs(results, exist_ok=True)
+    except OSError as exc:
+        raise HTTPException(502, f"Could not create the session's results folder: {exc}") from exc
+    results_dir = manager.to_kernel_path(results)
+    opened = _succeeded(
+        *_call(
+            manager,
+            kernel_id,
+            flow.flow_id,
+            op,
+            user_id=user.id,
+            snapshot=seed_snapshot(flow),
+            results_dir=results_dir,
+        )
+    )
     with _lock:
         _sessions.setdefault(flow.flow_id, {})[kernel_id] = opened.get("namespace_generation")
         _fingerprints[(kernel_id, flow.flow_id)] = fingerprint
+        _schemas_sent[(kernel_id, flow.flow_id)] = seeded_with
 
 
 def open_session(flow, user, kernel_id: str) -> None:
@@ -237,10 +258,10 @@ def run_cell(flow, user, kernel_id: str, cell_id: str, code: str, node_id: int =
         registered = kernel_id in _sessions.get(flow.flow_id, {})
     if not registered:
         _open(manager, flow, user, kernel_id, "open")
-    payload, raw = _call(manager, kernel_id, flow.flow_id, "execute", node_id=node_id, cell_id=cell_id, code=code)
+    payload, raw = _session_call(manager, flow, kernel_id, "execute", node_id=node_id, cell_id=cell_id, code=code)
     if payload is not None and payload.get("no_session"):
         _open(manager, flow, user, kernel_id, "open")
-        payload, raw = _call(manager, kernel_id, flow.flow_id, "execute", node_id=node_id, cell_id=cell_id, code=code)
+        payload, raw = _session_call(manager, flow, kernel_id, "execute", node_id=node_id, cell_id=cell_id, code=code)
     if payload is None:
         error = raw.error or "The notebook kernel returned no result"
         return SessionExecuteResult(**{**raw.model_dump(), "success": False, "error": error})
@@ -266,7 +287,7 @@ def dataframe_schemas(flow, user, kernel_id: str) -> dict:
         if (kernel_id, flow.flow_id) in _running:
             return {**empty, "state": "busy"}
     manager = _checked(kernel_id, user, flow.flow_id)
-    payload, _ = _call(manager, kernel_id, flow.flow_id, "schemas")
+    payload, _ = _session_call(manager, flow, kernel_id, "schemas")
     if payload is None or not payload.get("ok"):
         return {**empty, "state": "unavailable"}
     frames = [
@@ -291,9 +312,11 @@ def interrupt(flow, user, kernel_id: str) -> dict:
     """Interrupt the call running for this flow on the kernel, if any, and cancel the canvas run it waits on.
 
     The kernel's interrupt cannot reach a cell blocked reading core's answer to its canvas fallback, so that
-    run, the one holding this kernel (:func:`_run_lineage`), is cancelled here; the fallback then answers and
-    the cell stops.
+    run, the one holding this kernel (:func:`_run_lineage`, or a held node's in ``held_run``), is cancelled here;
+    the fallback then answers and the cell stops.
     """
+    from flowfile_core.notebook import held_run
+
     if not kernel_sessions_allowed(user):
         raise HTTPException(403, DISABLED_DETAIL)
     manager = _manager()
@@ -306,6 +329,8 @@ def interrupt(flow, user, kernel_id: str) -> dict:
     if hold is not None and kernel_id in hold.kernel_ids:
         flow.cancel()
         interrupted = True
+    if held_run.cancel(kernel_id, flow.flow_id):
+        interrupted = True
     return {"status": "interrupted" if interrupted else "no_execution_running"}
 
 
@@ -317,6 +342,7 @@ def close_flow_sessions(flow_id: int) -> None:
         handed = _results.pop(flow_id, None)
         for kernel_id in sessions:
             _fingerprints.pop((kernel_id, flow_id), None)
+            _schemas_sent.pop((kernel_id, flow_id), None)
     if not sessions and not handed:
         return
     threading.Thread(
@@ -349,8 +375,8 @@ def _results_dir(manager, flow_id: int) -> str:
 
 
 def forget_kernel(kernel_id: str, shared_dir: str) -> None:
-    """Drop core's sessions on a kernel that stopped or was deleted, the canvas results only it used and its
-    database copy. Never raises: it runs inside the kernel's stop."""
+    """Drop core's sessions on a kernel that stopped or was deleted and the canvas results only it used. Never
+    raises: it runs inside the kernel's stop."""
     try:
         with _lock:
             emptied = []
@@ -359,6 +385,7 @@ def forget_kernel(kernel_id: str, shared_dir: str) -> None:
                     continue
                 del kernel_ids[kernel_id]
                 _fingerprints.pop((kernel_id, flow_id), None)
+                _schemas_sent.pop((kernel_id, flow_id), None)
                 if not kernel_ids:
                     del _sessions[flow_id]
                     _results.pop(flow_id, None)
@@ -366,7 +393,6 @@ def forget_kernel(kernel_id: str, shared_dir: str) -> None:
             _verified.difference_update({key for key in _verified if key[0] == kernel_id})
         for flow_id in emptied:
             shutil.rmtree(os.path.join(shared_dir, "notebook", str(flow_id)), ignore_errors=True)
-        notebook_db.remove(shared_dir, kernel_id)
     except Exception:
         logger.debug(f"notebook: could not forget the sessions on kernel {kernel_id}", exc_info=True)
 
@@ -379,6 +405,15 @@ def _has_result(flow, node) -> bool:
         return bool(node.node_stats.has_run_with_current_setup)
     last = flow.latest_run_info
     return last is None or not any(r.node_id == node.node_id and r.skipped for r in last.node_step_result)
+
+
+def lineage_commits(flow, node_ids) -> bool:
+    """Whether a run of only ``node_ids`` commits its sources' progress (a change-feed cursor, a Kafka offset).
+
+    Only when it writes, which is when it holds an output node: rows written without the commit would be written
+    again by the flow's next run, and rows only looked at must leave the progress for that run.
+    """
+    return any(node.node_template.writes for node in map(flow.get_node, node_ids) if node is not None)
 
 
 def _own_kernel_detail(node, kernel_id: str, needed: str) -> str:
@@ -400,7 +435,8 @@ def _run_lineage(flow, node, kernel_id: str) -> None:
     The session's kernel call holds ``kernel_id`` until this returns, so nothing in the run may execute on it: a
     node on it without a current result is refused up front, and one that runs anyway (Performance mode, a missing
     cache, a changed source, a subflow, a virtual table's producer) is refused at once by the run's ``KernelHold``,
-    which also marks the run for :func:`interrupt`.
+    which also marks the run for :func:`interrupt`. The run commits its sources' progress only when it writes
+    (:func:`lineage_commits`): showing rows never moves a change-feed cursor or a Kafka offset.
 
     409 while the flow runs, when the run needs this kernel, when it was cancelled, or when a gate routes the node
     away; 422 when the run fails.
@@ -423,11 +459,20 @@ def _run_lineage(flow, node, kernel_id: str) -> None:
         raise HTTPException(409, _own_kernel_detail(node, kernel_id, f"node(s) {', '.join(map(str, waiting))}"))
     hold = KernelHold({kernel_id})
     try:
-        run_info = flow.run_graph(node_ids=lineage, kernel_hold=hold)
+        run_info = flow.run_graph(node_ids=lineage, kernel_hold=hold, commit_sources=lineage_commits(flow, lineage))
     except Exception as exc:
         if "already running" in str(exc):
             raise HTTPException(409, running) from exc
         raise HTTPException(422, f"Running node {node.node_id} on the canvas failed: {exc}") from exc
+    _run_outcome(flow, node, lineage, kernel_id, hold, run_info)
+
+
+def _run_outcome(flow, node, lineage, kernel_id: str, hold, run_info) -> None:
+    """Raise when a run under ``hold`` (:func:`_run_lineage`, a held node's) left ``node`` without rows.
+
+    409 when the run was cancelled, when it needed ``kernel_id`` (the session's own kernel) or when a gate routed
+    the node away; 422 naming each node of ``lineage`` that failed, or the node when it did not run.
+    """
     if flow.flow_settings.is_canceled:
         raise HTTPException(409, f"The canvas run for node {node.node_id} was cancelled")
     if hold.refusals:
@@ -460,20 +505,9 @@ def _write_result(flow, node_id: int, data, path: str) -> None:
         raise HTTPException(422, f"Could not hand node {node_id}'s rows to the kernel: {exc}") from exc
 
 
-def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle: str | None) -> dict:
-    """A canvas node's rows for the flow's session on ``kernel_id``: ``{"path", "canvas_changed"}``.
-
-    Only for the kernel's owner while the kernel holds the flow's session or runs a call for it (a push's clean
-    run). ``path`` is the kernel's view of a parquet in its shared folder, written after :func:`_run_lineage`
-    when the node has no current result (409/422 as there, and 409 for a gate output routed away);
-    ``canvas_changed`` is whether the canvas changed since the session was seeded. The cache holds the result
-    weakly, so it never keeps one alive, and removes a superseded file only when this kernel was handed it:
-    another kernel's session may still read it.
-    """
-    from flowfile_core import flow_file_handler
-    from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
-    from flowfile_core.notebook.render import code_fingerprint
-
+def _bound_kernel(kernel_id: str, user, flow_id: int):
+    """The manager behind a kernel's own call back, for the kernel's owner while the kernel holds the flow's session
+    or runs a call for it (a push's clean run): 403 otherwise. A lookup (``notebook.lookup``) needs no more."""
     if not kernel_sessions_allowed(user):
         raise HTTPException(403, DISABLED_DETAIL)
     with _lock:
@@ -483,9 +517,36 @@ def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle:
     manager = _manager()
     if manager.get_kernel_owner(kernel_id) != user.id:
         raise HTTPException(403, "Not authorized to access this kernel")
+    return manager
+
+
+def _bound_flow(kernel_id: str, user, flow_id: int):
+    """The manager and the open flow behind a kernel's own call back (:func:`node_result`, a held node's run).
+
+    :func:`_bound_kernel`, then 404 when the flow is not open.
+    """
+    from flowfile_core import flow_file_handler
+
+    manager = _bound_kernel(kernel_id, user, flow_id)
     flow = flow_file_handler.get_flow(flow_id, user.id)
     if flow is None:
         raise HTTPException(404, "Flow not found")
+    return manager, flow
+
+
+def node_result(kernel_id: str, user, flow_id: int, node_id: int, output_handle: str | None) -> dict:
+    """A canvas node's rows for the flow's session on ``kernel_id``: ``{"path", "canvas_changed"}``.
+
+    Bound as :func:`_bound_flow`. ``path`` is the kernel's view of a parquet in its shared folder, written after
+    :func:`_run_lineage` when the node has no current result (409/422 as there, and 409 for a gate output routed
+    away); ``canvas_changed`` is whether the canvas changed since the session was seeded. The cache holds the
+    result weakly, so it never keeps one alive, and removes a superseded file only when this kernel was handed
+    it: another kernel's session may still read it.
+    """
+    from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
+    from flowfile_core.notebook.render import code_fingerprint
+
+    manager, flow = _bound_flow(kernel_id, user, flow_id)
     node = flow.get_node(node_id)
     if node is None:
         raise HTTPException(404, f"Node {node_id} is no longer on the canvas: Reset session to pick up the canvas")
@@ -536,7 +597,3 @@ class KernelCleanRunner:
             return CleanRunResult(error="The notebook kernel returned a result core cannot read", kind="refused")
         result.traceback = payload.get("traceback")
         return result
-
-    def host_folders(self) -> dict[str, str]:
-        """Kernel folder -> host folder of this kernel (``KernelManager.host_folders``), for ``notebook.validate``."""
-        return _manager().host_folders(self.kernel_id)

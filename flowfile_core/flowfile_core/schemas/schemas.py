@@ -731,6 +731,12 @@ class NodeTemplate(BaseModel):
     dynamic_inputs: bool = False
     tags: list[NodeTag] = Field(default_factory=list)
 
+    @property
+    def writes(self) -> bool:
+        """Whether a node of this template writes when the flow runs: the ``output`` group, or a custom node whose
+        class declares ``node_type="output"`` whatever palette group its category gives it."""
+        return self.node_group == "output" or bool(self.custom_node and self.node_type == "output")
+
 
 class NodeInformation(BaseModel):
     """

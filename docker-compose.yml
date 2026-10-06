@@ -113,10 +113,10 @@ services:
     profiles:
       - kernel
 
-  # Lite flavour: same baked packages as base, but only the kernel-critical
-  # pins (polars, pyarrow, numpy, fastapi, uvicorn, httpx, cloudpickle, joblib)
-  # are kept in /opt/constraints.txt. Everything else floats so user-installed
-  # packages with their own dep trees (e.g. flowfile) can resolve freely.
+  # Lite flavour: same baked packages as base, but only polars and the artifact
+  # libraries (cloudpickle, joblib) are kept in /opt/constraints.txt. Everything
+  # else floats so user-installed packages with their own dep trees can resolve
+  # freely. The notebook image builds on it (`make notebook_kernel_dev`).
   # Build with:  docker compose --profile kernel build flowfile-kernel-lite
   flowfile-kernel-lite:
     build:

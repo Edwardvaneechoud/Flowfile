@@ -18,7 +18,7 @@ Kernels provide a sandboxed execution environment for Python Script nodes. Each 
 ## Prerequisites
 
 - **Docker** must be installed and running on the host machine
-- A kernel **image** must be installed — the Kernel Manager lists the standard images and pulls them for you with one click (see [Kernel images](#kernel-images)); no manual build needed
+- A kernel **image** must be installed — the Kernel Manager lists the standard images and pulls them for you with one click, and creating a kernel downloads a missing one (see [Kernel images](#kernel-images)); no manual build needed
 
 !!! tip "Desktop App"
     When running Flowfile as a desktop application, Docker must be available on your local machine. Verify with `docker info`.
@@ -48,7 +48,8 @@ Every kernel is created from an **image flavour** that decides which packages ar
 |---------|-------|---------|
 | **Base** | Polars, PyArrow, NumPy | Plain data work |
 | **ML** | Base + scikit-learn, XGBoost, LightGBM, statsmodels | Machine-learning nodes and scripts |
-| **Lite** | Same packages as Base, but only Polars and the kernel runtime are version-pinned | Installing large extra libraries whose own dependency trees need room to resolve |
+| **Lite** | Same packages as Base, but only Polars and the artifact libraries (cloudpickle, joblib) are version-pinned; NumPy, PyArrow, FastAPI and the rest resolve freely | Installing large extra libraries whose own dependency trees need room to resolve |
+| **Notebook** | Lite plus this app's `flowfile`; published for every app version | Running the [canvas notebook](notebook.md#running-on-a-kernel) |
 | **Custom image** | Whatever you put in it | Your own published Docker image URI |
 
 A kernel's flavour matters beyond notebooks: a [kernel-environment custom node](node-designer.md#execution-environment) declares the packages it needs, and those are **not installed automatically** — the node must run on a kernel whose image provides them. Flowfile does compare the two for you: the node's kernel picker marks kernels that have all the declared packages, offers **Add missing packages** on a near-miss (the kernel is stopped, rebuilt with the additions, and started again), and **Create kernel for this node** pre-fills a new kernel from the node's requirements. For scikit-learn and friends, that means an ML kernel (or a kernel with the package added — see below).
@@ -68,25 +69,20 @@ A kernel's flavour matters beyond notebooks: a [kernel-environment custom node](
 |---------|-------------|---------|
 | **Kernel ID** | Unique identifier: letters, numbers, hyphens and underscores | — |
 | **Name** | A human-readable display label | — |
-| **Image flavour** | Base, ML, Lite, or a custom image URI (see [Kernel images](#kernel-images)) | `Base` |
+| **Image flavour** | Base, ML, Lite, Notebook, or a custom image URI (see [Kernel images](#kernel-images)) | `Base` |
 | **Packages** | Extra pip packages baked into the kernel's image on top of the flavour (version pins encouraged) | *(none)* |
 | **Memory (GB)** | Maximum memory the container can use (0.5–64 GB) | `4` |
 | **CPU Cores** | Number of CPU cores allocated (0.5–32) | `2` |
 | **GPU** | Enable GPU passthrough (requires NVIDIA Docker) | `false` |
-| **Folders this kernel can read** | Folders on this machine the kernel may read, and write when marked **Writable**; desktop app and default `pip install` only, see below | *(none)* |
 
 3. Click **Create Kernel** to save the configuration
 4. Click **Start** on the kernel card to launch the container
 
 Extra packages are resolved against the flavour's version constraints and baked into a per-kernel image when the kernel is created — not installed on every start. Editing a stopped kernel's package list rebuilds its image.
 
-### Folders this kernel can read
+A flavour whose image is not on this machine yet can still be picked: the form says so and the button reads **Download image and create kernel**. Creating the kernel then downloads the image first (several hundred MB) and installs the packages after. Starting a kernel whose image is missing, for example after an app update moved the Notebook image to a new version, downloads it the same way.
 
-In the desktop app, and with `pip install flowfile` in the default mode, a kernel can read folders on your machine. Each folder must be an absolute path to an existing directory. On macOS and Linux it appears at the same path inside the container, so `pl.read_csv("/Users/me/data/sales.csv")` in a cell or Python Script node on that kernel reads the file you see on your machine. On Windows it appears under `/host/<drive>/`: `C:\Users\me\data` is `/host/c/Users/me/data`. A folder that holds Flowfile's own folder (`~/.flowfile`, so also your home folder) is refused; add narrower folders instead, such as one for your data.
-
-Folders are read-only unless you tick **Writable**, which lets any code on the kernel create, change or delete files in that folder, so keep only data in it. On Linux, files the kernel writes there belong to root. Flowfile's own key store is always hidden, even inside a folder you add. Edit the list on a stopped kernel in its details; changes take effect on the next start. Docker deployments refuse the setting.
-
-A kernel with the `flowfile` package installed can also run the [canvas notebook](notebook.md#running-on-a-kernel) and additionally reads Flowfile's saved flows, custom nodes and catalog tables; that section lists its limits, including Apple Silicon Macs.
+A kernel on the **Notebook** image runs the [canvas notebook](notebook.md#running-on-a-kernel), whose toolbar creates one in one click; that section lists its limits.
 
 ### Kernel Cards
 

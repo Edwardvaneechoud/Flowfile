@@ -14,9 +14,7 @@ imports from here.
 from __future__ import annotations
 
 import contextlib
-import glob
 import json
-import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -40,7 +38,7 @@ from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import Graphi
 from flowfile_core.schemas.schemas import NodeTemplate, get_settings_class_for_node_type
 from flowfile_frame._identity import current_user_id
 from flowfile_frame.enums import NodeType, NodeTypeLiteral, _literal
-from flowfile_frame.notebook import current
+from flowfile_frame.notebook import NotebookMode, current
 from flowfile_frame.utils import _implicit_graph, generate_node_id, set_node_id
 from flowfile_frame.utils import data as node_id_data
 from shared.path_utils import is_url
@@ -62,8 +60,24 @@ DEFERRED_NODE_TYPES: frozenset[str] = frozenset(
 SIDE_EFFECT_NODE_TYPES: frozenset[str] = frozenset({"train_model", "apply_model", "evaluate_model"})
 
 NOTEBOOK_DEFERRED_NODE_TYPES: frozenset[str] = frozenset(
-    {"database_reader", "rest_api_reader", "kafka_source", "api_response", "pivot", "polars_code"}
+    {
+        "database_reader",
+        "rest_api_reader",
+        "kafka_source",
+        "cloud_storage_reader",
+        "api_response",
+        "pivot",
+        "polars_code",
+    }
 )
+
+CONNECTION_SOURCE_TYPES: frozenset[str] = frozenset({"database_reader", "kafka_source", "cloud_storage_reader"})
+CORE_PREDICTED_TYPES: frozenset[str] = CONNECTION_SOURCE_TYPES | {"catalog_reader", "run_flow"}
+"""Sources whose schema callback or function resolves a stored connection (a database row and a secret).
+
+A notebook kernel session never predicts them itself (:func:`_predicts_in_core`): it asks its ``schema_resolver``,
+so core predicts the columns with the credentials and the kernel opens neither the database nor the connection.
+"""
 
 SYNC_HELD_NODE_TYPES: frozenset[str] = frozenset({"fuzzy_match", "random_split", "pivot"})
 """Transforms a sync holds: building them computes over their input's rows (a match, a shuffle, pivot values)."""
@@ -90,9 +104,7 @@ def is_side_effect_node_type(node_type: str) -> bool:
     if node_type in SIDE_EFFECT_NODE_TYPES:
         return True
     template = node_store.node_dict.get(node_type)
-    if template is None:
-        return False
-    return template.node_group == "output" or (template.custom_node and template.node_type == "output")
+    return template is not None and template.writes
 
 
 def notebook_defers(node_type: str, setting_input: Any = None) -> bool:
@@ -100,9 +112,10 @@ def notebook_defers(node_type: str, setting_input: Any = None) -> bool:
 
     The node types built without executing: ``DEFERRED_NODE_TYPES``, every side-effect
     type, the sources and transforms of ``NOTEBOOK_DEFERRED_NODE_TYPES`` (they do real I/O, or
-    may, when built in a local graph) and SQL-mode or virtual catalog readers (the latter
-    re-execute their producer); in a sync also every node :func:`held_in_sync` names. Always
-    ``False`` outside notebook mode.
+    may, when built in a local graph), SQL-mode or virtual catalog readers (the latter
+    re-execute their producer) and, in a kernel session (:func:`_in_kernel_session`), every catalog
+    reader: the kernel mounts no host folder and holds no credentials, so core reads the table; in a
+    sync also every node :func:`held_in_sync` names. Always ``False`` outside notebook mode.
     """
     mode = current()
     if mode is None:
@@ -112,9 +125,23 @@ def notebook_defers(node_type: str, setting_input: Any = None) -> bool:
     if node_type == "catalog_reader" and setting_input is not None:
         if setting_input.sql_query or setting_input.is_virtual_optimized is not None:
             return True
+        if _in_kernel_session(mode):
+            return True
     if is_side_effect_node_type(node_type):
         return True
     return mode.sync and held_in_sync(node_type, setting_input)
+
+
+def _in_kernel_session(mode: NotebookMode | None) -> bool:
+    """Whether ``mode`` is a notebook kernel session: not a sync, and a ``schema_resolver`` set (never a script)."""
+    return mode is not None and not mode.sync and mode.schema_resolver is not None
+
+
+def _predicts_in_core(node: FlowNode) -> bool:
+    """Whether a kernel session leaves ``node``'s schema to core: a ``CONNECTION_SOURCE_TYPES`` source, a catalog
+    reader or a ``run_flow`` (their schema callbacks would open a connection, scan a host path or read a flow
+    file, none of which the kernel has) while a ``schema_resolver`` is set (never in a sync, never in a script)."""
+    return node.node_type in CORE_PREDICTED_TYPES and _in_kernel_session(current())
 
 
 def held_in_sync(node_type: str, setting_input: Any = None) -> bool:
@@ -227,6 +254,20 @@ def seed_deferred_node(node: FlowNode, schemas: dict[str, list[FlowfileColumn]])
         node.placed_deferred = True
 
 
+def resolved_seed(node: FlowNode, schemas: dict[str, list[FlowfileColumn]]) -> dict[str, list[FlowfileColumn]]:
+    """``schemas``, or the columns the mode's ``schema_resolver`` finds for ``node`` when no handle of them has any.
+
+    A notebook kernel session answers with the columns of the canvas node a deferred node stands for, else
+    what core predicts from the node's settings; outside such a session, or when the seed already declares
+    columns, ``schemas`` is returned unchanged. A sync never asks.
+    """
+    mode = current()
+    if mode is None or mode.sync or mode.schema_resolver is None or any(schemas.values()):
+        return schemas
+    resolved = mode.schema_resolver(node)
+    return _per_handle(resolved, _handles(node)) if resolved else schemas
+
+
 def predicted_schema_without_running(node: FlowNode) -> list[FlowfileColumn]:
     """``node``'s predicted schema from its schema callback only, never from its function.
 
@@ -247,17 +288,25 @@ def seed_from_predicted_schema(node: FlowNode, declared: Mapping[str, list[Flowf
     A ``polars_code`` transform (seeded only in notebook mode) has no schema callback, so it
     predicts lazily over its inputs the way the canvas does; the frame's own writer fallbacks, the
     only fluent code that writes, are refused in notebook mode. A ``polars_code`` source would
-    read to predict, so it gets the callback-only (empty) schema like any other source. In a sync
-    nothing is predicted: every handle takes :func:`sync_seed_schemas` with ``declared`` (the
-    columns a frame method's own lazy plan gives, ``FlowFrame._planned_seed``).
+    read to predict, so it gets the callback-only (empty) schema like any other source, except in a
+    kernel session: the kernel runs the cell's code anyway and computes the node itself
+    (``COMPUTED_HERE_TYPES``), so it predicts there too (a ``scan_csv`` of a URL reads its header,
+    as Polars would) and the nodes a cell builds on it see its columns. A source
+    :func:`_predicts_in_core` names is not predicted here at all: its seed is what the mode's
+    ``schema_resolver`` answers. In a sync nothing is predicted: every handle takes
+    :func:`sync_seed_schemas` with ``declared`` (the columns a frame method's own lazy plan gives,
+    ``FlowFrame._planned_seed``).
     """
     if _in_sync():
         seed_deferred_node(node, sync_seed_schemas(node, _handles(node), declared))
         return
-    if node.node_type == "polars_code" and node.all_inputs:
+    if node.node_type == "polars_code" and (node.all_inputs or _in_kernel_session(current())):
         seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: _placeholder_schema(node)})
         return
-    seed_deferred_node(node, {DEFAULT_OUTPUT_HANDLE: predicted_schema_without_running(node)})
+    if _predicts_in_core(node):
+        seed_deferred_node(node, resolved_seed(node, {DEFAULT_OUTPUT_HANDLE: []}))
+        return
+    seed_deferred_node(node, resolved_seed(node, {DEFAULT_OUTPUT_HANDLE: predicted_schema_without_running(node)}))
 
 
 def source_frame(flow_graph: FlowGraph, node_id: int) -> FlowFrame:
@@ -265,8 +314,8 @@ def source_frame(flow_graph: FlowGraph, node_id: int) -> FlowFrame:
 
     In notebook mode a source that :func:`notebook_defers` names is seeded from its
     schema callback and wrapped as a deferred frame, so building it never runs the read. So is a local
-    file source a notebook kernel cannot open (:func:`_kernel_hidden_path`), seeded from its canvas twin;
-    otherwise the node's build-time result is wrapped.
+    file source in a kernel session (:func:`_kernel_hidden_path`: the kernel opens no host file), seeded
+    from its canvas twin; otherwise the node's build-time result is wrapped.
     """
     from flowfile_frame.flow_frame import FlowFrame
 
@@ -274,7 +323,7 @@ def source_frame(flow_graph: FlowGraph, node_id: int) -> FlowFrame:
     if notebook_defers(node.node_type, node.setting_input):
         seed_from_predicted_schema(node)
     elif _kernel_hidden_path(node) is not None:
-        seed_deferred_node(node, _kernel_hidden_seed(node))
+        seed_deferred_node(node, resolved_seed(node, _kernel_hidden_seed(node)))
         rows = _canvas_rows_at_build(flow_graph, node)
         if rows is not None:
             return FlowFrame(data=rows, flow_graph=flow_graph, node_id=node_id)
@@ -306,21 +355,14 @@ def _canvas_rows_at_build(flow_graph: FlowGraph, node: FlowNode) -> pl.LazyFrame
     return rows
 
 
-def _exists(path: str) -> bool:
-    while glob.has_magic(path):
-        path = os.path.dirname(path)
-    return os.path.exists(path)
-
-
 def _kernel_hidden_path(node: FlowNode) -> str | None:
-    """The path of a local ``read`` / ``list_files`` source a notebook kernel cannot open, else ``None``.
+    """The path of a local ``read`` / ``list_files`` source a notebook kernel never opens, else ``None``.
 
-    Only while paths are kept as written with a kernel translation (``notebook.paths_as_written``): the
-    source's path, opened through that translation, does not exist on this filesystem. URLs and paths
-    holding ``${`` are never judged.
+    Only while paths are kept as written (``notebook.paths_as_written``, a kernel session): the kernel mounts
+    no host folder, so every local path, a ``${param}`` one included, is read by core (the canvas twin's rows
+    or a held run, which resolves the session's parameters). URLs are read where the cell runs.
     """
-    translate = input_schema.kernel_file_path.get()
-    if not input_schema.keep_paths_as_written.get() or translate is None:
+    if not input_schema.keep_paths_as_written.get():
         return None
     settings = node.setting_input
     if isinstance(settings, input_schema.NodeRead):
@@ -329,9 +371,7 @@ def _kernel_hidden_path(node: FlowNode) -> str | None:
         path = settings.path or ""
     else:
         return None
-    if not path or is_url(path) or "${" in path:
-        return None
-    return None if _exists(translate(path) or path) else path
+    return None if not path or is_url(path) else path
 
 
 def _kernel_twin_id(node: FlowNode) -> int | None:
@@ -365,10 +405,13 @@ def _placeholder_schema(node: FlowNode) -> list[FlowfileColumn]:
     A deferred, side-effect or custom node type asks its schema callback only (a custom start
     node without a hook gets none: its fallback callback runs the node); any other type
     predicts lazily over its inputs' placeholders, the way the canvas does. In a sync it is
-    :func:`sync_seed_schemas`' output-0.
+    :func:`sync_seed_schemas`' output-0; a source :func:`_predicts_in_core` names keeps the
+    columns core gave its seed, so none here.
     """
     if _in_sync():
         return sync_seed_schemas(node, [DEFAULT_OUTPUT_HANDLE])[DEFAULT_OUTPUT_HANDLE]
+    if _predicts_in_core(node):
+        return []
     if isinstance(node.setting_input, input_schema.UserDefinedNode):
         if node.is_start and node.user_provided_schema_callback is None:
             return []
@@ -437,7 +480,7 @@ def _twin_settings(settings: BaseModel, node_type: str, *, translate: bool = Fal
     types whose rules translate formulas; those drop the same top-level fields and compare the
     rest as is, so the seed never evaluates anything (``translate`` normalises them too, for a
     caller that may evaluate). A read's ``abs_file_path`` is dropped too: it is derived from the
-    path, and a notebook kernel resolves it through its own folders.
+    path, which a notebook kernel keeps as written.
     """
     dumped = _without_ids(settings.model_dump(mode="json"))
     if node_type in _FORMULA_RULE_TYPES and not translate:
@@ -1081,7 +1124,7 @@ class NativeNode:
         if self.deferred and _in_sync():
             seed_deferred_node(node, sync_seed_schemas(node, handles, self._declared_seed(node, frames, handles)))
         elif self.deferred:
-            seed_deferred_node(node, self._seed_schemas(node, frames, handles))
+            seed_deferred_node(node, resolved_seed(node, self._seed_schemas(node, frames, handles)))
         inherited = any(f._deferred for f in frames)
         self._frames = {
             handle: FlowFrame(

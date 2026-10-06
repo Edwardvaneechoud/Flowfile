@@ -230,9 +230,9 @@ interface ImageRow {
 
 const imageRows = computed<ImageRow[]>(() => {
   const all = props.dockerStatus?.images ?? [];
-  // Only the three baked flavours have a registry image to install/show.
+  // Only the baked flavours have a registry image to install/show.
   // Custom is configured per-kernel via its URI, not as a global flavour.
-  const baked: ImageFlavour[] = ["base", "lite", "ml"];
+  const baked: ImageFlavour[] = ["base", "lite", "ml", "notebook"];
   const rows: ImageRow[] = [];
   for (const flavour of baked) {
     const status = all.find((s) => s.flavour === flavour);

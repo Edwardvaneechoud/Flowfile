@@ -2,7 +2,7 @@
 
 export type KernelState = "creating" | "stopped" | "starting" | "idle" | "executing" | "error";
 
-export type ImageFlavour = "base" | "ml" | "lite" | "custom";
+export type ImageFlavour = "base" | "ml" | "lite" | "notebook" | "custom";
 
 export interface KernelFlavourMeta {
   value: ImageFlavour;
@@ -25,10 +25,17 @@ export const KERNEL_FLAVOURS: KernelFlavourMeta[] = [
     value: "lite",
     label: "Lite",
     description:
-      "Same image as Base, but only Polars and the kernel-runtime libs are pinned — " +
-      "numpy, pyarrow and other transitives float. Best for installing large libraries " +
-      "(e.g. flowfile) whose own dep trees need room to resolve. " +
+      "Same image as Base, but only Polars and the artifact libraries are pinned — " +
+      "numpy, pyarrow, fastapi and other transitives float. Best for installing large libraries " +
+      "whose own dep trees need room to resolve. " +
       "flowfile_ctx is always available, regardless of flavour.",
+  },
+  {
+    value: "notebook",
+    label: "Notebook",
+    description:
+      "Lite plus this app's flowfile: runs the canvas notebook. Published per app version, " +
+      "so an app update means a new image (restart the kernel to pull it).",
   },
   {
     value: "custom",
@@ -48,9 +55,6 @@ export interface FlavourInfo {
   packages: FlavourPackage[];
 }
 
-/** A mounted host folder: a plain path is read-only, an object can mark it writable. */
-export type MountedFolderEntry = string | { path: string; writable: boolean };
-
 export interface KernelConfig {
   id: string;
   name: string;
@@ -60,8 +64,6 @@ export interface KernelConfig {
   gpu: boolean;
   image_flavour: ImageFlavour;
   custom_image: string | null;
-  /** Absolute host folders mounted into the kernel (desktop only). */
-  mounted_folders?: MountedFolderEntry[];
 }
 
 export interface KernelImageStatus {
@@ -109,7 +111,6 @@ export interface KernelInfo {
   created_at: string;
   error_message: string | null;
   kernel_version: string | null;
-  mounted_folders?: MountedFolderEntry[];
 }
 
 // "unknown" = the image's contents can't be enumerated, so nothing is provably
@@ -140,8 +141,6 @@ export interface KernelMatch {
 // Prefill seed for kernel creation, derived by the backend from a node's deps.
 export interface KernelSuggestion {
   config: KernelConfig;
-  covered_by_flavour: string[];
-  flavour_image_available: boolean | null; // null = Docker down / unknown
 }
 
 export interface KernelMatchResponse {

@@ -65,7 +65,7 @@ Extra fields per event:
 | | `duration_bucket` | `<1s` · `1-10s` · `10-60s` · `1-5m` · `5-30m` · `30m+` |
 | | `used_sample_data` | `true` · `false` |
 | `flow_run_failed`, `alteryx_import_failed` | `error_class` | Exception class name from a fixed list, or `OtherError`. |
-| `export_code_used` | `target` | `polars` · `flowframe` · `project_zip` · `project_save` |
+| `export_code_used` | `target` | `polars` · `flowframe` · `project_zip` · `project_save` · `notebook_py` · `notebook_ipynb` |
 | `alteryx_imported` | `tool_count_bucket` | `1-3` · `4-7` · `8-15` · `16-30` · `31+` |
 | | `converted_tools` | Names of Alteryx built-in tools that converted, sorted, max 60. |
 | | `partial_tools` | Same, for tools that partially converted. |

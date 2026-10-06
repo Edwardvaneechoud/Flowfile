@@ -1179,3 +1179,35 @@ class TestCloudConnectionAwsProfileMigration:
 
         _run_migration(db_path, monkeypatch)
         assert "aws_profile" in self._columns(db_path, "cloud_storage_connections")
+
+
+class TestKernelMountedFoldersDropped:
+    """035 drops ``kernels.mounted_folders`` (034): a kernel mounts no host folder any more."""
+
+    @staticmethod
+    def _columns(db_path: Path, table: str) -> set[str]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        names = {c["name"] for c in inspect(engine).get_columns(table)}
+        engine.dispose()
+        return names
+
+    def test_a_fresh_install_has_no_mounted_folders_column(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "catalog.db"
+        _run_migration(db_path, monkeypatch)
+        assert "mounted_folders" not in self._columns(db_path, "kernels")
+
+    def test_a_catalog_at_034_loses_the_column_and_a_downgrade_brings_it_back(self, tmp_path, monkeypatch):
+        from alembic import command
+
+        from flowfile_core.database.migration import _get_alembic_config
+
+        db_path = tmp_path / "catalog.db"
+        monkeypatch.setenv("FLOWFILE_DB_PATH", str(db_path))
+        command.upgrade(_get_alembic_config(), "034")
+        assert "mounted_folders" in self._columns(db_path, "kernels")
+
+        _run_migration(db_path, monkeypatch)
+        assert "mounted_folders" not in self._columns(db_path, "kernels")
+
+        command.downgrade(_get_alembic_config(), "034")
+        assert "mounted_folders" in self._columns(db_path, "kernels")

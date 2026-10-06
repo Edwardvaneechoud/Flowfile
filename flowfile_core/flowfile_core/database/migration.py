@@ -83,11 +83,6 @@ def _get_alembic_config() -> Config:
     return cfg
 
 
-def package_head() -> str | None:
-    """The Alembic head this flowfile_core ships (its newest migration), read from its scripts without a database."""
-    return ScriptDirectory.from_config(_get_alembic_config()).get_current_head()
-
-
 def _catalog_db_exists() -> bool:
     """Check the local file or the server catalog's Alembic revision."""
     url = _storage_config.get_database_url()

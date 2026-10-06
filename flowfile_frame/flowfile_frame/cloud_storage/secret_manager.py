@@ -1,10 +1,10 @@
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     delete_cloud_connection,
-    get_all_cloud_connections_interface,
     store_cloud_connection,
 )
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
+from flowfile_frame import _metadata
 from flowfile_frame._identity import current_user_id
 from flowfile_frame.notebook import refuse
 
@@ -46,9 +46,8 @@ def create_cloud_storage_connection_if_not_exists(connection: FullCloudStorageCo
 
 
 def get_all_available_cloud_storage_connections() -> list[FullCloudStorageConnectionInterface]:
-    with get_db_context() as db:
-        all_connections = get_all_cloud_connections_interface(db, current_user_id())
-    return all_connections
+    """The current user's cloud storage connections, public fields only (no secrets)."""
+    return _metadata.cloud_connections()
 
 
 def del_cloud_storage_connection(connection_name: str) -> None:

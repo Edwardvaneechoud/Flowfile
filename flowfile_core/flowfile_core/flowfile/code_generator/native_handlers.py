@@ -13,7 +13,6 @@ import importlib.util
 import inspect
 import json
 import keyword
-import linecache
 import re
 import types
 
@@ -463,15 +462,19 @@ class NativeHandlersMixin(ConverterMixinBase):
         reproduced. A script written in the drawer has neither marker and regenerates as a function
         without a ``return``, which takes its frames in the call.
 
-        Prelude imports become stub modules (each must pass ``importlib.util.find_spec``) and constant
-        assignments become literals, so nothing the script imports is loaded; the ``def`` is compiled and
-        executed to bind the function (its body never runs), then the frame's ``_notebook_cells`` regenerates
-        the cells. A notebook binds node references and flow parameters as variables, which the body would
-        read instead of a builtin of the same name, so those names are bound here too and such a body does
-        not regenerate. The text must also fit a cell the interpreter reads (``_fits_a_cell``).
+        The cells are regenerated from the text itself, through ``python_script._source_cells``, the text
+        entry point a push takes (``PythonScriptFunction._from_source``), so what is written here is what
+        would come back, and nothing is executed: no ``def`` is compiled, and no source is re-read with
+        ``inspect.getsource`` (which a PyInstaller build cannot do for text compiled from a string, so the
+        desktop app's render kept falling back to ``ff.PythonScript``). Prelude imports become stub modules
+        (each must pass ``importlib.util.find_spec``) and constant assignments become literals, so nothing
+        the script imports is loaded. A notebook binds node references and flow parameters as variables,
+        which the body would read instead of a builtin of the same name, so those names are bound here too
+        and such a body does not regenerate. The text must also fit a cell the interpreter reads
+        (``_fits_a_cell``).
         """
         from flowfile_core.notebook.compare import script_cells
-        from flowfile_frame.python_script import _notebook_cells
+        from flowfile_frame.python_script import _source_cells
 
         cells = script_cells([cell.code for cell in settings.python_script_input.cells])
         if any(_UNCOUNTED_LINE_BREAKS.search(cell) for cell in cells):
@@ -482,7 +485,7 @@ class NativeHandlersMixin(ConverterMixinBase):
         prelude, parameters, candidates, function, raw = parts
         if not raw and len(parameters) != len(inputs):
             return None
-        namespace: dict = {"__builtins__": builtins, **{name: object() for name in self._shadowed_builtins()}}
+        namespace: dict = {name: object() for name in self._shadowed_builtins()}
         known = getattr(self, "_script_prelude", None) or dict(_SESSION_PRELUDE)
         bound: dict[str, str] = {}
         for line in prelude:
@@ -516,24 +519,20 @@ class NativeHandlersMixin(ConverterMixinBase):
         if keyword.iskeyword(function):
             return None
         option_sets = [list(outputs)] if outputs != ["main"] else [None, ["main"]]
+        first_line = len(prelude) + 3 if prelude else 1  # where _decorated_text puts the decorator
         for docstring, body in candidates:
             source = _script_function_text(function, parameters, body, docstring)
             for option in option_sets:
-                filename = f"<python-script-export-{settings.node_id}>"
-                linecache.cache[filename] = (len(source), None, source.splitlines(True), filename)
+                text = self._decorated_text(
+                    settings, var_name, prelude, source, function, option, inputs, schema_literals
+                )
                 try:
-                    exec(compile(source, filename, "exec", dont_inherit=True), namespace)  # noqa: S102
-                    regenerated = _notebook_cells(namespace[function], option)
+                    regenerated = _source_cells(text, first_line, namespace, option)[2]
                 except Exception:
                     continue
-                finally:
-                    linecache.cache.pop(filename, None)
                 if regenerated == cells or (
                     prelude and regenerated[1:] == cells[1:] and sorted(regenerated[0].split("\n")) == sorted(prelude)
                 ):
-                    text = self._decorated_text(
-                        settings, var_name, prelude, source, function, option, inputs, schema_literals
-                    )
                     if not _fits_a_cell(text):
                         return None
                     self._script_prelude = {**known, **bound}

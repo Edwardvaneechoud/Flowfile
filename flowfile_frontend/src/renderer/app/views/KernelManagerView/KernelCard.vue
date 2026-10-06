@@ -310,6 +310,14 @@ const memoryLevel = computed((): "normal" | "warning" | "critical" => {
   color: var(--color-success);
 }
 
+.kernel-card__flavour--lite {
+  color: var(--color-info);
+}
+
+.kernel-card__flavour--notebook {
+  color: var(--color-primary);
+}
+
 .kernel-card__flavour--custom {
   /* warning-dark is brown — unreadable on dark page bg. Use the brighter
      orange so the badge stays legible in both themes. */

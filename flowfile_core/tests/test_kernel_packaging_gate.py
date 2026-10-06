@@ -19,6 +19,7 @@ The gate has three layers:
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -57,7 +58,7 @@ class TestContainment:
     def test_baseline_actually_loads(self):
         contents = matching._image_contents()
         assert contents is not None
-        assert {ImageFlavour.BASE, ImageFlavour.ML, ImageFlavour.LITE} <= set(contents)
+        assert {ImageFlavour.BASE, ImageFlavour.ML, ImageFlavour.LITE, ImageFlavour.NOTEBOOK} <= set(contents)
 
     def test_manifest_tracks_the_kernel_runtime_version(self):
         manifest = json.loads(flavours._MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -163,7 +164,16 @@ def test_packaged_layout_still_detects_a_missing_dependency(tmp_path):
     result = subprocess.run(
         [sys.executable, str(probe), str(staged)],
         cwd=tmp_path,
-        env={"PYTHONPATH": str(staged), "PATH": "/usr/bin:/bin"},
+        env={
+            # shared/storage_config resolves Path.home() on import, which on Windows needs USERPROFILE.
+            **{
+                k: os.environ[k]
+                for k in ("USERPROFILE", "HOMEDRIVE", "HOMEPATH", "HOME", "SYSTEMROOT")
+                if k in os.environ
+            },
+            "PYTHONPATH": str(staged),
+            "PATH": "/usr/bin:/bin",
+        },
         capture_output=True,
         text=True,
     )

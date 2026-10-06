@@ -127,7 +127,7 @@ Then point core at your local image (unset/empty env vars fall through to the pu
 ```bash
 # in .env or the shell running `docker compose up`
 FLOWFILE_KERNEL_IMAGE=flowfile-kernel-base:local
-# or per-flavour: FLOWFILE_KERNEL_IMAGE_BASE / _ML / _LITE
+# or per-flavour: FLOWFILE_KERNEL_IMAGE_BASE / _ML / _LITE / _NOTEBOOK
 ```
 
 Other things worth knowing before you run this:

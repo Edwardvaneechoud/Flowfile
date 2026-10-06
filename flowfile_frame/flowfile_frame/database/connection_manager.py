@@ -9,13 +9,13 @@ from pydantic import SecretStr
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import (
     get_database_connection,
-    get_database_connection_schema,
     store_database_connection,
 )
 from flowfile_core.schemas.input_schema import (
     FullDatabaseConnection,
     FullDatabaseConnectionInterface,
 )
+from flowfile_frame import _metadata
 from flowfile_frame._identity import current_user_id
 from flowfile_frame.notebook import refuse
 from shared.db_dialects import KNOWN_DIALECT_NAMES, get_dialect_or_generic
@@ -148,15 +148,16 @@ def create_database_connection_if_not_exists(
 def get_database_connection_by_name(connection_name: str) -> FullDatabaseConnection | None:
     """Get a database connection by its name.
 
+    In a notebook kernel session the connection comes from the app and its ``password`` is empty: no
+    secret reaches the kernel. In a script it is the stored (encrypted) value.
+
     Args:
         connection_name: The name of the connection to retrieve.
 
     Returns:
         FullDatabaseConnection if found, None otherwise.
     """
-    user_id = get_current_user_id()
-    with get_db_context() as db:
-        return get_database_connection_schema(db, connection_name, user_id)
+    return _metadata.database_connection(connection_name)
 
 
 def get_all_available_database_connections() -> list[FullDatabaseConnectionInterface]:
@@ -165,24 +166,7 @@ def get_all_available_database_connections() -> list[FullDatabaseConnectionInter
     Returns:
         List of database connection interfaces (without passwords).
     """
-    from flowfile_core.database.models import DatabaseConnection as DBConnectionModel
-
-    user_id = get_current_user_id()
-    with get_db_context() as db:
-        connections = db.query(DBConnectionModel).filter(DBConnectionModel.user_id == user_id).all()
-
-        return [
-            FullDatabaseConnectionInterface(
-                connection_name=conn.connection_name,
-                database_type=conn.database_type,
-                username=conn.username,
-                host=conn.host,
-                port=conn.port,
-                database=conn.database,
-                ssl_enabled=conn.ssl_enabled,
-            )
-            for conn in connections
-        ]
+    return _metadata.database_connections()
 
 
 def del_database_connection(connection_name: str) -> bool:

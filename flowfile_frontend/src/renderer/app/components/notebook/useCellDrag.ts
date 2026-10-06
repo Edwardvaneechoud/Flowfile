@@ -206,7 +206,7 @@ export function useCellDrag(opts: CellDragOptions): CellDragController {
     if (ev.button !== 0 || opts.isDisabled?.() || pointerId !== null) return;
     // preventDefault below suppresses focus-on-click, so take focus explicitly.
     const el = ev.currentTarget as HTMLElement | null;
-    if (el && typeof el.focus === "function") el.focus();
+    if (el && typeof el.focus === "function") el.focus({ preventScroll: true });
     ev.preventDefault();
     pointerId = ev.pointerId;
     cellId = id;

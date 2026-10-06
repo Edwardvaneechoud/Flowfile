@@ -1,10 +1,9 @@
-"""A notebook kernel's clean run comes back with host paths where a cell wrote the kernel's (no Docker)."""
+"""A notebook kernel's clean run comes back with its file paths as the cells wrote them (the kernel mounts no host
+folder); core recomputes the absolute paths on this machine (no Docker)."""
 
 import copy
 
 from flowfile_core.notebook.validate import host_file_paths
-
-FOLDERS = {"/host/c/Users/me/data": r"C:\Users\me\data"}
 
 
 def _flow(*nodes: dict) -> dict:
@@ -30,40 +29,22 @@ def _paths(data: dict) -> list:
     return out
 
 
-def test_kernel_paths_become_host_paths():
+def test_paths_stay_as_written_and_absolute_paths_are_recomputed_here(tmp_path):
+    csv = tmp_path / "orders.csv"
+    csv.write_text("a\n1\n")
     data = _flow(
-        _read(1, "/host/c/Users/me/data/orders.csv"),
+        _read(1, str(csv)),
+        _read(2, r"C:\Users\me\data\orders.csv"),
         {
-            "id": 2,
+            "id": 3,
             "type": "output",
-            "setting_input": {
-                "output_settings": {"name": "out.csv", "directory": "/host/c/Users/me/data/out.csv", "file_type": "csv"}
-            },
+            "setting_input": {"output_settings": {"name": "out.csv", "directory": str(tmp_path), "file_type": "csv"}},
         },
-        {"id": 3, "type": "list_files", "setting_input": {"path": "/host/c/Users/me/data"}},
-        {
-            "id": 4,
-            "type": "cloud_storage_reader",
-            "setting_input": {"cloud_storage_settings": {"resource_path": "/host/c/Users/me/data/sales"}},
-        },
-        _read(5, "/host/c/Users/me/data/**/*.csv"),
+        {"id": 4, "type": "list_files", "setting_input": {"path": str(tmp_path)}},
+        {"id": 5, "type": "cloud_storage_reader", "setting_input": {"cloud_storage_settings": {"resource_path": "s3://b/x"}}},
     )
     before = copy.deepcopy(data)
-    assert _paths(host_file_paths(data, FOLDERS)) == [
-        r"C:\Users\me\data\orders.csv",
-        r"C:\Users\me\data\out.csv",
-        r"C:\Users\me\data",
-        r"C:\Users\me\data\sales",
-        r"C:\Users\me\data\**\*.csv",
-    ]
-    assert data == before
-
-
-def test_host_paths_and_uris_are_kept():
-    paths = [r"C:\Users\me\data\orders.csv", "/Users/me/data//orders.csv", "/host/c/Users/me/database/x.csv"]
-    data = _flow(*(_read(i, path) for i, path in enumerate(paths, 1)))
-    data["nodes"].append(
-        {"id": 9, "type": "cloud_storage_reader", "setting_input": {"cloud_storage_settings": {"resource_path": "s3://b/x"}}}
-    )
-    assert _paths(host_file_paths(data, FOLDERS)) == [*paths, "s3://b/x"]
-    assert _paths(host_file_paths(_flow(_read(1, "/host/c/Users/me/data/x.csv")))) == ["/host/c/Users/me/data/x.csv"]
+    out = host_file_paths(data)
+    assert _paths(out) == [str(csv), r"C:\Users\me\data\orders.csv", str(tmp_path), str(tmp_path), "s3://b/x"]
+    assert out["nodes"][0]["setting_input"]["received_file"]["abs_file_path"] == str(csv.resolve())
+    assert data == before, "the kernel's data is copied, never changed in place"

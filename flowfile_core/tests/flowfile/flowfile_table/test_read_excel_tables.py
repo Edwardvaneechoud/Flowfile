@@ -304,7 +304,7 @@ COMPLEX_FILE = SUPPORT_FILES / "complex_excel_test.xlsx"
 
 
 def complex_table(sheet_name: str, **settings) -> ReceivedTable:
-    """A read of one sheet of the awkward-shapes fixture (see support_files/make_complex_excel_test.py)."""
+    """A read of one sheet of the awkward-shapes fixture (see support_files/make_complex_excel_fixture.py)."""
     return ReceivedTable(
         path=str(COMPLEX_FILE),
         name="complex_excel_test.xlsx",

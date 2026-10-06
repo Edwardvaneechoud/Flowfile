@@ -256,7 +256,8 @@ split-output mode).
   edit here." Add new tabs there, not by hand-wiring a drawer component.
   A tab that hosts CodeMirror must defer it until visible (gate it on an
   `active` prop derived from `drawer.activeTab`) — it breaks if
-  constructed while hidden.
+  constructed while hidden. The code dock needs no such gate: `DesignerView.vue`
+  `v-if`-mounts the `.code-dock` aside only while it is shown.
   The code generator is **not** a drawer tab: it is the resizable
   `code-dock` split pane in `DesignerView.vue` (toggled by
   `editorStore.showCodeGenerator`), holding FlowFrame | Polars | Project |

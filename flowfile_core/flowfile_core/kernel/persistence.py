@@ -16,7 +16,6 @@ from flowfile_core.kernel.models import (
     ImageFlavour,
     KernelConfig,
     KernelInfo,
-    MountedFolder,
     ResolvedPackage,
 )
 
@@ -25,10 +24,6 @@ logger = logging.getLogger(__name__)
 
 def _resolved_packages_to_json(resolved: list[ResolvedPackage]) -> str:
     return json.dumps([{"name": p.name, "version": p.version} for p in resolved])
-
-
-def _folders_to_json(folders: list[str | MountedFolder]) -> str:
-    return json.dumps([f if isinstance(f, str) else f.model_dump() for f in folders])
 
 
 def save_kernel(db: Session, kernel: KernelInfo, user_id: int) -> None:
@@ -43,7 +38,6 @@ def save_kernel(db: Session, kernel: KernelInfo, user_id: int) -> None:
         existing.gpu = kernel.gpu
         existing.image_flavour = kernel.image_flavour.value
         existing.custom_image = kernel.custom_image
-        existing.mounted_folders = _folders_to_json(kernel.mounted_folders)
         existing.user_id = user_id
     else:
         record = db_models.Kernel(
@@ -57,7 +51,6 @@ def save_kernel(db: Session, kernel: KernelInfo, user_id: int) -> None:
             gpu=kernel.gpu,
             image_flavour=kernel.image_flavour.value,
             custom_image=kernel.custom_image,
-            mounted_folders=_folders_to_json(kernel.mounted_folders),
         )
         db.add(record)
     db.commit()
@@ -140,24 +133,6 @@ def _row_to_resolved(row: db_models.Kernel) -> list[ResolvedPackage]:
     return out
 
 
-def _row_to_folders(row: db_models.Kernel) -> list[str | MountedFolder]:
-    """A path is a read-only folder, ``{"path", "writable": true}`` a writable one; anything else is dropped."""
-    try:
-        items = json.loads(getattr(row, "mounted_folders", None) or "[]")
-    except (TypeError, ValueError):
-        return []
-    if not isinstance(items, list):
-        return []
-    folders: list[str | MountedFolder] = []
-    for item in items:
-        if isinstance(item, str):
-            folders.append(item)
-        elif isinstance(item, dict) and isinstance(item.get("path"), str):
-            path = item["path"]
-            folders.append(MountedFolder(path=path, writable=True) if item.get("writable") is True else path)
-    return folders
-
-
 def _row_to_config(row: db_models.Kernel) -> KernelConfig:
     packages = json.loads(row.packages) if row.packages else []
     # Tolerate schema drift: getattr with a default lets us still restore a
@@ -177,5 +152,4 @@ def _row_to_config(row: db_models.Kernel) -> KernelConfig:
         gpu=row.gpu,
         image_flavour=flavour,
         custom_image=getattr(row, "custom_image", None),
-        mounted_folders=_row_to_folders(row),
     )

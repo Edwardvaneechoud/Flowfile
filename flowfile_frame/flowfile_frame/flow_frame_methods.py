@@ -11,6 +11,7 @@ from polars._typing import IO, CsvEncoding, PolarsDataType, SchemaDict, Sequence
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import cloud_storage_schemas, input_schema, transform_schema
+from flowfile_frame import _metadata
 from flowfile_frame.cloud_storage.secret_manager import get_current_user_id
 from flowfile_frame.config import logger
 from flowfile_frame.expr import col
@@ -70,10 +71,8 @@ def _resolve_scan_mode(source: str, *, glob: bool = True) -> Literal["single_fil
     if is_glob_pattern(source) or source.endswith(("/", os.sep)):
         return "directory"
     if input_schema.keep_paths_as_written.get():
-        # In a notebook kernel the folder is probed where the kernel sees it; a Windows one may end in "\".
-        translate = input_schema.kernel_file_path.get()
-        probe = (translate(source) if translate is not None else None) or source
-        return "directory" if source.endswith("\\") or Path(probe).is_dir() else "single_file"
+        # In a notebook kernel the folder is probed on the user's machine, by core; a Windows one may end in "\".
+        return "directory" if source.endswith("\\") or _metadata.is_directory(source) else "single_file"
     return "directory" if Path(source).expanduser().is_dir() else "single_file"
 
 

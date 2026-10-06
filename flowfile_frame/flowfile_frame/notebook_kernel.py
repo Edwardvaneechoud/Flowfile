@@ -10,20 +10,25 @@ prints its JSON result on one ``shared.notebook_display.KERNEL_RESULT_MARKER`` l
 cell prints stays the call's stdout. A flow's session keeps its variables in the kernel's namespace for the call's
 flow id (the snippet's ``globals()``), where the kernel's Jedi reads them. Notebook mode is context-local and every
 kernel call runs in a fresh context, so an op on the session resumes its mode (``notebook.resumed``), and an op that
-builds nodes keeps file paths as written (``notebook.paths_as_written``); core turns them back into host paths on a
-push. Rows the kernel
-cannot compute come from the canvas (:meth:`_Session.canvas_rows`), and the catalog database is a copy core
-writes under a new name when a call first connects to it (:func:`_rearm`).
+builds nodes keeps file paths as written (``notebook.paths_as_written``): the kernel mounts no host folder, so every
+file a cell names is read by core and core recomputes the absolute paths on a push. Rows the kernel cannot compute
+come from the canvas (:meth:`_Session.canvas_rows`): a canvas node's own, or, for a node only the cells hold, a run
+core makes of that node from its settings (:meth:`_Session._run_held`). The catalog metadata a build reads (tables,
+flow references, connections, kernels) comes from core too, as do a flow file's interface, whether a path is a folder
+and the installed custom node files (:func:`_mirror_custom_nodes`): every op runs under ``_metadata.installed``
+(``POST /notebook/session/lookup``), so the kernel opens no catalog connection. The kernel holds no catalog database
+at all: its catalog engine refuses every connection (:func:`_refuse_database`), so code in a cell that opens the
+database itself stops with a message naming the ``ff`` functions to use instead.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
-import threading
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,21 +38,28 @@ import polars as pl
 from pydantic import BaseModel
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
-from flowfile_frame import notebook
+from flowfile_core.flowfile.user_defined.registry import registry
+from flowfile_core.schemas.schemas import FlowfileNode
+from flowfile_frame import _metadata, notebook
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.native import (
     NativeNode,
     NativeNodeError,
+    _handles,
     _kernel_hidden_path,
     _kernel_twin_id,
+    _per_handle,
     _twin_settings,
     ancestors,
     materialise,
+    seed_deferred_node,
 )
 from flowfile_frame.notebook_cells import (
     _CELL_OUTPUTS,
+    _columns,
     _schema_entries,
     display,
     exec_cell,
@@ -58,7 +70,6 @@ from flowfile_frame.notebook_cells import (
 from shared.notebook_display import KERNEL_RESULT_MARKER
 
 CANVAS_CHANGED = "The canvas changed since this session started: Reset session to pick it up."
-PUSH_FIRST = "Push, then it runs on the canvas."
 
 COMPUTED_HERE_TYPES: frozenset[str] = frozenset({"pivot", "polars_code"})
 """Types notebook mode defers that a session still computes here, when every node above them can be."""
@@ -75,6 +86,26 @@ def _rows_settings(settings: BaseModel, node_type: str) -> Any:
     if excluded and isinstance(compared, dict):
         return {key: value for key, value in compared.items() if key not in excluded}
     return compared
+
+
+def _column_types(schemas: Mapping[str, Any]) -> dict[str, list[tuple[str, str]]]:
+    return {handle: [(c.column_name, c.data_type) for c in columns or []] for handle, columns in schemas.items()}
+
+
+def _bound_frames(namespace: Mapping[str, Any]) -> Iterator[FlowFrame]:
+    """Every frame a session variable holds: a frame itself, or a node's outputs."""
+    for value in list(namespace.values()):
+        if isinstance(value, FlowFrame):
+            yield value
+        elif isinstance(value, NativeNode):
+            yield from value.__dict__.get("_frames", {}).values()
+
+
+def _remove(paths: Iterable[str]) -> None:
+    """Delete files of the session's results folder only this session reaches; one already gone is fine."""
+    for path in paths:
+        with contextlib.suppress(OSError):
+            os.remove(path)
 
 
 def _post_core(route: str, body: dict[str, Any], what: str) -> dict[str, Any]:
@@ -113,25 +144,35 @@ def post_node_result(body: dict[str, Any]) -> dict[str, Any]:
     return _post_core("/notebook/session/node_result", body, f"node {body['node_id']}'s rows")
 
 
-def post_database_refresh() -> dict[str, Any]:
-    """Ask core to bring this kernel's copy of the catalog database up to date (``POST /notebook/session/database``)."""
-    return _post_core("/notebook/session/database", {}, "a fresh copy of the catalog database")
+def post_node_run(body: dict[str, Any]) -> dict[str, Any]:
+    """Ask core to run a node only this session holds (``POST /notebook/session/node_run``) as this kernel."""
+    return _post_core("/notebook/session/node_run", body, f"node {body['node']['id']}'s run")
+
+
+def post_lookup(body: dict[str, Any]) -> dict[str, Any]:
+    """Ask core for a catalog metadata lookup (``POST /notebook/session/lookup``) as this kernel."""
+    return _post_core("/notebook/session/lookup", body, f"the {body['kind']} lookup")
 
 
 transport: Callable[[dict[str, Any]], dict[str, Any]] = post_node_result
 """How a session asks core for a canvas node's result; tests route it to core in-process."""
 
-database_transport: Callable[[], dict[str, Any]] = post_database_refresh
-"""How a call asks core to refresh the kernel's catalog copy; tests route it to core in-process."""
+run_transport: Callable[[dict[str, Any]], dict[str, Any]] = post_node_run
+"""How a session asks core to run a node only its cells hold; tests route it to core in-process."""
+
+lookup_transport: Callable[[dict[str, Any]], dict[str, Any]] = post_lookup
+"""How an op asks core for catalog metadata (``_metadata.installed``); tests route it to core in-process."""
 
 
 @dataclass
 class _Session:
     """One flow's session: its (set aside) notebook mode, namespace and the identity the editor's schemas use.
 
-    ``seeded`` holds the canvas node ids the session was seeded with, ``rows`` the parquet path core
-    handed out per ``(node_id, output_handle)``, ``fetch`` the transport to core and ``canvas_settings``
-    each canvas node's :func:`_rows_settings`, worked out once.
+    ``seeded`` holds the canvas node ids the session was seeded with, ``rows`` the parquet path core handed out
+    per ``(node_id, output_handle)`` (a canvas node's, or a held node's after its run), ``fetch`` and ``run``
+    the transports to core, ``results_dir`` the session's results folder as this kernel sees it (where it
+    writes the inputs of a held node), ``ran`` the held nodes core ran and ``canvas_settings`` each canvas
+    node's :func:`_rows_settings`, worked out once.
     """
 
     flow_id: int
@@ -139,8 +180,11 @@ class _Session:
     namespace: dict[str, Any]
     generation: str
     fetch: Callable[[dict[str, Any]], dict[str, Any]]
+    run: Callable[[dict[str, Any]], dict[str, Any]]
     seeded: frozenset[int] = frozenset()
+    results_dir: str = ""
     rows: dict[tuple[int, str], str] = field(default_factory=dict)
+    ran: set[int] = field(default_factory=set)
     canvas_settings: dict[int, Any] = field(default_factory=dict)
     revision: int = 0
 
@@ -148,28 +192,69 @@ class _Session:
         return {"namespace_generation": self.generation, "revision": self.revision}
 
     def canvas_rows(self, frame: FlowFrame) -> pl.LazyFrame | None:
-        """The rows of a frame without rows here: the canvas's for a seeded node no cell replaced or the canvas
-        twin of a file read this kernel cannot open (``native._kernel_twin_id``), else computed here
-        (:meth:`_computed_here`)."""
+        """The rows of a frame without rows here: the canvas's for a seeded node no cell replaced, else resolved
+        node by node (:meth:`_resolve`)."""
         if frame.flow_graph is not self.mode.graph:
             return None
-        node_id, hidden = frame.node_id, False
         created = {entry[2] for entry in self.mode.provenance}
-        if node_id not in self.seeded or node_id in created:
-            node = self.mode.graph.get_node(node_id)
-            hidden = node is not None and _kernel_hidden_path(node) is not None
-            node_id = _kernel_twin_id(node) if hidden else None
-        if node_id is None and not hidden:
-            computed = self._computed_here(frame, created)
-            if computed is not None:
-                return computed
-        if node_id not in self.seeded:
-            raise NativeNodeError(_new_node_message(frame))
-        return self._fetch(node_id, frame.output_handle)
+        if frame.node_id in self.seeded and frame.node_id not in created:
+            return self._fetch(frame.node_id, frame.output_handle)
+        return self._resolve(frame, created)
+
+    def refresh(self, schemas: Mapping[Any, Mapping[str, Any]] | None = None) -> None:
+        """Take over the columns the canvas found since the session was seeded.
+
+        ``schemas`` holds the outputs of canvas nodes that ran (core sends them with a call); where they differ
+        the snapshot takes them and the rows handed out for that node are asked again. Every deferred node
+        standing for a canvas node (:meth:`_twin`) whose seed differs from that node's schemas is then seeded
+        with them, a node a cell built since included. The nodes computed below it are read again, and the
+        deferred frames bound to any of them take the new placeholder; a frame whose read now fails keeps its
+        old one. A read of a file this kernel cannot see holds its canvas rows and is left alone; telling one
+        needs paths as written, which a ``schemas`` call does not run under, so they are kept here.
+        """
+        with notebook.paths_as_written():
+            self._refresh(schemas)
+
+    def _refresh(self, schemas: Mapping[Any, Mapping[str, Any]] | None) -> None:
+        for canvas_id, by_handle in (schemas or {}).items():
+            twin = self.mode.snapshot.get(int(canvas_id))
+            found = {handle: _columns(entries) for handle, entries in by_handle.items()}
+            if twin is None or _column_types(found) == _column_types(twin.schemas):
+                continue
+            twin.schemas = found
+            for key in [key for key in self.rows if key[0] == int(canvas_id)]:
+                del self.rows[key]
+        created = {entry[2] for entry in self.mode.provenance}
+        twins: dict[int, int | None] = {}
+        stale: dict[int, FlowNode] = {}
+        for node in self.mode.graph.nodes:
+            if not node.deferred_until_run or _kernel_hidden_path(node) is not None:
+                continue
+            twin = self.mode.snapshot.get(self._twin(node, created, twins))
+            if twin is None or not any(twin.schemas.values()):
+                continue
+            seed = _per_handle(twin.schemas, _handles(node))
+            if _column_types(seed) != _column_types(node._named_schemas):
+                seed_deferred_node(node, seed)
+                stale[node.node_id] = node
+        for node in list(stale.values()):
+            for below in node.get_all_dependent_nodes():
+                if not below.deferred_until_run and below.node_id not in stale:
+                    below.results.resulting_data, below.results.errors, below._named_outputs = None, None, {}
+                    stale[below.node_id] = below
+        for frame in _bound_frames(self.namespace):
+            node = stale.get(frame.node_id)
+            if node is None or not frame._deferred or frame.flow_graph is not self.mode.graph:
+                continue
+            handle = None if frame.output_handle == DEFAULT_OUTPUT_HANDLE else frame.output_handle
+            try:
+                frame.data = materialise(node, handle).data_frame
+            except Exception:
+                continue
 
     def _fetch(self, node_id: int, handle: str) -> pl.LazyFrame:
         key = (node_id, handle)
-        if key not in self.rows:
+        if key not in self.rows or not os.path.exists(self.rows[key]):
             self.rows[key], changed = _canvas_answer(self.fetch, self.flow_id, node_id, handle)
             if changed:
                 print(CANVAS_CHANGED)
@@ -210,58 +295,209 @@ class _Session:
                 return canvas_id
         return None
 
-    def _computed_here(self, frame: FlowFrame, created: set[int]) -> pl.LazyFrame | None:
-        """A new frame's rows computed here; ``None`` when a node above it needs the canvas to run it.
+    def _resolve(self, frame: FlowFrame, created: set[int]) -> pl.LazyFrame:
+        """A new frame's rows: canvas nodes fetched, held nodes run by core, every other node computed here.
 
-        The walk up from the frame stops at canvas nodes: a seeded node no cell replaced, or a read of a file
-        this kernel cannot see whose canvas twin was seeded. Such a node holds its canvas rows when it is
-        deferred or at or below a gate, else keeps its own. Every other node computes again here, a deferred
-        node of ``COMPUTED_HERE_TYPES`` too, so a new frame needs no canvas ancestor. A new gate or any other
-        deferred node (an external source, a subflow, a script, a writer) holds the rows of the canvas node it
-        stands for (:meth:`_twin`); without one, as for a read of a file this kernel cannot see without a
-        seeded twin, the canvas has to run it first.
+        The walk up from the frame sorts each node. A seeded node no cell replaced, or a read of a file this
+        kernel cannot see whose canvas twin was seeded, holds its canvas rows when it is deferred or at or
+        below a gate (*canvas*), else keeps its own result and the walk stops. A new gate or deferred node
+        outside ``COMPUTED_HERE_TYPES`` with a canvas twin (:meth:`_twin`) is canvas too; without one, like a
+        read this kernel cannot see without a seeded twin, core runs it from its settings over its inputs' rows
+        (*held*, :meth:`_run_held`). Every other node computes again here (*computed*). Sources come first:
+        canvas and held rows become the results of their nodes, so the computed nodes below read them, and an
+        input of a held node this kernel computed is written as parquet for core.
         """
         canvas: dict[int, int] = {}
+        held: dict[int, FlowNode] = {}
         computed: dict[int, FlowNode] = {}
         twins: dict[int, int | None] = {}
-        stack = [self.mode.graph.get_node(frame.node_id)]
+        root = self.mode.graph.get_node(frame.node_id)
+        stack = [root]
         while stack:
             node = stack.pop()
-            if node.node_id in canvas or node.node_id in computed:
+            if node.node_id in canvas or node.node_id in held or node.node_id in computed:
                 continue
             if node.node_id in self.seeded and node.node_id not in created:
                 if node.deferred_until_run or any(n.node_type == "gate" for n in ancestors(node).values()):
                     canvas[node.node_id] = node.node_id
                 continue
             if _kernel_hidden_path(node) is not None:
-                if _kernel_twin_id(node) not in self.seeded:
-                    return None
-                canvas[node.node_id] = _kernel_twin_id(node)
-                continue
-            if node.node_type == "gate" or (node.deferred_until_run and node.node_type not in COMPUTED_HERE_TYPES):
+                twin = _kernel_twin_id(node)
+                if twin in self.seeded:
+                    canvas[node.node_id] = twin
+                    continue
+                held[node.node_id] = node
+            elif node.node_type == "gate" or (node.deferred_until_run and node.node_type not in COMPUTED_HERE_TYPES):
                 twin = self._twin(node, created, twins)
-                if twin is None:
-                    return None
-                canvas[node.node_id] = twin
-                continue
-            computed[node.node_id] = node
+                if twin is not None:
+                    canvas[node.node_id] = twin
+                    continue
+                held[node.node_id] = node
+            else:
+                computed[node.node_id] = node
             stack.extend(node.all_inputs)
-        if frame.node_id in canvas:
-            return self._fetch(canvas[frame.node_id], frame.output_handle)
-        for node in computed.values():
+        done: set[int] = set()
+
+        def ready(node: FlowNode) -> None:
+            if node.node_id in done or node.node_id in canvas:
+                return
+            done.add(node.node_id)
             for source, handle in node._incoming_edges():
+                ready(source)
                 if source.node_id in canvas:
-                    engine = FlowDataEngine(self._fetch(canvas[source.node_id], handle))
-                    if handle == DEFAULT_OUTPUT_HANDLE:
-                        source.results.resulting_data = engine
-                    else:
-                        source._named_outputs[handle] = engine
-        for node in computed.values():
-            node.results.resulting_data, node.results.errors, node._named_outputs = None, None, {}
-            node.deferred_until_run = False
+                    self._inject(source, handle, self._fetch(canvas[source.node_id], handle))
+            if node.node_id not in held:
+                node.results.resulting_data, node.results.errors, node._named_outputs = None, None, {}
+                node.deferred_until_run = False
+            elif self._held_current(node):
+                self._take(node)
+            else:
+                self._run_held(node, *self._held_inputs(node, canvas, held))
+
+        ready(root)
         handle = frame.output_handle
-        data = materialise(computed[frame.node_id], None if handle == DEFAULT_OUTPUT_HANDLE else handle).data_frame
+        if root.node_id in canvas:
+            return self._fetch(canvas[root.node_id], handle)
+        if root.node_id in held:
+            return self._held_rows(root, handle)
+        data = materialise(root, None if handle == DEFAULT_OUTPUT_HANDLE else handle).data_frame
         return data.lazy() if isinstance(data, pl.DataFrame) else data
+
+    @staticmethod
+    def _inject(node: FlowNode, handle: str, rows: pl.LazyFrame) -> None:
+        """Make ``rows`` the result of ``node``'s output ``handle`` here, so nodes below read them."""
+        engine = FlowDataEngine(rows)
+        if handle == DEFAULT_OUTPUT_HANDLE:
+            node.results.resulting_data = engine
+        else:
+            node._named_outputs[handle] = engine
+
+    def _held_current(self, node: FlowNode) -> bool:
+        """Whether core ran ``node`` in this session and every file it answered with is still there."""
+        paths = [path for (node_id, _), path in self.rows.items() if node_id == node.node_id]
+        return node.node_id in self.ran and all(os.path.exists(path) for path in paths)
+
+    def _held_rows(self, node: FlowNode, handle: str) -> pl.LazyFrame:
+        path = self.rows.get((node.node_id, handle))
+        if path is None:
+            raise NativeNodeError(
+                f"Node {node.node_id} has no rows for output {handle}: a gate routed it away in this run"
+            )
+        return pl.scan_parquet(path)
+
+    def _held_inputs(
+        self, node: FlowNode, canvas: Mapping[int, int], held: Mapping[int, FlowNode]
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """One entry per distinct ``(source, output handle)`` edge into ``node``, with its rows as a parquet core can
+        read (:meth:`_input_path`), and the files among them this kernel wrote for the run: a keyed node fed both
+        exits of a split sends each exit under its own handle."""
+        inputs: list[dict[str, Any]] = []
+        written: list[str] = []
+        seen: set[tuple[int, str]] = set()
+        for source, handle in node._incoming_edges():
+            if (source.node_id, handle) in seen:
+                continue
+            seen.add((source.node_id, handle))
+            path, mine = self._input_path(source, handle, canvas, held)
+            inputs.append({"node_id": source.node_id, "handle": handle, "path": path})
+            if mine:
+                written.append(path)
+        return inputs, written
+
+    def _input_path(
+        self, source: FlowNode, handle: str, canvas: Mapping[int, int], held: Mapping[int, FlowNode]
+    ) -> tuple[str, bool]:
+        """Output ``handle`` of ``source`` as a parquet core can read, and whether this kernel wrote it for the run:
+        a canvas or held node's own file, else rows this kernel computed written to the session's results folder."""
+        if source.node_id in canvas:
+            self._fetch(canvas[source.node_id], handle)
+            return self.rows[(canvas[source.node_id], handle)], False
+        if source.node_id in held:
+            self._held_rows(source, handle)
+            return self.rows[(source.node_id, handle)], False
+        if not self.results_dir:
+            raise NativeNodeError("This session has no results folder the canvas can read: Reset session")
+        os.makedirs(self.results_dir, exist_ok=True)
+        path = os.path.join(self.results_dir, f"input_{uuid4().hex}.parquet")
+        data = materialise(source, None if handle == DEFAULT_OUTPUT_HANDLE else handle).data_frame
+        (data if isinstance(data, pl.DataFrame) else data.collect()).write_parquet(path)
+        return path, True
+
+    def _ask_core(self, node: FlowNode, inputs: list[dict[str, Any]], *, schema_only: bool) -> dict[str, Any]:
+        body = {
+            "flow_id": self.flow_id,
+            "node": _node_payload(node),
+            "inputs": inputs,
+            "parameters": [p.model_dump(mode="json") for p in self.mode.graph.flow_settings.parameters],
+            "schema_only": schema_only,
+        }
+        try:
+            return self.run(body)
+        except NativeNodeError:
+            raise
+        except Exception as exc:
+            raise NativeNodeError(f"Could not run node {node.node_id} on the canvas: {exc}") from exc
+
+    def _run_held(self, node: FlowNode, inputs: list[dict[str, Any]], written: Sequence[str] = ()) -> None:
+        """Have core run ``node`` from its settings over ``inputs`` (:meth:`_held_inputs`) and take the rows of
+        every live output (:meth:`_take`); a gate's dead output gets none, an earlier run's rows for it included.
+
+        The inputs this kernel wrote go once core answered, and a node run again loses its earlier run's files:
+        only what the session can still reach stays in its results folder.
+        """
+        try:
+            answer = self._ask_core(node, inputs, schema_only=False)
+        finally:
+            _remove(written)
+        stale = [key for key in self.rows if key[0] == node.node_id]
+        _remove(self.rows.pop(key) for key in stale)
+        for handle, path in (answer.get("paths") or {}).items():
+            self.rows[(node.node_id, handle)] = path
+        self.ran.add(node.node_id)
+        self._take(node)
+
+    def _take(self, node: FlowNode) -> None:
+        """Make the rows core answered for ``node`` its results here, keep their schemas and give them to the
+        deferred frames bound to the node in the namespace, so ``.columns`` knows them. An output core answered
+        nothing for (a gate's exit closed in this run) goes back to its typed placeholder, here and on its frames,
+        so nothing reads the rows of an earlier run."""
+        schemas = dict(node._named_schemas)
+        live = {handle: path for (node_id, handle), path in self.rows.items() if node_id == node.node_id}
+
+        def rows_of(handle: str) -> pl.LazyFrame:
+            if handle in live:
+                return pl.scan_parquet(live[handle])
+            return FlowDataEngine.create_from_schema(list(schemas.get(handle) or [])).data_frame.lazy()
+
+        for handle in set(_handles(node)) | set(live):
+            rows = rows_of(handle)
+            if handle in live:
+                schemas[handle] = FlowDataEngine(rows).schema
+            self._inject(node, handle, rows)
+        node._named_schemas = schemas
+        for frame in _bound_frames(self.namespace):
+            if frame.node_id == node.node_id and frame._deferred:
+                frame.data = rows_of(frame.output_handle)
+
+    def held_schemas(self, node: FlowNode) -> dict[str, list[FlowfileColumn]] | None:
+        """The columns of a deferred node a cell built, for its seed (``native.resolved_seed``): its canvas twin's
+        when the twin has columns, else what core predicts from the node's settings and its inputs' columns
+        (``schema_only``, nothing runs). ``None`` when neither answers, and for a node this session computes."""
+        if node.node_type in COMPUTED_HERE_TYPES:
+            return None
+        created = {entry[2] for entry in self.mode.provenance}
+        twin = self.mode.snapshot.get(self._twin(node, created, {}))
+        if twin is not None and any(twin.schemas.values()):
+            return _per_handle(twin.schemas, _handles(node))
+        try:
+            inputs = [
+                {"node_id": source.node_id, "handle": handle, "columns": _entries(source, handle)}
+                for source, handle in node._incoming_edges()
+            ]
+            answer = self._ask_core(node, inputs, schema_only=True)
+            return {handle: _columns(entries) for handle, entries in (answer.get("schemas") or {}).items()} or None
+        except Exception:
+            return None
 
 
 def _canvas_answer(
@@ -291,97 +527,84 @@ def _clean_run_rows(flow_id: int) -> Callable[[int, str], pl.LazyFrame]:
     return rows
 
 
-def _new_node_message(frame: FlowFrame) -> str:
-    node = frame.flow_graph.get_node(frame.node_id)
-    hidden = _kernel_hidden_path(node) if node is not None else None
-    if hidden is not None:
-        return (
-            f"This kernel cannot see {hidden}: add its folder to the kernel's Folders this kernel can read, "
-            f"or {PUSH_FIRST[0].lower()}{PUSH_FIRST[1:]}"
-        )
-    return f"Node {frame.node_id} is new in this session and its rows need the canvas to run it. {PUSH_FIRST}"
+def _node_payload(node: FlowNode) -> dict[str, Any]:
+    """``node`` as the session graph's ``FlowfileData`` lists it, for core's ``node_run``."""
+    info = node.get_node_information()
+    return FlowfileNode(
+        id=info.id,
+        type=info.type,
+        is_start_node=node.is_start,
+        description=info.description,
+        node_reference=info.node_reference,
+        x_position=int(info.x_position or 0),
+        y_position=int(info.y_position or 0),
+        group_id=info.group_id,
+        left_input_id=info.left_input_id,
+        right_input_id=info.right_input_id,
+        input_ids=info.input_ids or None,
+        outputs=info.outputs,
+        output_handles=info.output_handles,
+        input_connections=info.input_connections,
+        setting_input=info.setting_input,
+    ).model_dump(mode="json")
+
+
+def _entries(source: FlowNode, handle: str) -> list[dict[str, str]]:
+    """The columns of ``source``'s output ``handle`` here, as ``{"name", "data_type"}`` entries."""
+    engine = materialise(source, None if handle == DEFAULT_OUTPUT_HANDLE else handle)
+    return [column.get_minimal_field_info().model_dump() for column in engine.schema or []]
 
 
 _SESSIONS: dict[int, _Session] = {}
 
 
-def _schema_head() -> str | None:
-    """The Alembic head this kernel's flowfile_core ships, which core compares with the catalog's revision;
-    ``None`` when it cannot be read."""
-    from flowfile_core.database.migration import package_head
-
-    try:
-        return package_head()
-    except Exception:
-        return None
+NO_DATABASE = (
+    "A notebook kernel has no catalog database to open ({site}); the catalog is read through flowfile: "
+    "ff.read_catalog_table, ff.list_catalogs, ff.get_catalog, ff.flow_ref, ff.kernels, "
+    "ff.get_all_available_database_connections"
+)
 
 
-_database_lock = threading.Lock()
-_refresh_pending = False
-_database_copy: str | None = None
+def _opened_from() -> str:
+    """Where this stack opened the catalog database: ``"a cell"``, else the nearest flowfile frame as
+    ``module.py:function`` (a build that opens it is a regression, and the message names its module)."""
+    for frame in reversed(traceback.extract_stack()[:-2]):
+        filename = frame.filename.replace("\\", "/")
+        if filename.startswith("<cell-"):
+            return "a cell"
+        for package in ("flowfile_frame/", "flowfile_core/", "flowfile/"):
+            if package in filename and "/database/" not in filename:
+                return f"{filename.rsplit(package, 1)[1]}:{frame.name}"
+    return "a cell"
 
 
-def _refresh_database() -> str | None:
-    """The catalog copy to open, after having core refresh it if this call has not yet; a missing copy raises.
+def _refuse_connect(dialect, conn_rec, cargs, cparams) -> None:
+    """Fail a new connection of the kernel's catalog engine before pysqlite opens (and would create) the file."""
+    raise RuntimeError(NO_DATABASE.format(site=_opened_from()))
 
-    Core answers with the copy's path in this kernel. ``None`` until core has named one (no SQLite file catalog).
+
+def _refuse_database() -> None:
+    """In a notebook kernel (``FLOWFILE_KERNEL_ID`` set) make the catalog engine refuse every connection, once.
+
+    ``connection.engine``, ``SessionLocal``, ``get_db_context`` and ``get_catalog_engine()`` all share the one
+    cached engine (``shared.database._engines``), so one ``do_connect`` listener covers them; a script and the
+    tests' kernel-sim never set the variable and keep core's engine as it is.
     """
-    global _refresh_pending, _database_copy
-    with _database_lock:
-        if _refresh_pending:
-            path = database_transport().get("path")
-            if path is not None and not Path(path).exists():
-                raise RuntimeError(
-                    f"The Flowfile database copy {path} is missing in this kernel; recreate the notebook kernel"
-                )
-            _database_copy = path
-            _refresh_pending = False
-        return _database_copy
-
-
-def _refresh_before_connect(dialect, conn_rec, cargs, cparams) -> None:
-    """Point every new SQLite connection at the copy core named last (pysqlite's first argument is the file)."""
-    copy = _refresh_database()
-    if copy is not None and dialect.name == "sqlite" and cargs:
-        cargs[0] = copy
-
-
-def _rearm(engine) -> None:
-    """Close ``engine``'s pooled connections and have its next new connection refresh the copy first.
-
-    Each copy is a plain rollback-journal file under a name of its own, so the engine's WAL switch is taken off,
-    and the refresh runs before the connection opens the file (``do_connect``), which then opens that copy
-    instead of ``FLOWFILE_DB_PATH``. Docker Desktop keeps serving a replaced file's old entry for a few
-    milliseconds, so a copy replaced in place would exist and fail to open.
-    """
-    global _refresh_pending
+    if not os.environ.get("FLOWFILE_KERNEL_ID"):
+        return
     from sqlalchemy import event
 
-    from shared.database import _enable_wal
-
-    if event.contains(engine, "connect", _enable_wal):
-        event.remove(engine, "connect", _enable_wal)
-    if not event.contains(engine, "do_connect", _refresh_before_connect):
-        event.listen(engine, "do_connect", _refresh_before_connect)
-    with _database_lock:
-        _refresh_pending = True
-    engine.dispose()
-
-
-def _release_database() -> None:
-    """In a notebook kernel (``FLOWFILE_KERNEL_ID`` and ``FLOWFILE_DB_PATH`` set), re-arm the catalog engine for
-    this call (:func:`_rearm`); elsewhere nothing happens."""
-    if not (os.environ.get("FLOWFILE_KERNEL_ID") and os.environ.get("FLOWFILE_DB_PATH")):
-        return
     from shared.database import get_catalog_engine
 
-    _rearm(get_catalog_engine())
+    engine = get_catalog_engine()
+    if not event.contains(engine, "do_connect", _refuse_connect):
+        event.listen(engine, "do_connect", _refuse_connect)
 
 
 def _hello(request: dict[str, Any]) -> dict[str, Any]:
     from shared._version import get_version
 
-    return {"ok": True, "version": get_version(), "schema_head": _schema_head()}
+    return {"ok": True, "version": get_version()}
 
 
 def _kernel_client() -> Any:
@@ -470,8 +693,10 @@ def _open(flow_id: int, request: dict[str, Any], namespace: dict[str, Any]) -> d
         finally:
             mode = notebook._deactivate()
     seeded = frozenset(node.node_id for node in mode.graph.nodes) if snapshot.get("flowfile_data") else frozenset()
-    session = _Session(flow_id, mode, namespace, uuid4().hex, transport, seeded)
+    results_dir = str(request.get("results_dir") or "")
+    session = _Session(flow_id, mode, namespace, uuid4().hex, transport, run_transport, seeded, results_dir)
     mode.row_resolver = session.canvas_rows
+    mode.schema_resolver = session.held_schemas
     _SESSIONS[flow_id] = session
     return {"ok": True, **session.stamp()}
 
@@ -481,11 +706,19 @@ def _error_line(text: str | None) -> str | None:
     return lines[-1] if lines else text
 
 
+def _refreshed(session: _Session, schemas: Mapping[Any, Mapping[str, Any]] | None = None) -> None:
+    """``session.refresh``, best effort: failing to take over the canvas's columns never fails the call."""
+    with contextlib.suppress(Exception):
+        session.refresh(schemas)
+
+
 def _execute(session: _Session, request: dict[str, Any]) -> dict[str, Any]:
     """Run one cell as Python in the session; its outputs, then the last expression's schema display."""
     session.revision += 1
     with notebook.resumed(session.mode), notebook.paths_as_written():
+        _refreshed(session, request.get("schemas"))
         result = execute_cell(str(request["cell_id"]), request["code"], session.namespace, executor=exec_cell)
+        _refreshed(session)
     displays = [*result.outputs, *([result.display] if result.display is not None else [])]
     return {
         "ok": result.ok,
@@ -526,9 +759,10 @@ def _clean_run(flow_id: int, request: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "result": result.model_dump(mode="json"), "traceback": result.traceback}
 
 
-def _schemas(session: _Session) -> dict[str, Any]:
+def _schemas(session: _Session, request: dict[str, Any]) -> dict[str, Any]:
     frames: dict[str, list[dict[str, str]]] = {}
     with notebook.resumed(session.mode):
+        _refreshed(session, request.get("schemas"))
         for name, value in list(session.namespace.items()):
             if name.startswith("_") or not isinstance(value, FlowFrame):
                 continue
@@ -539,11 +773,52 @@ def _schemas(session: _Session) -> dict[str, Any]:
     return {"ok": True, "frames": frames, **session.stamp()}
 
 
+_MIRRORED: dict[str, Path] = {}
+"""The custom node files this kernel wrote from core's sources, by node key: the only files the mirror removes."""
+
+_MIRRORING_OPS = frozenset({"open", "reset", "execute", "clean_run"})
+
+
+def _mirror_custom_nodes() -> None:
+    """Give this kernel's registry the custom node files core has, so a cell places them as a script does.
+
+    The kernel mounts no host folder, so core lists the hashes of its installed node files
+    (``custom_node_hashes``); only the files whose key the registry lacks, or holds with another hash, are
+    fetched (``custom_node_sources``) and written as ``<node_key>.py`` into the kernel's own nodes folder, byte
+    for byte as core hashed them (no newline translation). A mirrored file whose key core no longer lists is
+    removed, and the registry rescans once when anything changed. In the tests' kernel-sim that folder is
+    core's own, so every hash matches and nothing is fetched or written.
+    """
+    wanted = _metadata.custom_node_hashes()
+    stale = [key for key, digest in wanted.items() if (held := registry.get(key)) is None or held.source_hash != digest]
+    changed = False
+    for entry in _metadata.custom_node_sources(stale) if stale else []:
+        registry.directory.mkdir(parents=True, exist_ok=True)
+        path = registry.directory / f"{entry.node_key}.py"
+        path.write_text(entry.source, encoding="utf-8", newline="\n")
+        _MIRRORED[entry.node_key] = path
+        changed = True
+    for key in [key for key in _MIRRORED if key not in wanted]:
+        _MIRRORED.pop(key).unlink(missing_ok=True)
+        changed = True
+    if changed:
+        registry.scan()
+
+
 def _dispatch(request: dict[str, Any], namespace: dict[str, Any]) -> dict[str, Any]:
     op = request.get("op")
     if op == "hello":
         return _hello(request)
     flow_id = int(request["flow_id"])
+    with _metadata.installed(flow_id, lookup_transport):
+        return _dispatch_session(op, flow_id, request, namespace)
+
+
+def _dispatch_session(op: str | None, flow_id: int, request: dict[str, Any], namespace: dict[str, Any]) -> dict:
+    """One op on the flow's session, every catalog metadata lookup it makes answered by core; an op that builds
+    nodes first takes core's custom node files (:func:`_mirror_custom_nodes`)."""
+    if op in _MIRRORING_OPS:
+        _mirror_custom_nodes()
     if op in ("open", "reset"):
         return _open(flow_id, request, namespace)
     if op == "clean_run":
@@ -557,7 +832,7 @@ def _dispatch(request: dict[str, Any], namespace: dict[str, Any]) -> dict[str, A
     if session is None:
         return {"ok": False, "no_session": True, "error": "No notebook session is open for this flow"}
     _adopt(session, namespace)
-    return _execute(session, request) if op == "execute" else _schemas(session)
+    return _execute(session, request) if op == "execute" else _schemas(session, request)
 
 
 def handle(request_json: str, namespace: dict[str, Any]) -> None:
@@ -566,7 +841,7 @@ def handle(request_json: str, namespace: dict[str, Any]) -> None:
     ``namespace`` is the kernel's namespace the call runs in, where the flow's session keeps its variables.
     """
     try:
-        _release_database()
+        _refuse_database()
         result = _dispatch(json.loads(request_json), namespace)
     except BaseException as exc:
         text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))

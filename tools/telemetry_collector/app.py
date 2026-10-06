@@ -36,7 +36,9 @@ PLATFORMS = frozenset({"darwin", "linux", "windows", "other"})
 MODES = frozenset({"electron", "docker", "package", "other"})
 NODE_COUNT_BUCKETS = frozenset({"1-3", "4-7", "8-15", "16-30", "31+"})
 DURATION_BUCKETS = frozenset({"<1s", "1-10s", "10-60s", "1-5m", "5-30m", "30m+"})
-EXPORT_TARGETS = frozenset({"polars", "flowframe", "project", "project_zip", "project_save"})
+EXPORT_TARGETS = frozenset(
+    {"polars", "flowframe", "project", "project_zip", "project_save", "notebook_py", "notebook_ipynb"}
+)
 
 EVENT_PROPS: dict[str, frozenset[str]] = {
     "app_started": frozenset(),

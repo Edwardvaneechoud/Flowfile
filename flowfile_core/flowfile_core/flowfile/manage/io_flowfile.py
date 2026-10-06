@@ -17,6 +17,24 @@ except ImportError:
     yaml = None
 
 
+def _flow_storage_directories() -> list[Path]:
+    return [storage.flows_directory, storage.uploads_directory, storage.temp_directory_for_flows]
+
+
+def require_flow_in_storage(flow_path: Path) -> Path:
+    """``flow_path`` resolved; in docker mode it must lie under the flows, uploads or temp flows folder.
+
+    Stricter than ``_validate_flow_path``, which lets any absolute path through: a catalog registration
+    stores whatever path it was given, so reading a registered file must not reach past these folders.
+    """
+    resolved = flow_path.resolve()
+    if is_docker_mode() and not any(
+        resolved.is_relative_to(directory.resolve()) for directory in _flow_storage_directories()
+    ):
+        raise ValueError("the flow's file is outside the server's flow folders")
+    return resolved
+
+
 def _validate_flow_path(flow_path: Path) -> Path:
     """Validate flow path is within allowed directories or is an explicit absolute path."""
     resolved = flow_path.resolve()
@@ -29,12 +47,7 @@ def _validate_flow_path(flow_path: Path) -> Path:
         raise FileNotFoundError(f"Flow file not found: {resolved}")
 
     if is_docker_mode():
-        safe_directories = [
-            storage.flows_directory,
-            storage.uploads_directory,
-            storage.temp_directory_for_flows,
-        ]
-        is_safe = any(resolved.is_relative_to(safe_dir) for safe_dir in safe_directories)
+        is_safe = any(resolved.is_relative_to(safe_dir) for safe_dir in _flow_storage_directories())
     else:
         is_safe = True
 
@@ -412,10 +425,12 @@ def populate_graph_from_flow_information(
     dynamic-input nodes follow once every node is configured. Start nodes are not read
     from the file: each source's ``add_*`` marks itself, so a stale ``is_start_node``
     flag can never resurface. The caller holds ``graph.rebuilding()``, so nothing is
-    recorded.
+    recorded. The graph may already hold the nodes the information's edges read from
+    (a notebook's held run adds a node's inputs first); they are wired through their
+    default output.
 
     Args:
-        graph: An empty graph whose settings and identity are kept as-is.
+        graph: A graph holding at most the information's sources, whose settings and identity are kept as-is.
         flow_info: The flow to build.
         owner_of: Maps a node id to the ``user_id`` to stamp on its settings; None leaves
             ``user_id`` untouched.

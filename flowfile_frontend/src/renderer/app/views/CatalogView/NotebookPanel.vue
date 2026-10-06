@@ -112,18 +112,55 @@
           </el-option>
           <template #footer>
             <button
-              v-if="flowId && !pickerKernels.length"
+              v-if="needsNotebookKernel || creatingKernelId"
+              type="button"
+              class="nb-kernel-footer-link nb-kernel-footer-action"
+              :disabled="kernelActionBusy"
+              @click="createNotebookKernel"
+            >
+              <i class="fa-solid fa-plus"></i> {{ kernelActionLabel }}
+            </button>
+            <button
+              v-if="needsNotebookKernel"
               type="button"
               class="nb-kernel-footer-link nb-kernel-footer-create"
               @click="openCreateKernel"
             >
-              <i class="fa-solid fa-plus"></i> Create notebook kernel…
+              <i class="fa-solid fa-sliders"></i> Customise…
             </button>
             <router-link :to="kernelsRoute" class="nb-kernel-footer-link">
               <i class="fa-solid fa-microchip"></i> Manage kernels
             </router-link>
           </template>
         </el-select>
+
+        <!-- One click sets up the default notebook kernel; one on an older image gets a restart. -->
+        <button
+          v-if="needsNotebookKernel || creatingKernelId"
+          type="button"
+          class="nb-tool-btn nb-kernel-action"
+          data-testid="nb-create-notebook-kernel"
+          :title="CREATE_KERNEL_TITLE"
+          :disabled="kernelActionBusy"
+          @click="createNotebookKernel"
+        >
+          <i :class="kernelActionBusy ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-plus'"></i>
+          <span>{{ kernelActionLabel }}</span>
+        </button>
+        <button
+          v-else-if="outdatedNotebookKernel || restartingKernel"
+          type="button"
+          class="nb-tool-btn nb-kernel-action"
+          data-testid="nb-update-notebook-kernel"
+          :title="UPDATE_KERNEL_TITLE"
+          :disabled="restartingKernel"
+          @click="updateNotebookKernel"
+        >
+          <i
+            :class="restartingKernel ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-arrows-rotate'"
+          ></i>
+          <span>{{ restartingKernel ? kernelActionLabel : "Update notebook kernel" }}</span>
+        </button>
 
         <div class="nb-tool-group">
           <button
@@ -170,6 +207,30 @@
               <el-dropdown-menu>
                 <el-dropdown-item :disabled="batchBusy" @click="store.clearOutputs()">
                   <i class="fa-solid fa-eraser nb-menu-icon"></i> Clear outputs
+                </el-dropdown-item>
+                <el-dropdown-item
+                  divided
+                  :disabled="!canExport"
+                  data-testid="nb-export-py"
+                  title="Save the cells as a .py script with # %% cell markers"
+                  @click="onExport('py')"
+                >
+                  <i class="fa-solid fa-file-code nb-menu-icon"></i> Export as Python script…
+                </el-dropdown-item>
+                <el-dropdown-item
+                  :disabled="!canExport"
+                  data-testid="nb-export-ipynb"
+                  title="Save the cells and their outputs as a Jupyter .ipynb"
+                  @click="onExport('ipynb')"
+                >
+                  <i class="fa-solid fa-book nb-menu-icon"></i> Export as Jupyter notebook…
+                </el-dropdown-item>
+                <el-dropdown-item
+                  :disabled="!canExport"
+                  data-testid="nb-copy-script"
+                  @click="onCopyScript"
+                >
+                  <i class="fa-solid fa-clipboard nb-menu-icon"></i> Copy as Python script
                 </el-dropdown-item>
                 <el-dropdown-item
                   v-if="!flowId || store.active?.kernelId"
@@ -290,8 +351,11 @@
       </span>
     </div>
 
-    <!-- Cells of the active notebook -->
-    <div v-if="store.active" ref="hostRef" class="nb-cells">
+    <!-- Cells of the active notebook; a flow tab shows a placeholder until its first rendering lands. -->
+    <div v-if="rendering" class="nb-cells nb-cells--rendering">
+      <i class="fa-solid fa-spinner fa-spin"></i> Rendering the notebook…
+    </div>
+    <div v-else-if="store.active && ownTab" ref="hostRef" class="nb-cells">
       <div
         v-if="drag.indicatorTop.value !== null"
         class="nb-drop-line"
@@ -426,7 +490,7 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
       v-if="flowId"
       v-model="createKernelVisible"
       :suggestion="notebookKernelSuggestion"
-      @created="onKernelCreated"
+      @created="selectCreatedKernel"
     />
   </div>
 </template>
@@ -444,6 +508,7 @@ import {
   cellErrorMark,
   RERENDER_FAILED,
   SYNC_NEEDS_ADMIN,
+  rememberedFlowKernel,
 } from "../../stores/notebook-store";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useWritableNamespaces } from "../../composables/useWritableNamespaces";
@@ -460,11 +525,28 @@ import { flushPendingEdits } from "../../services/mutationChannel";
 import { currentNodeId, seedNodeId } from "../../composables/useDragAndDrop";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";
 import CreateKernelDialog from "../../components/kernel/CreateKernelDialog.vue";
+import { useKernelCreationTracker } from "../../composables/useKernelCreationTracker";
+import { useKernelResources } from "../../composables/useKernelResources";
 import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
 import { cellMoveAnnouncement } from "../../components/notebook/cellOperations";
+import {
+  EXPORT_FILTER,
+  EXPORT_MIME,
+  exportFileName,
+  hasExportableCells,
+  serializeNotebook,
+  toPythonScript,
+  type ExportFormat,
+} from "../../components/notebook/notebookExport";
+import { FlowApi } from "../../api/flow.api";
+import { copyTextEverywhere } from "../../utils/clipboardUtils";
+import { saveFile } from "../../utils/tableExport";
 import { cellPresentation } from "../../components/notebook/cellPresentation";
 import { cellSelector, focusCell, ownerIdForNotebook } from "../../components/notebook/editorViews";
-import { attachDataframeSchemas } from "../../components/notebook/useDataframeSchemas";
+import {
+  attachDataframeSchemas,
+  refresh as refreshDataframeSchemas,
+} from "../../components/notebook/useDataframeSchemas";
 import { scanCatalogRefs } from "../../components/nodes/node-types/elements/pythonScript/dataframeSchemaInference";
 import { useCellDrag } from "../../components/notebook/useCellDrag";
 import { getCellHistory } from "../../components/notebook/useCellHistory";
@@ -476,18 +558,30 @@ import {
 import {
   kernelStatusNeedsAttention,
   resolveNotebookKernelStatus,
+  sameKernelList,
 } from "../../components/notebook/notebookKernelStatus";
+import {
+  defaultNotebookKernel,
+  notebookKernelActionLabel,
+  notebookKernelConfig,
+  notebookKernelOutdated,
+  type NotebookKernelPhase,
+} from "../../components/notebook/notebookKernelSetup";
 import type { CellOperation } from "../../components/notebook/cellOperations";
 import type { CellType, NotebookCellModel } from "../../components/notebook/types";
 import type { KernelInfo, KernelSuggestion } from "../../types/kernel.types";
 
 const KERNEL_POLL_MS = 5000;
+const PULL_POLL_MS = 2000;
 const NO_KERNEL = "__no_kernel__";
+const CREATE_KERNEL_TITLE =
+  "Creates a kernel on the Notebook image (this app's flowfile) and selects it. " +
+  "The first time, the image downloads first.";
+const UPDATE_KERNEL_TITLE =
+  "Restarts the kernel on this app's Notebook image. Anything held in its memory is lost.";
 
-/** A kernel can run the canvas notebook when it has flowfile installed or is a notebook image. */
-const runsNotebook = (k: KernelInfo): boolean =>
-  k.packages.some((p) => /^flowfile\s*($|[=<>!~[;@ ])/i.test(p.trim())) ||
-  (k.custom_image ?? "").includes("notebook");
+/** Only the Notebook image runs the canvas notebook. */
+const runsNotebook = (k: KernelInfo): boolean => k.image_flavour === "notebook";
 
 /** With `flowId` the panel is that flow's canvas notebook: one ephemeral tab rendered from the canvas. */
 const props = defineProps<{ flowId?: number }>();
@@ -553,25 +647,126 @@ function openCreateKernel() {
   kernelSelectRef.value?.blur();
   createKernelVisible.value = true;
 }
-const notebookKernelSuggestion: KernelSuggestion = {
-  config: {
-    id: "notebook",
-    name: "Notebook",
-    packages: [__APP_VERSION__ ? `flowfile==${__APP_VERSION__}` : "flowfile"],
-    cpu_cores: 2,
-    memory_gb: 4,
-    gpu: false,
-    image_flavour: "lite",
-    custom_image: null,
-    mounted_folders: [],
-  },
-  covered_by_flavour: [],
-  flavour_image_available: null,
-};
+/** A flow notebook with kernel sessions but no kernel that can run it: offer the one-click default. */
+const needsNotebookKernel = computed(
+  () =>
+    !!props.flowId &&
+    store.kernelSessions &&
+    dockerAvailable.value &&
+    kernelsLoaded.value &&
+    pickerKernels.value.length === 0,
+);
 
-async function onKernelCreated(kernel: KernelInfo) {
-  store.setKernel(kernel.id);
-  await loadKernels();
+const { createKernel, pendingCreations } = useKernelCreationTracker();
+const { imageStatuses, ensureLoaded } = useKernelResources();
+const notebookImageStatus = computed(
+  () => imageStatuses.value.find((s) => s.flavour === "notebook") ?? null,
+);
+const notebookImageInstalled = computed<boolean | null>(
+  () => notebookImageStatus.value?.available ?? null,
+);
+
+const notebookKernelSuggestion = computed<KernelSuggestion>(() => ({
+  config: notebookKernelConfig(kernels.value.map((k) => k.id)),
+}));
+
+let unmounted = false;
+
+/** Select a kernel that finished creating, unless the panel meanwhile shows another notebook. */
+async function selectCreatedKernel(kernel: KernelInfo) {
+  if (store.active?.flowId === props.flowId) store.setKernel(kernel.id);
+  if (!unmounted) await loadKernels();
+}
+
+const creatingKernelId = ref<string | null>(null);
+const pulling = ref(false);
+const restartingKernel = ref(false);
+let pullPollTimer: ReturnType<typeof setInterval> | null = null;
+
+const kernelActionPhase = computed<NotebookKernelPhase>(() => {
+  if (restartingKernel.value) return "restarting";
+  if (!creatingKernelId.value) return "idle";
+  return pendingCreations.value.find((p) => p.id === creatingKernelId.value)?.phase ?? "creating";
+});
+const kernelActionBusy = computed(() => creatingKernelId.value !== null);
+const kernelActionLabel = computed(() =>
+  notebookKernelActionLabel({
+    imageInstalled: notebookImageInstalled.value,
+    phase: kernelActionPhase.value,
+    pulling: pulling.value,
+  }),
+);
+
+/** Core pulls the Notebook image inline on create and start; docker-status says while it does. */
+function startPullPoll() {
+  pulling.value = notebookImageInstalled.value === false;
+  pullPollTimer = setInterval(async () => {
+    const { images } = await KernelApi.getDockerStatus();
+    pulling.value = images.find((i) => i.flavour === "notebook")?.pull_state === "pulling";
+  }, PULL_POLL_MS);
+}
+
+function stopPullPoll() {
+  if (pullPollTimer) clearInterval(pullPollTimer);
+  pullPollTimer = null;
+  pulling.value = false;
+}
+
+/** Create, start and select the default notebook kernel; the tracker reports the outcome. */
+async function createNotebookKernel() {
+  if (creatingKernelId.value) return;
+  kernelSelectRef.value?.blur();
+  const config = notebookKernelConfig(kernels.value.map((k) => k.id));
+  creatingKernelId.value = config.id;
+  startPullPoll();
+  try {
+    const kernel = await createKernel(config, { autoStart: true });
+    await selectCreatedKernel(kernel);
+  } catch {
+    // The creation tracker already notified; the button simply re-enables.
+  } finally {
+    stopPullPoll();
+    creatingKernelId.value = null;
+    void ensureLoaded(true);
+  }
+}
+
+/** The selected notebook kernel runs an older release of the image than this app ships. */
+const outdatedNotebookKernel = computed<KernelInfo | null>(() => {
+  const s = kernelStatus.value;
+  if (!props.flowId || !("kernel" in s)) return null;
+  return notebookKernelOutdated(s.kernel, notebookImageStatus.value?.image) ? s.kernel : null;
+});
+
+/** Starting resolves the flavour's current image and pulls it, so a restart is the update. */
+async function updateNotebookKernel() {
+  const kernel = outdatedNotebookKernel.value;
+  if (!kernel || restartingKernel.value) return;
+  try {
+    await ElMessageBox.confirm(
+      `"${kernel.name}" will be stopped and started again on this app's Notebook image ` +
+        "(downloaded first when missing). Anything held in the kernel's memory is lost.",
+      "Update notebook kernel",
+      { confirmButtonText: "Update", cancelButtonText: "Cancel", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  restartingKernel.value = true;
+  startPullPoll();
+  try {
+    if (kernel.state !== "stopped") await KernelApi.stop(kernel.id);
+    await KernelApi.start(kernel.id);
+    await loadKernels();
+  } catch (e) {
+    ElMessage.error(
+      `Failed to update "${kernel.name}": ${(e as Error).message}. ` +
+        "Retry here or start it from the Python Kernels page.",
+    );
+  } finally {
+    stopPullPoll();
+    restartingKernel.value = false;
+  }
 }
 
 /** A kernel session keeps the stale badges; the canvas sync state shows only when it failed. */
@@ -594,6 +789,16 @@ const banner = computed<KernelBanner | null>(() => {
     return { tone: "warning", icon: "fa-solid fa-lock", text: SYNC_NEEDS_ADMIN };
   }
   if (props.flowId && !store.active?.kernelId) return null;
+  const outdated = outdatedNotebookKernel.value;
+  if (outdated) {
+    return {
+      tone: "warning",
+      icon: "fa-solid fa-arrows-rotate",
+      text:
+        `Kernel "${outdated.name}" runs ${outdated.image}; this app ships ` +
+        `${notebookImageStatus.value?.image}. Update it to run cells.`,
+    };
+  }
   const name = "kernel" in s ? `"${s.kernel.name}"` : "";
   switch (s.kind) {
     case "docker-off":
@@ -709,6 +914,18 @@ function cancelRename() {
 // Primer shows only while the notebook has no code yet; it hides as soon as you type.
 const showPrimer = computed(
   () => !props.flowId && !!store.active && store.active.cells.every((c) => !c.code.trim()),
+);
+
+// Flow mode shows only its own tab; until openFlowNotebook activates it, another tab is active.
+const ownTab = computed(
+  () =>
+    !!store.active &&
+    (props.flowId ? store.active.flowId === props.flowId : store.active.flowId == null),
+);
+const opening = ref(!!props.flowId);
+// A flow tab is created empty and filled by its first rendering; a re-opened tab keeps its cells.
+const rendering = computed(
+  () => opening.value && !(ownTab.value && store.active!.cells.length > 0),
 );
 
 function priorCodes(idx: number): string[] {
@@ -889,17 +1106,33 @@ function onRedoCellAction() {
 
 async function loadKernels() {
   try {
-    kernels.value = await KernelApi.getAll();
+    const next = await KernelApi.getAll();
+    if (!sameKernelList(kernels.value, next)) kernels.value = next;
     kernelsLoaded.value = true;
+    pickDefaultKernel();
   } catch {
     // Keep the last known list: a transient fetch failure must not flag every kernel as gone.
   }
 }
 
+/** A flow the user never picked a kernel for runs on a notebook kernel as soon as one exists; an explicit
+ * **No kernel** is remembered as such and left alone. */
+function pickDefaultKernel() {
+  const nb = store.active;
+  if (!props.flowId || nb?.flowId !== props.flowId || nb.kernelId || !store.kernelSessions) return;
+  if (rememberedFlowKernel(props.flowId) !== undefined) return;
+  const kernel = defaultNotebookKernel(kernels.value);
+  if (kernel) store.setKernel(kernel.id);
+}
+
 onMounted(async () => {
   if (props.flowId) {
-    await store.loadFlowStatus();
-    await openFlow();
+    try {
+      await store.loadFlowStatus();
+      await openFlow();
+    } finally {
+      opening.value = false;
+    }
     if (!store.kernelSessions) return;
   } else {
     store.ensureHydrated();
@@ -911,13 +1144,17 @@ onMounted(async () => {
     dockerAvailable.value = false;
   }
   if (dockerAvailable.value) {
+    // The image statuses tell whether the Notebook image is installed and which tag the app ships.
+    void ensureLoaded();
     await loadKernels();
     pollTimer = setInterval(loadKernels, KERNEL_POLL_MS);
   }
 });
 
 onBeforeUnmount(() => {
+  unmounted = true;
   if (pollTimer) clearInterval(pollTimer);
+  stopPullPoll();
   unregisterFlowHooks?.();
   for (const detach of schemaDetachers.values()) detach();
   schemaDetachers.clear();
@@ -1049,7 +1286,11 @@ async function onPush() {
 
 /** Run a node cell (syncing first when needed), then show its node in the canvas preview. */
 async function previewOnCanvas(cellId: string) {
+  const tabId = store.activeTabId;
+  const onKernel = !!store.active?.kernelId;
   if (!(await store.runFlowCell(cellId))) return;
+  // The canvas found the node's columns: a kernel session's frames take them with this call.
+  if (onKernel && tabId) void refreshDataframeSchemas(ownerIdForNotebook(tabId));
   // The user may have switched flows while the cell ran.
   if (store.active?.flowId !== props.flowId || useFlowStore().flowId !== props.flowId) return;
   const nodeId = store.active?.nodeIds?.[cellId]?.at(-1);
@@ -1083,6 +1324,36 @@ function onAddCell(command: string, afterIndex?: number) {
   const tab = store.activeTabId;
   if (!tab || structuralDisabled.value) return;
   focusAfterTick(tab, store.addCell(command as CellType, afterIndex)?.id ?? null);
+}
+
+const canExport = computed(() => !!store.active && hasExportableCells(store.active.cells));
+
+/** The flow's name for a flow tab (the tab itself is only "Flow N"), else the notebook's name. */
+async function exportBaseName(): Promise<string> {
+  const fallback = store.active?.name ?? "";
+  if (!props.flowId) return fallback;
+  const settings = await FlowApi.getFlowSettings(props.flowId).catch(() => null);
+  return settings?.name?.trim() || fallback;
+}
+
+async function onExport(format: ExportFormat) {
+  const nb = store.active;
+  if (!nb || !canExport.value) return;
+  const text = serializeNotebook(nb.cells, format);
+  const fileName = exportFileName(await exportBaseName(), format);
+  await saveFile(new Blob([text], { type: EXPORT_MIME[format] }), fileName, EXPORT_FILTER[format]);
+  // Fire-and-forget: confirming the export must never affect the download.
+  NotebookApi.confirmExport(format).catch(() => undefined);
+}
+
+async function onCopyScript() {
+  const nb = store.active;
+  if (!nb || !canExport.value) return;
+  if (await copyTextEverywhere(toPythonScript(nb.cells))) {
+    ElMessage.success("Copied the notebook as a Python script");
+  } else {
+    ElMessage.error("Couldn't copy to the clipboard. Use Export as Python script instead.");
+  }
 }
 
 async function onSave() {
@@ -1374,13 +1645,40 @@ async function onDelete() {
 .nb-kernel-footer-link:hover {
   text-decoration: underline;
 }
-.nb-kernel-footer-create {
+.nb-kernel-footer-create,
+.nb-kernel-footer-action {
   display: flex;
   margin-bottom: var(--spacing-1-5);
   padding: 0;
   border: none;
   background: none;
   cursor: pointer;
+}
+.nb-kernel-footer-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+  text-decoration: none;
+}
+/* Labelled kernel action beside the picker; it shrinks (ellipsised label) so a narrow dock never clips Push/Run all. */
+.nb-kernel-action {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  gap: var(--spacing-1-5);
+  padding: 0 var(--spacing-2);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+.nb-kernel-action > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nb-kernel-action:hover:not(:disabled) {
+  color: var(--color-primary);
+  background: var(--color-background-tertiary);
 }
 
 /* Canvas-style Save split-button (mirrors HeaderButtons .action-btn-split):
@@ -1572,6 +1870,14 @@ async function onDelete() {
   overflow-y: auto;
   padding: var(--spacing-3) var(--spacing-3) var(--spacing-6);
   background: var(--color-background-primary);
+}
+.nb-cells--rendering {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
 }
 /* Drop indicator for a cell drag; the list itself never reorders mid-gesture. */
 .nb-drop-line {

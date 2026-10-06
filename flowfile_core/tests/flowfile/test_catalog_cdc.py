@@ -400,6 +400,24 @@ class TestCatalogChangeReader:
         graph.get_node(1).get_resulting_data().collect()
         assert _cursors(table_id) == []
 
+    def test_run_that_commits_no_sources_does_not_advance_the_cursor(self):
+        """A notebook's lineage run passes ``commit_sources=False``; the next committing run advances it."""
+        ns_id = _create_namespace()
+        _write(ns_id, "looked_at", V1)
+        table_id = _table(ns_id, "looked_at").id
+
+        graph = _create_graph(flow_id=3)
+        _add_reader(
+            graph, 1, table_name="looked_at", namespace_id=ns_id,
+            cdc_mode="since_last_run", cdc_start="beginning", cdc_consumer_name="c1",
+        )
+        run_info = graph.run_graph(node_ids={1}, commit_sources=False)
+        assert run_info.success
+        assert _cursors(table_id) == []
+
+        _run_graph(graph)
+        assert len(_cursors(table_id)) == 1
+
     def test_since_version_reads_everything_after_that_commit(self):
         ns_id = _create_namespace()
         _write(ns_id, "byversion", V1)

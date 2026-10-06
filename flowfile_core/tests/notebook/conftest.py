@@ -20,7 +20,7 @@ from flowfile_core.auth.jwt import get_current_active_user, get_current_user
 from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
-from flowfile_core.kernel.models import ExecuteResult, KernelInfo, KernelState
+from flowfile_core.kernel.models import ExecuteResult, ImageFlavour, KernelInfo, KernelState
 from flowfile_core.notebook import bridge
 from flowfile_core.notebook.interpret import CellInterpreter
 from flowfile_core.notebook.push import seed_snapshot
@@ -35,6 +35,60 @@ RUNNER_KINDS = ("interpreting", "exec")
 _RUN_MINTED_FIELDS = {"flow_id", "flowfile_id", "flowfile_name"}
 
 KERNEL_CALLS_DURING_CORPUS: list[str] = []
+
+IN_KERNEL_OP: contextvars.ContextVar[bool] = contextvars.ContextVar("in_kernel_op", default=False)
+"""Set in the thread a :class:`KernelSimManager` runs a kernel op on; the session's calls back to core run in a
+fresh context, so a listener that reads it tells the kernel's own work from core's (:func:`kernel_db_opens`)."""
+
+_DATA_LAYER = (
+    "/catalog/",
+    "/database/",
+    "/auth/",
+    "/secret_manager/",
+    "/kernel/persistence.py",
+    "/database_connection_manager/",
+    "/kafka/connection_manager.py",
+)
+_PACKAGES = ("flowfile_frame/flowfile_frame/", "flowfile_core/flowfile_core/", "flowfile/flowfile/")
+
+
+def _opened_from(stack) -> str:
+    """The nearest flowfile frame above the data layer that opened a connection, as ``module.py:function``."""
+    for frame in reversed(stack):
+        filename = frame.filename.replace("\\", "/")
+        if "/tests/" in filename or any(part in filename for part in _DATA_LAYER):
+            continue
+        for package in _PACKAGES:
+            if package in filename:
+                return f"{filename.split(package, 1)[1]}:{frame.name}"
+    return "?"
+
+
+@pytest.fixture
+def kernel_db_opens() -> list[str]:
+    """Every catalog connection a kernel op (``IN_KERNEL_OP``) checked out, by the flowfile call site that opened it.
+
+    The ``kernel-sim`` kernel shares core's engine, so a pool listener under the sim's marker sees exactly the
+    connections the kernel's own work would open in a container; core's answers to the session's calls back run in
+    a fresh context and are not counted.
+    """
+    import traceback
+
+    from sqlalchemy import event
+
+    from flowfile_core.database import connection
+
+    opened: list[str] = []
+
+    def checked_out(dbapi_connection, connection_record, connection_proxy):
+        if IN_KERNEL_OP.get():
+            opened.append(_opened_from(traceback.extract_stack()[:-1]))
+
+    event.listen(connection.engine, "checkout", checked_out)
+    try:
+        yield opened
+    finally:
+        event.remove(connection.engine, "checkout", checked_out)
 
 
 @contextmanager
@@ -298,40 +352,58 @@ class KernelSimManager:
     calling context and in ``namespaces[request.flow_id]`` (the kernel's per-flow namespace), with stdout and
     stderr captured, as the kernel runtime runs a call, and returns an
     ``ExecuteResult``; so ``notebook.kernel_runner`` and the frame's ``notebook_kernel`` session run for real.
-    The shared folder is ``shared_volume_path`` and paths are the same on both sides. :meth:`node_result`
-    is the session's transport to core: ``kernel_runner.node_result`` in a fresh context, as the kernel's
-    owner, with its ``HTTPException`` detail raised as the kernel would see it.
+    The shared folder is ``shared_volume_path`` and paths are the same on both sides. :meth:`node_result` and
+    :meth:`node_run` are the session's transports to core: ``kernel_runner.node_result`` and
+    ``held_run.run_held_node`` in a fresh context, as the kernel's owner, with their ``HTTPException`` detail
+    raised as the kernel would see it.
     """
 
     def __init__(
         self, kernel_id: str = "nb-kernel", owner_id: int = NOTEBOOK_OWNER_ID, shared: Path | None = None
     ) -> None:
-        self.kernel = KernelInfo(id=kernel_id, name="Notebook", state=KernelState.IDLE, packages=["flowfile"])
+        self.kernel = KernelInfo(
+            id=kernel_id, name="Notebook", state=KernelState.IDLE, image_flavour=ImageFlavour.NOTEBOOK
+        )
         self.owner_id = owner_id
         self.requests = []
         self.shared_volume_path = str(shared)
         self.node_results: list[dict] = []
+        self.node_runs: list[dict] = []
+        self.lookups: list[dict] = []
         self.namespaces: dict[int, dict] = {}
+        self._docker_network = None
 
     def to_kernel_path(self, local_path):
         return local_path
 
-    def host_folders(self, kernel_id):
-        return {}
-
-    def node_result(self, body: dict) -> dict:
+    def _as_owner(self, call, *args):
         from fastapi import HTTPException
 
-        from flowfile_core.notebook import kernel_runner
         from flowfile_frame.native import NativeNodeError
 
-        self.node_results.append(body)
         user = PydanticUser(username="nb_kernel_owner", id=self.owner_id, disabled=False)
-        args = (self.kernel.id, user, body["flow_id"], body["node_id"], body.get("output_handle"))
         try:
-            return contextvars.Context().run(kernel_runner.node_result, *args)
+            return contextvars.Context().run(call, self.kernel.id, user, *args)
         except HTTPException as exc:
             raise NativeNodeError(str(exc.detail)) from exc
+
+    def node_result(self, body: dict) -> dict:
+        from flowfile_core.notebook import kernel_runner
+
+        self.node_results.append(body)
+        return self._as_owner(kernel_runner.node_result, body["flow_id"], body["node_id"], body.get("output_handle"))
+
+    def node_run(self, body: dict) -> dict:
+        from flowfile_core.notebook import held_run
+
+        self.node_runs.append(body)
+        return self._as_owner(held_run.run_held_node, held_run.NodeRunRequest.model_validate(body))
+
+    def lookup(self, body: dict) -> dict:
+        from flowfile_core.notebook import lookup
+
+        self.lookups.append(body)
+        return self._as_owner(lookup.answer_request, lookup.LookupRequest.model_validate(body))
 
     def get_kernel_sync(self, kernel_id):
         return self.kernel if kernel_id == self.kernel.id else None
@@ -347,6 +419,7 @@ class KernelSimManager:
         stdout, stderr, failure = io.StringIO(), io.StringIO(), []
 
         def run():
+            IN_KERNEL_OP.set(True)
             try:
                 with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                     namespace = self.namespaces.setdefault(request.flow_id, {})
@@ -374,7 +447,6 @@ class LockingKernelSimManager(KernelSimManager):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._docker_network = None
         self._locks: dict[str, threading.Lock] = {}
         self._locks_lock = threading.Lock()
 
@@ -402,6 +474,8 @@ def _install_kernel_sim(monkeypatch, manager: KernelSimManager) -> None:
     monkeypatch.setattr(kernel_package, "get_kernel_manager", lambda: manager)
     monkeypatch.setattr(flow_graph_module, "get_kernel_manager", lambda: manager)
     monkeypatch.setattr(notebook_kernel, "transport", manager.node_result)
+    monkeypatch.setattr(notebook_kernel, "run_transport", manager.node_run)
+    monkeypatch.setattr(notebook_kernel, "lookup_transport", manager.lookup)
 
 
 def _forget_kernel_sim() -> None:
@@ -413,6 +487,7 @@ def _forget_kernel_sim() -> None:
     kernel_runner._sessions.clear()
     kernel_runner._verified.clear()
     kernel_runner._fingerprints.clear()
+    kernel_runner._schemas_sent.clear()
     kernel_runner._results.clear()
 
 

@@ -1,0 +1,89 @@
+name: Notebook Kernel Tests
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'flowfile_frame/**'
+      - 'flowfile_core/flowfile_core/notebook/**'
+      - 'flowfile_core/flowfile_core/kernel/**'
+      - 'flowfile_core/tests/notebook/**'
+      - 'kernel_runtime/**'
+      - 'shared/**'
+      - 'pyproject.toml'
+      - 'poetry.lock'
+      - '.github/workflows/test-notebook-kernel.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'flowfile_frame/**'
+      - 'flowfile_core/flowfile_core/notebook/**'
+      - 'flowfile_core/flowfile_core/kernel/**'
+      - 'flowfile_core/tests/notebook/**'
+      - 'kernel_runtime/**'
+      - 'shared/**'
+      - 'pyproject.toml'
+      - 'poetry.lock'
+      - '.github/workflows/test-notebook-kernel.yml'
+  workflow_dispatch:
+
+jobs:
+  notebook-kernel-tests:
+    name: Notebook Kernel Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: |
+          poetry install --no-interaction --no-ansi
+
+      - name: Build the lite kernel image
+        run: make rebuild_kernel KERNEL_FLAVOUR=lite
+
+      # On the lite image just built, so an unpublished kernel change is tested too.
+      - name: Build the notebook kernel image from this checkout's wheel
+        run: make notebook_kernel_dev NOTEBOOK_BASE_IMAGE=flowfile-kernel-lite:local
+
+      - name: Run the notebook kernel tests
+        run: |
+          # The test skips without the image or a scratch storage folder; FLOWFILE_REQUIRE_NOTEBOOK_KERNEL
+          # turns such a skip into a failure, so this job is green only when the test ran.
+          export FLOWFILE_STORAGE_DIR="$(mktemp -d)"
+          poetry run pytest flowfile_core/tests/notebook/test_kernel_notebook_docker.py -m kernel -rs -vv --tb=long --log-cli-level=INFO -o faulthandler_timeout=600 --timeout=900 --timeout-method=thread
+        timeout-minutes: 20
+        env:
+          FLOWFILE_REQUIRE_NOTEBOOK_KERNEL: "1"
+          FLOWFILE_INTERNAL_TOKEN: ${{ github.run_id }}-test-token
+
+      - name: Clean up Docker resources
+        if: always()
+        run: |
+          docker ps -a --filter "name=flowfile-kernel" -q | xargs -r docker rm -f
+          docker rmi -f flowfile-kernel-notebook:local flowfile-kernel-lite:local || true
+          docker system prune -f
+
+      - name: Show kernel container logs on failure
+        if: failure()
+        run: |
+          docker ps -a
+          docker ps -a --filter "name=flowfile-kernel" --format "{{.Names}}" | while read name; do
+            echo "--- Logs for $name ---"
+            docker logs "$name" 2>&1 || true
+          done

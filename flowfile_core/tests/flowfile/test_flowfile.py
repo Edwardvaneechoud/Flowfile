@@ -3558,3 +3558,50 @@ def test_run_graph_restricted_to_node_ids_fires_callbacks_whose_downstream_ran(t
     assert writer_callbacks == []
     assert graph.get_node(3)._on_flow_complete is not None
 
+
+
+def test_run_graph_without_commit_sources_keeps_callbacks_for_the_next_run(tmp_path):
+    graph = _record_count_and_csv_writer(str(tmp_path))
+    source_callbacks = []
+    graph.get_node(1)._on_flow_complete = source_callbacks.append
+
+    handle_run_info(graph.run_graph(commit_sources=False))
+
+    assert (tmp_path / "out.csv").exists()
+    assert source_callbacks == []
+    assert graph.get_node(1)._on_flow_complete is not None
+
+    handle_run_info(graph.run_graph())
+
+    assert source_callbacks == [True]
+
+
+def test_run_graph_without_commit_sources_carries_into_a_subflow(monkeypatch):
+    """A child flow a ``run_flow`` node runs commits its sources only when the run around it does."""
+    from uuid import uuid4
+
+    import flowfile as ff
+
+    catalog = ff.CatalogReference(f"Commit_{uuid4().hex[:8]}", auto_create=True)
+    child = ff.create_flow_graph()
+    orders = ff.FlowInput("orders", schema={"id": ff.Int64}, flow_graph=child)
+    orders.to_flow_output("kept")
+    ref = catalog.schema("flows", auto_create=True).register_flow(orders, name=f"child_{uuid4().hex[:8]}")
+    graph = ff.RunFlow(ref, orders=ff.from_dict({"id": [1, 2, 3]}))["kept"].flow_graph
+
+    committed: list[int] = []
+    original = FlowGraph._run_post_execution_callbacks
+
+    def spy(self, *args, **kwargs):
+        committed.append(self._subflow_depth)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(FlowGraph, "_run_post_execution_callbacks", spy)
+
+    handle_run_info(graph.run_graph(commit_sources=False))
+
+    assert committed == [], "neither the parent nor the child it ran committed"
+
+    handle_run_info(graph.run_graph())
+
+    assert committed == [1, 0], "the child committed inside the parent's committing run, then the parent"

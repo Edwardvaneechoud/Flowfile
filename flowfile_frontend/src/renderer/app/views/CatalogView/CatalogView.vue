@@ -252,6 +252,10 @@
           @toggle-favorite="catalogStore.toggleFavorite($event)"
           @toggle-follow="catalogStore.toggleFollow($event)"
           @open-flow="catalogStore.selectedFlow && openFlowInDesigner(catalogStore.selectedFlow)"
+          @modify-in-notebook="
+            catalogStore.selectedFlow &&
+            openFlowInDesigner(catalogStore.selectedFlow, { codePane: 'notebook' })
+          "
           @select-table="selectTable($event)"
           @delete-flow="handleDeleteFlow($event)"
           @rename-flow="handleRenameFlow"
@@ -579,6 +583,8 @@ import { useProjectStore } from "../../stores/project-store";
 import { useNotebookStore } from "../../stores/notebook-store";
 import { useSqlEditorStore } from "../../stores/sql-editor-store";
 import { useFlowStore } from "../../stores/flow-store";
+import { useEditorStore } from "../../stores/editor-store";
+import type { CodeMode } from "../DesignerView/CodeGenerator/codeMode";
 import { useNotificationsStore } from "../../stores/notifications-store";
 import { CatalogApi } from "../../api/catalog.api";
 import { FlowApi } from "../../api/flow.api";
@@ -1510,6 +1516,7 @@ async function openRunSnapshot(runId: number) {
 
 async function openFlowInDesigner(
   flow: Pick<FlowRegistration, "flow_path" | "name" | "namespace_id" | "id">,
+  options: { codePane?: CodeMode } = {},
 ) {
   // openFlow owns the shared contract: reuse an already-open session by catalog
   // id (falling back to importFlow), set the flow id, record recents, and notify
@@ -1523,6 +1530,8 @@ async function openFlowInDesigner(
     catalogId: flow.id,
   });
   if (flowId !== null) {
+    // Requested before the navigation so the code pane applies it as it mounts.
+    if (options.codePane) useEditorStore().openCodePane(options.codePane);
     router.push({ name: "designer" });
   }
 }

@@ -41,14 +41,13 @@ def _kernel(kernel_id: str, name: str, flavour=ImageFlavour.BASE, packages=None,
     )
 
 
-def _mock_manager(owned: list[KernelInfo], all_kernels: list[KernelInfo], local_image: str | None = "img:1"):
+def _mock_manager(owned: list[KernelInfo], all_kernels: list[KernelInfo]):
     manager = MagicMock()
 
     async def list_kernels(user_id=None):
         return owned if user_id is not None else all_kernels
 
     manager.list_kernels = list_kernels
-    manager.resolve_local_image = MagicMock(return_value=local_image)
     return manager
 
 
@@ -71,8 +70,7 @@ class TestMatchWithManager:
         assert suggestion["config"]["id"] == "clusterer-kernel"
         assert suggestion["config"]["image_flavour"] == "ml"
         assert suggestion["config"]["packages"] == []
-        assert suggestion["covered_by_flavour"] == ["scikit-learn>=1.0"]
-        assert suggestion["flavour_image_available"] is True
+        assert set(suggestion) == {"config"}
 
     def test_ownership_filter_and_global_id_collision(self, client, monkeypatch):
         mine = _kernel("mine", "Mine")
@@ -87,14 +85,6 @@ class TestMatchWithManager:
         assert [m["kernel_id"] for m in body["matches"]] == ["mine"]
         # ...but its id still blocks the suggestion (create enforces global uniqueness).
         assert body["suggestion"]["config"]["id"] == "clusterer-kernel-2"
-
-    def test_flavour_image_unavailable_reported(self, client, monkeypatch):
-        manager = _mock_manager(owned=[], all_kernels=[], local_image=None)
-        monkeypatch.setattr(kernel_pkg, "get_kernel_manager_if_initialized", lambda: manager)
-
-        resp = client.post("/kernels/match", json={"dependencies": ["scikit-learn>=1.0"]})
-        assert resp.status_code == 200
-        assert resp.json()["suggestion"]["flavour_image_available"] is False
 
     def test_empty_dependencies(self, client, monkeypatch):
         kernel = _kernel("k1", "Kernel")
@@ -159,7 +149,6 @@ class TestMatchDockerDown:
             assert resp.status_code == 200, resp.text
             body = resp.json()
             assert body["docker_available"] is False
-            assert body["suggestion"]["flavour_image_available"] is None
 
             by_id = {m["kernel_id"]: m for m in body["matches"]}
             assert "dbk-owned" in by_id

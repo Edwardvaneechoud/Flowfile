@@ -65,9 +65,7 @@ from flowfile_frame.native import (
 from flowfile_frame.run_flow import FlowOutput
 from shared.notebook_display import DISPLAY_MAX_ROWS, TABLE_MIME, build_table_payload
 
-LIVE_SOURCE_TYPES: frozenset[str] = frozenset(
-    {"manual_input", "read", "list_files", "catalog_reader", "cloud_storage_reader"}
-)
+LIVE_SOURCE_TYPES: frozenset[str] = frozenset({"manual_input", "read", "list_files", "catalog_reader"})
 SEEDED_NODE_TYPES: frozenset[str] = frozenset({"gate", "run_flow", "python_script"})
 KEPT_NODE_TYPES: frozenset[str] = frozenset({"gate", "run_flow", "python_script", "flow_input", "flow_output"})
 
@@ -348,8 +346,8 @@ def seed_session(
 
     The graph is local, history-off and has its own flow id; ``parameters`` (``FlowParameter``
     models or dicts) are declared on it. A node that seeds live (``manual_input``,
-    ``read``, ``list_files``, non-virtual non-SQL ``catalog_reader``, ``cloud_storage_reader`` and
-    pure transforms whose inputs are all live) holds its lazy plan; every other node is seeded
+    ``read``, ``list_files``, a non-virtual non-SQL ``catalog_reader`` of a table in local storage
+    and pure transforms whose inputs are all live) holds its lazy plan; every other node is seeded
     from ``schemas[node_id][handle]`` (``{"name", "data_type"}`` entries) and its frames are
     deferred. A variable is ``names[node_id]``, else ``<type_label>_<id>``; a multi-output or
     native node binds a :class:`SeededNode`, any other node a ``FlowFrame``. ``flow`` is bound to
