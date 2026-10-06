@@ -124,6 +124,17 @@ export interface FlowRegistration {
   access?: AccessInfo | null;
 }
 
+export type FlowCodeFormat = "yaml" | "notebook" | "flowframe" | "polars";
+
+/** A registered flow as text; `content` is null when the file is gone or `error` says why. */
+export interface FlowCode {
+  registration_id: number;
+  format: FlowCodeFormat;
+  content: string | null;
+  file_exists: boolean;
+  error: string | null;
+}
+
 export interface FlowRegistrationCreate {
   name: string;
   description?: string | null;

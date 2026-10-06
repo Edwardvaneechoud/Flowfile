@@ -203,13 +203,14 @@ export const desktop = {
    * Save `bytes` via the native Save dialog; returns the chosen path, or null if cancelled/web.
    * The dialog adds that path to the fs scope, so main.json grants only save + write-file.
    */
-  async saveFile(defaultName: string, bytes: Uint8Array): Promise<string | null> {
+  async saveFile(
+    defaultName: string,
+    bytes: Uint8Array,
+    filter: { name: string; extensions: string[] } = { name: "CSV", extensions: ["csv"] },
+  ): Promise<string | null> {
     if (!isDesktop) return null;
     const { save } = await import("@tauri-apps/plugin-dialog");
-    const path = await save({
-      defaultPath: defaultName,
-      filters: [{ name: "CSV", extensions: ["csv"] }],
-    });
+    const path = await save({ defaultPath: defaultName, filters: [filter] });
     if (!path) return null;
     const { writeFile } = await import("@tauri-apps/plugin-fs");
     await writeFile(path, bytes);

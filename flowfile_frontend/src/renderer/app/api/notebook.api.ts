@@ -162,6 +162,11 @@ export class NotebookApi {
       .data;
   }
 
+  /** Tells core the user exported the cells; the download itself is client-side (telemetry only). */
+  static async confirmExport(format: "py" | "ipynb"): Promise<void> {
+    await axios.post(`/notebook/exported/${format}`);
+  }
+
   static async list(): Promise<NotebookSummary[]> {
     const response = await axios.get<NotebookSummary[]>(API_BASE_URL);
     return response.data;

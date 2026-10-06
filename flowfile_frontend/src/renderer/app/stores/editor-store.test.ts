@@ -312,3 +312,26 @@ describe("executeDrawCloseFunctionOnce", () => {
     expect(store.drawCloseFunction).toBe(close);
   });
 });
+
+describe("openCodePane", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("shows the pane and records the requested mode with a fresh token", () => {
+    const store = useEditorStore();
+    store.openCodePane("notebook");
+    expect(store.showCodeGenerator).toBe(true);
+    expect(store.codePaneRequest).toEqual({ mode: "notebook", token: 1 });
+    store.openCodePane("polars");
+    expect(store.codePaneRequest).toEqual({ mode: "polars", token: 2 });
+  });
+
+  it("is consumed once the pane applied it, leaving the pane visible", () => {
+    const store = useEditorStore();
+    store.openCodePane("notebook");
+    store.consumeCodePaneRequest();
+    expect(store.codePaneRequest).toBeNull();
+    expect(store.showCodeGenerator).toBe(true);
+  });
+});

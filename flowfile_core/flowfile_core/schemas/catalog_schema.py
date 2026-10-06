@@ -126,6 +126,24 @@ class FlowInterfaceOut(BaseModel):
     file_exists: bool = True
 
 
+FlowCodeFormat = Literal["yaml", "notebook", "flowframe", "polars"]
+
+
+class FlowCodeOut(BaseModel):
+    """A registered flow as text, read from its file without opening it in the editor.
+
+    ``format``: the flow file itself (``yaml``), the canvas notebook's cells as a ``# %%`` script
+    (``notebook``), or the Code pane's FlowFrame / Polars export. ``content`` is ``None`` with
+    ``file_exists=False`` when the file is gone, or with ``error`` set when the flow cannot be expressed.
+    """
+
+    registration_id: int
+    format: FlowCodeFormat
+    content: str | None = None
+    file_exists: bool = True
+    error: str | None = None
+
+
 class CatalogTableSummary(BaseModel):
     """Lightweight reference to a catalog table (used in flow detail views)."""
 

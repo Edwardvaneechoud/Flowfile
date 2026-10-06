@@ -209,6 +209,30 @@
                   <i class="fa-solid fa-eraser nb-menu-icon"></i> Clear outputs
                 </el-dropdown-item>
                 <el-dropdown-item
+                  divided
+                  :disabled="!canExport"
+                  data-testid="nb-export-py"
+                  title="Save the cells as a .py script with # %% cell markers"
+                  @click="onExport('py')"
+                >
+                  <i class="fa-solid fa-file-code nb-menu-icon"></i> Export as Python script…
+                </el-dropdown-item>
+                <el-dropdown-item
+                  :disabled="!canExport"
+                  data-testid="nb-export-ipynb"
+                  title="Save the cells and their outputs as a Jupyter .ipynb"
+                  @click="onExport('ipynb')"
+                >
+                  <i class="fa-solid fa-book nb-menu-icon"></i> Export as Jupyter notebook…
+                </el-dropdown-item>
+                <el-dropdown-item
+                  :disabled="!canExport"
+                  data-testid="nb-copy-script"
+                  @click="onCopyScript"
+                >
+                  <i class="fa-solid fa-clipboard nb-menu-icon"></i> Copy as Python script
+                </el-dropdown-item>
+                <el-dropdown-item
                   v-if="!flowId || store.active?.kernelId"
                   :disabled="batchBusy || resetPending"
                   :title="
@@ -505,6 +529,18 @@ import { useKernelCreationTracker } from "../../composables/useKernelCreationTra
 import { useKernelResources } from "../../composables/useKernelResources";
 import NotebookHelp from "../../components/notebook/NotebookHelp.vue";
 import { cellMoveAnnouncement } from "../../components/notebook/cellOperations";
+import {
+  EXPORT_FILTER,
+  EXPORT_MIME,
+  exportFileName,
+  hasExportableCells,
+  serializeNotebook,
+  toPythonScript,
+  type ExportFormat,
+} from "../../components/notebook/notebookExport";
+import { FlowApi } from "../../api/flow.api";
+import { copyTextEverywhere } from "../../utils/clipboardUtils";
+import { saveFile } from "../../utils/tableExport";
 import { cellPresentation } from "../../components/notebook/cellPresentation";
 import { cellSelector, focusCell, ownerIdForNotebook } from "../../components/notebook/editorViews";
 import {
@@ -1288,6 +1324,36 @@ function onAddCell(command: string, afterIndex?: number) {
   const tab = store.activeTabId;
   if (!tab || structuralDisabled.value) return;
   focusAfterTick(tab, store.addCell(command as CellType, afterIndex)?.id ?? null);
+}
+
+const canExport = computed(() => !!store.active && hasExportableCells(store.active.cells));
+
+/** The flow's name for a flow tab (the tab itself is only "Flow N"), else the notebook's name. */
+async function exportBaseName(): Promise<string> {
+  const fallback = store.active?.name ?? "";
+  if (!props.flowId) return fallback;
+  const settings = await FlowApi.getFlowSettings(props.flowId).catch(() => null);
+  return settings?.name?.trim() || fallback;
+}
+
+async function onExport(format: ExportFormat) {
+  const nb = store.active;
+  if (!nb || !canExport.value) return;
+  const text = serializeNotebook(nb.cells, format);
+  const fileName = exportFileName(await exportBaseName(), format);
+  await saveFile(new Blob([text], { type: EXPORT_MIME[format] }), fileName, EXPORT_FILTER[format]);
+  // Fire-and-forget: confirming the export must never affect the download.
+  NotebookApi.confirmExport(format).catch(() => undefined);
+}
+
+async function onCopyScript() {
+  const nb = store.active;
+  if (!nb || !canExport.value) return;
+  if (await copyTextEverywhere(toPythonScript(nb.cells))) {
+    ElMessage.success("Copied the notebook as a Python script");
+  } else {
+    ElMessage.error("Couldn't copy to the clipboard. Use Export as Python script instead.");
+  }
 }
 
 async function onSave() {

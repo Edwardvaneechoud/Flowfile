@@ -113,10 +113,7 @@ const NotebookPanel = defineAsyncComponent({
   loadingComponent: () => h("div", { class: "code-notebook-loading" }, "Loading the notebook…"),
 });
 
-type CodeMode = "flowframe" | "polars" | "project" | "notebook";
-
-const MODE_KEY = "flowfile.codeGenerator.mode.v1";
-const MODES: readonly CodeMode[] = ["flowframe", "polars", "project", "notebook"];
+import { CODE_MODE_KEY as MODE_KEY, CODE_MODES as MODES, type CodeMode } from "./codeMode";
 
 const readMode = (): CodeMode => {
   try {
@@ -192,6 +189,17 @@ const setMode = (mode: CodeMode) => {
     }
   }
 };
+
+// A request made before the pane mounted (the catalog's "Modify in notebook") lands here on mount.
+watch(
+  () => editorStore.codePaneRequest,
+  (request) => {
+    if (!request) return;
+    setMode(request.mode);
+    editorStore.consumeCodePaneRequest();
+  },
+  { immediate: true },
+);
 
 watch(
   () => nodeStore.flow_id,
