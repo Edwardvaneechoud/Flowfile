@@ -1,4 +1,5 @@
-"""Core's side of the canvas notebook session that runs in a notebook kernel (one with ``flowfile`` installed).
+"""Core's side of the canvas notebook session that runs in a notebook kernel (the ``notebook`` image flavour, which
+bakes this app's ``flowfile``).
 
 Core never runs the cells. Every op is one constant :data:`SNIPPET` sent through ``KernelManager.execute_sync``
 under the flow's own kernel namespace (:func:`kernel_flow_id`), where the editor's code intelligence also reads
@@ -25,8 +26,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from flowfile_core.configs import logger
-from flowfile_core.kernel.models import DisplayOutput, ExecuteRequest, ExecuteResult
-from flowfile_core.kernel.notebook_support import is_notebook_kernel_config
+from flowfile_core.kernel.models import DisplayOutput, ExecuteRequest, ExecuteResult, ImageFlavour
 from flowfile_core.notebook.bridge import CleanRunRequest, CleanRunResult
 from flowfile_core.notebook.gate import DISABLED_DETAIL, kernel_sessions_allowed
 from flowfile_core.notebook.push import known_schemas, seed_snapshot
@@ -105,7 +105,7 @@ def _succeeded(payload: dict | None, raw: ExecuteResult) -> dict:
 
 
 def _notebook_kernel(kernel_id: str, user):
-    """The manager and ``kernel_id``'s kernel, after the mode gate and the kernel's owner and packages."""
+    """The manager and ``kernel_id``'s kernel, after the mode gate and the kernel's owner and flavour."""
     if not kernel_sessions_allowed(user):
         raise HTTPException(403, DISABLED_DETAIL)
     manager = _manager()
@@ -114,8 +114,8 @@ def _notebook_kernel(kernel_id: str, user):
         raise HTTPException(404, f"Kernel '{kernel_id}' not found")
     if manager.get_kernel_owner(kernel_id) != user.id:
         raise HTTPException(403, "Not authorized to access this kernel")
-    if not is_notebook_kernel_config(kernel):
-        raise HTTPException(422, f"Kernel '{kernel_id}' has no flowfile package; pick or create a notebook kernel")
+    if kernel.image_flavour != ImageFlavour.NOTEBOOK:
+        raise HTTPException(422, f"Kernel '{kernel_id}' is not a notebook kernel; pick or create one")
     return manager, kernel
 
 
@@ -132,7 +132,7 @@ def _checked(kernel_id: str, user, flow_id: int):
             raise HTTPException(
                 409,
                 f"Kernel '{kernel_id}' has flowfile {hello.get('version')} and this app is {get_version()}: "
-                "recreate the notebook kernel",
+                "restart the notebook kernel to update its image",
             )
         _verified.add(key)
     return manager

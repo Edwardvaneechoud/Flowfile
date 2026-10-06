@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Compute the docker-publish build/merge matrices (CI helper for docker-publish.yml).
 
-Writes app_version / kernel_version / build_matrix / merge_matrix / has_work to
-$GITHUB_OUTPUT. App images are included when PUBLISH_APP is true (v* tag runs and
-the publish_app dispatch input); kernel images only when Docker Hub is missing
+Writes app_version / kernel_version / build_matrix / merge_matrix / has_work and the
+notebook_build_matrix / notebook_merge_matrix / has_notebook_work trio to $GITHUB_OUTPUT.
+App images are included when PUBLISH_APP is true (v* tag runs and the publish_app
+dispatch input); kernel images only when Docker Hub is missing
 flowfile-kernel-<flavour>:<kernel_version> — or FORCE_KERNEL is true — so
 published kernel version tags stay immutable and a missed publish self-heals on
 the next qualifying run.
+
+The notebook kernel image (this release's flowfile wheel on flowfile-kernel-lite) is
+tagged by the app version and published with the app images, but in its own matrices:
+its FROM is the lite image of this kernel version, which the kernel jobs may be
+publishing in the same run, so its jobs run after them.
 
 The matrices deliberately carry bare image names: DOCKERHUB_ORG comes from a
 repository secret, and GitHub silently drops job outputs containing a secret
@@ -38,6 +44,11 @@ KERNEL_IMAGES = [
     ("flowfile-kernel-ml", "ml", "false"),
     ("flowfile-kernel-lite", "", "true"),
 ]
+NOTEBOOK_IMAGE = "flowfile-kernel-notebook"
+NOTEBOOK_BASE_IMAGE = "flowfile-kernel-lite"
+NOTEBOOK_DOCKERFILE = "./kernel_runtime/Dockerfile.notebook"
+# The workflow builds the wheel into this folder; it is the build context.
+NOTEBOOK_CONTEXT = "./build/notebook_kernel"
 
 
 def _section_version(path: Path, section: str) -> str | None:
@@ -90,35 +101,65 @@ def main() -> int:
 
     build_cells: list[dict[str, str]] = []
     merge_cells: list[dict[str, str]] = []
+    notebook_build_cells: list[dict[str, str]] = []
+    notebook_merge_cells: list[dict[str, str]] = []
 
-    def add_image(image: str, dockerfile: str, context: str, extras: str, slim: str, version: str) -> None:
+    def add_image(
+        builds: list[dict[str, str]],
+        merges: list[dict[str, str]],
+        image: str,
+        dockerfile: str,
+        context: str,
+        version: str,
+        **build_args: str,
+    ) -> None:
         for platform, runner, arch in PLATFORMS:
-            build_cells.append(
+            builds.append(
                 {
                     "image": image,
                     "dockerfile": dockerfile,
                     "context": context,
-                    "extras": extras,
-                    "slim_constraints": slim,
                     "version": version,
                     "platform": platform,
                     "runner": runner,
                     "arch": arch,
+                    **build_args,
                 }
             )
-        merge_cells.append({"image": image, "version": version, "tags": " ".join(_tags_for(version))})
+        merges.append({"image": image, "version": version, "tags": " ".join(_tags_for(version))})
 
     if publish_app:
         for image, dockerfile in APP_IMAGES:
-            add_image(image, dockerfile, ".", "", "false", app_version)
+            add_image(
+                build_cells, merge_cells, image, dockerfile, ".", app_version, extras="", slim_constraints="false"
+            )
+        # base_image carries no org (the workflow prefixes the secret), like every image name here.
+        add_image(
+            notebook_build_cells,
+            notebook_merge_cells,
+            NOTEBOOK_IMAGE,
+            NOTEBOOK_DOCKERFILE,
+            NOTEBOOK_CONTEXT,
+            app_version,
+            base_image=f"{NOTEBOOK_BASE_IMAGE}:{kernel_version}",
+        )
 
     for image, extras, slim in KERNEL_IMAGES:
         if force_kernel or not _tag_exists(org, image, kernel_version):
-            add_image(image, "./kernel_runtime/Dockerfile", "./kernel_runtime", extras, slim, kernel_version)
+            add_image(
+                build_cells,
+                merge_cells,
+                image,
+                "./kernel_runtime/Dockerfile",
+                "./kernel_runtime",
+                kernel_version,
+                extras=extras,
+                slim_constraints=slim,
+            )
         else:
             print(f"::notice::{image}:{kernel_version} already exists on Docker Hub — skipped.")
 
-    for cell in merge_cells:
+    for cell in merge_cells + notebook_merge_cells:
         print(f"Will publish {cell['image']} tags: {cell['tags']}")
     if not build_cells:
         message = (
@@ -138,6 +179,9 @@ def main() -> int:
         fh.write(f"build_matrix={json.dumps({'include': build_cells})}\n")
         fh.write(f"merge_matrix={json.dumps({'include': merge_cells})}\n")
         fh.write(f"has_work={'true' if build_cells else 'false'}\n")
+        fh.write(f"notebook_build_matrix={json.dumps({'include': notebook_build_cells})}\n")
+        fh.write(f"notebook_merge_matrix={json.dumps({'include': notebook_merge_cells})}\n")
+        fh.write(f"has_notebook_work={'true' if notebook_build_cells else 'false'}\n")
     return 0
 
 

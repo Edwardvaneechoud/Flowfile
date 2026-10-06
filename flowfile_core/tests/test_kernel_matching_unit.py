@@ -126,6 +126,14 @@ class TestKernelProvides:
         assert "pyarrow" in provides and provides["pyarrow"] is None
         assert "polars" in provides
 
+    def test_notebook_provides_lite_plus_this_apps_flowfile(self):
+        from shared._version import get_version
+
+        provides, opaque = kernel_provides(make_kernel(flavour=ImageFlavour.NOTEBOOK))
+        lite, _ = kernel_provides(make_kernel(flavour=ImageFlavour.LITE))
+        assert not opaque
+        assert provides == {**lite, "flowfile": get_version()}
+
 
 class TestImageBaseline:
     """The baseline must be present in this interpreter, and honest when it isn't."""
@@ -138,13 +146,24 @@ class TestImageBaseline:
             "no kernel image baseline — dependency detection cannot prove anything is missing. "
             "See flowfile_core/tests/test_kernel_packaging_gate.py"
         )
-        assert set(contents) >= {ImageFlavour.BASE, ImageFlavour.ML, ImageFlavour.LITE}
+        assert set(contents) >= {ImageFlavour.BASE, ImageFlavour.ML, ImageFlavour.LITE, ImageFlavour.NOTEBOOK}
         assert contents[ImageFlavour.BASE]["polars"]
 
     def test_known_flavours_are_not_opaque(self):
-        for flavour in (ImageFlavour.BASE, ImageFlavour.ML, ImageFlavour.LITE):
+        for flavour in (ImageFlavour.BASE, ImageFlavour.ML, ImageFlavour.LITE, ImageFlavour.NOTEBOOK):
             _, opaque = kernel_provides(make_kernel(flavour=flavour))
             assert not opaque, f"{flavour} should be enumerable from the shipped manifest"
+
+    def test_repointed_notebook_image_becomes_unknown(self, monkeypatch):
+        # The notebook image is described by the app version, not the manifest's kernel version.
+        from flowfile_core.kernel import flavours, matching
+
+        monkeypatch.setenv("FLOWFILE_KERNEL_IMAGE_NOTEBOOK", "edwardvaneechoud/flowfile-kernel-notebook:0.1.0")
+        matching._image_contents.cache_clear()
+        flavours.load_manifest.cache_clear()
+
+        assert evaluate_kernel(["flowfile"], make_kernel(flavour=ImageFlavour.NOTEBOOK)).level == "unknown"
+        assert evaluate_kernel(["flowfile"], make_kernel(flavour=ImageFlavour.LITE)).level == "none"
 
     def test_repointed_flavour_becomes_unknown_without_touching_the_others(self, monkeypatch):
         # An operator can pin a flavour to a different release; the shipped
@@ -314,23 +333,21 @@ class TestMatchKernels:
 
 
 class TestSuggestKernelConfig:
-    def test_ml_inference_and_covered_dropping(self):
+    def test_ml_inference_drops_what_the_image_provides(self):
         # Every one of these is already baked into the ml image at a version the
         # pin accepts, so none of them should be re-installed on top of it.
         deps = ["scikit-learn>=1.0", "numpy", "pandas>=2.1"]
-        config, covered = suggest_kernel_config(deps, set(), "K-Means Cluster")
+        config = suggest_kernel_config(deps, set(), "K-Means Cluster")
         assert config.image_flavour == ImageFlavour.ML
         assert config.packages == []
-        assert covered == ["scikit-learn>=1.0", "numpy", "pandas>=2.1"]
         assert config.id == "k-means-cluster-kernel"
         assert config.name == "K-Means Cluster kernel"
 
     def test_unsatisfiable_pin_is_still_baked(self):
         # numpy is pinned to 1.26.4 in the image, so a >=2 pin genuinely needs
         # installing — only *provably satisfied* deps may be dropped.
-        config, covered = suggest_kernel_config(["numpy>=2"], set(), "Node")
+        config = suggest_kernel_config(["numpy>=2"], set(), "Node")
         assert config.packages == ["numpy>=2"]
-        assert covered == []
 
     def test_without_a_baseline_every_dep_is_baked(self, monkeypatch):
         # Nothing can be proven covered, so the seed stays conservative and bakes
@@ -338,53 +355,49 @@ class TestSuggestKernelConfig:
         from flowfile_core.kernel import matching
 
         monkeypatch.setattr(matching, "_image_contents", lambda: None)
-        config, covered = suggest_kernel_config(["polars>=1.8", "scikit-learn>=1.5"], set(), "Node")
+        config = suggest_kernel_config(["polars>=1.8", "scikit-learn>=1.5"], set(), "Node")
         assert config.packages == ["polars>=1.8", "scikit-learn>=1.5"]
-        assert covered == []
 
     def test_base_when_no_ml_dep(self):
-        config, covered = suggest_kernel_config(["requests>=2"], set(), "API Node")
+        config = suggest_kernel_config(["requests>=2"], set(), "API Node")
         assert config.image_flavour == ImageFlavour.BASE
         assert config.packages == ["requests>=2"]
-        assert covered == []
 
     def test_unprovable_pin_stays_in_packages(self):
         # A pin above the locked version can't be proven satisfied by the image.
-        config, covered = suggest_kernel_config(["scikit-learn>=999"], set(), "Node")
+        config = suggest_kernel_config(["scikit-learn>=999"], set(), "Node")
         assert config.image_flavour == ImageFlavour.ML
         assert config.packages == ["scikit-learn>=999"]
-        assert covered == []
 
     def test_id_collision_suffix(self):
         existing = {"my-node-kernel", "my-node-kernel-2"}
-        config, _ = suggest_kernel_config([], existing, "My Node")
+        config = suggest_kernel_config([], existing, "My Node")
         assert config.id == "my-node-kernel-3"
 
     def test_slug_is_docker_safe(self):
-        config, _ = suggest_kernel_config([], set(), "Ümlaut / node! (v2.0)")
+        config = suggest_kernel_config([], set(), "Ümlaut / node! (v2.0)")
         import re
 
         assert re.fullmatch(r"[A-Za-z0-9_-]+", config.id)
 
     def test_empty_name_falls_back(self):
-        config, _ = suggest_kernel_config([], set(), None)
+        config = suggest_kernel_config([], set(), None)
         assert config.id == "custom-node-kernel"
         assert config.name == "Custom node kernel"
 
     def test_duplicate_deps_deduped(self):
-        config, _ = suggest_kernel_config(["requests>=2", "requests>=2"], set(), "N")
+        config = suggest_kernel_config(["requests>=2", "requests>=2"], set(), "N")
         assert config.packages == ["requests>=2"]
 
     def test_invalid_deps_excluded(self):
-        config, covered = suggest_kernel_config(["git+https://x/y", "requests"], set(), "N")
+        config = suggest_kernel_config(["git+https://x/y", "requests"], set(), "N")
         assert config.packages == ["requests"]
-        assert covered == []
 
     def test_specs_rendered_valid_for_create(self):
         # PEP 508 allows inner whitespace and markers; _validate_packages doesn't.
         from flowfile_core.kernel.manager import _validate_packages
 
-        config, _ = suggest_kernel_config(
+        config = suggest_kernel_config(
             ["pandas >= 2.1", 'httpx-sse==0.4.0; python_version < "3.13"'], set(), "Spacey"
         )
         assert config.packages == ["pandas>=2.1", "httpx-sse==0.4.0"]

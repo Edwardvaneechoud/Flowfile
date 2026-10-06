@@ -17,7 +17,7 @@ The canvas notebook shows the open flow as Python code, one cell per statement, 
 
 ## Opening it
 
-Open the [Code panel](tutorials/code-generator.md) (Ctrl/Cmd+G) and pick **Notebook**. The panel stays open while you click the canvas or switch flows; a double-click on an empty spot of the canvas closes it, and closing it keeps your edits. The notebook renders the flow:
+Open the [Code panel](tutorials/code-generator.md) (Ctrl/Cmd+G) and pick **Notebook**, or click **Modify in notebook** on a flow's page in the [Catalog](catalog/index.md#flow-detail-panel), which opens the flow with the notebook already showing. The panel stays open while you click the canvas or switch flows; a double-click on an empty spot of the canvas closes it, and closing it keeps your edits. The notebook renders the flow:
 
 - The leading cells hold the imports and the flow parameters, then one cell per statement in the order the flow runs; a cell holds every node its statement chains together.
 - Cells use the [Python API](../python-api/index.md) (`import flowfile as ff`): fluent `FlowFrame` calls for built-in transforms, and the [native node classes](../python-api/reference/native-nodes.md) (`ff.Gate`, `ff.RunFlow`, `ff.PythonScript`, custom nodes, parameters) for the rest.
@@ -106,7 +106,7 @@ A sync is refused, with the reason on the failing cell or in a message, when:
 
 ## Running on a kernel
 
-In the desktop app, and with `pip install flowfile` in the default mode, the notebook toolbar has a kernel picker. Pick a **notebook kernel**, a [kernel](kernels.md) with the `flowfile` package installed, and the cells run as real Python in a session on that kernel: loops, `print`, other imports and `display(...)` work, as in a script. When you have no such kernel, **Create notebook kernel…** in the picker opens the kernel form with `flowfile` of this app's version already in its packages. Pick **No kernel** to go back to running on the canvas.
+In the desktop app, and with `pip install flowfile` in the default mode, the notebook toolbar has a kernel picker. Pick a **notebook kernel**, a [kernel](kernels.md) on the **Notebook** image (the Lite image with this app's `flowfile` installed, published for every Flowfile version), and the cells run as real Python in a session on that kernel: loops, `print`, other imports and `display(...)` work, as in a script. When you have no such kernel, **Create notebook kernel** in the toolbar sets one up in one click: created, started and selected for this flow; nothing is installed on your machine. When the Notebook image is not here yet, the button reads **Download image and create notebook kernel** and downloads it first (several hundred MB, once per Flowfile version). **Customise…** in the picker opens the kernel form with the same settings filled in. A flow you never picked a kernel for selects a notebook kernel by itself as soon as one exists (a running one first). Pick **No kernel** to run on the canvas instead; that choice is remembered for the flow.
 
 | Action | With a kernel picked |
 |---|---|
@@ -132,14 +132,17 @@ In cells, write file paths as they are on your machine (`C:\Users\me\data\sales.
 Limits:
 
 - Only in the desktop app and in a default `pip install flowfile` (`FLOWFILE_MODE` unset or `electron`), for a local connection. Docker deployments keep the notebook without a kernel.
-- The kernel's `flowfile` must have the same version as the app; after an update, recreate the notebook kernel.
-- On Apple Silicon Macs (Linux arm64 containers), installing `flowfile` on the lite kernel currently fails, because `polars-grouper` publishes no aarch64 Linux wheel.
+- The kernel's `flowfile` must have the same version as the app. After an app update the picked kernel still runs the previous Notebook image, so the toolbar shows **Update notebook kernel**: it stops the kernel and starts it again, which downloads this app's image and drops what the kernel holds in memory.
 
 ## Kernels, Docker and deployments
 
 With **No kernel** picked the notebook starts no Python process and needs no [kernel](kernels.md) and no Docker. A Python Script node in the flow still runs on its kernel: its cell is an `ff.PythonScript` or `@ff.python_script` definition, and running that cell runs the node on its kernel, which needs Docker as it does on the canvas. Python that prints, displays or computes needs a kernel: this notebook [on a kernel](#running-on-a-kernel), a Python Script node or a [catalog notebook](catalog/notebooks.md).
 
 Viewing and editing the cells, and running them while the notebook matches the canvas, work for every user, for their own flows, in the desktop app, with `pip install flowfile` and in a Docker deployment. Syncing works for every user in the default `electron` mode: the desktop app, and `pip install flowfile` unless you set `FLOWFILE_MODE`. With any other `FLOWFILE_MODE` (`docker` in a Docker deployment, or `package`) syncing needs an admin account, because the catalog lookups a cell can reach do not check each user's access. Other users keep editable cells; **Run** and **Run all** when the notebook no longer matches the canvas, and **Push**, leave the edits in the notebook, and a banner says that syncing needs an admin. The notebook has no settings of its own.
+
+## Exporting the notebook
+
+The **⋯** menu in the toolbar saves the cells as a file, so the code can leave Flowfile. **Export as Python script…** writes a `.py` file in which every cell opens with a `# %%` marker (`# %% [markdown]` for a Markdown cell, whose text becomes comments): VS Code, Spyder and Jupytext read the markers as cell boundaries, and a plain `python` runs the file top to bottom, since the imports cell comes first. **Export as Jupyter notebook…** writes an `.ipynb` that Jupyter, VS Code and Colab open, carrying the last output of every cell that ran in the panel. **Copy as Python script** puts the same script on the clipboard. The desktop app asks where to save; the browser downloads the file. The file is named after the flow, and nothing is sent anywhere: the export is built from the cells as they are in the panel, edits included.
 
 ## What is not saved with the flow
 

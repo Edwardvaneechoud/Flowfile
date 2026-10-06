@@ -45,7 +45,7 @@ export const computeHelp: PageHelpContent = {
           icon: "fa-solid fa-layer-group",
           title: "Image flavours",
           description:
-            "Pick Base (Polars/PyArrow/NumPy) or ML (sklearn, xgboost, lightgbm, statsmodels pre-baked). Use Custom for your own image.",
+            "Pick Base (Polars/PyArrow/NumPy), ML (sklearn, xgboost, lightgbm, statsmodels pre-baked), Lite (few pins, room for big installs) or Notebook (this app's flowfile, runs the canvas notebook). Use Custom for your own image.",
         },
         {
           icon: "fa-solid fa-cubes",

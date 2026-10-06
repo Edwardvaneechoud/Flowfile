@@ -48,16 +48,20 @@ export const copyRows = async (
   ElMessage.success(`Copied ${format(rows.length)}${of} rows`);
 };
 
+export interface SaveFilter {
+  name: string;
+  extensions: string[];
+}
+
 /**
- * Save CSV through the native Save dialog on desktop or a browser download on web, and toast
- * the outcome. A UTF-8 BOM is prepended so Excel reads non-ASCII.
+ * Save a file through the native Save dialog on desktop or a browser download on web, and toast
+ * the outcome. A cancelled desktop dialog is silent.
  */
-export const saveCsv = async (csv: Blob | string, fileName: string): Promise<void> => {
-  const data = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+export const saveFile = async (data: Blob, fileName: string, filter: SaveFilter): Promise<void> => {
   try {
     if (isDesktop) {
       const bytes = new Uint8Array(await data.arrayBuffer());
-      if ((await desktop.saveFile(fileName, bytes)) === null) return;
+      if ((await desktop.saveFile(fileName, bytes, filter)) === null) return;
     } else {
       const url = URL.createObjectURL(data);
       const a = document.createElement("a");
@@ -72,4 +76,10 @@ export const saveCsv = async (csv: Blob | string, fileName: string): Promise<voi
   } catch {
     ElMessage.error("Could not save the file.");
   }
+};
+
+/** Save CSV via `saveFile`. A UTF-8 BOM is prepended so Excel reads non-ASCII. */
+export const saveCsv = async (csv: Blob | string, fileName: string): Promise<void> => {
+  const data = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+  await saveFile(data, fileName, { name: "CSV", extensions: ["csv"] });
 };

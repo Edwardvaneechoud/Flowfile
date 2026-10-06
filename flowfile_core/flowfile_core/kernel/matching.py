@@ -253,13 +253,13 @@ def suggest_kernel_config(
     dependencies: list[str],
     existing_ids: set[str],
     node_name: str | None = None,
-) -> tuple[KernelConfig, list[str]]:
+) -> KernelConfig:
     """Derive a ready-to-POST create seed from a node's dependency specs.
 
     Flavour is ML when any dep name is among the ML image's extra packages,
-    else base (never lite/custom). Only deps the flavour's locked versions
+    else base (never lite/notebook/custom). Only deps the flavour's locked versions
     *provably* satisfy are dropped from ``packages`` — an unprovable pin
-    stays so the image bake resolves it. Returns ``(config, covered_by_flavour)``.
+    stays so the image bake resolves it.
     """
     parsed = [dep for dep in (parse_dependency(spec) for spec in dependencies) if dep is not None]
     flavour = ImageFlavour.ML if any(dep.name in _ml_extra_names() for dep in parsed) else ImageFlavour.BASE
@@ -271,13 +271,10 @@ def suggest_kernel_config(
     # baseline-less app ended up baking packages the image already ships.
     opaque = flavour not in contents
 
-    covered: list[str] = []
     packages: list[str] = []
     for dep in parsed:
         status, _ = evaluate_dependency(dep, provides, opaque=opaque, raw_packages=[])
-        if status == "satisfied":
-            covered.append(canonical_spec(dep))
-        else:
+        if status != "satisfied":
             packages.append(canonical_spec(dep))
     packages = list(dict.fromkeys(packages))
 
@@ -289,8 +286,7 @@ def suggest_kernel_config(
         suffix += 1
 
     display = (node_name or "").strip() or "Custom node"
-    config = KernelConfig(id=kernel_id, name=f"{display} kernel", image_flavour=flavour, packages=packages)
-    return config, covered
+    return KernelConfig(id=kernel_id, name=f"{display} kernel", image_flavour=flavour, packages=packages)
 
 
 def verify_kernel_for_node(kernel: KernelInfo | None, dependencies: list[str]) -> list[str]:

@@ -1,6 +1,6 @@
 """Remove local Flowfile kernels: Docker containers, per-kernel derived images,
 and (when Core is stopped) their catalog-DB records. With ``--images`` it also
-removes the kernel flavour images (base/ml/lite, local builds + pulled tags) so
+removes the kernel flavour images (base/ml/lite/notebook, local builds + pulled tags) so
 the Kernel Manager's image list is cleared.
 
 Run via ``make clean_kernels`` (instances) or ``make clean_kernel_images``
@@ -21,7 +21,7 @@ import docker
 from docker.errors import DockerException
 
 CONTAINER_NAME_MARKER = "flowfile-kernel-"
-# Every kernel image repo contains "flowfile-kernel" (base/ml/lite/derived, with
+# Every kernel image repo contains "flowfile-kernel" (base/ml/lite/notebook/derived, with
 # or without a registry prefix); the frontend/worker/core images never do.
 FLAVOUR_IMAGE_MARKER = "flowfile-kernel"
 DERIVED_IMAGE_MARKER = "flowfile-kernel-derived"
@@ -122,7 +122,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--images",
         action="store_true",
-        help="Also remove kernel flavour images (base/ml/lite, local + pulled).",
+        help="Also remove kernel flavour images (base/ml/lite/notebook, local + pulled).",
     )
     args = parser.parse_args(argv)
 

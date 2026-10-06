@@ -138,7 +138,7 @@ Non-env port facts: Tauri scans a free `(core, worker)` port pair starting at 63
 | Var | Read at | Default | Effect |
 |---|---|---|---|
 | `FLOWFILE_KERNEL_IMAGE` | `kernel/manager.py:64-68` via `_envvar_or_default` (`:48-55` — **empty string counts as unset**, deliberately, because compose writes `${VAR:-}` as `""`) | `_KERNEL_IMAGE_BASE_DEFAULT` in `kernel/images.py` | Legacy/base-flavour image override; read at lookup time, not import. |
-| `FLOWFILE_KERNEL_IMAGE_BASE` / `_ML` / `_LITE` | manager.py:65-76 | per-flavour defaults in `kernel/images.py` | Per-flavour pins; `_BASE` wins over the legacy `FLOWFILE_KERNEL_IMAGE`. |
+| `FLOWFILE_KERNEL_IMAGE_BASE` / `_ML` / `_LITE` / `_NOTEBOOK` | `kernel/images.py` | per-flavour defaults in `kernel/images.py` (the notebook tag is the app version) | Per-flavour pins; `_BASE` wins over the legacy `FLOWFILE_KERNEL_IMAGE`. |
 | `FLOWFILE_DOCKER_NETWORK` | manager.py:393 | auto-detected (`_detect_docker_network`) | Docker-in-Docker network that kernel containers join. |
 | `FLOWFILE_CORE_URL` | manager.py:1216 (core writes it into the kernel's env); `kernel_runtime/flowfile_client.py:219` (kernel reads it) | DinD: `http://flowfile-core:63578`; local: `http://host.docker.internal:63578` | How a kernel container dials core back. |
 

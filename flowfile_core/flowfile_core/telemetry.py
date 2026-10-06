@@ -119,6 +119,8 @@ ROUTE_EVENTS: dict[tuple[str, str], tuple[str, dict[str, Any] | None]] = {
     ("POST", "/editor/code_to_flowframe/exported"): ("export_code_used", {"target": "flowframe"}),
     ("GET", "/editor/code_to_project/zip"): ("export_code_used", {"target": "project_zip"}),
     ("POST", "/editor/code_to_project/save"): ("export_code_used", {"target": "project_save"}),
+    ("POST", "/notebook/exported/py"): ("export_code_used", {"target": "notebook_py"}),
+    ("POST", "/notebook/exported/ipynb"): ("export_code_used", {"target": "notebook_ipynb"}),
     ("POST", "/ai/diff/{diff_id}/accept"): ("ai_diff_accepted", None),
     ("POST", "/ai/diff/{diff_id}/reject"): ("ai_diff_rejected", None),
     ("POST", "/catalog/schedules"): ("schedule_created", None),

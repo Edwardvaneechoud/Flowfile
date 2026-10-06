@@ -176,7 +176,7 @@ async def docker_status():
 
 
 async def _matchable_kernels(user_id: int):
-    """``(kernels, all_kernel_ids, docker_available, manager | None)`` for matching.
+    """``(kernels, all_kernel_ids, docker_available)`` for matching.
 
     Degrades without Docker: when no manager exists (daemon down or still
     warming) the DB-persisted kernels are matched instead, so the picker and
@@ -190,7 +190,7 @@ async def _matchable_kernels(user_id: int):
         # Suggestion ids must dodge every kernel id, not just the caller's —
         # create_kernel enforces global uniqueness.
         existing_ids = {kernel.id for kernel in await manager.list_kernels()}
-        return kernels, existing_ids, True, manager
+        return kernels, existing_ids, True
 
     from flowfile_core.database.connection import get_db_context
     from flowfile_core.kernel import persistence
@@ -203,7 +203,7 @@ async def _matchable_kernels(user_id: int):
         if owner_id == user_id
     ]
     existing_ids = {config.id for config, _, _ in rows}
-    return kernels, existing_ids, False, None
+    return kernels, existing_ids, False
 
 
 @router.post("/match", response_model=KernelMatchResponse)
@@ -211,24 +211,12 @@ async def match_kernels_for_spec(request: KernelMatchRequest, current_user=Depen
     """Rank the caller's kernels against a node's dependency specs."""
     from flowfile_core.kernel import matching
 
-    kernels, existing_ids, docker_available, manager = await _matchable_kernels(current_user.id)
+    kernels, existing_ids, docker_available = await _matchable_kernels(current_user.id)
     matches = matching.match_kernels(request.dependencies, kernels)
-    config, covered = matching.suggest_kernel_config(request.dependencies, existing_ids, request.node_name)
-
-    flavour_image_available: bool | None = None
-    if manager is not None:
-        try:
-            flavour_image_available = manager.resolve_local_image(config.image_flavour) is not None
-        except Exception:
-            flavour_image_available = None
-
+    config = matching.suggest_kernel_config(request.dependencies, existing_ids, request.node_name)
     return KernelMatchResponse(
         matches=matches,
-        suggestion=KernelSuggestion(
-            config=config,
-            covered_by_flavour=covered,
-            flavour_image_available=flavour_image_available,
-        ),
+        suggestion=KernelSuggestion(config=config),
         docker_available=docker_available,
     )
 
@@ -242,7 +230,7 @@ async def match_kernels_batch(request: KernelMatchBatchRequest, current_user=Dep
     """
     from flowfile_core.kernel import matching
 
-    kernels, _existing_ids, docker_available, _manager = await _matchable_kernels(current_user.id)
+    kernels, _existing_ids, docker_available = await _matchable_kernels(current_user.id)
     results: dict[str, KernelMatchBatchSummary] = {}
     for key, dependencies in request.items.items():
         entries = matching.match_kernels(dependencies, kernels)

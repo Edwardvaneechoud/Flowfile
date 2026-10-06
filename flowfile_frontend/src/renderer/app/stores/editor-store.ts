@@ -5,6 +5,7 @@ import { ref, shallowRef } from "vue";
 import type { Component } from "vue";
 import type { NodeTitleInfo } from "../types";
 import type { DrawerCloseOptions } from "../composables/settingsDrawerSession";
+import type { CodeMode } from "../views/DesignerView/CodeGenerator/codeMode";
 
 // One leave attempt at a time: a double-click must not save (or refuse) the same drawer three times.
 let leaveInFlight: Promise<boolean> | null = null;
@@ -35,6 +36,9 @@ export const useEditorStore = defineStore("editor", {
 
     // Code generator split pane beside the canvas (DesignerView)
     showCodeGenerator: false,
+    // A request to show the pane in one mode (the catalog's "Modify in notebook"); CodeGenerator
+    // applies it on mount or live and then consumes it. Not persisted: the pane keeps its own mode.
+    codePaneRequest: null as { mode: CodeMode; token: number } | null,
 
     // Edge label state
     showEdgeLabels: false,
@@ -245,6 +249,16 @@ export const useEditorStore = defineStore("editor", {
 
     setCodeGeneratorVisibility(visible: boolean) {
       this.showCodeGenerator = visible;
+    },
+
+    /** Show the code pane in `mode`, now if the designer is mounted, else when it next mounts. */
+    openCodePane(mode: CodeMode) {
+      this.showCodeGenerator = true;
+      this.codePaneRequest = { mode, token: (this.codePaneRequest?.token ?? 0) + 1 };
+    },
+
+    consumeCodePaneRequest() {
+      this.codePaneRequest = null;
     },
 
     // ========== Log Viewer ==========

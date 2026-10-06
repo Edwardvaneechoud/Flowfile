@@ -176,8 +176,6 @@ describe("fallbackSuggestion", () => {
     const suggestion = fallbackSuggestion("My Node", ["numpy", "numpy", "pandas>=2"]);
     expect(suggestion.config.packages).toEqual(["numpy", "pandas>=2"]);
     expect(suggestion.config.image_flavour).toBe("base");
-    expect(suggestion.covered_by_flavour).toEqual([]);
-    expect(suggestion.flavour_image_available).toBeNull();
   });
 
   it("empty name falls back to custom-node", () => {

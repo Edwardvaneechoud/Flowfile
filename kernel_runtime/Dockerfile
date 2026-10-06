@@ -5,13 +5,11 @@ FROM python:3.12-slim AS builder
 WORKDIR /build
 
 ARG EXTRAS=""
-# SLIM_CONSTRAINTS=true filters /opt/constraints.txt down to just the packages
-# the kernel runtime directly imports (fastapi, uvicorn, httpx, cloudpickle,
-# polars + its version-coupled runtime, joblib for sklearn/numpy artifact
-# serialisation). pyarrow and numpy are deliberately left out: they come in as
-# polars transitives, and pinning them blocks users from installing packages
-# (e.g. flowfile) whose own dep trees need different versions. Used to build
-# the "lite" flavour. Keep this whitelist in sync with _LITE_PACKAGE_NAMES in
+# SLIM_CONSTRAINTS=true (the "lite" flavour) trims /opt/constraints.txt to polars
+# (plus its version-coupled runtime) and the artifact serialisers cloudpickle and
+# joblib. fastapi, uvicorn and httpx float, so a "flowfile" install resolves them
+# from flowfile's own pins (the kernel runtime and flowfile declare the same
+# fastapi range). Keep this whitelist in sync with _LITE_PACKAGE_NAMES in
 # flowfile_core/flowfile_core/kernel/flavours.py.
 ARG SLIM_CONSTRAINTS="false"
 
@@ -44,7 +42,7 @@ RUN poetry install --only=main --no-root ${EXTRAS:+--extras "$EXTRAS"} && \
         ${EXTRAS:+--extras "$EXTRAS"} \
         -o /opt/constraints.txt && \
     if [ "$SLIM_CONSTRAINTS" = "true" ]; then \
-        grep -E '^(polars|polars-runtime-32|fastapi|uvicorn|httpx|cloudpickle|joblib)==' \
+        grep -E '^(polars|polars-runtime-32|cloudpickle|joblib)==' \
             /opt/constraints.txt > /opt/constraints.slim.txt && \
         mv /opt/constraints.slim.txt /opt/constraints.txt ; \
     fi && \

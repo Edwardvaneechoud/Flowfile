@@ -105,8 +105,6 @@ export function fallbackSuggestion(
       image_flavour: "base",
       custom_image: null,
     },
-    covered_by_flavour: [],
-    flavour_image_available: null,
   };
 }
 

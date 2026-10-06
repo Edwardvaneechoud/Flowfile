@@ -69,6 +69,7 @@ jobs:
               - 'flowfile_core/flowfile_core/kernel/**'
               - 'flowfile_core/tests/test_kernel_packaging_gate.py'
               - 'tools/generate_kernel_manifest.py'
+              - 'tools/check_kernel_release_needed.py'
               - 'build_backends/**'
               - 'flowfile_core/Dockerfile'
               - 'pyproject.toml'
@@ -730,6 +731,7 @@ jobs:
   # kernel_runtime and (b) actually ship. Without it, matching cannot prove a
   # package is missing and silently reports every dependency as satisfied.
   # No Docker, Node or Rust needed.
+  # The release guard fails a kernel image change made under an already-published kernel version.
   check-kernel-data:
     needs: detect-changes
     if: |
@@ -739,6 +741,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -753,6 +757,10 @@ jobs:
 
       - name: Install Dependencies
         run: poetry install --no-interaction --no-ansi --with dev
+
+      - name: Kernel release guard
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        run: python3 tools/check_kernel_release_needed.py --base "${{ github.event.pull_request.base.sha || github.event.before }}"
 
       - name: Check kernel manifest drift and packaging coverage
         run: make check_kernel_data
