@@ -4,7 +4,9 @@ node the kernel cannot compute come from the canvas as parquet on the kernel's s
 from __future__ import annotations
 
 import json
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -212,6 +214,71 @@ def test_a_new_pivot_below_a_deferred_canvas_node_computes_here_on_its_rows(code
     assert shown["success"], shown
     assert _rows(shown) == [{"g": "all", "1": 100, "2": 200, "3": 300}], _table(shown)
     assert [body["node_id"] for body in kernel_sim.node_results] == [node_id]
+
+
+PENGUINS_CSV = b"species,bill_length_mm,bill_depth_mm,body_mass_g\nA,39.1,18.7,3750\nA,,,\nB,46.5,17.9,4800\n"
+
+
+class _CsvOverHttp(BaseHTTPRequestHandler):
+    """Serves ``PENGUINS_CSV`` with the range requests Polars' object store reads a URL with."""
+
+    def do_HEAD(self):  # noqa: N802
+        self._send(body=False)
+
+    def do_GET(self):  # noqa: N802
+        self._send(body=True)
+
+    def _send(self, body: bool) -> None:
+        data, requested = PENGUINS_CSV, self.headers.get("Range")
+        if requested:
+            start, _, end = requested.removeprefix("bytes=").partition("-")
+            first, last = int(start), min(int(end or len(PENGUINS_CSV) - 1), len(PENGUINS_CSV) - 1)
+            data = PENGUINS_CSV[first : last + 1]
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {first}-{last}/{len(PENGUINS_CSV)}")
+        else:
+            self.send_response(200)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Accept-Ranges", "bytes")
+        self.end_headers()
+        if body:
+            self.wfile.write(data)
+
+    def log_message(self, *args) -> None:
+        pass
+
+
+@pytest.fixture
+def penguins_url():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _CsvOverHttp)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/penguins.csv"
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.mark.parametrize(
+    "options, node_type", [("", "read"), (", null_values=['NA', '']", "polars_code")], ids=["read", "polars-code"]
+)
+def test_a_cell_builds_on_a_url_read_without_showing_it_first(
+    coded_flow, client, kernel_sim, penguins_url, options, node_type
+):
+    """The kernel reads a URL itself. An option the read node lacks builds it as Polars Code, which the session
+    computes here, so its seed predicts the file's columns: ``.columns`` and a formula built on it see them."""
+    cell = (
+        f"df = ff.read_csv({penguins_url!r}{options})\n"
+        "print(df.flow_graph.get_node(df.node_id).node_type, df.columns)\n"
+        "clean = df.drop_nulls(subset=['bill_length_mm', 'body_mass_g'])"
+        ".with_columns((ff.col('body_mass_g') / 1000).alias('body_mass_kg'))\n"
+        "print(clean.columns[-1], clean.collect().height)"
+    )
+    result = _execute(client, coded_flow, kernel_sim, cell)
+    assert result["success"], result.get("error")
+    assert result["stdout"].splitlines() == [
+        f"{node_type} ['species', 'bill_length_mm', 'bill_depth_mm', 'body_mass_g']",
+        "body_mass_kg 2",
+    ], result["stdout"]
+    assert not kernel_sim.node_results and not kernel_sim.node_runs
 
 
 def test_a_running_flow_is_refused_with_a_message(coded_flow, client, kernel_sim):
