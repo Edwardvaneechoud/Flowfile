@@ -13,6 +13,9 @@ import { createPinia, setActivePinia } from 'pinia'
 
 const pyodideMock = vi.hoisted(() => ({
   isReady: true,
+  isLoading: false,
+  error: null as string | null,
+  initialize: vi.fn(),
   runPython: vi.fn(),
   runPythonWithResult: vi.fn(),
   runPythonGetBytes: vi.fn(),
@@ -62,7 +65,7 @@ vi.mock('vue-codemirror', () => ({
 import { Codemirror } from 'vue-codemirror'
 import NotebookPane from '../../src/components/notebook/NotebookPane.vue'
 import { useFlowStore } from '../../src/stores/flow-store'
-import { SYNC_SOURCE, type NotebookCell } from '../../src/stores/notebook-store'
+import { SYNC_SOURCE, useNotebookStore, type NotebookCell } from '../../src/stores/notebook-store'
 
 const RENDER_DELAY = 200
 
@@ -109,6 +112,8 @@ describe('NotebookPane', () => {
     vi.clearAllMocks()
     vi.useFakeTimers()
     pyodideMock.isReady = true
+    pyodideMock.isLoading = false
+    pyodideMock.error = null
     pyodideMock.runPython.mockResolvedValue(undefined)
     pyodideMock.ensurePyPackages.mockResolvedValue(undefined)
     pyodideMock.runPythonWithResult.mockResolvedValue({ cells: [], warnings: [], var_by_node: {} })
@@ -120,6 +125,7 @@ describe('NotebookPane', () => {
 
   it('waits for Python and asks the bridge for nothing meanwhile', async () => {
     pyodideMock.isReady = false
+    pyodideMock.isLoading = true
     twoNodeFlow()
     pyodideMock.runPythonWithResult.mockClear()
 
@@ -127,6 +133,23 @@ describe('NotebookPane', () => {
 
     expect(wrapper.text()).toContain('Python is still starting up')
     expect(pyodideMock.runPythonWithResult).not.toHaveBeenCalled()
+    expect(pyodideMock.initialize).not.toHaveBeenCalled()
+  })
+
+  it('says when Python has not started or could not, and starts it only when asked', async () => {
+    pyodideMock.isReady = false
+    twoNodeFlow()
+    const idle = await mountPane()
+    expect(idle.text()).toContain('has not started yet')
+    expect(pyodideMock.initialize).not.toHaveBeenCalled()
+    await idle.get('[data-action="start-python"]').trigger('click')
+    expect(pyodideMock.initialize).toHaveBeenCalledTimes(1)
+
+    pyodideMock.error = 'the CDN is unreachable'
+    const failed = await mountPane()
+    expect(failed.text()).toContain('Python could not start')
+    expect(failed.text()).toContain('the CDN is unreachable')
+    expect(failed.text()).not.toContain('still starting up')
   })
 
   it('does not render while another tab is showing, and renders once it is picked', async () => {
@@ -246,7 +269,8 @@ describe('NotebookPane', () => {
 
     const wrapper = await mountPane()
 
-    expect(wrapper.text()).toContain('Add a node to the canvas and it appears here as code, or write the first step here.')
+    expect(wrapper.text()).toContain('Add a node to the canvas and it appears here as code, or start from data written in a cell')
+    expect(wrapper.find('.nb-empty code').text()).toContain('ff.DataFrame(')
     expect(wrapper.find('[data-action="add-cell"]').exists()).toBe(true)
   })
 
@@ -453,7 +477,7 @@ describe('NotebookPane', () => {
 
       const failed = wrapper.find('[data-cell-id="cell-1"]')
       expect(failed.find('.cell-error').text()).toBe('Line 3: This adds a step')
-      expect(failed.find('[data-sync-state]').text()).toBe('Sync failed')
+      expect(failed.find('[data-sync-state]').text()).toBe("Can't push")
       expect(failed.find('.cm-stub').text()).toBe(EDITED)
 
       await type(wrapper, 1, `${EDITED} `)
@@ -494,6 +518,37 @@ describe('NotebookPane', () => {
       await fresh.find('[data-action="discard"]').trigger('click')
       await wrapper.find('[data-cell-id="new-2"] [data-action="discard"]').trigger('click')
       expect(wrapper.findAll('.cell')).toHaveLength(3)
+    })
+
+    it('offers Run on a new cell only once something is written in it', async () => {
+      twoNodeFlow()
+      const wrapper = await mountPane()
+      await wrapper.find('[data-action="add-cell"]').trigger('click')
+      const fresh = () => wrapper.find('[data-cell-id="new-1"]')
+      expect(fresh().find('[data-action="run"]').exists()).toBe(false)
+
+      await type(wrapper, 3, 'top = source_1.head(3)')
+      expect(fresh().find('[data-action="run"]').exists()).toBe(true)
+    })
+
+    it('shows a detached cell read-only, with a way to use it as a new cell or drop it', async () => {
+      const { cells } = twoNodeFlow()
+      const wrapper = await mountPane()
+      await type(wrapper, 1, 'source_1 = ff.from_raw_data({"columns": []})')
+      pyodideMock.runPythonWithResult.mockResolvedValue({ cells: cells.slice(0, 1), warnings: [], var_by_node: {} })
+      await useNotebookStore().render()
+      await vi.advanceTimersByTimeAsync(0)
+
+      const detached = wrapper.findAll('.cell').at(-1)!
+      expect(detached.find('.cell-label').text()).toBe('Detached cell')
+      expect(detached.find('[data-note="detached"]').exists()).toBe(true)
+      expect(detached.find('[data-action="run"]').exists()).toBe(false)
+      expect(detached.find('.cm-stub').attributes('data-disabled')).toBe('true')
+
+      await detached.find('[data-action="adopt"]').trigger('click')
+      const fresh = wrapper.findAll('.cell').at(-1)!
+      expect(fresh.find('.cell-label').text()).toBe('New cell')
+      expect(fresh.find('[data-sync-state]').text()).toBe('New')
     })
 
     it('asks the canvas to show a node a push put on it', async () => {

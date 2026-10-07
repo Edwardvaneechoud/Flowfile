@@ -8,10 +8,12 @@ import threading
 from pathlib import Path
 
 import pytest
+import yaml
 
 import flowfile as ff
 from flowfile_core import main
 from flowfile_core.flowfile.code_generator.code_generator import node_label
+from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.notebook import allowlist, bridge
 from flowfile_core.notebook import runner as runner_module
 from flowfile_core.notebook.interpret import CellInterpreter
@@ -284,3 +286,30 @@ def test_both_runners_resolve_a_fused_chains_inner_name_only_below_the_chain(abo
     nodes = results["exec"].flowfile_data["nodes"]
     assert len({node["id"] for node in nodes}) == len(nodes)
     assert next(node for node in nodes if node["type"] == "select")["input_ids"] == [source.node_id]
+
+
+@pytest.mark.parametrize("kind", list(RUNNERS))
+def test_a_rename_below_a_group_by_the_sync_cannot_plan_keeps_every_column_in_place(kind, tmp_path):
+    graph = ff.from_dict({"region": ["a", "b", "a"], "revenue": [1, 2, 3]}).flow_graph
+    name = node_label("manual_input", _node_of_type(graph, "manual_input").node_id)
+    cells = [(cell.cell_id, cell.code) for cell in render(graph).cells]
+    cells.append(
+        (
+            "edit",
+            f"grouped = {name}.group_by('region').agg("
+            "ff.col('revenue').sum().alias('total'), ff.col('region').str.join(',').alias('regions'))\n"
+            "renamed = grouped.rename({'total': 'sum_revenue'})",
+        )
+    )
+    result = RUNNERS[kind]().clean_run(NOTEBOOK_OWNER_ID, 1, _request(graph, cells))
+    assert result.error is None, result.error
+
+    path = tmp_path / "pushed.yaml"
+    path.write_text(yaml.dump(result.flowfile_data))
+    pushed = open_flow(path)
+    pushed.flow_settings.execution_location = "local"
+    assert pushed.run_graph().success
+    renamed = result.flowfile_data["nodes"][-1]["id"]
+    rows = pushed.get_node(renamed).get_resulting_data().data_frame.collect().sort("region")
+    assert rows.columns == ["region", "sum_revenue", "regions"]
+    assert rows["sum_revenue"].to_list() == [4, 2]

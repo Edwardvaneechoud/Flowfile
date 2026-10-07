@@ -74,12 +74,11 @@ const RENDERING = { cells: [cell(1, 'source_1 = ff.from_raw_data({})')], warning
 const bridgeStrings = () => pyodideMock.runPythonWithResult.mock.calls.map(call => String(call[0]))
 const renderCalls = () => bridgeStrings().filter(src => src.includes('render_notebook('))
 
-/** The JSON arguments of the one render call: the flow, the schemas, the locked nodes and the written cells. */
+/** What the last render was asked: the flow, the schemas, the locked nodes and the written cells, sent as data. */
 function renderArguments(): [any, Record<string, unknown>, Record<string, string>, number[][]] {
-  const source = renderCalls().at(-1)!
-  const args = [...source.matchAll(/json\.loads\(("(?:[^"\\]|\\.)*")\)/g)].map(match => JSON.parse(JSON.parse(match[1])))
-  expect(args).toHaveLength(4)
-  return args as [any, Record<string, unknown>, Record<string, string>, number[][]]
+  const sent = pyodideMock.setGlobal.mock.calls.filter(call => call[0] === '_notebook_render_request').at(-1)!
+  const { flow, schemas, locked, layout } = JSON.parse(sent[1])
+  return [flow, schemas, locked, layout]
 }
 
 function sharedFlow(): FlowfileData {
@@ -257,18 +256,26 @@ describe('notebook store', () => {
     expect(renderArguments()[1]).toEqual({ [id]: [{ name: 'a', data_type: 'Int64' }] })
   })
 
-  it('keeps the newer render when an older one finishes last', async () => {
+  it('shows the newer of two renders, and runs engine calls one after another', async () => {
     useFlowStore().addNode('manual_input', 0, 0)
     const notebook = useNotebookStore()
     let finishFirst: (value: unknown) => void = () => undefined
-    pyodideMock.runPythonWithResult
-      .mockImplementationOnce(() => new Promise(resolve => (finishFirst = resolve)))
-      .mockResolvedValueOnce({ ...RENDERING, cells: [cell(1, 'newer = 1')] })
+    const answers = [
+      () => new Promise(resolve => (finishFirst = resolve)),
+      () => Promise.resolve({ ...RENDERING, cells: [cell(1, 'newer = 1')] })
+    ]
+    pyodideMock.runPythonWithResult.mockImplementation(async (source: string) =>
+      source.includes('render_notebook(') ? answers.shift()!() : { success: true }
+    )
+    pyodideMock.runPythonWithResult.mockClear()
 
     const first = notebook.render()
-    await notebook.render()
+    const second = notebook.render()
+    await vi.waitFor(() => expect(renderCalls()).toHaveLength(1))
+    // The second render's request is not set while the first one's is still being read.
+    expect(pyodideMock.setGlobal.mock.calls.filter(call => call[0] === '_notebook_render_request')).toHaveLength(1)
     finishFirst({ ...RENDERING, cells: [cell(1, 'older = 1')] })
-    await first
+    await Promise.all([first, second])
 
     expect(notebook.cells[0].code).toBe('newer = 1')
     expect(notebook.loading).toBe(false)
@@ -357,7 +364,14 @@ describe('running notebook cells', () => {
     expect(previewCalls()).toHaveLength(1)
     expect(previewCalls()[0]).toContain(`fetch_preview(${filter}, max_rows=100`)
     expect(notebook.outputs).toEqual({
-      'cell-2': { state: 'rows', columns: ['a', 'b'], rows: [{ a: 1, b: 'x' }, { a: 2, b: null }], total: 2 }
+      'cell-2': {
+        state: 'rows',
+        nodeId: filter,
+        columns: ['a', 'b'],
+        dtypes: { a: 'Int64' },
+        rows: [{ a: 1, b: 'x' }, { a: 2, b: null }],
+        total: 2
+      }
     })
     expect(notebook.running).toBe(false)
     expect(notebook.canRun).toBe(true)
@@ -386,7 +400,7 @@ describe('running notebook cells', () => {
 
     await notebook.runCell('cell-2')
 
-    expect(notebook.outputs['cell-2']).toEqual({ state: 'error', message: 'column "a" not found' })
+    expect(notebook.outputs['cell-2']).toMatchObject({ state: 'error', message: 'column "a" not found' })
     expect(previewCalls()).toEqual([])
   })
 
@@ -396,7 +410,7 @@ describe('running notebook cells', () => {
 
     await notebook.runCell('cell-2')
 
-    expect(notebook.outputs['cell-2']).toEqual({ state: 'error', message: 'the plan failed to collect' })
+    expect(notebook.outputs['cell-2']).toMatchObject({ state: 'error', message: 'the plan failed to collect' })
   })
 
   it('runs neither the imports cell nor a cell it does not know', async () => {
@@ -504,6 +518,19 @@ describe('running notebook cells', () => {
     expect(notebook.outputs).toEqual({})
   })
 
+  it('marks an output out of date once its step changes, and clears outputs on request', async () => {
+    const { flow, notebook, source } = await sourceAndFilter()
+    await notebook.runCell('cell-2')
+    expect(notebook.outputStale('cell-2')).toBe(false)
+
+    flow.updateNodeSettings(source, { ...flow.getNode(source)!.settings, description: 'changed upstream' } as any)
+    expect(notebook.outputStale('cell-2')).toBe(true)
+
+    notebook.clearOutputs()
+    expect(notebook.outputs).toEqual({})
+    expect(notebook.outputStale('cell-2')).toBe(false)
+  })
+
   it('drops an output when its cell goes, and keeps outputs with their flow', async () => {
     const { flow, notebook } = await sourceAndFilter()
     await notebook.runCell('cell-1')
@@ -520,6 +547,20 @@ describe('running notebook cells', () => {
 
     flow.loadFromSnapshot(first)
     expect(Object.keys(notebook.outputs)).toEqual(['cell-1'])
+  })
+
+  it("keeps each flow's cells with it, so another tab never shows them", async () => {
+    const { flow, notebook } = await sourceAndFilter()
+    const shown = notebook.cells.map(cell => cell.cell_id)
+    expect(shown.length).toBeGreaterThan(1)
+
+    const first = flow.captureSnapshot()
+    flow.importFromFlowfile(sharedFlow())
+    expect(notebook.cells).toEqual([])
+    expect(notebook.fingerprint).toBeNull()
+
+    flow.loadFromSnapshot(first)
+    expect(notebook.cells.map(cell => cell.cell_id)).toEqual(shown)
   })
 })
 

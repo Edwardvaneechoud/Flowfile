@@ -108,6 +108,8 @@ export type AggType =
   | 'first'
   | 'last'
   | 'n_unique'
+  | 'std'
+  | 'var'
   | 'concat'
 
 export interface AggCol {

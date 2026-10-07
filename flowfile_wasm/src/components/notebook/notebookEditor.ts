@@ -57,7 +57,26 @@ const theme = EditorView.theme({
   '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': {
     backgroundColor: 'var(--nb-selection)',
     outline: 'none'
-  }
+  },
+  '.cm-tooltip': {
+    backgroundColor: 'var(--color-background-primary)',
+    border: '1px solid var(--color-border-primary)',
+    borderRadius: '6px',
+    color: 'var(--color-text-primary)',
+    boxShadow: 'var(--shadow-md)'
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul': {
+    fontFamily: 'var(--font-family-mono)',
+    fontSize: '12px',
+    maxHeight: '14em'
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li': { padding: '2px 10px' },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+    backgroundColor: 'var(--nb-selection)',
+    color: 'var(--color-text-primary)'
+  },
+  '.cm-completionMatchedText': { textDecoration: 'none', color: 'var(--color-accent)', fontWeight: '600' },
+  '.cm-completionDetail': { color: 'var(--color-text-muted)', fontStyle: 'normal', marginLeft: '1em' }
 })
 
 /** The theme and syntax colours every notebook cell shares. */

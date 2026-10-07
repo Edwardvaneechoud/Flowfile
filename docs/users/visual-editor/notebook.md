@@ -140,6 +140,26 @@ With **No kernel** picked the notebook starts no Python process and needs no [ke
 
 Viewing and editing the cells, and running them while the notebook matches the canvas, work for every user, for their own flows, in the desktop app, with `pip install flowfile` and in a Docker deployment. Syncing works for every user in the default `electron` mode: the desktop app, and `pip install flowfile` unless you set `FLOWFILE_MODE`. With any other `FLOWFILE_MODE` (`docker` in a Docker deployment, or `package`) syncing needs an admin account, because the catalog lookups a cell can reach do not check each user's access. Other users keep editable cells; **Run** and **Run all** when the notebook no longer matches the canvas, and **Push**, leave the edits in the notebook, and a banner says that syncing needs an admin. The notebook has no settings of its own.
 
+## In Flowfile Lite
+
+[Flowfile Lite](../deployment/lite.md) has the notebook too, in the **Notebook** tab of its Code panel. The cells are the ones the full app renders for the same flow, written by Python running in the page, and nothing leaves the browser. Lite has no kernel, so a cell is never run as Python: **Push** reads the changed cells into node settings as one step you can undo, and **Run** pushes the changed cells above it, runs the cell's node on the canvas and shows its rows, with each column's type, under the cell.
+
+A push in Lite reads these calls, in a changed cell or a new one:
+
+- `sort`, `head`, `unique`, `with_row_index`, `unpivot`, `dynamic_rename`
+- `filter` with a single comparison, or with `flowfile_formula=`
+- `select`, `drop`, `rename`, each as a Select node
+- `group_by(...).agg(...)`, with `sum`, `min`, `max`, `count`, `mean`, `median`, `first`, `last`, `n_unique`, `std`, `var` and `.str.join(',')`
+- `with_columns(flowfile_formulas=[...], output_column_names=[...])`
+- `write_csv`, `write_parquet`, `write_excel`
+- `ff.from_raw_data`, `ff.DataFrame` and `ff.LazyFrame` (each a Manual Input), `ff.concat`
+
+A cell holding only steps a push cannot change in Lite (a read, a join, a pivot, Polars code) is read-only and marked **edit on the canvas**: change those steps on the canvas, or write a new step in a cell below. A change a push would refuse is marked on its line while you type.
+
+Writing over a cell replaces its step: a step the changed cell no longer writes is removed from the canvas when you push, after you confirm, and undo brings it back. The push is refused while another step still reads the one you removed: give its name to the new frame, so that step reads the new one, or change that step first. Python that is not flow code, such as a loop, `print` or a plain value like `threshold = 8`, needs the full app's [kernel](#running-on-a-kernel).
+
+Typing `ff.` or a dot after a frame offers only the names Lite reads; inside a string that a frame method reads, such as `select("` or `ff.col("`, it offers the frame's columns with their types. A cell you were editing when the canvas changed under it is kept as a **detached cell** until you remove it, use it as a new cell, or undo the canvas change.
+
 ## Exporting the notebook
 
 The **⋯** menu in the toolbar saves the cells as a file, so the code can leave Flowfile. **Export as Python script…** writes a `.py` file in which every cell opens with a `# %%` marker (`# %% [markdown]` for a Markdown cell, whose text becomes comments): VS Code, Spyder and Jupytext read the markers as cell boundaries, and a plain `python` runs the file top to bottom, since the imports cell comes first. **Export as Jupyter notebook…** writes an `.ipynb` that Jupyter, VS Code and Colab open, carrying the last output of every cell that ran in the panel. **Copy as Python script** puts the same script on the clipboard. The desktop app asks where to save; the browser downloads the file. The file is named after the flow, and nothing is sent anywhere: the export is built from the cells as they are in the panel, edits included.

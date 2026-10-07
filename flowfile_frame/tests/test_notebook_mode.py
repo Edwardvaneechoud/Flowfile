@@ -224,6 +224,22 @@ def test_a_sync_seeds_a_polars_code_method_from_the_frames_own_plan(monkeypatch)
         assert sync.column_less == {unplanned.node_id}
 
 
+def test_a_sync_renames_a_frame_without_known_columns_through_polars_code():
+    with notebook.notebook_mode(user_id=1, sync=True):
+        source = ff.from_dict(DATA)
+        unplanned = source.select(ff.numeric())
+        below = unplanned.with_columns(ff.lit(1).alias("one"))
+        known = source.rename({"a": "b"})
+        renames = [unplanned.rename({"a": "b"}), below.rename({"a": "b"}, strict=False)]
+
+        assert core_node(known).node_type == "select"
+        assert [core_node(f).node_type for f in renames] == ["polars_code", "polars_code"]
+        assert [core_node(f).setting_input.polars_code_input.polars_code for f in renames] == [
+            "output_df = input_df.rename({'a': 'b'})",
+            "output_df = input_df.rename({'a': 'b'}, strict=False)",
+        ]
+
+
 def test_fluent_polars_code_is_seeded_not_run_in_the_mode(mode):
     frame = ff.from_dict(DATA).polars_code("input_df.with_columns(pl.col('a').cum_sum().alias('running'))")
     node = core_node(frame)

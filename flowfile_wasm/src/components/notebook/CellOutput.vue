@@ -1,5 +1,14 @@
 <template>
-  <section class="cell-output" :class="`cell-output--${output.state}`" :data-output-state="output.state">
+  <section
+    class="cell-output"
+    :class="[`cell-output--${output.state}`, { 'cell-output--stale': stale }]"
+    :data-output-state="output.state"
+    :data-stale="stale || undefined"
+  >
+    <p v-if="stale" class="output-note output-note--stale">
+      <svg class="output-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 19h18zM12 10v4M12 16.5v.5" /></svg>
+      Out of date: this step or one before it changed since it ran. Run it again to see what it gives now.
+    </p>
     <p v-if="output.state === 'running'" class="output-note output-note--busy">
       <span class="output-spinner" aria-hidden="true"></span>
       Running…
@@ -14,7 +23,7 @@
     </div>
     <template v-else>
       <div v-if="output.rows.length" class="output-rows">
-        <RowTable :rows="output.rows" :limit="output.rows.length" />
+        <RowTable :rows="output.rows" :limit="output.rows.length" :columns="output.columns" :dtypes="output.dtypes" />
       </div>
       <p class="output-note">{{ summary }}</p>
     </template>
@@ -26,7 +35,7 @@ import { computed } from 'vue'
 import RowTable from '../RowTable.vue'
 import type { CellOutput } from '../../stores/notebook-store'
 
-const props = defineProps<{ output: CellOutput }>()
+const props = defineProps<{ output: CellOutput; stale?: boolean }>()
 
 const count = new Intl.NumberFormat('en-US')
 
@@ -60,6 +69,16 @@ const summary = computed(() => {
 
 .output-note--busy {
   color: var(--color-accent);
+}
+
+.output-note--stale {
+  border-bottom: 1px solid var(--color-border-light);
+  color: var(--color-warning);
+}
+
+.cell-output--stale .output-rows,
+.cell-output--stale .output-failure {
+  opacity: 0.55;
 }
 
 .output-icon {

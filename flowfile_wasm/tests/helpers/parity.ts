@@ -957,6 +957,29 @@ export const POLARS_ONLY_FIXTURES: Fixture[] = [
     ],
     output: 2
   },
+  {
+    // A standard deviation has no plain-Python form, so that flavour leaves it to the canvas.
+    name: 'group_by spread: std and var',
+    ordered: false,
+    steps: [
+      SALES,
+      {
+        id: 2,
+        type: 'group_by',
+        inputs: [1],
+        settings: {
+          groupby_input: {
+            agg_cols: [
+              { old_name: 'product', agg: 'groupby', new_name: 'product' },
+              { old_name: 'revenue', agg: 'std', new_name: 'spread' },
+              { old_name: 'revenue', agg: 'var', new_name: 'variance' }
+            ]
+          }
+        }
+      }
+    ],
+    output: 2
+  },
 
   {
     name: 'dynamic rename from the first row',

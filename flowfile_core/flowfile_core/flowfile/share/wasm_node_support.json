@@ -232,6 +232,8 @@
       "first",
       "last",
       "n_unique",
+      "std",
+      "var",
       "concat"
     ],
     "pivot_aggs": [

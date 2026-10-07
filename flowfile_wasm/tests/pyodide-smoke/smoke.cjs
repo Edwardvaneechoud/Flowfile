@@ -272,11 +272,22 @@ execute_formula(23, 1, json.loads(${j({
   // --- Canvas notebook: the notebook-store bridge call, then every golden flow and formula. ---
   const golden = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../python/notebook_golden.json'), 'utf8'));
   const sample = golden.flows.find((flow) => flow.name === 'notebook: polars code assigning output_df');
+  const renderRequest = { flow: sample.flow, schemas: sample.schemas, locked: { 2: 'locked until trusted' }, layout: [] };
+  pyodide.globals.set('_notebook_render_request', JSON.stringify(renderRequest));
   const notebookRes = await run('render_notebook (notebook-store bridge)', `
 import json
 from engine.notebook_render import render_notebook
-render_notebook(json.loads(${j(sample.flow)}), json.loads(${j(sample.schemas)}), json.loads(${j({ 2: 'locked until trusted' })}))
+render_notebook(**json.loads(_notebook_render_request))
 `);
+  pyodide.globals.delete('_notebook_render_request');
+  const surfaceRes = await run('notebook_surface (completions)', `
+from engine.notebook_cells import notebook_surface
+notebook_surface()
+`);
+  if (!surfaceRes || !Array.isArray(surfaceRes.ff) || !surfaceRes.pushable.includes('FlowFrame.group_by')) {
+    failed.push('notebook_surface result');
+    console.error(`  [FAIL] notebook_surface result: ${JSON.stringify(surfaceRes)}`);
+  }
   const notebookCells = (notebookRes && notebookRes.cells) || [];
   if (
     notebookCells.length !== sample.cells.length ||
@@ -331,7 +342,7 @@ def _touched(flow):
             continue
         drafts[cell["cell_id"]] = cell["code"] + "\\n# touched\\n"
     return drafts
-_unchanged = {"ok": True, "nodes": {}, "added": [], "inputs": {}, "warnings": []}
+_unchanged = {"ok": True, "nodes": {}, "added": [], "inputs": {}, "removed": [], "warnings": []}
 def _changes(result):
     return {key: value for key, value in result.items() if key not in ("node_ids_by_cell", "unnamed_by_cell")}
 [f["name"] for f in _golden["flows"] if _changes(sync_notebook(f["flow"], f["schemas"], {}, _touched(f))) != _unchanged]
@@ -339,6 +350,41 @@ def _changes(result):
   if (!Array.isArray(syncDiffs) || syncDiffs.length) {
     failed.push('sync_notebook golden');
     console.error(`  [FAIL] sync_notebook golden, changed: ${JSON.stringify(syncDiffs)}`);
+  }
+
+  // A group by is two calls read as one node; the engine then runs what was pushed.
+  const groupFlow = golden.flows.find((flow) => flow.name === 'a longer chain: filter then group_by then sort');
+  const groupCell = groupFlow.cells.find((cell) => cell.cell_id === 'cell-1');
+  const groupRequest = {
+    flow: groupFlow.flow,
+    schemas: groupFlow.schemas,
+    locked: {},
+    drafts: { 'cell-1': groupCell.code.replace('.sum().alias("total")', '.std().alias("total")') }
+  };
+  pyodide.globals.set('_notebook_sync_request', JSON.stringify(groupRequest));
+  const groupRes = await run('sync_notebook (group by)', `
+import json
+from engine.notebook_cells import sync_notebook
+sync_notebook(**json.loads(_notebook_sync_request))
+`);
+  pyodide.globals.delete('_notebook_sync_request');
+  const groupCols = groupRes && groupRes.ok && groupRes.nodes['3'] && groupRes.nodes['3'].settings.groupby_input.agg_cols;
+  if (!groupCols || groupCols[1].agg !== 'std') {
+    failed.push('sync_notebook group by');
+    console.error(`  [FAIL] sync_notebook group by: ${JSON.stringify(groupRes)}`);
+  }
+  pyodide.globals.set('_group_cols', JSON.stringify(groupCols || []));
+  const spread = await run('group by runs std', `
+import json
+import polars as pl
+from engine.nodes_aggregate import build_group_by
+_frame = pl.LazyFrame({"product": ["a", "a", "b"], "revenue": [10, 20, 5]})
+build_group_by(_frame, {"groupby_input": {"agg_cols": json.loads(_group_cols)}}).sort("product").collect()["total"].to_list()
+`);
+  pyodide.globals.delete('_group_cols');
+  if (!Array.isArray(spread) || Math.abs(spread[0] - Math.sqrt(50)) > 1e-9 || spread[1] != null) {
+    failed.push('group by std');
+    console.error(`  [FAIL] group by std: ${JSON.stringify(spread)}`);
   }
 
   // A frame written as data is built by the wasm Polars; a line with no name adds nothing.

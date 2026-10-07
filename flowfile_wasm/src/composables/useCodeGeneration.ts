@@ -821,7 +821,9 @@ export class FlowToPolarsConverter {
       median: 'median',
       first: 'first',
       last: 'last',
-      n_unique: 'n_unique'
+      n_unique: 'n_unique',
+      std: 'std',
+      var: 'var'
     }
     return `${col}.${mapping[agg] || 'sum'}()${alias}`
   }

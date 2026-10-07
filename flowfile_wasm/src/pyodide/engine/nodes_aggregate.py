@@ -6,6 +6,9 @@ from .errors import format_error, format_error_lf
 from .log import log_node
 from .state import get_lazyframe, get_schema, store_lazyframe
 
+# Names core's flows may carry for an aggregation the engine runs under another name.
+AGG_ALIASES = {"avg": "mean", "average": "mean"}
+
 # Absent pivot combination reads 0, not null — matching core's do_pivot.
 PIVOT_ZERO_FILL_AGGS = frozenset({"sum", "count", "len"})
 
@@ -29,11 +32,11 @@ def pivot_column_null_count(df: pl.DataFrame, pivot_column: str) -> int:
 
 
 def _build_agg_exprs(agg_defs: list[dict]) -> list:
-    """Build aggregation expressions from agg column definitions."""
+    """Build aggregation expressions from agg column definitions; an aggregation it does not know is an error."""
     exprs = []
     for a in agg_defs:
         col = pl.col(a["old_name"])
-        agg = a.get("agg", "count")
+        agg = AGG_ALIASES.get(a.get("agg", "count"), a.get("agg", "count"))
         new_name = a.get("new_name", f"{a['old_name']}_{agg}")
 
         if agg == "sum":
@@ -54,8 +57,14 @@ def _build_agg_exprs(agg_defs: list[dict]) -> list:
             exprs.append(col.last().alias(new_name))
         elif agg == "n_unique":
             exprs.append(col.n_unique().alias(new_name))
+        elif agg == "std":
+            exprs.append(col.std().alias(new_name))
+        elif agg == "var":
+            exprs.append(col.var().alias(new_name))
         elif agg == "concat":
             exprs.append(col.cast(pl.Utf8).str.join(",").alias(new_name))
+        else:
+            raise ValueError(f"The aggregation {agg!r} on column {a['old_name']!r} is not available in the browser")
     return exprs
 
 

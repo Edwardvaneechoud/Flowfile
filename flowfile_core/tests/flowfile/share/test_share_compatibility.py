@@ -133,8 +133,8 @@ PLACEHOLDER_CASES = [
     (
         "unknown group_by aggregation",
         "group_by",
-        {"groupby_input": {"agg_cols": [{"old_name": "a", "agg": "std"}]}},
-        "'std' aggregation",
+        {"groupby_input": {"agg_cols": [{"old_name": "a", "agg": "cumsum"}]}},
+        "'cumsum' aggregation",
     ),
     ("pivot n_unique", "pivot", {"pivot_input": {"aggregations": ["n_unique"]}}, "'n_unique' aggregation"),
     ("json read", "read", {"received_file": {"file_type": "json"}}, "cannot read json"),

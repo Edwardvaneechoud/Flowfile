@@ -3,7 +3,9 @@
     <table v-if="rows.length" class="row-table">
       <thead>
         <tr>
-          <th v-for="column in columns" :key="column">{{ column }}</th>
+          <th v-for="column in columns" :key="column">
+            {{ column }}<span v-if="dtypes?.[column]" class="row-table-dtype">{{ dtypes[column] }}</span>
+          </th>
         </tr>
       </thead>
       <tbody>
@@ -27,12 +29,17 @@ const props = defineProps<{
   limit: number
   /** True row count when `rows` is itself a capped sample — keeps "…and N more" honest. */
   total?: number
+  /** The columns in their order; without it they are read off the rows, where a number-like name sorts first. */
+  columns?: string[]
+  /** A data type to show under each column name. */
+  dtypes?: Record<string, string>
 }>()
 
 const shown = computed(() => props.rows.slice(0, props.limit))
 const hidden = computed(() => Math.max(0, (props.total ?? props.rows.length) - props.limit))
 
 const columns = computed(() => {
+  if (props.columns) return props.columns
   const seen: string[] = []
   for (const row of shown.value) {
     for (const column of Object.keys(row)) if (!seen.includes(column)) seen.push(column)
@@ -77,6 +84,13 @@ const format = (value: unknown): string =>
   font-weight: 600;
   color: var(--color-text-secondary);
   background: var(--color-background-secondary);
+}
+
+.row-table-dtype {
+  display: block;
+  font-weight: 400;
+  font-size: 10.5px;
+  color: var(--color-text-muted);
 }
 
 .row-table td {

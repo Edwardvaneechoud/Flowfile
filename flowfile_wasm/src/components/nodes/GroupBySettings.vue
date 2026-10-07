@@ -65,6 +65,8 @@
       <button @click="addAgg('first')">First</button>
       <button @click="addAgg('last')">Last</button>
       <button @click="addAgg('n_unique')">N Unique</button>
+      <button @click="addAgg('std')">Std</button>
+      <button @click="addAgg('var')">Var</button>
       <button @click="addAgg('concat')">Concat</button>
     </div>
 
@@ -107,7 +109,7 @@ const showContextMenuRemove = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
 const contextMenuRowIndex = ref<number | null>(null)
 
-const aggOptions: AggType[] = ['groupby', 'sum', 'count', 'mean', 'min', 'max', 'median', 'first', 'last', 'n_unique', 'concat']
+const aggOptions: AggType[] = ['groupby', 'sum', 'count', 'mean', 'min', 'max', 'median', 'first', 'last', 'n_unique', 'std', 'var', 'concat']
 
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)

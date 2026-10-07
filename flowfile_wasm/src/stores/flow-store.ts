@@ -2199,6 +2199,17 @@ result
    * Stops and surfaces the first failing node's error.
    */
   async function executeNodeWithUpstream(nodeId: number): Promise<NodeResult> {
+    // The flow is busy for the run's length, as for a canvas Run: Run and undo wait. A run inside one keeps its flag.
+    const owns = !isExecuting.value
+    if (owns) isExecuting.value = true
+    try {
+      return await executeChain(nodeId)
+    } finally {
+      if (owns) isExecuting.value = false
+    }
+  }
+
+  async function executeChain(nodeId: number): Promise<NodeResult> {
     const chain = getAncestorChain(nodeId)
 
     // Ground truth for "pointer already wired in this runtime" is the Python data

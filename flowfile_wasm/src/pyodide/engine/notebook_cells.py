@@ -8,7 +8,9 @@ here, so what counts as changed is decided against what the canvas says now:
   that node untouched;
 * any other call is read by the handler for its method, which answers with the settings that
   call describes, in flowfile_core's dialect, to be laid over the node's own. A call the cell
-  did not have before is a new node.
+  did not have before is a new node;
+* a node the cell stood for that none of its calls reads any more is removed, as core's push
+  deletes it, unless a step the push keeps still reads it.
 
 Inputs follow names: a node reads whatever its input's name is bound to where its cell stands, so
 a changed cell that binds a name to another node moves the readers of that name with it.
@@ -37,6 +39,7 @@ from .notebook_render import (
     AUTO_DATA_TYPE,
     NODE_TEMPLATE_NAMES,
     NODE_TYPE_VAR_LABEL,
+    STRING_CONCAT_DELIMITER,
     NotebookRenderer,
     _formula_entries,
     _Node,
@@ -71,6 +74,8 @@ _SELECT_TYPES = {
     "Datetime": "Datetime",
 }
 _SINKS = {"csv": "sink_csv", "parquet": "sink_parquet"}
+# The aggregations a Group by node runs, by the expression method a cell writes for them.
+_AGGREGATIONS = frozenset({"sum", "max", "min", "count", "mean", "median", "first", "last", "n_unique", "std", "var"})
 # A new node of these types stays although no name holds it: it writes, which is what it is for.
 _KEPT_UNNAMED = frozenset({"output"})
 # The column types of a frame written as data: the ones a Manual Input gives back as they were written.
@@ -113,7 +118,11 @@ class _Unit:
 
     @property
     def label(self) -> str:
-        return f"#{self.node.id} {NODE_TEMPLATE_NAMES.get(self.node.type) or self.node.type}"
+        return _step_label(self.node)
+
+
+def _step_label(node: _Node) -> str:
+    return f"#{node.id} {NODE_TEMPLATE_NAMES.get(node.type) or node.type}"
 
 
 def _unroll(value: ast.expr) -> tuple[ast.expr, list[ast.Call]]:
@@ -571,6 +580,30 @@ def _read_nothing(unit: _Unit, args: list, kwargs: dict, line: int) -> dict:
     return {}
 
 
+def _not_known(what: str, line: int) -> CellFailure:
+    return _refused(
+        f"The columns of this frame are not known yet, so {what} cannot say which ones it leaves out. "
+        "Push or run the steps before it first",
+        line,
+    )
+
+
+def _frame_columns(unit: _Unit, what: str, line: int) -> list[str]:
+    """The columns of the frame a Select is written on: the input's, else the ones the node already names."""
+    if unit.columns is not None:
+        return list(unit.columns)
+    rows = sorted(unit.node.settings.get("select_input") or [], key=lambda row: row.get("position") or 0)
+    if not rows:
+        raise _not_known(what, line)
+    return [row.get("old_name") for row in rows]
+
+
+def _missing(names: list[str], columns: list[str], line: int) -> None:
+    absent = next((name for name in names if name not in columns), None)
+    if absent is not None:
+        raise CellFailure(f"ColumnNotFoundError: `{absent}` is not one of {', '.join(columns)}", line)
+
+
 def _read_select(unit: _Unit, args: list, kwargs: dict, line: int) -> dict:
     """The columns listed are kept in that order; a column the node knew and the list leaves out is dropped."""
     if kwargs:
@@ -578,16 +611,54 @@ def _read_select(unit: _Unit, args: list, kwargs: dict, line: int) -> dict:
     items = args[0] if len(args) == 1 and isinstance(args[0], list | tuple) else args
     if not items:
         raise CellFailure("TypeError: select() needs at least one column", line)
+    if unit.columns is None and not unit.node.settings.get("select_input"):
+        raise _not_known("a select", line)
+    return _select_rows(unit, [_selected(item, line) for item in items], line)
+
+
+def _read_drop(unit: _Unit, args: list, kwargs: dict, line: int) -> dict:
+    """``drop(...)`` is a Select node that keeps every other column, as the full app lowers it."""
+    bound = _arguments("drop", ("strict",), [], kwargs, line)
+    strict = bound.get("strict", True)
+    if type(strict) is not bool:
+        raise CellFailure("TypeError: drop(strict=) takes True or False", line)
+    names = [name for item in args for name in _names(item, "drop()", line)]
+    columns = _frame_columns(unit, "a drop", line)
+    if strict:
+        _missing(names, columns, line)
+    kept = [(column, column, None) for column in columns if column not in names]
+    if not kept:
+        raise _refused("A drop that leaves no column is not a step the Select node can make", line)
+    return _select_rows(unit, kept, line)
+
+
+def _read_rename(unit: _Unit, args: list, kwargs: dict, line: int) -> dict:
+    """``rename({old: new})`` is a Select node that keeps every column and renames the ones listed."""
+    bound = _arguments("rename", ("mapping", "strict"), args, kwargs, line)
+    mapping, strict = bound.get("mapping"), bound.get("strict", True)
+    if not isinstance(mapping, dict) or not all(type(k) is str and type(v) is str for k, v in mapping.items()):
+        raise _refused("rename() takes a dict of column names here: {old: new}", line)
+    if type(strict) is not bool:
+        raise CellFailure("TypeError: rename(strict=) takes True or False", line)
+    columns = _frame_columns(unit, "a rename", line)
+    if strict:
+        _missing(list(mapping), columns, line)
+    picks = [(column, mapping.get(column, column), None) for column in columns]
+    _unique_names([name for _, name, _ in picks], line)
+    return _select_rows(unit, picks, line)
+
+
+def _unique_names(names: list[str], line: int) -> None:
+    repeated = next((name for name in names if names.count(name) > 1), None)
+    if repeated is not None:
+        raise CellFailure(f"DuplicateError: the name `{repeated}` is given to more than one column", line)
+
+
+def _select_rows(unit: _Unit, picks: list[tuple[str, str, str | None]], line: int) -> dict:
+    """Select settings keeping ``picks`` (column, name, cast) in that order and naming every other column dropped."""
     known = {row.get("old_name"): row for row in unit.node.settings.get("select_input") or []}
-    if unit.columns is None and not known:
-        raise _refused(
-            "The columns of this frame are not known yet, so a select cannot say which ones it leaves out. "
-            "Push or run the steps before it first",
-            line,
-        )
     rows: list[dict] = []
-    for item in items:
-        column, name, cast = _selected(item, line)
+    for column, name, cast in picks:
         if any(row["old_name"] == column for row in rows):
             raise _refused(f"The Select node takes each column once; `{column}` is listed twice", line)
         if unit.columns is not None and column not in unit.columns:
@@ -619,6 +690,89 @@ def _read_select(unit: _Unit, args: list, kwargs: dict, line: int) -> dict:
     return {"select_input": rows, "keep_missing": False}
 
 
+def _group_key(item: Any, line: int) -> tuple[str, str]:
+    """One grouping column: a name, ``ff.col(name)``, or ``ff.col(name).alias(new_name)``."""
+    if type(item) is str:
+        return item, item
+    expr, name = item, None
+    if isinstance(expr, Expr) and expr.op == "alias" and len(expr.args) == 2 and not expr.kwargs:
+        expr, name = expr.args
+    column = _column(expr)
+    if column is None or not (name is None or type(name) is str):
+        raise _refused("group_by() takes column names here, or `ff.col(name).alias(new_name)`", line)
+    return column, name or column
+
+
+def _aggregation(item: Any, line: int) -> tuple[str, str, str]:
+    """One aggregation: ``ff.col(name).<aggregation>()``, named with ``.alias(...)``; ``(column, agg, name)``."""
+    expr, name = item, None
+    if isinstance(expr, Expr) and expr.op == "alias" and len(expr.args) == 2 and not expr.kwargs:
+        expr, name = expr.args
+    agg = column = None
+    if isinstance(expr, Expr) and not expr.kwargs:
+        if expr.op in _AGGREGATIONS and len(expr.args) == 1:
+            agg, column = expr.op, _column(expr.args[0])
+        elif expr.op == "str.join" and len(expr.args) == 2:
+            if expr.args[1] != STRING_CONCAT_DELIMITER:
+                raise _refused(f"The Group by node joins text with {STRING_CONCAT_DELIMITER!r} only", line)
+            agg, column = "concat", _column(expr.args[0])
+    if column is None or not (name is None or type(name) is str):
+        raise _refused(
+            f"agg() takes `ff.col(name).<aggregation>()` here, one of {', '.join(sorted(_AGGREGATIONS))} "
+            f"or `.str.join({STRING_CONCAT_DELIMITER!r})`, named with `.alias(...)`",
+            line,
+        )
+    return column, agg, name or column
+
+
+def _items(call: ast.Call, args: list) -> tuple[list, list[int]]:
+    """A call's items, given as one list or one by one, with the line each is written on."""
+    if len(args) == 1 and isinstance(args[0], list | tuple):
+        elements = call.args[0].elts if isinstance(call.args[0], ast.List | ast.Tuple) else []
+        return list(args[0]), [element.lineno for element in elements] or [call.args[0].lineno] * len(args[0])
+    return list(args), [argument.lineno for argument in call.args]
+
+
+def _read_group_by(
+    keys_call: ast.Call,
+    keys_read: tuple[list, dict],
+    agg_call: ast.Call,
+    aggs_read: tuple[list, dict],
+    columns: list[str] | None,
+) -> dict:
+    """``group_by(keys).agg(aggregations)`` as a Group by node's ``agg_cols``: the keys, then the aggregations."""
+    keys_line = getattr(keys_call.func, "end_lineno", None) or keys_call.lineno
+    agg_line = getattr(agg_call.func, "end_lineno", None) or agg_call.lineno
+    args, kwargs = keys_read
+    if kwargs:
+        name = next(iter(kwargs))
+        raise _refused(f"`{name}=` has no setting on this node, so group_by() cannot take it here", keys_line)
+    items, key_lines = _items(keys_call, args)
+    grouped = [_group_key(item, line) for item, line in zip(items, key_lines, strict=True)]
+    args, kwargs = aggs_read
+    if kwargs:
+        raise _refused("agg() takes its aggregations by position here; name each one with `.alias(...)`", agg_line)
+    items, agg_lines = _items(agg_call, args)
+    aggregations = [_aggregation(item, line) for item, line in zip(items, agg_lines, strict=True)]
+    named: list[tuple[str, str, int]] = [
+        (column, name, line) for (column, name), line in zip(grouped, key_lines, strict=True)
+    ]
+    named += [(column, name, line) for (column, _, name), line in zip(aggregations, agg_lines, strict=True)]
+    seen: set[str] = set()
+    for column, name, line in named:
+        if columns is not None:
+            _missing([column], columns, line)
+        if name in seen:
+            raise CellFailure(f"DuplicateError: the name `{name}` is given to more than one column", line)
+        seen.add(name)
+    return {
+        "groupby_input": {
+            "agg_cols": [{"old_name": column, "new_name": name, "agg": "groupby"} for column, name in grouped]
+            + [{"old_name": column, "new_name": name, "agg": agg} for column, agg, name in aggregations]
+        }
+    }
+
+
 def _columns_after(node_type: str, columns: list[str] | None, settings: dict) -> list[str] | None:
     """The columns a node hands on, for the node types where its settings and input say so; else None."""
     if node_type == "manual_input":
@@ -626,6 +780,12 @@ def _columns_after(node_type: str, columns: list[str] | None, settings: dict) ->
         return [column.get("name") for column in raw]
     if node_type == "record_count":
         return ["number_of_records"]
+    if node_type == "group_by":
+        rows = (settings.get("groupby_input") or {}).get("agg_cols") or []
+        keys = [row.get("new_name") or row["old_name"] for row in rows if row.get("agg") == "groupby"]
+        return keys + [row.get("new_name") or row["old_name"] for row in rows if row.get("agg") != "groupby"]
+    if node_type == "unpivot":
+        return [*((settings.get("unpivot_input") or {}).get("index_columns") or []), "variable", "value"]
     if columns is None:
         return None
     if node_type in ("sort", "filter", "sample", "unique", "output"):
@@ -655,7 +815,10 @@ _HANDLERS: dict[tuple[str, str], tuple[tuple[str, ...], Callable | None]] = {
     ("FlowFrame", "dynamic_rename"): (("dynamic_rename",), _read_dynamic_rename),
     ("FlowFrame", "filter"): (("filter",), _read_filter),
     ("FlowFrame", "select"): (("select",), _read_select),
+    ("FlowFrame", "drop"): (("select",), _read_drop),
+    ("FlowFrame", "rename"): (("select",), _read_rename),
     ("FlowFrame", "with_columns"): (("formula",), None),
+    ("FlowFrame", "group_by"): (("group_by",), None),
     ("FlowFrame", "write_csv"): (("output",), _read_write("csv", ("path", "separator", "encoding"))),
     ("FlowFrame", "write_parquet"): (("output",), _read_write("parquet", ("path", "compression"))),
     ("FlowFrame", "write_excel"): (("output",), _read_write("excel", ("path", "worksheet", "write_mode"))),
@@ -682,18 +845,13 @@ class _CellReading:
         self.helpers_seen: dict[int, set[str]] = {}
         self.bound: set[str] = set()
 
-    def read(self, tree: ast.Module) -> None:
+    def read(self, tree: ast.Module) -> list[_Unit]:
+        """Read every statement; the nodes the cell stood for that no call of it reads any more."""
         if any(not unit.readable for unit in self.pending):
             raise _refused("This cell holds code the notebook cannot read back; change it on the canvas", 1)
         for statement in tree.body:
             self._statement(statement)
-        removed = [unit for unit in self.pending if unit.calls]
-        if removed:
-            raise _refused(
-                f"This change removes a step ({removed[0].label}). Removing a step from the notebook is not "
-                "supported yet; delete the node on the canvas",
-                1,
-            )
+        return [unit for unit in self.pending if unit.calls]
 
     @staticmethod
     def _nested_frame(kind: Any, receiver: Any, attribute: str, args: list, kwargs: dict, node: ast.Call) -> Any:
@@ -836,8 +994,9 @@ class _CellReading:
             raise _refused(
                 f"`{attribute}` cannot be written or changed from the notebook yet; use the canvas for this step", line
             )
-        if attribute == "with_columns":
-            return self._formula(self._unread(types), calls, signatures, index, current, line)
+        run = _RUN_READERS.get((kind, attribute))
+        if run is not None:
+            return run(self, self._unread(types), calls, signatures, index, current, line)
         args, kwargs = self.reader.arguments(call)
         accepted = allowlist.DATA_ARGUMENTS.get((kind, attribute))
         unaccepted = next((name for name in kwargs if accepted is not None and name not in accepted), None)
@@ -909,6 +1068,32 @@ class _CellReading:
         self.sync.change(unit, {"functions": entries}, description)
         return unit, {"main": current.node_id}, count
 
+    def _group_by(
+        self, unit: _Unit | None, calls: list, signatures: list, index: int, current: Frame | None, line: int
+    ) -> tuple[_Unit, dict[str, int], int]:
+        """A Group by node is ``group_by(keys)`` and the ``agg(...)`` called on it: two calls, one node."""
+        assert current is not None
+        follow = calls[index + 1] if index + 1 < len(calls) else None
+        if follow is None or follow.func.attr != "agg":
+            raise _refused(
+                "A group_by() is a step together with its .agg([...]); write the aggregations after it", line
+            )
+        keys_read = self.reader.arguments(calls[index])
+        description = _text(keys_read[1].pop("description", ""), "description=", line)
+        columns = self.sync.columns_of(current.node_id)
+        patch = _read_group_by(calls[index], keys_read, follow, self.reader.arguments(follow), columns)
+        unit = unit or self.sync.new_unit("group_by", line)
+        unit.columns = columns
+        self.sync.change(unit, patch, description)
+        return unit, {"main": current.node_id}, 2
+
+
+# Calls whose node reads a run of calls, from the one at ``index`` on: the reader answers how many it took.
+_RUN_READERS: dict[tuple[str, str], Callable] = {
+    ("FlowFrame", "with_columns"): _CellReading._formula,
+    ("FlowFrame", "group_by"): _CellReading._group_by,
+}
+
 
 class _Sync:
     """One reading of the notebook against the flow as it stands."""
@@ -947,6 +1132,8 @@ class _Sync:
         self.descriptions: dict[int, str] = {}
         self.references: dict[int, tuple[str | None, str, int]] = {}
         self.inputs: dict[int, dict[str, int]] = {}
+        # The nodes a changed cell no longer writes, by the cell that held them: a push removes them.
+        self.removed: dict[int, str] = {}
         self.warnings: list[str] = []
 
     def run(self) -> dict:
@@ -974,6 +1161,12 @@ class _Sync:
                     self._read(cell, draft)
             except CellFailure as failure:
                 return _failure(cell["cell_id"], failure)
+        still_read = self._still_read()
+        if still_read is not None:
+            return still_read
+        for table in (self.settings, self.descriptions, self.references, self.inputs, self.columns):
+            for node_id in self.removed:
+                table.pop(node_id, None)
         self._prune()
         taken = self._taken_reference()
         if taken is not None:
@@ -1013,8 +1206,40 @@ class _Sync:
                 for cell_id, lines in self.node_ids_by_cell.items()
             },
             "unnamed_by_cell": self.unnamed_by_cell,
+            "removed": [
+                {"id": node_id, "label": _step_label(self.renderer.nodes[node_id])} for node_id in sorted(self.removed)
+            ],
             "warnings": self.warnings,
         }
+
+    def _still_read(self) -> dict | None:
+        """A step a push removes must not be one a step it keeps still reads; that fails on the removing cell."""
+        readers: dict[int, list[tuple[_Node, str | None]]] = {}
+        for node_id, node in self.renderer.nodes.items():
+            if node_id in self.removed:
+                continue
+            rendered = self.units[node_id].inputs if node_id in self.units else self.renderer.node_inputs(node)
+            desired = self.inputs.get(node_id, {key: producer for key, (_, producer) in rendered.items()})
+            for key, source in desired.items():
+                if source in self.removed:
+                    name = rendered[key][0] if rendered.get(key, (None, None))[1] == source else None
+                    readers.setdefault(source, []).append((node, name))
+        if not readers:
+            return None
+        source, read_by = min(readers.items())
+        read_by.sort(key=lambda each: each[0].id)
+        labels = [_step_label(node) for node, _ in read_by]
+        one = len(labels) == 1
+        listed = labels[0] if one else f"{', '.join(labels[:-1])} and {labels[-1]}"
+        them = labels[0] if one else "those steps"
+        name = next((name for _, name in read_by if name), None)
+        message = f"This change removes {_step_label(self.renderer.nodes[source])}, which {listed} still "
+        message += "reads" if one else "read"
+        if name:
+            message += f" as `{name}`; give that name to another frame, or change {them} first"
+        else:
+            message += f"; change {them} first"
+        return _failure(self.removed[source], _refused(message, None))
 
     def _prune(self) -> None:
         """A new node stays only upstream of a named frame, a writer or a node the flow has: core's rule for a push.
@@ -1025,7 +1250,7 @@ class _Sync:
         new = {unit.node.id: unit for unit in self.added}
         named = {frame.node_id for frame in self.namespace.values() if isinstance(frame, Frame)}
         stack = [
-            *self.renderer.nodes,
+            *(node_id for node_id in self.renderer.nodes if node_id not in self.removed),
             *(node_id for node_id, unit in new.items() if node_id in named or unit.node.type in _KEPT_UNNAMED),
         ]
         kept: set[int] = set()
@@ -1100,9 +1325,12 @@ class _Sync:
         if len(draft.encode("utf-8")) > allowlist.BOUNDS["bytes_per_cell"]:
             raise _refused("The cell is too large to read", 1)
         reading = _CellReading(self, cell, draft)
-        reading.read(parse_cell(draft))
+        for unit in reading.read(parse_cell(draft)):
+            self.removed[unit.node.id] = cell["cell_id"]
         # A name the cell now gives to another node no longer names the node that had it.
         for node_id in cell["node_ids"]:
+            if node_id in self.removed:
+                continue
             node = self.renderer.nodes[node_id]
             holder = self.namespace.get(node.reference) if node.reference in reading.bound else None
             if isinstance(holder, Frame) and holder.node_id != node_id:
@@ -1116,6 +1344,8 @@ class _Sync:
         for node_id in cell["node_ids"]:
             unit = self.units.get(node_id)
             if unit is None or unit.target is None or unit.target not in self.rendered_names or unit.target in bound:
+                continue
+            if node_id in self.removed:
                 continue
             if bound:
                 self.namespace.setdefault(unit.target, Frame(node_id))
@@ -1178,6 +1408,8 @@ class _Sync:
             if reference is None:
                 continue
             for other in [*self.renderer.nodes.values(), *(unit.node for unit in self.added)]:
+                if other.id in self.removed:
+                    continue
                 named = self.references[other.id][0] if other.id in self.references else other.reference
                 if other.id != node_id and named == reference:
                     step = self._final(other.id)
@@ -1212,6 +1444,23 @@ def _failure(cell_id: str, failure: CellFailure) -> dict:
     }
 
 
+def notebook_surface() -> dict:
+    """What a cell may write, for the editor's completions: the allowlist, and the calls a push reads back.
+
+    ``ff`` lists every ``ff.<name>``, ``methods`` the attributes each kind of value offers, and ``pushable``
+    the ``"<kind>.<method>"`` calls a changed cell can turn into settings; any other call stays as the render
+    wrote it or is refused at a push. ``node_types`` (core's names) are the nodes a push can change.
+    """
+    readers = {*_HANDLERS, *_RUN_READERS}
+    return {
+        "ff": sorted({*allowlist.FL_VERDICTS, *allowlist.INPUT_ONLY.get("ff", {})}),
+        "methods": {kind: sorted(attributes) for kind, attributes in allowlist.ALLOWLIST.items()},
+        "pushable": sorted(f"{kind}.{method}" for kind, method in readers if _HANDLERS.get((kind, method), ((),))[0]),
+        # A Count records node is read by the select handler.
+        "node_types": sorted({"record_count", *(node_type for types, _ in _HANDLERS.values() for node_type in types)}),
+    }
+
+
 def sync_notebook(
     flow: dict,
     schemas: dict | None = None,
@@ -1233,6 +1482,9 @@ def sync_notebook(
     A new node is added only when a name holds its frame, or a frame downstream of it, once every
     cell is read; a writer and a node the flow has stay as they are. ``unnamed_by_cell`` answers,
     per cell, the text of each line whose nodes were left out for that reason.
+
+    ``removed`` lists the nodes a changed cell no longer writes (``id``, ``label``), for the editor
+    to remove once the user agrees; a node another step still reads is refused instead.
 
     ``layout`` is the render's (the cells a user wrote). ``new_cells`` (cell id -> text) are cells the
     flow has no node for yet, and ``order`` the cell ids as the notebook shows them: cells are read

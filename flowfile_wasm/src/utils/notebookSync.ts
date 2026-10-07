@@ -28,11 +28,18 @@ export interface NotebookSyncAddition extends NotebookSyncChange {
   type: string
 }
 
+/** A step a changed cell no longer writes: the push removes it. */
+export interface NotebookSyncRemoval {
+  id: number
+  label: string
+}
+
 export interface NotebookSyncResult {
   ok: true
   nodes: Record<string, NotebookSyncChange>
   added?: NotebookSyncAddition[]
   inputs: Record<string, NotebookSyncPorts>
+  removed?: NotebookSyncRemoval[]
   /** The nodes each cell that was read holds now, line by line. */
   node_ids_by_cell?: Record<string, number[][]>
   /** Per cell, the text of each line that gave its frame no name and so added no step. */
@@ -113,6 +120,8 @@ export function syncPatch(
   const addNodes: NonNullable<FlowPatch['addNodes']> = []
   const placed = new Map<number, { x: number; y: number }>()
   graph.nodes.forEach(node => placed.set(node.id, { x: node.x, y: node.y }))
+  // A removed step frees its spot, so the step written in its place can take it.
+  const removeNodeIds = (result.removed ?? []).map(step => step.id).filter(id => placed.delete(id))
   for (const added of result.added ?? []) {
     if (!defaults) throw new Error('The notebook adds a step, and this editor was given no defaults for one')
     if (placed.has(added.id)) throw new Error(`The notebook adds node ${added.id}, an id that is already in use`)
@@ -175,6 +184,7 @@ export function syncPatch(
   }
 
   const patch: FlowPatch = {}
+  if (removeNodeIds.length) patch.removeNodeIds = removeNodeIds
   if (addNodes.length) patch.addNodes = addNodes
   if (updateNodes.length) patch.updateNodes = updateNodes
   if (removeEdges.length) patch.removeEdges = removeEdges

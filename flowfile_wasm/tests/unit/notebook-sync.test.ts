@@ -51,7 +51,7 @@ vi.mock('../../src/stores/file-storage', () => ({
 }))
 
 import { useFlowStore } from '../../src/stores/flow-store'
-import { SYNC_SOURCE, useNotebookStore, type NotebookCell } from '../../src/stores/notebook-store'
+import { CHECK_DELAY_MS, CHECK_SOURCE, SYNC_SOURCE, useNotebookStore, type NotebookCell } from '../../src/stores/notebook-store'
 import { isEmptyPatch, mergeSettings, syncPatch, type NotebookSyncResult } from '../../src/utils/notebookSync'
 import type { FlowEdge, FlowNode, FlowfileData } from '../../src/types'
 
@@ -182,6 +182,31 @@ describe('mergeSettings and syncPatch', () => {
     expect(settings[5].unique_input).toEqual({ subset: [], keep: 'any', columns: null, strategy: 'any' })
   })
 
+  it('replaces a group by’s aggregations and a select’s columns as a whole, as the cell lists them', () => {
+    const key = { old_name: 'product', new_name: 'product', agg: 'groupby', is_available: true }
+    const graph = graphOf([
+      node(1, 'group_by', { groupby_input: { agg_cols: [key, { old_name: 'revenue', new_name: 'total', agg: 'sum' }] } }),
+      node(2, 'select', { keep_missing: false, select_input: [{ old_name: 'a', new_name: 'a', keep: true, position: 0 }] })
+    ])
+    const aggCols = [{ old_name: 'revenue', new_name: 'spread', agg: 'std' }]
+    const selectInput = [
+      { old_name: 'a', new_name: 'b', keep: true, position: 0 },
+      { old_name: 'c', new_name: 'c', keep: false, position: 1 }
+    ]
+    const patch = syncPatch(
+      graph,
+      answer({
+        nodes: {
+          '1': { settings: { groupby_input: { agg_cols: aggCols } } },
+          '2': { settings: { select_input: selectInput, keep_missing: false } }
+        }
+      })
+    )
+    const settings = Object.fromEntries(patch.updateNodes!.map(update => [update.id, update.settings as any]))
+    expect(settings[1].groupby_input.agg_cols).toEqual(aggCols)
+    expect(settings[2].select_input).toEqual(selectInput)
+  })
+
   it('sets a description and a reference on the node and in its settings, and clears a reference', () => {
     const graph = graphOf([node(2, 'sort', {}), { ...node(3, 'sort', { node_reference: 'old' }), node_reference: 'old' }])
     const patch = syncPatch(
@@ -264,6 +289,22 @@ describe('mergeSettings and syncPatch', () => {
         [4, 600, 170],
         [5, 50, 340]
       ])
+    })
+
+    it('removes the steps a cell no longer writes, and a step written in their place takes the spot', () => {
+      const graph = graphOf([at(1, 100, 40), at(2, 350, 40)], [edge(1, 2)])
+      const patch = syncPatch(
+        graph,
+        answer({
+          removed: [{ id: 2, label: '#2 Select data' }],
+          added: [{ id: 3, type: 'group_by', settings: {} }],
+          inputs: { '3': { main: [1] } }
+        }),
+        defaults
+      )
+      expect(patch.removeNodeIds).toEqual([2])
+      expect(patch.addNodes!.map(added => [added.id, added.x, added.y])).toEqual([[3, 350, 40]])
+      expect(isEmptyPatch(syncPatch(graph, answer({ removed: [] })))).toBe(true)
     })
 
     it('refuses new nodes it was given no defaults for, and an id that is taken', () => {
@@ -350,7 +391,8 @@ describe('syncing the notebook', () => {
     expect(notebook.drafts).toEqual({})
     expect(notebook.cellSyncState('cell-2')).toBe('synced')
     expect(notebook.syncError).toBeNull()
-    expect(bridgeSources().filter(source => source.includes('render_notebook('))).toHaveLength(2)
+    // The cells already showed the canvas, so only the render after the push was needed.
+    expect(bridgeSources().filter(source => source.includes('render_notebook('))).toHaveLength(1)
     expect(bridgeSources().filter(source => /execute_|fetch_preview\(/.test(source))).toEqual([])
 
     expect(flow.undo()).toBe(true)
@@ -385,6 +427,33 @@ describe('syncing the notebook', () => {
     expect(flow.undo()).toBe(true)
     expect(flow.getNode(added)).toBeUndefined()
     expect(flow.edges.some(each => each.target === String(added))).toBe(false)
+  })
+
+  it('asks before a push removes a step, and removes it as one undo step only when the user agrees', async () => {
+    const { flow, notebook, sort } = await sourceAndSort()
+    bridge({ ok: true, nodes: {}, inputs: {}, removed: [{ id: sort, label: `#${sort} Sort data` }], warnings: [] })
+    notebook.setCellCode('cell-2', '')
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+
+    try {
+      expect(await notebook.push()).toBe(false)
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining(`#${sort} Sort data is no longer in the notebook`))
+      expect(flow.getNode(sort)).toBeDefined()
+      expect(notebook.drafts).toEqual({ 'cell-2': '' })
+      expect(notebook.syncError).toBeNull()
+
+      confirm.mockReturnValue(true)
+      expect(await notebook.push()).toBe(true)
+      expect(flow.getNode(sort)).toBeUndefined()
+      expect(flow.edges).toEqual([])
+
+      expect(flow.undo()).toBe(true)
+      expect(flow.getNode(sort)).toBeDefined()
+      expect(flow.edges.map(each => [each.source, each.target])).toEqual([['1', String(sort)]])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   describe('cells the user adds and writes', () => {
@@ -467,8 +536,8 @@ describe('syncing the notebook', () => {
       expect(notebook.cellSyncState(`cell-${added}`)).toBe('synced')
       expect(notebook.added).toEqual({ nodes: [added], pushes: 1 })
       // The next render is asked to keep that cell's nodes together.
-      const render = bridgeSources().filter(source => source.includes('render_notebook(')).at(-1)!
-      expect(render).toContain(JSON.stringify(JSON.stringify([[[added]]])))
+      const render = pyodideMock.setGlobal.mock.calls.filter(call => call[0] === '_notebook_render_request').at(-1)!
+      expect(JSON.parse(render[1]).layout).toEqual([[[added]]])
 
       // A second push sends the written cell as the layout, and the cell is not read again.
       notebook.setCellCode('cell-2', SORT_DRAFT)
@@ -765,17 +834,21 @@ describe('syncing the notebook', () => {
     expect(notebook.syncError?.line).toBeNull()
   })
 
-  it('drops a draft whose cell is gone or now says the same, and keeps drafts with their flow', async () => {
+  it('drops a draft its cell now says, keeps one whose cell is gone aside, and keeps drafts with their flow', async () => {
     const { flow, notebook } = await sourceAndSort()
-    notebook.setCellCode('cell-1', 'source_1 = ff.from_raw_data({"columns": [], "data": []})')
+    const sourceDraft = 'source_1 = ff.from_raw_data({"columns": [], "data": []})'
+    notebook.setCellCode('cell-1', sourceDraft)
     notebook.setCellCode('cell-2', SORT_DRAFT)
 
     bridge(SORTED, [IMPORTS, cell(2, SORT_DRAFT)])
     await notebook.render()
     expect(notebook.drafts).toEqual({})
+    expect(notebook.shownCells.filter(each => each.detached).map(each => notebook.cellCode(each))).toEqual([sourceDraft])
 
     bridge()
     await notebook.render()
+    expect(notebook.drafts).toEqual({ 'cell-1': sourceDraft })
+    notebook.setCellCode('cell-1', CELLS[1].code)
     notebook.setCellCode('cell-2', SORT_DRAFT)
     const first = flow.captureSnapshot()
     flow.importFromFlowfile(flow.exportToFlowfile('another'))
@@ -813,5 +886,197 @@ describe('syncing the notebook', () => {
     expect(request.flow.nodes.find((node: any) => node.id === 2).setting_input).toEqual({})
     expect(JSON.stringify(request)).not.toContain(CANARY)
     for (const source of bridgeSources()) expect(source).not.toContain(CANARY)
+  })
+})
+
+describe('running, and cells the canvas changes under the user', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    sessionStorage.clear()
+    vi.clearAllMocks()
+    pyodideMock.isReady = true
+    pyodideMock.runPython.mockResolvedValue(undefined)
+    pyodideMock.ensurePyPackages.mockResolvedValue(undefined)
+    bridge()
+  })
+
+  const SOURCE_DRAFT = 'source_1 = ff.from_raw_data({"columns": []})'
+
+  it('Run pushes only the changed cells above the one it runs, and leaves the rest changed', async () => {
+    const { notebook } = await sourceAndSort()
+    bridge({ ok: true, nodes: {}, inputs: {}, node_ids_by_cell: { 'cell-1': [[1]] }, warnings: [] })
+    notebook.setCellCode('cell-1', SOURCE_DRAFT)
+    notebook.setCellCode('cell-2', SORT_DRAFT)
+
+    await notebook.runCell('cell-1')
+
+    expect(Object.keys(requests()[0].drafts)).toEqual(['cell-1'])
+    expect(notebook.drafts).toEqual({ 'cell-2': SORT_DRAFT })
+  })
+
+  it('says on the cell that was run why it did not run when a cell above is refused', async () => {
+    const { flow, notebook } = await sourceAndSort()
+    bridge({ ok: false, cell_id: 'cell-1', line: 1, kind: 'refused', message: 'no handler' })
+    notebook.setCellCode('cell-1', SOURCE_DRAFT)
+    const runs = vi.spyOn(flow, 'executeNodeWithUpstream')
+
+    await notebook.runCell('cell-2')
+
+    expect(runs).not.toHaveBeenCalled()
+    expect(notebook.syncError?.cellId).toBe('cell-1')
+    expect(notebook.outputs['cell-2']).toMatchObject({ state: 'blocked', message: expect.stringContaining('could not be pushed') })
+  })
+
+  it('moves a changed cell to the cell that holds its nodes now', async () => {
+    const { notebook } = await sourceAndSort()
+    notebook.setCellCode('cell-2', SORT_DRAFT)
+    bridge(SORTED, [IMPORTS, CELLS[1], { ...cell(2, SORT_CODE), cell_id: 'cell-2b' }])
+
+    await notebook.render()
+
+    expect(notebook.drafts).toEqual({ 'cell-2b': SORT_DRAFT })
+    expect(notebook.shownCells.some(each => each.detached)).toBe(false)
+  })
+
+  it('keeps a changed cell whose steps are gone as a detached cell that is never pushed', async () => {
+    const { notebook } = await sourceAndSort()
+    notebook.setCellCode('cell-2', SORT_DRAFT)
+    bridge(SORTED, [IMPORTS, CELLS[1]])
+
+    await notebook.render()
+
+    const detached = notebook.shownCells.find(each => each.detached)!
+    expect(notebook.shownCells.map(each => each.cell_id)).toEqual(['imports', 'cell-1', detached.cell_id])
+    expect(notebook.cellCode(detached)).toBe(SORT_DRAFT)
+    expect(notebook.isEditable(detached)).toBe(false)
+    expect(notebook.cellSyncState(detached.cell_id)).toBe('detached')
+    expect(notebook.notice).toContain('detached cell')
+    expect(notebook.changedCount).toBe(0)
+
+    // The step is back (an undo): the text goes back to its cell.
+    bridge(SORTED, CELLS)
+    await notebook.render()
+    expect(notebook.shownCells.some(each => each.detached)).toBe(false)
+    expect(notebook.drafts).toEqual({ 'cell-2': SORT_DRAFT })
+
+    bridge(SORTED, [IMPORTS, CELLS[1]])
+    await notebook.render()
+    const again = notebook.shownCells.find(each => each.detached)!
+    notebook.adoptDetached(again.cell_id)
+    const adopted = notebook.shownCells.find(each => each.fresh)!
+    expect(notebook.cellCode(adopted)).toBe(SORT_DRAFT)
+    expect(notebook.changedCount).toBe(1)
+    expect(notebook.shownCells.some(each => each.detached)).toBe(false)
+  })
+
+  it('keeps the cells in the order they were shown when a re-render would move them', async () => {
+    const { notebook } = await sourceAndSort()
+    const third = cell(3, 'other_3 = ff.from_raw_data({})')
+    bridge(SORTED, [IMPORTS, CELLS[1], CELLS[2], third])
+    await notebook.render()
+    bridge(SORTED, [IMPORTS, CELLS[1], third, CELLS[2]])
+
+    await notebook.render()
+
+    expect(notebook.shownCells.map(each => each.cell_id)).toEqual(['imports', 'cell-1', 'cell-2', 'cell-3'])
+  })
+
+  it('a cell run holds the flow busy, so the canvas Run and undo wait for it', async () => {
+    const { flow, notebook, sort } = await sourceAndSort()
+    let busy: boolean | null = null
+    pyodideMock.runPythonWithResult.mockImplementation(async (source: string) => {
+      if (source.includes('_lazyframes.keys()')) {
+        busy = flow.isExecuting
+        return []
+      }
+      if (source.includes('fetch_preview(')) return { success: true, data: { columns: ['a'], data: [[1]], total_rows: 1 } }
+      return { success: true }
+    })
+
+    await notebook.runCell(`cell-${sort}`)
+
+    expect(busy).toBe(true)
+    expect(flow.isExecuting).toBe(false)
+  })
+})
+
+describe('checking changed cells while they are written', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    sessionStorage.clear()
+    vi.clearAllMocks()
+    pyodideMock.isReady = true
+    pyodideMock.runPython.mockResolvedValue(undefined)
+    pyodideMock.ensurePyPackages.mockResolvedValue(undefined)
+    bridge()
+  })
+
+  const REFUSED = { ok: false, cell_id: 'cell-2', line: 1, kind: 'refused', message: '`pivot` cannot be written' }
+
+  /** Answer a check with `answer`; renders and syncs as `bridge` does. */
+  function checks(answer: unknown) {
+    pyodideMock.runPythonWithResult.mockImplementation(async (source: string) => {
+      if (source === CHECK_SOURCE) return typeof answer === 'function' ? answer() : answer
+      if (source === SYNC_SOURCE) return SORTED
+      if (source.includes('render_notebook(')) return { cells: CELLS, warnings: [], var_by_node: {} }
+      return { success: true }
+    })
+  }
+
+  it('shows on its line why a push would refuse a cell, a moment after typing stops, and lands nothing', async () => {
+    vi.useFakeTimers()
+    try {
+      const { flow, notebook, sort } = await sourceAndSort()
+      checks(REFUSED)
+      const draft = `ordered_2 = source_1.pivot(on="a")  # ${CANARY}`
+      notebook.setCellCode('cell-2', draft)
+      expect(notebook.syncError).toBeNull()
+
+      await vi.advanceTimersByTimeAsync(CHECK_DELAY_MS)
+
+      expect(notebook.syncError).toMatchObject({ cellId: 'cell-2', line: 1, kind: 'refused', code: draft })
+      expect(notebook.cellSyncState('cell-2')).toBe('failed')
+      expect(notebook.drafts).toEqual({ 'cell-2': draft })
+      expect(sortInput(flow, sort)).toEqual([{ column: 'a', how: 'asc' }])
+      expect(syncCalls()).toHaveLength(0)
+      const sent = pyodideMock.setGlobal.mock.calls.filter(call => call[0] === '_notebook_check_request')
+      expect(JSON.parse(sent[0][1]).drafts).toEqual({ 'cell-2': draft })
+      for (const source of bridgeSources()) expect(source).not.toContain(CANARY)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('drops an answer about text that changed while it was being checked', async () => {
+    const { notebook } = await sourceAndSort()
+    let typeMore: () => void = () => undefined
+    checks(() => {
+      typeMore()
+      return REFUSED
+    })
+    notebook.setCellCode('cell-2', SORT_DRAFT)
+    typeMore = () => notebook.setCellCode('cell-2', `${SORT_DRAFT}  # more`)
+
+    await notebook.check()
+
+    expect(notebook.syncError).toBeNull()
+  })
+
+  it('keeps a cell of steps no push can change as the render wrote it', async () => {
+    const { notebook } = await sourceAndSort()
+    pyodideMock.runPythonWithResult.mockImplementation(async (source: string) => {
+      if (source.includes('notebook_surface()')) return { ff: [], methods: {}, pushable: [], node_types: ['sort'] }
+      if (source.includes('render_notebook(')) return { cells: CELLS, warnings: [], var_by_node: {} }
+      return { success: true }
+    })
+    await notebook.render()
+
+    const [, source, sort] = notebook.shownCells
+    expect(notebook.canvasOnly(source)).toBe(true)
+    expect(notebook.isEditable(source)).toBe(false)
+    notebook.setCellCode(source.cell_id, 'source_1 = ff.from_raw_data({"columns": []})')
+    expect(notebook.drafts).toEqual({})
+    expect(notebook.canvasOnly(sort)).toBe(false)
+    expect(notebook.isEditable(sort)).toBe(true)
   })
 })

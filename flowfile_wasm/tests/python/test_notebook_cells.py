@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 import pytest
-from engine.notebook_cells import sync_notebook
+from engine.notebook_cells import notebook_surface, sync_notebook
 from engine.notebook_render import render_notebook
 
 GOLDEN = json.loads((Path(__file__).parent / "notebook_golden.json").read_text())
@@ -42,7 +42,7 @@ SCHEMA = [
 ]
 
 
-UNCHANGED = {"ok": True, "nodes": {}, "added": [], "inputs": {}, "warnings": []}
+UNCHANGED = {"ok": True, "nodes": {}, "added": [], "inputs": {}, "removed": [], "warnings": []}
 
 
 def changes(result: dict) -> dict:
@@ -98,6 +98,10 @@ def applied(flow: dict, result: dict) -> dict:
     """The flow after a sync, the way the editor lands it."""
     assert result["ok"], result
     flow = copy.deepcopy(flow)
+    gone = {each["id"] for each in result["removed"]}
+    flow["nodes"] = [each for each in flow["nodes"] if each["id"] not in gone]
+    for each in flow["nodes"]:
+        each["input_ids"] = [source for source in each["input_ids"] if source not in gone]
     for new in result["added"]:
         flow["nodes"].append(node(new["id"], new["type"], [], new["settings"], description=new["description"]))
         if new["node_reference"]:
@@ -155,6 +159,10 @@ SELECT = (
         ],
     },
 )
+KEY = {"old_name": "product", "new_name": "product", "agg": "groupby"}
+TOTAL = {"old_name": "revenue", "new_name": "total", "agg": "sum"}
+GROUP_BY = ("group_by", {"groupby_input": {"agg_cols": [KEY, TOTAL]}})
+GROUPED_SCHEMA = [{"name": "product", "data_type": "String"}, {"name": "total", "data_type": "Int64"}]
 
 
 # An unchanged notebook changes nothing
@@ -381,6 +389,41 @@ EDITS = [
         'write_csv("report.csv", separator=";")',
         {2: {"output_settings": {"name": "report.csv", "table_settings": {"delimiter": ";"}}}},
     ),
+    (
+        "group by: an aggregation added",
+        chain(GROUP_BY),
+        'ff.col("revenue").sum().alias("total"),',
+        'ff.col("revenue").sum().alias("total"),\n        ff.col("revenue").std().alias("spread"),',
+        {2: {"groupby_input": {"agg_cols": [KEY, TOTAL, {"old_name": "revenue", "new_name": "spread", "agg": "std"}]}}},
+    ),
+    (
+        "group by: another aggregation and name",
+        chain(GROUP_BY),
+        'ff.col("revenue").sum().alias("total")',
+        'ff.col("sold").max().alias("latest")',
+        {2: {"groupby_input": {"agg_cols": [KEY, {"old_name": "sold", "new_name": "latest", "agg": "max"}]}}},
+    ),
+    (
+        "group by: a renamed key",
+        chain(GROUP_BY),
+        "group_by(['product'])",
+        'group_by([ff.col("product").alias("item")])',
+        {2: {"groupby_input": {"agg_cols": [{**KEY, "new_name": "item"}, TOTAL]}}},
+    ),
+    (
+        "group by: text joined",
+        chain(GROUP_BY),
+        'ff.col("revenue").sum().alias("total")',
+        "ff.col(\"product\").str.join(',').alias(\"names\")",
+        {2: {"groupby_input": {"agg_cols": [KEY, {"old_name": "product", "new_name": "names", "agg": "concat"}]}}},
+    ),
+    (
+        "group by: no key",
+        chain(GROUP_BY),
+        "group_by(['product'])",
+        "group_by([])",
+        {2: {"groupby_input": {"agg_cols": [TOTAL]}}},
+    ),
 ]
 
 
@@ -577,6 +620,84 @@ def test_readers_of_a_name_move_to_the_node_added_under_it():
     assert after["cell-2"].startswith("ranked = (") and "ranked.head(5)" in after["cell-3"]
 
 
+# A step a changed cell no longer writes is removed
+
+
+def selected_then(*steps: dict) -> dict:
+    """``sales`` and a Select named ``sel`` in cells of their own, then ``steps``."""
+    return flow_of(
+        node(1, "manual_input", [], SOURCE, node_reference="sales"),
+        node(2, "select", [1], SELECT[1], node_reference="sel"),
+        *steps,
+    )
+
+
+GROUPED_BY_PRODUCT = 'sales.group_by(ff.col("product")).agg(ff.col("revenue").sum())'
+
+
+def test_a_cell_written_over_with_another_step_removes_the_step_it_held():
+    flow = selected_then()
+    result = sync(flow, {"cell-2": f"totals = {GROUPED_BY_PRODUCT}"})
+    assert result["removed"] == [{"id": 2, "label": "#2 Select data"}]
+    assert [(new["id"], new["type"], new["node_reference"]) for new in result["added"]] == [(3, "group_by", "totals")]
+    assert result["nodes"] == {} and result["inputs"] == {"3": {"main": [1], "right": None, "left": None}}
+    after = applied(flow, result)
+    cells = cells_of(after)
+    assert "sel" not in "".join(cells.values()) and cells["cell-3"].startswith("totals = sales.group_by(")
+    assert changes(sync(after, {"cell-3": cells["cell-3"] + "\n"})) == UNCHANGED
+
+
+def test_a_call_taken_out_of_a_chain_removes_its_step():
+    flow = chain(FILTER, SORT)
+    result, _ = edited(flow, "cell-1", '.sort(["revenue"], descending=[True])', "")
+    assert result["removed"] == [{"id": 3, "label": "#3 Sort data"}]
+    assert (result["added"], result["nodes"], result["inputs"]) == ([], {}, {})
+    assert ".sort(" not in cells_of(applied(flow, result))["cell-1"]
+
+
+def test_a_step_taken_out_of_the_middle_hands_its_input_to_the_next():
+    flow = chain(FILTER, SORT)
+    result, _ = edited(flow, "cell-1", '.filter(ff.col("revenue") > 60)', "")
+    assert result["removed"] == [{"id": 2, "label": "#2 Filter data"}]
+    assert result["inputs"] == {"3": {"main": [1], "right": None, "left": None}}
+
+
+def test_an_emptied_cell_removes_its_steps():
+    flow = selected_then()
+    assert sync(flow, {"cell-2": ""})["removed"] == [{"id": 2, "label": "#2 Select data"}]
+
+
+def test_readers_of_the_name_move_to_the_step_written_in_its_place():
+    flow = selected_then(node(3, "sort", [2], {"sort_input": [{"column": "item", "how": "desc"}]}, node_reference="ordered"))
+    result = sync(flow, {"cell-2": 'sel = sales.group_by(ff.col("product")).agg(ff.col("revenue").sum().alias("item"))'})
+    assert result["removed"] == [{"id": 2, "label": "#2 Select data"}]
+    assert [(new["id"], new["node_reference"]) for new in result["added"]] == [(4, "sel")]
+    assert result["inputs"]["3"]["main"] == [4]
+    assert cells_of(applied(flow, result))["cell-3"].startswith("ordered = sel.sort(")
+
+
+def test_a_step_another_still_reads_is_not_removed():
+    flow = selected_then(node(3, "sort", [2], {"sort_input": [{"column": "item", "how": "desc"}]}, node_reference="ordered"))
+    result = sync(flow, {"cell-2": f"totals = {GROUPED_BY_PRODUCT}"})
+    assert (result["ok"], result["cell_id"], result["line"], result["kind"]) == (False, "cell-2", None, "refused")
+    assert "removes #2 Select data, which #3 Sort data still reads as `sel`" in result["message"]
+
+    flow = selected_then(
+        node(3, "sort", [2], {"sort_input": [{"column": "item", "how": "desc"}]}, node_reference="ordered"),
+        node(4, "sample", [2], {"sample_size": 1, "sample_method": "first"}, node_reference="first"),
+    )
+    result = sync(flow, {"cell-2": f"totals = {GROUPED_BY_PRODUCT}"})
+    assert "which #3 Sort data and #4 Take Sample still read as `sel`" in result["message"], result
+    assert result["message"].endswith("or change those steps first")
+
+
+def test_a_locked_step_still_reading_it_keeps_a_step_too():
+    flow = selected_then(node(3, "sort", [2], {"sort_input": [{"column": "item", "how": "desc"}]}))
+    result = sync_notebook(copy.deepcopy(flow), schemas_of(flow), {3: "locked"}, {"cell-2": f"totals = {GROUPED_BY_PRODUCT}"})
+    assert (result["ok"], result["cell_id"]) == (False, "cell-2")
+    assert "#3 Sort data still reads" in result["message"]
+
+
 def test_a_select_names_every_column_it_leaves_out_so_the_editor_does_not_keep_them():
     """The columns come through the new steps before it: a sort hands on what it reads, a formula adds one."""
     flow = named(SORT)
@@ -605,6 +726,119 @@ def test_a_select_needs_to_know_the_columns_and_takes_only_ones_that_are_there()
     missing = sync(flow, {"cell-2": draft.replace('"product"', '"prodcut"')})
     assert (missing["ok"], missing["kind"], missing["line"]) == (False, "error", 2)
     assert "`prodcut` is not one of product, revenue, sold" in missing["message"]
+
+
+def grouped() -> tuple[dict, dict]:
+    """``sales`` grouped by product, with the schemas a run gives each node."""
+    flow = named(GROUP_BY)
+    return flow, {"1": SCHEMA, "2": GROUPED_SCHEMA}
+
+
+def test_a_new_group_by_is_one_node_and_a_select_after_it_knows_its_columns():
+    flow, schemas = grouped()
+    draft = (
+        cells_of(flow)["cell-2"]
+        + '\nby_day = sales.group_by("sold").agg(ff.col("revenue").mean().alias("avg"), ff.col("product").count())'
+        + '\nday_only = by_day.select(["sold", "avg"])'
+    )
+    result = sync_notebook(copy.deepcopy(flow), schemas, {}, {"cell-2": draft})
+    assert result["ok"], result
+    assert [(new["id"], new["type"], new["node_reference"]) for new in result["added"]] == [
+        (3, "group_by", "by_day"),
+        (4, "select", "day_only"),
+    ]
+    assert result["added"][0]["settings"] == {
+        "groupby_input": {
+            "agg_cols": [
+                {"old_name": "sold", "new_name": "sold", "agg": "groupby"},
+                {"old_name": "revenue", "new_name": "avg", "agg": "mean"},
+                {"old_name": "product", "new_name": "product", "agg": "count"},
+            ]
+        }
+    }
+    rows = result["added"][1]["settings"]["select_input"]
+    assert [(row["old_name"], row["keep"]) for row in rows] == [("sold", True), ("avg", True), ("product", False)]
+    rendered = "\n".join(cells_of(applied(flow, result)).values())
+    assert "by_day = sales.group_by(['sold']).agg([" in rendered
+    assert 'ff.col("product").count().alias("product"),' in rendered
+
+
+def test_a_group_by_reads_its_columns_and_marks_a_wrong_one_on_its_own_line():
+    flow, schemas = grouped()
+    draft = cells_of(flow)["cell-2"].replace('ff.col("revenue").sum()', 'ff.col("revenu").sum()')
+    result = sync_notebook(copy.deepcopy(flow), schemas, {}, {"cell-2": draft})
+    assert (result["ok"], result["kind"]) == (False, "error"), result
+    assert "`revenu` is not one of product, revenue, sold" in result["message"]
+    assert draft.split("\n")[result["line"] - 1].strip().startswith('ff.col("revenu")')
+
+
+def test_a_group_by_description_rides_on_the_group_by_call():
+    flow, schemas = grouped()
+    draft = cells_of(flow)["cell-2"].replace("group_by(['product'])", "group_by(['product'], description='per product')")
+    result = sync_notebook(copy.deepcopy(flow), schemas, {}, {"cell-2": draft})
+    assert result["nodes"] == {"2": {"description": "per product"}}
+
+
+def test_drop_and_rename_are_select_nodes_that_name_every_column():
+    """As the full app lowers them: a drop keeps every other column, a rename keeps every column."""
+    flow, schemas = grouped()
+    draft = (
+        cells_of(flow)["cell-2"]
+        + '\nsmall = grouped_2.drop("total")'
+        + '\nnamed = grouped_2.rename({"product": "item"})'
+        + '\nitems = named.select(["item"])'
+    )
+    result = sync_notebook(copy.deepcopy(flow), schemas, {}, {"cell-2": draft})
+    assert result["ok"], result
+    selects = {new["node_reference"]: new["settings"] for new in result["added"]}
+    assert set(selects) == {"small", "named", "items"}
+    shapes = {
+        reference: [(row["old_name"], row["new_name"], row["keep"]) for row in settings["select_input"]]
+        for reference, settings in selects.items()
+    }
+    assert shapes == {
+        "small": [("product", "product", True), ("total", "total", False)],
+        "named": [("product", "item", True), ("total", "total", True)],
+        "items": [("item", "item", True), ("total", "total", False)],
+    }
+    assert all(settings["keep_missing"] is False for settings in selects.values())
+    assert {node_id: ports["main"] for node_id, ports in result["inputs"].items()} == {"3": [2], "4": [2], "5": [4]}
+
+
+def test_a_drop_or_rename_replaces_what_a_select_said():
+    flow = chain(SELECT)
+    result, _ = edited(flow, "cell-1", '.select([', '.drop(["sold"]).select([')
+    # The drop takes the Select node the cell had; the select after it is a new node.
+    assert result["ok"], result
+    rows = result["nodes"]["2"]["settings"]["select_input"]
+    assert [(row["old_name"], row["keep"]) for row in rows] == [("product", True), ("revenue", True), ("sold", False)]
+    assert [new["type"] for new in result["added"]] == ["select"]
+
+
+@pytest.mark.parametrize(
+    ("call", "kind", "says"),
+    [
+        ('drop("nope")', "error", "ColumnNotFoundError: `nope` is not one of product, total"),
+        ('rename({"nope": "x"})', "error", "ColumnNotFoundError: `nope`"),
+        ('rename({"product": "total"})', "error", "DuplicateError"),
+        ('drop(["product", "total"])', "refused", "leaves no column"),
+        ('rename(["product"])', "refused", "dict of column names"),
+    ],
+)
+def test_a_drop_or_rename_that_cannot_be_a_select_fails_on_its_line(call, kind, says):
+    flow, schemas = grouped()
+    draft = cells_of(flow)["cell-2"] + f"\nx = grouped_2.{call}"
+    result = sync_notebook(copy.deepcopy(flow), schemas, {}, {"cell-2": draft})
+    assert (result["ok"], result["kind"], result["line"]) == (False, kind, len(draft.split("\n"))), result
+    assert says in result["message"]
+
+
+def test_a_drop_that_is_not_strict_skips_a_missing_column():
+    flow, schemas = grouped()
+    draft = cells_of(flow)["cell-2"] + '\nx = grouped_2.drop("total", "nope", strict=False)'
+    result = sync_notebook(copy.deepcopy(flow), schemas, {}, {"cell-2": draft})
+    rows = result["added"][0]["settings"]["select_input"]
+    assert [(row["old_name"], row["keep"]) for row in rows] == [("product", True), ("total", False)]
 
 
 # A cell the user wrote stays that cell
@@ -1024,8 +1258,13 @@ def refusal(flow: dict, cell_id: str, old: str, new: str) -> tuple[str, int | No
 
 
 REFUSALS = [
-    ("a removed step", chain(FILTER, SORT), '.sort(["revenue"], descending=[True])', "", "refused", "removes a step"),
-    ("a method with no handler yet", chain(SORT), '.sort(["revenue"], descending=[True])', '.drop(["revenue"])', "refused", "`drop`"),
+    ("a method with no handler yet", chain(SORT), '.sort(["revenue"], descending=[True])', '.pivot(on="product", values="revenue", index="sold")', "refused", "`pivot`"),
+    ("a group by without its aggregations", chain(SORT), '.sort(["revenue"], descending=[True])', '.group_by(["product"])', "refused", "together with its .agg"),
+    ("an aggregation the node cannot run", chain(GROUP_BY), ".sum()", ".round(2)", "refused", "agg() takes"),
+    ("a group by option the node has no place for", chain(GROUP_BY), "group_by(['product'])", "group_by(['product'], maintain_order=True)", "refused", "maintain_order"),
+    ("text joined with another separator", chain(GROUP_BY), ".sum()", ".str.join(';')", "refused", "joins text with"),
+    ("an aggregation named like a key", chain(GROUP_BY), '.alias("total")', '.alias("product")', "error", "DuplicateError"),
+    ("a key that is not a column", chain(GROUP_BY), "group_by(['product'])", "group_by([ff.col('product') * 2])", "refused", "group_by() takes column names"),
     ("a computed column in a select", chain(SELECT), 'ff.col("revenue").cast(ff.Int64)', 'ff.col("revenue") * 2', "refused", "with_columns()"),
     ("a cast the select node cannot make", chain(SELECT), "cast(ff.Int64)", "cast(ff.Int16)", "refused", "casts to"),
     ("a column listed twice", chain(SELECT), 'ff.col("revenue").cast(ff.Int64)', 'ff.col("product")', "refused", "listed twice"),
@@ -1141,3 +1380,16 @@ def test_the_module_names_no_way_to_run_code():
     source = (Path(__file__).parents[2] / "src/pyodide/engine/notebook_cells.py").read_text()
     names = {node.id for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Name)}
     assert not names & {"exec", "eval", "compile", "__import__", "globals", "locals", "importlib"}
+
+
+def test_the_surface_offers_only_what_a_cell_may_use_and_names_what_a_push_reads():
+    surface = notebook_surface()
+    for call in surface["pushable"]:
+        kind, method = call.split(".")
+        offered = surface["ff"] if kind == "ff" else surface["methods"][kind]
+        assert method in offered, call
+    assert {"FlowFrame.group_by", "FlowFrame.drop", "FlowFrame.rename"} <= set(surface["pushable"])
+    assert "FlowFrame.join" not in surface["pushable"] and "join" in surface["methods"]["FlowFrame"]
+    assert surface["methods"]["GroupByFrame"] == ["agg"]
+    assert {"group_by", "select", "record_count", "manual_input"} <= set(surface["node_types"])
+    assert not {"join", "pivot", "read", "polars_code"} & set(surface["node_types"])

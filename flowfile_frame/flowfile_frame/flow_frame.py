@@ -1272,8 +1272,20 @@ class FlowFrame:
         return self._create_child_frame(new_node_id)
 
     def rename(self, mapping: Mapping[str, str], *, strict: bool = True, description: str = None) -> FlowFrame:
-        """Rename columns based on a mapping or function."""
+        """Rename columns based on a mapping.
+
+        Lowers onto a native Select node that lists every input column. When the input's columns
+        are not known yet (a notebook sync seeds a frame it does not run without columns), the
+        Select could not keep the other columns in place, so the rename takes the Polars-code path.
+        """
         refuse_parameter_as_column(mapping, "rename")
+        if not self.columns or columns_unknown(self.flow_graph.get_node(self.node_id)):
+            processed = process_callable_args((dict(mapping),), {} if strict else {"strict": strict})
+            new_node_id = generate_node_id()
+            self._add_polars_code(
+                new_node_id, f"output_df = input_df.rename({processed.params_repr})", description or "Rename columns"
+            )
+            return self._create_child_frame(new_node_id)
         return self.select(
             [col(old_name).alias(new_name) for old_name, new_name in mapping.items()],
             description=description,
