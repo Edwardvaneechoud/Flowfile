@@ -94,6 +94,8 @@ export interface HistoryState {
   redo_description: string | null;
   undo_count: number;
   redo_count: number;
+  // Core's monotonic change counter for the flow; the change feed reports moves of it.
+  revision?: number;
 }
 
 export interface UndoRedoResult {

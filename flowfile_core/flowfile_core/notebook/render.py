@@ -62,6 +62,7 @@ class NotebookRendering(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     var_by_node: dict[int, str] = Field(default_factory=dict)
     code_fingerprint: str
+    revision: int = 0
 
 
 def _settings_payload(node: FlowNode):
@@ -152,6 +153,7 @@ def render(flow_graph: FlowGraph) -> NotebookRendering:
     The fingerprint is taken before the export, so an edit landing mid-render leaves an older fingerprint
     and the next refresh renders again instead of keeping cells for the pre-edit graph.
     """
+    revision = flow_graph.revision
     fingerprint = code_fingerprint(flow_graph)
     converter = FlowGraphToFlowFrameConverter(
         flow_graph, placeholders=True, deterministic_names=True, decorated_scripts=True
@@ -185,4 +187,5 @@ def render(flow_graph: FlowGraph) -> NotebookRendering:
         warnings=converter.warnings,
         var_by_node={em.node_id: em.var_name for em in emissions},
         code_fingerprint=fingerprint,
+        revision=revision,
     )

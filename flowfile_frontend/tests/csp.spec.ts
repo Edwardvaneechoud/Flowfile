@@ -39,7 +39,7 @@ function authHeaders(token: string) {
 
 async function navigateWithAuth(page: Page, token: string, targetUrl: string) {
   await page.goto(targetUrl);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   const expirationTime = Date.now() + 60 * 60 * 1000;
   await page.evaluate(
     ({ token, expiration }: { token: string; expiration: number }) => {
@@ -49,7 +49,7 @@ async function navigateWithAuth(page: Page, token: string, targetUrl: string) {
     { token, expiration: expirationTime },
   );
   await page.reload();
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
 }
 
 // Violations are recorded in the page (the event is composed, so a blocked
@@ -88,7 +88,7 @@ test.describe("Desktop CSP parity", () => {
     await navigateWithAuth(page, token, `${BASE_URL}/#/main/designer`);
     await expect(page.locator(".vue-flow").first()).toBeVisible({ timeout: 15000 });
     await page.goto(`${BASE_URL}/#/main/catalog?tab=visuals`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
 
     expect(await violations()).toEqual([]);
   });

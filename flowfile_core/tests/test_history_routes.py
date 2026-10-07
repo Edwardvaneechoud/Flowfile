@@ -1105,3 +1105,33 @@ def test_concurrent_undo_redo_and_mutations_keep_history_consistent():
         assert api.redo().json()["success"] is True
     assert api.snapshot() == final
     assert api.history()["redo_count"] == history["redo_count"]
+
+
+class TestRevision:
+    """``history.revision`` is the counter other clients compare; every change moves it by one."""
+
+    def test_every_mutating_route_moves_the_revision_by_one(self, custom_node_type):
+        api = new_flow(9240)
+        seed_two_sources_and_filter(api)
+        revision = api.history()["revision"]
+        for response in (
+            api.layout({3: (1, 1)}, record_history=False),
+            api.description(3, "d"),
+            api.reference(3, "r"),
+            api.add_node(6, CUSTOM_NODE_TYPE),
+            api.custom_settings(6, "x"),
+            api.apply([{"op": "delete_node", "node_id": 6}]),
+        ):
+            assert response.status_code == 200, response.text
+            revision += 1
+            assert response.json()["history"]["revision"] == revision
+        assert api.history()["revision"] == revision
+
+    def test_undo_and_redo_move_the_revision_and_a_no_op_does_not(self):
+        api = new_flow(9241)
+        assert api.add_node(1, "filter").status_code == 200
+        revision = api.history()["revision"]
+        assert api.undo().json()["history"]["revision"] == revision + 1
+        assert api.redo().json()["history"]["revision"] == revision + 2
+        assert api.redo().json()["history"]["revision"] == revision + 2
+        assert api.undo().json()["history"]["revision"] == revision + 3

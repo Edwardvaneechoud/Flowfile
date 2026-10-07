@@ -7,7 +7,7 @@ import { BASE_URL } from "./api";
 /** Store the token the way the login flow does, then open `hash`; `flowId` becomes the last-used flow. */
 export async function login(page: Page, token: string, hash: string, flowId?: number) {
   await page.goto(BASE_URL);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.evaluate(
     ({ token, expiration, flowId }) => {
       localStorage.setItem("auth_token", token);
@@ -17,7 +17,7 @@ export async function login(page: Page, token: string, hash: string, flowId?: nu
     { token, expiration: Date.now() + 60 * 60 * 1000, flowId },
   );
   await page.goto(`${BASE_URL}/${hash}`);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
 }
 
 /**

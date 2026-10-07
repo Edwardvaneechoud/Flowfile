@@ -2206,6 +2206,9 @@ class FlowGraph:
         self._transaction_depth = 0
         # Primitive graph writes made with history on but outside any transaction.
         self._untracked_writes = 0
+        # Change counter every client can compare; see `revision`.
+        self._revision = 0
+        self._revision_lock = threading.Lock()
         self.cache_results = cache_results
         self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
@@ -2341,6 +2344,8 @@ class FlowGraph:
                         txn.entry = self._history_manager.record(pre, post, action_type, txn.description, node_id)
                     self._history_manager.refresh_dirty(post)
                 txn.history = self.get_history_state()
+                # Last, so a failure anywhere above leaves the revision where it was.
+                txn.history.revision = self._bump_revision("graph")
             except BaseException:
                 if txn.entry is not None:
                     self._history_manager.discard_if_top(txn.entry)
@@ -2366,13 +2371,32 @@ class FlowGraph:
         self._history_manager.refresh_dirty_from(self)
 
     def _note_graph_write(self) -> None:
-        """Count primitive graph writes that bypass the transaction (history on, none active)."""
-        if (
-            self._transaction_depth == 0
-            and self.flow_settings.track_history
-            and not self._history_manager.is_restoring()
-        ):
+        """Count primitive graph writes that bypass the transaction (history on, none active).
+
+        Such a write is also a change of its own: outside a transaction nothing else advances
+        the revision for it. Inside one, the transaction's exit does.
+        """
+        if self._transaction_depth > 0 or self._history_manager.is_restoring():
+            return
+        if self.flow_settings.track_history:
             self._untracked_writes += 1
+        self._bump_revision("graph")
+
+    @property
+    def revision(self) -> int:
+        """Monotonic change counter: every mutation, undo/redo, run start/end and save moves it.
+
+        Clients compare it to learn that the flow changed under them; the change feed streams
+        each move as a ``flow_revision`` event with its ``kind``.
+        """
+        return self._revision
+
+    def _bump_revision(self, kind: str) -> int:
+        with self._revision_lock:
+            self._revision += 1
+            revision = self._revision
+        publish("flow_revision", graph=self, revision=revision, kind=kind)
+        return revision
 
     def capture_history_snapshot(
         self,
@@ -2426,6 +2450,8 @@ class FlowGraph:
         """
         with self.edit_lock():
             result = self._history_manager.undo(self)
+            if result.success:
+                self._bump_revision("graph")
             result.history = self.get_history_state()
             return result
 
@@ -2437,6 +2463,8 @@ class FlowGraph:
         """
         with self.edit_lock():
             result = self._history_manager.redo(self)
+            if result.success:
+                self._bump_revision("graph")
             result.history = self.get_history_state()
             return result
 
@@ -2445,7 +2473,10 @@ class FlowGraph:
         if entry is None:
             return False
         with self.edit_lock():
-            return self._history_manager.revert_if_top(self, entry)
+            reverted = self._history_manager.revert_if_top(self, entry)
+            if reverted:
+                self._bump_revision("graph")
+            return reverted
 
     def clear_history(self) -> None:
         """Drop every undo/redo entry (the save point is kept)."""
@@ -2460,12 +2491,14 @@ class FlowGraph:
         """
         state = self._history_manager.get_state()
         state.flow_id = self.flow_id
+        state.revision = self.revision
         return state
 
     def mark_as_saved(self) -> None:
         """Mark the current flow state as the saved baseline (for dirty tracking)."""
         with self.edit_lock():
             self._history_manager.mark_saved(self)
+        self._bump_revision("saved")
 
     def has_unsaved_changes(self) -> bool:
         """Return True if the flow has changed since the last save point."""
@@ -6971,14 +7004,18 @@ class FlowGraph:
             if self.flow_settings.is_running:
                 return False
             self.flow_settings.is_running = True
-            return True
+        self._bump_revision("run_started")
+        return True
 
     def release_run(self) -> None:
         """Release the single-run slot claimed by try_claim_run (idempotent)."""
         with self._run_claim_lock:
+            was_running = self.flow_settings.is_running
             self._kernel_hold = None
             self._commit_sources = True
             self.flow_settings.is_running = False
+        if was_running:
+            self._bump_revision("run_ended")
 
     def trigger_fetch_node(
         self,

@@ -65,6 +65,8 @@ export interface NotebookRendering {
   warnings: string[];
   var_by_node: Record<number, string>;
   code_fingerprint: string;
+  /** The flow revision the rendering was taken at. */
+  revision?: number;
 }
 
 export interface NotebookPushBody {

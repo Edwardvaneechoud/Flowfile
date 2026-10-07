@@ -546,6 +546,15 @@ watch(
   () => openSettingsModal(),
 );
 
+// Another client started or finished a run (the change feed): re-read the run state the
+// way a flow load does, which starts or stops the polling and picks up the result.
+watch(
+  () => flowStore.pendingRunStateCounter,
+  () => {
+    void loadFlowSettings();
+  },
+);
+
 watch(
   () => nodeStore.flow_id,
   async (newId, oldId) => {

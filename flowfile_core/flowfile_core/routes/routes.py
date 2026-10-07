@@ -13,7 +13,7 @@ import logging
 import os
 import re
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import aclosing, contextmanager
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from flowfile_core import events, flow_file_handler
+from flowfile_core import change_feed, events, flow_file_handler
 
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
@@ -1512,6 +1512,44 @@ def get_history_status(flow_id: int) -> HistoryState:
     if flow is None:
         raise HTTPException(404, "Could not find the flow")
     return flow.get_history_state()
+
+
+@router.get("/editor/events", tags=["editor"])
+async def flow_events(flow_id: int, current_user=Depends(get_current_active_user)):
+    """Stream the flow's changes as server-sent events, for every client showing it.
+
+    The first frame is ``hello`` with the flow's current ``revision`` and ``is_running``, then one
+    frame per change (``graph``, ``run_started``, ``run_ended``, ``saved``, ``closed``), each echoing
+    the ``X-Flowfile-Client`` origin of the request that made it, so a client can skip its own.
+    Comment lines keep the connection alive while nothing happens; ``closed`` ends the stream.
+    """
+    from flowfile_core.ai.streaming import (
+        KEEPALIVE_INTERVAL_SECONDS,
+        SSEEvent,
+        format_sse_keepalive,
+        make_streaming_response,
+    )
+
+    flow = flow_file_handler.get_flow(flow_id, current_user.id if current_user else None)
+    if flow is None:
+        raise HTTPException(404, "Could not find the flow")
+
+    def frame(kind: str, payload: dict, revision: int | None) -> str:
+        event_id = None if revision is None else str(revision)
+        return SSEEvent(event=kind, data=json.dumps(payload), id=event_id).format()
+
+    async def generate():
+        revision = flow.revision
+        hello = {"kind": "hello", "flow_id": flow_id, "revision": revision, "is_running": flow.flow_settings.is_running}
+        yield frame("hello", hello, revision)
+        async with aclosing(change_feed.stream(flow_id, keepalive=KEEPALIVE_INTERVAL_SECONDS)) as feed:
+            async for event in feed:
+                if event is None:
+                    yield format_sse_keepalive()
+                else:
+                    yield frame(event.kind, event.payload(), event.revision)
+
+    return make_streaming_response(generate())
 
 
 @router.post("/editor/history_clear/", tags=["editor"])

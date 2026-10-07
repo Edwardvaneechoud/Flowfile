@@ -59,7 +59,7 @@ async function authPost(request: APIRequestContext, url: string, token: string, 
 // doesn't reinitialize. We must inject the token then reload to pick it up.
 async function navigateWithAuth(page: any, token: string, targetUrl: string) {
   await page.goto(targetUrl);
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('load');
 
   const expirationTime = Date.now() + (60 * 60 * 1000); // 1 hour from now
   await page.evaluate(({ token, expiration }: { token: string; expiration: number }) => {
@@ -69,7 +69,7 @@ async function navigateWithAuth(page: any, token: string, targetUrl: string) {
 
   // Force reload so AuthService reads the token from localStorage on init
   await page.reload();
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('load');
 }
 
 test.describe('Web Flow E2E Tests', () => {
@@ -84,7 +84,7 @@ test.describe('Web Flow E2E Tests', () => {
   });
 
   test('should load the application', async ({ page }) => {
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     const body = await page.locator('body');
     await expect(body).toBeVisible();

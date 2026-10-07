@@ -257,6 +257,10 @@ class HistoryState(BaseModel):
     undo_count: int = Field(default=0, description="Number of available undo steps")
     redo_count: int = Field(default=0, description="Number of available redo steps")
     flow_id: int | None = Field(default=None, description="The flow this history belongs to")
+    revision: int = Field(
+        default=0,
+        description="Monotonic flow change counter; moves on every mutation, undo/redo, run start/end and save",
+    )
 
 
 class UndoRedoResult(BaseModel):

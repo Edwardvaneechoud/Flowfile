@@ -19,6 +19,7 @@ import uvicorn
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from flowfile_core import change_feed
 from flowfile_core import telemetry as core_telemetry
 from flowfile_core.ai import router as ai_router
 from flowfile_core.ai.admin_routes import router as ai_admin_router
@@ -136,6 +137,7 @@ async def shutdown_handler(app: FastAPI):
         yield
     finally:
         print("Shutting down core application...")
+        change_feed.close_all()
 
         # Stop scheduler
         scheduler = get_scheduler()
@@ -216,6 +218,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(change_feed.ClientOriginMiddleware)
 
 app.include_router(public_router)
 app.include_router(router)
@@ -282,14 +285,21 @@ async def trigger_shutdown():
     """
     await asyncio.sleep(1)
     if server_instance:
-        server_instance.should_exit = True
+        _stop_server(server_instance)
+
+
+def _stop_server(server: uvicorn.Server) -> None:
+    """Ask uvicorn to exit. Open event streams are closed first: uvicorn waits for every
+    connection before it runs the lifespan shutdown, and a stream would otherwise hold it."""
+    change_feed.close_all()
+    server.should_exit = True
 
 
 def signal_handler(signum, frame):
     """Handles OS signals like SIGINT (Ctrl+C) and SIGTERM for graceful shutdown."""
     print(f"Received signal {signum}")
     if server_instance:
-        server_instance.should_exit = True
+        _stop_server(server_instance)
 
 
 def run(host: str = None, port: int = None):
@@ -325,7 +335,7 @@ def run(host: str = None, port: int = None):
     server_instance = server
 
     # In desktop-sidecar mode, exit if the Tauri shell dies without reaping us.
-    start_parent_death_watcher(lambda: setattr(server, "should_exit", True))
+    start_parent_death_watcher(lambda: _stop_server(server))
 
     print("Starting core server...")
     print("Core server started")

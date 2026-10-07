@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from flowfile_core.events import publish
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.utils import create_unique_id
@@ -127,10 +128,12 @@ class FlowfileHandler:
             if not flow_still_open and flow_id in self._flows:
                 flow = self._flows.pop(flow_id)
                 del flow
+                publish("flow_closed", flow_id=flow_id)
         else:
             if flow_id in self._flows:
                 flow = self._flows.pop(flow_id)
                 del flow
+                publish("flow_closed", flow_id=flow_id)
 
     def evict_flow_by_path(self, flow_path: str) -> int | None:
         """Force-remove a flow (matched by on-disk path) from the registry and ALL user sessions,
