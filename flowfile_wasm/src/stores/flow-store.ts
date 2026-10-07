@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, shallowRef, watch } from 'vue'
+import { ref, computed, markRaw, shallowRef, watch, type Raw } from 'vue'
 import { usePyodideStore } from './pyodide-store'
 import yaml from 'js-yaml'
 import { toCoreCompatibleFlow, editorNodeType, editorNodeSettings } from '../utils/coreExport'
@@ -10,6 +10,18 @@ import { ipcStreamToParquet, parquetToIpcStream } from '../utils/parquet-bridge'
 import { fetchRemoteFile } from '../utils/remote-file'
 import { isPlaceholderNode as isPlaceholderNodeDef, placeholderLabel, placeholderReason } from '../utils/placeholder'
 import { EXPR_TRANSFORMER_PACKAGE } from '../composables/useFormulaTranslation'
+import { CONTINUOUS_EDIT_MS, FlowHistory } from './flow-history'
+import {
+  applyPatch,
+  cloneGraph,
+  cloneNode,
+  diffGraph,
+  linkEdge,
+  sameGraph,
+  unlinkEdge,
+  type FlowPatch,
+  type GraphState
+} from '../utils/flowPatch'
 import type {
   BlockedInfo,
   FlowNode,
@@ -67,6 +79,10 @@ const SINGLE_INPUT_PACKAGES: Record<string, (settings: any) => string[]> = {
   filter: (s) => (s?.filter_input?.mode === 'advanced' ? [EXPR_TRANSFORMER_PACKAGE] : []),
 }
 
+// Node types whose settings are Python the engine exec()s, on a run and during schema propagation.
+const CODE_NODE_TYPES = new Set(['polars_code'])
+const UNTRUSTED_CODE_MESSAGE = 'Custom code from a share link; trust the flow to run it'
+
 
 /**
  * A full, self-contained snapshot of a flow's live state — graph (FlowfileData),
@@ -80,7 +96,13 @@ export interface FlowStateSnapshot {
   snapshot: FlowfileData
   fileContents: Record<number, FileContent>
   nodeIdCounter: number
+  /** The flow's undo history. In memory only: a tab keeps it, a reload does not. */
+  history?: GraphHistory
 }
+
+/** Raw, so a tab holding one in reactive state does not proxy every stored graph. */
+type GraphHistory = Raw<FlowHistory<GraphState>>
+const newGraphHistory = (): GraphHistory => markRaw(new FlowHistory<GraphState>())
 
 // Preview cache limits to prevent memory bloat
 const PREVIEW_CACHE_MAX_SIZE = 20  // Max number of cached previews in TypeScript
@@ -239,6 +261,15 @@ export const useFlowStore = defineStore('flow', () => {
   // Track nodes that have been modified since last execution (dirty state)
   const dirtyNodes = ref<Set<number>>(new Set())
 
+  // True while the flow came from a share link and its code nodes await the recipient's trust.
+  const codeUntrusted = ref(false)
+
+  // Undo history of the open flow; replaced whenever another flow is loaded.
+  const history = shallowRef(newGraphHistory())
+  const historyRevision = ref(0)
+  // Bumped per node when its settings change from outside its panel, so an open panel reloads them.
+  const settingsEpochs = ref<Map<number, number>>(new Map())
+
   async function loadFromStorage() {
     try {
       const saved = sessionStorage.getItem(STORAGE_KEY)
@@ -304,6 +335,7 @@ export const useFlowStore = defineStore('flow', () => {
 
           const maxId = Math.max(0, ...data.nodes.map(n => n.id))
           nodeIdCounter.value = state.nodeIdCounter ?? maxId
+          codeUntrusted.value = data.untrusted_code === true
 
           // Restore the active flow's library identity + name (safety net for a
           // page reload; the tabs store also carries these per tab).
@@ -375,47 +407,81 @@ export const useFlowStore = defineStore('flow', () => {
     return !!node && isPlaceholderNodeDef(node.type, node.settings)
   }
 
+  /** A code node the recipient of a share link has not trusted yet. */
+  function isUntrustedCodeNode(node: FlowNode): boolean {
+    return codeUntrusted.value && CODE_NODE_TYPES.has(node.type)
+  }
+
   /**
-   * Every node that cannot run in this build: placeholder nodes plus everything
-   * downstream of one. BFS over the edge list only (buildDownstreamGraph), never
-   * getExecutionOrder — that throws on a cycle and this must stay total.
+   * Every node that cannot run: placeholder nodes, untrusted code nodes, and
+   * everything downstream of either. BFS over the edge list only
+   * (buildDownstreamGraph), never getExecutionOrder — that throws on a cycle
+   * and this must stay total.
    */
   const blockedNodes = computed<Map<number, BlockedInfo>>(() => {
     const blocked = new Map<number, BlockedInfo>()
-    const roots: number[] = []
-    nodes.value.forEach((node, id) => {
-      if (isPlaceholderNodeDef(node.type, node.settings)) {
-        blocked.set(id, {
-          reason: 'placeholder',
-          message: placeholderReason(node.settings),
-          sourceNodeId: id
-        })
-        roots.push(id)
-      }
-    })
-    if (roots.length === 0) return blocked
+    let downstream: Record<number, number[]> | null = null
 
-    const downstream = buildDownstreamGraph()
-    const queue = [...roots]
-    const visited = new Set<number>(roots)
-    while (queue.length > 0) {
-      const current = queue.shift()!
-      const source = blocked.get(current)!
-      for (const next of downstream[current] || []) {
-        if (visited.has(next)) continue
-        visited.add(next)
-        const rootId = source.sourceNodeId
-        const rootNode = nodes.value.get(rootId)
-        blocked.set(next, {
-          reason: 'upstream_placeholder',
-          message: `Depends on "${rootNode ? placeholderLabel(rootNode.type, rootNode.settings) : `node ${rootId}`}" (#${rootId}), which can't run in the browser`,
-          sourceNodeId: rootId
-        })
-        queue.push(next)
+    const spread = (roots: number[], reason: BlockedInfo['reason'], why: string) => {
+      if (roots.length === 0) return
+      downstream ??= buildDownstreamGraph()
+      const queue = [...roots]
+      while (queue.length > 0) {
+        const current = queue.shift()!
+        const rootId = blocked.get(current)!.sourceNodeId
+        for (const next of downstream[current] || []) {
+          if (blocked.has(next)) continue
+          const rootNode = nodes.value.get(rootId)
+          blocked.set(next, {
+            reason,
+            message: `Depends on "${rootNode ? placeholderLabel(rootNode.type, rootNode.settings) : `node ${rootId}`}" (#${rootId}), ${why}`,
+            sourceNodeId: rootId
+          })
+          queue.push(next)
+        }
       }
     }
+
+    const placeholders: number[] = []
+    nodes.value.forEach((node, id) => {
+      if (!isPlaceholderNodeDef(node.type, node.settings)) return
+      blocked.set(id, { reason: 'placeholder', message: placeholderReason(node.settings), sourceNodeId: id })
+      placeholders.push(id)
+    })
+    spread(placeholders, 'upstream_placeholder', "which can't run in the browser")
+
+    // Placeholders spread first: their block is permanent, this one lifts on trust.
+    const untrusted: number[] = []
+    nodes.value.forEach((node, id) => {
+      if (blocked.has(id) || !isUntrustedCodeNode(node)) return
+      blocked.set(id, { reason: 'untrusted_code', message: UNTRUSTED_CODE_MESSAGE, sourceNodeId: id })
+      untrusted.push(id)
+    })
+    spread(untrusted, 'upstream_untrusted_code', 'which runs shared code you have not trusted yet')
+
     return blocked
   })
+
+  /** The code nodes awaiting trust, for the share-import banner. */
+  const untrustedCodeNodes = computed(() =>
+    Array.from(nodes.value.values())
+      .filter(isUntrustedCodeNode)
+      .map(node => ({ nodeId: node.id, label: placeholderLabel(node.type, node.settings) }))
+      .sort((a, b) => a.nodeId - b.nodeId)
+  )
+
+  /** Lift the share-link code lock: the recipient chose to run the sender's code. */
+  function trustSharedCode() {
+    if (!codeUntrusted.value) return
+    codeUntrusted.value = false
+    for (const [id, result] of nodeResults.value) {
+      if (!result.blocked || blockedNodes.value.has(id)) continue
+      const { blocked: _lifted, ...rest } = result
+      nodeResults.value.set(id, rest)
+    }
+    scheduleSave()
+    debouncedPropagateSchemas()
+  }
 
   function getBlockedInfo(nodeId: number): BlockedInfo | undefined {
     return blockedNodes.value.get(nodeId)
@@ -516,7 +582,8 @@ export const useFlowStore = defineStore('flow', () => {
         auto_save: true,
         show_detailed_progress: false
       },
-      nodes: flowfileNodes
+      nodes: flowfileNodes,
+      ...(codeUntrusted.value ? { untrusted_code: true } : {})
     }
 
     // Separate small and large files for hybrid storage. sessionStorage keeps
@@ -690,6 +757,128 @@ export const useFlowStore = defineStore('flow', () => {
     return nodeResults.value.get(inputId)?.schemaResolved !== false
   }
 
+  // Undo / redo and batch edits
+
+  function captureGraph(): GraphState {
+    return cloneGraph({
+      nodes: nodes.value,
+      edges: edges.value,
+      fileContents: fileContents.value,
+      nodeIdCounter: nodeIdCounter.value
+    })
+  }
+
+  /** Note that the flow is about to change, so the change can be undone. Same-key edits merge for `mergeMs`. */
+  function recordHistory(key: string, mergeMs = 0) {
+    if (history.value.record(captureGraph, { key, mergeMs })) historyRevision.value++
+  }
+
+  function resetHistory(next = newGraphHistory()) {
+    history.value = next
+    historyRevision.value++
+  }
+
+  const canUndo = computed(() => historyRevision.value >= 0 && history.value.canUndo)
+  const canRedo = computed(() => historyRevision.value >= 0 && history.value.canRedo)
+  /** An object that stays the same while this flow is the open one; a tab switch or an import swaps it. */
+  const flowSessionKey = computed<object>(() => history.value)
+  /** The id the next new node gets: past the counter and past every node there is. */
+  const nextNodeId = computed(() => Math.max(nodeIdCounter.value, ...nodes.value.keys()) + 1)
+
+  function dropFileContent(id: number) {
+    fileContents.value.delete(id)
+    fileStorage.deleteFileContent(id).catch(err => {
+      // Silently ignore if file doesn't exist in IndexedDB
+      if (err && err.name !== 'NotFoundError') {
+        console.error(`Failed to delete file for node ${id} from IndexedDB:`, err)
+      }
+    })
+  }
+
+  /**
+   * Turn the live graph into `target`, in place. A node that is the same on both
+   * sides keeps its results; one whose type, settings or inputs differ is marked
+   * dirty. Never executes.
+   */
+  function morphGraph(target: GraphState) {
+    const diff = diffGraph({ nodes: nodes.value }, target)
+    const rerun = new Set([...diff.added, ...diff.changed])
+
+    for (const id of diff.removed) {
+      nodes.value.delete(id)
+      nodeResults.value.delete(id)
+      previewCache.value.delete(id)
+      dirtyNodes.value.delete(id)
+      settingsEpochs.value.delete(id)
+    }
+    for (const id of [...diff.added, ...diff.changed, ...diff.touched]) {
+      const node = target.nodes.get(id)!
+      // A result describes the node type that produced it.
+      if (nodes.value.get(id)?.type !== node.type) nodeResults.value.delete(id)
+      nodes.value.set(id, cloneNode(node))
+    }
+    // A node that came back was appended; exports and tie-breaks follow the map's order.
+    const order = [...target.nodes.keys()]
+    if (order.some((id, index) => id !== [...nodes.value.keys()][index])) {
+      nodes.value = new Map(order.map(id => [id, nodes.value.get(id)!]))
+    }
+    edges.value = target.edges.map(edge => ({ ...edge }))
+    nodeIdCounter.value = target.nodeIdCounter
+
+    for (const id of new Set([...fileContents.value.keys(), ...target.fileContents.keys()])) {
+      const wanted = target.fileContents.get(id)
+      if (fileContents.value.get(id) === wanted) continue
+      if (wanted && nodes.value.has(id)) {
+        writeFileContent(id, wanted)
+        rerun.add(id)
+      } else {
+        dropFileContent(id)
+      }
+    }
+
+    for (const id of rerun) {
+      if (!nodes.value.has(id)) continue
+      invalidatePreviewCache(id)
+      settingsEpochs.value.set(id, (settingsEpochs.value.get(id) ?? 0) + 1)
+    }
+    if (selectedNodeId.value !== null && !nodes.value.has(selectedNodeId.value)) {
+      selectedNodeId.value = null
+      showSettings.value = false
+      showTablePreview.value = false
+    }
+    debouncedPropagateSchemas()
+  }
+
+  function stepHistory(direction: 'undo' | 'redo'): boolean {
+    if (isExecuting.value) return false
+    const target = history.value[direction](captureGraph(), sameGraph)
+    historyRevision.value++
+    if (!target) return false
+    morphGraph(target)
+    return true
+  }
+
+  /** Go back one step. Returns false when there is nothing to undo. */
+  const undo = () => stepHistory('undo')
+  const redo = () => stepHistory('redo')
+
+  /**
+   * Apply a batch of node and edge changes as ONE undo step. Untouched nodes keep
+   * their id, position, description and results; changed ones are marked dirty.
+   * Never executes. Throws, having changed nothing, on a patch that cannot apply.
+   */
+  function applyFlowPatch(patch: FlowPatch) {
+    const before = captureGraph()
+    const target = applyPatch(before, patch)
+    if (history.value.record(() => before)) historyRevision.value++
+    morphGraph(target)
+  }
+
+  /** How often `nodeId`'s settings were replaced from outside its settings panel. */
+  function settingsEpoch(nodeId: number): number {
+    return settingsEpochs.value.get(nodeId) ?? 0
+  }
+
   // Actions
   function generateNodeId(): number {
     nodeIdCounter.value++
@@ -697,6 +886,7 @@ export const useFlowStore = defineStore('flow', () => {
   }
 
   function addNode(type: string, x: number, y: number): number {
+    recordHistory('graph')
     const id = generateNodeId()
     const defaultSettings = getDefaultSettings(type, id, x, y)
 
@@ -820,6 +1010,8 @@ export const useFlowStore = defineStore('flow', () => {
   function updateNode(id: number, updates: Partial<FlowNode>) {
     const node = nodes.value.get(id)
     if (node) {
+      const changes = (Object.keys(updates) as Array<keyof FlowNode>).some(key => node[key] !== updates[key])
+      if (changes) recordHistory('move', CONTINUOUS_EDIT_MS)
       nodes.value.set(id, { ...node, ...updates })
     }
   }
@@ -827,7 +1019,9 @@ export const useFlowStore = defineStore('flow', () => {
   function updateNodeSettings(id: number, settings: NodeSettings) {
     const node = nodes.value.get(id)
     if (node) {
-      node.settings = settings
+      recordHistory(`settings:${id}`, CONTINUOUS_EDIT_MS)
+      // A copy: the panel keeps editing the object it sent, and the flow must not change under an undo step.
+      node.settings = JSON.parse(JSON.stringify(settings))
       nodes.value.set(id, node)
 
       invalidatePreviewCache(id)
@@ -863,6 +1057,7 @@ export const useFlowStore = defineStore('flow', () => {
   function updateNodeDescription(id: number, description: string) {
     const node = nodes.value.get(id)
     if (node) {
+      if ((node.description ?? '') !== description) recordHistory(`meta:${id}`, CONTINUOUS_EDIT_MS)
       node.description = description
       // Also sync to settings for backward compatibility with flowfile_core
       if (node.settings) {
@@ -878,6 +1073,7 @@ export const useFlowStore = defineStore('flow', () => {
   function updateNodeReference(id: number, reference: string | undefined) {
     const node = nodes.value.get(id)
     if (node) {
+      if ((node.node_reference || undefined) !== (reference || undefined)) recordHistory(`meta:${id}`, CONTINUOUS_EDIT_MS)
       node.node_reference = reference || undefined
       if (node.settings) {
         (node.settings as NodeBase).node_reference = reference || undefined
@@ -919,18 +1115,12 @@ export const useFlowStore = defineStore('flow', () => {
   }
 
   function removeNode(id: number) {
+    if (nodes.value.has(id)) recordHistory('graph')
     nodes.value.delete(id)
     nodeResults.value.delete(id)
-    fileContents.value.delete(id)
     previewCache.value.delete(id)
     dirtyNodes.value.delete(id)
-
-    fileStorage.deleteFileContent(id).catch(err => {
-      // Silently ignore if file doesn't exist in IndexedDB
-      if (err && err.name !== 'NotFoundError') {
-        console.error(`Failed to delete file for node ${id} from IndexedDB:`, err)
-      }
-    })
+    dropFileContent(id)
 
     edges.value = edges.value.filter(
       e => e.source !== String(id) && e.target !== String(id)
@@ -952,25 +1142,14 @@ export const useFlowStore = defineStore('flow', () => {
     )
 
     if (!exists) {
+      recordHistory('graph')
       edges.value.push(edge)
 
       const targetId = parseInt(edge.target)
-      const sourceId = parseInt(edge.source)
       const targetNode = nodes.value.get(targetId)
 
       if (targetNode) {
-        if (edge.targetHandle === 'input-0' || !edge.targetHandle) {
-          // input-0 is the default/left input
-          if (!targetNode.inputIds.includes(sourceId)) {
-            targetNode.inputIds.push(sourceId)
-          }
-          // For join nodes, also set leftInputId
-          targetNode.leftInputId = sourceId
-        } else if (edge.targetHandle === 'input-1') {
-          // For join nodes, input-1 is the right input
-          targetNode.rightInputId = sourceId
-        }
-
+        linkEdge(targetNode, edge)
         invalidatePreviewCache(targetId)
       }
 
@@ -981,14 +1160,12 @@ export const useFlowStore = defineStore('flow', () => {
   function removeEdge(edgeId: string) {
     const edge = edges.value.find(e => e.id === edgeId)
     if (edge) {
+      recordHistory('graph')
       const targetId = parseInt(edge.target)
-      const sourceId = parseInt(edge.source)
       const targetNode = nodes.value.get(targetId)
 
       if (targetNode) {
-        targetNode.inputIds = targetNode.inputIds.filter(id => id !== sourceId)
-        if (targetNode.leftInputId === sourceId) targetNode.leftInputId = undefined
-        if (targetNode.rightInputId === sourceId) targetNode.rightInputId = undefined
+        unlinkEdge(targetNode, edge)
 
         // Clear inferred schema for disconnected node (unless it has execution data)
         const existingResult = nodeResults.value.get(targetId)
@@ -1005,8 +1182,25 @@ export const useFlowStore = defineStore('flow', () => {
     }
   }
 
-  function setFileContent(nodeId: number, content: string | FileContent) {
+  /**
+   * `undoable` marks a user's own change of input data. Anything else is the flow's
+   * data arriving (an import, a re-pick, a refetch): not a step, and no earlier step
+   * may take it away again, so it is filled into the history where it was missing.
+   */
+  function setFileContent(nodeId: number, content: string | FileContent, options: { undoable?: boolean } = {}) {
     const fc = asFileContent(content)
+    if (options.undoable) {
+      // The settings key: a panel writes the data and its settings together, in either order.
+      recordHistory(`settings:${nodeId}`, CONTINUOUS_EDIT_MS)
+    } else {
+      history.value.amend(state => {
+        if (state.nodes.has(nodeId) && !state.fileContents.has(nodeId)) state.fileContents.set(nodeId, fc)
+      })
+    }
+    writeFileContent(nodeId, fc)
+  }
+
+  function writeFileContent(nodeId: number, fc: FileContent) {
     fileContents.value.set(nodeId, fc)
 
     // Binary always persists to IndexedDB; large text too (sessionStorage can't hold it)
@@ -1542,9 +1736,10 @@ gc.collect()
       const node = nodes.value.get(nodeId)
       if (!node) continue
       // A placeholder's settings must never cross the bridge (they're stubs, or
-      // sender-authored content that must not be interpreted). Its downstream
-      // still travels and resolves loudly as "Upstream schema unavailable".
-      if (isPlaceholderNodeDef(node.type, node.settings)) continue
+      // sender-authored content that must not be interpreted), and neither may
+      // untrusted code: propagation exec()s it. Its downstream still travels and
+      // resolves loudly as "Upstream schema unavailable".
+      if (isPlaceholderNodeDef(node.type, node.settings) || isUntrustedCodeNode(node)) continue
       graphNodes[nodeId] = {
         type: node.type,
         input_ids: node.inputIds,
@@ -2004,6 +2199,17 @@ result
    * Stops and surfaces the first failing node's error.
    */
   async function executeNodeWithUpstream(nodeId: number): Promise<NodeResult> {
+    // The flow is busy for the run's length, as for a canvas Run: Run and undo wait. A run inside one keeps its flag.
+    const owns = !isExecuting.value
+    if (owns) isExecuting.value = true
+    try {
+      return await executeChain(nodeId)
+    } finally {
+      if (owns) isExecuting.value = false
+    }
+  }
+
+  async function executeChain(nodeId: number): Promise<NodeResult> {
     const chain = getAncestorChain(nodeId)
 
     // Ground truth for "pointer already wired in this runtime" is the Python data
@@ -2489,11 +2695,13 @@ result
       }
 
       // Store result - success=true indicates data is available in Python
-      // Preserve existing data if schema unchanged (data might be stale otherwise)
+      // Rows fetched before this run stay valid only when the node was current: a
+      // propagation re-run of an unchanged node keeps them, an edited one (dirty) must not.
       const existingResult = nodeResults.value.get(nodeId)
       const schemaUnchanged = existingResult?.schema &&
                               result.schema &&
                               JSON.stringify(existingResult.schema) === JSON.stringify(result.schema)
+      const rowsStillValid = schemaUnchanged && !dirtyNodes.value.has(nodeId)
 
       const nodeResult: NodeResult = {
         success: result.success,
@@ -2502,8 +2710,7 @@ result
         download: result.download,
         graphic_walker_input: result.graphic_walker_input,
         row_info: result.row_info,
-        // Preserve data if schema unchanged (prevents data loss during schema propagation)
-        data: schemaUnchanged ? existingResult?.data : undefined
+        data: rowsStillValid ? existingResult?.data : undefined
       }
 
       nodeResults.value.set(nodeId, nodeResult)
@@ -2512,8 +2719,7 @@ result
         dirtyNodes.value.delete(nodeId)
       }
 
-      // Clear preview cache only if schema changed (prevents cache thrashing during schema propagation)
-      if (!schemaUnchanged) {
+      if (!rowsStillValid) {
         previewCache.value.delete(nodeId)
       }
 
@@ -2737,14 +2943,10 @@ result
           }
         } as any
 
-      case 'formula':
-        return {
-          ...base,
-          function: {
-            field: { name: '', data_type: 'Auto' },
-            function: ''
-          }
-        } as any
+      case 'formula': {
+        const entry = { field: { name: '', data_type: 'Auto' }, function: '' }
+        return { ...base, function: entry, functions: [entry] } as any
+      }
 
       case 'cross_join':
         return {
@@ -2938,7 +3140,8 @@ result
         auto_save: true,
         show_detailed_progress: false
       },
-      nodes: flowfileNodes
+      nodes: flowfileNodes,
+      ...(codeUntrusted.value ? { untrusted_code: true } : {})
     }
 
     return flowfileData
@@ -2951,10 +3154,17 @@ result
    * Supports two formats:
    * 1. WASM format with explicit connections array
    * 2. flowfile_core format with implicit connections (derived from node relationships)
+   *
+   * `untrustedCode` marks a flow that arrived by share link: its code nodes stay
+   * locked until trustSharedCode(). The mark is set before any propagation can
+   * start and rides in the editor-dialect file, so tabs, reloads and library
+   * entries keep it.
    */
-  function importFromFlowfile(data: FlowfileData): boolean {
+  function importFromFlowfile(data: FlowfileData, options: { untrustedCode?: boolean } = {}): boolean {
 
     try {
+      codeUntrusted.value = false
+      resetHistory()
       nodes.value.clear()
       edges.value = []
       nodeResults.value.clear()
@@ -2987,6 +3197,8 @@ result
       }
 
       nodeIdCounter.value = maxId
+      codeUntrusted.value = (options.untrustedCode === true || data.untrusted_code === true)
+        && Array.from(nodes.value.values()).some(node => CODE_NODE_TYPES.has(node.type))
 
       // Import connections - support both explicit connections array and implicit derivation
       if (data.connections && data.connections.length > 0) {
@@ -3315,6 +3527,8 @@ result
     showSettings.value = false
     showTablePreview.value = false
     nodeIdCounter.value = 0
+    codeUntrusted.value = false
+    resetHistory()
     currentFlowName.value = 'Untitled Flow'
     currentFlowId.value = null
     sessionStorage.removeItem(STORAGE_KEY)
@@ -3342,7 +3556,8 @@ result
       flowId: currentFlowId.value,
       snapshot: exportToFlowfile(currentFlowName.value),
       fileContents: fc,
-      nodeIdCounter: nodeIdCounter.value
+      nodeIdCounter: nodeIdCounter.value,
+      history: history.value
     }
   }
 
@@ -3362,6 +3577,7 @@ result
     currentFlowName.value = snap.name
     // importFromFlowfile cleared the id; restore the snapshot's library identity.
     currentFlowId.value = snap.flowId ?? null
+    if (snap.history) resetHistory(snap.history)
     return true
   }
 
@@ -3416,6 +3632,19 @@ result
     isPlaceholderNode,
     blockedNodes,
     getBlockedInfo,
+    untrustedCodeNodes,
+    trustSharedCode,
+
+    // Undo / redo and batch edits
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    applyFlowPatch,
+    settingsEpoch,
+    flowSessionKey,
+    nextNodeId,
+    defaultSettings: getDefaultSettings,
 
     // Actions
     generateNodeId,

@@ -74,6 +74,8 @@ function inferAggOutputType(agg: AggType, inputType: string): string {
       return 'Float64'
     case 'mean':
     case 'median':
+    case 'std':
+    case 'var':
       return 'Float64'
     case 'first':
     case 'last':

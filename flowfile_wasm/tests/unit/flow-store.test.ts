@@ -1011,6 +1011,63 @@ describe('Flow Store', () => {
     })
   })
 
+  describe('Preview rows across a re-run', () => {
+    const SCHEMA = [{ name: 'a', data_type: 'Int64' }]
+    let rows: number[][]
+
+    /** manual_input → filter, run once, with the filter's rows fetched into the table. */
+    async function runAndFetch() {
+      pyodideMock.isReady = true
+      pyodideMock.runPython.mockResolvedValue(undefined)
+      rows = [[2], [3]]
+      pyodideMock.runPythonWithResult.mockImplementation(async (src: string) => {
+        if (src.includes('fetch_preview(')) return { success: true, data: { columns: ['a'], data: rows }, from_cache: false }
+        if (src.includes('_lazyframes.keys()')) return [1, 2]
+        if (src.includes('propagate_schemas(')) return {}
+        return { success: true, schema: SCHEMA, has_data: true }
+      })
+      const store = useFlowStore()
+      await new Promise(resolve => setTimeout(resolve, 0))
+      const source = store.addNode('manual_input', 0, 0)
+      store.updateNodeSettings(source, {
+        ...store.getNode(source)!.settings,
+        raw_data_format: { columns: SCHEMA, data: [[1, 2, 3]] }
+      } as any)
+      const filter = store.addNode('filter', 200, 0)
+      store.addEdge({ id: 'e', source: String(source), target: String(filter), sourceHandle: 'output-0', targetHandle: 'input-0' })
+      await store.executeFlow()
+      await store.fetchNodePreview(filter)
+      expect(store.nodeResults.get(filter)?.data?.data).toEqual([[2], [3]])
+      return { store, filter }
+    }
+
+    const previewFetches = () =>
+      pyodideMock.runPythonWithResult.mock.calls.filter(call => String(call[0]).includes('fetch_preview(')).length
+
+    it('drops the rows fetched before an edit, so Apply shows the new result', async () => {
+      const { store, filter } = await runAndFetch()
+
+      store.updateNodeSettings(filter, { ...store.getNode(filter)!.settings, description: 'edited' } as any)
+      rows = [[3]]
+      const fetchesBefore = previewFetches()
+      // What the settings Apply button does.
+      await store.executeNodeWithUpstream(filter)
+      const preview = await store.fetchNodePreview(filter, { maxRows: 100 })
+
+      expect(previewFetches()).toBe(fetchesBefore + 1)
+      expect(preview.data?.data).toEqual([[3]])
+      expect(store.nodeResults.get(filter)?.data?.data).toEqual([[3]])
+    })
+
+    it('keeps the fetched rows when an unchanged node is re-run by schema propagation', async () => {
+      const { store, filter } = await runAndFetch()
+
+      await store.executeNode(filter)
+
+      expect(store.nodeResults.get(filter)?.data?.data).toEqual([[2], [3]])
+    })
+  })
+
   describe('Schema Access', () => {
     it('should get input schema from upstream node', () => {
       const store = useFlowStore()

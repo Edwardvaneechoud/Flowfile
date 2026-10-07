@@ -34,13 +34,14 @@ import type {
   AggType
 } from '../types'
 import { selectCastTarget } from '../stores/schema-inference'
+import { activeFormulaEntries } from '../utils/formulaEntries'
 
 export interface CodeGenerationOptions {
   nodes: Map<number, FlowNode>
   edges: FlowEdge[]
   flowName?: string
-  // Formula node id → translated Polars expression code (to_polars_code).
-  formulaCode?: Record<number, string>
+  // Formula node id → translated Polars code (to_polars_code) per active entry, in order.
+  formulaCode?: Record<number, Array<string | undefined>>
 }
 
 
@@ -261,7 +262,7 @@ export class FlowToPolarsConverter {
   protected codeLines: string[]
   protected lastNodeVar: string | null
   private unsupportedNodes: Array<{ id: number; type: string; reason: string }>
-  private formulaCode: Record<number, string>
+  private formulaCode: Record<number, Array<string | undefined>>
   // (node, effectiveVar, start, end) per emitting node; (start, end) slices codeLines.
   protected nodeSpans: Array<{ node: FlowNode; effectiveVar: string; start: number; end: number }>
   // node_id -> upstream node_id for nodes that emit nothing (passthroughs).
@@ -820,7 +821,9 @@ export class FlowToPolarsConverter {
       median: 'median',
       first: 'first',
       last: 'last',
-      n_unique: 'n_unique'
+      n_unique: 'n_unique',
+      std: 'std',
+      var: 'var'
     }
     return `${col}.${mapping[agg] || 'sum'}()${alias}`
   }
@@ -881,31 +884,48 @@ export class FlowToPolarsConverter {
     settings: NodeFormulaSettings,
     varName: string,
     inputVars: { main?: string },
-    translated?: string,
+    translated: Array<string | undefined> = [],
   ): void {
     const inputDf = inputVars.main || 'df'
-    const fn = settings.function
-    const name = fn?.field?.name || 'new_column'
-    const expr = (fn?.function || '').trim()
-    if (!expr) {
+    const entries = activeFormulaEntries(settings)
+    if (entries.length === 0) {
       this.addCode(`${varName} = ${inputDf}`)
       this.addCode('')
       return
     }
-    const castType = this.formulaCastType(fn?.field?.data_type)
-    const cast = castType ? `.cast(${castType})` : ''
 
-    if (translated) {
-      this.addCode(`${varName} = ${inputDf}.with_columns((${translated})${cast}.alias(${toPythonValue(name)}))`)
+    if (entries.length === 1) {
+      const fn = entries[0]
+      const name = toPythonValue(fn.field?.name || 'new_column')
+      const castType = this.formulaCastType(fn.field?.data_type)
+      const cast = castType ? `.cast(${castType})` : ''
+      if (translated[0]) {
+        this.addCode(`${varName} = ${inputDf}.with_columns((${translated[0]})${cast}.alias(${name}))`)
+        this.addCode('')
+        return
+      }
+      // Fallback: translate at runtime.
+      this.addCode(`# requires: pip install polars-expr-transformer`)
+      this.addCode(`from polars_expr_transformer import simple_function_to_expr`)
+      this.addCode(`${varName} = ${inputDf}.with_columns(`)
+      this.addCode(`    simple_function_to_expr(${toPythonValue(fn.function.trim())})${cast}.alias(${name})`)
+      this.addCode(`)`)
       this.addCode('')
       return
     }
 
-    // Fallback: translate at runtime.
-    this.addCode(`# requires: pip install polars-expr-transformer`)
-    this.addCode(`from polars_expr_transformer import simple_function_to_expr`)
-    this.addCode(`${varName} = ${inputDf}.with_columns(`)
-    this.addCode(`    simple_function_to_expr(${toPythonValue(expr)})${cast}.alias(${toPythonValue(name)})`)
+    // One chained with_columns per entry, as core emits: a later entry may read an earlier one's column.
+    if (entries.some((_, i) => !translated[i])) {
+      this.addCode(`# requires: pip install polars-expr-transformer`)
+      this.addCode(`from polars_expr_transformer import simple_function_to_expr`)
+    }
+    this.addCode(`${varName} = (${inputDf}`)
+    entries.forEach((fn, i) => {
+      const castType = this.formulaCastType(fn.field?.data_type)
+      const cast = castType ? `.cast(${castType})` : ''
+      const expr = translated[i] ? `(${translated[i]})` : `simple_function_to_expr(${toPythonValue(fn.function.trim())})`
+      this.addCode(`    .with_columns(${expr}${cast}.alias(${toPythonValue(fn.field?.name || 'new_column')}))`)
+    })
     this.addCode(`)`)
     this.addCode('')
   }

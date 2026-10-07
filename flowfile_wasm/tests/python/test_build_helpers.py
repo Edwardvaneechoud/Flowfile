@@ -75,41 +75,62 @@ def test_filter_advanced_expr_handles_functions_and_conjunctions():
     assert out["city"].to_list() == ["Rotterdam"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "polars-expr-transformer <=0.6.0 executes Python from a formula: "
-        "token_classifier.standardize_quotes rewrites 'a\"b' to \"a\"b\" without escaping, "
-        "and models.Classifier.get_pl_func eval()s the result (to_polars_code's "
-        "_validate_polars_code is a second eval sink). Affects every formula "
-        "surface (formula node, advanced filter, core's settings validation), not just "
-        "this one. Needs an upstream fix; drop the xfail once the pin is raised past it."
-    ),
-)
-def test_filter_advanced_expr_does_not_evaluate_python(tmp_path):
-    """A formula must be parsed, never executed.
-
-    The old implementation ``eval``'d the whole field, so this is what the share
-    transform's placeholder demotion is protecting against. When this test goes
-    green the expression language is safe to ship in a link, and the demotion in
-    ``flowfile_core/flowfile/share/compatibility.py`` can be reconsidered.
-    """
-    canary = tmp_path / "canary"
-    hostile = [
+def _hostile_formulas(canary) -> list[str]:
+    """Formulas that try to break out of a literal or name a Python callable."""
+    return [
         f'__import__("os").system("touch {canary}")',
         f'open("{canary}", "w")',
         f'[a] > 1 and open("{canary}", "w")',
         f'"x" + str(open("{canary}", "w"))',
         f'[a] = "x\\" + open(\\"{canary}\\", \\"w\\") + \\"y"',
-        # The live escape: a single-quoted literal carrying a double quote.
+        # The escape polars-expr-transformer <=0.6.0 had: a single-quoted literal carrying a double quote.
         f"[a] = 'x\" + open(\"{canary}\", \"w\") + \"y'",
+        f"uppercase('x\" + open(\"{canary}\", \"w\") + \"')",
+        # Backslash parity around the requote.
+        f"[a] = 'x\\\\\" + open(\"{canary}\", \"w\") + \"y'",
+        f"[a] = 'x\\' + open(\"{canary}\", \"w\") + 'y'",
+        # A column name that closes its own quote.
+        f'[a") + open("{canary}", "w") + pl.col("b] > 1',
+        # Stays inside the generated dialect: no free name, only ``pl``.
+        f"[a] = 'x\" + str(pl.DataFrame({{\"x\": [1]}}).write_csv(\"{canary}\")) + \"y'",
     ]
-    for expression in hostile:
-        try:
-            engine.build_filter(lf(a=[1, 2]), {"filter_input": {"mode": "advanced", "advanced_filter": expression}})
-        except Exception:
-            pass
-        assert not canary.exists(), f"{expression!r} executed Python"
+
+
+def test_formula_surfaces_do_not_evaluate_python(tmp_path):
+    """A formula must be parsed, never executed, on every surface that takes one.
+
+    This is the arbiter for shipping expressions in share links: it failed on
+    polars-expr-transformer <=0.6.0 (``standardize_quotes`` requoted ``'a"b'``
+    unescaped and ``Classifier.get_pl_func`` ``eval``'d the result). A hostile
+    formula may raise; it may never run.
+    """
+    from engine.notebook_formulas import translate_advanced_filter, translate_to_ff_code
+    from polars_expr_transformer.process.polars_expr_transformer import to_flowframe_code, to_polars_code
+
+    canary = tmp_path / "canary"
+    frame = lf(a=["x", "y"], b=["1", "2"])
+    surfaces = {
+        "advanced filter": lambda text: engine.build_filter(
+            frame, {"filter_input": {"mode": "advanced", "advanced_filter": text}}
+        ).collect(),
+        "formula node": lambda text: engine.build_formula(
+            frame, {"functions": [{"field": {"name": "out"}, "function": text}]}
+        ).collect(),
+        "dynamic rename": lambda text: engine.build_dynamic_rename(
+            frame, {"dynamic_rename_input": {"rename_mode": "formula", "formula": text}}
+        ).collect(),
+        "to_polars_code": to_polars_code,
+        "to_flowframe_code": to_flowframe_code,
+        "notebook formula": translate_to_ff_code,
+        "notebook advanced filter": translate_advanced_filter,
+    }
+    for expression in _hostile_formulas(canary):
+        for surface, run in surfaces.items():
+            try:
+                run(expression)
+            except Exception:
+                pass
+            assert not canary.exists(), f"{surface} executed Python for {expression!r}"
 
 
 def test_filter_without_field_is_passthrough():

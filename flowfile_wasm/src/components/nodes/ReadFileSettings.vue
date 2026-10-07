@@ -286,7 +286,7 @@ async function handleFileSelect(event: Event) {
   try {
     if (format === 'excel' || format === 'parquet') {
       const content = binaryContent(new Uint8Array(await file.arrayBuffer()), format)
-      flowStore.setFileContent(props.nodeId, content)
+      flowStore.setFileContent(props.nodeId, content, { undoable: true })
       applyPickedFile(file.name, format)
       if (format === 'excel') {
         sheets.value = []
@@ -294,7 +294,7 @@ async function handleFileSelect(event: Event) {
       }
     } else {
       const content = await file.text()
-      flowStore.setFileContent(props.nodeId, content)
+      flowStore.setFileContent(props.nodeId, content, { undoable: true })
       applyPickedFile(file.name, 'csv')
     }
     urlInput.value = ''
@@ -316,7 +316,7 @@ async function loadFromUrl(url?: string) {
     const remote = await fetchRemoteFile(target)
     if (remote.warning) fileWarning.value = remote.warning
 
-    flowStore.setFileContent(props.nodeId, remote.content)
+    flowStore.setFileContent(props.nodeId, remote.content, { undoable: true })
     applyPickedFile(remote.fileName, remote.format)
     // Keep the URL as the path so the flow remembers its source (and the
     // desktop app can re-read the same location)

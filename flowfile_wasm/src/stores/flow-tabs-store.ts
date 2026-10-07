@@ -32,6 +32,8 @@ export interface FlowTab {
    *  and reloads via IndexedDB/re-pick. */
   fileContents: Record<number, FileContent>
   nodeIdCounter: number
+  /** The tab's undo history, stashed while it is inactive. Never persisted. */
+  history?: FlowStateSnapshot['history']
 }
 
 function genId(): string {
@@ -99,6 +101,7 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
     tab.snapshot = snap.snapshot
     tab.fileContents = snap.fileContents
     tab.nodeIdCounter = snap.nodeIdCounter
+    tab.history = snap.history
   }
 
   /** Seed the tab set on first use: restore from sessionStorage, or create one
@@ -158,7 +161,8 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
       flowId: target.flowId,
       snapshot: target.snapshot,
       fileContents: target.fileContents,
-      nodeIdCounter: target.nodeIdCounter
+      nodeIdCounter: target.nodeIdCounter,
+      history: target.history
     })
     persist()
   }
@@ -200,7 +204,8 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
           flowId: previous.flowId,
           snapshot: previous.snapshot,
           fileContents: previous.fileContents,
-          nodeIdCounter: previous.nodeIdCounter
+          nodeIdCounter: previous.nodeIdCounter,
+          history: previous.history
         })
       }
       return false
@@ -300,7 +305,8 @@ export const useFlowTabsStore = defineStore('flowTabs', () => {
         flowId: next.flowId,
         snapshot: next.snapshot,
         fileContents: next.fileContents,
-        nodeIdCounter: next.nodeIdCounter
+        nodeIdCounter: next.nodeIdCounter,
+        history: next.history
       })
     }
     persist()

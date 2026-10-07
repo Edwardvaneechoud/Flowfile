@@ -845,8 +845,55 @@ const ADVANCED_FILTER_FIXTURES: Fixture[] = [
   }
 ]
 
+/** Multi-entry formulas in core's saved shape (`functions` only, no `function`): entries
+ * chain in order, so a later one reads an earlier one's column. The plain flavour leaves
+ * formulas to the canvas, so these go to the Polars script and to flowfile_core. */
+const MULTI_FORMULA_FIXTURES: Fixture[] = [
+  {
+    name: 'formula: entries chained in order',
+    ordered: true,
+    steps: [
+      SALES,
+      {
+        id: 2,
+        type: 'formula',
+        inputs: [1],
+        settings: {
+          functions: [
+            { field: { name: 'doubled', data_type: 'Auto' }, function: '[revenue] * 2' },
+            { field: { name: 'plus_one', data_type: 'Auto' }, function: '[doubled] + 1' },
+            { field: { name: 'revenue', data_type: 'Auto' }, function: '[revenue] - 1' }
+          ]
+        }
+      }
+    ],
+    output: 2
+  },
+  {
+    name: 'formula: a blank entry is skipped and each entry casts on its own',
+    ordered: true,
+    steps: [
+      SALES,
+      {
+        id: 2,
+        type: 'formula',
+        inputs: [1],
+        settings: {
+          functions: [
+            { field: { name: 'ignored', data_type: 'Auto' }, function: '  ' },
+            { field: { name: 'as_text', data_type: 'String' }, function: '[revenue] + 1' },
+            { field: { name: 'label', data_type: 'Auto' }, function: 'concat([product], "-", [as_text])' }
+          ]
+        }
+      }
+    ],
+    output: 2
+  }
+]
+
 export const CORE_ONLY_FIXTURES: Fixture[] = [
   ...ADVANCED_FILTER_FIXTURES,
+  ...MULTI_FORMULA_FIXTURES,
   {
     name: 'pivot with no index columns over an empty table',
     // A column with no values is declared String, and neither engine sums a String.
@@ -894,6 +941,7 @@ export const CORE_ONLY_FIXTURES: Fixture[] = [
  */
 export const POLARS_ONLY_FIXTURES: Fixture[] = [
   ...ADVANCED_FILTER_FIXTURES,
+  ...MULTI_FORMULA_FIXTURES,
   {
     // A temporal target parses text rather than casting it, by sniffing the
     // format — which a list of dicts cannot reproduce, so the plain flavour
@@ -906,6 +954,29 @@ export const POLARS_ONLY_FIXTURES: Fixture[] = [
         { old_name: 'day', new_name: 'day', keep: true, position: 0, data_type: 'Date', data_type_change: true },
         { old_name: 'label', new_name: 'label', keep: true, position: 1, data_type: 'String' }
       ])
+    ],
+    output: 2
+  },
+  {
+    // A standard deviation has no plain-Python form, so that flavour leaves it to the canvas.
+    name: 'group_by spread: std and var',
+    ordered: false,
+    steps: [
+      SALES,
+      {
+        id: 2,
+        type: 'group_by',
+        inputs: [1],
+        settings: {
+          groupby_input: {
+            agg_cols: [
+              { old_name: 'product', agg: 'groupby', new_name: 'product' },
+              { old_name: 'revenue', agg: 'std', new_name: 'spread' },
+              { old_name: 'revenue', agg: 'var', new_name: 'variance' }
+            ]
+          }
+        }
+      }
     ],
     output: 2
   },

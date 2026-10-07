@@ -120,7 +120,7 @@ function handleDatasetChange(name: string) {
 function loadDataset(name: string) {
   const content = flowStore.getCatalogDatasetContent(name)
   if (content) {
-    flowStore.setFileContent(props.nodeId, content)
+    flowStore.setFileContent(props.nodeId, content, { undoable: true })
   }
 }
 </script>

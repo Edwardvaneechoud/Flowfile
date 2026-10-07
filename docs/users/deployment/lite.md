@@ -36,7 +36,7 @@ Flowfile Lite ships **23 nodes** (as of 2026-07) across five active categories �
 
 ¹ *External Data / External Output are host-integration nodes used when Flowfile Lite is embedded as a library — they let the host app feed in and read out datasets.*
 
-It also supports **exporting a flow to a Python/Polars script** and a lightweight **in-browser catalog** (CSV-only) for saving and reusing tables between flows.
+It also supports **exporting a flow to a Python/Polars script**, the [**canvas notebook**](../visual-editor/notebook.md#in-flowfile-lite) (the flow as Python cells you can edit, push back to the canvas and run), and a lightweight **in-browser catalog** (CSV-only) for saving and reusing tables between flows.
 
 !!! tip "Formula and Polars Code both ship"
     Lite includes the visual [**Formula** node](../visual-editor/nodes/transform.md#formula) for point-and-click column expressions *and* the **Polars Code** node for writing any Polars expression directly (with autocompletion).
@@ -148,6 +148,7 @@ is ready.
 | Catalog | Delta-backed, versioned, virtual tables | Lightweight (CSV-only) |
 | Secrets & connections manager | ✓ | ✗ |
 | Export flow to Python | ✓ | ✓ |
+| Canvas notebook | ✓, on a kernel or without | ✓, without a kernel; [a set of calls](../visual-editor/notebook.md#in-flowfile-lite) push back |
 | Plain-Python (learning) export | ✗ | ✓ |
 | Step-by-step Python walkthrough with live data | ✗ | ✓ |
 | Edit + re-run the generated script | ✗ | ✓ |

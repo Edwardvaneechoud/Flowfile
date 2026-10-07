@@ -253,6 +253,162 @@ execute_formula(20, 1, json.loads(${j({ function: { field: { name: 'age_plus', d
     failed.push('execute_formula result');
     console.error(`  [FAIL] execute_formula result: ${JSON.stringify(formulaRes)}`);
   }
+  // flowfile_core's multi-entry shape: `functions` only, each entry reading the one before it.
+  const chainedRes = await run('execute_formula (chained entries)', `
+import json
+execute_formula(23, 1, json.loads(${j({
+    functions: [
+      { field: { name: 'age_plus', data_type: 'Int64' }, function: '[age] + 10' },
+      { field: { name: 'age_double', data_type: 'Int64' }, function: '[age_plus] * 2' },
+    ],
+  })}))
+`);
+  const chainedColumns = ((chainedRes && chainedRes.schema) || []).map((c) => c.name);
+  if (!chainedRes || chainedRes.success !== true || !['age_plus', 'age_double'].every((c) => chainedColumns.includes(c))) {
+    failed.push('execute_formula chained result');
+    console.error(`  [FAIL] execute_formula chained result: ${JSON.stringify(chainedRes)}`);
+  }
+
+  // --- Canvas notebook: the notebook-store bridge call, then every golden flow and formula. ---
+  const golden = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../python/notebook_golden.json'), 'utf8'));
+  const sample = golden.flows.find((flow) => flow.name === 'notebook: polars code assigning output_df');
+  const renderRequest = { flow: sample.flow, schemas: sample.schemas, locked: { 2: 'locked until trusted' }, layout: [] };
+  pyodide.globals.set('_notebook_render_request', JSON.stringify(renderRequest));
+  const notebookRes = await run('render_notebook (notebook-store bridge)', `
+import json
+from engine.notebook_render import render_notebook
+render_notebook(**json.loads(_notebook_render_request))
+`);
+  pyodide.globals.delete('_notebook_render_request');
+  const surfaceRes = await run('notebook_surface (completions)', `
+from engine.notebook_cells import notebook_surface
+notebook_surface()
+`);
+  if (!surfaceRes || !Array.isArray(surfaceRes.ff) || !surfaceRes.pushable.includes('FlowFrame.group_by')) {
+    failed.push('notebook_surface result');
+    console.error(`  [FAIL] notebook_surface result: ${JSON.stringify(surfaceRes)}`);
+  }
+  const notebookCells = (notebookRes && notebookRes.cells) || [];
+  if (
+    notebookCells.length !== sample.cells.length ||
+    notebookCells[2].status !== 'placeholder' ||
+    !notebookCells[2].code.includes('ff.canvas_node(2, source_1)') ||
+    notebookCells[3].code !== sample.cells[3].code
+  ) {
+    failed.push('render_notebook result');
+    console.error(`  [FAIL] render_notebook result: ${JSON.stringify(notebookRes)}`);
+  }
+  FS.writeFile('/notebook_golden.json', JSON.stringify(golden), { encoding: 'utf8' });
+  const goldenDiffs = await run('render_notebook (golden flows + formulas)', `
+import json
+from engine.notebook_formulas import translate_to_ff_code
+from engine.notebook_render import render_notebook
+_golden = json.load(open('/notebook_golden.json'))
+_diffs = [f["name"] for f in _golden["flows"] if render_notebook(f["flow"], f["schemas"], {})["cells"] != f["cells"]]
+_diffs += [formula for formula, code in _golden["formulas"].items() if translate_to_ff_code(formula) != code]
+_diffs
+`);
+  if (!Array.isArray(goldenDiffs) || goldenDiffs.length) {
+    failed.push('render_notebook golden');
+    console.error(`  [FAIL] render_notebook golden, differing: ${JSON.stringify(goldenDiffs)}`);
+  }
+
+  // --- Notebook sync: the store's bridge call (a constant source, the request as a global), then every golden flow. ---
+  const headFlow = golden.flows.find((flow) => flow.name === 'head takes the first rows');
+  const headCell = headFlow.cells.find((cell) => cell.cell_id === 'cell-1');
+  const syncRequest = { flow: headFlow.flow, schemas: headFlow.schemas, locked: {}, drafts: { 'cell-1': headCell.code.replace('.head(3)', '.head(7)') } };
+  pyodide.globals.set('_notebook_sync_request', JSON.stringify(syncRequest));
+  const syncRes = await run('sync_notebook (notebook-store bridge)', `
+import json
+from engine.notebook_cells import sync_notebook
+sync_notebook(**json.loads(_notebook_sync_request))
+`);
+  pyodide.globals.delete('_notebook_sync_request');
+  if (!syncRes || syncRes.ok !== true || JSON.stringify(syncRes.nodes) !== '{"2":{"settings":{"sample_size":7}}}' || Object.keys(syncRes.inputs).length) {
+    failed.push('sync_notebook result');
+    console.error(`  [FAIL] sync_notebook result: ${JSON.stringify(syncRes)}`);
+  }
+  const syncDiffs = await run('sync_notebook (golden cells left as written change nothing)', `
+import ast, json
+from engine.notebook_cells import sync_notebook
+def _touched(flow):
+    drafts = {}
+    for cell in flow["cells"]:
+        if cell["kind"] != "node" or cell["status"] != "code":
+            continue
+        try:
+            ast.parse(cell["code"])
+        except SyntaxError:
+            continue
+        drafts[cell["cell_id"]] = cell["code"] + "\\n# touched\\n"
+    return drafts
+_unchanged = {"ok": True, "nodes": {}, "added": [], "inputs": {}, "removed": [], "warnings": []}
+def _changes(result):
+    return {key: value for key, value in result.items() if key not in ("node_ids_by_cell", "unnamed_by_cell")}
+[f["name"] for f in _golden["flows"] if _changes(sync_notebook(f["flow"], f["schemas"], {}, _touched(f))) != _unchanged]
+`);
+  if (!Array.isArray(syncDiffs) || syncDiffs.length) {
+    failed.push('sync_notebook golden');
+    console.error(`  [FAIL] sync_notebook golden, changed: ${JSON.stringify(syncDiffs)}`);
+  }
+
+  // A group by is two calls read as one node; the engine then runs what was pushed.
+  const groupFlow = golden.flows.find((flow) => flow.name === 'a longer chain: filter then group_by then sort');
+  const groupCell = groupFlow.cells.find((cell) => cell.cell_id === 'cell-1');
+  const groupRequest = {
+    flow: groupFlow.flow,
+    schemas: groupFlow.schemas,
+    locked: {},
+    drafts: { 'cell-1': groupCell.code.replace('.sum().alias("total")', '.std().alias("total")') }
+  };
+  pyodide.globals.set('_notebook_sync_request', JSON.stringify(groupRequest));
+  const groupRes = await run('sync_notebook (group by)', `
+import json
+from engine.notebook_cells import sync_notebook
+sync_notebook(**json.loads(_notebook_sync_request))
+`);
+  pyodide.globals.delete('_notebook_sync_request');
+  const groupCols = groupRes && groupRes.ok && groupRes.nodes['3'] && groupRes.nodes['3'].settings.groupby_input.agg_cols;
+  if (!groupCols || groupCols[1].agg !== 'std') {
+    failed.push('sync_notebook group by');
+    console.error(`  [FAIL] sync_notebook group by: ${JSON.stringify(groupRes)}`);
+  }
+  pyodide.globals.set('_group_cols', JSON.stringify(groupCols || []));
+  const spread = await run('group by runs std', `
+import json
+import polars as pl
+from engine.nodes_aggregate import build_group_by
+_frame = pl.LazyFrame({"product": ["a", "a", "b"], "revenue": [10, 20, 5]})
+build_group_by(_frame, {"groupby_input": {"agg_cols": json.loads(_group_cols)}}).sort("product").collect()["total"].to_list()
+`);
+  pyodide.globals.delete('_group_cols');
+  if (!Array.isArray(spread) || Math.abs(spread[0] - Math.sqrt(50)) > 1e-9 || spread[1] != null) {
+    failed.push('group by std');
+    console.error(`  [FAIL] group by std: ${JSON.stringify(spread)}`);
+  }
+
+  // A frame written as data is built by the wasm Polars; a line with no name adds nothing.
+  const frameRequest = {
+    flow: headFlow.flow,
+    schemas: headFlow.schemas,
+    locked: {},
+    drafts: {},
+    next_id: 50,
+    order: [...headFlow.cells.map((cell) => cell.cell_id), 'new-1'],
+    new_cells: { 'new-1': 'df = ff.DataFrame([{"a": 1, "b": "x"}, {"a": 2, "b": None}])\ndf.head(1)' }
+  };
+  pyodide.globals.set('_notebook_sync_request', JSON.stringify(frameRequest));
+  const frameRes = await run('sync_notebook (ff.DataFrame in a new cell)', `
+import json
+from engine.notebook_cells import sync_notebook
+sync_notebook(**json.loads(_notebook_sync_request))
+`);
+  pyodide.globals.delete('_notebook_sync_request');
+  const frameWanted = '[{"id":50,"type":"manual_input","settings":{"raw_data_format":{"columns":[{"name":"a","data_type":"Int64"},{"name":"b","data_type":"String"}],"data":[[1,2],["x",null]]}},"description":"","node_reference":"df"}]';
+  if (!frameRes || frameRes.ok !== true || JSON.stringify(frameRes.added) !== frameWanted || JSON.stringify(frameRes.unnamed_by_cell) !== '{"new-1":["df.head(1)"]}') {
+    failed.push('sync_notebook frame');
+    console.error(`  [FAIL] sync_notebook frame: ${JSON.stringify(frameRes)}`);
+  }
 
   // Parity executors.
   pyodide.globals.set('_temp_content', 'tag\nx\ny\n');

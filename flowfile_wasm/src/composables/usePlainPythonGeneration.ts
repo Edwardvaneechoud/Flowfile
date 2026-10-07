@@ -14,6 +14,7 @@ import { FlowToPolarsConverter, RESERVED_NAMES, toPythonValue } from './useCodeG
 import type { CodeGenerationOptions } from './useCodeGeneration'
 import { getNodeDescription } from '../config/nodeDescriptions'
 import { selectCastTarget } from '../stores/schema-inference'
+import { activeFormulaEntries } from '../utils/formulaEntries'
 import type {
   FlowNode,
   NodeReadSettings,
@@ -1004,7 +1005,11 @@ export class FlowToPlainPythonConverter extends FlowToPolarsConverter {
   /** The one line of configuration worth quoting back in a stub. */
   protected stubDetail(node: FlowNode): string | null {
     const settings = node.settings as any
-    if (node.type === 'formula') return settings?.function?.function?.trim() || null
+    if (node.type === 'formula') {
+      const entries = activeFormulaEntries(settings)
+      if (entries.length <= 1) return entries[0]?.function.trim() || null
+      return entries.map(e => `${e.field?.name || 'new_column'} = ${e.function.trim()}`).join('; ')
+    }
     if (node.type === 'polars_code') return settings?.polars_code_input?.polars_code?.trim()?.split('\n')[0] || null
     // Only reached by a pivot the emitter refused (an aggregation it will not fake).
     if (node.type === 'pivot') {

@@ -2,9 +2,10 @@
 
 The browser build executes an advanced filter correctly — it hands the formula
 to the same ``simple_function_to_expr`` core uses — but the string still cannot
-*travel*: that parser executes Python for a crafted formula (the escape is
-pinned by the xfail in ``flowfile_wasm/tests/python/test_build_helpers.py``), so
-a sender-authored expression must never reach a recipient's browser.
+*travel*: on browser builds pinned to polars-expr-transformer <=0.6.0 that parser
+executes Python for a crafted formula, so a sender-authored expression must not
+reach a recipient's browser until a build with the fixed parser is deployed
+(``flowfile_wasm/tests/python/test_build_helpers.py`` pins the fix).
 
 Most advanced filters, though, say nothing that needs an expression at all —
 ``[quantity] > 7`` is the basic filter "quantity greater_than 7" spelled

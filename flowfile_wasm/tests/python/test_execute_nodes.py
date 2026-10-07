@@ -112,6 +112,32 @@ def test_group_by_chain():
     assert set(rows[1:]) == {"x,30", "y,5"}
 
 
+def test_group_by_runs_std_var_and_core_s_avg_name():
+    read_csv(1, "cat,amount\nx,10\nx,20\ny,5\n")
+    r = engine.execute_group_by(2, 1, {"groupby_input": {"agg_cols": [
+        {"old_name": "cat", "new_name": "cat", "agg": "groupby"},
+        {"old_name": "amount", "new_name": "spread", "agg": "std"},
+        {"old_name": "amount", "new_name": "variance", "agg": "var"},
+        {"old_name": "amount", "new_name": "average", "agg": "avg"},
+    ]}})
+    assert r["success"] is True, r.get("error")
+    rows = {row["cat"]: row for row in engine.get_lazyframe(2).collect().to_dicts()}
+    assert round(rows["x"]["spread"], 6) == round(50 ** 0.5, 6)
+    assert rows["x"]["variance"] == 50
+    assert rows["x"]["average"] == 15
+    assert rows["y"]["spread"] is None
+
+
+def test_group_by_refuses_an_aggregation_it_does_not_know_rather_than_dropping_it():
+    read_csv(1, "cat,amount\nx,10\n")
+    r = engine.execute_group_by(2, 1, {"groupby_input": {"agg_cols": [
+        {"old_name": "cat", "new_name": "cat", "agg": "groupby"},
+        {"old_name": "amount", "new_name": "m", "agg": "mode"},
+    ]}})
+    assert r["success"] is False
+    assert "'mode'" in r["error"]
+
+
 def test_pivot_zero_fills_absent_combinations():
     # Like core's do_pivot: an absent combination reads 0 for sum/count.
     read_csv(1, "k,q,v\na,x,1\nb,x,3\nb,y,5\n")

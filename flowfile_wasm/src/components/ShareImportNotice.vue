@@ -16,14 +16,22 @@
             <span class="share-notice__reason"> — {{ p.reason }}</span>
           </li>
         </ul>
-        <p v-if="variant === 'warning'" class="share-notice__footer">
+        <p v-if="variant === 'warning' && !actionLabel" class="share-notice__footer">
           A shared flow runs the transformations its sender built.
           <a href="https://flowfile.io/install/" target="_blank" rel="noopener noreferrer">Install the full version</a>
           to run everything.
         </p>
+        <button
+          v-if="actionLabel"
+          class="share-notice__action"
+          :disabled="actionDisabled"
+          @click="$emit('action')"
+        >
+          {{ actionLabel }}
+        </button>
       </div>
     </div>
-    <button class="share-notice__close" title="Dismiss" @click="$emit('close')">
+    <button v-if="closable" class="share-notice__close" title="Dismiss" @click="$emit('close')">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
   </div>
@@ -38,12 +46,16 @@ withDefaults(
     title: string
     detail?: string
     placeholders?: SharePlaceholderInfo[]
+    actionLabel?: string
+    actionDisabled?: boolean
+    closable?: boolean
   }>(),
-  { detail: '', placeholders: () => [] }
+  { detail: '', placeholders: () => [], actionLabel: '', actionDisabled: false, closable: true }
 )
 
 defineEmits<{
   (e: 'close'): void
+  (e: 'action'): void
   (e: 'focus-node', nodeId: number): void
 }>()
 </script>
@@ -125,6 +137,25 @@ defineEmits<{
 }
 
 .share-notice__footer a { color: var(--accent-color, #3b82f6); }
+
+.share-notice__action {
+  margin-top: 8px;
+  padding: 5px 12px;
+  border: 1px solid color-mix(in srgb, #f59e0b 60%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.share-notice__action:hover:not(:disabled) { background: color-mix(in srgb, #f59e0b 28%, transparent); }
+
+.share-notice__action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 
 .share-notice__close {
   background: none;

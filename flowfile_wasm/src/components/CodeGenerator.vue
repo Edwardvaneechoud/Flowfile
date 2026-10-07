@@ -51,7 +51,13 @@
           <path d="M3 3v5h5"></path>
         </svg>
       </button>
-      <button class="icon-button refresh-button" :disabled="loading" title="Refresh code" @click="refreshCode">
+      <button
+        v-if="!isNotebook"
+        class="icon-button refresh-button"
+        :disabled="loading"
+        title="Refresh code"
+        @click="refreshCode"
+      >
         <svg
           v-if="!loading"
           width="14"
@@ -67,7 +73,7 @@
         </svg>
         <span v-if="loading" class="spinner"></span>
       </button>
-      <button class="icon-button export-button" title="Export as .py file" @click="exportCode">
+      <button v-if="!isNotebook" class="icon-button export-button" title="Export as .py file" @click="exportCode">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
           <polyline points="7 10 12 15 17 10"></polyline>
@@ -77,7 +83,9 @@
     </template>
 
     <div ref="bodyEl" class="code-body">
-      <div v-if="error" class="error-message">
+      <NotebookPane v-if="isNotebook" :active="isVisible" @focus-node="emit('focus-node', $event)" />
+
+      <div v-if="error && !isNotebook" class="error-message">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10"></circle>
           <line x1="12" y1="8" x2="12" y2="12"></line>
@@ -87,7 +95,7 @@
       </div>
 
       <!-- The premise is "this code IS your flow" — never let them drift silently. -->
-      <div v-if="flowChanged" class="flow-changed" role="status">
+      <div v-if="flowChanged && !isNotebook" class="flow-changed" role="status">
         <span>The flow changed — this code describes the previous version.</span>
         <button class="flow-changed-refresh" @click="refreshCode">Refresh</button>
       </div>
@@ -127,8 +135,10 @@
         behind them.
       </div>
 
+      <!-- v-show, not v-if: the script editor is one CodeMirror instance that must stay mounted. -->
       <div
         v-else
+        v-show="!isNotebook"
         ref="workbenchEl"
         class="workbench"
         :class="{ split: isWalkthrough, 'is-wide': isWide }"
@@ -238,6 +248,7 @@ import {
 import { useLearningStore } from '../stores/learning-store'
 import DraggableItem from './common/DraggableItem/DraggableItem.vue'
 import StepMargin, { type MarginTab } from './StepMargin.vue'
+import NotebookPane from './notebook/NotebookPane.vue'
 import type { NodeReadSettings } from '../types'
 
 const props = withDefaults(
@@ -263,7 +274,7 @@ const learning = useLearningStore()
 const { generateCode } = useCodeGeneration()
 const { buildWalkthrough } = usePlainPythonGeneration()
 
-type CodeMode = 'polars' | 'walkthrough'
+type CodeMode = 'polars' | 'walkthrough' | 'notebook'
 type WalkthroughFlavour = 'plain' | 'polars'
 const MODE_KEY = 'flowfile-codegen-mode'
 const FLAVOUR_KEY = 'flowfile-walkthrough-flavour'
@@ -275,10 +286,11 @@ const DEFAULT_SPLIT = { x: 60, y: 64 }
 const FLOORS = { bench: 200, margin: 120, benchX: 460, marginX: 340 }
 
 function initialMode(): CodeMode {
+  const saved = localStorage.getItem(MODE_KEY)
+  if (saved === 'notebook') return 'notebook'
   // The walkthrough is opt-in: without Learning mode the panel is a plain
   // Polars view, whatever tab an earlier learning session left behind.
   if (!learning.enabled) return 'polars'
-  const saved = localStorage.getItem(MODE_KEY)
   // 'plain' and 'walkthrough' were the two halves of what is now one tab.
   if (saved === 'plain') {
     localStorage.setItem(MODE_KEY, 'walkthrough')
@@ -306,22 +318,23 @@ const runResult = ref<PlainRunResult | null>(null)
 const comparison = ref<CompareResult | null>(null)
 
 const isWalkthrough = computed(() => mode.value === 'walkthrough')
+const isNotebook = computed(() => mode.value === 'notebook')
 
-// Header tab strip. Empty ⇒ DraggableItem shows the plain "Code" title.
-// The walkthrough tab exists only after the user opts into Learning mode, so
-// the default panel stays a plain code view.
-const tabs = computed(() =>
-  props.teachingMode && learning.enabled
+// Header tab strip. The walkthrough tab exists only after the user opts into
+// Learning mode; Polars and Notebook are always there.
+const tabs = computed(() => [
+  { id: 'polars', label: 'Polars', title: 'Production code using the Polars dataframe library' },
+  ...(props.teachingMode && learning.enabled
     ? [
-        { id: 'polars', label: 'Polars', title: 'Production code using the Polars dataframe library' },
         {
           id: 'walkthrough',
           label: 'Python walkthrough',
           title: 'Step through the flow one node at a time — in plain Python or in Polars'
         }
       ]
-    : []
-)
+    : []),
+  { id: 'notebook', label: 'Notebook', title: 'The flow as cells of flowfile code, as the full app writes it' }
+])
 
 // Editing the generated script is the point in walkthrough mode, so track
 // whether the buffer still matches what we generated — that is what "reset" undoes.
@@ -521,7 +534,8 @@ const setMode = (next: CodeMode) => {
   localStorage.setItem(MODE_KEY, next)
   runResult.value = null
   comparison.value = null
-  generateCodeFromFlow()
+  // The notebook renders its own cells; the script views regenerate theirs.
+  if (next !== 'notebook') generateCodeFromFlow()
 }
 
 const setFlavour = (next: WalkthroughFlavour) => {
@@ -563,7 +577,7 @@ const enableLearning = () => {
 watch(
   () => learning.enabled,
   enabled => {
-    if (!props.isVisible || !props.teachingMode) return
+    if (!props.isVisible || !props.teachingMode || isNotebook.value) return
     setMode(enabled ? 'walkthrough' : 'polars')
   }
 )
@@ -833,6 +847,16 @@ const generateCodeFromFlow = async (options?: { preserveStepNodeId?: number }) =
  */
 const runScript = async () => {
   if (!pyodideStore.isReady || running.value || loading.value) return
+  // The script inlines every Polars Code node, so running it would run the sender's code.
+  if (flowStore.untrustedCodeNodes.length) {
+    marginTab.value = 'output'
+    runResult.value = {
+      rows: [],
+      failed: true,
+      error: 'This shared flow contains custom code. Choose "Trust and run" above the canvas before running its script.'
+    }
+    return
+  }
   const epoch = buildEpoch.value
   running.value = true
   runResult.value = null
@@ -1039,7 +1063,8 @@ watch(
     if (isWalkthrough.value && edited.value) stashDraft()
     // Resolve the landing mode on open, so flipping Learning mode while the
     // panel is closed takes effect the next time it opens.
-    mode.value = props.teachingMode ? initialMode() : 'polars'
+    const notebookWasOpen = localStorage.getItem(MODE_KEY) === 'notebook'
+    mode.value = notebookWasOpen ? 'notebook' : props.teachingMode ? initialMode() : 'polars'
     generateCodeFromFlow()
   }
 )

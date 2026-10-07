@@ -87,7 +87,7 @@ describe('explainNodePolars', () => {
     const formula = makeNode(2, 'formula', { function: { field: { name: 'c' }, function: '[a] * 2' } }, [1])
     const flow = flowWith(SOURCE, formula)
 
-    const translated = explainNodePolars({ ...flow, formulaCode: { 2: 'pl.col("a") * 2' } }, 2)
+    const translated = explainNodePolars({ ...flow, formulaCode: { 2: ['pl.col("a") * 2'] } }, 2)
     expect(translated).toContain('with_columns((pl.col("a") * 2)')
     expect(translated).not.toContain('simple_function_to_expr')
 
