@@ -184,11 +184,13 @@ def _record_id(settings: dict) -> None:
 
 
 def _polars_code(settings: dict) -> None:
-    """The code dedented and stripped; a snippet as it reads back from its notebook ``def``.
+    """The code dedented and stripped, as it reads back from the ``def`` the notebook shows for it.
 
-    A function-form ``def`` is its own text. A snippet is shown as ``def _polars_code_<n>(...)`` with its
-    implied ``return`` written out, and reading that back drops blank lines and the comments around the
-    statements; comparing both sides in that form makes an unedited push of a snippet a no-op.
+    A function-form ``def`` is shown as written and reads back as the comment lines right above it and
+    the ``def`` itself, so a module docstring, a trailing comment or a blank line under the leading
+    comments is dropped. A snippet is shown as ``def _polars_code_<n>(...)`` with its implied ``return``
+    written out, and reading that back drops blank lines and the comments around the statements.
+    Comparing both sides in that form makes an unedited push a no-op.
     """
     from flowfile_core.flowfile.code_generator.code_generator import _snippet_function_lines
     from flowfile_core.flowfile.flow_data_engine.polars_code_parser import function_form
@@ -196,9 +198,12 @@ def _polars_code(settings: dict) -> None:
 
     code_input = settings.get("polars_code_input") or {}
     code = textwrap.dedent(code_input.get("polars_code") or "").strip()
-    if code and function_form(code) is None:
+    if code:
+        shown = code
+        if function_form(code) is None:
+            shown = "\n".join(_snippet_function_lines(code, "_polars_code_0", ["input_df"]))
         try:
-            code = _polars_code_text("\n".join(_snippet_function_lines(code, "_polars_code_0", ["input_df"])))
+            code = _polars_code_text(shown)
         except SyntaxError:
             pass
     code_input["polars_code"] = code

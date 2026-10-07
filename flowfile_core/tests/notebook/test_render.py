@@ -6,7 +6,7 @@ import flowfile_frame as ff
 from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToFlowFrameConverter
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.notebook.render import code_fingerprint, render
-from flowfile_core.schemas import input_schema
+from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_frame import notebook
 from flowfile_frame.notebook_cells import clean_run
 from tests.notebook.conftest import NOTEBOOK_OWNER_ID, RUNNERS
@@ -59,6 +59,43 @@ def test_the_cells_rebuild_every_node_exactly(runner_kind):
         ceiling = max(n.node_id for n in graph.nodes)
         executor = RUNNERS[runner_kind].executor()
         result = clean_run(cells, ceiling, provenance, user_id=NOTEBOOK_OWNER_ID, executor=executor)
+    finally:
+        if notebook.current() is not None:
+            notebook.exit()
+    assert result["ok"], result.get("error")
+    assert set(grade(graph, result).values()) == {"EXACT"}
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        pytest.param("def kept(rows: LazyFrame) -> LazyFrame:\n    return rows", id="bare_name_annotations"),
+        pytest.param("def kept(rows):\n    return rows\n# trailing note", id="trailing_comment"),
+        pytest.param("# heading\n\ndef kept(rows):\n    return rows", id="blank_line_under_comment"),
+        pytest.param('"""About it."""\ndef kept(rows):\n    return rows', id="module_docstring"),
+        pytest.param("def _polars_code_5(input_df):\n    return input_df", id="snippet_name"),
+        pytest.param("@staticmethod\ndef kept(rows):\n    return rows", id="decorated"),
+    ],
+)
+def test_an_unedited_polars_code_function_pushes_back_unchanged(code):
+    source = ff.from_dict({"a": [1, 2]})
+    graph = source.flow_graph
+    graph.add_polars_code(
+        input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=900,
+            depending_on_ids=[source.node_id],
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=code),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(source.node_id, 900))
+    rendering = render(graph)
+    assert "__future__" not in rendering.cells[0].code
+    provenance = {c.cell_id: [(graph.get_node(n).node_type, n) for n in c.node_ids] for c in rendering.cells}
+    try:
+        cells = [(c.cell_id, c.code) for c in rendering.cells]
+        executor = RUNNERS["interpreting"].executor()
+        result = clean_run(cells, 900, provenance, user_id=NOTEBOOK_OWNER_ID, executor=executor)
     finally:
         if notebook.current() is not None:
             notebook.exit()

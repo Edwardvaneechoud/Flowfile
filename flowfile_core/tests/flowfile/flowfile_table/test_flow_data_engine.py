@@ -7,6 +7,7 @@ from pl_fuzzy_frame_match.models import FuzzyMapping
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import (
     PolarsCodeParser,
+    function_form,
     polars_code_parser,
     remove_comments_and_docstrings,
 )
@@ -704,13 +705,31 @@ def test_function_form_without_inputs_is_a_source():
         ("def f(rows):\n    output_df = rows", 1, "`f` returns nothing"),
         ("def f(rows):\n    return 1", 1, "`f` returned int, not a Polars LazyFrame or DataFrame"),
         ("def f(rows):\n    import os\n    return rows", 1, "Import statements are not allowed"),
+        ("def f(a, *, how):\n    return a", 1, "`f` has keyword-only `how` without a default"),
+        ("def f(a, b, *rest):\n    return a", 1, "`f` takes at least 2 frames but the node has 1 input"),
+        ("def f(a, b=None):\n    return a", 3, "`f` takes 1 to 2 frames but the node has 3 inputs"),
+        ("def f(a=None):\n    return a", 2, "`f` takes up to 1 frame but the node has 2 inputs"),
     ],
-    ids=["too_many_inputs", "too_few_inputs", "no_return", "not_a_frame", "import"],
+    ids=[
+        "too_many_inputs", "too_few_inputs", "no_return", "not_a_frame", "import",
+        "required_keyword_only", "too_few_for_varargs", "outside_a_default_range", "over_all_defaults",
+    ],
 )
 def test_function_form_errors_name_the_function(code, inputs, message):
     frames = [FlowDataEngine({"a": [1]}) for _ in range(inputs)]
     with pytest.raises(ValueError, match=re.escape(message)):
         execute_polars_code(*frames, code=code)
+
+
+def test_function_form_takes_varargs_and_keyword_only_defaults():
+    code = "def stacked(*frames, how='vertical'):\n    return pl.concat(frames, how=how)"
+    frames = [FlowDataEngine(pl.LazyFrame({"a": [value]})) for value in (1, 2)]
+    assert execute_polars_code(*frames, code=code).data_frame.collect()["a"].to_list() == [1, 2]
+
+
+def test_a_decorated_def_is_not_function_form():
+    assert function_form("@staticmethod\ndef f(rows):\n    return rows") is None
+    assert function_form('"""About it."""\ndef f(rows):\n    return rows').name == "f"
 
 
 def test_function_form_runs_in_its_own_namespace():

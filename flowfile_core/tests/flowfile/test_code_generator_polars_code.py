@@ -127,6 +127,15 @@ def test_function_form_exports_as_written_and_runs(export, code):
     assert flow.get_node(2).get_resulting_data().data_frame.collect()["doubled"].to_list() == [2, 4, 6]
 
 
+@pytest.mark.parametrize("export", _EXPORTS)
+def test_annotations_without_an_import_put_the_future_import_first(export):
+    code = "def kept(rows: LazyFrame) -> LazyFrame:\n    return rows"
+    exported = export(_polars_code_flow(code))
+
+    assert exported.startswith("from __future__ import annotations\n")
+    assert len(_run_export(exported)) == 3
+
+
 def test_snippet_renders_its_inputs_as_lazyframes_in_the_flowframe_export():
     exported = export_flow_to_flowframe(_polars_code_flow("input_df.head(1)"))
 

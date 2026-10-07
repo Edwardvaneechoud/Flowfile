@@ -2273,7 +2273,11 @@ class NodePolarsCode(NodeMultiInput):
         entry = function_form(code) if code else None
         if entry is not None:
             docstring = (ast.get_docstring(entry) or "").strip()
-            params = ", ".join(arg.arg for arg in entry.args.args)
+            args = entry.args
+            names = [arg.arg for arg in [*args.posonlyargs, *args.args]]
+            names += [f"*{args.vararg.arg}"] if args.vararg else ["*"] if args.kwonlyargs else []
+            names += [arg.arg for arg in args.kwonlyargs] + ([f"**{args.kwarg.arg}"] if args.kwarg else [])
+            params = ", ".join(names)
             first_line = docstring.split("\n")[0] if docstring else f"{entry.name}({params})"
         else:
             first_line = code.strip().split("\n")[0] if code else ""

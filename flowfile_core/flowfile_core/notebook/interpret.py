@@ -193,7 +193,14 @@ def _error(exc: BaseException, line: int | None) -> _Failure:
 
 
 def _kind_label(kind: str | None) -> str:
-    return {"ff": "`ff`", "pl": "`pl`", "none": "None", "graph": "the session graph `flow`"}.get(kind or "", kind or "")
+    labels = {
+        "ff": "`ff`",
+        "pl": "`pl`",
+        "none": "None",
+        "graph": "the session graph `flow`",
+        "polars_code_def": "Polars Code `def`",
+    }
+    return labels.get(kind or "", kind or "")
 
 
 class CellInterpreter:
@@ -680,6 +687,10 @@ class _Cell:
     def call_value(self, callee: Any, call: ast.Call, line: int | None = None) -> Any:
         """Calling a value by its kind's ``__call__`` entry (a helper, a reader, a script, a custom node)."""
         kind = kind_of(callee)
+        if kind == "polars_code_def":
+            name = callee.name
+            what = f"Calling `{name}` (the notebook reads a plain `def` only as code for `.polars_code({name})`)"
+            raise _needs_kernel(what, call.lineno)
         if "__call__" not in allowlist.ALLOWLIST.get(kind or "", {}):
             raise _needs_kernel(f"Calling {_kind_label(kind) or 'this value'} in {self.text(call)}", call.lineno)
         self.interpreter.used.add((kind, "__call__"))

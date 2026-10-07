@@ -17,14 +17,16 @@ from .validation import refuse_placeholder
 
 
 def _function_form(code: str) -> ast.FunctionDef | None:
-    """The ``def`` of function-form code (one top-level ``def``, after an optional docstring), else None."""
+    """The ``def`` of function-form code (one undecorated top-level ``def``, after an optional docstring), else None."""
     try:
         body = ast.parse(textwrap.dedent(code).strip()).body
     except SyntaxError:
         return None
     if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0].value, "value", None), str):
         body = body[1:]
-    return body[0] if len(body) == 1 and isinstance(body[0], ast.FunctionDef) else None
+    if len(body) == 1 and isinstance(body[0], ast.FunctionDef) and not body[0].decorator_list:
+        return body[0]
+    return None
 
 
 def _call_function_form(code: str, name: str, input_lfs: list[pl.LazyFrame]) -> pl.LazyFrame:

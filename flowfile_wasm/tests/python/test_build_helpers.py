@@ -444,6 +444,13 @@ def test_polars_code_function_form_without_inputs_builds_a_source():
     assert engine.get_lazyframe(1).collect()["a"].to_list() == [1, 2]
 
 
+def test_polars_code_function_form_matches_core_on_decorated_defs():
+    from engine.nodes_polars_code import _function_form
+
+    assert _function_form("@staticmethod\ndef f(rows):\n    return rows") is None
+    assert _function_form('"""About it."""\ndef f(rows):\n    return rows').name == "f"
+
+
 def test_filter_parses_iso_values_for_date_and_datetime_columns():
     """Core wraps the value in to_date/to_datetime for temporal columns; the browser must agree."""
     frame = lf(

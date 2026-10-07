@@ -122,8 +122,8 @@ def remove_comments_and_docstrings(source: str) -> str:
 def function_form(code: str) -> ast.FunctionDef | None:
     """The ``def`` of function-form Polars Code, else ``None`` (snippet form, or code that does not parse).
 
-    Function form is code whose top level is exactly one ``def``, optionally after a module docstring;
-    the node calls it with its inputs, in connection order, and its ``return`` is the output.
+    Function form is code whose top level is exactly one undecorated ``def``, optionally after a module
+    docstring; the node calls it with its inputs, in connection order, and its ``return`` is the output.
     """
     try:
         body = ast.parse(textwrap.dedent(code).strip()).body
@@ -131,7 +131,9 @@ def function_form(code: str) -> ast.FunctionDef | None:
         return None
     if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0].value, "value", None), str):
         body = body[1:]
-    return body[0] if len(body) == 1 and isinstance(body[0], ast.FunctionDef) else None
+    if len(body) == 1 and isinstance(body[0], ast.FunctionDef) and not body[0].decorator_list:
+        return body[0]
+    return None
 
 
 def function_form_error(entry: ast.FunctionDef, num_inputs: int) -> str | None:
@@ -139,13 +141,24 @@ def function_form_error(entry: ast.FunctionDef, num_inputs: int) -> str | None:
     if not _returns_a_value(entry):
         return f"`{entry.name}` returns nothing: end it with `return <frame>`, which is the node's output"
     args = entry.args
+    keywords = [arg.arg for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True) if default is None]
+    if keywords:
+        names = ", ".join(f"`{name}`" for name in keywords)
+        return f"`{entry.name}` has keyword-only {names} without a default: the node passes its inputs by position"
     positional = len(args.posonlyargs) + len(args.args)
     required = positional - len(args.defaults)
     if required <= num_inputs <= positional or (args.vararg and num_inputs >= required):
-        if all(default is not None for default in args.kw_defaults):
-            return None
+        return None
+    if args.vararg:
+        takes = f"at least {_count(required, 'frame')}"
+    elif required == positional:
+        takes = _count(positional, "frame")
+    elif required == 0:
+        takes = f"up to {_count(positional, 'frame')}"
+    else:
+        takes = f"{required} to {_count(positional, 'frame')}"
     return (
-        f"`{entry.name}` takes {_count(positional, 'frame')} but the node has {_count(num_inputs, 'input')}: "
+        f"`{entry.name}` takes {takes} but the node has {_count(num_inputs, 'input')}: "
         "give it one parameter per connected input"
     )
 

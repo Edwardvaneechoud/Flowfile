@@ -369,3 +369,10 @@ def test_a_clean_run_reports_the_refused_cell_line_and_kind():
     assert (result["cell_id"], result["line"], result["kind"]) == ("cell-3", 2, "needs_kernel")
     assert result["message"] == result["error"] and "`print`" in result["message"]
     assert notebook.current() is None
+
+
+def test_calling_a_plain_def_says_the_notebook_reads_it_as_polars_code():
+    result, placed = _interpret("def f(x):\n    return x\n\n\ny = f(1)")
+    assert (result.line, result.kind) == (5, "needs_kernel")
+    assert result.message.startswith("Calling `f` (the notebook reads a plain `def` only as code for `.polars_code(f)`)")
+    assert placed == 0
