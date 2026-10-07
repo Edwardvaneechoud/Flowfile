@@ -868,14 +868,15 @@ export default function useDragAndDrop() {
     });
 
     if (keepExisting) {
-      // isValidConnection checks each re-set edge against the store: drop edges core no longer has
-      // first, or a rewired single input is refused as occupied by its old edge.
+      // Drop edges core no longer has first, or a rewired single input is refused as occupied.
       const incoming = new Set(edgesWithLabels.map(edgeKey));
       const stale = getEdges.value.filter((edge) => !incoming.has(edgeKey(edge)));
-      removeCommittedEdges(
-        removeEdges,
-        stale.map((edge) => edge.id),
-      );
+      if (stale.length) {
+        removeCommittedEdges(
+          removeEdges,
+          stale.map((edge) => edge.id),
+        );
+      }
       setEdges(edgesWithLabels);
     } else addEdges(edgesWithLabels);
     // Reused nodes keep stale handle bounds when settings changed their handles: re-measure in place.

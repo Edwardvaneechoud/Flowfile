@@ -319,14 +319,19 @@ def _added(plan):
 
 
 def _assert_added_nodes_cover_nothing(live, plan):
-    """Every added node's box is clear of the other nodes left on the canvas and of its comments."""
+    """Every added node's box is clear of the other nodes left on the canvas, its comments and collapsed groups."""
     added = _added(plan)
     left = {n["id"]: (n["x_position"], n["y_position"]) for n in live["nodes"] if n["id"] not in plan.deletions}
     positions = {**left, **added}
-    comments = [Box(c["x_position"], c["y_position"], c["width"], c["height"]) for c in live.get("comments", [])]
+    blocking = [g for g in live.get("groups", []) if g.get("collapsed")] + live.get("comments", [])
+    boxes = [Box(b["x_position"], b["y_position"], b["width"], b["height"]) for b in blocking]
     for nid, (x, y) in added.items():
-        others = [node_box(*p) for other, p in positions.items() if other != nid] + comments
+        others = [node_box(*p) for other, p in positions.items() if other != nid] + boxes
         assert not any(node_box(x, y).overlaps(box) for box in others), (nid, x, y)
+
+
+def _group(group_id, x, y, width, height, *, collapsed=False):
+    return {"id": group_id, "name": "g", "x_position": x, "y_position": y, "width": width, "height": height, "collapsed": collapsed}
 
 
 def test_a_node_inserted_into_a_chain_does_not_cover_the_next_node():
@@ -368,6 +373,24 @@ def test_a_deleted_nodes_slot_is_free_for_its_replacement():
     plan = reconcile(live, session, ["node-2"], _cells(1, extra={"node-2": [5]}))
     assert plan.deletions == [2]
     assert _added(plan) == {5: (250.0, 50.0)}
+
+
+def test_a_node_inserted_into_a_grouped_chain_stays_in_the_group():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50), _sort(3, 2, x=500, y=50))
+    live["groups"] = [_group(1, -40, -20, 600, 300)]
+    session = _payload(_manual(), _sort(5, 1), _filter(2, 5), _sort(3, 2))
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2, 3, extra={"node-2": [5, 2]}))
+    assert _added(plan) == {5: (250.0, 150.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+def test_a_collapsed_group_in_the_way_is_avoided():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50))
+    live["groups"] = [_group(1, 500, 0, 240, 200, collapsed=True)]
+    session = _payload(_manual(), _filter(2, 1), _sort(5, 2))
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2, extra={"node-2": [2, 5]}))
+    assert _added(plan) == {5: (500.0, 250.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
 
 
 def test_a_comment_in_the_way_is_avoided():
