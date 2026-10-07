@@ -3299,6 +3299,27 @@ class TestFlowCode:
             "error": None,
         }
 
+    def test_only_expected_failures_report_their_message(self, tmp_path, monkeypatch):
+        """An unexpected error's text (an OSError carries server paths) stays in the log, not the response."""
+        from flowfile_core.flowfile import code_generator
+
+        reg_id = self._saved_registration(tmp_path)
+
+        def unsupported(_graph):
+            raise code_generator.UnsupportedNodeError("python_script", 1, "it runs on a kernel")
+
+        def os_failure(_graph):
+            raise OSError("[Errno 13] Permission denied: '/srv/private/thing'")
+
+        monkeypatch.setattr(code_generator, "export_flow_to_flowframe", unsupported)
+        error = client.get(f"/catalog/flows/{reg_id}/code").json()["error"]
+        assert error == "Cannot generate code for node 'python_script' (node_id=1): it runs on a kernel"
+        monkeypatch.setattr(code_generator, "export_flow_to_flowframe", os_failure)
+        resp = client.get(f"/catalog/flows/{reg_id}/code")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["content"] is None and resp.json()["error"]
+        assert "/srv/private" not in resp.text
+
     def test_unknown_registration_is_404(self):
         assert client.get("/catalog/flows/987654321/code").status_code == 404
 

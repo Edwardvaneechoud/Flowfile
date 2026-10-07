@@ -468,7 +468,11 @@ def get_flow_code(
     released afterwards) and never enters the editor sessions. A missing file or a flow the exporter
     cannot express is a soft result, like ``/interface``, so the catalog page can say why.
     """
-    from flowfile_core.flowfile.code_generator import export_flow_to_flowframe, export_flow_to_polars
+    from flowfile_core.flowfile.code_generator import (
+        UnsupportedNodeError,
+        export_flow_to_flowframe,
+        export_flow_to_polars,
+    )
     from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
     from flowfile_core.flowfile.manage.io_flowfile import require_flow_in_storage
     from flowfile_core.notebook.render import render
@@ -490,9 +494,13 @@ def get_flow_code(
                     content = export_flow_to_polars(graph)
                 else:
                     content = export_flow_to_flowframe(graph)
-    except Exception as exc:  # noqa: BLE001 - the page reports the reason, whatever it is
+    except Exception as exc:  # noqa: BLE001 - a soft result; only the expected failures say why
         logger.warning("Code of registered flow %s could not be produced as %s: %s", flow_id, format, exc)
-        return FlowCodeOut(registration_id=flow_id, format=format, error=str(exc))
+        if isinstance(exc, ValueError | NotImplementedError | UnsupportedNodeError):
+            reason = str(exc)
+        else:
+            reason = "the flow's code could not be produced; the server log has the details"
+        return FlowCodeOut(registration_id=flow_id, format=format, error=reason)
     return FlowCodeOut(registration_id=flow_id, format=format, content=content)
 
 

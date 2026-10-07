@@ -405,7 +405,7 @@ const emit = defineEmits([
 const runHistorySection = ref<HTMLElement | null>(null);
 
 const COPY_OPTIONS: { format: FlowCodeFormat; label: string }[] = [
-  { format: "yaml", label: "Flow file (YAML)" },
+  { format: "yaml", label: "Flow file (YAML/JSON)" },
   { format: "notebook", label: "Notebook cells (Python script)" },
   { format: "flowframe", label: "Python (FlowFrame)" },
   { format: "polars", label: "Python (Polars)" },
