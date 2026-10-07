@@ -52,20 +52,41 @@ def test_a_comment_is_avoided():
     assert x == 250 and not node_box(x, y).overlaps(comment)
 
 
-def test_a_group_read_from_a_payload_is_avoided():
+def test_a_collapsed_group_read_from_a_payload_is_avoided():
     payload = {
         "nodes": [{"id": 1, "x_position": 0, "y_position": 50}],
-        "groups": [{"id": 1, "x_position": 240, "y_position": 0, "width": 300, "height": 180}],
+        "groups": [{"id": 1, "x_position": 240, "y_position": 0, "width": 300, "height": 180, "collapsed": True}],
         "comments": [],
     }
     x, y = placer_from_payload(payload).place(2, inputs=[1])
     assert x == 250 and not node_box(x, y).overlaps(Box(240, 0, 300, 180))
 
 
+def test_an_expanded_group_is_a_container_a_node_may_land_in():
+    payload = {
+        "nodes": [{"id": 1, "x_position": 0, "y_position": 50}],
+        "groups": [{"id": 1, "x_position": -40, "y_position": -20, "width": 600, "height": 300, "collapsed": False}],
+        "comments": [],
+    }
+    assert placer_from_payload(payload).place(2, inputs=[1]) == (250, 50)
+
+
 def test_a_released_node_frees_its_slot():
     placer = Placer({1: (0, 50), 2: (250, 50)})
     placer.release(2)
     assert placer.place(3, inputs=[1]) == (250, 50)
+
+
+def test_a_node_released_before_placing_does_not_push_the_band_down():
+    placer = Placer({1: (0, 50), 2: (0, 900)})
+    placer.release(2)
+    assert placer.place(3) == (0, 50 + NODE_HEIGHT + Y_SPACING)
+
+
+def test_a_free_slot_is_not_recorded():
+    placer = Placer({1: (0, 50)})
+    assert placer.free_slot(0, 50) == (0, 150)
+    assert placer.free_slot(0, 50) == (0, 150)
 
 
 def test_a_placed_node_is_avoided_and_anchors_the_next():

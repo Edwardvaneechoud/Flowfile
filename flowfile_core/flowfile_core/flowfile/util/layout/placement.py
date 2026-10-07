@@ -58,10 +58,10 @@ def _row_offsets() -> Iterable[int]:
 class Placer:
     """Hands out positions for new nodes, one at a time or as a batch, without covering anything.
 
-    ``positions`` are the nodes already on the canvas and ``obstacles`` the group and comment boxes.
-    A placed node is recorded, so later placements anchor on it and avoid it. Nodes with no
-    positioned neighbour start a band below the content that was on the canvas when the placer
-    was made.
+    ``positions`` are the nodes already on the canvas and ``obstacles`` the comment and collapsed-group
+    boxes. A placed node is recorded, so later placements anchor on it and avoid it. Nodes with no
+    positioned neighbour start a band below the content on the canvas when placing starts, so a node
+    released before that does not count.
     """
 
     def __init__(self, positions: Mapping[int, Point] | None = None, obstacles: Iterable[Box] = ()) -> None:
@@ -69,7 +69,7 @@ class Placer:
             node_id: (float(x), float(y)) for node_id, (x, y) in (positions or {}).items()
         }
         self._obstacles = list(obstacles)
-        self._band = self._band_origin()
+        self._band: Point | None = None
 
     def position(self, node_id: int) -> Point | None:
         return self._positions.get(node_id)
@@ -87,13 +87,23 @@ class Placer:
 
         Preferred is one column right of its right-most positioned input at their median height,
         else one column left of its left-most positioned output, else the band below the content.
-        From there the same column is searched row by row, nearest first and below before above.
         """
         self._positions.pop(node_id, None)
-        x, y = self._preferred(inputs, outputs)
-        spot = self._nearest_free(_snap(x), _snap(y))
+        if self._band is None:
+            self._band = self._band_origin()
+        spot = self.free_slot(*self._preferred(inputs, outputs, self._band))
         self._positions[node_id] = (float(spot[0]), float(spot[1]))
         return spot
+
+    def free_slot(self, x: float, y: float) -> tuple[int, int]:
+        """The free slot nearest to ``(x, y)``: its column searched row by row, nearest first and below before above."""
+        x, y = _snap(x), _snap(y)
+        boxes = self._boxes()
+        for row in _row_offsets():
+            candidate_y = y + row * Y_SPACING
+            if not any(node_box(x, candidate_y).overlaps(box) for box in boxes):
+                return x, candidate_y
+        return x, _snap(max(box.bottom for box in boxes) + Y_SPACING)
 
     def place_all(
         self,
@@ -123,14 +133,14 @@ class Placer:
     def _known(self, node_ids: Iterable[int]) -> list[Point]:
         return [self._positions[node_id] for node_id in dict.fromkeys(node_ids) if node_id in self._positions]
 
-    def _preferred(self, inputs: Sequence[int], outputs: Sequence[int]) -> Point:
+    def _preferred(self, inputs: Sequence[int], outputs: Sequence[int], band: Point) -> Point:
         sources = self._known(inputs)
         if sources:
             return max(x for x, _ in sources) + X_SPACING, statistics.median(y for _, y in sources)
         targets = self._known(outputs)
         if targets:
             return min(x for x, _ in targets) - X_SPACING, statistics.median(y for _, y in targets)
-        return self._band
+        return band
 
     def _boxes(self) -> list[Box]:
         return [node_box(x, y) for x, y in self._positions.values()] + self._obstacles
@@ -141,24 +151,20 @@ class Placer:
             return FALLBACK
         return min(box.x for box in boxes), max(box.bottom for box in boxes) + Y_SPACING
 
-    def _nearest_free(self, x: int, y: int) -> tuple[int, int]:
-        boxes = self._boxes()
-        for row in _row_offsets():
-            candidate_y = y + row * Y_SPACING
-            if not any(node_box(x, candidate_y).overlaps(box) for box in boxes):
-                return x, candidate_y
-        return x, _snap(max(box.bottom for box in boxes) + Y_SPACING)
-
 
 def placer_from_payload(flowfile_data: Mapping) -> Placer:
-    """A placer over a save-format dump (``FlowGraph.get_flowfile_data().model_dump(mode="json")``)."""
+    """A placer over a save-format dump (``FlowGraph.get_flowfile_data().model_dump(mode="json")``).
+
+    Comments and collapsed groups are obstacles; an expanded group is a container a node may land in.
+    """
     positions = {
         node["id"]: (node.get("x_position") or 0, node.get("y_position") or 0)
         for node in flowfile_data.get("nodes") or []
     }
+    blocking = [group for group in flowfile_data.get("groups") or [] if group.get("collapsed")]
+    blocking += list(flowfile_data.get("comments") or [])
     obstacles = [
         Box(item.get("x_position") or 0, item.get("y_position") or 0, item.get("width") or 0, item.get("height") or 0)
-        for key in ("groups", "comments")
-        for item in flowfile_data.get(key) or []
+        for item in blocking
     ]
     return Placer(positions, obstacles)

@@ -280,9 +280,10 @@ def reconcile(
         live_nodes, session_nodes, live_names, session_names, kept_absent, skipped, pinned, plan.warnings
     )
 
+    order = _topological(session_nodes)
     removals: list[Edge] = []
     connects: dict[int, list[Edge]] = defaultdict(list)
-    for target in _topological(session_nodes):
+    for target in order:
         if target in skipped:
             continue
         session_in = incoming_edges(session_nodes[target], session_nodes)
@@ -315,7 +316,6 @@ def reconcile(
             "its edges are re-connected."
         )
 
-    order = _topological(session_nodes)
     placer = placer_from_payload(live)
     for nid in deleted:
         placer.release(nid)
