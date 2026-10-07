@@ -615,6 +615,22 @@ class TestNodePolarsCodeDescription:
         )
         assert node.get_default_description() == "df.filter("
 
+    @pytest.mark.parametrize(
+        "code, expected",
+        [
+            ("def f(a, /, b, *rest, k=1, **kw):\n    return a", "f(a, b, *rest, k, **kw)"),
+            ("def f(a, *, how='inner'):\n    return a", "f(a, *, how)"),
+            ('def f(a):\n    """Keep the big ones."""\n    return a', "Keep the big ones."),
+        ],
+        ids=["every_parameter_kind", "bare_star", "docstring"],
+    )
+    def test_polars_code_function_description(self, code, expected):
+        node = input_schema.NodePolarsCode(
+            **BASE_KWARGS,
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=code),
+        )
+        assert node.get_default_description() == expected
+
 
 # NodeCrossJoin
 

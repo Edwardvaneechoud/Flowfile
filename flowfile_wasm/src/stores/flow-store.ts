@@ -10,6 +10,7 @@ import { ipcStreamToParquet, parquetToIpcStream } from '../utils/parquet-bridge'
 import { fetchRemoteFile } from '../utils/remote-file'
 import { isPlaceholderNode as isPlaceholderNodeDef, placeholderLabel, placeholderReason } from '../utils/placeholder'
 import { EXPR_TRANSFORMER_PACKAGE } from '../composables/useFormulaTranslation'
+import { DEFAULT_POLARS_CODE } from '../config/polarsCompletions'
 import type {
   BlockedInfo,
   FlowNode,
@@ -2733,7 +2734,7 @@ result
         return {
           ...base,
           polars_code_input: {
-            polars_code: 'input_df'
+            polars_code: DEFAULT_POLARS_CODE
           }
         } as any
 

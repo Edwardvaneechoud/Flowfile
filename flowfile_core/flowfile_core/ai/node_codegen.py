@@ -47,7 +47,9 @@ _NODE_CONTRACTS: dict[str, str] = {
     "polars_code": (
         "Target: a Flowfile **Polars code** node. Polars is imported as `pl`.\n"
         "- The single input is a Polars LazyFrame named `input_df`. With multiple "
-        "inputs they are `input_df_0`, `input_df_1`, ... in connection order.\n"
+        "inputs they are `input_df_1`, `input_df_2`, ... in connection order.\n"
+        "- If the existing code is a single `def`, keep that form: the node calls it "
+        "with one parameter per input, in connection order, and its `return` is the result.\n"
         "- Either end with a single expression that evaluates to the result frame, "
         "or assign the final frame to a variable named `output_df`.\n"
         "- With no inputs the node is a starter: build `output_df` from scratch "

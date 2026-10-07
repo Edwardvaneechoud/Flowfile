@@ -561,7 +561,16 @@ An API Response node, which has no fluent method, with its settings as a dict:
 
 ## `polars_code`
 
-`ff.polars_code(code, *inputs, flow_graph=None, description=None)` places one Polars Code node. With inputs it is `inputs[0].polars_code(code, *inputs[1:])`: the code reads `input_df`, or `input_df_1`, `input_df_2`, ... with several inputs. With no inputs the node is a source whose code builds its own frame (`output_df = pl.LazyFrame(...)`); it lands on `flow_graph`, else on a new graph as the readers do. `code` is a string or a `def` whose body is stored, as `FlowFrame.polars_code` stores it. A node that fails to build raises `NativeNodeError` and is removed.
+`ff.polars_code(code, *inputs, flow_graph=None, description=None)` places one Polars Code node. With inputs it is `inputs[0].polars_code(code, *inputs[1:])`; with none the node is a source that builds its own frame, and it lands on `flow_graph`, else on a new graph as the readers do.
+
+`code` is a function, or a string. A function is stored as written, with the comment lines right above it, and the node calls it with one Polars LazyFrame per input, in order; what it returns is the output. A function whose parameters do not fit the inputs raises `NativeNodeError`, and so does one that reads a name from outside itself other than `pl`, `col`, `lit` and `cs`, since only the function is stored: put helpers inside it. A string holding one `def` is the same. Any other string is a snippet that reads `input_df`, or `input_df_1`, `input_df_2`, ... with several inputs, and yields the `output_df` it assigns or its last expression. A function named `_polars_code_<n>` whose parameters are exactly those names, the form the [canvas notebook](../../visual-editor/notebook.md) shows a snippet in, stores its body as that snippet. A node that fails to build raises `NativeNodeError` and is removed.
+
+```python
+def high_value(orders: pl.LazyFrame) -> pl.LazyFrame:
+    return orders.filter(pl.col("amount") > 100)
+
+big_orders = orders.polars_code(high_value)
+```
 
 ## Notebook mode
 

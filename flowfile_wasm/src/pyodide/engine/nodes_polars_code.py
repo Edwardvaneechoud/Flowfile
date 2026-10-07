@@ -1,7 +1,11 @@
+import __future__
+
+import ast
 import contextlib
 import gc
 import io
 import sys
+import textwrap
 from typing import Any
 
 import polars as pl
@@ -10,6 +14,48 @@ from .errors import format_error_lf
 from .log import log_node
 from .state import get_lazyframe, get_schema, store_lazyframe
 from .validation import refuse_placeholder
+
+
+def _function_form(code: str) -> ast.FunctionDef | None:
+    """The ``def`` of function-form code (one undecorated top-level ``def``, after an optional docstring), else None."""
+    try:
+        body = ast.parse(textwrap.dedent(code).strip()).body
+    except SyntaxError:
+        return None
+    if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0].value, "value", None), str):
+        body = body[1:]
+    if len(body) == 1 and isinstance(body[0], ast.FunctionDef) and not body[0].decorator_list:
+        return body[0]
+    return None
+
+
+def _call_function_form(code: str, name: str, input_lfs: list[pl.LazyFrame]) -> pl.LazyFrame:
+    """Run function-form code: its ``def`` called with the inputs positionally, annotations never evaluated."""
+    namespace = {"pl": pl}
+    flags = __future__.annotations.compiler_flag
+    exec(compile(code, "<polars_code>", "exec", flags=flags, dont_inherit=True), namespace)
+    result = _to_lazyframe(namespace[name](*input_lfs))
+    if result is None:
+        raise ValueError(f"`{name}` must return a DataFrame or LazyFrame")
+    return result
+
+
+def _execute_function_form(node_id: int, input_ids: list[int], code: str, name: str) -> dict:
+    """Run function-form code over the inputs as LazyFrames; nothing is collected for it."""
+    input_lfs = []
+    for inp_id in input_ids:
+        lf = get_lazyframe(inp_id)
+        if lf is None:
+            return {
+                "success": False,
+                "error": f"Polars Code error on node #{node_id}: No input data from node #{inp_id}. Make sure the upstream node executed successfully.",
+            }
+        input_lfs.append(lf)
+    try:
+        store_lazyframe(node_id, _call_function_form(code, name, input_lfs))
+    except Exception as e:
+        return {"success": False, "error": format_error_lf("polars_code", node_id, e, input_lfs[0] if input_lfs else None)}
+    return {"success": True, "schema": get_schema(node_id), "has_data": True}
 
 
 def _build_local_vars(node_id: int, input_ids: list[int]) -> tuple[dict, dict | None, list[str]]:
@@ -154,6 +200,10 @@ def execute_polars_code(node_id: int, input_ids: list[int], settings: dict) -> d
     """Execute polars code node - supports zero, single, or multiple inputs.
     Memory-optimized: cleans up materialized DataFrames after execution."""
     refuse_placeholder(settings)
+    code = (settings.get("polars_code_input", {}).get("polars_code") or "").strip()
+    entry = _function_form(code)
+    if entry is not None:
+        return _execute_function_form(node_id, input_ids, code, entry.name)
 
     # Build inputs
     local_vars, error, df_keys_to_cleanup = _build_local_vars(node_id, input_ids)
@@ -161,9 +211,6 @@ def execute_polars_code(node_id: int, input_ids: list[int], settings: dict) -> d
         return error
 
     try:
-        polars_code_input = settings.get("polars_code_input", {})
-        code = (polars_code_input.get("polars_code") or "").strip()
-
         # Handle empty code
         if not code:
             if len(input_ids) == 0:
@@ -248,6 +295,17 @@ def build_polars_code_schema(input_lfs: list[pl.LazyFrame], settings: dict) -> p
     """Resolve a polars_code node's output schema by running the user code
     against EMPTY (0-row) input frames. Raises on failure (caught upstream)."""
     refuse_placeholder(settings)
+    code = (settings.get("polars_code_input", {}).get("polars_code") or "").strip()
+    if not code:
+        if not input_lfs:
+            raise ValueError("No code provided and no input to pass through.")
+        return input_lfs[0]
+
+    entry = _function_form(code)
+    if entry is not None:
+        with _silenced_user_stdout():
+            return _call_function_form(code, entry.name, input_lfs)
+
     local_vars = {"pl": pl, "output_df": None, "output_lf": None}
     if len(input_lfs) == 1:
         local_vars["input_df"] = input_lfs[0].collect()
@@ -258,12 +316,6 @@ def build_polars_code_schema(input_lfs: list[pl.LazyFrame], settings: dict) -> p
             local_vars[f"input_lf_{i}"] = lf
         local_vars["input_df"] = local_vars["input_df_1"]
         local_vars["input_lf"] = local_vars["input_lf_1"]
-
-    code = (settings.get("polars_code_input", {}).get("polars_code") or "").strip()
-    if not code:
-        if not input_lfs:
-            raise ValueError("No code provided and no input to pass through.")
-        return input_lfs[0]
 
     global_vars = {"pl": pl}
     # Schema inference runs the user code on every propagation pass; swallow its

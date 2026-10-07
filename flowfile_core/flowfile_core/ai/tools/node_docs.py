@@ -952,7 +952,10 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "write `output_df = input_df.with_columns(pl.col('amount').mean()."
         "over('region').alias('avg_30d'))`. Pitfall: the script is not "
         "Python in general — it's a Polars expression. Imperative loops "
-        "don't fit; use 'Python Script' for that."
+        "don't fit; use 'Python Script' for that. A new node starts as "
+        "`def transform(input_df: pl.LazyFrame) -> pl.LazyFrame: return input_df`: "
+        "code that is a single `def` is called with one parameter per input, in "
+        "connection order, and what it returns is the output."
     ),
     "sql_query": (
         "Settings panel: a SQL editor under a 'SQL Query' heading. "
