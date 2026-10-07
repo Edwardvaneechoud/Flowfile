@@ -80,9 +80,13 @@ type EdgeEnds = {
 };
 
 const edgeKey = (edge: EdgeEnds): string =>
-  [edge.id, edge.source, edge.sourceHandle ?? "output-0", edge.target, edge.targetHandle ?? "input-0"].join(
-    "|",
-  );
+  [
+    edge.id,
+    edge.source,
+    edge.sourceHandle ?? "output-0",
+    edge.target,
+    edge.targetHandle ?? "input-0",
+  ].join("|");
 
 function markHoveredEdge(nextId: string | null) {
   if (hoveredEdgeId === nextId) return;
