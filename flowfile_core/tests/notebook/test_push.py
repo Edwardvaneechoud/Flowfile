@@ -15,6 +15,7 @@ from flowfile_core import events
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRun
 from flowfile_core.flowfile.param_types import FlowParameter
+from flowfile_core.flowfile.util.layout.placement import node_box
 from flowfile_core.notebook import bridge
 from flowfile_core.notebook.push import needs_confirmation, refused_nodes
 from flowfile_core.notebook.reconcile import ReconcilePlan
@@ -243,6 +244,31 @@ def test_a_push_with_nothing_to_review_applies_in_one_call(runner, orders_flow, 
         [],
     )
     assert "20" in graph.get_node(filt.node_id).setting_input.filter_input.advanced_filter
+
+
+def test_a_node_pushed_into_the_middle_of_a_chain_lands_clear_of_every_node(runner, orders_flow, client_as):
+    client = client_as(OWNER_ID)
+    graph = orders_flow
+    assert client.post("/flow/apply_standard_layout/", params={"flow_id": graph.flow_id}).status_code == 200
+
+    def positions():
+        return {n.node_id: (n.setting_input.pos_x, n.setting_input.pos_y) for n in graph.nodes}
+
+    before = positions()
+    cell_id = _cell_of(graph, _node_of_type(graph, "filter").node_id)
+    step = '.filter(ff.col("amount") > 10)'
+
+    def insert_sort(cells):
+        assert step in cells[cell_id]
+        return {**cells, cell_id: cells[cell_id].replace(step, f'{step}\n    .sort("amount")')}
+
+    response = client.post("/editor/notebook/push/", json=_body(graph, insert_sort, changed=[cell_id]))
+    assert response.status_code == 200, response.text
+    sort = _node_of_type(graph, "sort")
+    after = positions()
+    assert {node_id: after[node_id] for node_id in before} == before
+    boxes = {node_id: node_box(x, y) for node_id, (x, y) in after.items()}
+    assert not any(boxes[sort.node_id].overlaps(box) for node_id, box in boxes.items() if node_id != sort.node_id)
 
 
 def test_a_run_reviews_only_deletions_and_a_push_anything_to_review():
