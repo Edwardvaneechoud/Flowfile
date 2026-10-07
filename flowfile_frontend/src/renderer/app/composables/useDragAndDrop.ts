@@ -71,6 +71,19 @@ export function removeCommittedEdges(removeEdges: (ids: string[]) => void, ids: 
   }
 }
 
+type EdgeEnds = {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+};
+
+const edgeKey = (edge: EdgeEnds): string =>
+  [edge.id, edge.source, edge.sourceHandle ?? "output-0", edge.target, edge.targetHandle ?? "input-0"].join(
+    "|",
+  );
+
 function markHoveredEdge(nextId: string | null) {
   if (hoveredEdgeId === nextId) return;
   if (hoveredEdgeId) {
@@ -850,8 +863,17 @@ export default function useDragAndDrop() {
       return { ...edge, label: `df_${sourceNode?.data?.id ?? edge.source}` };
     });
 
-    if (keepExisting) setEdges(edgesWithLabels);
-    else addEdges(edgesWithLabels);
+    if (keepExisting) {
+      // isValidConnection checks each re-set edge against the store: drop edges core no longer has
+      // first, or a rewired single input is refused as occupied by its old edge.
+      const incoming = new Set(edgesWithLabels.map(edgeKey));
+      const stale = getEdges.value.filter((edge) => !incoming.has(edgeKey(edge)));
+      removeCommittedEdges(
+        removeEdges,
+        stale.map((edge) => edge.id),
+      );
+      setEdges(edgesWithLabels);
+    } else addEdges(edgesWithLabels);
     // Reused nodes keep stale handle bounds when settings changed their handles: re-measure in place.
     if (keepExisting) {
       await nextTick();
