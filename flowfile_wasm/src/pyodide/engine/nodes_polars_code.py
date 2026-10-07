@@ -40,6 +40,24 @@ def _call_function_form(code: str, name: str, input_lfs: list[pl.LazyFrame]) -> 
     return result
 
 
+def _execute_function_form(node_id: int, input_ids: list[int], code: str, name: str) -> dict:
+    """Run function-form code over the inputs as LazyFrames; nothing is collected for it."""
+    input_lfs = []
+    for inp_id in input_ids:
+        lf = get_lazyframe(inp_id)
+        if lf is None:
+            return {
+                "success": False,
+                "error": f"Polars Code error on node #{node_id}: No input data from node #{inp_id}. Make sure the upstream node executed successfully.",
+            }
+        input_lfs.append(lf)
+    try:
+        store_lazyframe(node_id, _call_function_form(code, name, input_lfs))
+    except Exception as e:
+        return {"success": False, "error": format_error_lf("polars_code", node_id, e, input_lfs[0] if input_lfs else None)}
+    return {"success": True, "schema": get_schema(node_id), "has_data": True}
+
+
 def _build_local_vars(node_id: int, input_ids: list[int]) -> tuple[dict, dict | None, list[str]]:
     """Build local variables dict with inputs. Returns (local_vars, error_dict, df_keys_to_cleanup)."""
     local_vars = {"pl": pl, "output_df": None, "output_lf": None}
@@ -182,6 +200,10 @@ def execute_polars_code(node_id: int, input_ids: list[int], settings: dict) -> d
     """Execute polars code node - supports zero, single, or multiple inputs.
     Memory-optimized: cleans up materialized DataFrames after execution."""
     refuse_placeholder(settings)
+    code = (settings.get("polars_code_input", {}).get("polars_code") or "").strip()
+    entry = _function_form(code)
+    if entry is not None:
+        return _execute_function_form(node_id, input_ids, code, entry.name)
 
     # Build inputs
     local_vars, error, df_keys_to_cleanup = _build_local_vars(node_id, input_ids)
@@ -189,9 +211,6 @@ def execute_polars_code(node_id: int, input_ids: list[int], settings: dict) -> d
         return error
 
     try:
-        polars_code_input = settings.get("polars_code_input", {})
-        code = (polars_code_input.get("polars_code") or "").strip()
-
         # Handle empty code
         if not code:
             if len(input_ids) == 0:
@@ -201,8 +220,6 @@ def execute_polars_code(node_id: int, input_ids: list[int], settings: dict) -> d
                     "error": f"Polars Code error on node #{node_id}: No code provided and no input to pass through.",
                 }
             result_lf = local_vars["input_lf"]
-        elif (entry := _function_form(code)) is not None:
-            result_lf = _call_function_form(code, entry.name, [get_lazyframe(i) for i in input_ids])
         else:
             global_vars = {"pl": pl}
 
@@ -278,17 +295,6 @@ def build_polars_code_schema(input_lfs: list[pl.LazyFrame], settings: dict) -> p
     """Resolve a polars_code node's output schema by running the user code
     against EMPTY (0-row) input frames. Raises on failure (caught upstream)."""
     refuse_placeholder(settings)
-    local_vars = {"pl": pl, "output_df": None, "output_lf": None}
-    if len(input_lfs) == 1:
-        local_vars["input_df"] = input_lfs[0].collect()
-        local_vars["input_lf"] = input_lfs[0]
-    elif len(input_lfs) > 1:
-        for i, lf in enumerate(input_lfs, start=1):
-            local_vars[f"input_df_{i}"] = lf.collect()
-            local_vars[f"input_lf_{i}"] = lf
-        local_vars["input_df"] = local_vars["input_df_1"]
-        local_vars["input_lf"] = local_vars["input_lf_1"]
-
     code = (settings.get("polars_code_input", {}).get("polars_code") or "").strip()
     if not code:
         if not input_lfs:
@@ -299,6 +305,17 @@ def build_polars_code_schema(input_lfs: list[pl.LazyFrame], settings: dict) -> p
     if entry is not None:
         with _silenced_user_stdout():
             return _call_function_form(code, entry.name, input_lfs)
+
+    local_vars = {"pl": pl, "output_df": None, "output_lf": None}
+    if len(input_lfs) == 1:
+        local_vars["input_df"] = input_lfs[0].collect()
+        local_vars["input_lf"] = input_lfs[0]
+    elif len(input_lfs) > 1:
+        for i, lf in enumerate(input_lfs, start=1):
+            local_vars[f"input_df_{i}"] = lf.collect()
+            local_vars[f"input_lf_{i}"] = lf
+        local_vars["input_df"] = local_vars["input_df_1"]
+        local_vars["input_lf"] = local_vars["input_lf_1"]
 
     global_vars = {"pl": pl}
     # Schema inference runs the user code on every propagation pass; swallow its

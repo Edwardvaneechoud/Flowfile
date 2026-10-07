@@ -158,7 +158,7 @@ def render(flow_graph: FlowGraph) -> NotebookRendering:
     )
     converter.convert()
     emissions = converter.emissions(verbatim_refs=True)
-    # The notebook never evaluates a def's annotations, and the interpreter refuses a __future__ import
+    # Neither runner evaluates a def's annotations (exec_cell compiles as core does); the interpreter refuses the import
     dropped = {"import flowfile as ff", "from __future__ import annotations"}
     imports = ["import flowfile as ff", *(line for line in converter.import_lines() if line not in dropped)]
     helpers = [_NOTEBOOK_HELPERS.get(h.split("(")[0].removeprefix("def "), h) for h in converter.helpers()]

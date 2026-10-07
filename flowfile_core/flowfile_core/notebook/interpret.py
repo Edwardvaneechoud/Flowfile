@@ -437,16 +437,17 @@ class _Cell:
             raise _needs_kernel(f"The function `{node.name}`", node.lineno)
 
     def polars_code_def(self, node: ast.FunctionDef) -> None:
-        """Any other plain ``def`` is Polars Code text, usable only as ``polars_code``'s code (never evaluated)."""
+        """Any other plain ``def`` is Polars Code text, usable only as ``polars_code``'s code (never evaluated).
+
+        The name is the canvas's, so any identifier but a reserved one binds (a node's def may start with ``_``).
+        The cell up to the def travels with it: ``_polars_code_text`` takes the comment lines right above the def.
+        """
         from flowfile_frame.flow_frame import _polars_code_text
 
-        self.check_store(node.name, node.lineno)
-        lines = self.code.splitlines()
-        first = node.lineno
-        while first > 1 and lines[first - 2].strip().startswith("#"):
-            first -= 1
-        comments = [line.strip() + "\n" for line in lines[first - 1 : node.lineno - 1]]
-        text = _polars_code_text("".join(comments) + _block(self.code, node.lineno))
+        if node.name in allowlist.RESERVED_NAMES:
+            raise _needs_kernel(f"Binding the name `{node.name}`", node.lineno)
+        head = "".join(self.code.splitlines(True)[: node.lineno - 1])
+        text = _polars_code_text(head + _block(self.code, node.lineno))
         self.namespace[node.name] = _PolarsCodeDef(node.name, text)
 
     def script_def(self, node: ast.FunctionDef) -> None:
@@ -480,9 +481,9 @@ class _Cell:
     def name(self, node: ast.Name) -> Any:
         self.step(node)
         name = node.id
-        if name.startswith("__") or (name.startswith("_") and not _STORE_NAME.fullmatch(name)):
-            if name not in allowlist.HELPERS:
-                raise _needs_kernel(f"The name `{name}`", node.lineno)
+        private = name.startswith("__") or (name.startswith("_") and not _STORE_NAME.fullmatch(name))
+        if private and name not in allowlist.HELPERS and not self._polars_code_def(name):
+            raise _needs_kernel(f"The name `{name}`", node.lineno)
         try:
             value = self.namespace[name]  # not `in`: a clean run's namespace resolves seeded names on lookup
         except KeyError:
@@ -494,6 +495,13 @@ class _Cell:
         if kind_of(value) is None:
             raise _needs_kernel(f"`{name}`", node.lineno)
         return value
+
+    def _polars_code_def(self, name: str) -> bool:
+        """Whether the cell bound ``name`` as a Polars Code def: the canvas's name, which may start with ``_``."""
+        try:
+            return isinstance(self.namespace[name], _PolarsCodeDef)
+        except (KeyError, NameError):
+            return False
 
     def expr(self, node: ast.expr) -> Any:
         self.step(node)

@@ -98,18 +98,34 @@ def _polars_code_source(code: Any) -> str:
 
 
 def _refuse_outside_names(function: Callable[..., Any]) -> None:
-    """Raise when ``function`` reads a name from outside itself (a global or a closure) the node does not provide."""
+    """Raise when ``function`` reads a name from outside itself (a global, a closure or a builtin) the node lacks."""
+    import builtins
+
     from flowfile_frame.python_script import _global_names
+
+    def listed(names: list[str]) -> str:
+        return ", ".join(f"`{name}`" for name in names)
 
     provided = set(polars_code_parser.safe_globals) - {"__builtins__"}
     names = [*function.__code__.co_freevars, *_global_names(function.__code__)]
     outside = [name for name in names if name not in provided]
-    if outside:
-        names = ", ".join(f"`{name}`" for name in outside)
-        raise NativeNodeError(
-            f"`{function.__name__}` reads {names} from outside the function; the node stores only "
-            f"`{function.__name__}`, so define what it needs inside it (`pl`, `col`, `lit` and `cs` are provided)"
+    if not outside:
+        return
+    missing = [name for name in outside if hasattr(builtins, name)]
+    read = [name for name in outside if name not in missing]
+    problems = []
+    if read:
+        problems.append(
+            f"reads {listed(read)} from outside the function; the node stores only `{function.__name__}`, "
+            "so define what it needs inside it"
         )
+    if missing:
+        keywords = {"True", "False", "None"}
+        available = sorted(name for name in provided if hasattr(builtins, name) and name not in keywords)
+        problems.append(
+            f"uses {listed(missing)}, which Polars Code does not provide (its builtins are {listed(available)})"
+        )
+    raise NativeNodeError(f"`{function.__name__}` {', and '.join(problems)} (`pl`, `col`, `lit` and `cs` are provided)")
 
 
 def _is_snippet_function(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
@@ -122,15 +138,16 @@ def _is_snippet_function(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 
 
 def _polars_code_text(source: str) -> str:
-    """The Polars Code node text of the ``def`` in ``source`` (read from source text, never compiled).
+    """The Polars Code node text of the last top-level ``def`` in ``source`` (read as text, never compiled).
 
-    A def is stored as itself (function form: the comment lines right above it, then the def from
+    Statements may precede the def (a notebook cell's lines above it travel with it). A def is stored as
+    itself (function form: the comment lines right above it, then the def from
     its ``def`` line), unless it is a snippet's rendering, ``_polars_code_<n>`` over ``input_df`` or
     ``input_df_1``, ``input_df_2``, ...: then its ``def`` line is dropped, a body that is one
     ``return <expr>`` stores ``<expr>``, a last ``return output_df`` is dropped, and any other body
     is stored as written, with the comment lines right above its first statement.
     """
-    fn = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef))
+    fn = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)][-1]
     lines = source.splitlines()
     if not _is_snippet_function(fn):
         if isinstance(fn, ast.AsyncFunctionDef) or fn.decorator_list:

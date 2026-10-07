@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import yaml from 'js-yaml'
-import { useCodeGeneration } from '../../src/composables/useCodeGeneration'
+import { useCodeGeneration, functionFormName } from '../../src/composables/useCodeGeneration'
 import type { FlowNode, FlowEdge, FlowfileData } from '../../src/types'
 
 describe('Code Generation', () => {
@@ -637,6 +637,15 @@ describe('Code Generation', () => {
       expect(code).toContain('# Top rows.\n    def top(orders: pl.LazyFrame) -> pl.LazyFrame:\n\n        return orders.head(5)')
       expect(code).toContain('transformed = top(source)')
       expect(code).not.toContain('_polars_code_7')
+    })
+
+    it('detects function form the way the engine does', () => {
+      expect(functionFormName('"""About it."""\ndef f(rows):\n    return rows')).toBe('f')
+      expect(functionFormName('def make():\n    return pl.DataFrame({\n        "a": [1]\n})')).toBe('make')
+      expect(functionFormName('def f(rows):\n    q = """a\nb"""\n    return rows')).toBe('f')
+      expect(functionFormName('def f(rows):  # ) comment\n    return rows')).toBe('f')
+      expect(functionFormName('@staticmethod\ndef f(rows):\n    return rows')).toBeNull()
+      expect(functionFormName('def f(rows):\n    return rows\nf(input_df)')).toBeNull()
     })
   })
 

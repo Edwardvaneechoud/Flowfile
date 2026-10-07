@@ -90,6 +90,13 @@ def test_errors_come_back_with_the_cell_filename(session):
     assert "SyntaxError" in syntax.error and syntax.filename.startswith("<cell-syn-")
 
 
+def test_exec_cell_keeps_annotations_as_strings_like_the_canvas(session):
+    _, ns = session
+    result = execute_cell("ann", "def kept(rows: LazyFrame) -> LazyFrame:\n    return rows", ns, executor=exec_cell)
+    assert result.ok, result.error
+    assert ns["kept"].__annotations__ == {"rows": "LazyFrame", "return": "LazyFrame"}
+
+
 def test_inspect_getsource_works_for_a_function_defined_in_a_cell(session):
     _, ns = session
     run(ns, "import inspect\n\ndef add_one(x):\n    return x + 1\n\nsource = inspect.getsource(add_one)")

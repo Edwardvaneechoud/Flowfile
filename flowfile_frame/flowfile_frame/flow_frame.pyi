@@ -2,6 +2,7 @@
 # DO NOT MODIFY THIS FILE MANUALLY
 # Run `python flowfile_frame/flow_frame_stub_generator.py` to regenerate
 # Standard library imports
+import ast
 import inspect
 import os
 import sys

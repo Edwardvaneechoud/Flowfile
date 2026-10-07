@@ -128,8 +128,14 @@ def test_function_form_exports_as_written_and_runs(export, code):
 
 
 @pytest.mark.parametrize("export", _EXPORTS)
-def test_annotations_without_an_import_put_the_future_import_first(export):
-    code = "def kept(rows: LazyFrame) -> LazyFrame:\n    return rows"
+@pytest.mark.parametrize(
+    "code",
+    [
+        pytest.param("def kept(rows: LazyFrame) -> LazyFrame:\n    return rows", id="signature"),
+        pytest.param("def kept(rows):\n    def same(c: Expr) -> Expr:\n        return c\n    return rows", id="nested_def"),
+    ],
+)
+def test_annotations_without_an_import_put_the_future_import_first(export, code):
     exported = export(_polars_code_flow(code))
 
     assert exported.startswith("from __future__ import annotations\n")

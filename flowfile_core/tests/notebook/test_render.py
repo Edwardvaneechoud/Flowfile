@@ -75,6 +75,7 @@ def test_the_cells_rebuild_every_node_exactly(runner_kind):
         pytest.param('"""About it."""\ndef kept(rows):\n    return rows', id="module_docstring"),
         pytest.param("def _polars_code_5(input_df):\n    return input_df", id="snippet_name"),
         pytest.param("@staticmethod\ndef kept(rows):\n    return rows", id="decorated"),
+        pytest.param("def _kept(rows):\n    return rows", id="underscore_name"),
     ],
 )
 def test_an_unedited_polars_code_function_pushes_back_unchanged(code):

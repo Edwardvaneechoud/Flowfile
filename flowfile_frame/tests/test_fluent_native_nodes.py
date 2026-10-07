@@ -108,6 +108,12 @@ def test_polars_code_refuses_a_function_that_returns_nothing_or_reads_outside_na
     with pytest.raises(NativeNodeError, match="reads `frame` from outside the function"):
         frame.polars_code(uses_frame)
 
+    def biggest(input_df):
+        return input_df.head(max(1, 2))
+
+    with pytest.raises(NativeNodeError, match="uses `max`, which Polars Code does not provide"):
+        frame.polars_code(biggest)
+
 
 def test_polars_code_honours_parameter_names_over_several_inputs():
     def stacked(top: pl.LazyFrame, bottom: pl.LazyFrame) -> pl.LazyFrame:

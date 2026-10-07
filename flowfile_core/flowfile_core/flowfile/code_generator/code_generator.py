@@ -238,10 +238,17 @@ def _polars_code_header(settings: input_schema.NodePolarsCode) -> str:
 
 
 def _annotation_roots(entry: ast.FunctionDef) -> set[str]:
-    """The names a function-form def's annotations start from (``pl`` for ``pl.LazyFrame``)."""
-    args = entry.args
-    annotations = [arg.annotation for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]]
-    annotations += [args.vararg and args.vararg.annotation, args.kwarg and args.kwarg.annotation, entry.returns]
+    """The names a function-form def's annotations start from (``pl`` for ``pl.LazyFrame``), nested defs too.
+
+    A nested def's annotations are evaluated when its ``def`` runs, at call time, so they need the same guard.
+    """
+    annotations: list[ast.expr | None] = []
+    for fn in ast.walk(entry):
+        if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        args = fn.args
+        annotations += [arg.annotation for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]]
+        annotations += [args.vararg and args.vararg.annotation, args.kwarg and args.kwarg.annotation, fn.returns]
     return {
         node.id
         for annotation in annotations
