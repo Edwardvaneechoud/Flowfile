@@ -1278,7 +1278,11 @@ class FlowDataEngine:
 
         # Only the excel reader reports which engine it used; the rest take the table alone.
         extra = {"logger": node_logger} if received_table.file_type == "excel" else {}
-        flow_file = cls(handler(received_table, **extra))
+        data = handler(received_table, **extra)
+        if isinstance(data, pl.DataFrame):
+            flow_file = cls(data.lazy(), number_of_records=data.height)
+        else:
+            flow_file = cls(data)
         if received_table.file_type == "parquet":
             count = create_funcs.parquet_row_count(received_table)
             if count is not None:
@@ -2072,24 +2076,27 @@ class FlowDataEngine:
         if join_map_problems:
             raise Exception("Join is not valid: " + "; ".join(join_map_problems))
 
+        # Either side may be eager (e.g. a local Excel read); polars only joins lazy with lazy.
+        left_lf = self.data_frame.lazy()
+        right_lf = other.data_frame.lazy()
         if join_manager.how in ("semi", "anti"):
             # Semi/anti joins push the full left input downstream unchanged (all columns,
             # original order, no rename or drop); the right frame only supplies the join
             # keys for matching. Stale entries in left_select are therefore irrelevant here.
             left_on = [jm.left_col for jm in join_manager.join_mapping]
             right_on = [jm.right_col for jm in join_manager.join_mapping]
-            right = other.data_frame.select(list(dict.fromkeys(right_on)))
-            joined_df = self.data_frame.join(other=right, left_on=left_on, right_on=right_on, how=join_manager.how)
+            right = right_lf.select(list(dict.fromkeys(right_on)))
+            joined_df = left_lf.join(other=right, left_on=left_on, right_on=right_on, how=join_manager.how)
             # -1 = unknown (not 0): a 0 here reads as a real "empty result" count.
             return FlowDataEngine(joined_df, calculate_schema_stats=False, number_of_records=-1, streamable=False)
 
         if auto_generate_selection:
             join_manager.auto_rename()
 
-        left = self.data_frame.select(join_manager.left_manager.get_select_cols()).rename(
+        left = left_lf.select(join_manager.left_manager.get_select_cols()).rename(
             join_manager.left_manager.get_rename_table()
         )
-        right = other.data_frame.select(join_manager.right_manager.get_select_cols()).rename(
+        right = right_lf.select(join_manager.right_manager.get_select_cols()).rename(
             join_manager.right_manager.get_rename_table()
         )
 

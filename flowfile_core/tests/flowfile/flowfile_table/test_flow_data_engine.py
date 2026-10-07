@@ -4,7 +4,7 @@ from pl_fuzzy_frame_match.models import FuzzyMapping
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import PolarsCodeParser, remove_comments_and_docstrings
-from flowfile_core.schemas import transform_schema
+from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.input_schema import RawData
 
 
@@ -381,6 +381,26 @@ def test_join_anti():
     expected_df = FlowDataEngine([{"name": "eduward", "other": 1},
                                  {"name": "courtney", "other": 1}])
     result_df.assert_equal(expected_df)
+
+
+@pytest.mark.parametrize("how, expected", [("inner", [{"name": "edward", "right_name": "edward"}]),
+                                           ("anti", [{"name": "eduward"}, {"name": "courtney"}])])
+def test_join_lazy_left_eager_right(how, expected):
+    join_input = transform_schema.JoinInput(**get_join_settings(how))
+    left_df = FlowDataEngine(pl.LazyFrame({"name": ["eduward", "edward", "courtney"]}))
+    right_df = FlowDataEngine(pl.DataFrame({"name": ["edward"]}))
+    result_df = left_df.join(join_input=join_input, other=right_df, verify_integrity=False,
+                             auto_generate_selection=True)
+    result_df.assert_equal(FlowDataEngine(expected))
+
+
+def test_create_from_path_excel_is_lazy():
+    received_table = input_schema.ReceivedTable(
+        name='fake_data.xlsx', path='flowfile_core/tests/support_files/data/fake_data.xlsx', file_type='excel',
+        table_settings=input_schema.InputExcelTable(sheet_name='Sheet1'))
+    flow_file = FlowDataEngine.create_from_path(received_table)
+    assert flow_file.lazy is True
+    assert flow_file.number_of_records == 1000
 
 
 def test_join_anti_passthrough_ignores_left_select():

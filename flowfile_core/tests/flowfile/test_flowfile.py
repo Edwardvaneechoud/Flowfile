@@ -7,6 +7,7 @@ from time import sleep
 from typing import Literal
 
 import datetime
+import polars as pl
 import pytest
 
 from flowfile_core.configs.flow_logger import FlowLogger
@@ -1584,6 +1585,34 @@ def test_add_join(execution_location):
     graph.add_join(input_schema.NodeJoin(**data))
     run_info = graph.run_graph()
     handle_run_info(run_info)
+
+
+def test_join_with_excel_right_input(execution_location):
+    """A local Excel read is eager under the hood; joining it as the right input must still work."""
+    graph = create_graph(execution_location=execution_location)
+    excel_names = pl.read_excel('flowfile_core/tests/support_files/data/fake_data.xlsx')['Name'].head(2).to_list()
+    add_manual_input(graph, data=[{'name': n} for n in excel_names] + [{'name': 'nobody'}])
+    add_node_promise_on_type(graph, 'read', 2)
+    graph.add_read(input_schema.NodeRead(
+        flow_id=1, node_id=2, received_file=input_schema.ReceivedTable(
+            name='fake_data.xlsx', path='flowfile_core/tests/support_files/data/fake_data.xlsx', file_type='excel',
+            table_settings=input_schema.InputExcelTable(sheet_name='Sheet1'))))
+    for node_id, how in ((3, 'inner'), (4, 'anti')):
+        add_node_promise_on_type(graph, 'join', node_id)
+        left_connection = input_schema.NodeConnection.create_from_simple_input(1, node_id)
+        right_connection = input_schema.NodeConnection.create_from_simple_input(2, node_id)
+        right_connection.input_connection.connection_class = 'input-1'
+        add_connection(graph, left_connection)
+        add_connection(graph, right_connection)
+        data = get_join_data(how=how)
+        data['node_id'] = node_id
+        data['join_input']['join_mapping'] = [{'left_col': 'name', 'right_col': 'Name'}]
+        data['join_input']['right_select']['renames'][0]['old_name'] = 'Name'
+        graph.add_join(input_schema.NodeJoin(**data))
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+    assert graph.get_node(3).get_resulting_data().count() == 2
+    assert graph.get_node(4).get_resulting_data().to_pylist() == [{'name': 'nobody'}]
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
