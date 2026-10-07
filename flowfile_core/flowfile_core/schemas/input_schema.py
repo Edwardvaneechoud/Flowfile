@@ -19,7 +19,6 @@ from pydantic import (
     model_validator,
 )
 
-from flowfile_core.flowfile.flow_data_engine.polars_code_parser import function_form
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
@@ -2269,6 +2268,8 @@ class NodePolarsCode(NodeMultiInput):
 
     def get_default_description(self) -> str:
         """Describes the Polars code: a function's docstring line or ``name(params)``, else the snippet's first line."""
+        from flowfile_core.flowfile.flow_data_engine.polars_code_parser import function_form
+
         code = self.polars_code_input.polars_code
         entry = function_form(code) if code else None
         if entry is not None:

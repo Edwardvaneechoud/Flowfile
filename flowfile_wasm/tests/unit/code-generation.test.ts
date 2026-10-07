@@ -639,13 +639,13 @@ describe('Code Generation', () => {
       expect(code).not.toContain('_polars_code_7')
     })
 
-    it('detects function form the way the engine does', () => {
-      expect(functionFormName('"""About it."""\ndef f(rows):\n    return rows')).toBe('f')
-      expect(functionFormName('def make():\n    return pl.DataFrame({\n        "a": [1]\n})')).toBe('make')
-      expect(functionFormName('def f(rows):\n    q = """a\nb"""\n    return rows')).toBe('f')
-      expect(functionFormName('def f(rows):  # ) comment\n    return rows')).toBe('f')
-      expect(functionFormName('@staticmethod\ndef f(rows):\n    return rows')).toBeNull()
-      expect(functionFormName('def f(rows):\n    return rows\nf(input_df)')).toBeNull()
+    it('decides function form on the shared fixtures the way the engine does', () => {
+      const fixtures = JSON.parse(
+        readFileSync(resolve(__dirname, '../fixtures/polars-code-function-form.json'), 'utf-8')
+      ) as { label: string; code: string; name: string | null }[]
+      for (const { label, code, name } of fixtures) {
+        expect(functionFormName(code), label).toBe(name)
+      }
     })
   })
 

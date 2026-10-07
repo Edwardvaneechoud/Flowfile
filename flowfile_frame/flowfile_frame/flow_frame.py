@@ -24,6 +24,7 @@ from flowfile_core.flowfile.flow_data_engine.polars_code_parser import (
     function_form,
     function_form_error,
     polars_code_parser,
+    unrunnable_def_error,
 )
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -171,9 +172,10 @@ def _polars_code_text(source: str) -> str:
 
 
 def _check_polars_code_inputs(text: str, num_inputs: int) -> None:
-    """Raise when function-form ``text`` returns nothing or cannot take the node's ``num_inputs`` frames."""
+    """Raise when function-form ``text`` returns nothing or cannot take ``num_inputs`` frames, or is a lone
+    async or decorated def."""
     entry = function_form(text)
-    error = function_form_error(entry, num_inputs) if entry is not None else None
+    error = function_form_error(entry, num_inputs) if entry is not None else unrunnable_def_error(text)
     if error is not None:
         raise NativeNodeError(error)
 

@@ -125,6 +125,11 @@ def test_polars_code_honours_parameter_names_over_several_inputs():
         left.polars_code(stacked)
 
 
+def test_polars_code_refuses_a_lone_decorated_def_given_as_text():
+    with pytest.raises(NativeNodeError, match="`f` is decorated: Polars Code runs a plain `def`"):
+        _frame().polars_code("@staticmethod\ndef f(rows):\n    return rows")
+
+
 def test_polars_code_takes_more_inputs_in_order_and_a_description():
     left, right = _frame(), ff.from_dict({"g": ["c", "d"], "x": [0.0, 1.0], "y": [9, 8]})
     out = left.polars_code("pl.concat([input_df_1, input_df_2])", right, description="stack")

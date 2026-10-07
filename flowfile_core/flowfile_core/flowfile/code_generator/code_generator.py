@@ -309,7 +309,7 @@ def _polars_code_function_body(code: str) -> tuple[list[str], str | None]:
     return lines, None
 
 
-def _snippet_function_lines(code: str, function: str, names: list[str]) -> list[str]:
+def snippet_function_lines(code: str, function: str, names: list[str]) -> list[str]:
     """A snippet as the notebook shows it: ``def <function>(<names>: pl.LazyFrame):`` over its body and return."""
     body, returned = _polars_code_function_body(code)
     if returned not in (None, "output_df") and re.search(rf"^{re.escape(returned)}\s*=[^=]", "\n".join(body), re.M):
@@ -2959,7 +2959,7 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
             function = entry.name
             lines = code.split("\n")
         else:
-            lines = _snippet_function_lines(code, function, names)
+            lines = snippet_function_lines(code, function, names)
         for line in lines:
             self._add_code(line)
         self._add_code("")

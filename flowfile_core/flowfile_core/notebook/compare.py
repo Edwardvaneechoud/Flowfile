@@ -192,7 +192,7 @@ def _polars_code(settings: dict) -> None:
     written out, and reading that back drops blank lines and the comments around the statements.
     Comparing both sides in that form makes an unedited push a no-op.
     """
-    from flowfile_core.flowfile.code_generator.code_generator import _snippet_function_lines
+    from flowfile_core.flowfile.code_generator.code_generator import snippet_function_lines
     from flowfile_core.flowfile.flow_data_engine.polars_code_parser import function_form
     from flowfile_frame.flow_frame import _polars_code_text
 
@@ -201,11 +201,11 @@ def _polars_code(settings: dict) -> None:
     if code:
         shown = code
         if function_form(code) is None:
-            shown = "\n".join(_snippet_function_lines(code, "_polars_code_0", ["input_df"]))
+            shown = "\n".join(snippet_function_lines(code, "_polars_code_0", ["input_df"]))
         try:
             code = _polars_code_text(shown)
         except SyntaxError:
-            pass
+            pass  # code that does not parse is never shown as a def, so the canvas text is the comparison form
     code_input["polars_code"] = code
 
 

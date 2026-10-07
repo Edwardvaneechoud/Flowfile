@@ -119,21 +119,38 @@ def remove_comments_and_docstrings(source: str) -> str:
         return source
 
 
-def function_form(code: str) -> ast.FunctionDef | None:
-    """The ``def`` of function-form Polars Code, else ``None`` (snippet form, or code that does not parse).
-
-    Function form is code whose top level is exactly one undecorated ``def``, optionally after a module
-    docstring; the node calls it with its inputs, in connection order, and its ``return`` is the output.
-    """
+def _lone_def(code: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """The one top-level def of ``code`` (after an optional module docstring), plain or not, else ``None``."""
     try:
         body = ast.parse(textwrap.dedent(code).strip()).body
     except SyntaxError:
         return None
     if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0].value, "value", None), str):
         body = body[1:]
-    if len(body) == 1 and isinstance(body[0], ast.FunctionDef) and not body[0].decorator_list:
+    if len(body) == 1 and isinstance(body[0], ast.FunctionDef | ast.AsyncFunctionDef):
         return body[0]
     return None
+
+
+def function_form(code: str) -> ast.FunctionDef | None:
+    """The ``def`` of function-form Polars Code, else ``None`` (snippet form, or code that does not parse).
+
+    Function form is code whose top level is exactly one undecorated ``def``, optionally after a module
+    docstring; the node calls it with its inputs, in connection order, and its ``return`` is the output.
+    """
+    entry = _lone_def(code)
+    if isinstance(entry, ast.FunctionDef) and not entry.decorator_list:
+        return entry
+    return None
+
+
+def unrunnable_def_error(code: str) -> str | None:
+    """Why a lone top-level def is not function form: it is async or decorated, which Polars Code cannot run."""
+    entry = _lone_def(code)
+    if entry is None or not (isinstance(entry, ast.AsyncFunctionDef) or entry.decorator_list):
+        return None
+    what = "async" if isinstance(entry, ast.AsyncFunctionDef) else "decorated"
+    return f"`{entry.name}` is {what}: Polars Code runs a plain `def` (no `async`, no decorator)"
 
 
 def function_form_error(entry: ast.FunctionDef, num_inputs: int) -> str | None:
@@ -350,6 +367,9 @@ class PolarsCodeParser:
             if error is not None:
                 raise ValueError(error)
             return self._function_form_executable(code, entry.name)
+        error = unrunnable_def_error(code)
+        if error is not None:
+            raise ValueError(error)
 
         wrapped_code = self._wrap_in_function(code, num_inputs)
         try:

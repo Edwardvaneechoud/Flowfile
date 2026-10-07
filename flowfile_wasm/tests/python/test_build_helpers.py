@@ -3,6 +3,8 @@
 Each helper takes (LazyFrame, settings) and returns a LazyFrame with no global
 state. Settings shapes mirror `toPythonJson(node.settings)` from flow-store.ts.
 """
+import json
+from pathlib import Path
 import datetime
 
 import polars as pl
@@ -444,11 +446,14 @@ def test_polars_code_function_form_without_inputs_builds_a_source():
     assert engine.get_lazyframe(1).collect()["a"].to_list() == [1, 2]
 
 
-def test_polars_code_function_form_matches_core_on_decorated_defs():
+def test_polars_code_function_form_matches_the_code_generator_on_the_shared_fixtures():
+    """The engine and ``useCodeGeneration``'s ``functionFormName`` read the same fixture list and must agree."""
     from engine.nodes_polars_code import _function_form
 
-    assert _function_form("@staticmethod\ndef f(rows):\n    return rows") is None
-    assert _function_form('"""About it."""\ndef f(rows):\n    return rows').name == "f"
+    fixtures = json.loads((Path(__file__).parents[1] / "fixtures" / "polars-code-function-form.json").read_text())
+    for fixture in fixtures:
+        entry = _function_form(fixture["code"])
+        assert (entry.name if entry is not None else None) == fixture["name"], fixture["label"]
 
 
 def test_filter_parses_iso_values_for_date_and_datetime_columns():
