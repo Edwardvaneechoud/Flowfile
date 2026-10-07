@@ -1,6 +1,13 @@
 import { test, expect, Locator, Page, APIRequestContext } from "@playwright/test";
 
-import { API_URL, authHeaders, closeFlow, createFlow, getAuthToken } from "./helpers/api";
+import {
+  API_URL,
+  authHeaders,
+  closeFlow,
+  createFlow,
+  flowEdges,
+  getAuthToken,
+} from "./helpers/api";
 import { minimizePalette, openFlow } from "./helpers/canvas";
 
 /**
@@ -439,6 +446,10 @@ test.describe("Canvas notebook", () => {
       .toBeGreaterThanOrEqual(2);
     expect(await nodeKept(page, 2)).toBe(true);
     await expect(page.locator('.vue-flow__node[data-id="2"]')).toHaveCSS("visibility", "visible");
+    // The reload re-sets every edge over the ones still on the canvas: a single-input node keeps its edge.
+    const edges = await flowEdges(request, token, flowId);
+    expect(edges).toEqual(["1->2", "2->3"]);
+    await expect(page.locator(".vue-flow__edge")).toHaveCount(edges.length);
     await expect(filter.locator(".cell-output")).toHaveCount(0);
     expect(called("/editor/notebook/run_lineage/") || called("/flow/run/")).toBe(false);
     await shot(page, "08-pushed");

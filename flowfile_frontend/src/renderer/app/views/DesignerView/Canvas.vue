@@ -628,8 +628,14 @@ function isValidConnection(connection: Connection): boolean {
     (targetTemplate.dynamic_inputs || !targetTemplate.multi) &&
     connection.targetHandle
   ) {
+    // A same-flow reload re-sets every edge while the old copy is still in the store: the same
+    // connection does not occupy the handle it is re-added to.
+    const sameConnection = (e: { source: string; sourceHandle?: string | null }) =>
+      e.source === source &&
+      (e.sourceHandle ?? "output-0") === (connection.sourceHandle ?? "output-0");
     const handleOccupied = currentEdges.some(
-      (e) => e.target === target && e.targetHandle === connection.targetHandle,
+      (e) =>
+        e.target === target && e.targetHandle === connection.targetHandle && !sameConnection(e),
     );
     if (handleOccupied) {
       return rejectConnection(
