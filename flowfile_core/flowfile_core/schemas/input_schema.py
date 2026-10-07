@@ -1,3 +1,4 @@
+import ast
 import os
 import re
 from contextvars import ContextVar
@@ -18,6 +19,7 @@ from pydantic import (
     model_validator,
 )
 
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import function_form
 from flowfile_core.flowfile.param_types import FlowParameter
 from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
@@ -2266,9 +2268,15 @@ class NodePolarsCode(NodeMultiInput):
     polars_code_input: transform_schema.PolarsCodeInput
 
     def get_default_description(self) -> str:
-        """Describes the Polars code snippet."""
+        """Describes the Polars code: a function's docstring line or ``name(params)``, else the snippet's first line."""
         code = self.polars_code_input.polars_code
-        first_line = code.strip().split("\n")[0] if code else ""
+        entry = function_form(code) if code else None
+        if entry is not None:
+            docstring = (ast.get_docstring(entry) or "").strip()
+            params = ", ".join(arg.arg for arg in entry.args.args)
+            first_line = docstring.split("\n")[0] if docstring else f"{entry.name}({params})"
+        else:
+            first_line = code.strip().split("\n")[0] if code else ""
         if len(first_line) > 80:
             first_line = first_line[:77] + "..."
         return first_line

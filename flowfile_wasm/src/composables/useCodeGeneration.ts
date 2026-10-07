@@ -67,6 +67,16 @@ const POLARS_DTYPES = new Set([
   'Boolean', 'String', 'Utf8', 'Categorical', 'Date', 'Time', 'Datetime', 'Duration', 'Null'
 ])
 
+// The def a function-form Polars Code node calls (its only top-level statement), else null.
+export function functionFormName(code: string): string | null {
+  const topLevel = code
+    .split('\n')
+    .filter(line => line.trim() && !/^[\s#)\]]/.test(line))
+  if (topLevel.length !== 1) return null
+  const match = /^def\s+([A-Za-z_]\w*)\s*\(/.exec(topLevel[0])
+  return match ? match[1] : null
+}
+
 export function polarsDtype(name: string | undefined): string {
   const base = (name || '').split('(')[0]
   return POLARS_DTYPES.has(base) ? `pl.${base}` : 'pl.String'
@@ -1174,6 +1184,18 @@ export class FlowToPolarsConverter {
       args = argList.join(', ')
     }
   
+    const definedName = functionFormName(code)
+    if (definedName) {
+      this.addCode('# Custom Polars code')
+      for (const line of code.split('\n')) {
+        this.addCode(line)
+      }
+      this.addCode('')
+      this.addCode(`${varName} = ${definedName}(${args})`)
+      this.addCode('')
+      return
+    }
+
     const fnName = `_polars_code_${this.currentNodeId}`
     this.addCode('# Custom Polars code')
     this.addCode(`def ${fnName}(${params}):`)

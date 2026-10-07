@@ -20,6 +20,11 @@ if TYPE_CHECKING:
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import (
+    function_form,
+    function_form_error,
+    polars_code_parser,
+)
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_node.multi_output import DEFAULT_OUTPUT_HANDLE
@@ -65,11 +70,16 @@ class _PolarsCodeText(str):
     """Polars Code node text already read from a ``def`` (:func:`_polars_code_text`), stored as it is."""
 
 
-def _polars_code_source(code: Any) -> str:
-    """The Polars Code node text of ``code``: a string dedented and stripped, or a function's body.
+_SNIPPET_FUNCTION_NAME = re.compile(r"_polars_code_\d+")
 
-    The function is read with ``inspect.getsource`` (a notebook cell's through ``linecache``) and
-    its body taken by :func:`_polars_code_text`. A :class:`_PolarsCodeText` is that text already.
+
+def _polars_code_source(code: Any) -> str:
+    """The Polars Code node text of ``code``: a string dedented and stripped, or a function's text.
+
+    The function is read with ``inspect.getsource`` (a notebook cell's through ``linecache``), with
+    the comment lines right above it, and stored by :func:`_polars_code_text`. A function stored as
+    itself may read only what the node provides (``pl``, ``col``, ...), since nothing else travels
+    with it. A :class:`_PolarsCodeText` is that text already.
     """
     if isinstance(code, _PolarsCodeText):
         return str(code)
@@ -80,17 +90,55 @@ def _polars_code_source(code: Any) -> str:
     source, _ = _get_function_source(code)
     if source is None:
         raise NativeNodeError(f"The source of `{code.__name__}` cannot be read; pass the code as a string")
-    return _polars_code_text(source)
+    comments = inspect.getcomments(code)
+    text = _polars_code_text(textwrap.dedent(comments) + source if comments else source)
+    if function_form(text) is not None:
+        _refuse_outside_names(code)
+    return text
+
+
+def _refuse_outside_names(function: Callable[..., Any]) -> None:
+    """Raise when ``function`` reads a name from outside itself (a global or a closure) the node does not provide."""
+    from flowfile_frame.python_script import _global_names
+
+    provided = set(polars_code_parser.safe_globals) - {"__builtins__"}
+    names = [*function.__code__.co_freevars, *_global_names(function.__code__)]
+    outside = [name for name in names if name not in provided]
+    if outside:
+        names = ", ".join(f"`{name}`" for name in outside)
+        raise NativeNodeError(
+            f"`{function.__name__}` reads {names} from outside the function; the node stores only "
+            f"`{function.__name__}`, so define what it needs inside it (`pl`, `col`, `lit` and `cs` are provided)"
+        )
+
+
+def _is_snippet_function(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether ``fn`` is the notebook's rendering of a snippet: ``_polars_code_<n>`` over the standard input names."""
+    args = fn.args
+    names = [arg.arg for arg in args.args]
+    standard = names in ([], ["input_df"]) or names == [f"input_df_{i}" for i in range(1, len(names) + 1)]
+    plain = not (args.posonlyargs or args.vararg or args.kwonlyargs or args.kwarg or args.defaults)
+    return bool(_SNIPPET_FUNCTION_NAME.fullmatch(fn.name)) and standard and plain
 
 
 def _polars_code_text(source: str) -> str:
     """The Polars Code node text of the ``def`` in ``source`` (read from source text, never compiled).
 
-    Its ``def`` line is dropped: a body that is one ``return <expr>`` stores ``<expr>``, a last
-    ``return output_df`` is dropped, and any other body is stored as written, with the comment
-    lines right above its first statement.
+    A def is stored as itself (function form: the comment lines right above it, then the def from
+    its ``def`` line), unless it is a snippet's rendering, ``_polars_code_<n>`` over ``input_df`` or
+    ``input_df_1``, ``input_df_2``, ...: then its ``def`` line is dropped, a body that is one
+    ``return <expr>`` stores ``<expr>``, a last ``return output_df`` is dropped, and any other body
+    is stored as written, with the comment lines right above its first statement.
     """
     fn = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef))
+    lines = source.splitlines()
+    if not _is_snippet_function(fn):
+        if isinstance(fn, ast.AsyncFunctionDef) or fn.decorator_list:
+            raise NativeNodeError(f"`{fn.name}` is async or decorated; Polars Code stores a plain def")
+        start = fn.lineno - 1
+        while start > 0 and lines[start - 1].strip().startswith("#"):
+            start -= 1
+        return textwrap.dedent("\n".join(lines[start : fn.end_lineno])).strip()
     body = fn.body
     if len(body) == 1 and isinstance(body[0], ast.Return) and body[0].value is not None:
         return ast.get_source_segment(source, body[0].value).strip()
@@ -103,6 +151,14 @@ def _polars_code_text(source: str) -> str:
     while start - 1 >= fn.lineno and lines[start - 1].strip().startswith("#"):
         start -= 1
     return textwrap.dedent("\n".join(lines[start : body[-1].end_lineno])).strip()
+
+
+def _check_polars_code_inputs(text: str, num_inputs: int) -> None:
+    """Raise when function-form ``text`` returns nothing or cannot take the node's ``num_inputs`` frames."""
+    entry = function_form(text)
+    error = function_form_error(entry, num_inputs) if entry is not None else None
+    if error is not None:
+        raise NativeNodeError(error)
 
 
 def _suffixed_right_names(
@@ -2884,14 +2940,17 @@ class FlowFrame:
     ) -> FlowFrame:
         """Place one Polars Code node over this frame, and ``others`` as its further inputs, in order.
 
-        ``code`` is the node's code: a string, stored dedented and stripped, or a ``def`` function
-        whose body is stored instead (a single ``return <expr>`` becomes ``<expr>``, a trailing
-        ``return output_df`` is dropped, anything else is kept as written; the parameters, typed
-        ``ff.FlowFrame`` or not, are ignored). The code reads its input as ``input_df``, or
-        ``input_df_1``, ``input_df_2``, ... with several inputs, and yields ``output_df`` or its
-        last expression, exactly as on the canvas.
+        ``code`` is the node's code, a ``def`` function or a string. A function is stored as
+        written and called with the inputs as Polars LazyFrames, one parameter per input in order;
+        what it returns is the node's output. It may read only what the node provides (``pl``,
+        ``col``, ``lit``, ``cs``), so helpers go inside it. A string holding one ``def`` is the
+        same; any other string is a snippet that reads ``input_df``, or ``input_df_1``,
+        ``input_df_2``, ... with several inputs, and yields ``output_df`` or its last expression.
+        A function named ``_polars_code_<n>`` over exactly those input names (how the notebook
+        shows a snippet) stores its body as that snippet.
         """
         text = _polars_code_source(code)
+        _check_polars_code_inputs(text, 1 + len(others))
         for frame in others:
             if not isinstance(frame, FlowFrame):
                 raise NativeNodeError(f"polars_code takes FlowFrames as inputs, got {type(frame).__name__}")

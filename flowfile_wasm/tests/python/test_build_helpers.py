@@ -420,6 +420,30 @@ def test_polars_code_schema_build_does_not_capture_dead_stdout(capsys):
     assert "LOG_MARKER" in capsys.readouterr().out
 
 
+def test_polars_code_function_form_runs_its_def_over_the_inputs_in_order():
+    code = (
+        "# Join the two inputs.\n"
+        "def joined(orders: pl.LazyFrame, names: ff.FlowFrame) -> pl.LazyFrame:\n"
+        "    return orders.join(names, on='id')"
+    )
+    settings = {"polars_code_input": {"polars_code": code}}
+
+    schema = engine.build_polars_code_schema([lf(id=[1], amount=[2]), lf(id=[1], name=["x"])], settings)
+    assert schema.collect_schema().names() == ["id", "amount", "name"]
+
+    assert engine.execute_read_csv(1, "id,amount\n1,10\n2,20\n", {})["success"] is True
+    assert engine.execute_read_csv(2, "id,name\n2,b\n", {})["success"] is True
+    assert engine.execute_polars_code(3, [1, 2], settings)["success"] is True
+    assert engine.get_lazyframe(3).collect().rows() == [(2, 20, "b")]
+
+
+def test_polars_code_function_form_without_inputs_builds_a_source():
+    settings = {"polars_code_input": {"polars_code": "def make():\n    return pl.DataFrame({'a': [1, 2]})"}}
+
+    assert engine.execute_polars_code(1, [], settings)["success"] is True
+    assert engine.get_lazyframe(1).collect()["a"].to_list() == [1, 2]
+
+
 def test_filter_parses_iso_values_for_date_and_datetime_columns():
     """Core wraps the value in to_date/to_datetime for temporal columns; the browser must agree."""
     frame = lf(

@@ -48,7 +48,13 @@ def _one_return(input_df: ff.FlowFrame):
     return input_df.with_columns((pl.col("x") * 2).alias("x2"))
 
 
-def _ends_in_output_df(input_df):
+# Keep the big ones.
+def big_ones(orders: pl.LazyFrame) -> pl.LazyFrame:
+    output_df = orders.filter(pl.col("x") > 1.5)
+    return output_df.select("g", "x")
+
+
+def _polars_code_3(input_df):
     # keep the big ones
     output_df = input_df.filter(pl.col("x") > 1.5)
     output_df = output_df.select("g", "x")
@@ -63,19 +69,54 @@ def _free_form(input_df):
 @pytest.mark.parametrize(
     "fn, code, height",
     [
-        (_one_return, 'input_df.with_columns((pl.col("x") * 2).alias("x2"))', 4),
         (
-            _ends_in_output_df,
-            '# keep the big ones\noutput_df = input_df.filter(pl.col("x") > 1.5)\noutput_df = output_df.select("g", "x")',
+            _one_return,
+            'def _one_return(input_df: ff.FlowFrame):\n    return input_df.with_columns((pl.col("x") * 2).alias("x2"))',
+            4,
+        ),
+        (
+            big_ones,
+            "# Keep the big ones.\ndef big_ones(orders: pl.LazyFrame) -> pl.LazyFrame:\n"
+            '    output_df = orders.filter(pl.col("x") > 1.5)\n    return output_df.select("g", "x")',
             3,
         ),
-        (_free_form, 'doubled = input_df.with_columns(pl.col("y") * 2)\noutput_df = doubled.head(1)', 1),
     ],
 )
-def test_polars_code_stores_a_function_body(fn, code, height):
+def test_polars_code_stores_a_function_as_written(fn, code, height):
     out = _frame().polars_code(fn)
     assert _code(out) == code
     assert out.collect().height == height
+
+
+def test_polars_code_stores_a_snippet_functions_body():
+    """``_polars_code_<n>`` over the standard input names is how the notebook shows a snippet: its body is stored."""
+    out = _frame().polars_code(_polars_code_3)
+    assert _code(out) == (
+        '# keep the big ones\noutput_df = input_df.filter(pl.col("x") > 1.5)\noutput_df = output_df.select("g", "x")'
+    )
+    assert out.collect().height == 3
+
+
+def test_polars_code_refuses_a_function_that_returns_nothing_or_reads_outside_names():
+    frame = _frame()
+    with pytest.raises(NativeNodeError, match="`_free_form` returns nothing"):
+        frame.polars_code(_free_form)
+
+    def uses_frame(input_df):
+        return input_df.join(frame, on="g")
+
+    with pytest.raises(NativeNodeError, match="reads `frame` from outside the function"):
+        frame.polars_code(uses_frame)
+
+
+def test_polars_code_honours_parameter_names_over_several_inputs():
+    def stacked(top: pl.LazyFrame, bottom: pl.LazyFrame) -> pl.LazyFrame:
+        return pl.concat([bottom, top])
+
+    left, right = _frame(), ff.from_dict({"g": ["c", "d"], "x": [0.0, 1.0], "y": [9, 8]})
+    assert left.polars_code(stacked, right).collect()["y"].to_list() == [9, 8, 1, 2, 3, 4]
+    with pytest.raises(NativeNodeError, match="`stacked` takes 2 frames but the node has 1 input"):
+        left.polars_code(stacked)
 
 
 def test_polars_code_takes_more_inputs_in_order_and_a_description():

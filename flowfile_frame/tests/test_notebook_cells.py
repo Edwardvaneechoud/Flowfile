@@ -98,11 +98,11 @@ def test_inspect_getsource_works_for_a_function_defined_in_a_cell(session):
 
 def test_polars_code_reads_a_function_defined_in_a_cell(session):
     mode, ns = session
-    code = f"df = {DATA}\ndef top(input_df: ff.FlowFrame): output_df = input_df.head(2)\nout = df.polars_code(top)"
+    code = f"df = {DATA}\ndef top(frame: ff.FlowFrame): return frame.head(2)\nout = df.polars_code(top)"
     run(ns, code)
     assert reference(mode, ns["out"].node_id) == "out"
     settings = mode.graph.get_node(ns["out"].node_id).setting_input
-    assert settings.polars_code_input.polars_code == "output_df = input_df.head(2)"
+    assert settings.polars_code_input.polars_code == "def top(frame: ff.FlowFrame): return frame.head(2)"
 
 
 def test_python_script_in_a_cell_needs_no_console_hook(session, monkeypatch):

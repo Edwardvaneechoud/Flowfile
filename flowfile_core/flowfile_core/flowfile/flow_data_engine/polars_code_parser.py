@@ -1,3 +1,5 @@
+import __future__
+
 import ast
 import base64
 import re
@@ -115,6 +117,53 @@ def remove_comments_and_docstrings(source: str) -> str:
         return "\n".join(line for line in result.splitlines() if line.strip())
     except Exception:
         return source
+
+
+def function_form(code: str) -> ast.FunctionDef | None:
+    """The ``def`` of function-form Polars Code, else ``None`` (snippet form, or code that does not parse).
+
+    Function form is code whose top level is exactly one ``def``, optionally after a module docstring;
+    the node calls it with its inputs, in connection order, and its ``return`` is the output.
+    """
+    try:
+        body = ast.parse(textwrap.dedent(code).strip()).body
+    except SyntaxError:
+        return None
+    if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0].value, "value", None), str):
+        body = body[1:]
+    return body[0] if len(body) == 1 and isinstance(body[0], ast.FunctionDef) else None
+
+
+def function_form_error(entry: ast.FunctionDef, num_inputs: int) -> str | None:
+    """Why ``entry`` cannot run as the node's code with ``num_inputs`` frames, or ``None`` when it can."""
+    if not _returns_a_value(entry):
+        return f"`{entry.name}` returns nothing: end it with `return <frame>`, which is the node's output"
+    args = entry.args
+    positional = len(args.posonlyargs) + len(args.args)
+    required = positional - len(args.defaults)
+    if required <= num_inputs <= positional or (args.vararg and num_inputs >= required):
+        if all(default is not None for default in args.kw_defaults):
+            return None
+    return (
+        f"`{entry.name}` takes {_count(positional, 'frame')} but the node has {_count(num_inputs, 'input')}: "
+        "give it one parameter per connected input"
+    )
+
+
+def _returns_a_value(entry: ast.FunctionDef) -> bool:
+    """Whether ``entry`` has a ``return <value>`` of its own (not one of a function nested in it)."""
+    stack: list[ast.AST] = list(entry.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Return) and node.value is not None:
+            return True
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda | ast.ClassDef):
+            stack.extend(ast.iter_child_nodes(node))
+    return False
+
+
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}" if number == 1 else f"{number or 'no'} {noun}s"
 
 
 class PolarsCodeParser:
@@ -282,6 +331,13 @@ class PolarsCodeParser:
         code = textwrap.dedent(code).strip()
         self._validate_code(code)
 
+        entry = function_form(code)
+        if entry is not None:
+            error = function_form_error(entry, num_inputs)
+            if error is not None:
+                raise ValueError(error)
+            return self._function_form_executable(code, entry.name)
+
         wrapped_code = self._wrap_in_function(code, num_inputs)
         try:
             local_namespace: dict[str, Any] = {}
@@ -292,6 +348,29 @@ class PolarsCodeParser:
             return transform_func
         except Exception as e:
             raise ValueError(f"Error executing code: {str(e)}") from e
+
+    def _function_form_executable(self, code: str, name: str) -> Callable:
+        """The ``def`` of function-form code, called with the node's inputs positionally as LazyFrames.
+
+        The code runs in its own copy of the sandbox globals (one namespace, so the shared globals
+        never see it) and its annotations are never evaluated, so they are documentation only.
+        """
+        namespace = dict(self.safe_globals)
+        try:
+            flags = __future__.annotations.compiler_flag
+            compiled = compile(code, "<polars_code>", "exec", flags=flags, dont_inherit=True)
+            exec(compiled, namespace)
+        except Exception as e:
+            raise ValueError(f"Error executing code: {str(e)}") from e
+        function = namespace[name]
+
+        def _call(*frames):
+            result = function(*(frame.lazy() for frame in frames))
+            if not isinstance(result, pl.LazyFrame | pl.DataFrame):
+                raise ValueError(f"`{name}` returned {type(result).__name__}, not a Polars LazyFrame or DataFrame")
+            return result
+
+        return _call
 
     def validate_code(self, code: str):
         """

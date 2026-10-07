@@ -1,9 +1,15 @@
+import re
+
 import polars as pl
 import pytest
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
-from flowfile_core.flowfile.flow_data_engine.polars_code_parser import PolarsCodeParser, remove_comments_and_docstrings
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import (
+    PolarsCodeParser,
+    polars_code_parser,
+    remove_comments_and_docstrings,
+)
 from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas.input_schema import RawData
 
@@ -646,6 +652,50 @@ output_df = temp_df.select("other_name")"""
     result = execute_polars_code(test_df, code=code)
     expected_result = FlowDataEngine([{'other_name': 'eduward'}, {'other_name': 'edward'}, {'other_name': 'courtney'}])
     result.assert_equal(expected_result)
+
+
+def test_function_form_calls_its_def_with_the_inputs_in_order():
+    orders = FlowDataEngine({"id": [1, 2, 3], "amount": [50, 150, 300]})
+    names = FlowDataEngine(pl.LazyFrame({"id": [2, 3], "name": ["b", "c"]}))
+    code = """# Join the big orders to their names.
+def big_named(orders: pl.LazyFrame, names: ff.FlowFrame) -> pl.LazyFrame:
+    \"\"\"Orders over 100 with a name.\"\"\"
+    def big(frame):
+        return frame.filter(pl.col("amount") > 100)
+    return big(orders).join(names, on="id")"""
+    result = execute_polars_code(orders, names, code=code)
+    assert isinstance(result.data_frame, pl.LazyFrame)
+    assert result.data_frame.sort("id").collect().to_dicts() == [
+        {"id": 2, "amount": 150, "name": "b"},
+        {"id": 3, "amount": 300, "name": "c"},
+    ]
+
+
+def test_function_form_without_inputs_is_a_source():
+    result = execute_polars_code(code="def make():\n    return pl.DataFrame({'r': [1, 2]})")
+    result.assert_equal(FlowDataEngine({"r": [1, 2]}))
+
+
+@pytest.mark.parametrize(
+    "code, inputs, message",
+    [
+        ("def f(rows):\n    return rows", 2, "`f` takes 1 frame but the node has 2 inputs"),
+        ("def f(a, b):\n    return a", 0, "`f` takes 2 frames but the node has no inputs"),
+        ("def f(rows):\n    output_df = rows", 1, "`f` returns nothing"),
+        ("def f(rows):\n    return 1", 1, "`f` returned int, not a Polars LazyFrame or DataFrame"),
+        ("def f(rows):\n    import os\n    return rows", 1, "Import statements are not allowed"),
+    ],
+    ids=["too_many_inputs", "too_few_inputs", "no_return", "not_a_frame", "import"],
+)
+def test_function_form_errors_name_the_function(code, inputs, message):
+    frames = [FlowDataEngine({"a": [1]}) for _ in range(inputs)]
+    with pytest.raises(ValueError, match=re.escape(message)):
+        execute_polars_code(*frames, code=code)
+
+
+def test_function_form_runs_in_its_own_namespace():
+    execute_polars_code(FlowDataEngine({"a": [1]}), code="def leaks(rows):\n    return rows")
+    assert "leaks" not in polars_code_parser.safe_globals
 
 
 def test_error_no_output_df():

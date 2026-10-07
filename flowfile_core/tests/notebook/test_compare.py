@@ -1,5 +1,7 @@
 """The per-type settings normaliser a push compares a rebuilt node with its canvas twin through."""
 
+import pytest
+
 import flowfile_frame as ff
 from flowfile_core.notebook.compare import (
     normalise,
@@ -118,6 +120,35 @@ def test_a_parameter_comparison_equals_its_basic_filter():
     between = param_comparison_filter("(([x] >= ${a}) and ([x] <= ${b}))")
     assert between["basic_filter"] == {"field": "x", "operator": "between", "value": "${a}", "value2": "${b}"}
     assert param_comparison_filter("([x] > ${p}) and ([y] < 2)") is None
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "a = input_df.filter(pl.col('x') > 1)\n\noutput_df = a.select('x')",
+        "output_df = input_df\n# keep all rows for now",
+        "# top 5\ninput_df.head(5)",
+        "a = input_df.head()\na.select('x')",
+        "input_df.head(5)",
+    ],
+    ids=["blank_line", "trailing_comment", "leading_comment", "expression_after_assignment", "one_liner"],
+)
+def test_a_snippet_pushed_back_unedited_from_its_notebook_def_is_unchanged(snippet):
+    from flowfile_core.flowfile.code_generator.code_generator import _snippet_function_lines
+    from flowfile_frame.flow_frame import _polars_code_text
+
+    pushed = _polars_code_text("\n".join(_snippet_function_lines(snippet, "_polars_code_3", ["input_df"])))
+    canvas = {"polars_code_input": {"polars_code": snippet}}
+    assert settings_equal(canvas, {"polars_code_input": {"polars_code": pushed}}, "polars_code")
+    edited = {"polars_code_input": {"polars_code": pushed + ".head(1)"}}
+    assert not settings_equal(canvas, edited, "polars_code")
+
+
+def test_a_function_compares_by_its_text():
+    code = "# note\ndef f(rows):\n\n    return rows"
+    canvas = {"polars_code_input": {"polars_code": code}}
+    assert settings_equal(canvas, {"polars_code_input": {"polars_code": "  " + code + "\n"}}, "polars_code")
+    assert not settings_equal(canvas, {"polars_code_input": {"polars_code": code.replace("# note\n", "")}}, "polars_code")
 
 
 def test_a_closing_return_output_df_and_stale_group_columns_are_cosmetic():

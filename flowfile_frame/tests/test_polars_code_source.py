@@ -17,14 +17,24 @@ def test_no_input_places_a_source_polars_code_node():
     assert out.collect()["a"].to_list() == [1, 2, 3]
 
 
-def test_a_def_without_parameters_stores_its_body():
+def test_a_def_without_parameters_is_stored_as_written():
     def make():
         output_df = pl.LazyFrame({"a": [1, 2]})
         return output_df
 
     out = ff.polars_code(make)
-    assert core_node(out).setting_input.polars_code_input.polars_code == 'output_df = pl.LazyFrame({"a": [1, 2]})'
+    assert core_node(out).setting_input.polars_code_input.polars_code == (
+        'def make():\n    output_df = pl.LazyFrame({"a": [1, 2]})\n    return output_df'
+    )
     assert out.collect().height == 2
+
+
+def test_a_source_def_with_parameters_is_refused():
+    def make(frame):
+        return frame
+
+    with pytest.raises(NativeNodeError, match="`make` takes 1 frame but the node has no inputs"):
+        ff.polars_code(make)
 
 
 def test_flow_graph_places_the_source_on_that_graph():

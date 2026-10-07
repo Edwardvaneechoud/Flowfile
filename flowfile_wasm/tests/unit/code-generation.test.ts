@@ -624,6 +624,20 @@ describe('Code Generation', () => {
       expect(code).toContain('def _polars_code_7(')
       expect(code).toContain('transformed = _polars_code_7(')
     })
+
+    it('emits a function-form polars_code node as written and calls it', () => {
+      const nodes = new Map<number, FlowNode>()
+      nodes.set(1, createNode(1, 'read', { received_file: { name: 'data.csv', table_settings: {} } }))
+      nodes.set(7, createNode(7, 'polars_code', {
+        polars_code_input: { polars_code: '# Top rows.\ndef top(orders: pl.LazyFrame) -> pl.LazyFrame:\n\n    return orders.head(5)' }
+      }, [1]))
+
+      const code = generateCode({ nodes, edges: createEdges([[1, 7]]) })
+
+      expect(code).toContain('# Top rows.\n    def top(orders: pl.LazyFrame) -> pl.LazyFrame:\n\n        return orders.head(5)')
+      expect(code).toContain('transformed = top(source)')
+      expect(code).not.toContain('_polars_code_7')
+    })
   })
 
   describe('Error Handling', () => {

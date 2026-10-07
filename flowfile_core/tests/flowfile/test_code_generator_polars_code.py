@@ -100,6 +100,41 @@ def test_indented_body_with_explicit_return_exports(export):
     assert result["doubled"].to_list() == [2, 4, 6]
 
 
+@pytest.mark.parametrize("export", _EXPORTS)
+@pytest.mark.parametrize(
+    "code",
+    [
+        pytest.param(
+            "# Double it.\ndef doubled(rows: pl.LazyFrame) -> pl.LazyFrame:\n\n"
+            "    return rows.with_columns((pl.col('a') * 2).alias('doubled'))",
+            id="annotated",
+        ),
+        pytest.param(
+            "def doubled(rows: ff.FlowFrame):\n    def twice(c):\n        return c * 2\n"
+            "    return rows.with_columns(twice(pl.col('a')).alias('doubled'))",
+            id="flowframe_hint_and_nested_helper",
+        ),
+    ],
+)
+def test_function_form_exports_as_written_and_runs(export, code):
+    flow = _polars_code_flow(code)
+    exported = export(flow)
+
+    assert code.split("\n", 1)[1] in exported.replace("\n    ", "\n")
+    assert "_polars_code_2" not in exported
+    assert _run_export(exported)["doubled"].to_list() == [2, 4, 6]
+    flow.run_graph()
+    assert flow.get_node(2).get_resulting_data().data_frame.collect()["doubled"].to_list() == [2, 4, 6]
+
+
+def test_snippet_renders_its_inputs_as_lazyframes_in_the_flowframe_export():
+    exported = export_flow_to_flowframe(_polars_code_flow("input_df.head(1)"))
+
+    assert "def _polars_code_2(input_df: pl.LazyFrame):" in exported
+    assert "import polars as pl" in exported
+    assert len(_run_export(exported)) == 1
+
+
 @pytest.mark.parametrize(
     "code, expected",
     [
