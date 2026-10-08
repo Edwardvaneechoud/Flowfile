@@ -173,11 +173,6 @@ export function getId(): number {
   return ++id;
 }
 
-/** The last id the client handed out; the next node gets a higher one. */
-export function currentNodeId(): number {
-  return id;
-}
-
 /** Raise the client id counter to at least `max` (never lowers it: a redo may reference an undone id). */
 export function seedNodeId(max: number): void {
   if (Number.isFinite(max)) id = Math.max(id, Math.floor(max));

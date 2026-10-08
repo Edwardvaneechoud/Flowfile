@@ -118,6 +118,7 @@ import { ref, watch, onMounted, onBeforeUnmount, computed, nextTick } from "vue"
 import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
+import { useFlowSyncStore } from "../../stores/flow-sync-store";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useRecentFlows } from "../../composables/useRecentFlows";
 import { FlowApi } from "../../api";
@@ -260,9 +261,27 @@ const selectedFlow = computed(
   () => flows.value.find((flow) => flow.flow_id === selectedFlowId.value) || null,
 );
 
-const loadFlows = async () => {
-  if (isLoading.value) return;
+let flowsLoad: Promise<void> | null = null;
+let flowsReload = false;
 
+// A load asked for during a load runs once more after it: a `closed` mid-load needs the newer list.
+const loadFlows = (): Promise<void> => {
+  if (flowsLoad) {
+    flowsReload = true;
+    return flowsLoad;
+  }
+  flowsLoad = (async () => {
+    do {
+      flowsReload = false;
+      await fetchFlows();
+    } while (flowsReload);
+  })().finally(() => {
+    flowsLoad = null;
+  });
+  return flowsLoad;
+};
+
+const fetchFlows = async () => {
   try {
     isLoading.value = true;
     const flowsData = await getAllFlows();
@@ -539,6 +558,32 @@ watch(
         nodeStore.setFlowId(-1);
       }
     }
+  },
+);
+
+// A flow closed in another window (the change feed) leaves the tab bar; with none left, the canvas empties.
+const flowSync = useFlowSyncStore();
+watch(
+  () => flowSync.closeCount,
+  async () => {
+    const closedId = flowSync.closedFlowId;
+    if (closedId == null || !flows.value.some((flow) => flow.flow_id === closedId)) return;
+    await loadFlows();
+    if (!flows.value.length) {
+      selectedFlowId.value = null;
+      nodeStore.setFlowId(-1);
+    }
+  },
+);
+
+// A Save As made in another window moved the flow to a new id: its tab follows it there.
+watch(
+  () => flowSync.rekeyedTo,
+  async (moved) => {
+    if (!moved || !flows.value.some((flow) => flow.flow_id === moved.from)) return;
+    // Switch first, so the reload keeps this tab instead of falling back to the first flow.
+    if (selectedFlowId.value === moved.from) selectFlow(moved.to);
+    await loadFlows();
   },
 );
 

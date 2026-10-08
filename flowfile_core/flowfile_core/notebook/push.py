@@ -50,6 +50,7 @@ class NotebookPushRequest(BaseModel):
     changed_cell_ids: list[str] = Field(default_factory=list)
     provenance: dict[str, list[tuple[str, int]]] = Field(default_factory=dict)
     code_fingerprint: str
+    # Older designers send the ids they handed out ahead of a placement; the canvas now keeps its own ceiling.
     client_max_node_id: int = 0
     trigger: Literal["push", "run"] | None = None
     kernel_id: str | None = None
@@ -204,8 +205,12 @@ def _refusing_cell(
 
 
 def node_id_ceiling(flow: FlowGraph, client_max_node_id: int) -> int:
-    """The highest node id either the canvas or the client has seen; new nodes number above it."""
-    return max([client_max_node_id, *(node.node_id for node in flow.nodes)], default=0)
+    """The highest node id the canvas has held (or the client has seen); new nodes number above it.
+
+    The canvas keeps its own ceiling (``FlowGraph.node_id_ceiling``), so a client sends nothing; the
+    client term stays for older designers that still hand out ids ahead of their placements.
+    """
+    return max(flow.node_id_ceiling, client_max_node_id)
 
 
 def plan_push(flow: FlowGraph, user, request: NotebookPushRequest) -> tuple[ReconcilePlan, CleanRunResult]:

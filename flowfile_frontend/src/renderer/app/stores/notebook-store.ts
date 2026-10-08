@@ -235,8 +235,6 @@ export type FlowSyncStatus =
 export interface FlowNotebookHooks {
   /** Flush pending canvas edits and save the settings drawer; false aborts the action. */
   prepare(): Promise<boolean>;
-  /** The designer's node id counter, so new nodes number above ids it handed out. */
-  clientMaxNodeId(): number;
   /** Ask before applying a push core held back for review (`applied: false`); it lists `warnings`. */
   confirm(held: NotebookPushResult, trigger: FlowSyncTrigger): Promise<boolean>;
   /** A push was applied (seed the node id counter, reload the canvas). */
@@ -249,7 +247,6 @@ export interface FlowNotebookHooks {
 
 const NO_HOOKS: FlowNotebookHooks = {
   prepare: async () => true,
-  clientMaxNodeId: () => 0,
   confirm: async () => false,
   pushed: () => undefined,
   runStarted: () => undefined,
@@ -402,11 +399,7 @@ function applyRendering(nb: OpenNotebook, rendering: NotebookRendering): void {
 }
 
 /** The push body: Python cells, the edited ones marked, and their live nodes as `[type, id]`. */
-export function flowPushBody(
-  nb: OpenNotebook,
-  nodeTypes: Map<number, string>,
-  clientMaxNodeId: number,
-): NotebookPushBody {
+export function flowPushBody(nb: OpenNotebook, nodeTypes: Map<number, string>): NotebookPushBody {
   const python = nb.cells.filter((c) => c.cellType === "python");
   const provenance: Record<string, [string, number][]> = {};
   for (const cell of python) {
@@ -419,7 +412,6 @@ export function flowPushBody(
     changed_cell_ids: python.filter((c) => isEdited(nb, c)).map((c) => c.id),
     provenance,
     code_fingerprint: nb.fingerprint ?? "",
-    client_max_node_id: Math.max(clientMaxNodeId, ...nodeTypes.keys()),
     ...(nb.kernelId ? { kernel_id: nb.kernelId } : {}),
   };
 }
@@ -666,6 +658,8 @@ interface NotebookState {
   hydrated: boolean;
   /** `GET /notebook/status`; `null` until loaded or when it failed. */
   flowStatus: { kernel_sessions: boolean } | null;
+  /** Off in a pop-out window: it neither restores the designer's catalog tabs nor writes over them. */
+  persistence: boolean;
 }
 
 let _persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -678,6 +672,7 @@ export const useNotebookStore = defineStore("notebook", {
     loading: false,
     hydrated: false,
     flowStatus: null,
+    persistence: true,
   }),
 
   getters: {
@@ -716,7 +711,14 @@ export const useNotebookStore = defineStore("notebook", {
       };
     },
 
+    /** A pop-out window turns persistence off before it opens its flow tab (see `persistence`). */
+    setPersistence(on: boolean) {
+      this.persistence = on;
+      if (!on) this.hydrated = true;
+    },
+
     _schedulePersist() {
+      if (!this.persistence) return;
       const snapshot = this._snapshot();
       if (_persistTimer) clearTimeout(_persistTimer);
       _persistTimer = setTimeout(() => persistNotebooks(snapshot), 400);
@@ -737,7 +739,7 @@ export const useNotebookStore = defineStore("notebook", {
     /** Restore open tabs from browser storage on first use; start one blank
      * notebook if there's nothing persisted. Idempotent. */
     ensureHydrated() {
-      if (this.hydrated) return;
+      if (this.hydrated || !this.persistence) return;
       this.hydrated = true;
       const persisted = loadPersistedNotebooks();
       if (persisted.openNotebooks.length) {
@@ -1351,11 +1353,7 @@ export const useNotebookStore = defineStore("notebook", {
         // `prepare` may have saved the settings drawer, which moves the canvas fingerprint.
         await this.refreshFlowNotebook(flowId);
         const nodes = (await FlowApi.getFlowData(flowId)).node_inputs;
-        const body = flowPushBody(
-          nb,
-          new Map(nodes.map((n) => [n.id, n.item])),
-          hooks.clientMaxNodeId(),
-        );
+        const body = flowPushBody(nb, new Map(nodes.map((n) => [n.id, n.item])));
         cells = body.cells;
         let result = await NotebookApi.pushFlowNotebook({ ...body, trigger });
         if (!result.applied) {

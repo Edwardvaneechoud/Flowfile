@@ -29,7 +29,7 @@ def test_render_route_returns_the_owner_rendering(open_flow, client_as):
     response = client_as(OWNER_ID).get("/notebook/render", params={"flow_id": open_flow.flow_id})
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"cells", "warnings", "var_by_node", "code_fingerprint"}
+    assert set(body) == {"cells", "warnings", "var_by_node", "code_fingerprint", "revision"}
     assert body == render(open_flow).model_dump(mode="json")
     assert body["cells"][0]["cell_id"] == "imports"
     node_cells = [cell for cell in body["cells"] if cell["kind"] == "node"]
@@ -37,6 +37,13 @@ def test_render_route_returns_the_owner_rendering(open_flow, client_as):
     assert all(cell["status"] == "code" for cell in node_cells)
     for cell in body["cells"]:
         compile(cell["code"], cell["cell_id"], "exec")
+
+
+def test_render_route_revision_is_the_flow_revision(open_flow, client_as):
+    client = client_as(OWNER_ID)
+    rendered = client.get("/notebook/render", params={"flow_id": open_flow.flow_id}).json()
+    history = client.get("/editor/history_status/", params={"flow_id": open_flow.flow_id}).json()
+    assert rendered["revision"] == history["revision"] == open_flow.revision
 
 
 def test_render_route_answers_422_when_the_export_fails(open_flow, client_as, monkeypatch):

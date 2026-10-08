@@ -24,7 +24,12 @@ from flowfile_core.flowfile.user_defined.registry import (
     registry,
 )
 from flowfile_core.routes.custom_node_mounts import require_admin
-from flowfile_core.routes.routes import edit_flow, keep_server_owned_layout
+from flowfile_core.routes.routes import (
+    edit_flow,
+    keep_server_owned_layout,
+    require_settings_unchanged,
+    settings_fingerprint_of,
+)
 from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.history_schema import HistoryActionType, OperationResponse
 from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS
@@ -185,6 +190,7 @@ def update_user_defined_node(
     input_data: dict[str, Any], node_type: str, current_user=Depends(get_current_active_user)
 ) -> OperationResponse:
     input_data["user_id"] = current_user.id
+    expected_fingerprint = input_data.pop("expected_settings_fingerprint", None)
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get("flow_id"))
     logger.info(f'Updating the data for flow: {flow_id}, node {input_data["node_id"]}')
@@ -205,6 +211,7 @@ def update_user_defined_node(
 
     node_id = user_defined_node_settings.node_id
     with edit_flow(flow, f"Update {node_type} settings", HistoryActionType.UPDATE_SETTINGS, node_id=node_id) as txn:
+        require_settings_unchanged(flow, node_id, expected_fingerprint)
         keep_server_owned_layout(flow, user_defined_node_settings)
         try:
             flow.add_user_defined_node(
@@ -215,7 +222,9 @@ def update_user_defined_node(
                 status_code=422,
                 detail={"error_code": "KERNEL_REQUIRED", "node_type": e.node_type, "message": str(e)},
             ) from e
-    return OperationResponse(success=True, history=txn.history)
+    return OperationResponse(
+        success=True, history=txn.history, settings_fingerprint=settings_fingerprint_of(flow, node_id)
+    )
 
 
 def _render_save_source(request: SaveCustomNodeRequest) -> str:
