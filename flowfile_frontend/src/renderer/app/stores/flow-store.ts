@@ -58,6 +58,8 @@ export const useFlowStore = defineStore("flow", {
       // layout-reorganize prompt so the banner's [Reorganize] button
       // can call into the canvas without prop-drilling.
       pendingLayoutResetCounter: 0,
+      // A run started or ended elsewhere; HeaderButtons re-reads the run state on it.
+      pendingRunStateCounter: 0,
     };
   },
 
@@ -164,6 +166,12 @@ export const useFlowStore = defineStore("flow", {
     // prop-drilling. Safe to call multiple times.
     requestLayoutReset() {
       this.pendingLayoutResetCounter += 1;
+    },
+
+    // Signal "the flow's run state changed elsewhere; re-read it". Same
+    // counter pattern as `requestReload`.
+    requestRunStateRefresh() {
+      this.pendingRunStateCounter += 1;
     },
   },
 });

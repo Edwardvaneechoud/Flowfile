@@ -94,7 +94,7 @@ async function deleteNotebook(request: APIRequestContext, token: string, id: num
 // let AuthService pick it up on init.
 async function navigateWithAuth(page: Page, token: string, targetUrl: string) {
   await page.goto(targetUrl);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.evaluate(
     ({ token, expiration, storageKey }) => {
       localStorage.setItem("auth_token", token);
@@ -107,7 +107,7 @@ async function navigateWithAuth(page: Page, token: string, targetUrl: string) {
     { token, expiration: Date.now() + 60 * 60 * 1000, storageKey: NOTEBOOK_STORAGE_KEY },
   );
   await page.reload();
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
 }
 
 const KERNEL_ID = "e2e-kernel";
@@ -1479,7 +1479,7 @@ test.describe("Python Script node notebook — reorder and undo", () => {
 
   test("drags a node cell past the last one and undoes it", async ({ page }) => {
     await page.goto(`${BASE_URL}/#/main/designer`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.evaluate(
       ({ token, expiration, flowId }) => {
         localStorage.setItem("auth_token", token);
@@ -1491,7 +1491,7 @@ test.describe("Python Script node notebook — reorder and undo", () => {
       { token: authToken, expiration: Date.now() + 60 * 60 * 1000, flowId },
     );
     await page.reload();
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await expect(page.locator('.vue-flow__node[data-id="1"]')).toBeVisible({ timeout: 20000 });
 
     // dispatchEvent rather than dblclick: the floating palette can cover the node.
@@ -1565,7 +1565,7 @@ test.describe("Python Script node notebook — cell actions and focus", () => {
 
   async function openNodeNotebook(page: Page, nodeId: number) {
     await page.goto(`${BASE_URL}/#/main/designer`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.evaluate(
       ({ token, expiration, flowId }) => {
         localStorage.setItem("auth_token", token);
@@ -1577,7 +1577,7 @@ test.describe("Python Script node notebook — cell actions and focus", () => {
       { token: authToken, expiration: Date.now() + 60 * 60 * 1000, flowId },
     );
     await page.reload();
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     const node = page.locator(`.vue-flow__node[data-id="${nodeId}"]`);
     await expect(node).toBeVisible({ timeout: 20000 });
     // dispatchEvent rather than dblclick: the floating palette can cover the node.
@@ -1783,7 +1783,7 @@ test.describe("Python Script node notebook — outdated outputs", () => {
 
   async function openNodeNotebook(page: Page, nodeId: number) {
     await page.goto(`${BASE_URL}/#/main/designer`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await page.evaluate(
       ({ token, expiration, flowId }) => {
         localStorage.setItem("auth_token", token);
@@ -1795,7 +1795,7 @@ test.describe("Python Script node notebook — outdated outputs", () => {
       { token: authToken, expiration: Date.now() + 60 * 60 * 1000, flowId },
     );
     await page.reload();
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     const node = page.locator(`.vue-flow__node[data-id="${nodeId}"]`);
     await expect(node).toBeVisible({ timeout: 20000 });
     // dispatchEvent rather than dblclick: the floating palette can cover the node.

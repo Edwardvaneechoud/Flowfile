@@ -38,7 +38,7 @@ async function createFreshFlow(request: APIRequestContext, token: string): Promi
 
 async function navigateWithAuth(page: Page, token: string, targetUrl: string, flowId?: number) {
   await page.goto(targetUrl);
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('load');
   const expirationTime = Date.now() + 60 * 60 * 1000;
   await page.evaluate(
     ({ token, expiration, flowId }: { token: string; expiration: number; flowId?: number }) => {
@@ -52,7 +52,7 @@ async function navigateWithAuth(page: Page, token: string, targetUrl: string, fl
     { token, expiration: expirationTime, flowId },
   );
   await page.reload();
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('load');
 }
 
 async function expectStep(page: Page, title: string) {

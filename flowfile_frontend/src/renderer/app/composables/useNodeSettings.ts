@@ -7,6 +7,11 @@ import { useEditorStore } from "../stores/editor-store";
 import { useFlowStore } from "../stores/flow-store";
 import { deleteConnectionOperations, type EdgeLike } from "../utils/graphOperations";
 import { extractSaveErrorMessage } from "./saveError";
+import {
+  isSettingsConflict,
+  loadedSettingsFingerprint,
+  resolveSettingsConflict,
+} from "./settingsConflict";
 import { removeCommittedEdges } from "./useDragAndDrop";
 
 export { extractSaveErrorMessage };
@@ -134,6 +139,8 @@ export function useNodeSettings<T extends NodeBase>(
   // The settings as last loaded or saved; reassigning nodeRef is a load, in-place changes are edits.
   const snapshot = (): string | null => (nodeRef.value ? JSON.stringify(nodeRef.value) : null);
   let cleanSnapshot: string | null = null;
+  // "Discard mine" on a conflict: the draft is gone, so a leave no longer waits on it.
+  let discarded = false;
   watch(
     nodeRef,
     () => {
@@ -165,22 +172,39 @@ export function useNodeSettings<T extends NodeBase>(
 
     isSaving.value = true;
 
+    const saved = async (): Promise<boolean> => {
+      cleanSnapshot = snapshot();
+      // Covers saves outside a leave, such as the request-save on the output-schema tab.
+      useEditorStore().disarmRefusedSave();
+      if (onAfterSave) {
+        await onAfterSave();
+      }
+      return true;
+    };
+
     try {
       if (autoSetIsSetup && nodeRef.value.is_setup !== undefined) {
         nodeRef.value.is_setup = true;
       }
 
-      await nodeStore.updateSettings(nodeRef, undefined, batch);
-      cleanSnapshot = snapshot();
-      // Covers saves outside a leave, such as the request-save on the output-schema tab.
-      useEditorStore().disarmRefusedSave();
-
-      if (onAfterSave) {
-        await onAfterSave();
-      }
-
-      return true;
+      // The fingerprint the node loaded with: core refuses the save when the settings moved since.
+      const fingerprint = loadedSettingsFingerprint(nodeRef.value.node_id);
+      await (fingerprint
+        ? nodeStore.updateSettings(nodeRef, undefined, batch, { expectedFingerprint: fingerprint })
+        : nodeStore.updateSettings(nodeRef, undefined, batch));
+      return await saved();
     } catch (error) {
+      if (isSettingsConflict(error)) {
+        const outcome = await resolveSettingsConflict(error, async () => {
+          await nodeStore.updateSettings(nodeRef, undefined, batch);
+        });
+        if (outcome === "saved") return await saved();
+        if (outcome === "discarded") {
+          discarded = true;
+          useEditorStore().disarmRefusedSave();
+        }
+        return false;
+      }
       console.error("useNodeSettings: Error saving settings:", error);
       ElMessage.error({ message: extractSaveErrorMessage(error), showClose: true, duration: 6000 });
       return false;
@@ -212,10 +236,11 @@ export function useNodeSettings<T extends NodeBase>(
   /**
    * Push node data - called when drawer closes.
    * This wraps saveSettings for the standard drawer lifecycle.
-   * A refused save of settings unchanged since load resolves true, so a fresh node never blocks leaving.
+   * A refused save of settings unchanged since load resolves true, so a fresh node never blocks leaving;
+   * so does a draft the user discarded over a conflict.
    */
   const pushNodeData = async (): Promise<boolean> =>
-    (await saveSettings()) || (cleanSnapshot !== null && snapshot() === cleanSnapshot);
+    (await saveSettings()) || discarded || (cleanSnapshot !== null && snapshot() === cleanSnapshot);
 
   /**
    * Handle updates from genericNodeSettings component.

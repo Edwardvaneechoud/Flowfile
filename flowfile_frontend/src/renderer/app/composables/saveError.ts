@@ -14,6 +14,10 @@ export function extractSaveErrorMessage(error: unknown): string {
       return messages.join("; ");
     }
   }
+  // Structured details (the settings-conflict 409) carry their copy in .message.
+  if (detail !== null && typeof detail === "object" && typeof detail.message === "string") {
+    return detail.message;
+  }
   return "Failed to save settings. Please check the node configuration.";
 }
 

@@ -45,7 +45,7 @@ async function navigateWithAuth(
   seed: Record<string, string> = {},
 ) {
   await page.goto(targetUrl);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   const expirationTime = Date.now() + 60 * 60 * 1000;
   await page.evaluate(
     ({
@@ -66,7 +66,7 @@ async function navigateWithAuth(
     { token, expiration: expirationTime, seed },
   );
   await page.reload();
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
 }
 
 // Drag from the center of a locator by (dx, dy) with real mouse events.
@@ -341,7 +341,7 @@ test.describe("Canvas Overlay Behaviour", () => {
 
       // The committed intent must survive a full reload.
       await page.reload();
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("load");
       await page.waitForSelector("main", { timeout: 10000 });
       const flowTabAfter = page.getByText(flowName, { exact: true });
       await flowTabAfter.first().waitFor({ state: "visible", timeout: 10000 });

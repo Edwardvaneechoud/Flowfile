@@ -664,3 +664,26 @@ def _missing_connection():
         "output_connection": {"node_id": 998, "connection_class": "output-0"},
         "input_connection": {"node_id": 999, "connection_class": "input-0"},
     }
+
+
+def test_a_push_numbers_new_nodes_above_every_id_the_canvas_has_held(runner, orders_flow, client_as):
+    """The canvas keeps the ceiling: a deleted id is not reused, and the client need not send its counter."""
+    client, graph = client_as(OWNER_ID), orders_flow
+    formula = _node_of_type(graph, "formula")
+    highest = max(n.node_id for n in graph.nodes)
+    assert formula.node_id == highest
+    assert client.post("/editor/delete_node/", params={"flow_id": graph.flow_id, "node_id": highest}).status_code == 200
+    filt = _node_of_type(graph, "filter")
+    cell_id = _cell_of(graph, filt.node_id)
+
+    def add_a_filter(cells):
+        code = cells[cell_id]
+        name = re.match(r"(\w+) = ", code).group(1)
+        return {**cells, cell_id: f"{code}\n{name}_more = {name}.filter(ff.col('amount') > 15)\n"}
+
+    body = {**_body(graph, add_a_filter, changed=[cell_id]), "client_max_node_id": 0}
+    response = client.post("/editor/notebook/push/", json=body)
+    assert response.status_code == 200, response.text
+    new_ids = {n.node_id for n in graph.nodes} - {filt.node_id, _node_of_type(graph, "manual_input").node_id}
+    assert new_ids and min(new_ids) > highest, new_ids
+    assert response.json()["max_node_id"] == max(new_ids)

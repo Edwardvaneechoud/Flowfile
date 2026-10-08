@@ -51,7 +51,7 @@ async function findNodeId(
  */
 async function openFlow(page: Page, token: string, flowName: string) {
   await page.goto(BASE_URL);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.evaluate(
     ({ token, expiration }) => {
       localStorage.setItem("auth_token", token);
@@ -60,7 +60,7 @@ async function openFlow(page: Page, token: string, flowName: string) {
     { token, expiration: Date.now() + 60 * 60 * 1000 },
   );
   await page.goto(`${BASE_URL}/#/main/designer`);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   await page.locator(".flow-tab", { hasText: flowName }).first().click();
   await page.locator(".vue-flow__node").first().waitFor({ state: "visible", timeout: 20000 });
   // The node palette floats over the canvas and would swallow clicks on nodes.

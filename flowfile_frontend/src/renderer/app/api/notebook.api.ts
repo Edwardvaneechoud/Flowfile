@@ -65,6 +65,8 @@ export interface NotebookRendering {
   warnings: string[];
   var_by_node: Record<number, string>;
   code_fingerprint: string;
+  /** The flow revision the rendering was taken at. */
+  revision?: number;
 }
 
 export interface NotebookPushBody {
@@ -73,7 +75,6 @@ export interface NotebookPushBody {
   changed_cell_ids: string[];
   provenance: Record<string, [string, number][]>;
   code_fingerprint: string;
-  client_max_node_id: number;
   /** Core holds back (`applied: false`) a push this action must review first; absent, it applies. */
   trigger?: "push" | "run";
   /** Set when a kernel is picked: the push runs the cells on that kernel. */

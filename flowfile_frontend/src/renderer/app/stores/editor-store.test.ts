@@ -335,3 +335,23 @@ describe("openCodePane", () => {
     expect(store.showCodeGenerator).toBe(true);
   });
 });
+
+describe("notebook pop-out state", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("marks, answers and clears a popped-out flow once", () => {
+    const store = useEditorStore();
+    expect(store.isNotebookPoppedOut(4)).toBe(false);
+    store.markNotebookPoppedOut(4);
+    store.markNotebookPoppedOut(4);
+    expect(store.poppedOutNotebooks).toEqual([4]);
+    expect(store.isNotebookPoppedOut(4)).toBe(true);
+    expect(store.isNotebookPoppedOut(5)).toBe(false);
+    store.clearNotebookPoppedOut(4);
+    expect(store.poppedOutNotebooks).toEqual([]);
+    store.clearNotebookPoppedOut(4);
+    expect(store.isNotebookPoppedOut(4)).toBe(false);
+  });
+});

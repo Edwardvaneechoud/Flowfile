@@ -76,7 +76,7 @@ function bufferSeed(flowId: number): string {
 /** Boot the app authenticated, with the flow open and the buffer armed. */
 async function openFlow(page: Page, token: string, flowId: number) {
   await page.goto(BASE_URL);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   const expiration = Date.now() + 60 * 60 * 1000;
   await page.evaluate(
     ({ token, expiration, flowId, buffer }) => {

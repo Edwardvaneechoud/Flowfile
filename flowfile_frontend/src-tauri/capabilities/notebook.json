@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "notebook-capability",
+  "description": "Capabilities granted to a flow's pop-out notebook window (label notebook-<flow id>): the notebook's clipboard and export, closing itself, nothing that exits or updates the app",
+  "windows": ["notebook-*"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-title",
+    "core:app:allow-version",
+    "log:default",
+    "os:default",
+    "opener:default",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text",
+    "dialog:allow-save",
+    "fs:allow-write-file"
+  ]
+}

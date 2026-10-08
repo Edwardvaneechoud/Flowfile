@@ -25,6 +25,14 @@ const routes: Array<RouteRecordRaw> = [
     meta: { requiresAuth: false },
   },
   {
+    // One flow's canvas notebook in its own window (the code dock's pop-out): outside AppLayout, so
+    // no sidebar, no app-wide modals, no update check.
+    path: "/notebook",
+    name: "notebookWindow",
+    component: () => import("../views/NotebookWindowView/NotebookWindowView.vue"),
+    meta: { requiresAuth: true },
+  },
+  {
     path: "/main",
     component: AppLayout,
     meta: { requiresAuth: true },

@@ -57,3 +57,13 @@ describe("flow-store updateHistoryState", () => {
     expect(store.historyState.undo_count).toBe(3);
   });
 });
+
+describe("flow-store run state signal", () => {
+  it("requestRunStateRefresh bumps a monotonic counter", () => {
+    const store = useFlowStore();
+    expect(store.pendingRunStateCounter).toBe(0);
+    store.requestRunStateRefresh();
+    store.requestRunStateRefresh();
+    expect(store.pendingRunStateCounter).toBe(2);
+  });
+});

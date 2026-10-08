@@ -2,6 +2,7 @@
 import axios, { InternalAxiosRequestConfig, AxiosResponse, AxiosError } from "axios";
 import authService from "./auth.service";
 import { createMutationQueue, installMutationChannel } from "./mutationChannel";
+import { CLIENT_HEADER, clientId } from "./clientId";
 import { useFlowStore } from "../stores/flow-store";
 import { flowfileCorebaseURL } from "../../config/constants";
 
@@ -10,6 +11,8 @@ axios.defaults.withCredentials = true;
 
 axios.interceptors.request.use(
   async (config: InternalAxiosRequestConfig): Promise<InternalAxiosRequestConfig> => {
+    // Core echoes it on the change feed, so this window can skip the events it caused.
+    if (config.headers) config.headers[CLIENT_HEADER] = clientId;
     if (config.headers && config.headers["X-Skip-Auth-Header"]) {
       delete config.headers["X-Skip-Auth-Header"];
       return config;

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from flowfile_core.events import publish
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
 from flowfile_core.flowfile.utils import create_unique_id
@@ -127,10 +128,12 @@ class FlowfileHandler:
             if not flow_still_open and flow_id in self._flows:
                 flow = self._flows.pop(flow_id)
                 del flow
+                publish("flow_closed", flow_id=flow_id)
         else:
             if flow_id in self._flows:
                 flow = self._flows.pop(flow_id)
                 del flow
+                publish("flow_closed", flow_id=flow_id)
 
     def evict_flow_by_path(self, flow_path: str) -> int | None:
         """Force-remove a flow (matched by on-disk path) from the registry and ALL user sessions,
@@ -145,6 +148,7 @@ class FlowfileHandler:
         self._flows.pop(target_id, None)
         for flow_ids in self._user_sessions.values():
             flow_ids.discard(target_id)
+        publish("flow_closed", flow_id=target_id)
         return target_id
 
     def rekey_flow(self, old_flow_id: int, new_flow_id: int, user_id: int | None = None) -> None:
@@ -159,6 +163,9 @@ class FlowfileHandler:
         if user_id is not None:
             self._unregister_user_session(user_id, old_flow_id)
             self._register_user_session(user_id, new_flow_id)
+        if flow is not None:
+            # A client following the old id (the change feed) learns where the flow went.
+            publish("flow_rekeyed", old_flow_id=old_flow_id, new_flow_id=new_flow_id)
 
     def save_flow(self, flow_id: int, flow_path: str, user_id: int | None = None):
         flow = self.get_flow(flow_id, user_id)

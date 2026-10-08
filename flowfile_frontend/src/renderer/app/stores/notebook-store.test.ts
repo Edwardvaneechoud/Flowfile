@@ -122,6 +122,17 @@ describe("flowSessionId", () => {
 });
 
 describe("tab lifecycle", () => {
+  it("with persistence off nothing is restored and nothing is written", () => {
+    const store = useNotebookStore();
+    const snapshot = vi.spyOn(store, "_snapshot");
+    store.setPersistence(false);
+    store.ensureHydrated();
+    expect(store.hydrated).toBe(true);
+    expect(store.openNotebooks).toEqual([]);
+    store._schedulePersist();
+    expect(snapshot).not.toHaveBeenCalled();
+  });
+
   it("ensureHydrated starts one blank tab when nothing is persisted", () => {
     const store = useNotebookStore();
     store.ensureHydrated();
@@ -982,7 +993,6 @@ describe("flow notebook", () => {
         [2, "filter"],
         [4, "select"],
       ]),
-      9,
     );
     expect(body.changed_cell_ids).toEqual(["node-2", extra.id]);
     expect(body.provenance).toEqual({
@@ -991,7 +1001,7 @@ describe("flow notebook", () => {
       "node-2": [["filter", 2]],
     });
     expect(body.code_fingerprint).toBe("f2");
-    expect(body.client_max_node_id).toBe(9);
+    expect(body).not.toHaveProperty("client_max_node_id");
 
     store.markFlowPushed(
       nb,
@@ -1051,7 +1061,7 @@ describe("flow notebook", () => {
       [3, "select"],
       [4, "sort"],
     ]);
-    expect(flowPushBody(nb, types, 4).provenance).toEqual({
+    expect(flowPushBody(nb, types).provenance).toEqual({
       "cell-1": [
         ["manual_input", 1],
         ["sort", 4],
@@ -1250,7 +1260,6 @@ describe("flow notebook run", () => {
     mocks.push.mockResolvedValue(pushed());
     hooks = {
       prepare: vi.fn(async () => true),
-      clientMaxNodeId: vi.fn(() => 3),
       confirm: vi.fn(async () => true),
       pushed: vi.fn(),
       runStarted: vi.fn(),
@@ -1805,7 +1814,7 @@ describe("flow notebook run", () => {
     mocks.render.mockResolvedValue(rendered("f2"));
     await store.refreshFlowNotebook(FLOW);
     expect(nb.cells.find((c) => c.id === "cell-1")!.code).toBe("Reads the source file");
-    const body = flowPushBody(nb, new Map([[1, "read"]]), 3);
+    const body = flowPushBody(nb, new Map([[1, "read"]]));
     expect(body.cells.map(([id]) => id)).not.toContain("cell-1");
     expect(body.provenance).not.toHaveProperty("cell-1");
   });

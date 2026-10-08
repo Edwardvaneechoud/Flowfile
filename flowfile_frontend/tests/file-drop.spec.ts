@@ -32,7 +32,7 @@ async function createFreshFlow(request: APIRequestContext, token: string): Promi
 
 async function openDesigner(page: Page, token: string, flowId: number) {
   await page.goto(`${BASE_URL}/#/main/designer`);
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('load');
   await page.evaluate(
     ({ token, expiration, flowId }: { token: string; expiration: number; flowId: number }) => {
       localStorage.setItem('auth_token', token);
@@ -45,7 +45,7 @@ async function openDesigner(page: Page, token: string, flowId: number) {
     { token, expiration: Date.now() + 60 * 60 * 1000, flowId },
   );
   await page.reload();
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('load');
   await expect(page.locator('.vue-flow')).toBeVisible({ timeout: 15000 });
 }
 
