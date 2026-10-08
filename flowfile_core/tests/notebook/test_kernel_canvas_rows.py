@@ -393,6 +393,26 @@ def test_run_all_of_a_flow_on_a_file_the_kernel_cannot_see_shows_the_canvas_rows
     assert len(_rows(_execute(client, flow, kernel_sim, f"display({name})"))) == 2
 
 
+def test_run_all_of_a_designer_configured_catalog_writer_reads_below_it_from_the_canvas(
+    designer_writer_flow, client, kernel_sim
+):
+    """The writer's cell drops the namespace id the designer stored beside its name; it still stands for the
+    canvas writer, so the rows below it are the canvas's and core is never asked to run (and refuse) a writer."""
+    from flowfile_core.notebook.render import render
+
+    flow = designer_writer_flow
+    cells = [cell for cell in render(flow).cells if cell.kind in ("imports", "node")]
+    for cell in cells:
+        result = _execute(client, flow, kernel_sim, cell.code)
+        assert result["success"], (cell.code, result)
+    read = _execute(client, flow, kernel_sim, f"print({cells[-1].defines[-1]}.collect().shape)")
+
+    assert read["success"] and read["stdout"].strip() == "(3, 3)", read
+    writer = next(node.node_id for node in flow.nodes if node.node_type == "catalog_writer")
+    assert [body["node_id"] for body in kernel_sim.node_results] == [writer]
+    assert kernel_sim.node_runs == []
+
+
 @pytest.fixture
 def editor_built_flow(open_as, tmp_path, monkeypatch):
     """CSV read -> basic filter ``quantity >= 8``, built from settings as the editor's API saves them."""
