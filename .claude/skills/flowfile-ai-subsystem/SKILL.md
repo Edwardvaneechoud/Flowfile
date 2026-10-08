@@ -323,6 +323,10 @@ never created for users who never touch the feature.
   `intent_router.py` matches its wording. Chat forwards client mentions as
   parsed `Mention`s, never as raw text (raw text would render a fake
   `## User request` line).
+- **Simple build writes code by default** (`local_model/code_build.py`, §10):
+  `POST /ai/generate` with `mode="code"` asks for a FlowFrame script and the
+  notebook's exec-free interpreter turns it into nodes. The JSON `simple` /
+  `one_shot` modes stay reachable and `simple` stays the request default.
 - Module-level singleton — **at most one server runs at a time**; `_lock`
   guards it. `LocalProvider` resolves the live port lazily on the first
   `.stream()` call so constructing it stays synchronous/non-blocking.
@@ -465,6 +469,72 @@ from `executor/__init__.py` so `from flowfile_core.ai.tools.executor import
   LLM-tolerance cost of a permissive schema. The schema stays the strict,
   canonical contract; leniency is the executor's job, scoped to the AI path
   only.
+
+---
+
+## 10. Simple build code pipeline (`ai/local_model/code_build.py`)
+
+`POST /ai/generate` with `mode="code"` (the chat drawer's default since the
+Qwen3.5 move; `simple` and `one_shot` are the JSON modes and `simple` stays
+the request default for older clients) asks the model for one ```python
+block in the notebook's FlowFrame dialect instead of a `{nodes, edges}`
+object. Measured on the on-device Qwen3.5-4B: a four-step flow in ~3 s versus
+6–8 s for the JSON object, and far fewer invented settings keys.
+
+The script is never executed. Three gates, in order, each failing with a line
+when it has one:
+
+1. **`prescan` — `ast` only.** Refuses `def`/`lambda`/loops/`if`/
+   comprehensions, any import but `flowfile`/`polars`/`datetime` (from
+   `allowlist.IMPORTS`), bare function calls (`print`, `__import__`), private
+   and dunder names, `ff.<name>` in `REFUSED_FF_NAMES` (stored sources such as
+   `read_database`/`read_catalog_table`, writers, `polars_code`/`sql`/
+   `PythonScript`, `RunFlow`/`Gate`/`concat`…) and method names in
+   `REFUSED_METHODS` (`collect`, `write_*`/`sink_*`, `sql`, `polars_code`,
+   the frame's pure transforms that fall back to a Polars Code node, minus the
+   names an `Expr` method shares such as `count`/`sum`/`cast`, since the scan
+   sees names, not receivers). **This is why the route stays JWT-only in
+   docker/package mode**: the notebook's `require_notebook_sync` admin gate
+   exists because the frame's catalog lookups do not check grants, and nothing
+   that passes the pre-scan can make one. Widening the dialect to catalog
+   readers means adding the grant check or the admin gate first.
+2. **The clean run** — `bridge.get_clean_runner().clean_run(user_id,
+   flow_id, CleanRunRequest(cells=[("build", code)], ceiling=
+   flow.node_id_ceiling, snapshot={}))`: the installed `NotebookRunner`
+   interprets the cell through `notebook/allowlist.py` and builds nodes in
+   frame build mode. No snapshot is seeded (the script never references canvas
+   nodes) and ids are renumbered by `_plan_insertions` anyway.
+3. **`spec_from_flowfile_data`** — the save-format payload becomes the
+   `{nodes, edges}` spec `oneshot._build_simple_diff` consumes (settings minus
+   identity/wiring keys, `input_ids` then `right_input_id` as edges, a
+   cwd-absolute path for a missing file turned back into what the user typed).
+   Any node in `REFUSED_NODE_TYPES` (writers, `polars_code`, `sql_query`,
+   connection sources, custom nodes) refuses the whole script — a frame method
+   such as `filter(col.str.contains(...))` or `str.to_date` still lowers to
+   a Polars Code node, and dropping it mid-chain would strand the rest.
+
+One repair round (`REPAIR_ROUNDS = 1`): the refusal goes back as a `user`
+turn after the model's own reply; a second failure is `CodeBuildError(message,
+line, code)` → 422 `{message, line, kind: "code", code}`, which the chat
+renders as the script with the line flagged. The `{"answer": …}` escape hatch
+(`oneshot.extract_answer`) still applies when no code block comes back.
+
+The prompt is `prompts/code_build.md` plus a **generated** "Available calls"
+block (`render_dialect_block`, from the allowlist and the refusal sets, so it
+can never offer a call the interpreter refuses); `test_code_build.py` pins
+every advertised name to the allowlist and the whole prompt under 2.5k
+tokens. Keep `ff.concat`, `str.contains` in a filter, `str.to_date` and the
+frame's pure transforms (`tail`, `drop_nulls`, `fill_nan`, …) out of the
+examples: they produce Polars Code nodes. Tests run the real interpreter with
+a stub provider (`StubProvider`) — never mock the clean run — and
+`test_hostile_code_never_reaches_the_clean_run_or_exec` reuses the notebook
+contract's builtin recorders.
+
+Frontend: `generateFlow(..., mode)` in `localModelApi.ts` (default `code`),
+`aiStore.simpleBuildOutput` (`code` | `json`, persisted in the device-wide
+settings bucket, Settings → AI → Assistant → Simple build), the bubble's
+collapsed `Generated code` block in `AiMessage.vue` (`buildCode`,
+`buildCodeLine`).
 
 ---
 

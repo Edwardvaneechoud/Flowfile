@@ -21,6 +21,10 @@ prompt with a small curated node vocabulary — see ``prompts/local_oneshot.md``
 Writer / sink nodes are dropped in both modes (mirroring the agent's
 ``safety.AGENT_BLOCKED_NODE_TYPES``) so a generated flow never auto-creates an
 external write; the user attaches the destination after inserting.
+
+A third mode, ``code`` (:mod:`flowfile_core.ai.local_model.code_build`), asks
+the model for FlowFrame code instead of the JSON object and feeds the notebook's
+exec-free interpreter; its nodes go through :func:`_build_simple_diff` too.
 """
 
 from __future__ import annotations
@@ -398,7 +402,9 @@ def _stage_flow(*, flow: Any, flow_id: int, user_id: int, spec: dict[str, Any]) 
     }
 
 
-def _build_simple_diff(*, flow: Any, flow_id: int, spec: dict[str, Any]) -> dict[str, Any]:
+def _build_simple_diff(
+    *, flow: Any, flow_id: int, spec: dict[str, Any], rationale: str = "Generated flow (simple mode)"
+) -> dict[str, Any]:
     """Build a :class:`GraphDiff` DIRECTLY from a ``{nodes, edges}`` spec — the
     light "simple" path: no executor, no schema prediction, no dry-run.
 
@@ -465,7 +471,6 @@ def _build_simple_diff(*, flow: Any, flow_id: int, spec: dict[str, Any]) -> dict
         logger.warning("oneshot (simple): no usable nodes after filtering: %s", "; ".join(warnings))
         raise OneShotError("no usable nodes after dropping writers/unknowns: " + "; ".join(warnings[:5]))
 
-    rationale = "Generated flow (simple mode)"
     session_id = f"simple-{flow_id}-{uuid.uuid4().hex[:8]}"
     graph_diff = diff_module.GraphDiff(
         session_id=session_id,
@@ -501,6 +506,11 @@ async def generate_flow(
         (schema prediction + dry-run). For bigger models; catches errors early.
       * ``"simple"`` — build the diff directly, no validation until apply. For
         small local models; cheap and forgiving.
+      * ``"code"`` — the model writes FlowFrame code, which the notebook's
+        exec-free interpreter turns into nodes (:mod:`code_build`); the result
+        also carries the accepted ``code``. Raises
+        :class:`code_build.CodeBuildError` when the script still fails after
+        its one repair round.
 
     Returns ``{diff_id, op_count, created, warnings, rationale, diff_payload}``.
     The build step is offloaded to a worker thread (the one-shot path can hit
@@ -511,6 +521,17 @@ async def generate_flow(
     ``answer`` with ``diff_id=None`` / ``op_count=0``, so the chat shows the
     reply instead of a parse error.
     """
+    if mode == "code":
+        from flowfile_core.ai.local_model import code_build
+
+        return await code_build.generate_code_flow(
+            provider=provider,
+            flow=flow,
+            flow_id=flow_id,
+            user_id=user_id,
+            user_request=user_request,
+            max_tokens=max_tokens,
+        )
     messages = [
         Message(role="system", content=SYSTEM_PROMPT),
         Message(role="user", content=user_request),

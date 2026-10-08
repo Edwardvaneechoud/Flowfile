@@ -346,7 +346,7 @@ const modeTooltip = computed<string>(() => {
     case "agent":
       return "Agent mode — every Send runs the agent and proposes a GraphDiff for review.";
     case "simple":
-      return "Simple build — generate a whole flow in one shot (no validation); add it to the canvas with one click.";
+      return "Simple build — the model writes the flow as FlowFrame code, Flowfile turns it into nodes; add them to the canvas with one click.";
     case "auto":
     default:
       return "Auto-agent — chat by default; the classifier auto-promotes to agent when a build intent is detected.";

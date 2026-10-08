@@ -115,6 +115,8 @@ The server runs them with thinking switched off, so answers start at the first t
 
 The on-device model gets its own system prompt: a short assist prompt without the cloud footer that asks you to switch to agent mode (there is no agent mode on-device), and a one-line-per-node reference instead of the full one, so the whole prompt is about 3k tokens. If you ask it to build or change something, it describes the steps with the palette labels and points to *Simple build* for generating a whole flow.
 
+*Simple build* asks the model for [FlowFrame code](index.md#simple-build-one-message-one-flow) rather than node settings, which the 4B handles well: a four-step flow comes back in a few seconds on an Apple Silicon laptop, and the code is shown in the chat bubble so you can see what it understood. Flowfile reads the script into nodes without running it.
+
 Prebuilt runtimes exist for macOS, Linux, and Windows on x64 and arm64; elsewhere the card shows "Not available on this platform".
 
 The on-device model streams but does not do tool calls, so it backs the read-only and text surfaces — Chat, Fix With AI, Generate Documentation, Lineage Q&A, the inline ✨ actions — plus one-shot flow generation. The Agent rejects it with a `422`. For heavier work use a provider such as Ollama or OpenRouter.

@@ -211,7 +211,27 @@ export interface GenerateFlowResult {
   // The model's plain reply when the request was not a pipeline description
   // (a question, a greeting); shown as the chat answer, nothing is staged.
   answer: string | null;
+  // ``mode="code"``: the FlowFrame script the nodes were built from, shown
+  // in the chat bubble. ``null`` in the JSON modes and for an answer.
+  code: string | null;
 }
+
+export type GenerateFlowMode = "simple" | "one_shot" | "code";
+
+// The 422 detail ``mode="code"`` answers when the script still fails after
+// its repair round: the message, the 1-based line in ``code`` when known.
+export interface GenerateFlowFailure {
+  message: string;
+  line: number | null;
+  kind: "code";
+  code: string | null;
+}
+
+export const isGenerateFlowFailure = (detail: unknown): detail is GenerateFlowFailure =>
+  typeof detail === "object" &&
+  detail !== null &&
+  (detail as { kind?: unknown }).kind === "code" &&
+  typeof (detail as { message?: unknown }).message === "string";
 
 interface PyGenerateFlowResult {
   diff_id: string | null;
@@ -221,20 +241,23 @@ interface PyGenerateFlowResult {
   rationale: string;
   diff_payload: Record<string, unknown> | null;
   answer?: string | null;
+  code?: string | null;
 }
 
 // POST /ai/generate — provider-agnostic whole-flow generation (the "Simple
-// build" surface). Works for any provider (local or cloud). ``mode="simple"``
-// builds the diff with no validation until apply; ``"one_shot"`` validates each
-// node through the executor (for bigger models). Returns the staged diff id +
-// the full diff payload so the caller can apply it via the existing diff-accept
-// route.
+// build" surface). Works for any provider (local or cloud). ``mode="code"``
+// (the drawer's default) has the model write FlowFrame code that core turns
+// into nodes without running it; ``"simple"`` has it write the node settings
+// as JSON, built with no validation until apply; ``"one_shot"`` validates
+// each node through the executor (for bigger models). Returns the staged
+// diff id + the full diff payload so the caller can apply it via the
+// existing diff-accept route.
 export const generateFlow = async (
   flowId: number,
   userRequest: string,
   provider: string,
   model: string | null = null,
-  mode: "simple" | "one_shot" = "simple",
+  mode: GenerateFlowMode = "code",
   maxTokens?: number | null,
 ): Promise<GenerateFlowResult> => {
   const response = await axios.post<PyGenerateFlowResult>("/ai/generate", {
@@ -254,6 +277,7 @@ export const generateFlow = async (
     rationale: raw.rationale,
     diffPayload: raw.diff_payload,
     answer: raw.answer ?? null,
+    code: raw.code ?? null,
   };
 };
 

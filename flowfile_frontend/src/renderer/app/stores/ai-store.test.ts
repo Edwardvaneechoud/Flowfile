@@ -138,6 +138,12 @@ vi.mock("../views/AiSettingsView/localModelApi", () => ({
   LOCAL_PROVIDER_ID: "local",
   fetchLocalModelStatus: vi.fn(async () => null),
   generateFlow: mockSymbols.generateFlow,
+  // The real guard: pure, and the code-mode failure specs rely on it.
+  isGenerateFlowFailure: (detail: unknown) =>
+    typeof detail === "object" &&
+    detail !== null &&
+    (detail as { kind?: unknown }).kind === "code" &&
+    typeof (detail as { message?: unknown }).message === "string",
   selectLocalModel: vi.fn(),
   streamLocalModelInstall: vi.fn(),
 }));
@@ -972,6 +978,7 @@ describe("useAiStore - Simple build answers instead of failing on a question", (
       rationale: "Generated flow (simple mode)",
       diffPayload: {},
       answer: null,
+      code: null,
     });
     const store = _seed();
     await store.generateFlowFromComposer("read orders.csv and keep paid orders");
@@ -979,5 +986,115 @@ describe("useAiStore - Simple build answers instead of failing on a question", (
     expect(reply.buildDiffId).toBe("diff-1");
     expect(reply.buildOpCount).toBe(3);
     expect(reply.content).toContain("Built a flow with 3 node(s)");
+  });
+});
+
+describe("useAiStore - Simple build in code mode", () => {
+  const SCRIPT = 'import flowfile as ff\norders = ff.read_csv("orders.csv")';
+  const _seed = (): ReturnType<typeof useAiStore> => {
+    const store = useAiStore();
+    store.providers = [
+      {
+        provider: "local",
+        supportsTools: false,
+        supportsStreaming: true,
+        defaultModel: "qwen3.5-4b",
+        surfaces: {},
+        status: "configured",
+        credential: null,
+      },
+    ];
+    store.setSelectedProvider("local");
+    return store;
+  };
+
+  it("asks for code by default and keeps the script on the bubble", async () => {
+    mockSymbols.generateFlow.mockResolvedValue({
+      diffId: "diff-2",
+      opCount: 1,
+      created: [],
+      warnings: [],
+      rationale: "Generated flow (code mode)",
+      diffPayload: {},
+      answer: null,
+      code: SCRIPT,
+    });
+    const store = _seed();
+    expect(store.simpleBuildOutput).toBe("code");
+    await store.generateFlowFromComposer("read orders.csv");
+    expect(mockSymbols.generateFlow).toHaveBeenCalledWith(
+      1,
+      "read orders.csv",
+      "local",
+      "qwen3.5-4b",
+      "code",
+    );
+    const reply = store.messages[store.messages.length - 1];
+    expect(reply.buildDiffId).toBe("diff-2");
+    expect(reply.buildCode).toBe(SCRIPT);
+    expect(reply.buildCodeLine).toBeUndefined();
+  });
+
+  it("sends the JSON mode when the setting says so", async () => {
+    mockSymbols.generateFlow.mockResolvedValue({
+      diffId: "diff-3",
+      opCount: 1,
+      created: [],
+      warnings: [],
+      rationale: "Generated flow (simple mode)",
+      diffPayload: {},
+      answer: null,
+      code: null,
+    });
+    const store = _seed();
+    store.setSimpleBuildOutput("json");
+    await store.generateFlowFromComposer("read orders.csv");
+    expect(mockSymbols.generateFlow).toHaveBeenLastCalledWith(
+      1,
+      "read orders.csv",
+      "local",
+      "qwen3.5-4b",
+      "simple",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(mockSymbols.persistAiSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ simpleBuildOutput: "json" }),
+    );
+  });
+
+  it("shows the failing script and its line when the repair round also failed", async () => {
+    mockSymbols.generateFlow.mockRejectedValue({
+      response: {
+        status: 422,
+        data: {
+          detail: {
+            message: "`ff.read_json` is not a flowfile name",
+            line: 2,
+            kind: "code",
+            code: 'import flowfile as ff\norders = ff.read_json("orders.json")',
+          },
+        },
+      },
+    });
+    const store = _seed();
+    await store.generateFlowFromComposer("read orders.json");
+    const reply = store.messages[store.messages.length - 1];
+    expect(reply.error).toBe("line 2: `ff.read_json` is not a flowfile name");
+    expect(reply.content).toContain("Generation failed: line 2");
+    expect(reply.buildCode).toContain("ff.read_json");
+    expect(reply.buildCodeLine).toBe(2);
+    expect(reply.buildDiffId).toBeUndefined();
+    expect(store.streamingState).toBe("error");
+  });
+
+  it("keeps a plain string detail as the failure message", async () => {
+    mockSymbols.generateFlow.mockRejectedValue({
+      response: { status: 422, data: { detail: "Could not generate a flow: nothing parsed" } },
+    });
+    const store = _seed();
+    await store.generateFlowFromComposer("read orders.csv");
+    const reply = store.messages[store.messages.length - 1];
+    expect(reply.error).toBe("Could not generate a flow: nothing parsed");
+    expect(reply.buildCode).toBeUndefined();
   });
 });

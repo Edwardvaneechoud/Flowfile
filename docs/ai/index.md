@@ -42,6 +42,23 @@ The **Verify plan completion** checkbox adds one extra LLM round after the agent
 
 Every variant shows fine-grained progress (*"Step 1/4: classifying intent"*, etc.) and supports follow-up messages after completion. Internals: [AI Integration Architecture](../for-developers/ai-architecture.md#the-planner-state-machine).
 
+### Simple build (one message, one flow)
+
+The lightest way to start a flow, and the one that works on every provider including On-device AI: switch the drawer to *Simple build*, describe the pipeline in one message, and the reply carries an **Add to canvas** button that inserts the whole flow as one undo step.
+
+Under the hood the model writes the flow as **FlowFrame code**, Flowfile's Python dialect, the same code the Notebook pane shows for any flow:
+
+```python
+import flowfile as ff
+orders = ff.read_csv("orders.csv")
+paid = orders.filter(ff.col("status") == "paid")
+totals = paid.group_by(["city"]).agg(ff.col("amount").sum().alias("total"))
+```
+
+Models have seen far more code of this shape than Flowfile's node settings, so the result comes back faster and more often correct, especially from a small model. Flowfile **never runs that code**: it reads it the way the notebook sync does and places one node per step. Anything outside the dialect is refused before it is read at all: writers (`write_*`, `sink_*`), `collect()`, code nodes (`polars_code`, `sql`, Python scripts), database, cloud, catalog and Kafka sources, and plain Python (`def`, loops, other imports). A refused line goes back to the model once for a rewrite; if that fails too, the chat shows the message, the script and the offending line. The script behind a successful build sits collapsed under **Generated code** in the bubble.
+
+Attach the destination (a writer node) after inserting; Simple build never creates one. **Settings → AI → Assistant → Simple build** switches the model back to writing node settings as JSON, the behaviour of earlier releases.
+
 ### Auto routing (chat ↔ agent)
 
 With the drawer mode toggle set to *Auto* (default), each message hits a lightweight intent classifier first. Clear *editing* intent (*"add a filter for Q4 orders"*) auto-promotes to the Agent with a banner explaining the switch; pure questions stay in chat. The classifier runs on a small fast model (Haiku / Flash / 4.1-mini) so the round-trip is nearly invisible. Pin to *Chat* or *Agent* explicitly to bypass routing.
