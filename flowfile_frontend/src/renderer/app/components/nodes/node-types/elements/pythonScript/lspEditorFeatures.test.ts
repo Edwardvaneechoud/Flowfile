@@ -7,9 +7,16 @@ import type { Tooltip } from "@codemirror/view";
 // The hover/signature modules reach the API layer, which boots axios + auth on import.
 vi.mock("@/api/lsp.api", () => ({ LspApi: { capabilities: vi.fn(), hover: vi.fn() } }));
 
-import { insideCall, insideString, lspDiagnosticToRange, notInAsBinding } from "./lspPositions";
+import {
+  callArgsEmpty,
+  currentArgText,
+  insideCall,
+  insideString,
+  lspDiagnosticToRange,
+  notInAsBinding,
+} from "./lspPositions";
 import { signatureCoversHover } from "./lspHover";
-import { setSigTooltip, sigTooltipField, signatureApplies } from "./lspSignature";
+import { activeParamIndex, setSigTooltip, sigTooltipField, signatureApplies } from "./lspSignature";
 import type { LspDiagnostic } from "@/api/lsp.api";
 
 function stateFor(code: string): EditorState {
@@ -145,6 +152,50 @@ describe("signatureApplies (signature help vs. string arguments)", () => {
   it("does not apply outside a call", () => {
     expect(at("orders.rename()|")).toBe(false);
   });
+
+  it("steps aside while a member access is typed as an argument", () => {
+    expect(at("ff.read_api(df.|)")).toBe(false);
+    expect(at("ff.read_api(df.sel|)")).toBe(false);
+    expect(at("df.select(pl.col|)")).toBe(false);
+    expect(at("f(a.b().c.|)")).toBe(false);
+    expect(at("f(x[0].|)")).toBe(false);
+  });
+
+  it("comes back between arguments and after a numeric literal", () => {
+    expect(at("ff.read_api(df.x, |)")).toBe(true);
+    expect(at('df.select(pl.col("a")|)')).toBe(true);
+    expect(at("round(1.|)")).toBe(true);
+  });
+});
+
+describe("sigTooltipField (drops on the keystroke that leaves the arguments)", () => {
+  const tooltip = { pos: 0, above: true, create: () => ({ dom: null }) } as unknown as Tooltip;
+
+  function shownAt(source: string): EditorState {
+    const { state, pos } = pyStateAt(source);
+    const withField = EditorState.create({
+      doc: state.doc,
+      selection: { anchor: pos },
+      extensions: [python(), sigTooltipField],
+    });
+    return withField.update({ effects: setSigTooltip.of({ ...tooltip, pos }) }).state;
+  }
+
+  it("clears when the user types a member-access dot", () => {
+    const state = shownAt("ff.read_api(df|)");
+    const pos = state.selection.main.head;
+    const next = state.update({
+      changes: { from: pos, insert: "." },
+      selection: { anchor: pos + 1 },
+    });
+    expect(next.state.field(sigTooltipField)).toBeNull();
+  });
+
+  it("stays while typing an ordinary argument", () => {
+    const state = shownAt("ff.read_api(|)");
+    const next = state.update({ changes: { from: 12, insert: "x" }, selection: { anchor: 13 } });
+    expect(next.state.field(sigTooltipField)).not.toBeNull();
+  });
 });
 
 describe("lspDiagnosticToRange (coordinate -> offset mapping)", () => {
@@ -250,5 +301,90 @@ describe("signatureCoversHover (one hint, not two)", () => {
 
   it("does nothing when no signature tooltip is showing", () => {
     expect(signatureCoversHover(stateWithSignatureAt(null), CALLEE)).toBe(false);
+  });
+});
+
+describe("callArgsEmpty (full docs only right after the open paren)", () => {
+  function at(source: string): boolean {
+    const { state, pos } = pyStateAt(source);
+    return callArgsEmpty(state, pos);
+  }
+
+  it("is true right after the paren, whitespace allowed", () => {
+    expect(at("ff.read_database(|)")).toBe(true);
+    expect(at("ff.read_database(\n    |)")).toBe(true);
+  });
+
+  it("is false once an argument is typed", () => {
+    expect(at("ff.read_database(c|)")).toBe(false);
+    expect(at("ff.read_database(connection_name=|)")).toBe(false);
+    expect(at('ff.read_database("db", |)')).toBe(false);
+  });
+
+  it("follows the innermost call and is false outside one", () => {
+    expect(at("f(g(|))")).toBe(true);
+    expect(at("f(g(x), |)")).toBe(false);
+    expect(at("f()|")).toBe(false);
+  });
+});
+
+describe("currentArgText (the argument being typed)", () => {
+  function at(source: string): string | null {
+    const { state, pos } = pyStateAt(source);
+    return currentArgText(state, pos);
+  }
+
+  it("is the text after the open paren or the last top-level comma", () => {
+    expect(at("ff.read_database(table_n|)")).toBe("table_n");
+    expect(at('ff.read_database("db", ta|)')).toBe(" ta");
+    expect(at("f(a, b=|)")).toBe(" b=");
+  });
+
+  it("skips commas nested in brackets and strings", () => {
+    expect(at("f(g(1, 2) + x|)")).toBe("g(1, 2) + x");
+    expect(at('f("a,b" + c|)')).toBe('"a,b" + c');
+    expect(at("f([1, 2], {3: 4, 5: 6}|)")).toBe(" {3: 4, 5: 6}");
+  });
+
+  it("is null outside a call", () => {
+    expect(at("x = 1|")).toBeNull();
+  });
+});
+
+describe("activeParamIndex (which parameter the typed argument targets)", () => {
+  const sig = {
+    label: "read_database(connection_name: 'str', *, table_name: 'str | None'=None, ...)",
+    parameters: [
+      "connection_name: 'str'",
+      "table_name: 'str | None'=None",
+      "schema_name: 'str | None'=None",
+      "*args",
+      "**kwargs",
+    ],
+    active_parameter: 0,
+    documentation: "",
+  };
+
+  it("follows a partial keyword name before the `=` is typed", () => {
+    expect(activeParamIndex(sig, "table_n")).toBe(1);
+    expect(activeParamIndex(sig, " sch")).toBe(2);
+  });
+
+  it("follows a completed `name=`", () => {
+    expect(activeParamIndex(sig, "schema_name=")).toBe(2);
+    expect(activeParamIndex(sig, " table_name = 'x")).toBe(1);
+  });
+
+  it("keeps Jedi's index for positional values and unknown names", () => {
+    expect(activeParamIndex(sig, '"db"')).toBe(0);
+    expect(activeParamIndex(sig, "my_conn")).toBe(0);
+    expect(activeParamIndex(sig, "x == 1")).toBe(0);
+    expect(activeParamIndex({ ...sig, active_parameter: 1 }, "")).toBe(1);
+    expect(activeParamIndex(sig, null)).toBe(0);
+  });
+
+  it("never matches the star parameters by name", () => {
+    expect(activeParamIndex(sig, "args")).toBe(0);
+    expect(activeParamIndex(sig, "kwargs=")).toBe(0);
   });
 });
