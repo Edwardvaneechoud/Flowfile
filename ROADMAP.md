@@ -1,348 +1,341 @@
 # Flowfile Roadmap
 
-### One graph. Two doors. Your environment.
-
 **Flowfile 0.22.1 · updated 2026-10-08 · [discuss this roadmap](https://github.com/edwardvaneechoud/Flowfile/discussions/categories/announcements)**
 
-Flowfile is a tool for analytics and exploratory ETL: work that starts as a
-question about some data, turns into a pipeline, and tends to end up tied to
-the place it was built. This roadmap is about making that work portable. A
-flow built on a laptop should run on a machine you choose, keep its tables in
-a format other engines can read, use a catalog you operate, and still work as
-plain Python if you stop using Flowfile.
+Flowfile is for analytics and exploratory ETL. You start with a question,
+work through the data, and end up with a pipeline worth keeping. You should
+be able to run that pipeline wherever it makes sense, without being tied to
+the setup where you built it.
 
-Flowfile already does part of this. The analyst's canvas and the engineer's
-Python edit the same graph. Tables are stored as Delta, on disk or in your
-own bucket. Compute runs in a worker you can place where you like, and every
-flow exports to a Polars script. The rest of this document is about closing
-the distance between that and the full picture.
+Some of that already works. The canvas and the Python API edit the same
+graph. Tables use Delta and live on disk or in your own bucket. Compute runs
+in a separate worker, and flows export to Polars scripts. There are still
+gaps, especially around running workers on separate machines, connecting to
+external catalogs and exporting every node type. This roadmap covers those
+gaps and what comes after.
 
-It is a direction, not a delivery schedule: no dates, no version numbers next
-to features. Each track names the step it starts with and the result you will
-be able to check, and the design of each step is open to argument in a
-public Discussion before its code lands.
+There are no delivery dates here. Each track has a first step and a clear
+way to check whether it works. We'll discuss the design publicly before
+implementing it.
 
 ---
 
 ## 1. Where Flowfile sits
 
-Most data tools are built around one way of working, and do it well. Visual
-tools such as Alteryx, KNIME and Power Query put the canvas first and offer a
-script node for the cases the palette does not cover. Code tools such as dbt,
-Airflow and Dagster put code first and draw a graph so you can see what you
-wrote. Each is a sensible choice, and a lot of good work gets done in both.
+Visual tools like Alteryx, KNIME and Power Query start with a canvas and let
+you add scripts where needed. Tools like dbt, Airflow and Dagster start with
+code and show you a graph of what you wrote. Both approaches work.
 
-Flowfile tries to serve both ways of working on one graph. The analyst on the
-canvas and the engineer in Python edit **the same object**, not a translation
-or an export of it:
+In Flowfile, the canvas and Python API edit **the same graph**. An analyst
+can build a flow visually, and an engineer can open it in Python and carry
+on from there, with the same node IDs.
 
-![The visual designer on the left and the Python API on the right both edit one shared flow graph in the middle, and that graph exports to a plain Polars script that runs with no Flowfile installed.](docs/assets/images/roadmap/one-graph-three-renderings.svg)
+![The visual designer and Python API edit the same flow graph. The graph exports to a Polars script that runs without Flowfile.](docs/assets/images/roadmap/one-graph-three-renderings.svg)
 
-A flow built by dragging nodes opens in Python with the same node ids. A flow
-written in Python opens on the canvas as editable nodes. Either one exports
-to a Polars script that runs without Flowfile installed.
+It works the other way too: a flow written in Python opens as editable nodes
+on the canvas. Both export to a Polars script that runs without Flowfile
+installed.
 
-Where that puts Flowfile among the tools people use for this kind of work:
+This is roughly where we place Flowfile alongside other tools:
 
-![A two-by-two chart: visual-first tools such as Alteryx, KNIME and Power Query sit top-left; Excel and one-off scripts sit bottom-left; code-first tools such as dbt, Airflow, Dagster, Databricks and plain Polars sit bottom-right; Enso and Flowfile sit top-right, where the canvas and the code are both main surfaces on one graph, with Flowfile furthest into that corner.](docs/assets/images/roadmap/where-flowfile-sits.svg)
+![A two-by-two chart comparing tools: Alteryx, KNIME and Power Query favour the canvas; dbt, Airflow, Dagster, Databricks and Polars favour code; Excel and one-off scripts sit bottom-left. Enso and Flowfile sit top-right, with both canvas and code as primary ways to work.](docs/assets/images/roadmap/where-flowfile-sits.svg)
 
-*Placements are our reading of each tool's design priorities, not a feature
-scorecard. Product names are trademarks of their owners; Flowfile is not
-affiliated with any of them.*
+*This is our view of each tool's priorities. Product names belong to their
+respective owners, and Flowfile isn't affiliated with them.*
 
-Enso is the closest neighbour: it also treats the diagram and the code as one
-thing, and does it with a language of its own. Flowfile does it with Python
-and Polars, so what you build runs in the stack most data teams already have.
+Enso is the closest neighbour. It also treats the diagram and code as one
+thing, using its own language. Flowfile uses Python and Polars, which many
+data teams already work with.
 
-This is why the Alteryx importer reports, per tool, what it could not
-reproduce instead of guessing, why the canvas notebook renders the open flow
-as Python cells and pushes edits back, and why the code export is tested for
-equality against the canvas result on every commit. It is also the rule for
-everything below: a feature is done when it exists on the canvas, in the
-Python API and in the export.
+The Alteryx importer reports what it couldn't reproduce for each tool.
+The canvas notebook shows the open flow as Python cells and writes edits
+back to it. On every commit, tests compare exported code with the canvas
+result. The same requirement applies to new features: they need to work on
+the canvas, in the Python API and in the export.
 
 ---
 
 ## 2. Where we are going
 
-Portable needs a concrete meaning. We check it with four questions:
+We want a flow to meet four requirements:
 
-| | Question | What it asks |
+| | Requirement | What it means |
 |---|---|---|
-| 1 | **Own compute** | Is the data processed where you choose, on machines you control? |
-| 2 | **Open formats** | Can another engine read your tables without Flowfile? |
-| 3 | **Own catalog** | Is the catalog a service you run, and does it hand credentials to the compute so the flow never holds them? |
-| 4 | **Exit without rewrite** | If you stop using Flowfile, does the pipeline still run? |
+| 1 | **Your compute** | Data is processed on machines you choose and control. |
+| 2 | **Open formats** | Other engines can read your tables without Flowfile. |
+| 3 | **Your catalog** | You run the catalog. It passes credentials to the compute, so the flow doesn't need to hold them. |
+| 4 | **Keep your work** | If you stop using Flowfile, your pipeline still runs. |
 
-The aim is a yes to all four for the work that fits on one good machine, and
-a path to a cluster when you need one without changing the flow. Most
-analytics pipelines handle gigabytes, not terabytes, and one machine is often
-the right size for them.
+The first target is work that fits on one good machine. Many analytics
+pipelines deal with gigabytes, and a single machine handles them fine. When
+you do need a cluster, you should be able to use one without rebuilding the
+flow.
 
-Many teams are asking these same questions under the heading of data
-sovereignty, as workloads move to European or on-premises infrastructure. The
-questions are the same whatever you call them, and they are decided by the
-tools a team uses day to day more than by the datacenter.
+These requirements also matter to teams moving to European or on-premises
+infrastructure. Choosing a datacenter is part of data sovereignty; the tools
+you use every day need to support that choice too.
 
 ### The target architecture
 
-Every box in this picture can be swapped for something else.
+The idea is to let you choose the parts of the stack, and replace them when
+you need to.
 
-![Six layers from top to bottom: you author in the visual designer, the Python API, the canvas notebook or the AI planner; everything meets in one flow graph that exports to plain Polars and imports Alteryx workflows; it runs on your laptop, your own worker, Polars Cloud or sandboxed kernels; tables are stored as Delta inside the catalog or Iceberg at the edges; the catalog is Flowfile's own metadata, Lakekeeper, or any Iceberg REST catalog such as Unity, Polaris, Glue or S3 Tables; and it all sits on any object store. Plain cards are shipped, a GAP tag marks a known gap, dimmed cards are planned.](docs/assets/images/roadmap/target-architecture.svg)
+![The planned stack: the visual designer, Python API, canvas notebook and AI planner share one flow graph, with Polars export and Alteryx import. Execution options include a laptop, your own worker, Polars Cloud and sandboxed kernels. Tables use Delta internally and Iceberg for exchange. Catalog options include Flowfile metadata, Lakekeeper and other Iceberg REST catalogs, backed by your choice of object store.](docs/assets/images/roadmap/target-architecture.svg)
 
-**Legend:** plain cards are shipped · a `GAP` tag marks something shipped
-with a known gap · dimmed cards are on this roadmap.
+**Legend:** plain cards are shipped · `GAP` marks a known limitation in
+something shipped · dimmed cards are planned.
 
-Two gaps are marked. The flow graph exports almost every node, but a few
-types (Google Analytics, SQL query, API response) have no code export yet.
-The worker runs as a separate service with its own URL and auth, but it hands
-results back as a path on its own disk, so today it has to share a filesystem
-with core. Both are first on the road.
+The diagram marks two gaps. A few node types, including Google Analytics,
+SQL query and API response, don't have code export yet. The worker has its
+own URL and authentication, but returns results as a path on its local
+disk. Core needs to read that file, so the two still need a shared
+filesystem. Both need fixing.
 
 ### What 1.0 means
 
-Flowfile calls itself 1.0 when a flow built on a laptop answers yes to all
-four questions without being changed: it runs on a worker on another machine
-with no shared disk; its tables sit in the owner's bucket and other engines
-can read them through a catalog the owner runs; the owner signs in with their
-own identity provider, and credentials reach the compute through the catalog
-rather than through the flow; and its code export runs with Flowfile
-uninstalled and gives the same frame. The whole stack comes up from one
-compose command, and CI proves it.
+A flow built on a laptop must meet all four requirements without changes:
+
+- It runs on a worker on another machine, with no shared disk.
+- Its tables live in your bucket, and other engines can read them through a
+  catalog you run.
+- You sign in with your own identity provider. The catalog passes
+  credentials to the compute; the flow doesn't store them.
+- Its exported code produces the same DataFrame with Flowfile uninstalled.
+
+The full stack must start with one Docker Compose command, with CI checking
+that it all works together. That's the bar for 1.0.
 
 ---
 
-## 3. The road
+## 3. What comes first
 
-Three horizons, no dates.
+**Now:** let workers return results over the network, and implement the
+Iceberg reader. Add a round-trip test that counts what gets lost in export,
+a benchmark for the AI planner, and a Compose profile with PostgreSQL and
+MinIO.
 
-**Now.** The two gaps in the architecture picture close first: worker results
-travel over the wire instead of as a path, and the Iceberg reader stops being
-a stub. Alongside them, the round-trip gets a test that counts lossy exports,
-the AI planner gets a benchmark, and the compose file gets a profile with
-PostgreSQL and MinIO.
+**Next, towards 1.0:** introduce a common execution interface with pluggable
+backends, and try a Polars Cloud backend behind a feature flag. Connect
+Iceberg to external catalogs, mirror the Flowfile catalog in Lakekeeper, and
+let each catalog root choose its table format. Verify in CI that two Flowfile
+instances can share one catalog. Add OIDC login and finish code export for
+every node type.
 
-**Next, the road to 1.0.** Execution becomes a seam with pluggable backends,
-with a Polars Cloud spike behind a flag. Iceberg gets a catalog connection,
-Lakekeeper mirrors the Flowfile catalog, and a catalog root can choose its
-table format. Two Flowfile instances share one catalog, proven in CI. OIDC
-login. Every node type exports.
-
-**Later.** A stable Polars Cloud backend, Lakekeeper in delegate mode,
-components shared through the catalog instead of per-instance files, kernels
-on a remote Docker host, and a checklist mapping the four questions to
-settings.
+**Later:** a stable Polars Cloud backend, Lakekeeper in delegate mode,
+components shared through the catalog, and kernels running on a remote
+Docker host. Also, a practical checklist showing which settings cover the
+four requirements above.
 
 ---
 
 ## 4. The tracks
 
-Six tracks carry the road. A track gets a Discussion thread in
+The work is split into six tracks. Each gets a Discussion in
 [Announcements](https://github.com/edwardvaneechoud/Flowfile/discussions/categories/announcements)
-when work on it starts, holding its milestones with their design, their
-open questions and the concrete result that says each one landed. Here,
-each track keeps only its intent, where it starts, and how you will know.
+when work starts. That's where we'll keep the detailed milestones, design
+questions and acceptance criteria.
 
 ### Track 1 · Bring your own compute
 
-Run the compute wherever the data owner chooses, from a laptop to a VM in
-their own account to a managed Polars cluster, without changing the flow. The
-worker is already a separate service with its own URL and auth; what keeps it
-on the same machine as core is that it hands results back as a path on its
-own disk, and core reads that file for the schema and the preview.
+Run a flow on your laptop, a VM in your own account or a managed Polars
+cluster without changing it. The worker is already a separate service with
+its own URL and authentication. The remaining dependency is its result
+file: core opens it to read the schema and preview.
 
-*Where it starts:* the worker returns a bounded sample, the schema and the
-row count over the wire, behind a flag, so core never opens the worker's
-files.
+The first step is to return a limited sample, schema and row count over the
+network, behind a feature flag. Core should no longer need access to the
+worker's files. We'll verify this by running the end-to-end suite with core
+and worker on separate hosts and no shared filesystem.
 
-*How you will know:* core and worker run on two hosts with no shared
-filesystem and the end-to-end suite is green. After that: one execution
-interface in place of the inline local-or-remote branches, backends as
-entry-point plugins, a Polars Cloud backend whose submitted plans carry no
-credentials, and kernels on a remote Docker host.
+After that, we'll replace the scattered local-or-remote branches with one
+execution interface and support backends as entry-point plugins. That makes
+room for Polars Cloud, with no credentials in submitted plans, and kernels
+running on a remote Docker host.
 
 ### Track 2 · Open formats and catalogs
 
-Flowfile tables are readable by any engine, and Flowfile reads and writes the
-catalogs the ecosystem is standardizing on. Delta stays the internal format
-because it needs no catalog and because change data feed, merge, SCD2, row
-edits and time travel are built on it. Iceberg is added at the edges, and
-Flowfile works with the Iceberg REST catalogs you already run: Lakekeeper
-first, then Polaris, Unity, Glue and S3 Tables.
+Other engines should be able to read Flowfile's tables, and Flowfile should
+work with the catalogs you already use. Delta stays the internal format. It
+doesn't require a catalog, and our change data feed, merge, SCD2, row edits
+and time travel support already use it.
 
-*Where it starts:* the Iceberg reader, by metadata path, built in the worker
-so credentials never enter a plan. The writer follows with the catalog
-connection, because an Iceberg commit is a catalog operation.
+We'll add Iceberg for reading and writing data across tools, starting with
+Lakekeeper and then Polaris, Unity, Glue and S3 Tables through the Iceberg
+REST API.
 
-*How you will know:* an Iceberg table written by another engine reads in
-Flowfile from MinIO, through the node, the Python API and the export. Later,
-a Delta table Flowfile wrote shows up in Lakekeeper, and another engine reads
-it with credentials the catalog vended, with no storage keys in that engine's
-config.
+First comes an Iceberg reader that takes a metadata path. It will run in the
+worker so credentials stay out of the plan. The writer follows once the
+catalog connection is in place, since committing to Iceberg requires a
+catalog operation.
+
+The first check is to read an Iceberg table stored in MinIO and written by
+another engine, using the node, Python API and exported code. Later, a Delta
+table written by Flowfile should appear in Lakekeeper and be readable by
+another engine, using credentials supplied by the catalog. That engine
+shouldn't need storage keys in its config.
 
 ### Track 3 · One catalog, many instances
 
-Independent Flowfile installs, each with its own compute, share one catalog
-safely. The pieces exist: metadata on PostgreSQL, data in the owner's bucket,
-secrets any master-key holder can re-derive. The proof does not.
+Separate Flowfile installs should be able to share a catalog, each with its
+own compute. We have the parts: PostgreSQL metadata, data in your bucket,
+and secrets that any instance with the master key can re-derive. We still
+need to prove they work together safely.
 
-*Where it starts:* a test. Two cores on one PostgreSQL catalog and one MinIO
-bucket, each with its own worker; instance B reads what instance A wrote, and
-no cloud-backed read is ever served from a replayed plan carrying another
-instance's credentials.
+We'll start with a test: two cores, one PostgreSQL catalog, one MinIO bucket
+and a worker for each core. Instance B must read what instance A wrote.
+Cloud-backed reads must never replay a plan containing another instance's
+credentials.
 
-*How you will know:* that test runs in CI. Then OIDC login in server mode,
-with the user's own identity reaching external catalogs; then custom nodes,
-flow references and connections shared through the catalog instead of
-per-instance files.
+Once that runs in CI, the next step is OIDC login in server mode, passing
+the user's identity to external catalogs. Then custom nodes, flow
+references and connections can move from per-instance files into the shared
+catalog.
 
 ### Track 4 · The round-trip
 
-The canvas, the exported Polars script and the Python API are three
-renderings of one flow, with nothing lost between them. Today the trip is
-lossy in two places: a node type with no export handler, and an expression
-the Python API cannot turn back into source, which it stores as an opaque
-blob.
+Moving between the canvas, Python API and exported Polars script should
+preserve the flow. Today, information can be lost in two places: nodes
+without an export handler, and expressions the Python API can't turn back
+into source code. Those expressions are stored as opaque blobs.
 
-*Where it starts:* a round-trip test over a fixed flow corpus, and a gate that
-counts both.
+We'll add a round-trip test over a fixed set of flows and a CI check that
+counts both cases. The target is zero for both, with every node type in the
+palette supported by code export.
 
-*How you will know:* both counters read zero and every node type in the
-palette exports.
+### Track 5 · Measuring the AI planner
 
-### Track 5 · AI that edits pipelines, measured
+The planner already shows changes as a diff for review. It pauses if you
+edit the canvas while it's working, and applies or rejects each set of
+changes in full. We still need a reliable measure of how often it gets the
+job right.
 
-The planner already stages every change as a reviewable diff, pauses when
-you edit the canvas underneath it, and applies or rejects atomically. What is
-missing is a number for how often it is right.
-
-*Where it starts:* a held-out benchmark against a recorded provider that
-reports success rate and retries.
-
-*How you will know:* pre-registered thresholds cleared with zero human
-tool-name corrections, with refusal statistics and executor-seam fixes
-measured against the benchmark along the way.
+We'll start with a held-out benchmark using recorded provider responses,
+measuring success rate and retries. We'll set the pass thresholds in
+advance, and the planner must meet them without a person correcting tool
+names. We'll also track refusals and use the benchmark to check fixes where
+the planner hands work to the executor.
 
 ### Track 6 · The reference deployment
 
-One command stands up the whole stack on machines you own: PostgreSQL for
-metadata, MinIO for tables and Lakekeeper as the catalog, next to core,
-worker and kernels. It is the setup people usually mean by a sovereign
-deployment, and the quickest way to try everything on this roadmap end to
-end.
+One command should start the full stack on your own machines: PostgreSQL
+for metadata, MinIO for tables, Lakekeeper as the catalog, plus core, worker
+and kernels. This gives people a working setup to try the whole roadmap
+end to end.
 
-*Where it starts:* `docker compose --profile sovereign`.
+First, we'll add the `sovereign` Docker Compose profile.
 
-*How you will know:* a new contributor completes the documented walk-through
-(install, write a table, read it from another engine, run a flow on a second
-worker, export the flow and run it with Flowfile uninstalled) from a clean
-machine in under an hour, and every step is a CI job.
+We'll check the setup with a documented walkthrough: install it, write a
+table, read that table from another engine, run a flow on a second worker,
+then export the flow and run it with Flowfile uninstalled. A new contributor
+should be able to do this on a clean machine in under an hour. Every step
+must also run in CI.
 
 ---
 
-## 5. The boundary
+## 5. What Flowfile builds and connects to
 
-Flowfile is one layer of a data platform. These are the layers it does not
-build and integrates with instead. We will not compete with them, and we will
-make them easy to plug in.
+Flowfile handles part of a data platform. For the rest, we'll integrate with
+existing tools.
 
-![Two columns: Flowfile builds the flow graph and its three renderings, the node palette with custom and community nodes, catalog metadata with lineage, sharing and change tracking, the execution backends interface and the worker, and importers from other tools; it supports and never replaces compute clusters, Iceberg catalogs, identity providers, orchestrators, object storage, LLM providers, and warehouses and BI tools.](docs/assets/images/roadmap/we-build-we-support.svg)
+![Flowfile builds the shared flow graph, canvas, Python API, code export, nodes, catalog metadata, execution interface, worker and importers. It integrates with compute clusters, external catalogs, identity providers, orchestrators, storage, model providers, warehouses and BI tools.](docs/assets/images/roadmap/we-build-we-support.svg)
 
-| Layer | What we do | What we will not do |
+| Layer | What we do | What we leave to other tools |
 |---|---|---|
-| **Compute at scale** | Pluggable backends; your workers; Polars Cloud as the reference scale-out backend | Build a cluster manager or a distributed engine |
-| **Catalog servers** | Be a client of Iceberg REST catalogs; mirror our tables into them | Ship our own Iceberg REST server |
-| **Identity** | OIDC login and token pass-through | Run an identity provider |
-| **Orchestration** | A small embedded scheduler; exports and a CLI that run under any orchestrator | Compete with Airflow or Dagster on orchestration |
-| **Storage** | Read and write any S3-compatible store, ADLS, GCS, local disk | Operate storage |
-| **Language models** | Bring your own key, any provider, or a local model | Train or host models |
-| **Analytics and BI** | Previews at every node, lightweight exploration dashboards | Become a BI product |
-| **Warehouses** | Read from and write to them through database nodes | Be a warehouse |
+| **Compute at scale** | Pluggable backends, your workers, and Polars Cloud as the reference scale-out backend | Cluster management and distributed engines |
+| **Catalog servers** | Connect to Iceberg REST catalogs and mirror our tables into them | Building an Iceberg REST server |
+| **Identity** | OIDC login and token pass-through | Providing an identity service |
+| **Orchestration** | A small embedded scheduler, plus exports and a CLI for use with any orchestrator | Full orchestration, as in Airflow or Dagster |
+| **Storage** | Read and write S3-compatible stores, ADLS, GCS and local disk | Operating storage |
+| **Language models** | Use your own key and provider, or a local model | Training and hosting models |
+| **Analytics and BI** | Previews at every node and lightweight exploration dashboards | A full BI product |
+| **Warehouses** | Read and write through database nodes | Building a warehouse |
 
 ---
 
-## 6. Tools: adopting, evaluating, keeping, retired
+## 6. Technology choices
 
-Which tools Flowfile builds on, which it is evaluating, and which it has set
-aside, with the reasons.
+What we use, what we're looking at, and what we've dropped.
 
 | Tool | Role in Flowfile | Status | Why |
 |---|---|---|---|
-| **Polars** | The engine, everywhere | Keeping | One cross-platform pin; plugins and the kernel image move with it |
-| **delta-rs** | Catalog table storage | Keeping | Needs no catalog; carries CDC, merge, SCD2, row edits, time travel |
-| **Apache Iceberg** (pyiceberg) | Interop format at the edges | Adopting | Already a dependency; the reader is the first step of Track 2 |
-| **Lakekeeper** | Reference Iceberg catalog | Adopting | Apache 2.0, Rust, vended credentials, OIDC; registers non-Iceberg tables too |
-| **Polars Cloud** | Reference scale-out backend | Evaluating | Same API, compute in your account or on-prem; European vendor; control plane is theirs, so never the only backend |
-| **PostgreSQL** | Catalog metadata | Shipped | Alongside SQLite; the migration chain runs against both in CI |
-| **OIDC** (any provider) | Identity in server mode | Adopting | Needed for per-user authorization in external catalogs |
-| **Docker kernels** | Sandboxed Python execution | Shipped | Remote Docker host planned |
-| **Tauri** | Desktop shell | Migrated to, 2026-05 | Replaced Electron: smaller, faster, signed sidecars |
-| **Alteryx `.yxmd` import** | Migration path for visual users | Shipped | Per-tool report; nothing is silently approximated |
-| **Airbyte connector** | Cloud ingestion | Retired, 2025-07 | Replaced by native cloud-storage reads |
-| **In-house fuzzy matcher** | Fuzzy join | Extracted, 2025-08 | Lives on as an external package the worker imports |
-| **DuckDB** | Second SQL engine | Not planned | Asked often; Polars SQL covers the SQL nodes and one engine keeps parity possible |
-| **Spark** | Distributed compute | Not planned | Scale comes through backends, not a second engine |
+| **Polars** | Data engine | Keeping | One pinned version across platforms; plugins and the kernel image update with it |
+| **delta-rs** | Catalog table storage | Keeping | No catalog required; supports CDC, merge, SCD2, row edits and time travel |
+| **Apache Iceberg** (pyiceberg) | Reading and writing tables across tools | Adopting | Already a dependency; the reader is the first step in Track 2 |
+| **Lakekeeper** | Reference Iceberg catalog | Adopting | Apache 2.0, Rust, credential vending and OIDC; also registers non-Iceberg tables |
+| **Polars Cloud** | Reference scale-out backend | Evaluating | Same API, compute in your account or on-prem, European vendor. They run the control plane, so it will remain one of several backend options |
+| **PostgreSQL** | Catalog metadata | Shipped | Available alongside SQLite; CI runs the migrations against both |
+| **OIDC** (any provider) | Server-mode identity | Adopting | Needed for per-user authorization in external catalogs |
+| **Docker kernels** | Sandboxed Python execution | Shipped | Support for a remote Docker host is planned |
+| **Tauri** | Desktop shell | Migrated in May 2026 | Replaced Electron for a smaller, faster app with signed sidecars |
+| **Alteryx `.yxmd` import** | Importing existing visual workflows | Shipped | Reports unsupported behaviour per tool instead of silently approximating it |
+| **Airbyte connector** | Cloud ingestion | Retired in July 2025 | Replaced by native cloud-storage reads |
+| **In-house fuzzy matcher** | Fuzzy join | Extracted in August 2025 | Now an external package imported by the worker |
+| **DuckDB** | Second SQL engine | Not planned | A frequent request, but Polars SQL covers the SQL nodes. Keeping one engine makes it easier to keep canvas, API and export results consistent |
+| **Spark** | Distributed compute | Not planned | We'll add scale through execution backends |
 
 ---
 
 ## 7. Out of scope
 
-Things we considered and set aside.
+Some limits are worth spelling out:
 
-- **Our own distributed engine or cluster scheduler.** Backends, not clusters.
-- **Our own Iceberg REST catalog server.** Lakekeeper, Polaris and the cloud
-  providers ship the spec; Flowfile is a client of them.
-- **Replacing Delta as the internal table format.** Iceberg is an edge.
-- **A second DataFrame engine.** Parity between canvas, API and export is only
-  possible with one.
-- **A bespoke metadata store.** Standard SQL, standard migrations.
-- **A BI product.** Previews and exploration, yes. Dashboards as a business,
-  no.
-- **An identity provider.** Any OIDC provider, never ours.
-- **Certification work.** Frameworks are welcome to point at the reference
-  deployment; the project will not organize itself around certification
-  processes.
-- **A hosted multi-tenant service as part of this roadmap.** Everything here
-  runs where you put it.
+- **A distributed engine or cluster scheduler.** We'll connect to existing
+  ones through backends.
+- **An Iceberg REST catalog server.** Flowfile will use Lakekeeper, Polaris
+  and the cloud providers' implementations.
+- **Replacing Delta internally.** Iceberg support is for working with data
+  across tools.
+- **A second DataFrame engine.** We'll keep one engine so the canvas, API
+  and export stay consistent.
+- **A custom metadata store.** We'll stick with SQL and standard migrations.
+- **A BI product.** Previews and lightweight exploration are enough for
+  Flowfile's role.
+- **An identity provider.** We'll support existing OIDC providers.
+- **Certification work.** Frameworks can refer to the reference deployment,
+  but certification processes won't drive the project.
+- **A hosted multi-tenant service.** This roadmap is for software you run
+  where you choose.
 
 ---
 
 ## 8. Open source commitment
 
-Flowfile is MIT-licensed and every item on this roadmap ships under that
-license in this repository: the execution backend interface, the local and
-remote worker backends, the Iceberg and Lakekeeper integrations, OIDC, the
-reference deployment, the round-trip work and the AI work.
+Flowfile is MIT-licensed. Everything on this roadmap will ship under MIT in
+this repository: the backend interface, local and remote workers, Iceberg
+and Lakekeeper support, OIDC, the reference deployment, round-trip fixes and
+AI work.
 
-One rule decides what could ever be paid: **would a single person on one
-machine ever need it?** If yes, it is MIT and lives here. Only capabilities
-that exist purely because an organization is large (audit, policy, support
-contracts) could ever sit outside, and they would sit on the public
-interfaces this roadmap defines, as separately installed packages that never
-require a change to the open code path. If that line ever needs to move, it
-will be proposed in a public Discussion first, not discovered in a release.
+The rule for anything we might charge for is simple: **could one person
+working on one machine need it?** If yes, it belongs here, under MIT.
 
-There is no contributor license agreement and none is planned. Your
-contributions stay MIT, which also means they cannot be relicensed later.
+Only features needed because an organization is large, such as audit,
+policy or support contracts, could sit outside this repository. Those would
+be separate packages using the public interfaces described here, without
+requiring changes to the open code path. Any proposed change to that rule
+would go through a public Discussion first.
+
+There is no contributor license agreement, and we don't plan to add one.
+Your contributions stay under MIT; we won't relicense them later.
 
 ---
 
-## 9. Join
+## 9. Get involved
 
-- **Pick a track.** Tracks with work under way have a Discussion in
+- **Pick a track.** Once work starts, its Discussion in
   [Announcements](https://github.com/edwardvaneechoud/Flowfile/discussions/categories/announcements)
-  with the design, the open questions and the result that says each
-  milestone landed; the other tracks get theirs the day work on them starts.
-  Comment there before writing code for anything larger than a bug fix.
-- **Change the roadmap.** Open a Discussion titled `RFC: <topic>`. An RFC
-  needs a problem statement, its effect on the four questions, the smallest
-  shippable first step and a result that can prove it wrong.
-- **Start small.** Issues labeled
+  will cover the design, open questions and what each milestone needs to
+  deliver. For anything larger than a bug fix, comment there before writing
+  code.
+- **Suggest a change.** Open a Discussion titled `RFC: <topic>`. Describe the
+  problem, how it affects the four requirements, the smallest useful first
+  step and how we'd test whether it solves the problem.
+- **Start small.** Have a look at
   [`good first issue`](https://github.com/edwardvaneechoud/Flowfile/issues?q=is%3Aopen+label%3A%22good+first+issue%22)
-  and the two gaps in the architecture picture are the fastest way in.
-- **How we work** is in [CONTRIBUTING.md](https://github.com/edwardvaneechoud/Flowfile/blob/main/CONTRIBUTING.md): real
-  integration tests over mocks, the drift gates, how a change is reviewed and
-  released.
+  issues or the two gaps marked in the architecture diagram.
+- **Read [CONTRIBUTING.md](https://github.com/edwardvaneechoud/Flowfile/blob/main/CONTRIBUTING.md)**
+  for how we test, review and release changes, why we favour integration
+  tests over mocks, and the checks that keep the canvas, API and export in
+  sync.
 
-This file changes by pull request like everything else. Its history is its
-changelog.
+Suggestions for this file are welcome as pull requests too. The Git history
+keeps track of what changed.
