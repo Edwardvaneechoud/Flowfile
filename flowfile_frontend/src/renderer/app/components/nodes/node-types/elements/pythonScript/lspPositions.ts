@@ -24,9 +24,9 @@ export function notInAsBinding(source: CompletionSource): CompletionSource {
   return (context: CompletionContext) => (context.matchBefore(AS_BINDING) ? null : source(context));
 }
 
-// Cheap heuristic: is the cursor inside an unclosed "(" (i.e. typing call arguments)? Scans
-// back a bounded window tracking paren depth so signature help only fires when plausible.
-export function insideCall(state: EditorState, pos: number): boolean {
+// Position of the unclosed "(" the cursor sits in, or -1. Scans back a bounded window
+// tracking paren depth so signature help only fires when plausible.
+export function openCallParen(state: EditorState, pos: number): number {
   const start = Math.max(0, pos - CALL_SCAN_WINDOW);
   const text = state.sliceDoc(start, pos);
   let depth = 0;
@@ -34,11 +34,53 @@ export function insideCall(state: EditorState, pos: number): boolean {
     const ch = text[i];
     if (ch === ")") depth++;
     else if (ch === "(") {
-      if (depth === 0) return true;
+      if (depth === 0) return start + i;
       depth--;
     }
   }
-  return false;
+  return -1;
+}
+
+// Cheap heuristic: is the cursor inside an unclosed "(" (i.e. typing call arguments)?
+export function insideCall(state: EditorState, pos: number): boolean {
+  return openCallParen(state, pos) >= 0;
+}
+
+// Just opened the call: nothing but whitespace between the "(" and the cursor.
+export function callArgsEmpty(state: EditorState, pos: number): boolean {
+  const paren = openCallParen(state, pos);
+  return paren >= 0 && !state.sliceDoc(paren + 1, pos).trim();
+}
+
+// Text of the argument being typed: from the last top-level "," (or the open "(") to the
+// cursor, skipping commas nested in brackets or strings. null outside a call.
+export function currentArgText(state: EditorState, pos: number): string | null {
+  const paren = openCallParen(state, pos);
+  if (paren < 0) return null;
+  const text = state.sliceDoc(paren + 1, pos);
+  let start = 0;
+  let depth = 0;
+  let quote = "";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === "\\") i++;
+      else if (ch === quote) quote = "";
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if ("([{".includes(ch)) depth++;
+    else if (")]}".includes(ch)) depth--;
+    else if (ch === "," && depth === 0) start = i + 1;
+  }
+  return text.slice(start);
+}
+
+// Is the caret ending a member access (`df.`, `df.sel`, `f().x`, `a[0].`)? A numeric
+// literal like `1.` is not a receiver, so it doesn't count.
+const MEMBER_ACCESS = /(?:[A-Za-z_]\w*|[)\]])\s*\.\w*$/;
+
+export function typingMemberAccess(state: EditorState, pos: number): boolean {
+  const line = state.doc.lineAt(pos);
+  return MEMBER_ACCESS.test(state.sliceDoc(line.from, pos));
 }
 
 // Is the cursor inside a string literal? Column completions own that position, so signature
