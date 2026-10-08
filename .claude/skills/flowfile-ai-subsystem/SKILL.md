@@ -293,8 +293,36 @@ never created for users who never touch the feature.
 
 - Pinned llama.cpp build: `LLAMACPP_BUILD = "b9305"` from `ggml-org/llama.cpp`
   releases (platform-specific archive per OS/arch). Default model:
-  Qwen2.5-Coder-3B-Instruct GGUF (~2 GB); a curated list also offers a 1.5B
-  (lighter) and a 7B (heavier, non-coder) option.
+  Qwen3.5 4B Q4_K_M (`qwen3.5-4b`, ~3 GB, `bartowski/Qwen_Qwen3.5-4B-GGUF`);
+  the catalog also offers Qwen3.5 2B and 9B. The Qwen2.5-Coder 1.5B/3B and
+  Qwen2.5 7B entries are `ModelSpec.legacy=True`: hidden from `status()`
+  unless installed (or selected), still selectable and deletable, so an
+  existing download never becomes invisible or stuck (`installed_model_ids`
+  and the per-model delete walk the full `MODELS`).
+- `_spawn` always passes `--jinja --reasoning off` (thinking off for
+  every surface at once — chat, Simple build, the small-`max_tokens` JSON
+  surfaces; `--reasoning-budget 0` does **not** stop Qwen3.5 from
+  reasoning, verified on the real 4B) plus the model's `ModelSpec.server_args` (Qwen3.5 gets Qwen's
+  non-thinking sampling `--temp 0.7 --top-p 0.8 --top-k 20`). The context
+  ceiling is per model (`ModelSpec.max_ctx`: 32k legacy, 128k Qwen3.5);
+  `get_ctx_size`/`set_ctx_size` clamp to the selected model's value.
+  `oneshot.extract_flow_json` strips a `<think>…</think>` block before the
+  candidate scan.
+- **On-device prompt**: every assist-level route (`chat_routes` — stream and
+  preview share `_build_chat_messages` — `run_failure_routes`,
+  `docgen_routes`, `lineage_routes`, `inline_action_routes`) passes
+  `local=(provider == LOCAL_PROVIDER_ID)` to `render_prompt_context` /
+  `assemble_system_prompt`. With `local=True` the assist suffix is
+  `prompts/local_assist.md` (no "say do it / switch to agent mode" footer,
+  which a 3B model parrots verbatim and which points at a mode on-device
+  lacks) and the node reference collapses to one line per node
+  (`_render_compact_node_reference`: ~2.7k tokens for the whole explain
+  prompt instead of ~10k). `local=False` is the cloud prompt byte for byte
+  (`test_context.py` pins both). `_chat_mode_footer_override` returns
+  `None` for the local provider — the cloud footer text is untouched because
+  `intent_router.py` matches its wording. Chat forwards client mentions as
+  parsed `Mention`s, never as raw text (raw text would render a fake
+  `## User request` line).
 - Module-level singleton — **at most one server runs at a time**; `_lock`
   guards it. `LocalProvider` resolves the live port lazily on the first
   `.stream()` call so constructing it stays synchronous/non-blocking.

@@ -40,6 +40,7 @@ from flowfile_core.ai.byok import ProviderNotConfiguredError, get_configured_pro
 from flowfile_core.ai.context import (
     SURFACE_TO_LEVEL,
     assemble_system_prompt,
+    parse_mentions,
     render_prompt_context,
 )
 from flowfile_core.ai.providers import (
@@ -126,8 +127,15 @@ def _to_provider_messages(payload: list[ChatMessageInput]) -> list[Message]:
 
 def _chat_mode_footer_override(
     chat_mode: Literal["chat", "auto_agent"] | None,
+    provider_name: str | None = None,
 ) -> str | None:
-    if chat_mode != "chat":
+    """The trailing system message for a chat-only cloud conversation.
+
+    ``None`` for the on-device provider: its prompt (``local_assist.md``)
+    has no footer to replace, a small model repeats whatever exact block
+    is the last thing it reads, and there is no agent mode to switch to.
+    """
+    if chat_mode != "chat" or provider_name == LOCAL_PROVIDER_ID:
         return None
     return (
         "MODE OVERRIDE — user is in CHAT-ONLY mode. The assist.md "
@@ -153,6 +161,73 @@ def _resolve_prompt_surface(requested: str | None) -> str:
     if requested and requested in SURFACE_TO_LEVEL:
         return requested
     return _DEFAULT_SURFACE
+
+
+def _build_chat_messages(body: ChatStreamRequest) -> list[Message]:
+    """The exact message list ``/chat/stream`` sends — shared with
+    ``/chat/preview`` so the preview can never drift from the stream.
+
+    With a ``flow_id`` the system prompt is context-rich (subgraph
+    snapshot + per-node schemas, samples off); without one it is the
+    identity-only layered prompt, so callers without a flow keep working.
+    Raises the 422 for an unknown flow.
+    """
+    prompt_surface = _resolve_prompt_surface(body.surface)
+    is_local = body.provider == LOCAL_PROVIDER_ID
+
+    if body.flow_id is not None:
+        flow = flow_file_handler.get_flow(body.flow_id)
+        if flow is None:
+            raise HTTPException(status_code=422, detail=f"Flow {body.flow_id} not found")
+        # Client-parsed mentions are forwarded as parsed ``Mention``s — not
+        # as raw text, which ``render_prompt_context`` would also render as
+        # the "## User request" (the user's words arrive in ``messages``).
+        # With neither mentions nor a selection, default to ``@flow`` so the
+        # chat is still context-grounded; an explicit selection or explicit
+        # mentions win over the auto-expand default.
+        mention_text: str
+        if body.mentions:
+            mention_text = " ".join(body.mentions)
+        elif not body.selected_node_ids:
+            mention_text = "@flow"
+        else:
+            mention_text = ""
+        logger.debug(
+            "chat render_prompt_context flow_id=%s surface=%s selection=%s mentions=%r samples_mode=off",
+            body.flow_id,
+            prompt_surface,
+            body.selected_node_ids,
+            mention_text,
+        )
+        ctx = render_prompt_context(
+            flow,
+            body.selected_node_ids or [],
+            surface=prompt_surface,
+            mentions=parse_mentions(mention_text) if mention_text else None,
+            samples_mode="off",
+            # Local model has a small context window; shrink verbose node
+            # settings (column/field lists, code bodies) and cap columns so a
+            # wide source node can't overflow the window.
+            compact_settings=is_local,
+            max_columns_per_node=12 if is_local else None,
+            local=is_local,
+        )
+        messages = [
+            Message(role="system", content=ctx.system),
+            Message(role="user", content=ctx.user),
+            *_to_provider_messages(body.messages),
+        ]
+    else:
+        system_prompt = assemble_system_prompt(prompt_surface, local=is_local)
+        messages = [
+            Message(role="system", content=system_prompt),
+            *_to_provider_messages(body.messages),
+        ]
+
+    footer_override = _chat_mode_footer_override(body.chat_mode, body.provider)
+    if footer_override is not None:
+        messages.append(Message(role="system", content=footer_override))
+    return messages
 
 
 @router.post("/chat/stream", tags=["ai"])
@@ -198,63 +273,7 @@ async def chat_stream(
         # PROVIDERS-side mapping, but provider_factory has its own check.
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    prompt_surface = _resolve_prompt_surface(body.surface)
-
-    # When the client sends a ``flow_id``, build a context-rich prompt
-    # (subgraph snapshot + per-node schemas + optional samples).
-    # Otherwise fall back to the identity-only prompt so the contract
-    # stays backwards-compatible for callers without a flow.
-    if body.flow_id is not None:
-        flow = flow_file_handler.get_flow(body.flow_id)
-        if flow is None:
-            raise HTTPException(status_code=422, detail=f"Flow {body.flow_id} not found")
-        # If the client passed parsed mentions, forward them as a
-        # single space-joined string — ``render_prompt_context`` parses
-        # raw text via ``_coerce_mentions``. When neither mentions nor
-        # a selection are given, default to ``@flow`` so the chat is
-        # still context-grounded by default. Explicit selections +
-        # explicit mentions both win over the auto-expand default.
-        mention_text: str
-        if body.mentions:
-            mention_text = " ".join(body.mentions)
-        elif not body.selected_node_ids:
-            mention_text = "@flow"
-        else:
-            mention_text = ""
-        logger.debug(
-            "chat_stream render_prompt_context flow_id=%s surface=%s selection=%s mentions=%r samples_mode=off",
-            body.flow_id,
-            prompt_surface,
-            body.selected_node_ids,
-            mention_text,
-        )
-        ctx = render_prompt_context(
-            flow,
-            body.selected_node_ids or [],
-            surface=prompt_surface,
-            mentions=mention_text or None,
-            samples_mode="off",
-            # Local model has a small context window; shrink verbose node
-            # settings (column/field lists, code bodies) and cap columns so a
-            # wide source node can't overflow the window.
-            compact_settings=body.provider == LOCAL_PROVIDER_ID,
-            max_columns_per_node=12 if body.provider == LOCAL_PROVIDER_ID else None,
-        )
-        messages = [
-            Message(role="system", content=ctx.system),
-            Message(role="user", content=ctx.user),
-            *_to_provider_messages(body.messages),
-        ]
-    else:
-        system_prompt = assemble_system_prompt(prompt_surface)
-        messages = [
-            Message(role="system", content=system_prompt),
-            *_to_provider_messages(body.messages),
-        ]
-
-    footer_override = _chat_mode_footer_override(body.chat_mode)
-    if footer_override is not None:
-        messages.append(Message(role="system", content=footer_override))
+    messages = _build_chat_messages(body)
 
     provider_stream = provider.stream(
         messages=messages,
@@ -325,37 +344,7 @@ async def chat_preview(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     prompt_surface = _resolve_prompt_surface(body.surface)
-
-    if body.flow_id is not None:
-        flow = flow_file_handler.get_flow(body.flow_id)
-        if flow is None:
-            raise HTTPException(status_code=422, detail=f"Flow {body.flow_id} not found")
-        mention_text: str
-        if body.mentions:
-            mention_text = " ".join(body.mentions)
-        elif not body.selected_node_ids:
-            mention_text = "@flow"
-        else:
-            mention_text = ""
-        ctx = render_prompt_context(
-            flow,
-            body.selected_node_ids or [],
-            surface=prompt_surface,
-            mentions=mention_text or None,
-            compact_settings=body.provider == LOCAL_PROVIDER_ID,
-            max_columns_per_node=12 if body.provider == LOCAL_PROVIDER_ID else None,
-        )
-        messages = [
-            Message(role="system", content=ctx.system),
-            Message(role="user", content=ctx.user),
-            *_to_provider_messages(body.messages),
-        ]
-    else:
-        system_prompt = assemble_system_prompt(prompt_surface)
-        messages = [
-            Message(role="system", content=system_prompt),
-            *_to_provider_messages(body.messages),
-        ]
+    messages = _build_chat_messages(body)
 
     preview_messages: list[ChatPreviewMessage] = []
     total_chars = 0

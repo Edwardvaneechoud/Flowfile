@@ -63,7 +63,9 @@ async def generate_flow_route(
 
     Returns ``{diff_id, op_count, created, warnings, rationale, diff_payload}``;
     the frontend's "Add to canvas" applies it via the existing diff-accept
-    route. Writer / sink nodes are never created — the user attaches the
+    route. When the model answered instead of building (the request was a
+    question), ``answer`` carries its reply and ``diff_id`` is ``None``.
+    Writer / sink nodes are never created — the user attaches the
     destination after inserting.
 
     Errors: 404 unknown provider · 409 provider not configured / local model

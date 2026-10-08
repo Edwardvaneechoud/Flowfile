@@ -580,6 +580,12 @@ export const useAiStore = defineStore("ai", () => {
       // Inject/refresh the synthetic ``local`` entry through the single writer
       // so the Models card and On-device card stay one source of truth.
       applyLocalModelStatus(localStatus);
+      // A saved pick the provider no longer offers (a class default that
+      // moved with a release, saved to localStorage by an older build) resets
+      // to the provider's current default, so a better default reaches users
+      // who never picked a model. A pick from the user's curated list stays.
+      selectedModel.value = _offeredOrDefault(selectedProvider.value, selectedModel.value);
+      simpleModel.value = _offeredOrDefault(simpleProvider.value, simpleModel.value);
       if (selectedProvider.value === null) {
         const first = providers.value.find(
           (p) => p.status === "configured" || p.status === "env_fallback",
@@ -612,6 +618,16 @@ export const useAiStore = defineStore("ai", () => {
     const def = meta.credential?.defaultModel ?? meta.defaultModel;
     if (def) set.add(def);
     return Array.from(set);
+  };
+
+  // ``model`` when provider ``name`` offers it (``modelsForProvider``), else
+  // the provider's current default. Unknown provider → unchanged.
+  const _offeredOrDefault = (name: string | null, model: string | null): string | null => {
+    if (!name) return model;
+    const meta = providers.value.find((p) => p.provider === name);
+    if (!meta) return model;
+    if (model !== null && modelsForProvider(name).includes(model)) return model;
+    return meta.credential?.defaultModel ?? meta.defaultModel ?? null;
   };
 
   const setSelectedProvider = (name: string): void => {
@@ -1515,6 +1531,13 @@ export const useAiStore = defineStore("ai", () => {
       );
       reactivePlaceholder.pending = false;
       streamingState.value = "idle";
+      if (result.answer !== null || result.diffId === null) {
+        // Not a pipeline description — the model replied instead of building.
+        reactivePlaceholder.content =
+          result.answer ??
+          "That doesn't describe a pipeline to build. Describe the steps, or switch to Chat mode to ask about the flow.";
+        return;
+      }
       reactivePlaceholder.buildDiffId = result.diffId;
       reactivePlaceholder.buildOpCount = result.opCount;
       const lines = [

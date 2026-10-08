@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from collections import deque
 from dataclasses import dataclass
@@ -77,6 +78,12 @@ class OneShotError(RuntimeError):
     """Raised when the model output can't be parsed into a usable flow spec."""
 
 
+# A thinking model's ``<think>…</think>`` preamble (the server is started with
+# thinking off, but a model may still emit the tags) — never JSON, and its prose
+# can carry stray braces that would win the widest-brace scan.
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
 def extract_flow_json(text: str) -> dict[str, Any]:
     """Parse model output into a ``{"nodes", "edges"}`` dict — tolerant.
 
@@ -92,7 +99,7 @@ def extract_flow_json(text: str) -> dict[str, Any]:
     The first candidate that parses to a dict with a ``nodes`` list wins.
     Raises :class:`OneShotError` only when nothing does.
     """
-    text = (text or "").strip()
+    text = _THINK_RE.sub("", text or "").strip()
     if not text:
         raise OneShotError("model returned empty output")
 
@@ -108,6 +115,31 @@ def extract_flow_json(text: str) -> dict[str, Any]:
             return obj
 
     raise OneShotError("could not parse a {nodes, edges} object from the model output")
+
+
+def extract_answer(text: str) -> str | None:
+    """The model's plain reply when it declined to build — ``{"answer": "…"}``
+    per the prompt's escape hatch (fenced or prose-wrapped like a flow), or,
+    when the output holds no JSON object at all, the prose itself. ``None``
+    when the output looks like a flow attempt (anything with a ``nodes``
+    list, or a brace span that is not an answer object), so a broken flow
+    still surfaces as a parse error rather than as a bogus chat reply."""
+    text = _THINK_RE.sub("", text or "").strip()
+    if not text:
+        return None
+    candidates: list[str] = [text, *_fenced_blocks(text)]
+    brace = _widest_brace_span(text)
+    if brace:
+        candidates.append(brace)
+    for candidate in candidates:
+        obj = _try_parse(candidate)
+        if isinstance(obj, dict) and isinstance(obj.get("nodes"), list):
+            return None
+        if isinstance(obj, dict) and isinstance(obj.get("answer"), str) and obj["answer"].strip():
+            return obj["answer"].strip()
+    if "{" not in text and not _fenced_blocks(text):
+        return text
+    return None
 
 
 def _try_parse(candidate: str) -> Any:
@@ -473,6 +505,11 @@ async def generate_flow(
     Returns ``{diff_id, op_count, created, warnings, rationale, diff_payload}``.
     The build step is offloaded to a worker thread (the one-shot path can hit
     the kernel / worker for schema prediction).
+
+    When the model declines to build (the request was a question, not a
+    pipeline — see :func:`extract_answer`) the result carries its reply as
+    ``answer`` with ``diff_id=None`` / ``op_count=0``, so the chat shows the
+    reply instead of a parse error.
     """
     messages = [
         Message(role="system", content=SYSTEM_PROMPT),
@@ -485,7 +522,19 @@ async def generate_flow(
         surface="local_oneshot",
         user_id=user_id,
     )
-    spec = extract_flow_json(response.content or "")
+    content = response.content or ""
+    answer = extract_answer(content)
+    if answer is not None:
+        return {
+            "diff_id": None,
+            "op_count": 0,
+            "created": [],
+            "warnings": [],
+            "rationale": "Answered without building (the request did not describe a pipeline)",
+            "diff_payload": None,
+            "answer": answer,
+        }
+    spec = extract_flow_json(content)
     if mode == "simple":
         return await asyncio.to_thread(_build_simple_diff, flow=flow, flow_id=flow_id, spec=spec)
     return await asyncio.to_thread(_stage_flow, flow=flow, flow_id=flow_id, user_id=user_id, spec=spec)
