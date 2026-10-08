@@ -1,8 +1,10 @@
 """``GET /editor/events``: a live stream of one flow's changes, for flows in the caller's session."""
 
+import asyncio
 import json
 import socket
 import threading
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -143,6 +145,27 @@ def test_closing_the_flow_ends_the_stream(live_core, own_flow):
         assert stream.next() is None
     finally:
         stream.close()
+
+
+@pytest.mark.asyncio
+async def test_the_stream_is_subscribed_before_hello_leaves(own_flow):
+    """A `close_all()` (or any change) right after hello reaches the stream: it subscribed before sending it."""
+    from flowfile_core.routes.routes import flow_events
+
+    frames = (await flow_events(own_flow, current_user=SimpleNamespace(id=_me()))).body_iterator
+    try:
+        hello = await frames.__anext__()
+        assert '"kind": "hello"' in hello
+        assert change_feed.subscriber_count(own_flow) == 1
+        change_feed.close_all()
+
+        async def rest():
+            return [chunk async for chunk in frames]
+
+        assert await asyncio.wait_for(rest(), 5) == []
+    finally:
+        await frames.aclose()
+    assert change_feed.subscriber_count(own_flow) == 0
 
 
 def test_close_all_ends_an_open_stream(live_core, own_flow):

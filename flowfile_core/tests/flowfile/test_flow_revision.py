@@ -38,6 +38,17 @@ def test_a_transaction_moves_the_revision_once_and_the_history_state_carries_it(
     assert bus_events[-1][1]["revision"] == graph.revision
 
 
+def test_a_transaction_that_changes_nothing_leaves_the_revision(bus_events):
+    graph = make_graph(9311)
+    promise(graph, "manual_input", 1)
+    revision = graph.revision
+    with graph.transaction("nothing") as txn:
+        pass
+    assert graph.revision == revision
+    assert txn.history.revision == revision
+    assert kinds(bus_events) == ["graph"]
+
+
 def test_a_placement_outside_a_transaction_moves_the_revision_once_with_history_on(bus_events):
     graph = make_graph(9302)
     before = graph.revision

@@ -51,6 +51,7 @@ export const useFlowSyncStore = defineStore("flow-sync", () => {
   const rekeyedTo = ref<{ from: number; to: number } | null>(null);
 
   let controller: AbortController | null = null;
+  let activeFlowId: number | null = null;
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
   function noteRevision(flowId: number, revision: number | null | undefined) {
@@ -81,14 +82,14 @@ export const useFlowSyncStore = defineStore("flow-sync", () => {
     if (event.kind === "closed") {
       closedFlowId.value = flowId;
       closeCount.value += 1;
-      stop();
+      endStream(flowId);
       return;
     }
     if (event.kind === "rekeyed") {
       if (typeof event.new_flow_id === "number") {
         rekeyedTo.value = { from: flowId, to: event.new_flow_id };
       }
-      stop();
+      endStream(flowId);
       return;
     }
     if (event.origin === clientId) return;
@@ -145,6 +146,7 @@ export const useFlowSyncStore = defineStore("flow-sync", () => {
   function start(flowId: number) {
     stop();
     controller = new AbortController();
+    activeFlowId = flowId;
     void run(flowId, controller.signal);
   }
 
@@ -155,7 +157,13 @@ export const useFlowSyncStore = defineStore("flow-sync", () => {
     }
     controller?.abort();
     controller = null;
+    activeFlowId = null;
     connected.value = false;
+  }
+
+  /** A final event ends its own stream only: one that lands after a flow switch must not abort the next flow's. */
+  function endStream(flowId: number) {
+    if (activeFlowId === flowId) stop();
   }
 
   watch(

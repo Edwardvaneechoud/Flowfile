@@ -212,6 +212,16 @@ describe("flow-sync-store", () => {
     expect(store.connected).toBe(false);
   });
 
+  it("a final event on a stream the window already left keeps the next flow's stream", async () => {
+    await open();
+    const first = current();
+    mocks.flowStore.flowId = 9;
+    await settle();
+    first.opts.onEvent(event({ kind: "rekeyed", revision: null, origin: null, new_flow_id: 9 }));
+    expect(current().opts.flowId).toBe(9);
+    expect(current().opts.signal.aborted).toBe(false);
+  });
+
   it("a rekeyed event ends the stream and records where the flow went", async () => {
     const store = await open();
     current().opts.onEvent(

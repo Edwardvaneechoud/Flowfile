@@ -65,6 +65,17 @@ async def test_changes_made_on_another_thread_reach_the_subscriber_with_their_or
 
 
 @pytest.mark.asyncio
+async def test_a_change_made_after_subscribing_and_before_reading_is_not_lost():
+    graph = make_graph(9409)
+    with change_feed.subscribe(graph.flow_id) as subscriber:
+        await asyncio.to_thread(promise, graph, "manual_input", 1)
+        async with aclosing(subscriber.events()) as feed:
+            received = await asyncio.wait_for(feed.__anext__(), 5)
+    assert (received.kind, received.revision) == ("graph", graph.revision)
+    assert change_feed.subscriber_count(graph.flow_id) == 0
+
+
+@pytest.mark.asyncio
 async def test_a_change_without_a_client_header_has_no_origin():
     graph = make_graph(9402)
     task = asyncio.create_task(_collect(graph.flow_id, stop=lambda r: True))

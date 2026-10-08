@@ -261,9 +261,27 @@ const selectedFlow = computed(
   () => flows.value.find((flow) => flow.flow_id === selectedFlowId.value) || null,
 );
 
-const loadFlows = async () => {
-  if (isLoading.value) return;
+let flowsLoad: Promise<void> | null = null;
+let flowsReload = false;
 
+// A load asked for during a load runs once more after it: a `closed` mid-load needs the newer list.
+const loadFlows = (): Promise<void> => {
+  if (flowsLoad) {
+    flowsReload = true;
+    return flowsLoad;
+  }
+  flowsLoad = (async () => {
+    do {
+      flowsReload = false;
+      await fetchFlows();
+    } while (flowsReload);
+  })().finally(() => {
+    flowsLoad = null;
+  });
+  return flowsLoad;
+};
+
+const fetchFlows = async () => {
   try {
     isLoading.value = true;
     const flowsData = await getAllFlows();
@@ -555,6 +573,17 @@ watch(
       selectedFlowId.value = null;
       nodeStore.setFlowId(-1);
     }
+  },
+);
+
+// A Save As made in another window moved the flow to a new id: its tab follows it there.
+watch(
+  () => flowSync.rekeyedTo,
+  async (moved) => {
+    if (!moved || !flows.value.some((flow) => flow.flow_id === moved.from)) return;
+    // Switch first, so the reload keeps this tab instead of falling back to the first flow.
+    if (selectedFlowId.value === moved.from) selectFlow(moved.to);
+    await loadFlows();
   },
 );
 

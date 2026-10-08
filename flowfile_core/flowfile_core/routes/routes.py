@@ -1039,6 +1039,10 @@ def _run_operations(flow, flow_id: int, operations: list[schemas.EditorOperation
             try:
                 _apply_operation(flow_id, operation, current_user)
             except HTTPException as exc:
+                # A structured detail (the 409 codes) keeps its shape: the renderer dispatches on `code`.
+                if isinstance(exc.detail, dict):
+                    detail = {**exc.detail, "operation": index, "op": operation.op}
+                    raise HTTPException(exc.status_code, detail) from exc
                 raise HTTPException(exc.status_code, f"Operation {index} ({operation.op}): {exc.detail}") from exc
             except Exception as exc:
                 logger.exception(f"apply_operations: operation {index} ({operation.op}) failed")
@@ -1545,15 +1549,22 @@ async def flow_events(flow_id: int, current_user=Depends(get_current_active_user
         return SSEEvent(event=kind, data=json.dumps(payload), id=event_id).format()
 
     async def generate():
-        revision = flow.revision
-        hello = {"kind": "hello", "flow_id": flow_id, "revision": revision, "is_running": flow.flow_settings.is_running}
-        yield frame("hello", hello, revision)
-        async with aclosing(change_feed.stream(flow_id, keepalive=KEEPALIVE_INTERVAL_SECONDS)) as feed:
-            async for event in feed:
-                if event is None:
-                    yield format_sse_keepalive()
-                else:
-                    yield frame(event.kind, event.payload(), event.revision)
+        # Subscribed before the revision is read: a change landing while hello is sent arrives as an event.
+        with change_feed.subscribe(flow_id) as subscriber:
+            revision = flow.revision
+            hello = {
+                "kind": "hello",
+                "flow_id": flow_id,
+                "revision": revision,
+                "is_running": flow.flow_settings.is_running,
+            }
+            yield frame("hello", hello, revision)
+            async with aclosing(subscriber.events(keepalive=KEEPALIVE_INTERVAL_SECONDS)) as feed:
+                async for event in feed:
+                    if event is None:
+                        yield format_sse_keepalive()
+                    else:
+                        yield frame(event.kind, event.payload(), event.revision)
 
     return make_streaming_response(generate())
 

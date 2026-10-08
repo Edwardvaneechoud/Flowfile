@@ -1245,7 +1245,8 @@ class TestSettingsFingerprint:
         settings = {**_filter_payload(api.flow_id, 3, 1, "3"), "expected_settings_fingerprint": stale}
         response = api.apply([{"op": "update_settings", "node_type": "filter", "settings": settings}])
         assert response.status_code == 409, response.text
-        assert "NODE_SETTINGS_CHANGED" in response.text
+        detail = response.json()["detail"]
+        assert (detail["code"], detail["operation"], detail["op"]) == ("NODE_SETTINGS_CHANGED", 0, "update_settings")
         assert api.flow.get_node(3).setting_input.filter_input.basic_filter.value == "2"
 
     def test_a_custom_node_save_checks_its_fingerprint(self, custom_node_type):
@@ -1303,5 +1304,6 @@ class TestNodeIdTaken:
             [{"op": "add_node", "node_id": 7, "node_type": "sort"}, {"op": "add_node", "node_id": 3, "node_type": "sort"}]
         )
         assert response.status_code == 409, response.text
-        assert "NODE_ID_TAKEN" in response.text
+        detail = response.json()["detail"]
+        assert (detail["code"], detail["operation"], detail["op"]) == ("NODE_ID_TAKEN", 1, "add_node")
         assert api.snapshot() == snapshot

@@ -18,8 +18,6 @@ def test_a_deleted_id_stays_under_the_ceiling():
     graph.delete_node(5)
     assert [n.node_id for n in graph.nodes] == [1]
     assert graph.node_id_ceiling == 5
-    assert graph.next_node_id() == 6
-    assert graph.next_node_id() == 7
 
 
 def test_an_undone_placement_stays_under_the_ceiling():

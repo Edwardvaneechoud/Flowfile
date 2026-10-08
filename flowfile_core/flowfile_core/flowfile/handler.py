@@ -148,6 +148,7 @@ class FlowfileHandler:
         self._flows.pop(target_id, None)
         for flow_ids in self._user_sessions.values():
             flow_ids.discard(target_id)
+        publish("flow_closed", flow_id=target_id)
         return target_id
 
     def rekey_flow(self, old_flow_id: int, new_flow_id: int, user_id: int | None = None) -> None:

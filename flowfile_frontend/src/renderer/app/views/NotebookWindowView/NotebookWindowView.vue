@@ -26,9 +26,7 @@
 </template>
 
 <script lang="ts" setup>
-// One flow's canvas notebook in its own window. Core's change feed keeps it in step with the
-// designer: a foreign canvas edit re-renders the cells, a run disables Push while it lasts, a
-// closed flow closes the window, a Save As follows the flow to its new id.
+// One flow's canvas notebook in its own window, kept in step by core's change feed.
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";

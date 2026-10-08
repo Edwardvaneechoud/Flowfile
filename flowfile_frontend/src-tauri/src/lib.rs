@@ -145,9 +145,7 @@ pub fn run() {
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { .. } = event {
                     let app = window.app_handle().clone();
-                    // The notebook windows go first: they would otherwise outlive the sidecars
-                    // and keep the app running on a dead backend. A notebook window's own close
-                    // is left alone (it just closes).
+                    // Notebook windows go first: left open they would outlive the sidecars and keep the app alive.
                     window::close_notebook_windows(&app);
                     tauri::async_runtime::block_on(async move {
                         sidecar::shutdown::shutdown_all(&app).await;

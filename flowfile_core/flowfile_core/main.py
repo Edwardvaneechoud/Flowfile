@@ -295,6 +295,15 @@ def _stop_server(server: uvicorn.Server) -> None:
     server.should_exit = True
 
 
+class _Server(uvicorn.Server):
+    """uvicorn handles SIGINT/SIGTERM itself while serving (``capture_signals``), so the streams
+    are closed from its handler; ``signal_handler`` below only sees a signal outside ``serve``."""
+
+    def handle_exit(self, sig, frame) -> None:
+        change_feed.close_all()
+        super().handle_exit(sig, frame)
+
+
 def signal_handler(signum, frame):
     """Handles OS signals like SIGINT (Ctrl+C) and SIGTERM for graceful shutdown."""
     print(f"Received signal {signum}")
@@ -331,7 +340,7 @@ def run(host: str = None, port: int = None):
         loop="asyncio",
     )
     install_access_log_redaction()
-    server = uvicorn.Server(config)
+    server = _Server(config)
     server_instance = server
 
     # In desktop-sidecar mode, exit if the Tauri shell dies without reaping us.

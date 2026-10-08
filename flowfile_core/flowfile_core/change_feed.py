@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import aclosing, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
@@ -68,6 +69,26 @@ class _Subscriber:
         except RuntimeError:
             pass  # the loop is closed: the stream it served is already gone
 
+    async def events(self, keepalive: float | None = None) -> AsyncIterator[FlowEvent | None]:
+        """Yield the flow's events as they happen, ``None`` after ``keepalive`` idle seconds.
+
+        Ends after the flow's ``closed`` or ``rekeyed`` event and when :func:`close_all` runs.
+        """
+        while True:
+            if keepalive is None:
+                item = await self.queue.get()
+            else:
+                try:
+                    item = await asyncio.wait_for(self.queue.get(), keepalive)
+                except asyncio.TimeoutError:
+                    yield None
+                    continue
+            if item is _SHUTDOWN:
+                return
+            yield item
+            if item.kind in _FINAL_KINDS:
+                return
+
 
 _lock = threading.Lock()
 _subscribers: dict[int, set[_Subscriber]] = {}
@@ -108,30 +129,19 @@ def subscriber_count(flow_id: int) -> int:
         return len(_subscribers.get(flow_id, ()))
 
 
-async def stream(flow_id: int, *, keepalive: float | None = None) -> AsyncIterator[FlowEvent | None]:
-    """Yield the flow's events as they happen, ``None`` after ``keepalive`` idle seconds.
+@contextmanager
+def subscribe(flow_id: int) -> Iterator[_Subscriber]:
+    """Register a subscriber for the flow on the running loop; its events come from ``events()``.
 
-    Ends after the flow's ``closed`` or ``rekeyed`` event and when :func:`close_all` runs.
+    Subscribing is separate from reading so a caller can take the snapshot its events continue
+    from (the route's ``hello``) with no change falling between the two.
     """
     install()  # a bus reset (tests) must not leave a later stream deaf
     subscriber = _Subscriber(asyncio.get_running_loop(), asyncio.Queue())
     with _lock:
         _subscribers.setdefault(flow_id, set()).add(subscriber)
     try:
-        while True:
-            if keepalive is None:
-                item = await subscriber.queue.get()
-            else:
-                try:
-                    item = await asyncio.wait_for(subscriber.queue.get(), keepalive)
-                except asyncio.TimeoutError:
-                    yield None
-                    continue
-            if item is _SHUTDOWN:
-                return
-            yield item
-            if item.kind in _FINAL_KINDS:
-                return
+        yield subscriber
     finally:
         with _lock:
             group = _subscribers.get(flow_id)
@@ -139,6 +149,14 @@ async def stream(flow_id: int, *, keepalive: float | None = None) -> AsyncIterat
                 group.discard(subscriber)
                 if not group:
                     del _subscribers[flow_id]
+
+
+async def stream(flow_id: int, *, keepalive: float | None = None) -> AsyncIterator[FlowEvent | None]:
+    """:func:`subscribe` and yield the flow's events, ``None`` after ``keepalive`` idle seconds."""
+    with subscribe(flow_id) as subscriber:
+        async with aclosing(subscriber.events(keepalive)) as feed:
+            async for item in feed:
+                yield item
 
 
 def close_all() -> None:

@@ -132,6 +132,14 @@ const NOTEBOOK_RETURN_MESSAGE = "flowfile:notebook-return";
 const popoutClosedHandlers = new Set<(flowId: number) => void>();
 let popoutPoll: ReturnType<typeof setInterval> | null = null;
 
+const isBlankWindow = (handle: Window): boolean => {
+  try {
+    return handle.location.href === "about:blank";
+  } catch {
+    return false;
+  }
+};
+
 function watchWebPopouts(): void {
   if (popoutPoll) return;
   popoutPoll = setInterval(() => {
@@ -402,8 +410,11 @@ export const desktop = {
       existing.focus();
       return;
     }
-    const handle = window.open(web.url, web.name, "popup=yes,width=1100,height=800");
+    // An empty URL hands back the named window as is (one forgotten over a reload), else a blank one.
+    const handle = window.open("", web.name, "popup=yes,width=1100,height=800");
     if (!handle) throw new Error("The browser blocked the notebook window");
+    if (isBlankWindow(handle)) handle.location.assign(web.url);
+    else handle.focus();
     webPopouts.set(flowId, handle);
     watchWebPopouts();
   },
