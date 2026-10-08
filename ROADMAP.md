@@ -19,8 +19,8 @@ the distance between that and the full picture.
 
 It is a direction, not a delivery schedule: no dates, no version numbers next
 to features. Each track names the step it starts with and the result you will
-be able to check, and each one has a public Discussion where the design is
-open to argument before the code lands.
+be able to check, and the design of each step is open to argument in a
+public Discussion before its code lands.
 
 ---
 
@@ -137,11 +137,11 @@ settings.
 
 ## 4. The tracks
 
-Six tracks carry the road. Each one has a Discussion thread in
+Six tracks carry the road. A track gets a Discussion thread in
 [Announcements](https://github.com/edwardvaneechoud/Flowfile/discussions/categories/announcements)
-where its milestones live, with their design, their open questions and the
-concrete result that says they landed. Here, each track keeps only its
-intent, where it starts, and how you will know.
+when work on it starts, holding its milestones with their design, their
+open questions and the concrete result that says each one landed. Here,
+each track keeps only its intent, where it starts, and how you will know.
 
 ### Track 1 · Bring your own compute
 
@@ -329,12 +329,11 @@ contributions stay MIT, which also means they cannot be relicensed later.
 
 ## 9. Join
 
-- **Pick a track.** Every track has a Discussion in
+- **Pick a track.** Tracks with work under way have a Discussion in
   [Announcements](https://github.com/edwardvaneechoud/Flowfile/discussions/categories/announcements)
-  with the design, the open questions and the result that says each of its
-  milestones landed; a milestone gets a thread of its own the day work on it
-  starts. Comment there before writing code for anything larger than a bug
-  fix.
+  with the design, the open questions and the result that says each
+  milestone landed; the other tracks get theirs the day work on them starts.
+  Comment there before writing code for anything larger than a bug fix.
 - **Change the roadmap.** Open a Discussion titled `RFC: <topic>`. An RFC
   needs a problem statement, its effect on the four questions, the smallest
   shippable first step and a result that can prove it wrong.
