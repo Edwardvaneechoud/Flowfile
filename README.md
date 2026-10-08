@@ -226,7 +226,7 @@ Deeper dive: [Architecting a Visual ETL Tool with Polars](https://dev.to/edwardv
 
 ## Project status
 
-Actively developed, pre-1.0. Releases ship from this repo to PyPI, the desktop installers, Docker Hub and npm, gated by 7,000+ Python tests and 150+ frontend test files across seven CI workflows, with backend coverage on [Codecov](https://codecov.io/gh/edwardvaneechoud/Flowfile). Where it is going is in [ROADMAP.md](ROADMAP.md): portable pipelines, the four questions we check them against, and the tracks that get there. What's next is tracked in [Issues](https://github.com/edwardvaneechoud/Flowfile/issues) and discussed in [Discussions](https://github.com/edwardvaneechoud/Flowfile/discussions).
+Actively developed, pre-1.0. Releases ship from this repo to PyPI, the desktop installers, Docker Hub and npm, gated by 7,000+ Python tests and 150+ frontend test files across seven CI workflows, with backend coverage on [Codecov](https://codecov.io/gh/edwardvaneechoud/Flowfile). [ROADMAP.md](ROADMAP.md) sets out the priorities, current status and goals for 1.0. The [architecture and technology notes](docs/roadmap-details.md) cover the longer-term plans. Work is tracked in [Issues](https://github.com/edwardvaneechoud/Flowfile/issues) and discussed in [Discussions](https://github.com/edwardvaneechoud/Flowfile/discussions).
 
 ## License
 
