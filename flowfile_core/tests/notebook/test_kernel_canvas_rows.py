@@ -413,6 +413,38 @@ def test_run_all_of_a_designer_configured_catalog_writer_reads_below_it_from_the
     assert kernel_sim.node_runs == []
 
 
+def test_run_all_of_the_product_fuzzy_match_template_matches_on_the_renamed_keys(open_as, client, kernel_sim, tmp_path):
+    """The template's Fuzzy Match renames both keys in its selects; its cell renames before ``fuzzy_join``, which
+    builds in the kernel on the canvas rows of the two reads."""
+    import shutil
+
+    import yaml
+
+    from flowfile_core.flowfile.manage.io_flowfile import open_flow
+    from flowfile_core.notebook.render import render
+    from flowfile_core.templates import get_template_flowfile_data
+
+    folder = tmp_path / "host_data"
+    folder.mkdir()
+    for name in ("internal_products.csv", "supplier_products.csv"):
+        shutil.copy(Path(__file__).parents[3] / "data" / "templates" / name, folder / name)
+    path = tmp_path / "product_fuzzy_match.yaml"
+    path.write_text(yaml.dump(get_template_flowfile_data("product_fuzzy_match", folder).model_dump()))
+    flow = open_as(open_flow(path))
+    assert all(result.success for result in flow.run_graph().node_step_result)
+    expected = flow.get_node(3).get_resulting_data().data_frame.collect()
+
+    cells = [cell for cell in render(flow).cells if cell.kind in ("imports", "node")]
+    for cell in cells:
+        result = _execute(client, flow, kernel_sim, cell.code)
+        assert result["success"], (cell.code, result)
+    joined = next(cell.defines[-1] for cell in cells if 3 in cell.node_ids)
+    read = _execute(client, flow, kernel_sim, f"print({joined}.collect().columns, {joined}.collect().height)")
+
+    assert read["success"], read
+    assert read["stdout"].strip() == f"{expected.columns} {expected.height}" and expected.height > 0, read
+
+
 @pytest.fixture
 def editor_built_flow(open_as, tmp_path, monkeypatch):
     """CSV read -> basic filter ``quantity >= 8``, built from settings as the editor's API saves them."""

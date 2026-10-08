@@ -8309,6 +8309,53 @@ def test_fuzzy_match_left_drop_uses_node_local_temp(fuzzy_join_left_data, export
     assert_frame_equal(result, expected, check_dtypes=False, check_row_order=False, check_column_order=False)
 
 
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_fuzzy_match_renaming_its_key_columns_renames_before_matching(export_func):
+    """The product-match template: both keys are renamed by the selects, which the node applies before it matches
+    (its score column is named after the new names), so the export renames first too."""
+    flow = create_basic_flow()
+    internal = {"id": [1, 2], "product_name": ["Apple MacBook Pro 16-inch", "Samsung Galaxy S24 Ultra"], "sku": ["A", "B"]}
+    supplier = {"supplier_id": [7, 8], "product_name": ["MacBook Pro 16in Apple", "Galaxy S24 Ultra Samsung"]}
+    for node_id, columns in ((1, internal), (2, supplier)):
+        flow.add_manual_input(
+            input_schema.NodeManualInput(
+                flow_id=1,
+                node_id=node_id,
+                raw_data_format=input_schema.RawData.from_pylist(
+                    [dict(zip(columns, row)) for row in zip(*columns.values())]
+                ),
+            )
+        )
+    flow.add_fuzzy_match(
+        input_schema.NodeFuzzyMatch(
+            flow_id=1,
+            node_id=3,
+            depending_on_ids=[1, 2],
+            join_input=transform_schema.FuzzyMatchInput(
+                join_mapping=[FuzzyMapping("product_name", threshold_score=30.0)],
+                left_select=[
+                    transform_schema.SelectInput(old_name="id", new_name="internal_id"),
+                    transform_schema.SelectInput(old_name="product_name", new_name="internal_name"),
+                    transform_schema.SelectInput(old_name="sku"),
+                ],
+                right_select=[
+                    transform_schema.SelectInput(old_name="supplier_id"),
+                    transform_schema.SelectInput(old_name="product_name", new_name="supplier_name"),
+                ],
+            ),
+        )
+    )
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3, input_type="main"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, input_type="right"))
+
+    code = export_func(flow)
+    verify_if_execute(code)
+    result = normalize_result(get_result_from_generated_code(code))
+    expected = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
+    assert "internal_name_vs_supplier_name_levenshtein" in expected.columns
+    assert_frame_equal(result, expected, check_dtypes=False, check_row_order=False, check_column_order=False)
+
+
 def test_rest_api_reader_redacts_sensitive_headers():
     """A token placed directly in a header/param is redacted, not emitted verbatim."""
     from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
