@@ -7,10 +7,10 @@ description: Read a flow as Python cells in the Code panel, edit them, and run a
 The canvas notebook shows the open flow as Python code, one cell per statement, in the **Notebook** mode of the Code panel. It uses the editor of a [catalog notebook](catalog/notebooks.md), with the same cells, shortcuts, undo, drag and completions. By default it has no kernel: running a cell writes your edits onto the canvas and runs the cell's node where the flow runs. In the desktop app you can also [run it on a kernel](#running-on-a-kernel), where cells run as real Python. This page covers what the cells contain, what **Run** does for each kind of cell, what a sync refuses, running on a kernel, and how the notebook behaves in each deployment.
 
 <details markdown="1" open>
-<summary>See it: notebook cells pushed to the canvas, and a canvas edit back in the notebook</summary>
+<summary>See it: a filter cell pushed to the canvas, and a Sort node added on the canvas back in the notebook</summary>
 
-<video autoplay loop muted playsinline controls preload="metadata" width="1280" height="676" style="width: 100%; height: auto;" aria-label="A flow opened in the canvas notebook: a cell that counts customers and premium customers per city and joins them is pushed and appears on the canvas as group-by, filter and join nodes; after a run, a Sort node added on the canvas shows up in the notebook as an ordered_17 = output.sort(...) cell">
-  <source src="../../assets/images/guides/notebooks/canvas-notebook-in-action.mp4" type="video/mp4">
+<video autoplay loop muted playsinline controls preload="metadata" width="1600" height="900" style="width: 100%; height: auto;" aria-label="A flow with one CSV reader opened in the canvas notebook. A cell big_orders = source_1.filter(ff.col('qty') > 5) is typed and pushed: a Filter node appears on the canvas and the cells re-render as one chained big_orders statement. A Sort node dropped on the canvas shows up as a placeholder cell, ordered_3 = ff.canvas_node(3), marked inputs not fully connected; once it is connected and set to sort by qty descending, the cell reads ordered_3 = big_orders.sort(['qty'], descending=[True])">
+  <source src="../../assets/images/guides/notebooks/notebook-round-trip.mp4" type="video/mp4">
 </video>
 
 </details>
@@ -25,6 +25,8 @@ Open the [Code panel](tutorials/code-generator.md) (Ctrl/Cmd+G) and pick **Noteb
 - A Polars Code node holding a function is that function as written, followed by the call that wires it (`transformed_5 = df.polars_code(high_value)`); rename the function or its parameters and the node keeps your names. A node holding a snippet is a generated `_polars_code_<id>(input_df)` function whose body is the snippet with its result returned; edit the body and it stays a snippet, rename the function or a parameter and it becomes a function node.
 - A node's variable is its node reference when it has one, else a label derived from its type and id (`filtered_12`).
 - Dropping, connecting or saving a node on the canvas updates the cells within a couple of seconds; a cell you edited keeps your text. Moving a node changes nothing.
+
+![The canvas holds a CSV reader, a filter and a Sort by qty Descending node; the notebook beside it shows the reader and filter as one chained big_orders statement and the sort as its own cell, ordered_3 = big_orders.sort(["qty"], descending=[True])](../../assets/images/guides/notebooks/notebook-canvas-sort.png)
 
 The code is rendered on the server and needs no Python session, no kernel and no Docker, so every user can open it in every deployment.
 
@@ -82,6 +84,17 @@ These markers take the place of the catalog notebook's **Code changed — rerun*
 **Run all** syncs when the notebook no longer matches the canvas (a cell edited, added, removed or moved), runs the whole flow as **Run** in the top toolbar does, then fills in every parameters and node cell's output; imports and plain cells show nothing.
 
 **Push** only syncs: it writes the cells onto the canvas and runs nothing.
+
+![After a push, the canvas shows a CSV reader connected to a filter node labelled [qty] > 5, and the notebook shows the two as one cell: big_orders = ff.scan_csv(...).filter(ff.col("qty") > 5)](../../assets/images/guides/notebooks/notebook-push-filter.png)
+
+<details markdown="1">
+<summary>See it: a longer example with a group-by, filter and join pushed from one cell</summary>
+
+<video loop muted playsinline controls preload="metadata" width="1280" height="676" style="width: 100%; height: auto;" aria-label="A flow opened in the canvas notebook: a cell that counts customers and premium customers per city and joins them is pushed and appears on the canvas as group-by, filter and join nodes; after a run, a Sort node added on the canvas shows up in the notebook as an ordered_17 = output.sort(...) cell">
+  <source src="../../assets/images/guides/notebooks/canvas-notebook-in-action.mp4" type="video/mp4">
+</video>
+
+</details>
 
 ## What a sync does
 

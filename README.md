@@ -30,6 +30,7 @@
   <a href="https://edwardvaneechoud.github.io/Flowfile/">Docs</a> ·
   <a href="https://github.com/edwardvaneechoud/Flowfile/releases">Releases</a> ·
   <a href="https://github.com/edwardvaneechoud/Flowfile/discussions">Discussions</a> ·
+  <a href="ROADMAP.md">Roadmap</a> ·
   <a href="https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c">Architecture deep-dive</a>
 </p>
 
@@ -225,7 +226,7 @@ Deeper dive: [Architecting a Visual ETL Tool with Polars](https://dev.to/edwardv
 
 ## Project status
 
-Actively developed, pre-1.0. Releases ship from this repo to PyPI, the desktop installers, Docker Hub and npm, gated by 7,000+ Python tests and 150+ frontend test files across seven CI workflows, with backend coverage on [Codecov](https://codecov.io/gh/edwardvaneechoud/Flowfile). What's next is tracked in [Issues](https://github.com/edwardvaneechoud/Flowfile/issues) and discussed in [Discussions](https://github.com/edwardvaneechoud/Flowfile/discussions).
+Actively developed, pre-1.0. Releases ship from this repo to PyPI, the desktop installers, Docker Hub and npm, gated by 7,000+ Python tests and 150+ frontend test files across seven CI workflows, with backend coverage on [Codecov](https://codecov.io/gh/edwardvaneechoud/Flowfile). Where it is going is in [ROADMAP.md](ROADMAP.md): portable pipelines, the four questions we check them against, and the tracks that get there. What's next is tracked in [Issues](https://github.com/edwardvaneechoud/Flowfile/issues) and discussed in [Discussions](https://github.com/edwardvaneechoud/Flowfile/discussions).
 
 ## License
 
