@@ -90,3 +90,9 @@ export const polarsCompletionVals = [
   { label: 'False', type: 'keyword', info: 'Boolean false' },
   { label: 'None', type: 'keyword', info: 'Null value' },
 ]
+
+// Starting code of a new Polars Code node: one parameter per connected input, returning the result.
+export const DEFAULT_POLARS_CODE = `# Each connected input arrives as one parameter (a Polars LazyFrame), in connection order.
+# Return the result. \`pl\` is available.
+def transform(input_df: pl.LazyFrame) -> pl.LazyFrame:
+    return input_df`

@@ -42,6 +42,7 @@ from flowfile_core.flowfile.flow_data_engine.hierarchy import (
     hierarchy_function_name,
     hierarchy_node_id_casts,
 )
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import function_form
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.param_types import coerce_param_value
@@ -236,6 +237,27 @@ def _polars_code_header(settings: input_schema.NodePolarsCode) -> str:
     return f"# Custom Polars code: {description[0]}" if description else "# Custom Polars code"
 
 
+def _annotation_roots(entry: ast.FunctionDef) -> set[str]:
+    """The names a function-form def's annotations start from (``pl`` for ``pl.LazyFrame``), nested defs too.
+
+    A nested def's annotations are evaluated when its ``def`` runs, at call time, so they need the same guard.
+    """
+    annotations: list[ast.expr | None] = []
+    for fn in ast.walk(entry):
+        if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        args = fn.args
+        annotations += [arg.annotation for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]]
+        annotations += [args.vararg and args.vararg.annotation, args.kwarg and args.kwarg.annotation, fn.returns]
+    return {
+        node.id
+        for annotation in annotations
+        if annotation is not None
+        for node in ast.walk(annotation)
+        if isinstance(node, ast.Name)
+    }
+
+
 def _legacy_polars_code_body(code: str) -> tuple[list[str], str | None]:
     """Text heuristics for Polars code that does not parse, so a node with broken code still exports."""
     if "output_df" not in code:
@@ -285,6 +307,16 @@ def _polars_code_function_body(code: str) -> tuple[list[str], str | None]:
         if isinstance(statement, ast.Assign) and isinstance(statement.targets[0], ast.Name):
             return lines, statement.targets[0].id
     return lines, None
+
+
+def snippet_function_lines(code: str, function: str, names: list[str]) -> list[str]:
+    """A snippet as the notebook shows it: ``def <function>(<names>: pl.LazyFrame):`` over its body and return."""
+    body, returned = _polars_code_function_body(code)
+    if returned not in (None, "output_df") and re.search(rf"^{re.escape(returned)}\s*=[^=]", "\n".join(body), re.M):
+        returned = None
+    lines = [*body, *([f"return {returned}"] if returned else [] if body else ["pass"])]
+    params = ", ".join(f"{name}: pl.LazyFrame" for name in names)
+    return [f"def {function}({params}):", *(f"    {line}" for line in lines)]
 
 
 _FRAME_CLASS_NAMES = frozenset({"LazyFrame", "DataFrame"})
@@ -1665,6 +1697,16 @@ class FlowGraphCodeConverter(
             args = ", ".join(arg_list)
 
         self._add_code(_polars_code_header(settings))
+        entry = function_form(code)
+        if entry is not None:
+            if _annotation_roots(entry) - {"pl"}:
+                self.imports.add("from __future__ import annotations")
+            for line in code.split("\n"):
+                self._add_code(line)
+            self._add_code("")
+            self._add_code(f"{var_name} = {entry.name}({args})")
+            self._add_code("")
+            return
         self._add_code(f"def _polars_code_{settings.node_id}({params}):")
         self._emit_polars_code_body(code)
 
@@ -2908,14 +2950,18 @@ class FlowGraphToFlowFrameConverter(NativeHandlersMixin, FlowGraphCodeConverter)
             args = "".join(f"\n    {line}" for line in [*lines, *(f"{var}," for var in inputs[1:])])
             target = f"{inputs[0]}.polars_code" if inputs else "ff.polars_code"
             return self._add_statement(f"{var_name} = {target}({args}\n)")
-        if re.search(r"\bpl\.", code):
+        entry = function_form(code)
+        if (names and entry is None) or re.search(r"\bpl\.", code):
             self.imports.add("import polars as pl")
-        body, returned = _polars_code_function_body(code)
-        if returned not in (None, "output_df") and re.search(rf"^{re.escape(returned)}\s*=[^=]", "\n".join(body), re.M):
-            returned = None
-        self._add_code(f"def {function}({', '.join(f'{name}: ff.FlowFrame' for name in names)}):")
-        for line in [*body, *([f"return {returned}"] if returned else [] if body else ["pass"])]:
-            self._add_code(f"    {line}")
+        if entry is not None:
+            if _annotation_roots(entry) - {"pl", "ff"}:
+                self.imports.add("from __future__ import annotations")
+            function = entry.name
+            lines = code.split("\n")
+        else:
+            lines = snippet_function_lines(code, function, names)
+        for line in lines:
+            self._add_code(line)
         self._add_code("")
         self._add_code("")
         call = f"{inputs[0]}.polars_code({', '.join([function, *inputs[1:]])})" if inputs else None

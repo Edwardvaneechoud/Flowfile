@@ -653,13 +653,18 @@ def _cell_filename(mode: notebook.NotebookMode | None, cell_id: str, code: str) 
 
 
 def _compile(filename: str, code: str) -> tuple[Any, Any]:
-    """The cell body and its last expression (``None`` when the cell does not end in one), at ``optimize=0``."""
+    """The cell body and its last expression (``None`` when the cell does not end in one), at ``optimize=0``.
+
+    Annotations stay strings, as core compiles a Polars Code def (``from __future__ import annotations``), so a
+    def a node holds runs here whatever names its annotations use.
+    """
     tree = ast.parse(code, filename, "exec")
     last = None
     if tree.body and isinstance(tree.body[-1], ast.Expr):
         last = ast.Expression(tree.body.pop().value)
-    body = compile(tree, filename, "exec", dont_inherit=True, optimize=0)
-    expression = compile(last, filename, "eval", dont_inherit=True, optimize=0) if last is not None else None
+    flags = annotations.compiler_flag  # the __future__ feature this module imports
+    body = compile(tree, filename, "exec", flags=flags, dont_inherit=True, optimize=0)
+    expression = compile(last, filename, "eval", flags=flags, dont_inherit=True, optimize=0) if last else None
     return body, expression
 
 

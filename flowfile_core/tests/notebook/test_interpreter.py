@@ -154,6 +154,10 @@ SHAPES = {
         "def _polars_code_5(input_df: ff.FlowFrame):\n    return input_df.with_columns(\n        \n"
         "        b=pl.lit(1),\n    )\n\n\nwidened = src.polars_code(_polars_code_5)",
         "texted = src.polars_code(\n    'output_df = input_df'\n)",
+        "# Pair every row with the other frame.\n"
+        "def paired(rows: pl.LazyFrame, extra: ff.FlowFrame = None) -> pl.LazyFrame:\n"
+        "    return rows.join(extra, how='cross')\n\n\nnamed = src.polars_code(paired, other)",
+        "def _polars_code_9(input_df: pl.LazyFrame):\n    return input_df.head(1)\n\n\nshown = src.polars_code(_polars_code_9)",
     ],
     "python_script_forms": [
         IMPORTS,

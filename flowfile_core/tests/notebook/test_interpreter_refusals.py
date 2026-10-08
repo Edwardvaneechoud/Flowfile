@@ -63,7 +63,8 @@ NEEDS_KERNEL = {
     "try": ("y = 1\ntry:\n    y = 2\nexcept Exception:\n    pass", 2),
     "class": ("class A:\n    pass", 1),
     "async_def": ("async def f():\n    pass", 1),
-    "plain_def": ("def f(x):\n    return x", 1),
+    "plain_def_called": ("def f(x):\n    return x\n\n\ny = f(1)", 5),
+    "decorated_def": ("@ff.lit\ndef f(x):\n    return x", 2),
     "helper_text_changed": (
         "def _flowfile_flow_parameter(frame, name, value, **declaration):\n"
         '    """The parameters cell declares every parameter, so a gate only names it"""\n'
@@ -204,8 +205,6 @@ NEEDS_KERNEL = {
         "def _polars_code_4(input_df):\n    return input_df\n\n\nx = ff.lit(_polars_code_4)",
         5,
     ),
-    "polars_code_annotation": ("def _polars_code_4(input_df: pl.LazyFrame):\n    return input_df", 1),
-    "polars_code_default": ("def _polars_code_4(input_df=None):\n    return input_df", 1),
     "multi_line_chain": ("x = (\n    df\n    .filter(ff.col('a') > 1)\n    .collect()\n)", 4, 1),
     "frame_from_data_read": ("x = ff.LazyFrame", 1),
     "frame_from_data_unknown_keyword": ("x = ff.LazyFrame([1], nope=1)", 1),
@@ -370,3 +369,10 @@ def test_a_clean_run_reports_the_refused_cell_line_and_kind():
     assert (result["cell_id"], result["line"], result["kind"]) == ("cell-3", 2, "needs_kernel")
     assert result["message"] == result["error"] and "`print`" in result["message"]
     assert notebook.current() is None
+
+
+def test_calling_a_plain_def_says_the_notebook_reads_it_as_polars_code():
+    result, placed = _interpret("def f(x):\n    return x\n\n\ny = f(1)")
+    assert (result.line, result.kind) == (5, "needs_kernel")
+    assert result.message.startswith("Calling `f` (the notebook reads a plain `def` only as code for `.polars_code(f)`)")
+    assert placed == 0

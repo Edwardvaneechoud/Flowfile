@@ -67,6 +67,42 @@ const POLARS_DTYPES = new Set([
   'Boolean', 'String', 'Utf8', 'Categorical', 'Date', 'Time', 'Datetime', 'Duration', 'Null'
 ])
 
+// The def a function-form Polars Code node calls (its only top-level statement, after an optional
+// docstring), else null. Mirrors engine/nodes_polars_code._function_form without a parser: a line
+// inside brackets or a triple-quoted string continues the statement above it.
+export function functionFormName(code: string): string | null {
+  const statements: string[] = []
+  let depth = 0
+  let quote: string | null = null
+  for (const line of code.split('\n')) {
+    if (depth === 0 && quote === null && line.trim() && !/^[\s#]/.test(line)) statements.push(line)
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i]
+      if (quote !== null) {
+        if (ch === '\\') i++
+        else if (line.startsWith(quote, i)) {
+          i += quote.length - 1
+          quote = null
+        }
+      } else if (ch === '#') {
+        break
+      } else if (ch === '"' || ch === "'") {
+        quote = line.startsWith(ch + ch + ch, i) ? ch + ch + ch : ch
+        i += quote.length - 1
+      } else if ('([{'.includes(ch)) {
+        depth++
+      } else if (')]}'.includes(ch)) {
+        depth = Math.max(0, depth - 1)
+      }
+    }
+    if (quote !== null && quote.length === 1) quote = null
+  }
+  if (statements.length === 2 && /^[rRuU]?["']/.test(statements[0])) statements.shift()
+  if (statements.length !== 1) return null
+  const match = /^def\s+([A-Za-z_]\w*)\s*\(/.exec(statements[0])
+  return match ? match[1] : null
+}
+
 export function polarsDtype(name: string | undefined): string {
   const base = (name || '').split('(')[0]
   return POLARS_DTYPES.has(base) ? `pl.${base}` : 'pl.String'
@@ -1174,6 +1210,18 @@ export class FlowToPolarsConverter {
       args = argList.join(', ')
     }
   
+    const definedName = functionFormName(code)
+    if (definedName) {
+      this.addCode('# Custom Polars code')
+      for (const line of code.split('\n')) {
+        this.addCode(line)
+      }
+      this.addCode('')
+      this.addCode(`${varName} = ${definedName}(${args})`)
+      this.addCode('')
+      return
+    }
+
     const fnName = `_polars_code_${this.currentNodeId}`
     this.addCode('# Custom Polars code')
     this.addCode(`def ${fnName}(${params}):`)

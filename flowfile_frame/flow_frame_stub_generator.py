@@ -295,6 +295,7 @@ def generate_improved_type_stub(
         "# DO NOT MODIFY THIS FILE MANUALLY",
         "# Run `python flowfile_frame/flow_frame_stub_generator.py` to regenerate",
         "# Standard library imports",
+        "import ast",
         "import collections",
         "import inspect",
         "import os",

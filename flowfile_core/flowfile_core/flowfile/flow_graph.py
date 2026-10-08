@@ -146,6 +146,7 @@ from flowfile_core.flowfile.user_defined.registry import (
 from flowfile_core.flowfile.user_defined.registry import registry as user_defined_registry
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.util.execution_orderer import ExecutionPlan, ExecutionStage, compute_execution_plan
+from flowfile_core.flowfile.util.layout.placement import NODE_HEIGHT, NODE_WIDTH
 from flowfile_core.flowfile.util.skip_rules import (
     GATE_NODE_TYPE,
     NodeRunStatus,
@@ -2626,7 +2627,7 @@ class FlowGraph:
         keep their current bounds. When refitting all groups, deepest first so a parent
         unions already-fitted child-group boxes.
         """
-        node_width, node_height, padding, header = 180.0, 80.0, 40.0, 36.0
+        node_width, node_height, padding, header = float(NODE_WIDTH), float(NODE_HEIGHT), 40.0, 36.0
         if group_id is not None:
             target_ids = [group_id]
         else:

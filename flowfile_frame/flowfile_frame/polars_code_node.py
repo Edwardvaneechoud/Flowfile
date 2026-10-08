@@ -22,13 +22,14 @@ def polars_code(
 ) -> FlowFrame:
     """Place one Polars Code node reading ``inputs`` in order, or none: a source node.
 
-    ``code`` is stored as :meth:`FlowFrame.polars_code` stores it (a string, or a ``def`` whose body
-    is read). With inputs this is ``inputs[0].polars_code(code, *inputs[1:])``. Without, the code
-    builds its own frame (``output_df = pl.LazyFrame(...)``) and the node lands on ``flow_graph``,
+    ``code`` is stored as :meth:`FlowFrame.polars_code` stores it (a ``def`` as written, or a
+    string). With inputs this is ``inputs[0].polars_code(code, *inputs[1:])``. Without, the code
+    builds its own frame (a ``def`` without parameters returning ``pl.LazyFrame(...)``, or
+    ``output_df = pl.LazyFrame(...)``) and the node lands on ``flow_graph``,
     else the implicit graph (the notebook session's in notebook mode, a new one otherwise), the way
     ``ff.from_dict`` places a source.
     """
-    from flowfile_frame.flow_frame import FlowFrame, _polars_code_source
+    from flowfile_frame.flow_frame import FlowFrame, _check_polars_code_inputs, _polars_code_source
 
     if inputs:
         first = inputs[0]
@@ -38,6 +39,7 @@ def polars_code(
             raise NativeNodeError("polars_code: the inputs live on another graph than flow_graph")
         return first.polars_code(code, *inputs[1:], description=description)
     text = _polars_code_source(code)
+    _check_polars_code_inputs(text, 0)
     graph = flow_graph if flow_graph is not None else _implicit_graph()
     node_id = generate_node_id()
     graph.add_polars_code(
