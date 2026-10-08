@@ -3,6 +3,8 @@
 Each helper takes (LazyFrame, settings) and returns a LazyFrame with no global
 state. Settings shapes mirror `toPythonJson(node.settings)` from flow-store.ts.
 """
+import json
+from pathlib import Path
 import datetime
 
 import polars as pl
@@ -418,6 +420,40 @@ def test_polars_code_schema_build_does_not_capture_dead_stdout(capsys):
     assert engine.execute_read_csv(1, "a\n1\n", {})["success"] is True
     assert engine.execute_polars_code(2, [1], settings)["success"] is True
     assert "LOG_MARKER" in capsys.readouterr().out
+
+
+def test_polars_code_function_form_runs_its_def_over_the_inputs_in_order():
+    code = (
+        "# Join the two inputs.\n"
+        "def joined(orders: pl.LazyFrame, names: ff.FlowFrame) -> pl.LazyFrame:\n"
+        "    return orders.join(names, on='id')"
+    )
+    settings = {"polars_code_input": {"polars_code": code}}
+
+    schema = engine.build_polars_code_schema([lf(id=[1], amount=[2]), lf(id=[1], name=["x"])], settings)
+    assert schema.collect_schema().names() == ["id", "amount", "name"]
+
+    assert engine.execute_read_csv(1, "id,amount\n1,10\n2,20\n", {})["success"] is True
+    assert engine.execute_read_csv(2, "id,name\n2,b\n", {})["success"] is True
+    assert engine.execute_polars_code(3, [1, 2], settings)["success"] is True
+    assert engine.get_lazyframe(3).collect().rows() == [(2, 20, "b")]
+
+
+def test_polars_code_function_form_without_inputs_builds_a_source():
+    settings = {"polars_code_input": {"polars_code": "def make():\n    return pl.DataFrame({'a': [1, 2]})"}}
+
+    assert engine.execute_polars_code(1, [], settings)["success"] is True
+    assert engine.get_lazyframe(1).collect()["a"].to_list() == [1, 2]
+
+
+def test_polars_code_function_form_matches_the_code_generator_on_the_shared_fixtures():
+    """The engine and ``useCodeGeneration``'s ``functionFormName`` read the same fixture list and must agree."""
+    from engine.nodes_polars_code import _function_form
+
+    fixtures = json.loads((Path(__file__).parents[1] / "fixtures" / "polars-code-function-form.json").read_text())
+    for fixture in fixtures:
+        entry = _function_form(fixture["code"])
+        assert (entry.name if entry is not None else None) == fixture["name"], fixture["label"]
 
 
 def test_filter_parses_iso_values_for_date_and_datetime_columns():

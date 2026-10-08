@@ -12,9 +12,10 @@ ids already agree (the session's were relabelled onto provenance ids). :func:`re
   custom node) only when its settings differ under :func:`compare.settings_equal`, its user description
   differs, or its ``node_reference`` changes; an unchanged node never gets an op, since ``update_node``
   swaps its function and resets its cache even for an equal hash;
-* new ids become ``add_node`` next to their most recent input (:func:`_insertion_position`, the AI executor's
-  ``_resolve_insertion_position`` rule), then their inputs are connected, then their settings are sent; a type
-  change under the same id is ``delete_node`` + ``add_node`` at the live position + every edge re-connected;
+* new ids become ``add_node`` at the free slot nearest their inputs or outputs (``util/layout/placement.py``:
+  live nodes never move and a deleted node's slot is free), then their inputs are connected, then their settings
+  are sent; a type change under the same id is ``delete_node`` + ``add_node`` at the live position + every edge
+  re-connected;
 * edges are diffed per target handle: ``input-0`` as an ordered list (a union's or multi-input Polars
   code's order matters and ``connect`` appends, so a changed order re-adds every input), ``input-1`` /
   ``input-2`` as single slots and keyed inputs as sets, each with its source handle (``output-0..9``);
@@ -33,13 +34,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from flowfile_core.flowfile.util.layout.placement import placer_from_payload
 from flowfile_core.notebook.compare import parameters_equal, settings_equal
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
 
 MAIN, RIGHT, LEFT = "input-0", "input-1", "input-2"
 DEFAULT_HANDLE = "output-0"
-X_SPACING, Y_SPACING, FALLBACK_X, FALLBACK_Y = 250.0, 100.0, 50.0, 50.0
 
 
 class ReconcilePlan(BaseModel):
@@ -279,9 +280,10 @@ def reconcile(
         live_nodes, session_nodes, live_names, session_names, kept_absent, skipped, pinned, plan.warnings
     )
 
+    order = _topological(session_nodes)
     removals: list[Edge] = []
     connects: dict[int, list[Edge]] = defaultdict(list)
-    for target in _topological(session_nodes):
+    for target in order:
         if target in skipped:
             continue
         session_in = incoming_edges(session_nodes[target], session_nodes)
@@ -314,20 +316,21 @@ def reconcile(
             "its edges are re-connected."
         )
 
-    positions = {
-        nid: (float(n.get("x_position") or 0), float(n.get("y_position") or 0)) for nid, n in live_nodes.items()
-    }
-    anchored: Counter = Counter()
-    for nid in _topological(session_nodes):
+    placer = placer_from_payload(live)
+    for nid in deleted:
+        placer.release(nid)
+    targets: dict[int, list[int]] = defaultdict(list)
+    for target, edges in connects.items():
+        for source, *_ in edges:
+            targets[source].append(target)
+    new_ids = [nid for nid in order if nid in added]
+    placed = placer.place_all(new_ids, {nid: [s for s, *_ in connects[nid]] for nid in new_ids}, targets)
+    for nid in order:
         if nid in skipped:
             continue
         node = session_nodes[nid]
         if nid in added or nid in type_changed:
-            if nid in type_changed:
-                pos = positions[nid]
-            else:
-                pos = _insertion_position(connects[nid], positions, anchored)
-                positions[nid] = pos
+            pos = placer.position(nid) if nid in type_changed else placed[nid]
             ops.append(
                 schemas.AddNodeOperation(op="add_node", node_id=nid, node_type=node["type"], pos_x=pos[0], pos_y=pos[1])
             )
@@ -372,19 +375,6 @@ def _final_references(
         taken[ref] = nid
         references[nid] = ref
     return references
-
-
-def _insertion_position(edges: list[Edge], positions: dict, anchored: Counter) -> tuple[float, float]:
-    """Next to the most recent input that has a position, stacked below earlier nodes anchored on it."""
-    for source, *_ in reversed(edges):
-        if source in positions:
-            index = anchored[source]
-            anchored[source] += 1
-            x, y = positions[source]
-            return x + X_SPACING, y + index * Y_SPACING
-    index = anchored[None]
-    anchored[None] += 1
-    return FALLBACK_X, FALLBACK_Y + index * Y_SPACING
 
 
 def _op_for(node: dict, body: dict) -> schemas.EditorOperation:

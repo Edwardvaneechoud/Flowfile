@@ -1,0 +1,57 @@
+[
+  {
+    "label": "plain def with a comment above",
+    "code": "# c\ndef f(rows):\n    return rows",
+    "name": "f"
+  },
+  {
+    "label": "module docstring before the def",
+    "code": "\"\"\"About it.\"\"\"\ndef f(rows):\n    return rows",
+    "name": "f"
+  },
+  {
+    "label": "dict closed at column 0",
+    "code": "def make():\n    return pl.DataFrame({\n        \"a\": [1]\n})",
+    "name": "make"
+  },
+  {
+    "label": "multi-line string with column-0 content",
+    "code": "def f(rows):\n    q = \"\"\"a\nb\"\"\"\n    return rows",
+    "name": "f"
+  },
+  {
+    "label": "bracket inside a comment",
+    "code": "def f(rows):  # ) comment\n    return rows",
+    "name": "f"
+  },
+  {
+    "label": "bracket inside a string",
+    "code": "def f(rows):\n    return rows.filter(pl.col('x') == ')')",
+    "name": "f"
+  },
+  {
+    "label": "decorated def",
+    "code": "@staticmethod\ndef f(rows):\n    return rows",
+    "name": null
+  },
+  {
+    "label": "async def",
+    "code": "async def f(rows):\n    return rows",
+    "name": null
+  },
+  {
+    "label": "def followed by a call",
+    "code": "def f(rows):\n    return rows\nf(input_df)",
+    "name": null
+  },
+  {
+    "label": "snippet",
+    "code": "input_df.head(5)",
+    "name": null
+  },
+  {
+    "label": "two defs",
+    "code": "def a(rows):\n    return rows\ndef b(rows):\n    return rows",
+    "name": null
+  }
+]

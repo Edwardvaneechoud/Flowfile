@@ -1,4 +1,4 @@
-"""Layered graph layout passes.
+"""Layered graph layout passes, plus :mod:`placement` for nodes added to an existing canvas.
 
 Each module holds one pass of the pipeline and takes plain ints and lists, so
 everything below :mod:`extract` is testable without a ``FlowGraph``.

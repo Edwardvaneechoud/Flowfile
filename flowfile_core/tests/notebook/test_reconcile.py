@@ -2,6 +2,7 @@
 
 import copy
 
+from flowfile_core.flowfile.util.layout.placement import Box, node_box
 from flowfile_core.notebook.reconcile import incoming_edges, reconcile, user_description
 
 
@@ -306,3 +307,96 @@ def test_incoming_edges_keep_two_handles_of_one_source():
         "input-0": [(2, "output-0")],
         "input-1": [(2, "output-1")],
     }
+
+
+def _at(node, x, y):
+    node.update(x_position=x, y_position=y)
+    return node
+
+
+def _added(plan):
+    return {op.node_id: (op.pos_x, op.pos_y) for op in plan.operations if op.op == "add_node"}
+
+
+def _assert_added_nodes_cover_nothing(live, plan):
+    """Every added node's box is clear of the other nodes left on the canvas, its comments and collapsed groups."""
+    added = _added(plan)
+    left = {n["id"]: (n["x_position"], n["y_position"]) for n in live["nodes"] if n["id"] not in plan.deletions}
+    positions = {**left, **added}
+    blocking = [g for g in live.get("groups", []) if g.get("collapsed")] + live.get("comments", [])
+    boxes = [Box(b["x_position"], b["y_position"], b["width"], b["height"]) for b in blocking]
+    for nid, (x, y) in added.items():
+        others = [node_box(*p) for other, p in positions.items() if other != nid] + boxes
+        assert not any(node_box(x, y).overlaps(box) for box in others), (nid, x, y)
+
+
+def _group(group_id, x, y, width, height, *, collapsed=False):
+    return {"id": group_id, "name": "g", "x_position": x, "y_position": y, "width": width, "height": height, "collapsed": collapsed}
+
+
+def test_a_node_inserted_into_a_chain_does_not_cover_the_next_node():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50), _sort(3, 2, x=500, y=50))
+    session = _payload(_manual(), _sort(5, 1), _filter(2, 5), _sort(3, 2))
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2, 3, extra={"node-2": [5, 2]}))
+    assert _added(plan) == {5: (250.0, 150.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+def test_a_second_branch_does_not_cover_the_first():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50))
+    session = _payload(_manual(), _filter(2, 1), _sort(5, 1))
+    plan = reconcile(live, session, ["cell-5"], _cells(1, 2, extra={"cell-5": [5]}))
+    assert _added(plan) == {5: (250.0, 150.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+def test_a_new_reader_goes_below_the_canvas_not_onto_its_first_node():
+    live = _payload(_at(_manual(), 50, 50), _filter(2, 1, x=300, y=50))
+    session = _payload(_manual(), _filter(2, 1), _manual(5))
+    plan = reconcile(live, session, ["cell-5"], _cells(1, 2, extra={"cell-5": [5]}))
+    assert _added(plan) == {5: (50.0, 230.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+def test_a_new_reader_joined_into_the_chain_lands_beside_the_other_join_input():
+    join = {"join_input": {"join_mapping": [{"left_col": "a", "right_col": "a"}], "how": "inner"}}
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50))
+    session = _payload(_manual(), _filter(2, 1), _manual(5), _node(6, "join", join, inputs=[2], right=5))
+    plan = reconcile(live, session, ["cell-5"], _cells(1, 2, extra={"cell-5": [5, 6]}))
+    assert _added(plan) == {6: (500.0, 50.0), 5: (250.0, 150.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+def test_a_deleted_nodes_slot_is_free_for_its_replacement():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50))
+    session = _payload(_manual(), _sort(5, 1))
+    plan = reconcile(live, session, ["node-2"], _cells(1, extra={"node-2": [5]}))
+    assert plan.deletions == [2]
+    assert _added(plan) == {5: (250.0, 50.0)}
+
+
+def test_a_node_inserted_into_a_grouped_chain_stays_in_the_group():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50), _sort(3, 2, x=500, y=50))
+    live["groups"] = [_group(1, -40, -20, 600, 300)]
+    session = _payload(_manual(), _sort(5, 1), _filter(2, 5), _sort(3, 2))
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2, 3, extra={"node-2": [5, 2]}))
+    assert _added(plan) == {5: (250.0, 150.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+def test_a_collapsed_group_in_the_way_is_avoided():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50))
+    live["groups"] = [_group(1, 500, 0, 240, 200, collapsed=True)]
+    session = _payload(_manual(), _filter(2, 1), _sort(5, 2))
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2, extra={"node-2": [2, 5]}))
+    assert _added(plan) == {5: (500.0, 250.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+def test_a_comment_in_the_way_is_avoided():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50))
+    live["comments"] = [{"id": 1, "text": "note", "x_position": 500, "y_position": 0, "width": 240, "height": 200}]
+    session = _payload(_manual(), _filter(2, 1), _sort(5, 2))
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2, extra={"node-2": [2, 5]}))
+    assert _added(plan) == {5: (500.0, 250.0)}
+    _assert_added_nodes_cover_nothing(live, plan)

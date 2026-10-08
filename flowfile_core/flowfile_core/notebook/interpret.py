@@ -6,12 +6,13 @@ only the frame calls :mod:`flowfile_core.notebook.allowlist` names for a value's
 anything else fails on its line with "this needs a kernel".
 
 Statements: ``import`` and ``from ... import`` of what the allowlist names, assignments, expression statements (a
-call, name, attribute, subscript or constant) and ``def``. A ``def`` binds only in the render's three shapes: a
-module helper whose text equals ``render._NOTEBOOK_HELPERS`` byte for byte (core's copy is bound), a Polars Code
-body (its text, through the frame's ``_polars_code_text``) and an ``@ff.python_script``
-(``PythonScriptFunction._from_source``). A script's prelude may also import a module the dialect does not name,
-bound inert once ``importlib.util.find_spec`` finds it, checked on its top-level name only (a dotted name would
-import the parent).
+call, name, attribute, subscript or constant) and ``def``. A ``def`` binds in three shapes: a module helper whose
+text equals ``render._NOTEBOOK_HELPERS`` byte for byte (core's copy is bound), an ``@ff.python_script``
+(``PythonScriptFunction._from_source``) and any other undecorated ``def`` as Polars Code text (through the frame's
+``_polars_code_text``: the function as written with the comment lines above it, or a ``_polars_code_<n>``
+snippet's body), which only ``polars_code`` accepts. A script's prelude may also import a module the dialect does
+not name, bound inert once ``importlib.util.find_spec`` finds it, checked on its top-level name only (a dotted name
+would import the parent).
 
 A failure is a ``notebook_cells.CellFailure`` on the line CPython reports (a chain's method name, its
 ``end_lineno``; on 3.10 a method call with keywords reports the call's ``lineno`` and a failing
@@ -62,7 +63,6 @@ _COMPARE = {
 _STORE_NAME = re.compile(rf"{allowlist.USER_NAME}|{'|'.join(allowlist.GENERATED_NAMES)}")
 _SCRIPT_NAME = re.compile(rf"{allowlist.USER_NAME}|_script_\d+")
 _PRELUDE_NAME = re.compile(rf"_?{allowlist.USER_NAME}")
-_POLARS_CODE_NAME = re.compile(r"_polars_code_\d+")
 _BUILTIN_NAMES = frozenset(dir(builtins))
 
 
@@ -193,7 +193,14 @@ def _error(exc: BaseException, line: int | None) -> _Failure:
 
 
 def _kind_label(kind: str | None) -> str:
-    return {"ff": "`ff`", "pl": "`pl`", "none": "None", "graph": "the session graph `flow`"}.get(kind or "", kind or "")
+    labels = {
+        "ff": "`ff`",
+        "pl": "`pl`",
+        "none": "None",
+        "graph": "the session graph `flow`",
+        "polars_code_def": "Polars Code `def`",
+    }
+    return labels.get(kind or "", kind or "")
 
 
 class CellInterpreter:
@@ -414,7 +421,7 @@ class _Cell:
             raise _needs_kernel(f"Binding {_kind_label(kind) or 'this value'} to `{name}`", line)
 
     def function(self, node: ast.FunctionDef) -> None:
-        """The three ``def`` shapes the render emits: a module helper, a Polars Code body, a Python Script."""
+        """The three ``def`` shapes: a module helper, a Python Script, and Polars Code (any other plain ``def``)."""
         from flowfile_core.notebook.render import _NOTEBOOK_HELPERS
 
         if node.name in allowlist.HELPERS and not node.decorator_list:
@@ -422,32 +429,26 @@ class _Cell:
                 raise _needs_kernel(f"A `{node.name}` that differs from the notebook's own", node.lineno)
             self.interpreter.used.add(("helper", node.name))
             self.namespace[node.name] = _Helper(node.name, _HELPER_FUNCTIONS[node.name])
-        elif _POLARS_CODE_NAME.fullmatch(node.name) and not node.decorator_list:
-            self.polars_code_def(node)
         elif _is_script(node):
             self.script_def(node)
+        elif not node.decorator_list:
+            self.polars_code_def(node)
         else:
             raise _needs_kernel(f"The function `{node.name}`", node.lineno)
 
     def polars_code_def(self, node: ast.FunctionDef) -> None:
+        """Any other plain ``def`` is Polars Code text, usable only as ``polars_code``'s code (never evaluated).
+
+        The name is the canvas's, so any identifier but a reserved one binds (a node's def may start with ``_``).
+        The cell up to the def travels with it: ``_polars_code_text`` takes the comment lines right above the def.
+        """
         from flowfile_frame.flow_frame import _polars_code_text
 
-        args = node.args
-        if args.posonlyargs or args.vararg or args.kwonlyargs or args.kwarg or args.defaults or node.returns:
-            raise _needs_kernel(f"The signature of `{node.name}`", node.lineno)
-        for arg in args.args:
-            annotation = arg.annotation
-            if annotation is None:
-                continue
-            if not (
-                isinstance(annotation, ast.Attribute)
-                and isinstance(annotation.value, ast.Name)
-                and annotation.attr == "FlowFrame"
-                and kind_of(self.name(annotation.value)) == "ff"
-            ):
-                raise _needs_kernel(f"The annotation {self.text(annotation)}", annotation.lineno)
-        self.check_store(node.name, node.lineno)
-        self.namespace[node.name] = _PolarsCodeDef(node.name, _polars_code_text(_block(self.code, node.lineno)))
+        if node.name in allowlist.RESERVED_NAMES:
+            raise _needs_kernel(f"Binding the name `{node.name}`", node.lineno)
+        head = "".join(self.code.splitlines(True)[: node.lineno - 1])
+        text = _polars_code_text(head + _block(self.code, node.lineno))
+        self.namespace[node.name] = _PolarsCodeDef(node.name, text)
 
     def script_def(self, node: ast.FunctionDef) -> None:
         """``@ff.python_script(...)``: the decorator's keywords like a call's, the cells from the source text."""
@@ -480,9 +481,9 @@ class _Cell:
     def name(self, node: ast.Name) -> Any:
         self.step(node)
         name = node.id
-        if name.startswith("__") or (name.startswith("_") and not _STORE_NAME.fullmatch(name)):
-            if name not in allowlist.HELPERS:
-                raise _needs_kernel(f"The name `{name}`", node.lineno)
+        private = name.startswith("__") or (name.startswith("_") and not _STORE_NAME.fullmatch(name))
+        if private and name not in allowlist.HELPERS and not self._polars_code_def(name):
+            raise _needs_kernel(f"The name `{name}`", node.lineno)
         try:
             value = self.namespace[name]  # not `in`: a clean run's namespace resolves seeded names on lookup
         except KeyError:
@@ -494,6 +495,13 @@ class _Cell:
         if kind_of(value) is None:
             raise _needs_kernel(f"`{name}`", node.lineno)
         return value
+
+    def _polars_code_def(self, name: str) -> bool:
+        """Whether the cell bound ``name`` as a Polars Code def: the canvas's name, which may start with ``_``."""
+        try:
+            return isinstance(self.namespace[name], _PolarsCodeDef)
+        except (KeyError, NameError):
+            return False
 
     def expr(self, node: ast.expr) -> Any:
         self.step(node)
@@ -687,6 +695,10 @@ class _Cell:
     def call_value(self, callee: Any, call: ast.Call, line: int | None = None) -> Any:
         """Calling a value by its kind's ``__call__`` entry (a helper, a reader, a script, a custom node)."""
         kind = kind_of(callee)
+        if kind == "polars_code_def":
+            name = callee.name
+            what = f"Calling `{name}` (the notebook reads a plain `def` only as code for `.polars_code({name})`)"
+            raise _needs_kernel(what, call.lineno)
         if "__call__" not in allowlist.ALLOWLIST.get(kind or "", {}):
             raise _needs_kernel(f"Calling {_kind_label(kind) or 'this value'} in {self.text(call)}", call.lineno)
         self.interpreter.used.add((kind, "__call__"))

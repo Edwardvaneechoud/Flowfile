@@ -3244,8 +3244,9 @@ def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowData
     """Executes arbitrary Polars code on one or more FlowDataEngine objects.
 
     This function takes a string of Python code that uses Polars and executes it.
-    Input `FlowDataEngine` objects are made available in the code's scope as
-    `input_df` (for a single input) or `input_df_1`, `input_df_2`, etc.
+    Function-form code (a single ``def``) is called with the inputs as positional
+    LazyFrames; snippet code reads them as `input_df` (for a single input) or
+    `input_df_1`, `input_df_2`, etc.
 
     Args:
         *flowfile_tables: A variable number of `FlowDataEngine` objects to be
@@ -3256,13 +3257,7 @@ def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowData
         A new `FlowDataEngine` instance containing the result of the executed code.
     """
     polars_executable = polars_code_parser.get_executable(code, num_inputs=len(flowfile_tables))
-    if len(flowfile_tables) == 0:
-        kwargs = {}
-    elif len(flowfile_tables) == 1:
-        kwargs = {"input_df": flowfile_tables[0].data_frame}
-    else:
-        kwargs = {f"input_df_{i+1}": flowfile_table.data_frame for i, flowfile_table in enumerate(flowfile_tables)}
-    df = polars_executable(**kwargs)
+    df = polars_executable(*(flowfile_table.data_frame for flowfile_table in flowfile_tables))
     if isinstance(df, pl.DataFrame):
         logger.warning("Got a non lazy DataFrame, possibly harming performance, if possible, try to use a lazy method")
     return FlowDataEngine(df)

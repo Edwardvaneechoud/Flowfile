@@ -290,16 +290,22 @@ Pipelines built with the Python API only fall back to this node for operations w
 
 | Setting | Description |
 |---|---|
-| **Code** | The Polars code to run. The incoming frame is `input_df` — or `input_df_0`, `input_df_1`, … when several are connected. For multi-line code, assign the result to `output_df`. A commented example template is there to start from. |
+| **Code** | The Polars code to run. A new node starts with a function, `def transform(input_df: pl.LazyFrame) -> pl.LazyFrame`. It gets one parameter per connected input, in connection order, each a Polars LazyFrame, and what it returns is the node's output; name the function and its parameters as you like, and put any helper functions inside it. Code that is not a single function runs as a snippet: it reads `input_df`, or `input_df_1`, `input_df_2`, … when several inputs are connected, and its result is the `output_df` it assigns or its last expression. `pl` is available; imports are not allowed. |
 
 ```python
-input_df.filter(pl.col('Age') > 30)
+def adults(customers: pl.LazyFrame) -> pl.LazyFrame:
+    return customers.filter(pl.col('Age') > 30)
 ```
 
 ```python
-result = input_df.select(['Name', 'City'])
-filtered = result.filter(pl.col('City') == 'Amsterdam')
-output_df = filtered.with_columns(pl.col('Name').alias('Customer_Name'))
+def enrich(orders: pl.LazyFrame, customers: pl.LazyFrame) -> pl.LazyFrame:
+    return orders.join(customers, on='customer_id', how='left')
+```
+
+A snippet does the same in fewer lines:
+
+```python
+input_df.filter(pl.col('Age') > 30)
 ```
 
 ## ![Python Script](../../../assets/images/nodes/python_code.svg){ width="44" height="44" } Python Script
