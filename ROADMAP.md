@@ -1,6 +1,6 @@
 # Flowfile Roadmap
 
-**Flowfile 0.22.1 · updated 2026-10-08 · [discuss this roadmap](https://github.com/edwardvaneechoud/Flowfile/discussions/categories/announcements)**
+**Flowfile 0.22 . updated 2026-10-08 · [discuss this roadmap](https://github.com/edwardvaneechoud/Flowfile/discussions/categories/announcements)**
 
 Flowfile is for analytics and exploratory ETL. You start with a question,
 work through the data, and end up with a pipeline worth keeping. You should
