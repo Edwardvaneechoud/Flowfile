@@ -53,7 +53,7 @@ pub fn open_notebook_window(app: &AppHandle, flow_id: i64) -> Result<(), String>
         &format!("index.html#/notebook?flow={flow_id}"),
         ports,
     )
-    .title("Flowfile – Notebook")
+    .title("Notebook")
     .inner_size(1100.0, 800.0)
     .min_inner_size(720.0, 500.0)
     .visible(true)
@@ -85,6 +85,22 @@ pub fn close_notebook_window(app: &AppHandle, flow_id: i64) {
     if let Some(window) = app.get_webview_window(&notebook_label(flow_id)) {
         let _ = window.close();
     }
+}
+
+/// The pop-out's "Return to designer": `main` reopens its dock on that flow
+/// (`notebook-window-returned`) and comes to the front, then the notebook window closes (its
+/// `Destroyed` still reports the close).
+pub fn return_notebook_window(app: &AppHandle, flow_id: i64) {
+    let _ = app.emit_to(
+        EventTarget::webview_window("main"),
+        "notebook-window-returned",
+        flow_id,
+    );
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+    close_notebook_window(app, flow_id);
 }
 
 pub fn notebook_windows(app: &AppHandle) -> Vec<(i64, WebviewWindow)> {

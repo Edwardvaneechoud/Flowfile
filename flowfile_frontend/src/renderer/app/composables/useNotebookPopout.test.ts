@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     closeNotebookWindow: vi.fn(),
     listNotebookWindows: vi.fn(),
     onNotebookWindowClosed: vi.fn(),
+    onNotebookWindowReturned: vi.fn(),
   },
   editorStore: {
     poppedOut: [] as number[],
@@ -20,11 +21,15 @@ const mocks = vi.hoisted(() => ({
     setCodeGeneratorVisibility: vi.fn(),
     openCodePane: vi.fn(),
   },
+  flowStore: { setFlowId: vi.fn() },
+  router: { currentRoute: { value: { name: "designer" as string } }, push: vi.fn() },
   messageError: vi.fn(),
 }));
 
 vi.mock("../../lib/desktop", () => ({ desktop: mocks.desktop }));
 vi.mock("../stores/editor-store", () => ({ useEditorStore: () => mocks.editorStore }));
+vi.mock("../stores/flow-store", () => ({ useFlowStore: () => mocks.flowStore }));
+vi.mock("../router", () => ({ default: mocks.router }));
 vi.mock("element-plus", () => ({ ElMessage: { error: mocks.messageError } }));
 
 import { _resetForTests, useNotebookPopout } from "./useNotebookPopout";
@@ -35,14 +40,21 @@ const settle = async () => {
 
 describe("useNotebookPopout", () => {
   let onClosed: ((flowId: number) => void) | null = null;
+  let onReturned: ((flowId: number) => void) | null = null;
 
   beforeEach(() => {
     vi.clearAllMocks();
     _resetForTests();
     mocks.editorStore.poppedOut = [];
+    mocks.router.currentRoute.value.name = "designer";
     onClosed = null;
+    onReturned = null;
     mocks.desktop.onNotebookWindowClosed.mockImplementation(async (handler) => {
       onClosed = handler;
+      return () => undefined;
+    });
+    mocks.desktop.onNotebookWindowReturned.mockImplementation(async (handler) => {
+      onReturned = handler;
       return () => undefined;
     });
     mocks.desktop.listNotebookWindows.mockResolvedValue([]);
@@ -94,7 +106,31 @@ describe("useNotebookPopout", () => {
     expect(mocks.editorStore.openCodePane).toHaveBeenCalledWith("notebook");
   });
 
-  it("adopts the windows already open and installs the listener once", async () => {
+  it("a window's Return to designer reopens the pane on its flow", async () => {
+    const { popOut, isPoppedOut } = useNotebookPopout();
+    await popOut(4);
+    await settle();
+
+    expect(onReturned).not.toBeNull();
+    onReturned!(4);
+    expect(isPoppedOut(4)).toBe(false);
+    expect(mocks.flowStore.setFlowId).toHaveBeenCalledWith(4);
+    expect(mocks.editorStore.openCodePane).toHaveBeenCalledWith("notebook");
+    expect(mocks.router.push).not.toHaveBeenCalled();
+  });
+
+  it("a returned notebook brings the designer page back when it was left", async () => {
+    mocks.router.currentRoute.value.name = "catalog";
+    useNotebookPopout();
+    await settle();
+
+    onReturned!(4);
+    expect(mocks.flowStore.setFlowId).toHaveBeenCalledWith(4);
+    expect(mocks.editorStore.openCodePane).toHaveBeenCalledWith("notebook");
+    expect(mocks.router.push).toHaveBeenCalledWith({ name: "designer" });
+  });
+
+  it("adopts the windows already open and installs the listeners once", async () => {
     mocks.desktop.listNotebookWindows.mockResolvedValue([2, 3]);
     const first = useNotebookPopout();
     await settle();
@@ -103,6 +139,7 @@ describe("useNotebookPopout", () => {
 
     useNotebookPopout();
     expect(mocks.desktop.onNotebookWindowClosed).toHaveBeenCalledTimes(1);
+    expect(mocks.desktop.onNotebookWindowReturned).toHaveBeenCalledTimes(1);
     expect(mocks.desktop.listNotebookWindows).toHaveBeenCalledTimes(1);
   });
 });

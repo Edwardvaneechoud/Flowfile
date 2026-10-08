@@ -89,6 +89,25 @@ pub fn close_notebook_window(app: AppHandle, window: Window, flow_id: i64) -> Re
     Ok(())
 }
 
+/// Only the notebook window of that flow may hand itself back to the designer.
+fn require_notebook(window: &Window, flow_id: i64) -> Result<(), String> {
+    if window.label() == window::notebook_label(flow_id) {
+        Ok(())
+    } else {
+        Err(format!(
+            "window '{}' is not the notebook window of flow {flow_id}",
+            window.label()
+        ))
+    }
+}
+
+#[tauri::command]
+pub fn return_notebook_window(app: AppHandle, window: Window, flow_id: i64) -> Result<(), String> {
+    require_notebook(&window, flow_id)?;
+    window::return_notebook_window(&app, flow_id);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn list_notebook_windows(app: AppHandle, window: Window) -> Result<Vec<i64>, String> {
     require_main(&window)?;

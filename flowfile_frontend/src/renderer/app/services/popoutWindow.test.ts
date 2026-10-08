@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  flowLabel,
   isPopoutHash,
   notebookWindowName,
   notebookWindowUrl,
@@ -42,5 +43,13 @@ describe("popoutWindow", () => {
     expect(windowTitle("orders")).toBe("Notebook – orders");
     expect(windowTitle(null)).toBe("Notebook");
     expect(windowTitle("")).toBe("Notebook");
+  });
+
+  it("labels the flow as the designer's tab bar does", () => {
+    expect(flowLabel({ name: "orders.flowfile", display_name: "Orders" })).toBe("Orders");
+    expect(flowLabel({ name: "orders", display_name: null })).toBe("orders");
+    expect(flowLabel({ name: "Untitled flow 2026-10-08 04:19:57" })).toBe(
+      "Untitled flow 2026-10-08 04:19:57",
+    );
   });
 });

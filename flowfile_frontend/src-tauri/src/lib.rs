@@ -62,6 +62,7 @@ pub fn run() {
             commands::focus_notebook_window,
             commands::close_notebook_window,
             commands::list_notebook_windows,
+            commands::return_notebook_window,
         ])
         .menu(|app_handle| menu::build(app_handle))
         .on_menu_event(|app, event| menu::on_menu_event(app, event.id().as_ref()))

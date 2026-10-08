@@ -8,6 +8,7 @@
     "core:event:default",
     "core:window:allow-close",
     "core:window:allow-set-focus",
+    "core:window:allow-set-title",
     "core:app:allow-version",
     "log:default",
     "os:default",

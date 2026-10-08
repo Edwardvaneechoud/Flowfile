@@ -41,26 +41,28 @@
           Notebook
         </button>
       </div>
-      <button
-        v-if="codeMode === 'notebook' && nodeStore.flow_id > 0 && !poppedOut"
-        class="close-btn popout-btn"
-        type="button"
-        aria-label="Open the notebook in its own window"
-        title="Open the notebook in its own window"
-        data-testid="code-popout"
-        @click="popOut(nodeStore.flow_id)"
-      >
-        <span class="material-icons" aria-hidden="true">open_in_new</span>
-      </button>
-      <button
-        class="close-btn"
-        type="button"
-        aria-label="Close code pane"
-        title="Close (Ctrl/Cmd+G)"
-        @click="editorStore.setCodeGeneratorVisibility(false)"
-      >
-        <span class="material-icons" aria-hidden="true">close</span>
-      </button>
+      <div class="header-actions">
+        <button
+          v-if="codeMode === 'notebook' && nodeStore.flow_id > 0 && !poppedOut"
+          class="icon-btn"
+          type="button"
+          aria-label="Open the notebook in its own window"
+          title="Open the notebook in its own window"
+          data-testid="code-popout"
+          @click="popOut(nodeStore.flow_id)"
+        >
+          <span class="material-icons" aria-hidden="true">open_in_new</span>
+        </button>
+        <button
+          class="icon-btn"
+          type="button"
+          aria-label="Close code pane"
+          title="Close (Ctrl/Cmd+G)"
+          @click="editorStore.setCodeGeneratorVisibility(false)"
+        >
+          <span class="material-icons" aria-hidden="true">close</span>
+        </button>
+      </div>
     </div>
     <div v-if="!ownsBody" class="code-toolbar">
       <button class="action-btn" :disabled="loading" @click="refreshCode">
@@ -339,14 +341,22 @@ const exportCode = () => {
   white-space: nowrap;
 }
 
-.close-btn {
+/* The trailing icon buttons sit together at the header's right edge. */
+.header-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--spacing-1);
+  margin-left: auto;
+}
+
+.icon-btn {
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 28px;
-  margin-left: auto;
   padding: 0;
   border: none;
   border-radius: var(--border-radius-md);
@@ -358,11 +368,11 @@ const exportCode = () => {
     color var(--transition-fast);
 }
 
-.close-btn .material-icons {
+.icon-btn .material-icons {
   font-size: 18px;
 }
 
-.close-btn:hover {
+.icon-btn:hover {
   color: var(--color-text-primary);
   background: var(--color-background-tertiary);
 }

@@ -26,6 +26,7 @@ interface TauriWebviewWindow {
   label: string;
   listen: TauriEvent["listen"];
   close(): Promise<void>;
+  setTitle(title: string): Promise<void>;
 }
 
 interface TauriRuntime {
@@ -126,6 +127,8 @@ async function listen<T>(event: string, handler: (payload: T) => void): Promise<
 
 // Web mode's pop-out notebook windows (`window.open` handles) and who wants to know when one closes.
 const webPopouts = new Map<number, Window>();
+// Web mode's "Return to designer": the pop-out posts this to its opener before closing itself.
+const NOTEBOOK_RETURN_MESSAGE = "flowfile:notebook-return";
 const popoutClosedHandlers = new Set<(flowId: number) => void>();
 let popoutPoll: ReturnType<typeof setInterval> | null = null;
 
@@ -438,7 +441,44 @@ export const desktop = {
     });
   },
 
-  /** Close the window this renderer runs in: the pop-out's "Return to designer". */
+  /**
+   * A notebook window's "Return to designer": the shell's `notebook-window-returned` on `main`, or
+   * the pop-out's message to its opener. The dock reopens on that flow; the window closes after.
+   */
+  onNotebookWindowReturned(handler: (flowId: number) => void): Promise<() => void> {
+    if (isDesktop) return listen<number>("notebook-window-returned", handler);
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data as { type?: unknown; flowId?: unknown } | null;
+      if (data?.type !== NOTEBOOK_RETURN_MESSAGE || typeof data.flowId !== "number") return;
+      handler(data.flowId);
+    };
+    window.addEventListener("message", onMessage);
+    return Promise.resolve(() => window.removeEventListener("message", onMessage));
+  },
+
+  /**
+   * Hand this notebook window's flow back to the designer and close the window. Desktop: the shell
+   * tells `main`, focuses it and closes this window. Web: a message to the opener, then `close()`.
+   */
+  async returnNotebookToDesigner(flowId: number): Promise<void> {
+    if (isDesktop) {
+      await invoke<void>("return_notebook_window", { flowId });
+      return;
+    }
+    window.opener?.postMessage({ type: NOTEBOOK_RETURN_MESSAGE, flowId }, window.location.origin);
+    window.close();
+  },
+
+  /** Title this window: `document.title`, and on desktop the native window title with it. */
+  async setWindowTitle(title: string): Promise<void> {
+    document.title = title;
+    if (!isDesktop) return;
+    const current = runtime()?.webviewWindow?.getCurrentWebviewWindow?.();
+    await current?.setTitle(title).catch(() => undefined);
+  },
+
+  /** Close the window this renderer runs in (the pop-out of a flow closed elsewhere). */
   async closeCurrentWindow(): Promise<void> {
     if (!isDesktop) {
       window.close();

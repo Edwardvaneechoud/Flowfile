@@ -5,16 +5,28 @@
  */
 import { ElMessage } from "element-plus";
 import { desktop } from "../../lib/desktop";
+import router from "../router";
 import { notebookWindowName, notebookWindowUrl } from "../services/popoutWindow";
 import { useEditorStore } from "../stores/editor-store";
+import { useFlowStore } from "../stores/flow-store";
 
 let installed = false;
 
-/** Once per window: follow closed notebook windows, and adopt the ones already open (a reload). */
+/** A window's "Return to designer": the dock reopens on that flow, switching to it when needed. */
+function adoptReturnedNotebook(flowId: number): void {
+  const editorStore = useEditorStore();
+  editorStore.clearNotebookPoppedOut(flowId);
+  useFlowStore().setFlowId(flowId);
+  editorStore.openCodePane("notebook");
+  if (router.currentRoute.value.name !== "designer") void router.push({ name: "designer" });
+}
+
+/** Once per window: follow closed and returned notebook windows, adopt the ones already open. */
 function install(): void {
   if (installed) return;
   installed = true;
   void desktop.onNotebookWindowClosed((flowId) => useEditorStore().clearNotebookPoppedOut(flowId));
+  void desktop.onNotebookWindowReturned(adoptReturnedNotebook);
   void desktop
     .listNotebookWindows()
     .then((flowIds) => flowIds.forEach((id) => useEditorStore().markNotebookPoppedOut(id)))

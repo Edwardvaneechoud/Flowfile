@@ -35,7 +35,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import NotebookPanel from "../CatalogView/NotebookPanel.vue";
 import { FlowApi } from "../../api";
 import { desktop } from "../../../lib/desktop";
-import { parseFlowQuery, windowTitle } from "../../services/popoutWindow";
+import { flowLabel, parseFlowQuery, windowTitle } from "../../services/popoutWindow";
 import { useEditorStore } from "../../stores/editor-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useFlowSyncStore } from "../../stores/flow-sync-store";
@@ -59,12 +59,12 @@ async function loadFlow(id: number): Promise<void> {
   if (flowId.value !== id) return;
   if (!settings) {
     state.value = "missing";
-    document.title = windowTitle(null);
+    void desktop.setWindowTitle(windowTitle(null));
     return;
   }
-  flowName.value = settings.name;
+  flowName.value = flowLabel(settings);
   editorStore.isRunning = !!settings.is_running;
-  document.title = title.value;
+  void desktop.setWindowTitle(title.value);
   state.value = "ready";
 }
 
@@ -127,19 +127,24 @@ const hasUnpushedEdits = (): boolean => {
   return !!nb && flowNeedsSync(nb);
 };
 
+/** Hand the notebook back to the designer's dock, which reopens on this flow, and close. */
 async function returnToDesigner(): Promise<void> {
+  if (flowId.value <= 0) {
+    await closeThisWindow();
+    return;
+  }
   if (hasUnpushedEdits()) {
     try {
       await ElMessageBox.confirm(
-        "Cells edited here were not pushed to the canvas yet; closing the window discards them.",
-        "Close the notebook?",
-        { confirmButtonText: "Close", cancelButtonText: "Keep open", type: "warning" },
+        "Cells edited here were not pushed to the canvas yet; returning discards them.",
+        "Return to the designer?",
+        { confirmButtonText: "Return", cancelButtonText: "Keep open", type: "warning" },
       );
     } catch {
       return;
     }
   }
-  await closeThisWindow();
+  await desktop.returnNotebookToDesigner(flowId.value);
 }
 
 async function closeThisWindow(): Promise<void> {

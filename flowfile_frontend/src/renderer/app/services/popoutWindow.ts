@@ -27,5 +27,9 @@ export const parseFlowQuery = (value: unknown): number => {
   return Number.isInteger(id) && id > 0 ? id : -1;
 };
 
-export const windowTitle = (flowName: string | null | undefined): string =>
-  flowName ? `Notebook – ${flowName}` : "Notebook";
+/** What the window calls the flow: the label the designer's tab bar shows. */
+export const flowLabel = (flow: { name: string; display_name?: string | null }): string =>
+  flow.display_name || flow.name;
+
+export const windowTitle = (label: string | null | undefined): string =>
+  label ? `Notebook – ${label}` : "Notebook";

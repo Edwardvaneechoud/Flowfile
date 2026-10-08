@@ -76,7 +76,7 @@ test.describe("Notebook pop-out", () => {
     // The pop-out is a bare window: the notebook and nothing of the app around it.
     await expect(popup.getByTestId("notebook-window")).toBeVisible();
     await expect(popup.locator('[data-tutorial="generate-code-btn"]')).toHaveCount(0);
-    await expect(popup).toHaveTitle(/^Notebook – /);
+    await expect(popup).toHaveTitle(/^Notebook – notebook_popout_\d+$/);
     // The dock closed: one host per flow.
     await expect(page.locator(".code-dock")).toHaveCount(0);
 
@@ -125,6 +125,19 @@ test.describe("Notebook pop-out", () => {
 
     await openDockNotebook(page);
     await expect(page.locator(DOCK_NOTEBOOK)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("notebook-popout-stub")).toHaveCount(0);
+  });
+
+  test("the pop-out's Return to designer reopens the dock on its flow", async ({ page }) => {
+    const popup = await popOut(page);
+    await expect(page.locator(".code-dock")).toHaveCount(0);
+
+    await popup.getByTestId("notebook-window-return").click();
+    await expect.poll(() => popup.isClosed()).toBe(true);
+
+    // The designer opened the dock itself, in notebook mode, with no stub.
+    await expect(page.locator(DOCK_NOTEBOOK)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("code-mode-notebook")).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByTestId("notebook-popout-stub")).toHaveCount(0);
   });
 
