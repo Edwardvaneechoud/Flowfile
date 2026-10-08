@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 740" role="img" aria-label="Flowfile's target architecture as layers read top to bottom: you author through the visual designer, the Python API, the canvas notebook or the AI planner; all of them edit one flow graph that exports to plain Polars and imports Alteryx workflows; it runs on your laptop, your worker, Polars Cloud or sandboxed kernels; it stores Delta inside the catalog and Iceberg at the edges; its catalog is Flowfile metadata, Lakekeeper, or Unity, Polaris, Glue and S3 Tables over Iceberg REST; and it all sits on any object store, so every layer is replaceable, with a legend marking each box as shipped, a known gap, or planned.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/><stop offset="0.55" stop-color="#26A8E0"/><stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto"><path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/></marker>
+  </defs>
+  <style>
+    .band { fill:#f7f8fa; stroke:#e1e6ec; stroke-width:1.2; }
+    .box  { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .pl   { fill:#e9edf1; stroke:#cdd4dc; stroke-width:1.4; stroke-dasharray:6 5; }
+    .gap  { fill:#ffffff; stroke:#233588; stroke-width:1; }
+    .gapw { fill:rgba(255,255,255,0.16); stroke:rgba(255,255,255,0.7); stroke-width:1; }
+    .sub  { fill:#eef2ff; stroke:#233588; stroke-width:1.5; }
+    .t    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:13.5px; fill:#233588; }
+    .s    { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .tp   { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:13.5px; fill:#6b7280; }
+    .sp   { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .tag  { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:9px; letter-spacing:1px; fill:#8a93a3; }
+    .gapt { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:9px; letter-spacing:0.8px; fill:#233588; }
+    .gapwt{ font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:9px; letter-spacing:0.8px; fill:#ffffff; }
+    .hubt { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:18px; fill:#ffffff; }
+    .hubs { font-family:Roboto,Arial,sans-serif; font-size:11.5px; fill:#eaf6ff; }
+    .subt { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .subs { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#4a5578; }
+    .lgd  { font-family:Roboto,Arial,sans-serif; font-size:11px; fill:#6b7280; }
+    .tick { stroke:#b3bcc9; stroke-width:1.8; }
+    .arwc { fill:none; stroke:#2DD5D3; stroke-width:3; }
+  </style>
+
+  <!-- ============ LEGEND (on a band-coloured surface, so swatches match the bands) ============ -->
+  <g>
+    <rect class="band" x="626" y="14" width="290" height="32" rx="10"/>
+    <rect class="box" x="640" y="23" width="22" height="14" rx="4"/>
+    <text class="lgd" x="668" y="34">Shipped</text>
+    <rect class="gap" x="724" y="22.5" width="32" height="15" rx="7.5"/>
+    <text class="gapt" x="740" y="33" text-anchor="middle">GAP</text>
+    <text class="lgd" x="762" y="34">Known gap</text>
+    <rect class="pl" x="836" y="23" width="22" height="14" rx="4"/>
+    <text class="lgd" x="864" y="34">Planned</text>
+  </g>
+
+  <!-- ============ BAND BACKGROUNDS + GREY TICK CONNECTORS ============ -->
+  <!-- AUTHOR band -->
+  <rect class="band" x="24" y="56" width="892" height="96" rx="14"/>
+  <text class="tag" x="40" y="76">AUTHOR &#183; PICK YOUR DOOR</text>
+  <line class="tick" x1="450" y1="113" x2="490" y2="113"/>
+  <!-- RUN band -->
+  <rect class="band" x="24" y="278" width="892" height="96" rx="14"/>
+  <text class="tag" x="40" y="298">RUN &#183; BRING YOUR OWN COMPUTE</text>
+  <line class="tick" x1="450" y1="335" x2="490" y2="335"/>
+  <!-- STORE band -->
+  <rect class="band" x="24" y="402" width="892" height="96" rx="14"/>
+  <text class="tag" x="40" y="422">STORE &#183; OPEN FORMATS</text>
+  <line class="tick" x1="450" y1="459" x2="490" y2="459"/>
+  <!-- CATALOG band -->
+  <rect class="band" x="24" y="526" width="892" height="96" rx="14"/>
+  <text class="tag" x="40" y="546">CATALOG &#183; YOURS</text>
+  <line class="tick" x1="450" y1="583" x2="490" y2="583"/>
+
+  <!-- ============ SPINE: the one cyan path (runs behind cards and the hero bar) ============ -->
+  <path class="arwc" d="M470,113 L470,646" marker-end="url(#ahc)"/>
+  <circle cx="470" cy="113" r="4.5" fill="#2DD5D3"/>
+
+  <!-- ============ AUTHOR ============ -->
+  <g>
+    <rect class="box" x="40" y="86" width="197" height="54" rx="10"/>
+    <text class="t" x="56" y="118">Visual designer</text>
+    <rect class="box" x="253" y="86" width="197" height="54" rx="10"/>
+    <text class="t" x="269" y="118">Python API</text>
+    <rect class="box" x="490" y="86" width="197" height="54" rx="10"/>
+    <text class="t" x="506" y="118">Canvas notebook</text>
+    <rect class="box" x="703" y="86" width="197" height="54" rx="10"/>
+    <text class="t" x="719" y="109">AI planner</text>
+    <text class="s" x="719" y="126">staged diffs, accept or reject</text>
+  </g>
+
+  <!-- ============ RUN ============ -->
+  <g>
+    <rect class="box" x="40" y="308" width="197" height="54" rx="10"/>
+    <text class="t" x="56" y="331">Your laptop</text>
+    <text class="s" x="56" y="348">in-process Polars</text>
+    <rect class="box" x="253" y="308" width="197" height="54" rx="10"/>
+    <text class="t" x="269" y="331">Your worker</text>
+    <text class="s" x="269" y="348">VM &#183; Kubernetes &#183; on-prem</text>
+    <rect class="gap" x="406" y="317" width="32" height="15" rx="7.5"/>
+    <text class="gapt" x="422" y="327.5" text-anchor="middle">GAP</text>
+    <rect class="pl" x="490" y="308" width="197" height="54" rx="10"/>
+    <text class="tp" x="506" y="331">Polars Cloud</text>
+    <text class="sp" x="506" y="348">your account or on-prem cluster</text>
+    <rect class="box" x="703" y="308" width="197" height="54" rx="10"/>
+    <text class="t" x="719" y="331">Sandboxed kernels</text>
+    <text class="s" x="719" y="348">Docker, local or remote host</text>
+  </g>
+
+  <!-- ============ STORE ============ -->
+  <g>
+    <rect class="box" x="40" y="432" width="410" height="54" rx="10"/>
+    <text class="t" x="56" y="455">Delta</text>
+    <text class="s" x="56" y="472">inside the catalog</text>
+    <rect class="pl" x="490" y="432" width="410" height="54" rx="10"/>
+    <text class="tp" x="506" y="455">Iceberg</text>
+    <text class="sp" x="506" y="472">read and write at the edges</text>
+  </g>
+
+  <!-- ============ CATALOG ============ -->
+  <g>
+    <rect class="box" x="40" y="556" width="160" height="54" rx="10"/>
+    <text class="t" x="56" y="579">Flowfile metadata</text>
+    <text class="s" x="56" y="596">PostgreSQL or SQLite</text>
+    <rect class="pl" x="216" y="556" width="234" height="54" rx="10"/>
+    <text class="tp" x="232" y="579">Lakekeeper</text>
+    <text class="sp" x="232" y="596">Iceberg REST &#183; vended credentials &#183; OIDC</text>
+    <rect class="pl" x="490" y="556" width="410" height="54" rx="10"/>
+    <text class="tp" x="506" y="579">Unity &#183; Polaris &#183; Glue &#183; S3 Tables</text>
+    <text class="sp" x="506" y="596">via Iceberg REST</text>
+  </g>
+
+  <!-- ============ HERO: ONE FLOW GRAPH ============ -->
+  <g>
+    <rect x="24" y="180" width="892" height="70" rx="14" fill="url(#brand)"/>
+    <text class="hubt" x="470" y="210" text-anchor="middle">One flow graph</text>
+    <text class="hubs" x="470" y="231" text-anchor="middle">exports to plain Polars &#183; imports Alteryx workflows</text>
+    <rect class="gapw" x="866" y="192" width="34" height="16" rx="8"/>
+    <text class="gapwt" x="883" y="203" text-anchor="middle">GAP</text>
+  </g>
+
+  <!-- ============ SUBSTRATE: ANY OBJECT STORE ============ -->
+  <g>
+    <rect class="sub" x="24" y="650" width="892" height="66" rx="14"/>
+    <text class="subt" x="470" y="679" text-anchor="middle">Any object store</text>
+    <text class="subs" x="470" y="697" text-anchor="middle">S3-compatible &#183; ADLS &#183; GCS &#183; local disk</text>
+  </g>
+</svg>

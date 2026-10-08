@@ -30,7 +30,7 @@ See [Databases](../visual-editor/tutorials/database-connectivity.md) for the con
 
 ## Cloud storage
 
-Read and write **Amazon S3**, **Azure Data Lake Storage (ADLS)**, and **Google Cloud Storage (GCS)**. Eight authentication methods are available (`access_key`, `iam_role`, `service_principal`, `managed_identity`, `sas_token`, `aws-cli`, `env_vars`, and `service_account`), so a connection can use stored keys or delegate to the ambient cloud credentials. Read formats are CSV, Parquet, JSON, Delta, and Iceberg; write formats are CSV, Parquet, JSON, and Delta.
+Read and write **Amazon S3**, **Azure Data Lake Storage (ADLS)**, and **Google Cloud Storage (GCS)**. Eight authentication methods are available (`access_key`, `iam_role`, `service_principal`, `managed_identity`, `sas_token`, `aws-cli`, `env_vars`, and `service_account`), so a connection can use stored keys or delegate to the ambient cloud credentials. Read formats are CSV, Parquet, JSON, and Delta; write formats are CSV, Parquet, JSON, and Delta. Iceberg reading and writing is on the [roadmap](../../roadmap.md).
 
 Paths are full URIs (`s3://`, `az://`, `abfss://`, `gs://`). A node can also run with no connection on the credentials of the machine running Flowfile, except on a multi-user Docker server, where every cloud node needs a saved connection.
 
