@@ -382,10 +382,10 @@ class TransformHandlersMixin(ConverterMixinBase):
         output_str = "["
         for i, fuzzy_mapping in enumerate(fuzzy_mappings):
             output_str += (
-                f"{prefix}FuzzyMapping(left_col='{fuzzy_mapping.left_col}',"
-                f" right_col='{fuzzy_mapping.right_col}', "
+                f"{prefix}FuzzyMapping(left_col={fuzzy_mapping.left_col!r},"
+                f" right_col={fuzzy_mapping.right_col!r}, "
                 f"threshold_score={fuzzy_mapping.threshold_score}, "
-                f"fuzzy_type='{fuzzy_mapping.fuzzy_type}')"
+                f"fuzzy_type={fuzzy_mapping.fuzzy_type!r})"
             )
             if i < len(fuzzy_mappings) - 1:
                 output_str += ",\n"
@@ -408,20 +408,41 @@ class TransformHandlersMixin(ConverterMixinBase):
             right_df = "df_right"
             self._add_code(f"{right_df} = {left_df}")
 
-        left_df = self._fuzzy_select(left_df, fuzzy_match_handler.left_select, f"_fuzzy_left_{settings.node_id}")
-        right_df = self._fuzzy_select(right_df, fuzzy_match_handler.right_select, f"_fuzzy_right_{settings.node_id}")
+        inputs = self.flow_graph.get_node(settings.node_id).node_inputs
+        left_columns = self._predicted_columns((inputs.main_inputs or [None])[0])
+        right_columns = self._predicted_columns(inputs.right_input)
+        node_id = settings.node_id
+        left_df = self._fuzzy_select(left_df, fuzzy_match_handler.left_select, left_columns, f"_fuzzy_left_{node_id}")
+        right_df = self._fuzzy_select(
+            right_df, fuzzy_match_handler.right_select, right_columns, f"_fuzzy_right_{node_id}"
+        )
         return left_df, right_df, fuzzy_match_handler
 
-    def _fuzzy_select(self, frame: str, select: transform_schema.JoinInputsManager, temp: str) -> str:
-        """``frame`` with one side's drops and renames applied, bound to the node-local ``temp`` so a fanned-out
-        upstream frame isn't rebound; ``frame`` itself when the select changes nothing."""
-        drops = [c.old_name for c in select.non_jk_drop_columns]
+    @staticmethod
+    def _predicted_columns(node) -> set[str] | None:
+        """The column names ``node`` outputs; None without a node or when its schema can't be predicted."""
+        try:
+            schema = node.get_predicted_schema() if node is not None else None
+        except Exception:
+            return None
+        return {column.column_name for column in schema} if schema else None
+
+    def _fuzzy_select(
+        self, frame: str, select: transform_schema.JoinInputsManager, columns: set[str] | None, temp: str
+    ) -> str:
+        """``frame`` as the node selects it from one side before matching.
+
+        Like ``prepare_for_fuzzy_match``, an entry whose column is no longer in the input is ignored, and a
+        present column is kept only when it is available and kept or a join key; without a predicted
+        ``columns`` the stored flags decide.
+        """
+        if columns is None:
+            drops = [c.old_name for c in select.non_jk_drop_columns]
+        else:
+            select.join_inputs.renames = [c for c in select.renames if c.old_name in columns]
+            drops = [c.old_name for c in select.renames if not ((c.keep or c.join_key) and c.is_available)]
         renames = {old: new for old, new in select.rename_table.items() if old != new}
-        if not drops and not renames:
-            return frame
-        call = frame + (f".drop({drops})" if drops else "") + (f".rename({renames})" if renames else "")
-        self._add_code(f"{temp} = {call}")
-        return temp
+        return self._select_into_temp(frame, temp, drops, renames)
 
     def _handle_fuzzy_match(
         self, settings: input_schema.NodeFuzzyMatch, var_name: str, input_vars: dict[str, str]

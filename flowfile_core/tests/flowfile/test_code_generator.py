@@ -8309,14 +8309,11 @@ def test_fuzzy_match_left_drop_uses_node_local_temp(fuzzy_join_left_data, export
     assert_frame_equal(result, expected, check_dtypes=False, check_row_order=False, check_column_order=False)
 
 
-@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
-def test_fuzzy_match_renaming_its_key_columns_renames_before_matching(export_func):
-    """The product-match template: both keys are renamed by the selects, which the node applies before it matches
-    (its score column is named after the new names), so the export renames first too."""
+def _fuzzy_match_flow(left: dict, right: dict | None, mapping, left_select, right_select) -> FlowGraph:
+    """Manual inputs 1 (left) and 2 (right) into fuzzy match 3; with ``right`` None, input 1 feeds both sides."""
     flow = create_basic_flow()
-    internal = {"id": [1, 2], "product_name": ["Apple MacBook Pro 16-inch", "Samsung Galaxy S24 Ultra"], "sku": ["A", "B"]}
-    supplier = {"supplier_id": [7, 8], "product_name": ["MacBook Pro 16in Apple", "Galaxy S24 Ultra Samsung"]}
-    for node_id, columns in ((1, internal), (2, supplier)):
+    sources = ((1, left),) if right is None else ((1, left), (2, right))
+    for node_id, columns in sources:
         flow.add_manual_input(
             input_schema.NodeManualInput(
                 flow_id=1,
@@ -8326,34 +8323,103 @@ def test_fuzzy_match_renaming_its_key_columns_renames_before_matching(export_fun
                 ),
             )
         )
+    right_id = 1 if right is None else 2
     flow.add_fuzzy_match(
         input_schema.NodeFuzzyMatch(
             flow_id=1,
             node_id=3,
-            depending_on_ids=[1, 2],
+            depending_on_ids=[1, right_id],
             join_input=transform_schema.FuzzyMatchInput(
-                join_mapping=[FuzzyMapping("product_name", threshold_score=30.0)],
-                left_select=[
-                    transform_schema.SelectInput(old_name="id", new_name="internal_id"),
-                    transform_schema.SelectInput(old_name="product_name", new_name="internal_name"),
-                    transform_schema.SelectInput(old_name="sku"),
-                ],
-                right_select=[
-                    transform_schema.SelectInput(old_name="supplier_id"),
-                    transform_schema.SelectInput(old_name="product_name", new_name="supplier_name"),
-                ],
+                join_mapping=mapping, left_select=left_select, right_select=right_select
             ),
         )
     )
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3, input_type="main"))
-    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3, input_type="right"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(right_id, 3, input_type="right"))
+    return flow
 
-    code = export_func(flow)
+
+def _assert_fuzzy_export_matches_the_node(flow: FlowGraph, code: str) -> pl.DataFrame:
     verify_if_execute(code)
     result = normalize_result(get_result_from_generated_code(code))
     expected = normalize_result(flow.get_node(3).get_resulting_data().data_frame)
-    assert "internal_name_vs_supplier_name_levenshtein" in expected.columns
     assert_frame_equal(result, expected, check_dtypes=False, check_row_order=False, check_column_order=False)
+    return expected
+
+
+_INTERNAL = {"id": [1, 2], "product_name": ["Apple MacBook Pro 16-inch", "Samsung Galaxy S24 Ultra"], "sku": ["A", "B"]}
+_SUPPLIER = {"supplier_id": [7, 8], "product_name": ["MacBook Pro 16in Apple", "Galaxy S24 Ultra Samsung"]}
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_fuzzy_match_renaming_its_key_columns_renames_before_matching(export_func):
+    """The product-match template: both keys are renamed by the selects, which the node applies before it matches
+    (its score column is named after the new names), so the export renames first too."""
+    flow = _fuzzy_match_flow(
+        _INTERNAL,
+        _SUPPLIER,
+        [FuzzyMapping("product_name", threshold_score=30.0)],
+        left_select=[
+            transform_schema.SelectInput(old_name="id", new_name="internal_id"),
+            transform_schema.SelectInput(old_name="product_name", new_name="internal_name"),
+            transform_schema.SelectInput(old_name="sku"),
+        ],
+        right_select=[
+            transform_schema.SelectInput(old_name="supplier_id"),
+            transform_schema.SelectInput(old_name="product_name", new_name="supplier_name"),
+        ],
+    )
+    expected = _assert_fuzzy_export_matches_the_node(flow, export_func(flow))
+    assert "internal_name_vs_supplier_name_levenshtein" in expected.columns
+
+
+_S = transform_schema.SelectInput
+_FUZZY_SELECT_CASES = {
+    "drop_and_rename_on_one_side": (
+        [_S(old_name="id", new_name="internal_id"), _S(old_name="product_name"), _S(old_name="sku", keep=False)],
+        [_S(old_name="supplier_id"), _S(old_name="product_name")],
+    ),
+    "dropped_key_renamed": (
+        [_S(old_name="id"), _S(old_name="product_name", new_name="name", keep=False), _S(old_name="sku")],
+        [_S(old_name="supplier_id"), _S(old_name="product_name")],
+    ),
+    "key_renamed_to_a_name_with_a_quote": (
+        [_S(old_name="id"), _S(old_name="product_name"), _S(old_name="sku")],
+        [_S(old_name="supplier_id"), _S(old_name="product_name", new_name="supplier's name")],
+    ),
+    "rename_of_a_column_no_longer_in_the_input": (
+        [_S(old_name="id"), _S(old_name="product_name"), _S(old_name="gone", new_name="was_gone")],
+        [_S(old_name="supplier_id"), _S(old_name="product_name")],
+    ),
+    "present_column_saved_as_unavailable": (
+        [_S(old_name="id", new_name="internal_id", is_available=False), _S(old_name="product_name")],
+        [_S(old_name="supplier_id"), _S(old_name="product_name")],
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_FUZZY_SELECT_CASES))
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_fuzzy_match_select_edge_cases_export_like_the_node(case, export_func):
+    """Drops and renames on one side, a dropped key, a quoted name and stale entries all export as the node runs."""
+    left_select, right_select = _FUZZY_SELECT_CASES[case]
+    mapping = [FuzzyMapping("product_name", threshold_score=30.0)]
+    flow = _fuzzy_match_flow(_INTERNAL, _SUPPLIER, mapping, left_select, right_select)
+    _assert_fuzzy_export_matches_the_node(flow, export_func(flow))
+
+
+@pytest.mark.parametrize("export_func", [export_flow_to_polars, export_flow_to_flowframe], ids=["polars", "flowframe"])
+def test_fuzzy_match_of_an_input_with_itself_renames_both_sides(export_func):
+    flow = _fuzzy_match_flow(
+        _INTERNAL,
+        None,
+        [FuzzyMapping("product_name", threshold_score=30.0)],
+        left_select=[_S(old_name="id", new_name="left_id"), _S(old_name="product_name", new_name="left_name")],
+        right_select=[_S(old_name="id", new_name="right_id"), _S(old_name="product_name", new_name="right_name")],
+    )
+    code = export_func(flow)
+    assert "df_right = " in code
+    _assert_fuzzy_export_matches_the_node(flow, code)
 
 
 def test_rest_api_reader_redacts_sensitive_headers():

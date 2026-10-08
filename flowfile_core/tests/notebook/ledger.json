@@ -12,7 +12,7 @@
   "flow_input": "EXACT",
   "flow_output": "EXACT",
   "formula": "EXACT",
-  "fuzzy_match": "EXACT",
+  "fuzzy_match": "LOSSY",
   "gate": "EXACT",
   "graph_solver": "EXACT",
   "group_by": "EXACT",
