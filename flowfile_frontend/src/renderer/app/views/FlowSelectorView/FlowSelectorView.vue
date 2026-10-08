@@ -118,6 +118,7 @@ import { ref, watch, onMounted, onBeforeUnmount, computed, nextTick } from "vue"
 import { ElMessage } from "element-plus";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
+import { useFlowSyncStore } from "../../stores/flow-sync-store";
 import { useCatalogStore } from "../../stores/catalog-store";
 import { useRecentFlows } from "../../composables/useRecentFlows";
 import { FlowApi } from "../../api";
@@ -538,6 +539,21 @@ watch(
         selectedFlowId.value = null;
         nodeStore.setFlowId(-1);
       }
+    }
+  },
+);
+
+// A flow closed in another window (the change feed) leaves the tab bar; with none left, the canvas empties.
+const flowSync = useFlowSyncStore();
+watch(
+  () => flowSync.closeCount,
+  async () => {
+    const closedId = flowSync.closedFlowId;
+    if (closedId == null || !flows.value.some((flow) => flow.flow_id === closedId)) return;
+    await loadFlows();
+    if (!flows.value.length) {
+      selectedFlowId.value = null;
+      nodeStore.setFlowId(-1);
     }
   },
 );

@@ -107,20 +107,36 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     builder.build()
 }
 
+/// The View menu acts on the window the user is looking at: the focused one (the main window or
+/// a pop-out notebook), else the main window.
+fn focused_label<R: Runtime>(app: &AppHandle<R>) -> String {
+    // `Manager::get_focused_window` needs tauri's `unstable` feature; asking each window works.
+    app.webview_windows()
+        .into_iter()
+        .find(|(_, window)| window.is_focused().unwrap_or(false))
+        .map(|(label, _)| label)
+        .unwrap_or_else(|| "main".to_string())
+}
+
+fn target_window<R: Runtime>(app: &AppHandle<R>) -> Option<tauri::WebviewWindow<R>> {
+    app.get_webview_window(&focused_label(app))
+        .or_else(|| app.get_webview_window("main"))
+}
+
 pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
     match event_id {
         "view-refresh" => {
-            if let Some(main) = app.get_webview_window("main") {
-                let _ = main.eval("window.location.reload()");
+            if let Some(window) = target_window(app) {
+                let _ = window.eval("window.location.reload()");
             }
         }
         "view-zoom-in" => emit_zoom(app, "in"),
         "view-zoom-out" => emit_zoom(app, "out"),
         "view-zoom-reset" => emit_zoom(app, "reset"),
         "view-fullscreen" => {
-            if let Some(main) = app.get_webview_window("main") {
-                if let Ok(current) = main.is_fullscreen() {
-                    let _ = main.set_fullscreen(!current);
+            if let Some(window) = target_window(app) {
+                if let Ok(current) = window.is_fullscreen() {
+                    let _ = window.set_fullscreen(!current);
                 }
             }
         }
@@ -132,9 +148,16 @@ pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event_id: &str) {
     }
 }
 
+/// Zoom goes to the focused window only: the renderer listens as its own window
+/// (`lib/desktop.ts`), so the canvas in the main window never zooms for a shortcut pressed in a
+/// notebook window.
 fn emit_zoom<R: Runtime>(app: &AppHandle<R>, direction: &str) {
-    use tauri::Emitter;
-    let _ = app.emit("view:zoom", direction);
+    use tauri::{Emitter, EventTarget};
+    let _ = app.emit_to(
+        EventTarget::webview_window(focused_label(app)),
+        "view:zoom",
+        direction,
+    );
 }
 
 fn emit_help_request_node<R: Runtime>(app: &AppHandle<R>) {

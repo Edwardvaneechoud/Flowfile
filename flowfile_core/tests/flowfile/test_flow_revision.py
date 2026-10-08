@@ -14,6 +14,7 @@ def bus_events():
     seen: list[tuple[str, dict]] = []
     events.subscribe("flow_revision", lambda **payload: seen.append(("flow_revision", payload)))
     events.subscribe("flow_closed", lambda **payload: seen.append(("flow_closed", payload)))
+    events.subscribe("flow_rekeyed", lambda **payload: seen.append(("flow_rekeyed", payload)))
     yield seen
     events._handlers.clear()
     events._handlers.update(saved)
@@ -93,3 +94,15 @@ def test_closing_a_flow_publishes_flow_closed(bus_events):
     handler.register_flow(schemas.FlowSettings(flow_id=9307, name="closing", path="."))
     handler.delete_flow(9307)
     assert [payload for event, payload in bus_events if event == "flow_closed"] == [{"flow_id": 9307}]
+
+
+def test_rekeying_a_flow_publishes_flow_rekeyed_once_it_moved(bus_events):
+    handler = FlowfileHandler()
+    handler.register_flow(schemas.FlowSettings(flow_id=9308, name="moving", path="."))
+    handler.rekey_flow(9308, 9309)
+    handler.rekey_flow(9999, 9998)  # nothing under that id: nothing to announce
+    assert [payload for event, payload in bus_events if event == "flow_rekeyed"] == [
+        {"old_flow_id": 9308, "new_flow_id": 9309}
+    ]
+    assert handler.get_flow(9309) is not None
+    handler.delete_flow(9309)

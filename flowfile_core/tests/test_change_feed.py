@@ -131,3 +131,21 @@ def test_the_middleware_reads_the_client_header_for_the_request_only():
 
     assert asyncio.run(run()) is None
     assert seen == ["tab-a", None, None, "x" * 128, None]
+
+
+@pytest.mark.asyncio
+async def test_rekeying_the_flow_ends_the_stream_with_the_new_id():
+    graph = make_graph(9407)
+    task = asyncio.create_task(_collect(graph.flow_id))
+    await _subscribed(graph.flow_id)
+    events.publish("flow_rekeyed", old_flow_id=graph.flow_id, new_flow_id=9408)
+    received = await asyncio.wait_for(task, 5)
+    assert [(e.kind, e.revision, e.new_flow_id) for e in received] == [("rekeyed", None, 9408)]
+    assert received[0].payload() == {
+        "kind": "rekeyed",
+        "flow_id": graph.flow_id,
+        "revision": None,
+        "origin": None,
+        "new_flow_id": 9408,
+    }
+    assert change_feed.subscriber_count(graph.flow_id) == 0

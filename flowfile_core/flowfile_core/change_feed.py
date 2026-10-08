@@ -30,19 +30,26 @@ _ORIGIN_MAX_LENGTH = 128
 CLIENT_ORIGIN: ContextVar[str | None] = ContextVar("flowfile_client_origin", default=None)
 
 CLOSED = "closed"
+REKEYED = "rekeyed"
+# The events that end a flow's stream: the flow left memory, or lives on under another id.
+_FINAL_KINDS = frozenset({CLOSED, REKEYED})
 
 
 @dataclass(frozen=True, slots=True)
 class FlowEvent:
-    """One change of a flow; ``revision`` is ``None`` only for ``closed``."""
+    """One change of a flow; ``revision`` is ``None`` only for ``closed`` and ``rekeyed``."""
 
     flow_id: int
     revision: int | None
     kind: str
     origin: str | None = None
+    new_flow_id: int | None = None
 
     def payload(self) -> dict:
-        return {"kind": self.kind, "flow_id": self.flow_id, "revision": self.revision, "origin": self.origin}
+        payload = {"kind": self.kind, "flow_id": self.flow_id, "revision": self.revision, "origin": self.origin}
+        if self.new_flow_id is not None:
+            payload["new_flow_id"] = self.new_flow_id
+        return payload
 
 
 _SHUTDOWN = object()
@@ -81,12 +88,19 @@ def _on_closed(flow_id: int) -> None:
     _deliver(flow_id, FlowEvent(flow_id, None, CLOSED))
 
 
+def _on_rekeyed(old_flow_id: int, new_flow_id: int) -> None:
+    _deliver(old_flow_id, FlowEvent(old_flow_id, None, REKEYED, new_flow_id=new_flow_id))
+
+
 def install() -> None:
     """Subscribe to the bus. Idempotent, also after ``events._reset_for_tests``."""
-    if _on_revision not in events._handlers.get("flow_revision", ()):
-        events.subscribe("flow_revision", _on_revision)
-    if _on_closed not in events._handlers.get("flow_closed", ()):
-        events.subscribe("flow_closed", _on_closed)
+    for event, handler in (
+        ("flow_revision", _on_revision),
+        ("flow_closed", _on_closed),
+        ("flow_rekeyed", _on_rekeyed),
+    ):
+        if handler not in events._handlers.get(event, ()):
+            events.subscribe(event, handler)
 
 
 def subscriber_count(flow_id: int) -> int:
@@ -97,7 +111,7 @@ def subscriber_count(flow_id: int) -> int:
 async def stream(flow_id: int, *, keepalive: float | None = None) -> AsyncIterator[FlowEvent | None]:
     """Yield the flow's events as they happen, ``None`` after ``keepalive`` idle seconds.
 
-    Ends after the flow's ``closed`` event and when :func:`close_all` runs.
+    Ends after the flow's ``closed`` or ``rekeyed`` event and when :func:`close_all` runs.
     """
     install()  # a bus reset (tests) must not leave a later stream deaf
     subscriber = _Subscriber(asyncio.get_running_loop(), asyncio.Queue())
@@ -116,7 +130,7 @@ async def stream(flow_id: int, *, keepalive: float | None = None) -> AsyncIterat
             if item is _SHUTDOWN:
                 return
             yield item
-            if item.kind == CLOSED:
+            if item.kind in _FINAL_KINDS:
                 return
     finally:
         with _lock:

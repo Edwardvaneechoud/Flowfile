@@ -281,3 +281,7 @@ class OperationResponse(BaseModel):
     success: bool = Field(default=True, description="Whether the operation succeeded")
     message: str | None = Field(default=None, description="Optional message")
     history: HistoryState = Field(..., description="Current history state after the operation")
+    settings_fingerprint: str | None = Field(
+        default=None,
+        description="After a save of one node's settings: its fingerprint now, the next save's expectation",
+    )

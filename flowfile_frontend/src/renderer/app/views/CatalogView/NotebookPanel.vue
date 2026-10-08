@@ -128,7 +128,7 @@
             >
               <i class="fa-solid fa-sliders"></i> Customise…
             </button>
-            <router-link :to="kernelsRoute" class="nb-kernel-footer-link">
+            <router-link v-if="host !== 'window'" :to="kernelsRoute" class="nb-kernel-footer-link">
               <i class="fa-solid fa-microchip"></i> Manage kernels
             </router-link>
           </template>
@@ -415,7 +415,10 @@ flowfile_ctx.explore(df)      # full explorer</code></pre>
           @activate="store.setFocusedCell(cell.id)"
           @cursor="(pos: number) => store.setCellCursor(cell.id, pos)"
         >
-          <template v-if="flowId && store.active.nodeIds?.[cell.id]?.length" #menu-extra>
+          <template
+            v-if="host !== 'window' && flowId && store.active.nodeIds?.[cell.id]?.length"
+            #menu-extra
+          >
             <el-dropdown-item
               data-action="run-on-canvas"
               :disabled="batchBusy || editorStore.isRunning"
@@ -522,7 +525,7 @@ import { useFlowStore } from "../../stores/flow-store";
 import { useResultsStore } from "../../stores/results-store";
 import { whenMutationsIdle } from "../../services/axios.config";
 import { flushPendingEdits } from "../../services/mutationChannel";
-import { currentNodeId, seedNodeId } from "../../composables/useDragAndDrop";
+import { seedNodeId } from "../../composables/useDragAndDrop";
 import CatalogNotebookCell from "../../components/notebook/CatalogNotebookCell.vue";
 import CreateKernelDialog from "../../components/kernel/CreateKernelDialog.vue";
 import { useKernelCreationTracker } from "../../composables/useKernelCreationTracker";
@@ -583,8 +586,12 @@ const UPDATE_KERNEL_TITLE =
 /** Only the Notebook image runs the canvas notebook. */
 const runsNotebook = (k: KernelInfo): boolean => k.image_flavour === "notebook";
 
-/** With `flowId` the panel is that flow's canvas notebook: one ephemeral tab rendered from the canvas. */
-const props = defineProps<{ flowId?: number }>();
+/**
+ * With `flowId` the panel is that flow's canvas notebook: one ephemeral tab rendered from the canvas.
+ * `host` is where it renders: the designer's code dock, or the pop-out window (no canvas or app
+ * navigation to reach, so the canvas preview and the kernels link are left out).
+ */
+const props = defineProps<{ flowId?: number; host?: "dock" | "window" }>();
 
 const store = useNotebookStore();
 const editorStore = useEditorStore();
@@ -1183,7 +1190,6 @@ async function openFlow() {
   const onThisFlow = () => useFlowStore().flowId === flowId;
   unregisterFlowHooks = registerFlowNotebookHooks(flowId, {
     prepare: prepareFlowAction,
-    clientMaxNodeId: currentNodeId,
     confirm: (plan, trigger) =>
       ElMessageBox.confirm(
         plan.warnings.join("\n"),

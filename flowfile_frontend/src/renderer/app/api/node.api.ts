@@ -1,4 +1,5 @@
 import axios from "../services/axios.config";
+import { withExpectation } from "./settingsExpectation";
 import type {
   NodeData,
   FileColumn,
@@ -192,10 +193,11 @@ export class NodeApi {
     nodeId: number,
     entries: FormulaInput[],
   ): Promise<FormulaChainCheck> {
-    const response = await axios.post<FormulaChainCheck>(
-      "/custom_functions/formula_chain_check",
-      { flow_id: flowId, node_id: nodeId, entries },
-    );
+    const response = await axios.post<FormulaChainCheck>("/custom_functions/formula_chain_check", {
+      flow_id: flowId,
+      node_id: nodeId,
+      entries,
+    });
     return response.data;
   }
 
@@ -221,10 +223,15 @@ export class NodeApi {
   static async updateSettingsDirectly(
     nodeType: string,
     inputData: any,
+    expectedFingerprint?: string,
   ): Promise<OperationResponse> {
-    const response = await axios.post("/update_settings/", inputData, {
-      params: { node_type: nodeType },
-    });
+    const response = await axios.post(
+      "/update_settings/",
+      withExpectation(inputData, expectedFingerprint),
+      {
+        params: { node_type: nodeType },
+      },
+    );
     return response.data;
   }
 
@@ -234,10 +241,11 @@ export class NodeApi {
   static async updateUserDefinedSettings(
     nodeType: string,
     inputData: any,
+    expectedFingerprint?: string,
   ): Promise<OperationResponse> {
     const response = await axios.post(
       "/user_defined_components/update_user_defined_node",
-      inputData,
+      withExpectation(inputData, expectedFingerprint),
       {
         params: { node_type: nodeType },
       },

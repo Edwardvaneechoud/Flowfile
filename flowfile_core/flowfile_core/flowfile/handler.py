@@ -162,6 +162,9 @@ class FlowfileHandler:
         if user_id is not None:
             self._unregister_user_session(user_id, old_flow_id)
             self._register_user_session(user_id, new_flow_id)
+        if flow is not None:
+            # A client following the old id (the change feed) learns where the flow went.
+            publish("flow_rekeyed", old_flow_id=old_flow_id, new_flow_id=new_flow_id)
 
     def save_flow(self, flow_id: int, flow_path: str, user_id: int | None = None):
         flow = self.get_flow(flow_id, user_id)

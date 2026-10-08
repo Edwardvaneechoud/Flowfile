@@ -200,12 +200,28 @@ describe("flow-sync-store", () => {
     expect(mocks.stream).toHaveBeenCalledTimes(2);
   });
 
-  it("a closed event ends the stream without reconnecting", async () => {
+  it("a closed event ends the stream without reconnecting and says which flow closed", async () => {
     const store = await open();
+    expect(store.closedFlowId).toBeNull();
     current().opts.onEvent(event({ kind: "closed", revision: null, origin: null }));
     expect(current().opts.signal.aborted).toBe(true);
+    expect(store.closedFlowId).toBe(7);
+    expect(store.closeCount).toBe(1);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(mocks.stream).toHaveBeenCalledTimes(1);
     expect(store.connected).toBe(false);
+  });
+
+  it("a rekeyed event ends the stream and records where the flow went", async () => {
+    const store = await open();
+    current().opts.onEvent(
+      event({ kind: "rekeyed", revision: null, origin: null, new_flow_id: 9 }),
+    );
+    expect(current().opts.signal.aborted).toBe(true);
+    expect(store.rekeyedTo).toEqual({ from: 7, to: 9 });
+    expect(store.closedFlowId).toBeNull();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mocks.stream).toHaveBeenCalledTimes(1);
+    expect(mocks.flowStore.requestReload).not.toHaveBeenCalled();
   });
 });

@@ -63,6 +63,8 @@ export interface NodeData {
   /** The live node's configuration state; setting_input may be a display-only proposal. */
   is_setup?: boolean;
   setting_input?: any | null;
+  /** The settings' digest when read; a save echoes it so core can refuse a save over a moved node (409). */
+  settings_fingerprint?: string | null;
   /** Column prediction needs an un-run kernel node to run first; warning text to show. */
   prediction_warning?: string | null;
 }

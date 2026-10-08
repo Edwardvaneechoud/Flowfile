@@ -1,3 +1,4 @@
+import hashlib
 import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -66,6 +67,9 @@ class DeferredNodeError(RuntimeError):
 ExternalTaskHandle = (
     ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter | ExternalCloudWriter | ExternalOutputWriter
 )
+
+# Fields the layout and group routes own, plus the server-stamped owner: a settings drawer never edits them.
+SETTINGS_FINGERPRINT_EXCLUDE = frozenset({"pos_x", "pos_y", "group_id", "user_id"})
 
 
 def kernel_block_reason(node: "FlowNode", include_self: bool) -> str | None:
@@ -2309,6 +2313,17 @@ class FlowNode:
                 data=[],
             )
 
+    def settings_fingerprint(self) -> str | None:
+        """A digest of the drawer-owned settings, the token a settings save hands back as its expectation.
+
+        Layout, group membership and the owner are left out (``SETTINGS_FINGERPRINT_EXCLUDE``): a drag
+        or a group move while the drawer is open is not a conflict. ``None`` for a node without settings.
+        """
+        settings = self.setting_input
+        if settings is None or not hasattr(settings, "model_dump_json"):
+            return None
+        return hashlib.sha256(settings.model_dump_json(exclude=SETTINGS_FINGERPRINT_EXCLUDE).encode()).hexdigest()[:16]
+
     def get_node_data(
         self,
         flow_id: int,
@@ -2343,6 +2358,7 @@ class FlowNode:
             has_run=self.node_stats.has_run_with_current_setup,
             is_setup=bool(self.is_setup),
             setting_input=self.setting_input,
+            settings_fingerprint=self.settings_fingerprint(),
             flow_type=self.node_type,
         )
         if include_inputs:

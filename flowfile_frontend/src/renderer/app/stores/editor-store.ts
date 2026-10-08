@@ -39,6 +39,8 @@ export const useEditorStore = defineStore("editor", {
     // A request to show the pane in one mode (the catalog's "Modify in notebook"); CodeGenerator
     // applies it on mount or live and then consumes it. Not persisted: the pane keeps its own mode.
     codePaneRequest: null as { mode: CodeMode; token: number } | null,
+    // Flows whose notebook moved to its own window: the dock shows a stub for them, not a second host.
+    poppedOutNotebooks: [] as number[],
 
     // Edge label state
     showEdgeLabels: false,
@@ -259,6 +261,19 @@ export const useEditorStore = defineStore("editor", {
 
     consumeCodePaneRequest() {
       this.codePaneRequest = null;
+    },
+
+    // ========== Notebook pop-out ==========
+    markNotebookPoppedOut(flowId: number) {
+      if (!this.poppedOutNotebooks.includes(flowId)) this.poppedOutNotebooks.push(flowId);
+    },
+
+    clearNotebookPoppedOut(flowId: number) {
+      this.poppedOutNotebooks = this.poppedOutNotebooks.filter((id) => id !== flowId);
+    },
+
+    isNotebookPoppedOut(flowId: number): boolean {
+      return this.poppedOutNotebooks.includes(flowId);
     },
 
     // ========== Log Viewer ==========

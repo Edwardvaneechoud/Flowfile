@@ -2182,6 +2182,8 @@ class FlowGraph:
         self._output_cols = [] if output_cols is None else output_cols
         self._node_ids = []
         self._node_db = {}
+        # Highest node id that ever left the canvas; with the live ids it gives `node_id_ceiling`.
+        self._node_id_seq: int = 0
         # Last run's surviving-input signature per ANY-rule node (union). A gate
         # flip changes which inputs survive without changing any hash, so a
         # signature change must invalidate the node or dev-mode serves the
@@ -2546,6 +2548,8 @@ class FlowGraph:
             node_owners = _NodeOwners.capture(self)
             flow_info = _flowfile_data_to_flow_information(snapshot)
 
+            # Ids the restore drops (an undone placement) stay below the ceiling, like a deletion.
+            self._node_id_seq = self.node_id_ceiling
             self._node_db.clear()
             self._node_ids.clear()
             self._flow_starts.clear()
@@ -2560,6 +2564,16 @@ class FlowGraph:
         logger.info(f"Restored flow from snapshot with {len(self._node_db)} nodes")
 
     # ==================== End History Management Methods ====================
+
+    @property
+    def node_id_ceiling(self) -> int:
+        """The highest node id this canvas has held; a new node numbers above it, deleted ids are never reused."""
+        return max([self._node_id_seq, *(node_id for node_id in self._node_db if isinstance(node_id, int))], default=0)
+
+    def next_node_id(self) -> int:
+        """Allocate a node id above everything the canvas has held (never reuses a freed id this session)."""
+        self._node_id_seq = self.node_id_ceiling + 1
+        return self._node_id_seq
 
     # ==================== Group Management Methods ====================
     # Groups are purely visual containers. They never affect execution; the only
@@ -5090,6 +5104,8 @@ class FlowGraph:
                     depend_on.delete_lead_to_node(node_id)
 
             self._node_db.pop(node_id)
+            if isinstance(node_id, int):
+                self._node_id_seq = max(self._node_id_seq, node_id)
             # A later node reusing this id must not inherit its start flag.
             self._flow_starts[:] = [start for start in self._flow_starts if start.node_id != node_id]
             logger.debug(f"Successfully removed node {node_id} from node_db")

@@ -178,6 +178,11 @@ import {
 } from "@/components/kernel/kernelMatch";
 import { useKernelMatch } from "@/composables/useKernelMatch";
 import { extractSaveErrorMessage } from "@/composables/saveError";
+import {
+  isSettingsConflict,
+  loadedSettingsFingerprint,
+  resolveSettingsConflict,
+} from "@/composables/settingsConflict";
 import { CustomNodeSchema } from "./interface";
 import type { ArtifactOption, GlobalArtifactOption } from "./interface";
 import { getCustomNodeSchema, CustomNodeSchemaError } from "./interface";
@@ -558,9 +563,19 @@ const pushNodeData = async (): Promise<boolean> => {
     }
   }
   try {
-    await nodeStore.updateUserDefinedSettings(nodeUserDefined);
+    // The fingerprint the node loaded with: core refuses the save when the settings moved since.
+    const fingerprint = loadedSettingsFingerprint(currentNodeId.value);
+    await (fingerprint
+      ? nodeStore.updateUserDefinedSettings(nodeUserDefined, { expectedFingerprint: fingerprint })
+      : nodeStore.updateUserDefinedSettings(nodeUserDefined));
     return true;
   } catch (err) {
+    if (isSettingsConflict(err)) {
+      const outcome = await resolveSettingsConflict(err, async () => {
+        await nodeStore.updateUserDefinedSettings(nodeUserDefined);
+      });
+      return outcome !== "kept-open";
+    }
     ElMessage.error({ message: extractSaveErrorMessage(err), showClose: true, duration: 6000 });
     return false;
   }

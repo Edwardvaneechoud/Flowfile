@@ -42,6 +42,17 @@
         </button>
       </div>
       <button
+        v-if="codeMode === 'notebook' && nodeStore.flow_id > 0 && !poppedOut"
+        class="close-btn popout-btn"
+        type="button"
+        aria-label="Open the notebook in its own window"
+        title="Open the notebook in its own window"
+        data-testid="code-popout"
+        @click="popOut(nodeStore.flow_id)"
+      >
+        <span class="material-icons" aria-hidden="true">open_in_new</span>
+      </button>
+      <button
         class="close-btn"
         type="button"
         aria-label="Close code pane"
@@ -89,7 +100,8 @@
       <ProjectExport />
     </div>
     <div v-else-if="codeMode === 'notebook'" class="code-notebook">
-      <NotebookPanel :key="nodeStore.flow_id" :flow-id="nodeStore.flow_id" />
+      <NotebookPoppedOutStub v-if="poppedOut" :flow-id="nodeStore.flow_id" />
+      <NotebookPanel v-else :key="nodeStore.flow_id" :flow-id="nodeStore.flow_id" host="dock" />
     </div>
     <codemirror v-else v-model="code" :extensions="extensions" :disabled="true" />
   </div>
@@ -104,6 +116,8 @@ import { python } from "@codemirror/lang-python";
 import { EditorView } from "@codemirror/view";
 import { flowfileEditorTheme } from "@/utils/codemirrorTheme";
 import ProjectExport from "./ProjectExport.vue";
+import NotebookPoppedOutStub from "./NotebookPoppedOutStub.vue";
+import { useNotebookPopout } from "../../../composables/useNotebookPopout";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 
@@ -132,6 +146,9 @@ const ownsBody = computed(() => codeMode.value === "project" || codeMode.value =
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const lastLoadedFlowId = ref<number | null>(null);
+// The notebook moved to its own window: the dock shows the stub, never a second host.
+const { popOut } = useNotebookPopout();
+const poppedOut = computed(() => editorStore.isNotebookPoppedOut(nodeStore.flow_id));
 
 const extensions = [
   python(),

@@ -109,6 +109,8 @@ export interface OperationResponse {
   success: boolean;
   message: string | null;
   history: HistoryState;
+  /** After a save of one node's settings: that node's fingerprint now, the next save's expectation. */
+  settings_fingerprint?: string | null;
 }
 
 // Local File Types

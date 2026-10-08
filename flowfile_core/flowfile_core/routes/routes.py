@@ -621,8 +621,7 @@ def copy_node(
     ) as txn:
         try:
             node_to_copy = flow_to_copy_from.get_node(node_id_to_copy_from)
-            if flow.get_node(node_promise.node_id) is not None:
-                flow.delete_node(node_promise.node_id)
+            require_node_id_free(flow, node_promise.node_id)
             if node_promise.node_type == "explore_data":
                 flow.add_initial_node_analysis(node_promise)
             else:
@@ -658,8 +657,7 @@ def add_node(
     flow = get_flow_or_404(flow_id)
     logger.info(f"Adding a promise for {node_type}")
     with edit_flow(flow, f"Add {node_type} node", HistoryActionType.ADD_NODE, node_id=node_id) as txn:
-        if flow.get_node(node_id) is not None:
-            flow.delete_node(node_id)
+        require_node_id_free(flow, node_id)
         node_promise = input_schema.NodePromise(
             flow_id=flow_id, node_id=node_id, cache_results=False, pos_x=pos_x, pos_y=pos_y, node_type=node_type
         )
@@ -1020,7 +1018,14 @@ def apply_operations(
     flow = get_flow_or_404(request.flow_id)
     with edit_flow(flow, request.label, HistoryActionType.BATCH) as txn:
         _run_operations(flow, request.flow_id, request.operations, current_user)
-    return OperationResponse(success=True, history=txn.history)
+    # A drawer's save-with-operations is one update_settings op: hand back that node's fingerprint.
+    saved_nodes = {
+        int(op.settings["node_id"])
+        for op in request.operations
+        if op.op == "update_settings" and op.settings and op.settings.get("node_id") is not None
+    }
+    fingerprint = settings_fingerprint_of(flow, saved_nodes.pop()) if len(saved_nodes) == 1 else None
+    return OperationResponse(success=True, history=txn.history, settings_fingerprint=fingerprint)
 
 
 def _run_operations(flow, flow_id: int, operations: list[schemas.EditorOperation], current_user) -> None:
@@ -1521,7 +1526,8 @@ async def flow_events(flow_id: int, current_user=Depends(get_current_active_user
     The first frame is ``hello`` with the flow's current ``revision`` and ``is_running``, then one
     frame per change (``graph``, ``run_started``, ``run_ended``, ``saved``, ``closed``), each echoing
     the ``X-Flowfile-Client`` origin of the request that made it, so a client can skip its own.
-    Comment lines keep the connection alive while nothing happens; ``closed`` ends the stream.
+    Comment lines keep the connection alive while nothing happens; ``closed`` ends the stream, and
+    so does ``rekeyed`` (a Save As moved the flow to ``new_flow_id``: subscribe there).
     """
     from flowfile_core.ai.streaming import (
         KEEPALIVE_INTERVAL_SECONDS,
@@ -1678,6 +1684,7 @@ def add_generic_settings(
         OperationResponse with current history state.
     """
     input_data["user_id"] = current_user.id
+    expected_fingerprint = input_data.pop("expected_settings_fingerprint", None)
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get("flow_id"))
     node_id = int(input_data.get("node_id"))
@@ -1700,6 +1707,7 @@ def add_generic_settings(
     if parsed_input is None:
         raise HTTPException(404, "could not find the interface")
     with edit_flow(flow, f"Update {node_type} settings", HistoryActionType.UPDATE_SETTINGS, node_id=node_id) as txn:
+        require_settings_unchanged(flow, node_id, expected_fingerprint)
         keep_server_owned_layout(flow, parsed_input)
         if node_type == "catalog_writer":
             _validate_catalog_writer_target(parsed_input, current_user, flow)
@@ -1711,7 +1719,9 @@ def add_generic_settings(
             logger.error(e)
             raise HTTPException(419, str(f"error: {e}")) from e
 
-    return OperationResponse(success=True, history=txn.history)
+    return OperationResponse(
+        success=True, history=txn.history, settings_fingerprint=settings_fingerprint_of(flow, node_id)
+    )
 
 
 _SERVER_OWNED_LAYOUT_FIELDS = ("pos_x", "pos_y", "group_id")
@@ -1726,6 +1736,50 @@ def keep_server_owned_layout(flow, settings) -> None:
     for field in _SERVER_OWNED_LAYOUT_FIELDS:
         if hasattr(settings, field) and hasattr(live_settings, field):
             setattr(settings, field, getattr(live_settings, field))
+
+
+NODE_SETTINGS_CHANGED = "NODE_SETTINGS_CHANGED"
+NODE_ID_TAKEN = "NODE_ID_TAKEN"
+
+
+def require_settings_unchanged(flow, node_id: int, expected_fingerprint: str | None) -> None:
+    """409 when the node's settings moved since the client read them; no check without an expectation.
+
+    Called under the edit lock before the save applies, so a stale drawer in another window never
+    overwrites a push or a save made there. The detail carries the live fingerprint.
+    """
+    if expected_fingerprint is None:
+        return
+    live = flow.get_node(node_id)
+    live_fingerprint = live.settings_fingerprint() if live is not None else None
+    if live is None or live_fingerprint != expected_fingerprint:
+        raise HTTPException(
+            409,
+            {
+                "code": NODE_SETTINGS_CHANGED,
+                "message": (
+                    "This node no longer exists on the canvas."
+                    if live is None
+                    else "These settings changed in another window since you opened them."
+                ),
+                "settings_fingerprint": live_fingerprint,
+            },
+        )
+
+
+def settings_fingerprint_of(flow, node_id: int) -> str | None:
+    """The node's settings fingerprint after a save, for the response: the drawer's next expectation."""
+    node = flow.get_node(node_id)
+    return node.settings_fingerprint() if node is not None else None
+
+
+def require_node_id_free(flow, node_id: int) -> None:
+    """409 when a node with this id is on the canvas: a placement never replaces a node it did not see."""
+    if flow.get_node(node_id) is not None:
+        raise HTTPException(
+            409,
+            {"code": NODE_ID_TAKEN, "message": f"Node {node_id} is already on the canvas.", "node_id": node_id},
+        )
 
 
 class RestApiSampleResponse(BaseModel):
@@ -1928,7 +1982,9 @@ def update_description_node(flow_id: int, node_id: int, description: str = Body(
         if node is None:
             raise HTTPException(404, "Could not find the node")
         node.setting_input.description = description
-    return OperationResponse(success=True, history=txn.history)
+    return OperationResponse(
+        success=True, history=txn.history, settings_fingerprint=settings_fingerprint_of(flow, node_id)
+    )
 
 
 @router.get("/node/description", response_model=output_model.NodeDescriptionResponse, tags=["editor"])
@@ -1969,7 +2025,9 @@ def update_reference_node(flow_id: int, node_id: int, reference: str = Body(...)
             raise HTTPException(422, error)
         # Clearing falls back to the default df_<node_id> reference.
         node.setting_input.node_reference = reference or None
-    return OperationResponse(success=True, history=txn.history)
+    return OperationResponse(
+        success=True, history=txn.history, settings_fingerprint=settings_fingerprint_of(flow, node_id)
+    )
 
 
 def _reference_error(flow, node_id: int, reference: str) -> str | None:

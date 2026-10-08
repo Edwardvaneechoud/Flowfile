@@ -44,6 +44,11 @@ export const useFlowSyncStore = defineStore("flow-sync", () => {
   const connected = ref(false);
   /** Per flow, the last revision this window saw: its own responses and every event. */
   const lastRevision = ref<Record<number, number>>({});
+  /** The flow whose stream last ended with `closed`, and a counter so the same id closing again is seen. */
+  const closedFlowId = ref<number | null>(null);
+  const closeCount = ref(0);
+  /** The last `rekeyed` event: the flow moved from one id to another (a Save As). */
+  const rekeyedTo = ref<{ from: number; to: number } | null>(null);
 
   let controller: AbortController | null = null;
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
@@ -74,6 +79,15 @@ export const useFlowSyncStore = defineStore("flow-sync", () => {
     }
     noteRevision(flowId, event.revision);
     if (event.kind === "closed") {
+      closedFlowId.value = flowId;
+      closeCount.value += 1;
+      stop();
+      return;
+    }
+    if (event.kind === "rekeyed") {
+      if (typeof event.new_flow_id === "number") {
+        rekeyedTo.value = { from: flowId, to: event.new_flow_id };
+      }
       stop();
       return;
     }
@@ -160,5 +174,15 @@ export const useFlowSyncStore = defineStore("flow-sync", () => {
     { immediate: true },
   );
 
-  return { connected, lastRevision, noteRevision, handleEvent, start, stop };
+  return {
+    connected,
+    lastRevision,
+    closedFlowId,
+    closeCount,
+    rekeyedTo,
+    noteRevision,
+    handleEvent,
+    start,
+    stop,
+  };
 });

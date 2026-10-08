@@ -22,10 +22,17 @@ interface TauriApp {
   getVersion(): Promise<string>;
 }
 
+interface TauriWebviewWindow {
+  label: string;
+  listen: TauriEvent["listen"];
+  close(): Promise<void>;
+}
+
 interface TauriRuntime {
   core?: TauriCore;
   event?: TauriEvent;
   app?: TauriApp;
+  webviewWindow?: { getCurrentWebviewWindow(): TauriWebviewWindow };
 }
 
 declare global {
@@ -104,10 +111,37 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
   return rt.core.invoke<T>(cmd, args);
 }
 
+/**
+ * Listen as this window: a listener registered through the current webview window receives the
+ * shell's global emits plus the `emit_to` aimed at this window only, so a menu action the shell
+ * routes to the focused window (zoom) never lands in the other windows as well.
+ */
 async function listen<T>(event: string, handler: (payload: T) => void): Promise<() => void> {
   const rt = runtime();
+  const current = rt?.webviewWindow?.getCurrentWebviewWindow?.();
+  if (current?.listen) return current.listen<T>(event, (e) => handler(e.payload));
   if (!rt?.event?.listen) return () => undefined;
   return rt.event.listen<T>(event, (e) => handler(e.payload));
+}
+
+// Web mode's pop-out notebook windows (`window.open` handles) and who wants to know when one closes.
+const webPopouts = new Map<number, Window>();
+const popoutClosedHandlers = new Set<(flowId: number) => void>();
+let popoutPoll: ReturnType<typeof setInterval> | null = null;
+
+function watchWebPopouts(): void {
+  if (popoutPoll) return;
+  popoutPoll = setInterval(() => {
+    for (const [flowId, handle] of webPopouts) {
+      if (!handle.closed) continue;
+      webPopouts.delete(flowId);
+      for (const handler of popoutClosedHandlers) handler(flowId);
+    }
+    if (!webPopouts.size && popoutPoll) {
+      clearInterval(popoutPoll);
+      popoutPoll = null;
+    }
+  }, 1000);
 }
 
 export const desktop = {
@@ -347,6 +381,71 @@ export const desktop = {
   async revealInFolder(path: string): Promise<void> {
     if (!isDesktop) return;
     await invoke<void>("plugin:opener|reveal_item_in_dir", { paths: [path] });
+  },
+
+  /**
+   * Open (or focus) the notebook window of a flow. Desktop: a native `notebook-<id>` window the
+   * shell builds with the same injected ports as the main window (`open_notebook_window`). Web:
+   * `window.open` on the pop-out route with a per-flow target name, so a second click focuses the
+   * window that is already there instead of opening another.
+   */
+  async openNotebookWindow(flowId: number, web: { url: string; name: string }): Promise<void> {
+    if (isDesktop) {
+      await invoke<void>("open_notebook_window", { flowId });
+      return;
+    }
+    const existing = webPopouts.get(flowId);
+    if (existing && !existing.closed) {
+      existing.focus();
+      return;
+    }
+    const handle = window.open(web.url, web.name, "popup=yes,width=1100,height=800");
+    if (!handle) throw new Error("The browser blocked the notebook window");
+    webPopouts.set(flowId, handle);
+    watchWebPopouts();
+  },
+
+  async focusNotebookWindow(flowId: number): Promise<void> {
+    if (isDesktop) {
+      await invoke<void>("focus_notebook_window", { flowId });
+      return;
+    }
+    webPopouts.get(flowId)?.focus();
+  },
+
+  async closeNotebookWindow(flowId: number): Promise<void> {
+    if (isDesktop) {
+      await invoke<void>("close_notebook_window", { flowId });
+      return;
+    }
+    const handle = webPopouts.get(flowId);
+    webPopouts.delete(flowId);
+    if (handle && !handle.closed) handle.close();
+  },
+
+  /** The flows whose notebook window is open right now (desktop: the shell's `notebook-*` windows). */
+  async listNotebookWindows(): Promise<number[]> {
+    if (isDesktop) return invoke<number[]>("list_notebook_windows");
+    return [...webPopouts].filter(([, handle]) => !handle.closed).map(([flowId]) => flowId);
+  },
+
+  /** A notebook window went away: the shell's `notebook-window-closed`, or the web handle's `closed`. */
+  onNotebookWindowClosed(handler: (flowId: number) => void): Promise<() => void> {
+    if (isDesktop) return listen<number>("notebook-window-closed", handler);
+    popoutClosedHandlers.add(handler);
+    return Promise.resolve(() => {
+      popoutClosedHandlers.delete(handler);
+    });
+  },
+
+  /** Close the window this renderer runs in: the pop-out's "Return to designer". */
+  async closeCurrentWindow(): Promise<void> {
+    if (!isDesktop) {
+      window.close();
+      return;
+    }
+    const current = runtime()?.webviewWindow?.getCurrentWebviewWindow?.();
+    if (current) await current.close();
   },
 
   onServicesStatus(handler: (status: ServicesStatus) => void): Promise<() => void> {

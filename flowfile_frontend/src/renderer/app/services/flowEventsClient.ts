@@ -4,17 +4,26 @@ import { flowfileCorebaseURL } from "../../config/constants";
 import { CLIENT_HEADER } from "./clientId";
 import { readSseData } from "./logStreamClient";
 
-export type FlowEventKind = "hello" | "graph" | "run_started" | "run_ended" | "saved" | "closed";
+export type FlowEventKind =
+  | "hello"
+  | "graph"
+  | "run_started"
+  | "run_ended"
+  | "saved"
+  | "closed"
+  | "rekeyed";
 
 export interface FlowEvent {
   kind: FlowEventKind;
   flow_id: number;
-  /** The flow's revision after the change; null only for `closed`. */
+  /** The flow's revision after the change; null only for `closed` and `rekeyed`. */
   revision: number | null;
   /** The X-Flowfile-Client of the request that made the change; absent on `hello`. */
   origin?: string | null;
   /** Only on `hello`: whether the flow is running right now. */
   is_running?: boolean;
+  /** Only on `rekeyed`: the id the flow lives under now (a Save As). The stream ends after it. */
+  new_flow_id?: number;
 }
 
 export class FlowEventsHttpError extends Error {
