@@ -4,11 +4,15 @@ import { BASE_URL } from "./api";
 
 /** Designer interactions shared by specs that build flows through the real canvas. */
 
-/** Store the token the way the login flow does, then open `hash`; `flowId` becomes the last-used flow. */
+/**
+ * Store the token the way the login flow does, then open `hash`; `flowId` becomes the last-used flow.
+ * The storage is seeded before any app script runs and `hash` is the page's first and only
+ * navigation: the router installs its hash listener only once its first navigation (two awaited
+ * requests in the guard) has finalized, so a hash change made during it is lost and that
+ * navigation's `replace` lands the page on the designer instead.
+ */
 export async function login(page: Page, token: string, hash: string, flowId?: number) {
-  await page.goto(BASE_URL);
-  await page.waitForLoadState("load");
-  await page.evaluate(
+  await page.addInitScript(
     ({ token, expiration, flowId }) => {
       localStorage.setItem("auth_token", token);
       localStorage.setItem("auth_token_expiration", expiration.toString());
