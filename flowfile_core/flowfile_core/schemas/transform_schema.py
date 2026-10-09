@@ -246,12 +246,9 @@ class SelectInput(BaseModel):
 
     @model_validator(mode="after")
     def set_default_new_name(self):
-        """Default a missing or blank new_name to old_name. Also set is_altered if needed.
+        """Default a missing or blank new_name to old_name; is_altered then only reflects a type change.
 
-        The drawer's rename box shows old_name as its placeholder, so a cleared box
-        arrives as "" while the user sees the original name; two of those on one
-        side made Polars' rename fail with "column '' is duplicate". A blank means
-        keep the name, and is_altered then only reflects a type change.
+        A cleared rename box arrives as "" while the drawer shows old_name as its placeholder (#815).
         """
         if self.new_name is None:
             self.new_name = self.old_name
