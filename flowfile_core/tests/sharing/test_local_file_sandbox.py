@@ -16,9 +16,9 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_graph import (
     FlowGraph,
     add_connection,
-    get_xlsx_schema_callback,
     scan_directory_to_frame,
 )
+from flowfile_core.flowfile.flow_graph.builders.io import get_xlsx_schema_callback
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.schemas import FlowParameter

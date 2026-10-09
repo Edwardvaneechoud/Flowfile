@@ -211,6 +211,7 @@ def render_prompt_context(
     stage: str | None = None,
     picked_node_type: str | None = None,
     compact_settings: bool = False,
+    local: bool = False,
 ) -> PromptContext:
     """Build a budget-bounded :class:`PromptContext` for ``surface``.
 
@@ -224,6 +225,10 @@ def render_prompt_context(
     prospective-schema resolution for predictable upstreams (see
     module docstring). Pass ``False`` to fall back to the cache-only
     behaviour.
+
+    ``local`` selects the on-device system prompt (see
+    :func:`assemble_system_prompt`); ``False`` renders exactly the cloud
+    prompt.
     """
 
     pinned_list = _coerce_to_list(pinned_node_ids)
@@ -255,7 +260,7 @@ def render_prompt_context(
     rendered_user = render_user_message(snapshot, user_text=raw_text, compact_settings=compact_settings)
     report.estimated_input_tokens = estimate_tokens(rendered_user)
 
-    system = assemble_system_prompt(surface, stage=stage, picked_node_type=picked_node_type)
+    system = assemble_system_prompt(surface, stage=stage, picked_node_type=picked_node_type, local=local)
     messages = [
         Message(role="system", content=system),
         Message(role="user", content=rendered_user),
@@ -387,6 +392,7 @@ def assemble_system_prompt(
     *,
     stage: str | None = None,
     picked_node_type: str | None = None,
+    local: bool = False,
 ) -> str:
     """Compose the layered system prompt for ``surface``.
 
@@ -411,6 +417,13 @@ def assemble_system_prompt(
     single-node block at ``"fill_settings"`` (using
     ``picked_node_type``), and an empty catalog at the other stages.
 
+    ``local=True`` is the on-device (llama.cpp) variant: assist-level
+    surfaces take ``prompts/local_assist.md`` instead of ``assist.md``
+    (no agent-mode footer, no exact-block instruction a small model
+    would parrot) and the node reference collapses to one line per
+    node so the whole prompt fits a small context window. The default
+    ``False`` produces the cloud prompt byte for byte.
+
     Raises ``ValueError`` for unknown surfaces.
     """
 
@@ -425,14 +438,17 @@ def assemble_system_prompt(
         suffix_name = _STAGE_TO_PROMPT.get(stage, SURFACE_TO_LEVEL[surface])
     else:
         suffix_name = SURFACE_TO_LEVEL[surface]
+    if local and suffix_name == "assist":
+        suffix_name = _LOCAL_ASSIST_PROMPT
     suffix = _load_prompt(suffix_name)
-    catalog = _build_catalog_block(surface, stage=stage, picked_node_type=picked_node_type)
+    catalog = _build_catalog_block(surface, stage=stage, picked_node_type=picked_node_type, local=local)
     blocks = [block for block in (base, suffix, catalog) if block]
     return "\n\n".join(blocks)
 
 
 _CATALOG_HEADER = "## Tool catalog"
 _NODE_REFERENCE_HEADER = "## Flowfile node reference"
+_LOCAL_ASSIST_PROMPT = "local_assist"
 
 # Surface that gets the full catalog block. ``agent_complex`` is the
 # one-shot full-catalog surface; ``agent_staged`` renders the catalog
@@ -460,6 +476,7 @@ def _build_catalog_block(
     *,
     stage: str | None = None,
     picked_node_type: str | None = None,
+    local: bool = False,
 ) -> str:
     """Build the narrative block for ``surface``.
 
@@ -479,6 +496,8 @@ def _build_catalog_block(
       only confuse the model into mixing UI advice with tool-call talk.
     * ``settings_autocomplete`` — returns ``""`` (constrained-JSON
       output, no narrative grounding needed).
+    * ``local=True`` swaps the assist-level reference for the one-line
+      per node form (:func:`_render_compact_node_reference`).
 
     ``agent_staged`` is per-stage:
 
@@ -530,6 +549,8 @@ def _build_catalog_block(
         return _render_tool_catalog(tools)
     if surface in _ASSIST_CATALOG_SURFACES:
         node_tools = [tool for tool in full_catalog if tool.name.startswith(_NODE_TYPE_TOOL_PREFIX)]
+        if local:
+            return _render_compact_node_reference(node_tools)
         return _render_node_reference(node_tools)
     return ""
 
@@ -868,6 +889,62 @@ def _render_node_reference(tools: list[Any]) -> str:
         lines.append(f"### {node_type}")
         lines.append(tool.user_instructions.strip())
         lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+_COMPACT_REFERENCE_SENTENCE_CAP = 160
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z(])")
+_ABBREVIATIONS = ("e.g.", "i.e.", "vs.", "etc.")
+
+
+def _first_sentence(text: str, cap: int = _COMPACT_REFERENCE_SENTENCE_CAP) -> str:
+    """The first sentence of ``text`` (markdown emphasis stripped), capped."""
+    flat = " ".join(text.split()).replace("**", "")
+    first = ""
+    for piece in _SENTENCE_END_RE.split(flat):
+        first = f"{first} {piece}".strip()
+        if not first.endswith(_ABBREVIATIONS):
+            break
+    if len(first) > cap:
+        first = first[: cap - 1].rstrip() + "…"
+    return first
+
+
+def _render_compact_node_reference(tools: list[Any]) -> str:
+    """One line per node type — the on-device form of the node reference.
+
+    ``- <palette label> (<sidebar section>): <first sentence>`` using the
+    palette label and sidebar section from the node store and the
+    first sentence of the node's ``long_description`` (what the node
+    does; the user-shaped ``user_instructions`` lead with the settings
+    panel, which a one-liner can't carry). A ~10k-token reference
+    becomes ~1.5k, which is what lets the whole local system prompt fit
+    a 16k window with room for the flow and the conversation.
+    """
+
+    from flowfile_core.ai.tools.node_docs import palette_label_for, sidebar_section_for
+
+    documented = [tool for tool in tools if tool.user_instructions]
+    if not documented:
+        return ""
+    documented.sort(key=lambda tool: tool.name)
+    lines: list[str] = [
+        _NODE_REFERENCE_HEADER,
+        "",
+        (
+            "Every Flowfile node as `palette label (sidebar section): what it "
+            "does`. Cite these labels verbatim when telling the user what to "
+            "drag or configure; nothing else exists in the UI."
+        ),
+        "",
+    ]
+    for tool in documented:
+        node_type = tool.name.removeprefix(_NODE_TYPE_TOOL_PREFIX)
+        label = palette_label_for(node_type)
+        section = sidebar_section_for(node_type)
+        summary = _first_sentence(tool.long_description or tool.user_instructions)
+        where = f" ({section})" if section else ""
+        lines.append(f"- {label}{where}: {summary}")
     return "\n".join(lines).rstrip()
 
 

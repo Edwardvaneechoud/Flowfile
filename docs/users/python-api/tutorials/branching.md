@@ -51,7 +51,7 @@ You can route an entire report without filtering away context. The Union keeps t
 <!-- Claim-to-source verification
 flowfile_frame/flowfile_frame/gate.py: Gate, then, otherwise, else_;
 flowfile_frame/flowfile_frame/flow_frame.py: _materialised_lazyframe, concat;
-flowfile_core/flowfile_core/flowfile/flow_graph.py: _evaluate_gate_conditions, run_graph;
+flowfile_core/flowfile_core/flowfile/flow_graph/execution.py: _evaluate_gate_conditions, run_graph;
 flowfile_core/flowfile_core/flowfile/flow_data_engine/flow_data_engine.py: gate evaluation.
 Exit names in the graph drawing: flowfile_core/flowfile_core/schemas/input_schema.py: NodeGate.output_names.
 Displayed output: docs/examples/output/tutorial_06.txt, compared with the script's stdout by

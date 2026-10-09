@@ -9,16 +9,16 @@ The [AI Assistant](index.md) runs against a built-in [on-device model](#on-devic
 
 ## Supported providers
 
-Default models below reflect the provider classes as of 2026-07.
+Default models below reflect the provider classes as of 2026-10.
 
 | Provider | Default model | Tools | Streaming | Key env var | Notes |
 |----------|---------------|:-----:|:---------:|-------------|-------|
-| **Anthropic** | `claude-sonnet-4-6` | ✓ | ✓ | `ANTHROPIC_API_KEY` | Haiku 4.5 is the default for fast surfaces (Cmd+K, ghost-node, autocomplete); Opus 4.7 for `agent_complex`. |
+| **Anthropic** | `claude-sonnet-5-5` | ✓ | ✓ | `ANTHROPIC_API_KEY` | Sonnet 5.5 for `explain` / `docgen` / `lineage`; Haiku 4.5 for the fast surfaces (Cmd+K, ghost-node, autocomplete, `agent_staged`); Opus 4.7 for `agent_complex`. |
 | **OpenAI** | `gpt-4.1-mini` | ✓ | ✓ | `OPENAI_API_KEY` | Mini tier for the cheap surfaces; full `gpt-4.1` for `explain` / `agent_complex` / `docgen`. Strict structured outputs supported via litellm. |
 | **Google (Gemini)** | `gemini-2.5-flash` | ✓ | ✓ | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Free tier ~250–1000 req/day, no card required. Pro for `agent_complex`. |
 | **Groq** | `qwen/qwen3-32b` | ✓ | ✓ | `GROQ_API_KEY` | Fast inference; free tier is ~30 RPM. |
-| **OpenRouter** | `qwen/qwen3-coder-30b-a3b-instruct` | ✓ | ✓ | `OPENROUTER_API_KEY` | One key routing to many hosted models. The `agent_staged` default is `meta-llama/llama-3.3-70b-instruct` (free tier). |
-| **Ollama** | `llama3.1:8b` | ✓ (model-dependent) | ✓ | *(none — local)* | Self-hosted; talks to your local Ollama server (default `http://localhost:11434`). Tool-use works on Llama 3.1+ and most newer instruct models. |
+| **OpenRouter** | `qwen/qwen3.6-35b-a3b` | ✓ | ✓ | `OPENROUTER_API_KEY` | One key routing to many hosted models. `agent_staged` also defaults to `qwen/qwen3.6-35b-a3b` (billed, cheap); the Claude surfaces mirror the direct Anthropic defaults. |
+| **Ollama** | `qwen3.5:9b` | ✓ (model-dependent) | ✓ | *(none — local)* | Self-hosted; talks to your local Ollama server (default `http://localhost:11434`). `qwen3.6:35b-a3b` for `agent_complex`. Thinking is switched off on every request. Tool-use works on Qwen3.5+, Llama 3.1+ and most newer instruct models. |
 
 The "Tools" column means the provider can return structured tool-call arguments — required for the Agent surface. The Agent refuses to start against a model that lacks tool support.
 
@@ -99,17 +99,23 @@ Set it up under **Settings → AI → Providers**, on the **On-device AI** row a
 3. **Manage** expands the row: a plain-language note on what a model this size can and can't do, the full catalog (install another size, switch the active one with **Use**, or delete one), and the context-window setting.
 
 !!! info "What a model this size can and can't do"
-    The on-device models are small (1.5B to 7B parameters). They are good at chatting about your flow, explaining nodes, writing descriptions, and building a simple flow from one sentence (*Simple build*), and nothing leaves your machine. They **cannot run the Agent**: *Auto-agent* and *Agent* build step by step through tool calls, which these models don't support, so the chat drawer offers only *Chat* and *Simple build* while On-device AI is selected. Expect simpler answers than a cloud model, the occasional wrong column name, and slower replies on CPU; Flowfile sends the local model a trimmed view of the flow (at most 12 columns per node) to fit its context, and ⌘K / next-node suggestions miss more often. The same note appears in the app under **Manage** on the row.
+    The on-device models are small (2B to 9B parameters). They are good at chatting about your flow, explaining nodes, writing descriptions, and building a simple flow from one sentence (*Simple build*), and nothing leaves your machine. They **cannot run the Agent**: *Auto-agent* and *Agent* build step by step through tool calls, which these models don't support, so the chat drawer offers only *Chat* and *Simple build* while On-device AI is selected. Expect simpler answers than a cloud model, the occasional wrong column name, and slower replies on CPU; Flowfile sends the local model a trimmed view of the flow (at most 12 columns per node) to fit its context, and ⌘K / next-node suggestions miss more often. The same note appears in the app under **Manage** on the row.
 
 ![On-device AI row on the Providers tab, expanded with Manage — what to expect from the model, the catalog, and the context window](../assets/images/ai/on_device_ai_setup.png)
 
-The catalog is three q4_k_m GGUF builds, pulled from Hugging Face on demand:
+The catalog is three Q4_K_M GGUF builds of Qwen3.5, pulled from Hugging Face on demand:
 
 | Model | Notes |
 |-------|-------|
-| **Qwen2.5-Coder 1.5B** | ~1.1 GB download. For low-RAM machines. |
-| **Qwen2.5-Coder 3B** | ~2.0 GB download. The default. |
-| **Qwen2.5 7B Instruct** | ~4.4 GB download. Needs ~6 GB free RAM; slow on CPU. |
+| **Qwen3.5 2B** | ~1.4 GB download. For low-RAM machines. |
+| **Qwen3.5 4B** | ~3.0 GB download. The default. |
+| **Qwen3.5 9B** | ~6.2 GB download. Needs ~8 GB free RAM; slow on CPU. |
+
+The server runs them with thinking switched off, so answers start at the first token. The earlier Qwen2.5-Coder 1.5B / 3B and Qwen2.5 7B downloads are *older models*: no longer offered for install, but one that is already on disk stays listed under **Manage** (marked *older model*), keeps working, and can be deleted. The context-window ceiling is per model (32k for the older ones, 128k for Qwen3.5).
+
+The on-device model gets its own system prompt: a short assist prompt without the cloud footer that asks you to switch to agent mode (there is no agent mode on-device), and a one-line-per-node reference instead of the full one, so the whole prompt is about 3k tokens. If you ask it to build or change something, it describes the steps with the palette labels and points to *Simple build* for generating a whole flow.
+
+*Simple build* asks the model for [FlowFrame code](index.md#simple-build-one-message-one-flow) rather than node settings, which the 4B handles well: a four-step flow comes back in a few seconds on an Apple Silicon laptop, and the code is shown in the chat bubble so you can see what it understood. Flowfile reads the script into nodes without running it.
 
 Prebuilt runtimes exist for macOS, Linux, and Windows on x64 and arm64; elsewhere the card shows "Not available on this platform".
 
@@ -128,9 +134,9 @@ Ollama is the other offline path — a server you install and manage yourself. Q
 2. Pull a tool-capable instruct model:
 
     ```bash
-    ollama pull llama3.1:8b
+    ollama pull qwen3.5:9b
     # or for the agent_complex surface:
-    ollama pull llama3.1:70b
+    ollama pull qwen3.6:35b-a3b
     ```
 
 3. In Flowfile, open **Settings → AI → Providers** and select **Ollama**:
@@ -139,7 +145,7 @@ Ollama is the other offline path — a server you install and manage yourself. Q
     - Optionally set *Default model* to the tag you pulled.
     - Click **Save**, then **Test**.
 
-Tool-call quality varies by model. Llama 3.1+ instruct models do tool calls correctly; older or non-instruct models sometimes return tool calls as text in the assistant content. The Agent surface compensates with Pydantic-repair on the tool-call shape.
+Tool-call quality varies by model. Qwen3.5+ and Llama 3.1+ instruct models do tool calls correctly; older or non-instruct models sometimes return tool calls as text in the assistant content. The Agent surface compensates with Pydantic-repair on the tool-call shape.
 
 ---
 
@@ -155,7 +161,7 @@ The picked provider can't do tool calls — the [on-device model](#on-device-mod
 Provider name typo. The supported names are exactly: `anthropic`, `openai`, `google`, `groq`, `openrouter`, `ollama` (lowercase, no dashes).
 
 **On-device (local) model exits on startup in Docker / "no CPU backend found".**
-The bundled `llama-server` loads CPU compute backends (`libggml-cpu-*.so`) that need the OpenMP runtime, `libgomp1`. The official `flowfile-core` image bundles it; a custom or older image may not — add it (Debian/Ubuntu: `apt-get install -y libgomp1`) and restart. The startup error now names the cause: `no CPU backend found` / `exit code 127` → missing `libgomp1`; `killed by SIGKILL` → out of memory (give the container more RAM, or pick the 1.5B model / a smaller context under **Manage** on the On-device AI row, Settings → AI → Providers); `killed by SIGILL` → the image's architecture doesn't match the host CPU.
+The bundled `llama-server` loads CPU compute backends (`libggml-cpu-*.so`) that need the OpenMP runtime, `libgomp1`. The official `flowfile-core` image bundles it; a custom or older image may not — add it (Debian/Ubuntu: `apt-get install -y libgomp1`) and restart. The startup error now names the cause: `no CPU backend found` / `exit code 127` → missing `libgomp1`; `killed by SIGKILL` → out of memory (give the container more RAM, or pick the 2B model / a smaller context under **Manage** on the On-device AI row, Settings → AI → Providers); `killed by SIGILL` → the image's architecture doesn't match the host CPU.
 
 **Credential `Test` returns `ok=false` with an authentication error.**
 Key is wrong, expired, or missing required scopes. The error message from the upstream provider is surfaced in the `error` field of the test result.
