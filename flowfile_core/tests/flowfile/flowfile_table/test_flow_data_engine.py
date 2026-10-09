@@ -1122,8 +1122,7 @@ def _cleared_rename(old_name: str, keep: bool = True) -> dict:
 
 
 def test_join_cleared_rename_boxes_keep_original_names():
-    # Regression for #815: two cleared left names renamed both columns to '' and the join failed
-    # with "column '' is duplicate" while the drawer showed the original names.
+    # Regression for #815: cleared rename boxes used to rename every column to "".
     left = FlowDataEngine(pl.DataFrame({"Company Code": ["A"], "Plant": ["P1"], "Vendor Name": ["V"]}))
     right = FlowDataEngine(pl.DataFrame({"Company Code": ["A"], "Plant": ["P1"], "Value": [1.0]}))
     node = input_schema.NodeJoin.model_validate({
@@ -1204,3 +1203,36 @@ def test_select_rename_onto_unmentioned_kept_column_raises_readable_error():
         df.do_select(select_inputs, keep_missing=True)
     # Without keep_missing the unmentioned b is dropped first, so the rename is fine.
     assert df.do_select(select_inputs, keep_missing=False).columns == ["b"]
+
+
+def test_join_stale_kept_column_does_not_count_as_duplicate():
+    # Left still lists 'a' from an older schema; it is unavailable, so the right 'a' is the only one kept.
+    left = FlowDataEngine(pl.DataFrame({"id": [1], "b": [1]}))
+    right = FlowDataEngine(pl.DataFrame({"id": [1], "a": [2]}))
+    join_input = transform_schema.JoinInput(
+        join_mapping="id",
+        left_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("b"),
+                     transform_schema.SelectInput("a")],
+        right_select=[transform_schema.SelectInput("id", keep=False), transform_schema.SelectInput("a")],
+    )
+    result = left.join(join_input, auto_generate_selection=False, verify_integrity=False, other=right)
+    assert result.columns == ["id", "b", "a"]
+
+
+def test_cross_join_stale_renamed_column_does_not_count_as_duplicate():
+    left = FlowDataEngine(pl.DataFrame({"a": [1]}))
+    right = FlowDataEngine(pl.DataFrame({"c": [3]}))
+    cross_join_input = transform_schema.CrossJoinInput(
+        left_select=[transform_schema.SelectInput("a")],
+        right_select=[transform_schema.SelectInput("c", "Y"), transform_schema.SelectInput("gone", "Y")],
+    )
+    result = left.do_cross_join(cross_join_input, auto_generate_selection=True, verify_integrity=False, other=right)
+    assert result.columns == ["a", "Y"]
+
+
+def test_select_stale_rename_does_not_count_as_duplicate():
+    df = FlowDataEngine(pl.DataFrame({"a": [1], "b": [2]}))
+    select_inputs = transform_schema.SelectInputs(
+        renames=[transform_schema.SelectInput("gone", "b"), transform_schema.SelectInput("a")]
+    )
+    assert sorted(df.do_select(select_inputs, keep_missing=True).columns) == ["a", "b"]

@@ -187,3 +187,13 @@ describe("restoreBlankName", () => {
     expect(restoreBlankName(selectInput).new_name).toBe("Value (EUR)");
   });
 });
+
+describe("applySelectPositions with a cleared rename box", () => {
+  it("saves the original name, not '' and not an altered flag", () => {
+    const cleared = input("a", "String", 0);
+    cleared.new_name = "";
+    const [result] = applySelectPositions([cleared], [column("a", "String")]);
+    expect(result.new_name).toBe("a");
+    expect(result.is_altered).toBe(false);
+  });
+});

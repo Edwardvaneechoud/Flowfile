@@ -47,6 +47,7 @@ from flowfile_core.flowfile.flow_data_engine.join import (
     get_col_name_to_delete,
     get_duplicate_output_problems,
     get_join_map_problems,
+    get_shared_output_name_problems,
     get_undo_rename_mapping_join,
     rename_df_table_for_join,
     verify_join_select_integrity,
@@ -2051,7 +2052,7 @@ class FlowDataEngine:
         cross_join_input_manager.auto_rename(rename_mode="suffix")
         duplicate_problems = get_duplicate_output_problems(cross_join_input_manager)
         if duplicate_problems:
-            raise Exception("Cross join is not valid: " + "; ".join(duplicate_problems))
+            raise ValueError("Cross join is not valid: " + "; ".join(duplicate_problems))
         left = self.data_frame.select(left_select).rename(cross_join_input_manager.left_select.rename_table)
         right = other.data_frame.select(right_select).rename(cross_join_input_manager.right_select.rename_table)
 
@@ -2107,7 +2108,7 @@ class FlowDataEngine:
             join_manager.auto_rename()
         duplicate_problems = get_duplicate_output_problems(join_manager)
         if duplicate_problems:
-            raise Exception("Join is not valid: " + "; ".join(duplicate_problems))
+            raise ValueError("Join is not valid: " + "; ".join(duplicate_problems))
 
         left = left_lf.select(join_manager.left_manager.get_select_cols()).rename(
             join_manager.left_manager.get_rename_table()
@@ -3141,31 +3142,25 @@ class FlowDataEngine:
             A new `FlowDataEngine` with the transformed selection.
         """
         new_schema = deepcopy(self.schema)
+        frame_cols = set(self.data_frame.collect_schema().names())
         renames = [r for r in select_inputs.renames if r.is_available]
         if not keep_missing:
-            drop_cols = set(self.data_frame.collect_schema().names()) - set(r.old_name for r in renames).union(
+            drop_cols = frame_cols - set(r.old_name for r in renames).union(
                 set(r.old_name for r in renames if not r.keep)
             )
             keep_cols = []
         else:
-            keep_cols = list(set(self.data_frame.collect_schema().names()) - set(r.old_name for r in renames))
+            keep_cols = list(frame_cols - set(r.old_name for r in renames))
             drop_cols = set(r.old_name for r in renames if not r.keep)
 
         if len(drop_cols) > 0:
             new_schema = [s for s in new_schema if s.name not in drop_cols]
         new_schema_mapping = {v.name: v for v in new_schema}
 
-        sources_by_output: dict[str, list[str]] = {}
-        for rename in renames:
-            if rename.keep:
-                sources_by_output.setdefault(rename.new_name, []).append(rename.old_name)
-        for kept_col in keep_cols:
-            sources_by_output.setdefault(kept_col, []).append(kept_col)
-        shared_names = [
-            f"columns {', '.join(repr(s) for s in sources)} share the output name '{new_name}'"
-            for new_name, sources in sources_by_output.items()
-            if len(sources) > 1
-        ]
+        # Only columns the frame holds reach the rename; a stale entry is skipped below, so it cannot collide.
+        output_sources = {r.old_name: r.new_name for r in renames if r.keep and r.old_name in frame_cols}
+        output_sources.update({c: c for c in keep_cols})
+        shared_names = get_shared_output_name_problems(output_sources)
         if shared_names:
             raise ValueError("Select is not valid: " + "; ".join(shared_names))
 

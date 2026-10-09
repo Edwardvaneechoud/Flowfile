@@ -69,15 +69,26 @@ def get_join_map_problems(
     return problems
 
 
-def _shared_output_names(rename_table: dict[str, str], side: str) -> list[str]:
+def get_shared_output_name_problems(rename_table: dict[str, str], side: str | None = None) -> list[str]:
+    """One message per output name that more than one source column maps to.
+
+    Args:
+        rename_table: Source column → output name, as Polars' `.rename()` would receive it.
+        side: Optional label ("left"/"right") naming the join side in the message.
+    """
     sources_by_output: dict[str, list[str]] = {}
     for old_name, new_name in rename_table.items():
         sources_by_output.setdefault(new_name, []).append(old_name)
+    label = f"{side} columns" if side else "columns"
     return [
-        f"{side} columns {', '.join(repr(s) for s in sources)} share the output name '{new_name}'"
+        f"{label} {', '.join(repr(s) for s in sources)} share the output name '{new_name}'"
         for new_name, sources in sources_by_output.items()
         if len(sources) > 1
     ]
+
+
+def _kept_output_names(side_manager: transform_schema.JoinInputsManager) -> set[str]:
+    return {v.new_name for v in side_manager.select_inputs.renames if v.keep and v.is_available}
 
 
 def get_duplicate_output_problems(
@@ -87,14 +98,15 @@ def get_duplicate_output_problems(
 
     Checked after any auto-rename: two columns on one side renamed to the same
     name, or a kept name present on both sides, would otherwise surface as a
-    bare Polars duplicate-column error.
+    bare Polars duplicate-column error. Only available columns count, since an
+    unavailable one is never selected.
 
     Returns:
         list[str]: One message per collision; empty when every output name is unique.
     """
-    problems = _shared_output_names(manager.left_manager.get_rename_table(), "left")
-    problems += _shared_output_names(manager.right_manager.get_rename_table(), "right")
-    overlapping = sorted(manager.get_overlapping_columns())
+    problems = get_shared_output_name_problems(manager.left_manager.get_rename_table(), "left")
+    problems += get_shared_output_name_problems(manager.right_manager.get_rename_table(), "right")
+    overlapping = sorted(_kept_output_names(manager.left_manager) & _kept_output_names(manager.right_manager))
     if overlapping:
         problems.append(f"columns {', '.join(repr(c) for c in overlapping)} are kept on both sides")
     return problems

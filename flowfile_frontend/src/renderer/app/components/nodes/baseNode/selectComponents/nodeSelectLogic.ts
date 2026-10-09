@@ -58,6 +58,14 @@ export const updateNodeSelect = (
     }
   });
 };
+/** A cleared rename box means "keep the name": show it as real text instead of the placeholder. */
+export const restoreBlankName = (selectInput: SelectInput): SelectInput => {
+  if (!selectInput.new_name?.trim()) {
+    selectInput.new_name = selectInput.old_name;
+  }
+  return selectInput;
+};
+
 /**
  * Normalise a select node's inputs just before saving: order by the on-screen
  * `position`, then re-stamp `position`, `original_position` and the
@@ -73,6 +81,7 @@ export const applySelectPositions = (
 ): SelectInput[] => {
   selectInputs.sort((a, b) => a.position - b.position);
   selectInputs.forEach((selectInput, index) => {
+    restoreBlankName(selectInput);
     selectInput.position = index;
     if (!tableSchema) return;
     const originalIndex = tableSchema.findIndex((column) => column.name === selectInput.old_name);
@@ -141,12 +150,4 @@ export const createNewSelect = (org_node_select: NodeSelect, node_id: number): N
   newNodeSelect.value.depending_on_id = org_node_select.node_id;
   newNodeSelect.value.node_id = node_id;
   return newNodeSelect.value;
-};
-
-/** A cleared rename box means "keep the name": show it as real text instead of the placeholder. */
-export const restoreBlankName = (selectInput: SelectInput): SelectInput => {
-  if (!selectInput.new_name?.trim()) {
-    selectInput.new_name = selectInput.old_name;
-  }
-  return selectInput;
 };

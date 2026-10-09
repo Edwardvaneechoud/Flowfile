@@ -14,6 +14,9 @@ from flowfile_core.flowfile.flow_data_engine.join.verify_integrity import (
     get_join_map_problems as get_join_map_problems,
 )
 from flowfile_core.flowfile.flow_data_engine.join.verify_integrity import (
+    get_shared_output_name_problems as get_shared_output_name_problems,
+)
+from flowfile_core.flowfile.flow_data_engine.join.verify_integrity import (
     verify_join_map_integrity as verify_join_map_integrity,
 )
 from flowfile_core.flowfile.flow_data_engine.join.verify_integrity import (
