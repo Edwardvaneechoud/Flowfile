@@ -238,21 +238,8 @@ class JoinHandlersMixin(ConverterMixinBase):
             column.old_name for column in settings.right_select.renames if not column.keep and not column.join_key
         ]
 
-        left_tmp = f"_join_{node_id}_left"
-        right_tmp = f"_join_{node_id}_right"
-        if right_renames:
-            self._add_code(f"{right_tmp} = {right_df}.rename({right_renames})")
-            right_df = right_tmp
-        if left_renames:
-            self._add_code(f"{left_tmp} = {left_df}.rename({left_renames})")
-            left_df = left_tmp
-        if left_drop_columns:
-            self._add_code(f"{left_tmp} = {left_df}.drop({left_drop_columns})")
-            left_df = left_tmp
-        if right_drop_columns:
-            self._add_code(f"{right_tmp} = {right_df}.drop({right_drop_columns})")
-            right_df = right_tmp
-
+        left_df = self._select_into_temp(left_df, f"_join_{node_id}_left", left_drop_columns, left_renames)
+        right_df = self._select_into_temp(right_df, f"_join_{node_id}_right", right_drop_columns, right_renames)
         return left_df, right_df
 
     def _handle_join_key_transformations(

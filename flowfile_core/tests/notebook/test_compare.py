@@ -151,6 +151,19 @@ def test_a_function_compares_by_its_text():
     assert not settings_equal(canvas, {"polars_code_input": {"polars_code": code.replace("# note\n", "")}}, "polars_code")
 
 
+def _writer(namespace_id: int | None, full_name: str | None = None) -> dict:
+    return {
+        "catalog_write_settings": {"table_name": "t", "namespace_id": namespace_id, "namespace_full_name": full_name}
+    }
+
+
+def test_a_writers_namespace_id_beside_its_stored_name_is_cosmetic():
+    """The designer stores both; the notebook renders only the name, so the rebuilt writer has no id."""
+    assert settings_equal(_writer(2, "General.default"), _writer(None, "General.default"), "catalog_writer")
+    assert not settings_equal(_writer(2, "General.default"), _writer(2, "General.other"), "catalog_writer")
+    assert not settings_equal(_writer(2), _writer(3), "catalog_writer")
+
+
 def test_a_closing_return_output_df_and_stale_group_columns_are_cosmetic():
     code = {"polars_code_input": {"polars_code": "output_df = input_df\nreturn output_df"}}
     assert settings_equal(code, {"polars_code_input": {"polars_code": "  output_df = input_df"}}, "polars_code")

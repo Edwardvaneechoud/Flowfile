@@ -242,10 +242,13 @@ def fuzzy_join_task(
     flowfile_node_id: int | str,
 ):
     from pl_fuzzy_frame_match import fuzzy_match_dfs
+    from pl_fuzzy_frame_match.output_column_name_utils import set_name_in_fuzzy_mappings
 
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     try:
         flowfile_logger.info("Starting fuzzy join operation")
+        # fuzzy_match_dfs skips naming the score columns when a side is empty
+        set_name_in_fuzzy_mappings(fuzzy_maps)
         left_df = pl.LazyFrame.deserialize(io.BytesIO(left_serializable_object))
         right_df = pl.LazyFrame.deserialize(io.BytesIO(right_serializable_object))
         fuzzy_match_result = fuzzy_match_dfs(

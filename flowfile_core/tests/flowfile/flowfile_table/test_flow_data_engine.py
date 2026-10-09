@@ -107,6 +107,22 @@ def test_fuzzy_match_auto_select_columns_not_selected(fuzzy_test_data_left, fuzz
     assert fuzzy_match_result.number_of_fields == 4
 
 
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+def test_fuzzy_match_with_an_empty_side_names_the_score_column_as_with_rows(empty_side):
+    """The library returns early on an empty side without naming the score columns; the node names them itself."""
+    left = FlowDataEngine(pl.DataFrame({"name": ["edward", "court"]} if empty_side == "right" else {"name": []},
+                                       schema={"name": pl.String}))
+    right = FlowDataEngine(pl.DataFrame({"other": ["eduward"]} if empty_side == "left" else {"other": []},
+                                        schema={"other": pl.String}))
+    fuzzy_match_input = transform_schema.FuzzyMatchInput(
+        join_mapping=[FuzzyMapping(left_col="name", right_col="other")],
+        left_select=[transform_schema.SelectInput("name")],
+        right_select=[transform_schema.SelectInput("other")],
+    )
+    result = left.fuzzy_join(fuzzy_match_input, right)
+    assert result.columns == ["name", "other", "name_vs_other_levenshtein"]
+
+
 def test_fuzzy_match_external():
     r = transform_schema.SelectInputs([transform_schema.SelectInput(old_name='column_0', new_name='name')])
     left_flowfile_table = FlowDataEngine(['edward', 'eduward', 'court']).do_select(r)

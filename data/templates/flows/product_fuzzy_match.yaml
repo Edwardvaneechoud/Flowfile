@@ -98,7 +98,7 @@ nodes:
     cache_results: false
     filter_input:
       mode: advanced
-      advanced_filter: '[internal_name_vs_supplier_name_levenshtein] >= 80'
+      advanced_filter: '[internal_name_vs_supplier_name_levenshtein] >= 0.8'
 - id: 5
   type: explore_data
   is_start_node: false
