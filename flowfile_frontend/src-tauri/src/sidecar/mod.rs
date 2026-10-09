@@ -311,17 +311,15 @@ async fn handle_termination(
 ) {
     let state: Arc<AppState> = app.state::<Arc<AppState>>().inner().clone();
 
-    if *state.is_shutting_down.lock() {
-        log::debug!("{} terminated during shutdown, not restarting", kind.name());
-        // TODO(C): clear the pid here too — leaving it stale lets shutdown.rs's
-        // `.take()` + killpg target a process/group whose PID has been recycled.
-        return;
-    }
-
-    // Clear the pid so a stale SIGTERM during shutdown can't target a recycled PID.
+    // Cleared first so a later kill never targets a recycled pid.
     match kind {
         SidecarKind::Core => *state.core_pid.lock() = None,
         SidecarKind::Worker => *state.worker_pid.lock() = None,
+    }
+
+    if *state.is_shutting_down.lock() {
+        log::debug!("{} terminated during shutdown, not restarting", kind.name());
+        return;
     }
 
     let backoff = match kind {
