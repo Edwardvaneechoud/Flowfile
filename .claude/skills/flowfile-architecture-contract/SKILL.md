@@ -396,7 +396,7 @@ lands:
   `if execution_location == "local"` branches (§3) with one
   `backend.run_lazyframe/sample/count_records` call per node. Adds a
   **ratchet test** pinning the count of remaining inline branches in
-  `flow_graph.py`, failing if it goes up — worth reusing regardless of
+  the `flow_graph/` package, failing if it goes up — worth reusing regardless of
   whether this branch lands.
 - `NodeSpec` registry (`flowfile/node_registry/`) — proposed single source of
   truth for built-in node types, unifying four independently-maintained

@@ -1,7 +1,6 @@
 """Catalog reader and writer nodes."""
 
 import json
-from typing import TYPE_CHECKING
 
 import polars as pl
 
@@ -52,9 +51,6 @@ from shared.delta_utils import (
     get_delta_head_version,
     scan_delta_changes,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 class CatalogBuildersMixin(GraphMixinBase):

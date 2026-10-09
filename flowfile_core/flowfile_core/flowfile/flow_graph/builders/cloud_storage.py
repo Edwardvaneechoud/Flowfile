@@ -1,7 +1,5 @@
 """Object-storage reader and writer nodes (S3, ADLS, GCS)."""
 
-from typing import TYPE_CHECKING
-
 import polars as pl
 
 from flowfile_core.configs import logger
@@ -43,9 +41,6 @@ from shared.delta_utils import (
     get_delta_head_version,
     scan_delta_changes,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 class CloudStorageBuildersMixin(GraphMixinBase):

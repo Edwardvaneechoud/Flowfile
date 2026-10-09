@@ -85,9 +85,8 @@ __all__ = [
     "_write_catalog_delta_local",
     "_write_catalog_delta_remote",
     "_write_cloud_delta_remote",
-    # Bind surface: swappable collaborators that submodules resolve through `root()` at call time.
-    "CatalogService",
     "CloudStorageReader",
+    "CatalogService",
     "ExternalDatabaseWriter",
     "ExternalGoogleAnalyticsFetcher",
     "ExternalRestApiFetcher",

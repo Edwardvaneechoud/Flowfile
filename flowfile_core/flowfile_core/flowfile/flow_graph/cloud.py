@@ -36,7 +36,6 @@ from shared.delta_utils import write_delta as _write_delta
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph.graph import FlowGraph
-    from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 
 
 def get_cloud_connection_settings(

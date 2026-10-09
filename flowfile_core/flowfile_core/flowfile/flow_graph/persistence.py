@@ -4,7 +4,6 @@ import datetime
 import json
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import yaml
 
@@ -17,10 +16,6 @@ from flowfile_core.flowfile.graph_tree.graph_tree import render_flow
 from flowfile_core.schemas import schemas
 from flowfile_core.schemas.output_model import NodeData
 from shared._version import get_version
-
-if TYPE_CHECKING:
-    pass
-
 
 __version__ = get_version()
 

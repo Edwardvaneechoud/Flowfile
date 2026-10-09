@@ -1,7 +1,6 @@
 """Canvas organisation of a `FlowGraph`: groups, comments, positions and layout (never read by the executor)."""
 
 from time import time
-from typing import TYPE_CHECKING
 
 from flowfile_core.flowfile.flow_graph._base import GraphMixinBase
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
@@ -10,9 +9,6 @@ from flowfile_core.schemas import schemas
 from flowfile_core.schemas.history_schema import (
     HistoryActionType,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 class CanvasMixin(GraphMixinBase):

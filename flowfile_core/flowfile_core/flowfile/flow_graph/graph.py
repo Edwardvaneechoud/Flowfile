@@ -61,9 +61,6 @@ from flowfile_core.schemas.history_schema import (
 )
 from flowfile_core.schemas.output_model import RunInformation
 
-# Catalog writer/reader helpers (extracted for testability)
-
-
 NodeObserver = Callable[[int | str, str, Any, bool], None]
 
 
@@ -239,18 +236,10 @@ class FlowGraph(
                         node.reset(deep=True)
         self._flow_settings = flow_settings
 
-    # ==================== History Management Methods ====================
-
-    # ==================== End History Management Methods ====================
-
     @property
     def node_id_ceiling(self) -> int:
         """The highest node id this canvas has held; a new node numbers above it, deleted ids are never reused."""
         return max([self._node_id_seq, *(node_id for node_id in self._node_db if isinstance(node_id, int))], default=0)
-
-    # ==================== End Group Management Methods ====================
-
-    # ==================== End Comment Management Methods ====================
 
     def add_node_observer(self, observer: NodeObserver) -> None:
         """Register ``observer(node_id, node_type, settings, is_new)`` for every node add or update.
@@ -640,8 +629,6 @@ class FlowGraph(
         """Gets a list of all FlowNode objects in the graph."""
 
         return list(self._node_db.values())
-
-    # Artifact helpers
 
     @property
     def node_connections(self) -> list[tuple[int, int]]:

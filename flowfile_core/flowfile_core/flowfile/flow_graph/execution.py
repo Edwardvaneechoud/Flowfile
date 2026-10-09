@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import ExitStack
 from contextvars import ContextVar
 from time import time
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 import polars as pl
 from polars_expr_transformer import simple_function_to_expr as to_expr
@@ -57,10 +57,6 @@ from flowfile_core.kernel.execution import (
 )
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.output_model import NodeResult, RunInformation
-
-if TYPE_CHECKING:
-    pass
-
 
 ambient_kernel_hold: ContextVar[KernelHold | None] = ContextVar("ambient_kernel_hold", default=None)
 """The ``kernel_hold`` of the run whose thread this is: ``run_graph`` sets it for its own thread and every node it
