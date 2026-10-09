@@ -16,6 +16,22 @@ export interface LocalModelEntry {
   approxDownloadMb: number;
   description: string;
   installed: boolean;
+  // Superseded entry: only listed while installed (or selected); never
+  // offered for a fresh install, still selectable and deletable.
+  legacy: boolean;
+  // Context-window ceiling for this model (the backend clamps to it).
+  maxCtx: number;
+}
+
+// The install running in the backend process (``active``), or how the last
+// one ended. Lets a page that reloaded mid-download re-attach to it.
+export interface LocalInstallState {
+  active: boolean;
+  phase: string;
+  modelId: string | null;
+  received: number | null;
+  total: number | null;
+  error: string | null;
 }
 
 export interface LocalModelStatus {
@@ -37,6 +53,16 @@ export interface LocalModelStatus {
   ctxSize: number;
   ctxSizeMin: number;
   ctxSizeMax: number;
+  install: LocalInstallState | null;
+}
+
+interface PyLocalInstallState {
+  active: boolean;
+  phase: string;
+  model_id?: string | null;
+  received?: number | null;
+  total?: number | null;
+  error?: string | null;
 }
 
 interface PyLocalModelEntry {
@@ -45,6 +71,8 @@ interface PyLocalModelEntry {
   approx_download_mb: number;
   description: string;
   installed: boolean;
+  legacy?: boolean;
+  max_ctx?: number;
 }
 
 interface PyLocalModelStatus {
@@ -63,6 +91,7 @@ interface PyLocalModelStatus {
   ctx_size: number;
   ctx_size_min: number;
   ctx_size_max: number;
+  install?: PyLocalInstallState | null;
 }
 
 const fromPyStatus = (raw: PyLocalModelStatus): LocalModelStatus => ({
@@ -82,11 +111,23 @@ const fromPyStatus = (raw: PyLocalModelStatus): LocalModelStatus => ({
     approxDownloadMb: m.approx_download_mb,
     description: m.description,
     installed: m.installed,
+    legacy: m.legacy ?? false,
+    maxCtx: m.max_ctx ?? raw.ctx_size_max,
   })),
   installDir: raw.install_dir,
   ctxSize: raw.ctx_size,
   ctxSizeMin: raw.ctx_size_min,
   ctxSizeMax: raw.ctx_size_max,
+  install: raw.install
+    ? {
+        active: raw.install.active,
+        phase: raw.install.phase,
+        modelId: raw.install.model_id ?? null,
+        received: raw.install.received ?? null,
+        total: raw.install.total ?? null,
+        error: raw.install.error ?? null,
+      }
+    : null,
 });
 
 const LOCAL_BASE = "/ai/local-model";
@@ -159,36 +200,64 @@ export const LOCAL_PROVIDER_LABEL = "On-device AI";
 // it the flow context (subgraph + schemas) cloud providers get.
 
 export interface GenerateFlowResult {
-  diffId: string;
+  // ``null`` when the model answered instead of building (see ``answer``).
+  diffId: string | null;
   opCount: number;
   created: Array<{ id: string; type: string; node_id: number }>;
   warnings: string[];
   rationale: string;
   // Full GraphDiff (snake_case wire shape) for the diff-review panel.
   diffPayload: Record<string, unknown> | null;
+  // The model's plain reply when the request was not a pipeline description
+  // (a question, a greeting); shown as the chat answer, nothing is staged.
+  answer: string | null;
+  // ``mode="code"``: the FlowFrame script the nodes were built from, shown
+  // in the chat bubble. ``null`` in the JSON modes and for an answer.
+  code: string | null;
 }
 
+export type GenerateFlowMode = "simple" | "one_shot" | "code";
+
+// The 422 detail ``mode="code"`` answers when the script still fails after
+// its repair round: the message, the 1-based line in ``code`` when known.
+export interface GenerateFlowFailure {
+  message: string;
+  line: number | null;
+  kind: "code";
+  code: string | null;
+}
+
+export const isGenerateFlowFailure = (detail: unknown): detail is GenerateFlowFailure =>
+  typeof detail === "object" &&
+  detail !== null &&
+  (detail as { kind?: unknown }).kind === "code" &&
+  typeof (detail as { message?: unknown }).message === "string";
+
 interface PyGenerateFlowResult {
-  diff_id: string;
+  diff_id: string | null;
   op_count: number;
   created: Array<{ id: string; type: string; node_id: number }>;
   warnings: string[];
   rationale: string;
   diff_payload: Record<string, unknown> | null;
+  answer?: string | null;
+  code?: string | null;
 }
 
 // POST /ai/generate — provider-agnostic whole-flow generation (the "Simple
-// build" surface). Works for any provider (local or cloud). ``mode="simple"``
-// builds the diff with no validation until apply; ``"one_shot"`` validates each
-// node through the executor (for bigger models). Returns the staged diff id +
-// the full diff payload so the caller can apply it via the existing diff-accept
-// route.
+// build" surface). Works for any provider (local or cloud). ``mode="code"``
+// (the drawer's default) has the model write FlowFrame code that core turns
+// into nodes without running it; ``"simple"`` has it write the node settings
+// as JSON, built with no validation until apply; ``"one_shot"`` validates
+// each node through the executor (for bigger models). Returns the staged
+// diff id + the full diff payload so the caller can apply it via the
+// existing diff-accept route.
 export const generateFlow = async (
   flowId: number,
   userRequest: string,
   provider: string,
   model: string | null = null,
-  mode: "simple" | "one_shot" = "simple",
+  mode: GenerateFlowMode = "code",
   maxTokens?: number | null,
 ): Promise<GenerateFlowResult> => {
   const response = await axios.post<PyGenerateFlowResult>("/ai/generate", {
@@ -207,6 +276,8 @@ export const generateFlow = async (
     warnings: raw.warnings,
     rationale: raw.rationale,
     diffPayload: raw.diff_payload,
+    answer: raw.answer ?? null,
+    code: raw.code ?? null,
   };
 };
 

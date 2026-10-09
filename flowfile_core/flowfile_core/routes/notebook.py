@@ -30,6 +30,12 @@ def require_notebook_sync(current_user=Depends(get_current_active_user)):
     because the frame's catalog lookups a cell can reach do not yet check the requesting user's grants;
     the 403 is ``require_admin``'s and comes before the flow lookup. Electron is never gated. Rendering
     and running stay open to every user.
+
+    The AI's Simple build (``POST /ai/generate``, ``mode="code"``) runs model-written cells through the same
+    runner without this gate: its pre-scan (``ai/local_model/code_build.py``) refuses every call that could
+    reach a stored resource, and where sharing is enabled a canvas holding such a node is not sent along as
+    context, so none of those lookups can happen there. Widening that dialect to catalog readers means adding
+    the grant check or this gate first.
     """
     if sharing.sharing_enabled():
         require_admin(current_user)

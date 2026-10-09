@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_url
+from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_cloud_path, is_url
 
 
 class MinimalFieldInfo(BaseModel):
@@ -180,7 +180,7 @@ class ReceivedTable(BaseModel):
 
     def set_absolute_filepath(self):
         """Resolves the path to an absolute file path (or, in directory mode, to a glob pattern)."""
-        if is_url(self.path):
+        if is_url(self.path) or is_cloud_path(self.path):
             self.abs_file_path = self.path
             return
         base_path = Path(self.path).expanduser()

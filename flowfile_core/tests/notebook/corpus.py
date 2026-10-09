@@ -44,6 +44,7 @@ CODEGEN_TESTS = (
     "test_fusion_explore_data_elided_mid_chain",
     "test_fusion_grouped_record_id_self_reference_preserved",
     "test_fusion_keeps_named_boundaries_at_join",
+    "test_fuzzy_match_renaming_its_key_columns_renames_before_matching",
     "test_fuzzy_match_with_multiple_columns",
     "test_graph_solver",
     "test_manual_input_with_select",

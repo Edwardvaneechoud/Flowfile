@@ -154,7 +154,11 @@ def test_list_supported_providers() -> None:
         ("google", "cmd_k", "flash"),
         ("google", "agent_complex", "pro"),
         ("groq", "cmd_k", "qwen"),
-        ("ollama", "agent_complex", "70b"),
+        ("ollama", "agent_complex", "qwen3.6"),
+        ("ollama", "explain", "qwen3.5"),
+        ("anthropic", "explain", "sonnet-5-5"),
+        ("openrouter", "explain", "sonnet-5.5"),
+        ("openrouter", "agent_staged", "qwen3.6"),
         ("openrouter", "cmd_k", "haiku"),
     ],
 )
@@ -362,6 +366,27 @@ async def test_chat_omits_optional_fields() -> None:
     assert "api_base" not in kwargs
     assert "max_tokens" not in kwargs
     assert "tools" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_ollama_turns_thinking_off_via_extra_params() -> None:
+    """Ollama's class-level ``extra_params`` ride on every call (litellm maps
+    ``reasoning_effort="none"`` to Ollama's ``think: false``); an explicit
+    per-call kwarg of the same name is never overridden."""
+    p = provider_factory("ollama")
+    assert p.extra_params == {"reasoning_effort": "none"}
+    fake_response = _make_chat_response()
+    with patch("litellm.acompletion", new=AsyncMock(return_value=fake_response)) as mock_acomp:
+        await p.chat([Message(role="user", content="hi")])
+    assert mock_acomp.await_args.kwargs["reasoning_effort"] == "none"
+
+
+@pytest.mark.parametrize("name", [n for n in PROVIDER_NAMES if n != "ollama"])
+def test_other_providers_have_no_extra_params(name: str) -> None:
+    p = provider_factory(name)
+    assert p.extra_params == {}
+    kwargs = p._build_kwargs([Message(role="user", content="hi")], None, None, stream=False)
+    assert "reasoning_effort" not in kwargs
 
 
 # -------- Message translation helpers (unit-level) --------

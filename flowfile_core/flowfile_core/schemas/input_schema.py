@@ -37,7 +37,7 @@ from flowfile_core.schemas.yaml_types import (
 )
 from flowfile_core.types import DataTypeStr
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
-from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_url
+from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_cloud_path, is_url
 
 keep_paths_as_written: ContextVar[bool] = ContextVar("keep_paths_as_written", default=False)
 """While set in a context, ``set_absolute_filepath`` keeps a path as written: no ``~``, working directory or links.
@@ -293,8 +293,12 @@ class ReceivedTable(BaseModel):
             return self.path
 
     def set_absolute_filepath(self):
-        """Resolves the path to an absolute file path (or, in directory mode, to a glob pattern)."""
-        if is_url(self.path):
+        """Resolves the path to an absolute file path (or, in directory mode, to a glob pattern).
+
+        URLs and object-storage URIs are kept verbatim; the reader refuses a cloud URI with an
+        actionable error instead of resolving it into a bogus local path.
+        """
+        if is_url(self.path) or is_cloud_path(self.path):
             self.abs_file_path = self.path
             return
         if keep_paths_as_written.get():

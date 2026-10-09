@@ -293,8 +293,40 @@ never created for users who never touch the feature.
 
 - Pinned llama.cpp build: `LLAMACPP_BUILD = "b9305"` from `ggml-org/llama.cpp`
   releases (platform-specific archive per OS/arch). Default model:
-  Qwen2.5-Coder-3B-Instruct GGUF (~2 GB); a curated list also offers a 1.5B
-  (lighter) and a 7B (heavier, non-coder) option.
+  Qwen3.5 4B Q4_K_M (`qwen3.5-4b`, ~3 GB, `bartowski/Qwen_Qwen3.5-4B-GGUF`);
+  the catalog also offers Qwen3.5 2B and 9B. The Qwen2.5-Coder 1.5B/3B and
+  Qwen2.5 7B entries are `ModelSpec.legacy=True`: hidden from `status()`
+  unless installed (or selected), still selectable and deletable, so an
+  existing download never becomes invisible or stuck (`installed_model_ids`
+  and the per-model delete walk the full `MODELS`).
+- `_spawn` always passes `--jinja --reasoning off` (thinking off for
+  every surface at once — chat, Simple build, the small-`max_tokens` JSON
+  surfaces; `--reasoning-budget 0` does **not** stop Qwen3.5 from
+  reasoning, verified on the real 4B) plus the model's `ModelSpec.server_args` (Qwen3.5 gets Qwen's
+  non-thinking sampling `--temp 0.7 --top-p 0.8 --top-k 20`). The context
+  ceiling is per model (`ModelSpec.max_ctx`: 32k legacy, 128k Qwen3.5);
+  `get_ctx_size`/`set_ctx_size` clamp to the selected model's value.
+  `oneshot.extract_flow_json` strips a `<think>…</think>` block before the
+  candidate scan.
+- **On-device prompt**: every assist-level route (`chat_routes` — stream and
+  preview share `_build_chat_messages` — `run_failure_routes`,
+  `docgen_routes`, `lineage_routes`, `inline_action_routes`) passes
+  `local=(provider == LOCAL_PROVIDER_ID)` to `render_prompt_context` /
+  `assemble_system_prompt`. With `local=True` the assist suffix is
+  `prompts/local_assist.md` (no "say do it / switch to agent mode" footer,
+  which a 3B model parrots verbatim and which points at a mode on-device
+  lacks) and the node reference collapses to one line per node
+  (`_render_compact_node_reference`: ~2.7k tokens for the whole explain
+  prompt instead of ~10k). `local=False` is the cloud prompt byte for byte
+  (`test_context.py` pins both). `_chat_mode_footer_override` returns
+  `None` for the local provider — the cloud footer text is untouched because
+  `intent_router.py` matches its wording. Chat forwards client mentions as
+  parsed `Mention`s, never as raw text (raw text would render a fake
+  `## User request` line).
+- **Simple build writes code by default** (`local_model/code_build.py`, §10):
+  `POST /ai/generate` with `mode="code"` asks for a FlowFrame script and the
+  notebook's exec-free interpreter turns it into nodes. The JSON `simple` /
+  `one_shot` modes stay reachable and `simple` stays the request default.
 - Module-level singleton — **at most one server runs at a time**; `_lock`
   guards it. `LocalProvider` resolves the live port lazily on the first
   `.stream()` call so constructing it stays synchronous/non-blocking.
@@ -437,6 +469,99 @@ from `executor/__init__.py` so `from flowfile_core.ai.tools.executor import
   LLM-tolerance cost of a permissive schema. The schema stays the strict,
   canonical contract; leniency is the executor's job, scoped to the AI path
   only.
+
+---
+
+## 10. Simple build code pipeline (`ai/local_model/code_build.py`)
+
+`POST /ai/generate` with `mode="code"` (the chat drawer's default since the
+Qwen3.5 move; `simple` and `one_shot` are the JSON modes and `simple` stays
+the request default for older clients) asks the model for one ```python
+block in the notebook's FlowFrame dialect instead of a `{nodes, edges}`
+object. Measured on the on-device Qwen3.5-4B: a four-step flow in ~3 s versus
+6–8 s for the JSON object, and far fewer invented settings keys.
+
+The script is never executed. Three gates, in order, each failing with a line
+when it has one:
+
+1. **`prescan` — `ast` only.** Refuses `def`/`lambda`/loops/`if`/
+   comprehensions, any import but `flowfile`/`polars`/`datetime` (from
+   `allowlist.IMPORTS`), bare function calls (`print`, `__import__`), private
+   and dunder names, `ff.<name>` in `REFUSED_FF_NAMES` (stored sources such as
+   `read_database`/`read_catalog_table`, writers, `polars_code`/`sql`/
+   `PythonScript`, `RunFlow`/`Gate`/`concat`…) and method names in
+   `REFUSED_METHODS` (`collect`, `write_*`/`sink_*`, `sql`, `polars_code`,
+   the frame's pure transforms that fall back to a Polars Code node, minus the
+   names an `Expr` method shares such as `count`/`sum`/`cast`, since the scan
+   sees names, not receivers). **This is why the route stays JWT-only in
+   docker/package mode**: the notebook's `require_notebook_sync` admin gate
+   exists because the frame's catalog lookups do not check grants, and nothing
+   that passes the pre-scan can make one. Widening the dialect to catalog
+   readers means adding the grant check or the admin gate first.
+2. **The clean run** — `bridge.get_clean_runner().clean_run(user_id,
+   flow_id, CleanRunRequest(cells=[*canvas cells, ("build", code)],
+   provenance, ceiling=flow.node_id_ceiling, snapshot))`: the installed
+   `NotebookRunner` interprets the cells through `notebook/allowlist.py` and
+   builds nodes in frame build mode. **Canvas context** (`canvas_context`):
+   with nodes on the canvas, `notebook.render(flow)` gives the rendered cells
+   and their provenance (what a push sends), the prompt's user turn becomes
+   `## Current flow` (the same code with a `# columns:` hint per cell from
+   `push.node_schemas`, capped at `CONTEXT_CHAR_BUDGET`, newest steps kept)
+   plus `## Request`, and the model writes only the new lines continuing from
+   a variable. The rendered cells relabel onto their canvas ids, so
+   `node_ids_by_cell["build"]` are exactly the new nodes. An empty canvas,
+   an exporter failure, a canvas cell the caller's clean run cannot rebuild
+   (`CanvasCellFailure`, retried without context), or, with sharing enabled,
+   a live node in `STORED_RESOURCE_NODE_TYPES` / a custom node (its cell
+   would make the grant-less lookup) all mean no context and the
+   from-scratch build.
+   `strip_echoed` first drops every script line that restates a line of the
+   block (a 4B likes to repeat the context before adding to it; run as written
+   each repeated step would be a duplicate node), and a script that then adds
+   no node is refused into the repair round. Known limit: Simple build stages
+   additions only, so "add a column with these values" to an inline table has
+   no honest answer in the dialect and fails with its line.
+3. **`spec_from_flowfile_data(payload, new_ids)`** — the save-format payload
+   becomes the `{nodes, edges}` spec `oneshot._build_simple_diff` consumes
+   (settings minus identity/wiring keys, `reconcile.incoming_edges` for the
+   main and right inputs with their source handles — a split's second frame
+   or a gate's else side rides as `source_handle` and becomes a
+   `connections_added` op, since `insertion_context` wires `output-0` only —
+   a cwd-absolute path for a missing file turned back into what the user
+   typed). With `new_ids` only those become spec nodes; an input outside them is
+   a live node, carried as `canvas_upstream_ids` / `canvas_right_input_id` /
+   `canvas_source_handles`, which `_plan_insertions` keeps verbatim (first in
+   `upstream_ids`) and `_build_simple_diff` keeps through its writer filter;
+   positions come from the layout `Placer` over the live canvas
+   (`_canvas_placer`), ids from `node_id_ceiling + 1`, and
+   `validate_diff_against_flow` then treats a vanished live upstream as drift.
+   Any node in `REFUSED_NODE_TYPES` (writers, `polars_code`, `sql_query`,
+   connection sources, custom nodes) refuses the whole script — a frame method
+   such as `filter(col.str.contains(...))` or `str.to_date` still lowers to
+   a Polars Code node, and dropping it mid-chain would strand the rest.
+
+One repair round (`REPAIR_ROUNDS = 1`): the refusal goes back as a `user`
+turn after the model's own reply; a second failure is `CodeBuildError(message,
+line, code)` → 422 `{message, line, kind: "code", code}`, which the chat
+renders as the script with the line flagged. The `{"answer": …}` escape hatch
+(`oneshot.extract_answer`) still applies when no code block comes back.
+
+The prompt is `prompts/code_build.md` plus a **generated** "Available calls"
+block (`render_dialect_block`, from the allowlist and the refusal sets, so it
+can never offer a call the interpreter refuses); `test_code_build.py` pins
+every advertised name to the allowlist and the whole prompt under 2.5k
+tokens. Keep `ff.concat`, `str.contains` in a filter, `str.to_date` and the
+frame's pure transforms (`tail`, `drop_nulls`, `fill_nan`, …) out of the
+examples: they produce Polars Code nodes. Tests run the real interpreter with
+a stub provider (`StubProvider`) — never mock the clean run — and
+`test_hostile_code_never_reaches_the_clean_run_or_exec` reuses the notebook
+contract's builtin recorders.
+
+Frontend: `generateFlow(..., mode)` in `localModelApi.ts` (default `code`),
+`aiStore.simpleBuildOutput` (`code` | `json`, persisted in the device-wide
+settings bucket, Settings → AI → Assistant → Simple build), the bubble's
+collapsed `Generated code` block in `AiMessage.vue` (`buildCode`,
+`buildCodeLine`).
 
 ---
 

@@ -163,6 +163,37 @@
       </div>
     </div>
 
+    <!-- Simple build output. Applies to every provider; the on-device model is
+         the one that gains most from the code form. -->
+    <div class="card mb-3">
+      <div class="card-header">
+        <h3 class="card-title">Simple build</h3>
+      </div>
+      <div class="card-content">
+        <p class="hint-text models-intro">
+          What the model writes when the chat drawer's Simple build generates a flow from one
+          message. Flowfile turns either form into nodes for you to add to the canvas; nothing the
+          model writes is executed.
+        </p>
+        <span class="option-group__label">Output</span>
+        <div class="option-list">
+          <label v-for="output in SIMPLE_BUILD_OUTPUTS" :key="output.value" class="option">
+            <input
+              type="radio"
+              name="ai-simple-build-output"
+              :value="output.value"
+              :checked="aiStore.simpleBuildOutput === output.value"
+              @change="aiStore.setSimpleBuildOutput(output.value)"
+            />
+            <span class="option__body">
+              <span class="option__name">{{ output.name }}</span>
+              <span class="option__desc">{{ output.description }}</span>
+            </span>
+          </label>
+        </div>
+      </div>
+    </div>
+
     <!-- Agent behaviour. Used whenever Send dispatches an agent run (Auto-agent
          or Agent mode), including auto-promotion from chat. -->
     <div class="card mb-3">
@@ -237,7 +268,10 @@
 import { computed } from "vue";
 import { ElCheckbox, ElOption, ElSelect } from "element-plus";
 import { useAiStore } from "../../stores/ai-store";
-import type { PersistedAgentSurface } from "../../stores/ai-store-persistence";
+import type {
+  PersistedAgentSurface,
+  PersistedSimpleBuildOutput,
+} from "../../stores/ai-store-persistence";
 import { LOCAL_PROVIDER_ID, LOCAL_PROVIDER_LABEL } from "./localModelApi";
 
 const emit = defineEmits<{
@@ -245,6 +279,25 @@ const emit = defineEmits<{
 }>();
 
 const aiStore = useAiStore();
+
+const SIMPLE_BUILD_OUTPUTS: ReadonlyArray<{
+  value: PersistedSimpleBuildOutput;
+  name: string;
+  description: string;
+}> = [
+  {
+    value: "code",
+    name: "FlowFrame code",
+    description:
+      "The model writes the flow as Flowfile's Python dialect (the same code the Notebook pane shows) and Flowfile reads it into nodes without running it. The code shows in the chat bubble. Faster and more reliable, especially on small and on-device models. The default.",
+  },
+  {
+    value: "json",
+    name: "Node settings",
+    description:
+      "The model writes each node's settings directly, as in earlier releases. Nothing is validated until you add the flow to the canvas.",
+  },
+];
 
 const AGENT_VARIANTS: ReadonlyArray<{
   value: PersistedAgentSurface;

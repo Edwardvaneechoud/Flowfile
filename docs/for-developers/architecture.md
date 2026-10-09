@@ -66,7 +66,7 @@ As you add and connect nodes, Flowfile builds a Directed Acyclic Graph (DAG) whe
 * **Nodes** represent data operations (read file, filter, join, write to database, etc.).
 * **Edges** represent the flow of data between operations.
 
-The DAG is managed by the `FlowGraph` class (`flowfile_core/flowfile_core/flowfile/flow_graph.py`) in the Core service, which orchestrates the entire workflow. The class shape below is illustrative — see the [Python API Reference](python-api-reference.md#flowgraph) for the real signatures.
+The DAG is managed by the `FlowGraph` class (`flowfile_core/flowfile_core/flowfile/flow_graph/graph.py`, imported from the `flowfile_core.flowfile.flow_graph` package) in the Core service, which orchestrates the entire workflow. The class shape below is illustrative — see the [Python API Reference](python-api-reference.md#flowgraph) for the real signatures.
 
 <details markdown="1">
 <summary>View FlowGraph shape (illustrative)</summary>

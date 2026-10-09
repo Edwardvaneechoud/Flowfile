@@ -1,5 +1,6 @@
 import { setActivePinia, createPinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AiProvider } from "../views/AiSettingsView/aiProviderTypes";
 
 const mockSymbols = vi.hoisted(() => {
   class AiStreamHttpError extends Error {
@@ -26,7 +27,8 @@ const mockSymbols = vi.hoisted(() => {
     streamLineageQuestion: vi.fn(),
     streamRunFailureExplanation: vi.fn(),
     routeMessage: vi.fn(),
-    fetchAiProviders: vi.fn(async () => []),
+    fetchAiProviders: vi.fn(async (): Promise<AiProvider[]> => []),
+    generateFlow: vi.fn(),
     agentStoreStart: vi.fn(),
     agentStoreAbort: vi.fn(),
     flowStoreState: { flowId: 1 as number | null, vueFlowInstance: null as unknown },
@@ -135,7 +137,13 @@ vi.mock("./ai-store-persistence", () => ({
 vi.mock("../views/AiSettingsView/localModelApi", () => ({
   LOCAL_PROVIDER_ID: "local",
   fetchLocalModelStatus: vi.fn(async () => null),
-  generateFlow: vi.fn(),
+  generateFlow: mockSymbols.generateFlow,
+  // The real guard: pure, and the code-mode failure specs rely on it.
+  isGenerateFlowFailure: (detail: unknown) =>
+    typeof detail === "object" &&
+    detail !== null &&
+    (detail as { kind?: unknown }).kind === "code" &&
+    typeof (detail as { message?: unknown }).message === "string",
   selectLocalModel: vi.fn(),
   streamLocalModelInstall: vi.fn(),
 }));
@@ -850,5 +858,243 @@ describe("useAiStore - aiDisabled", () => {
     await store.loadProviders();
     expect(store.aiDisabled).toBe(false);
     expect(store.providersError).toBe("boom");
+  });
+});
+
+describe("useAiStore - loadProviders resets a saved model the provider no longer offers", () => {
+  const _openrouter = (models: string[] | null): AiProvider => ({
+    provider: "openrouter",
+    supportsTools: true,
+    supportsStreaming: true,
+    defaultModel: "qwen/qwen3.6-35b-a3b",
+    surfaces: {},
+    status: "configured" as const,
+    credential:
+      models === null
+        ? null
+        : {
+            provider: "openrouter",
+            hasKey: true,
+            apiBase: null,
+            defaultModel: null,
+            models,
+            lastTestedAt: null,
+            lastTestStatus: null,
+            lastTestError: null,
+            createdAt: null,
+            updatedAt: null,
+          },
+  });
+
+  it("replaces a stale class default saved by an older build with the current default", async () => {
+    mockSymbols.loadPersistedAiSettings.mockImplementation(() => ({
+      selectedProvider: "openrouter",
+      selectedModel: "meta-llama/llama-3.3-70b-instruct",
+      splitModels: true,
+      simpleProvider: "openrouter",
+      simpleModel: "qwen/qwen3-coder-30b-a3b-instruct",
+    }));
+    mockSymbols.fetchAiProviders.mockResolvedValue([_openrouter(null)]);
+    const store = useAiStore();
+    expect(store.selectedModel).toBe("meta-llama/llama-3.3-70b-instruct");
+    await store.loadProviders();
+    expect(store.selectedProvider).toBe("openrouter");
+    expect(store.selectedModel).toBe("qwen/qwen3.6-35b-a3b");
+    expect(store.simpleModel).toBe("qwen/qwen3.6-35b-a3b");
+  });
+
+  it("keeps a model the user picked from their curated list", async () => {
+    mockSymbols.loadPersistedAiSettings.mockImplementation(() => ({
+      selectedProvider: "openrouter",
+      selectedModel: "custom/model-x:free",
+      splitModels: false,
+      simpleProvider: null,
+      simpleModel: null,
+    }));
+    mockSymbols.fetchAiProviders.mockResolvedValue([_openrouter(["custom/model-x:free"])]);
+    const store = useAiStore();
+    await store.loadProviders();
+    expect(store.selectedModel).toBe("custom/model-x:free");
+  });
+
+  it("leaves the pick alone when the provider list cannot be loaded", async () => {
+    mockSymbols.loadPersistedAiSettings.mockImplementation(() => ({
+      selectedProvider: "openrouter",
+      selectedModel: "meta-llama/llama-3.3-70b-instruct",
+    }));
+    mockSymbols.fetchAiProviders.mockRejectedValue(new Error("boom"));
+    const store = useAiStore();
+    await store.loadProviders();
+    expect(store.selectedModel).toBe("meta-llama/llama-3.3-70b-instruct");
+  });
+});
+
+describe("useAiStore - Simple build answers instead of failing on a question", () => {
+  const _seed = (): ReturnType<typeof useAiStore> => {
+    const store = useAiStore();
+    store.providers = [
+      {
+        provider: "local",
+        supportsTools: false,
+        supportsStreaming: true,
+        defaultModel: "qwen3.5-4b",
+        surfaces: {},
+        status: "configured",
+        credential: null,
+      },
+    ];
+    store.setSelectedProvider("local");
+    return store;
+  };
+
+  it("shows the model's reply as the assistant message and stages nothing", async () => {
+    mockSymbols.generateFlow.mockResolvedValue({
+      diffId: null,
+      opCount: 0,
+      created: [],
+      warnings: [],
+      rationale: "Answered without building",
+      diffPayload: null,
+      answer: "I build flows from a description; ask about this one in Chat mode.",
+    });
+    const store = _seed();
+    await store.generateFlowFromComposer("What is this flow?");
+    const reply = store.messages[store.messages.length - 1];
+    expect(reply.role).toBe("assistant");
+    expect(reply.content).toBe(
+      "I build flows from a description; ask about this one in Chat mode.",
+    );
+    expect(reply.buildDiffId).toBeUndefined();
+    expect(reply.error).toBeUndefined();
+    expect(store.streamingState).toBe("idle");
+  });
+
+  it("still renders the Add-to-canvas result for a real build", async () => {
+    mockSymbols.generateFlow.mockResolvedValue({
+      diffId: "diff-1",
+      opCount: 3,
+      created: [],
+      warnings: [],
+      rationale: "Generated flow (simple mode)",
+      diffPayload: {},
+      answer: null,
+      code: null,
+    });
+    const store = _seed();
+    await store.generateFlowFromComposer("read orders.csv and keep paid orders");
+    const reply = store.messages[store.messages.length - 1];
+    expect(reply.buildDiffId).toBe("diff-1");
+    expect(reply.buildOpCount).toBe(3);
+    expect(reply.content).toContain("Built a flow with 3 node(s)");
+  });
+});
+
+describe("useAiStore - Simple build in code mode", () => {
+  const SCRIPT = 'import flowfile as ff\norders = ff.read_csv("orders.csv")';
+  const _seed = (): ReturnType<typeof useAiStore> => {
+    const store = useAiStore();
+    store.providers = [
+      {
+        provider: "local",
+        supportsTools: false,
+        supportsStreaming: true,
+        defaultModel: "qwen3.5-4b",
+        surfaces: {},
+        status: "configured",
+        credential: null,
+      },
+    ];
+    store.setSelectedProvider("local");
+    return store;
+  };
+
+  it("asks for code by default and keeps the script on the bubble", async () => {
+    mockSymbols.generateFlow.mockResolvedValue({
+      diffId: "diff-2",
+      opCount: 1,
+      created: [],
+      warnings: [],
+      rationale: "Generated flow (code mode)",
+      diffPayload: {},
+      answer: null,
+      code: SCRIPT,
+    });
+    const store = _seed();
+    expect(store.simpleBuildOutput).toBe("code");
+    await store.generateFlowFromComposer("read orders.csv");
+    expect(mockSymbols.generateFlow).toHaveBeenCalledWith(
+      1,
+      "read orders.csv",
+      "local",
+      "qwen3.5-4b",
+      "code",
+    );
+    const reply = store.messages[store.messages.length - 1];
+    expect(reply.buildDiffId).toBe("diff-2");
+    expect(reply.buildCode).toBe(SCRIPT);
+    expect(reply.buildCodeLine).toBeUndefined();
+  });
+
+  it("sends the JSON mode when the setting says so", async () => {
+    mockSymbols.generateFlow.mockResolvedValue({
+      diffId: "diff-3",
+      opCount: 1,
+      created: [],
+      warnings: [],
+      rationale: "Generated flow (simple mode)",
+      diffPayload: {},
+      answer: null,
+      code: null,
+    });
+    const store = _seed();
+    store.setSimpleBuildOutput("json");
+    await store.generateFlowFromComposer("read orders.csv");
+    expect(mockSymbols.generateFlow).toHaveBeenLastCalledWith(
+      1,
+      "read orders.csv",
+      "local",
+      "qwen3.5-4b",
+      "simple",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(mockSymbols.persistAiSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ simpleBuildOutput: "json" }),
+    );
+  });
+
+  it("shows the failing script and its line when the repair round also failed", async () => {
+    mockSymbols.generateFlow.mockRejectedValue({
+      response: {
+        status: 422,
+        data: {
+          detail: {
+            message: "`ff.read_json` is not a flowfile name",
+            line: 2,
+            kind: "code",
+            code: 'import flowfile as ff\norders = ff.read_json("orders.json")',
+          },
+        },
+      },
+    });
+    const store = _seed();
+    await store.generateFlowFromComposer("read orders.json");
+    const reply = store.messages[store.messages.length - 1];
+    expect(reply.error).toBe("line 2: `ff.read_json` is not a flowfile name");
+    expect(reply.content).toContain("Generation failed: line 2");
+    expect(reply.buildCode).toContain("ff.read_json");
+    expect(reply.buildCodeLine).toBe(2);
+    expect(reply.buildDiffId).toBeUndefined();
+    expect(store.streamingState).toBe("error");
+  });
+
+  it("keeps a plain string detail as the failure message", async () => {
+    mockSymbols.generateFlow.mockRejectedValue({
+      response: { status: 422, data: { detail: "Could not generate a flow: nothing parsed" } },
+    });
+    const store = _seed();
+    await store.generateFlowFromComposer("read orders.csv");
+    const reply = store.messages[store.messages.length - 1];
+    expect(reply.error).toBe("Could not generate a flow: nothing parsed");
+    expect(reply.buildCode).toBeUndefined();
   });
 });

@@ -20,6 +20,10 @@ class NoFilesMatchedError(FileNotFoundError):
     """Raised when a directory/glob pattern expands to zero files."""
 
 
+class CloudPathNotSupportedError(ValueError):
+    """Raised when a local file reader is handed an object-storage URI such as ``s3://bucket/key``."""
+
+
 DIRECTORY_SCAN_FILE_TYPES = frozenset({"csv", "parquet", "ipc"})
 
 _UTF8_ENCODINGS = frozenset({"UTF-8", "UTF8", "UTF8-LOSSY", "UTF-8-LOSSY"})
@@ -46,6 +50,51 @@ def is_url(path: str | None) -> bool:
     so callers use this to skip local-path resolution and ``os.path.getsize`` checks.
     """
     return isinstance(path, str) and path.startswith(("http://", "https://"))
+
+
+# Two or more scheme characters, so a Windows drive such as ``C://`` is not taken for a URI.
+_URI_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+://")
+_COLLAPSED_URI_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+:/(?!/)")
+
+_CLOUD_READER_HINTS = {
+    "parquet": "ff.scan_parquet_from_cloud_storage",
+    "csv": "ff.scan_csv_from_cloud_storage",
+    "ndjson": "ff.scan_json_from_cloud_storage",
+    "json": "ff.scan_json_from_cloud_storage",
+}
+
+
+def is_cloud_path(path: str | os.PathLike | None) -> bool:
+    """Return True if ``path`` is a URI a local file reader cannot read (any scheme but ``http(s)``).
+
+    Matches every ``<scheme>://`` regardless of case (``s3://``, ``S3://``, ``gs://``, ``file://``, ...),
+    and a ``pathlib`` path whose ``//`` was already collapsed (``Path("s3://b/k")`` is ``s3:/b/k``).
+    """
+    if isinstance(path, os.PathLike):
+        text = os.fspath(path).replace("\\", "/")  # a WindowsPath renders s3:/b/k as s3:\\b\\k
+        return bool(_COLLAPSED_URI_RE.match(text) or _URI_SCHEME_RE.match(text))
+    return isinstance(path, str) and bool(_URI_SCHEME_RE.match(path)) and not is_url(path.lower())
+
+
+def refuse_cloud_path(path: str | os.PathLike | None, file_type: str | None = None) -> None:
+    """Raise ``CloudPathNotSupportedError`` when a local file reader is given a non-http(s) URI.
+
+    Local path resolution would otherwise join ``s3://bucket/key`` onto the working directory and
+    collapse the ``//``, so the read fails with a misleading "file not found" for a local path.
+    """
+    if not is_cloud_path(path):
+        return
+    reader = _CLOUD_READER_HINTS.get(file_type or "")
+    if reader:
+        hint = (
+            f"Use {reader}(...) with a cloud storage connection in Python, "
+            "or a Cloud Storage Reader node in the designer."
+        )
+    else:
+        hint = f"No cloud storage reader supports {file_type or 'this'} files; copy the file to a local path first."
+    raise CloudPathNotSupportedError(
+        f"'{os.fspath(path)}' is not a local file path, so the local file reader cannot read it. {hint}"
+    )
 
 
 def is_glob_pattern(path: str) -> bool:

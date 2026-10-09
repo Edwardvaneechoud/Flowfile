@@ -230,12 +230,12 @@ Per-vendor subclasses override class-level fields:
 
 | Class | `name` | `model_prefix` | `default_model` | Notable surface defaults |
 |-------|--------|----------------|-----------------|--------------------------|
-| `AnthropicProvider` | `anthropic` | `anthropic/` | `claude-sonnet-4-6` | Haiku 4.5 for Cmd+K / ghost / autocomplete / agent_staged; Opus 4.7 for `agent_complex` |
+| `AnthropicProvider` | `anthropic` | `anthropic/` | `claude-sonnet-5-5` | Sonnet 5.5 for `explain` / `docgen` / `lineage`; Haiku 4.5 for Cmd+K / ghost / autocomplete / agent_staged; Opus 4.7 for `agent_complex` |
 | `OpenAIProvider` | `openai` | `""` | `gpt-4.1-mini` | `gpt-4.1` for `explain` / `agent_complex` / `docgen` / `lineage` |
 | `GoogleProvider` | `google` | `gemini/` | `gemini-2.5-flash` | `gemini-2.5-pro` for `agent_complex` |
 | `GroqProvider` | `groq` | `groq/` | `qwen/qwen3-32b` | `qwen/qwen3-coder-30b-a3b-instruct` for most surfaces (ghost / explain / agent_* / docgen / lineage / …); `qwen/qwen3-32b` for `cmd_k` |
-| `OpenRouterProvider` | `openrouter` | `openrouter/` | `qwen/qwen3-coder-30b-a3b-instruct` | `meta-llama/llama-3.3-70b-instruct` for `agent_staged` (free tier) |
-| `OllamaProvider` | `ollama` | `ollama_chat/` | `llama3.1:8b` | `llama3.1:70b` for `agent_complex`. `default_api_base="http://localhost:11434"` |
+| `OpenRouterProvider` | `openrouter` | `openrouter/` | `qwen/qwen3.6-35b-a3b` | same for `agent_staged`; `anthropic/claude-sonnet-5.5` / `claude-haiku-4.5` / `claude-opus-4.7` mirror the Anthropic adapter |
+| `OllamaProvider` | `ollama` | `ollama_chat/` | `qwen3.5:9b` | `qwen3.6:35b-a3b` for `agent_complex`. `default_api_base="http://localhost:11434"`; `extra_params={"reasoning_effort": "none"}` (thinking off) |
 
 !!! note "`default_model` vs surface models"
     `default_model` is the terminal fallback the class uses when no other rule fires (see the resolution order below). It is **not** the model most surfaces run on — `surface_models[surface]` usually shadows it. Groq is a good example: the class default is `qwen/qwen3-32b`, but every surface except `cmd_k` maps to `qwen/qwen3-coder-30b-a3b-instruct`. The model names in this table rot as vendors rename releases; check each provider's `surface_models` dict in `providers/{name}.py` for the current values.

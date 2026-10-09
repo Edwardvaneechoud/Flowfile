@@ -196,9 +196,11 @@ async def explain_run_failure(
         [body.node_id],
         surface="explain",
         samples_mode=body.samples_mode,
-        # Local model: shrink verbose settings + cap columns to fit its window.
+        # Local model: shrink verbose settings + cap columns to fit its window,
+        # and take the on-device system prompt.
         compact_settings=body.provider == LOCAL_PROVIDER_ID,
         max_columns_per_node=12 if body.provider == LOCAL_PROVIDER_ID else None,
+        local=body.provider == LOCAL_PROVIDER_ID,
     )
 
     node_label = getattr(node, "name", None) or getattr(node, "node_type", None) or f"node-{body.node_id}"

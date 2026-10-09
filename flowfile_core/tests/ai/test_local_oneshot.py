@@ -68,6 +68,49 @@ def test_extract_flow_json_raw_yaml():
     assert spec["nodes"][0]["type"] == "read"
 
 
+def test_extract_flow_json_strips_think_block():
+    # A thinking model may still emit <think>…</think> (the server runs with
+    # thinking off, but not every template honours it); its prose can carry
+    # braces that would otherwise win the widest-brace scan.
+    text = (
+        "<think>\nThe user wants {something}. I will output {\"nodes\": ...}\n</think>\n"
+        '{"nodes":[{"id":"a","type":"read"}],"edges":[]}'
+    )
+    spec = oneshot.extract_flow_json(text)
+    assert spec["nodes"][0]["type"] == "read"
+    assert spec["edges"] == []
+
+
+def test_extract_flow_json_only_think_block_is_empty():
+    with pytest.raises(oneshot.OneShotError):
+        oneshot.extract_flow_json("<think>nothing useful</think>")
+
+
+# extract_answer                                                              #
+
+
+def test_extract_answer_reads_the_escape_hatch_object():
+    assert oneshot.extract_answer('{"answer": "I build flows from a description."}') == (
+        "I build flows from a description."
+    )
+    assert oneshot.extract_answer('Sure:\n```json\n{"answer": "Hi!"}\n```') == "Hi!"
+    assert oneshot.extract_answer('<think>hmm</think>{"answer": "Hi!"}') == "Hi!"
+
+
+def test_extract_answer_treats_plain_prose_as_the_answer():
+    prose = "I'm Flowfile's local flow generator. Describe a pipeline and I'll build it."
+    assert oneshot.extract_answer(prose) == prose
+
+
+def test_extract_answer_is_none_for_flow_attempts():
+    assert oneshot.extract_answer('{"nodes":[{"id":"a","type":"read"}],"edges":[]}') is None
+    # A brace span that is neither a flow nor an answer stays a parse error.
+    assert oneshot.extract_answer('{"foo": "bar"}') is None
+    assert oneshot.extract_answer("here is a broken one: {nodes: [") is None
+    assert oneshot.extract_answer('{"answer": ""}') is None
+    assert oneshot.extract_answer("") is None
+
+
 def test_extract_flow_json_rejects_garbage():
     with pytest.raises(oneshot.OneShotError):
         oneshot.extract_flow_json("sorry, I cannot help with that")
@@ -297,3 +340,50 @@ def test_generate_flow_simple_with_stub_provider():
     graph_diff = diff.get_diff(result["diff_id"])
     assert graph_diff is not None
     assert [a.node_type for a in graph_diff.additions] == ["manual_input"]
+
+
+def _run_generate(content: str) -> dict:
+    import asyncio
+
+    flow = _empty_flow()
+
+    class _Resp:
+        pass
+
+    _Resp.content = content
+
+    class _StubProvider:
+        async def chat(self, messages, **kwargs):  # type: ignore[no-untyped-def]
+            return _Resp()
+
+    return asyncio.run(
+        oneshot.generate_flow(
+            provider=_StubProvider(),
+            flow=flow,
+            flow_id=1,
+            user_id=1,
+            user_request="what is this flow?",
+            mode="simple",
+        )
+    )
+
+
+def test_generate_flow_returns_the_models_answer_instead_of_failing():
+    """A question in Simple build gets the model's reply back as ``answer``
+    (nothing staged) rather than a "could not parse" 422."""
+    result = _run_generate('{"answer": "I build flows from a description; ask in Chat mode about this one."}')
+    assert result["answer"].startswith("I build flows")
+    assert result["diff_id"] is None
+    assert result["op_count"] == 0
+    assert result["created"] == []
+
+
+def test_generate_flow_prose_reply_becomes_the_answer():
+    result = _run_generate("I'm Flowfile's local flow generator. Describe a pipeline to build.")
+    assert result["answer"].startswith("I'm Flowfile's")
+    assert result["diff_id"] is None
+
+
+def test_generate_flow_broken_json_still_raises():
+    with pytest.raises(oneshot.OneShotError):
+        _run_generate('{"foo": "bar"}')

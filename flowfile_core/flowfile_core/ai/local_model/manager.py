@@ -32,10 +32,19 @@ LLAMACPP_BUILD = "b9305"
 
 @dataclass(frozen=True)
 class ModelSpec:
-    """One installable GGUF model. All q4_k_m single-file GGUFs (the manager's
+    """One installable GGUF model. All Q4_K_M single-file GGUFs (the manager's
     streaming downloader can't reassemble split files), verified to resolve on
     HuggingFace. ``id`` is the stable wire key; the GGUF lands at
-    ``<dir>/<id>.gguf`` so several models can coexist on disk."""
+    ``<dir>/<id>.gguf`` so several models can coexist on disk.
+
+    ``max_ctx`` caps the user-set context window for this model (the native
+    window, or a practical ceiling below it for the long-context models — a
+    q4 KV cache past 128k buys nothing a CPU box can use). ``server_args``
+    are extra ``llama-server`` flags, used for the sampling a model family
+    recommends. ``legacy`` keeps a superseded entry installable-if-present:
+    hidden from the install list unless its GGUF is already on disk, but
+    still selectable and deletable, so an existing download never becomes
+    invisible or stuck."""
 
     id: str
     name: str
@@ -43,21 +52,60 @@ class ModelSpec:
     file: str
     approx_mb: int
     description: str
+    max_ctx: int = 32768
+    server_args: tuple[str, ...] = ()
+    legacy: bool = False
 
 
-# Curated catalog. ``qwen2.5-coder-3b`` is the default — the best balance of
-# quality and speed for flow building, and a clear step up from the 1.5B without
-# the RAM/latency cost of the 7B. All entries are Qwen2.5-Coder/Instruct: code-
-# and structured-JSON-tuned, which is what one-shot flow generation needs.
-# Ordered smallest→largest.
+# Qwen's recommended sampling for Qwen3.5 in non-thinking mode.
+_QWEN35_SERVER_ARGS: tuple[str, ...] = ("--temp", "0.7", "--top-p", "0.8", "--top-k", "20")
+_QWEN35_MAX_CTX = 131072
+
+# Curated catalog. The Qwen3.5 entries are current; ``qwen3.5-4b`` is the
+# default — much stronger than the Qwen2.5-Coder 3B it replaces at a similar
+# CPU cost. The Qwen2.5 entries are ``legacy``: still served and deletable for
+# installs that already downloaded them, no longer offered. Current entries
+# first (smallest→largest), then the legacy ones — ``status()`` renders in
+# this order.
 MODELS: dict[str, ModelSpec] = {
+    "qwen3.5-2b": ModelSpec(
+        id="qwen3.5-2b",
+        name="Qwen3.5 2B",
+        repo="bartowski/Qwen_Qwen3.5-2B-GGUF",
+        file="Qwen_Qwen3.5-2B-Q4_K_M.gguf",
+        approx_mb=1400,
+        description="Fastest and lightest. Good for low-RAM machines, but lower quality on bigger flows.",
+        max_ctx=_QWEN35_MAX_CTX,
+        server_args=_QWEN35_SERVER_ARGS,
+    ),
+    "qwen3.5-4b": ModelSpec(
+        id="qwen3.5-4b",
+        name="Qwen3.5 4B",
+        repo="bartowski/Qwen_Qwen3.5-4B-GGUF",
+        file="Qwen_Qwen3.5-4B-Q4_K_M.gguf",
+        approx_mb=3010,
+        description="Recommended. Best balance of quality and speed for chat and flow building; still usable on CPU.",
+        max_ctx=_QWEN35_MAX_CTX,
+        server_args=_QWEN35_SERVER_ARGS,
+    ),
+    "qwen3.5-9b": ModelSpec(
+        id="qwen3.5-9b",
+        name="Qwen3.5 9B",
+        repo="bartowski/Qwen_Qwen3.5-9B-GGUF",
+        file="Qwen_Qwen3.5-9B-Q4_K_M.gguf",
+        approx_mb=6170,
+        description="Strongest answers, but slow on CPU (a few tok/s) and needs ~8 GB free RAM.",
+        max_ctx=_QWEN35_MAX_CTX,
+        server_args=_QWEN35_SERVER_ARGS,
+    ),
     "qwen2.5-coder-1.5b": ModelSpec(
         id="qwen2.5-coder-1.5b",
         name="Qwen2.5-Coder 1.5B",
         repo="Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
         file="qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
         approx_mb=1100,
-        description="Fastest and lightest. Good for low-RAM machines, but lower quality on bigger flows.",
+        description="Older model. Superseded by Qwen3.5 2B.",
+        legacy=True,
     ),
     "qwen2.5-coder-3b": ModelSpec(
         id="qwen2.5-coder-3b",
@@ -65,7 +113,8 @@ MODELS: dict[str, ModelSpec] = {
         repo="Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",
         file="qwen2.5-coder-3b-instruct-q4_k_m.gguf",
         approx_mb=1960,
-        description="Recommended. Best balance of quality and speed for flow building; still snappy on CPU.",
+        description="Older model. Superseded by Qwen3.5 4B.",
+        legacy=True,
     ),
     "qwen2.5-7b": ModelSpec(
         id="qwen2.5-7b",
@@ -73,26 +122,26 @@ MODELS: dict[str, ModelSpec] = {
         repo="bartowski/Qwen2.5-7B-Instruct-GGUF",
         file="Qwen2.5-7B-Instruct-Q4_K_M.gguf",
         approx_mb=4360,
-        description="Strongest reasoning, but slow on CPU (a few tok/s) and needs ~6 GB free RAM.",
+        description="Older model. Superseded by Qwen3.5 9B.",
+        legacy=True,
     ),
 }
 
-DEFAULT_MODEL_ID = "qwen2.5-coder-3b"
+DEFAULT_MODEL_ID = "qwen3.5-4b"
 
 _USER_AGENT = "flowfile"
 _CHUNK = 256 * 1024
 _CONNECT_TIMEOUT = 60.0
 _HEALTH_TIMEOUT = 90.0
 # Context window default. 16384 gives headroom for the (compacted) flow
-# context + several chat turns; Qwen2.5 supports 32k natively and q4 KV-cache at
-# 16k is still modest RAM for a 1.5-3B model. The effective value is
-# user-settable from the UI (persisted in a sidecar, see ``get_ctx_size``); this
-# env var only seeds the first-run default.
+# context + several chat turns, and a q4 KV cache at 16k is still modest RAM
+# for a 2-4B model. The effective value is user-settable from the UI
+# (persisted in a sidecar, see ``get_ctx_size``); this env var only seeds the
+# first-run default.
 _DEFAULT_CTX_SIZE = int(os.environ.get("FLOWFILE_LOCAL_MODEL_CTX", "16384"))
-# Guardrails for the user-set value: below ~2k the prompt won't fit; above 32k
-# exceeds Qwen2.5's native window and burns RAM for no gain on these models.
+# Lower guardrail for the user-set value: below ~2k the prompt won't fit. The
+# upper bound is per model (``ModelSpec.max_ctx``, see ``max_ctx_size``).
 _MIN_CTX_SIZE = 2048
-_MAX_CTX_SIZE = 32768
 
 ProgressFn = Callable[[dict], None]
 
@@ -105,6 +154,11 @@ _lock = threading.RLock()
 _boot_lock = threading.Lock()
 _install_lock = threading.Lock()
 _server: _RunningServer | None = None
+# The in-flight install's latest progress event (or the last install's terminal
+# event), so a page that reloads mid-download can re-attach through ``status()``
+# instead of seeing "not installed" and "an install is already in progress".
+# Guarded by ``_lock``.
+_install_progress: dict | None = None
 
 
 class LocalModelError(RuntimeError):
@@ -231,21 +285,32 @@ def _ctx_path() -> Path:
     return _engine_dir() / _CTX_FILE
 
 
+def max_ctx_size(model_id: str | None = None) -> int:
+    """The context ceiling for ``model_id`` (default: the selected model)."""
+    return resolve_model(model_id or get_selected_model_id()).max_ctx
+
+
+def _clamp_ctx(ctx_size: int, model_id: str | None = None) -> int:
+    return max(_MIN_CTX_SIZE, min(max_ctx_size(model_id), int(ctx_size)))
+
+
 def get_ctx_size() -> int:
     """The llama-server context window the next boot will use. Reads the sidecar
     (set from the UI); falls back to the env-seeded default. Always clamped to
-    ``[_MIN_CTX_SIZE, _MAX_CTX_SIZE]`` so a stale/garbage file can't break boot."""
+    ``[_MIN_CTX_SIZE, max_ctx_size()]`` of the selected model so a stale or
+    garbage file, or a model switch to a smaller window, can't break boot."""
     try:
         raw = int(_ctx_path().read_text(encoding="utf-8").strip())
-        return max(_MIN_CTX_SIZE, min(_MAX_CTX_SIZE, raw))
     except (OSError, ValueError):
-        return _DEFAULT_CTX_SIZE
+        raw = _DEFAULT_CTX_SIZE
+    return _clamp_ctx(raw)
 
 
 def set_ctx_size(ctx_size: int) -> int:
-    """Persist the context window (clamped). Returns the stored value. The caller
-    recycles the server so the new size takes effect on the next boot."""
-    clamped = max(_MIN_CTX_SIZE, min(_MAX_CTX_SIZE, int(ctx_size)))
+    """Persist the context window (clamped to the selected model). Returns the
+    stored value. The caller recycles the server so the new size takes effect
+    on the next boot."""
+    clamped = _clamp_ctx(ctx_size)
     _engine_dir().mkdir(parents=True, exist_ok=True)
     _ctx_path().write_text(str(clamped), encoding="utf-8")
     return clamped
@@ -406,6 +471,21 @@ def _verify_gguf(path: Path) -> None:
         raise LocalModelError("Downloaded model is not a valid GGUF file (bad header).")
 
 
+def _note_install(ev: dict) -> None:
+    global _install_progress
+    with _lock:
+        _install_progress = {**ev, "active": ev.get("phase") not in ("done", "error")}
+
+
+def install_progress() -> dict | None:
+    """The running install's latest event (``active=True``) or the last one's
+    terminal ``done`` / ``error`` event (``active=False``); ``None`` before any
+    install this process. Every event carries ``phase`` and ``model_id``;
+    download phases add ``received`` / ``total``, a failure adds ``error``."""
+    with _lock:
+        return dict(_install_progress) if _install_progress is not None else None
+
+
 def install(model_id: str | None = None, on_progress: ProgressFn | None = None) -> str:
     """Download + install the shared llama-server binary and one model's GGUF.
 
@@ -416,15 +496,21 @@ def install(model_id: str | None = None, on_progress: ProgressFn | None = None) 
     ``{"phase": "done"}``). Raises :class:`LocalModelError` on failure. Blocking —
     call from a worker thread.
     """
-    cb: ProgressFn = on_progress or (lambda ev: None)
+    user_cb: ProgressFn = on_progress or (lambda ev: None)
     asset = asset_for()
     if asset is None:
         raise UnsupportedPlatform(unsupported_platform_detail())
     spec = resolve_model(model_id)
 
+    def cb(ev: dict) -> None:
+        stamped = {"model_id": spec.id, **ev}
+        _note_install(stamped)
+        user_cb(stamped)
+
     if not _install_lock.acquire(blocking=False):
         raise LocalModelError("An install is already in progress.")
     try:
+        cb({"phase": "starting"})
         engine_dir = _engine_dir()
         engine_dir.mkdir(parents=True, exist_ok=True)
 
@@ -451,8 +537,11 @@ def install(model_id: str | None = None, on_progress: ProgressFn | None = None) 
 
         # Newly-installed model becomes the active one.
         set_selected_model_id(spec.id)
-        cb({"phase": "done", "path": str(binary), "model_id": spec.id})
+        cb({"phase": "done", "path": str(binary)})
         return str(binary)
+    except Exception as exc:
+        _note_install({"phase": "error", "model_id": spec.id, "error": str(exc)})
+        raise
     finally:
         _install_lock.release()
 
@@ -508,6 +597,7 @@ def _describe_exit(rc: int) -> str:
 
 def _spawn(binary: Path, model: Path, model_id: str) -> _RunningServer:
     port = _free_port()
+    spec = resolve_model(model_id)
     cmd = [
         str(binary),
         "--host",
@@ -520,6 +610,18 @@ def _spawn(binary: Path, model: Path, model_id: str) -> _RunningServer:
         str(get_ctx_size()),
         "--threads",
         str(_num_threads()),
+        # Thinking off, for every surface at once: chat answers start at the
+        # first token instead of after a hidden reasoning pass, and the JSON
+        # surfaces (96-1500 ``max_tokens``) don't spend their budget on it.
+        # ``--reasoning off`` sets ``enable_thinking=false`` in the model's own
+        # chat template, which ``--jinja`` is what renders; a model without a
+        # thinking mode ignores both. (``--reasoning-budget 0`` was tried
+        # first and Qwen3.5-4B still reasoned — ~2x the latency, and a 512-token
+        # answer budget spent entirely on ``reasoning_content``.)
+        "--jinja",
+        "--reasoning",
+        "off",
+        *spec.server_args,
     ]
     creationflags = 0x08000000 if sys.platform.startswith("win") else 0  # CREATE_NO_WINDOW
     # Capture stderr to a temp file so a startup failure carries the real ggml /
@@ -682,7 +784,10 @@ def uninstall(model_id: str | None = None) -> None:
 
 
 def status() -> dict:
-    """Snapshot for the UI: availability, per-model install state, run state."""
+    """Snapshot for the UI: availability, per-model install state, run state.
+
+    A ``legacy`` model is listed only while it is installed (or selected), so
+    it is never offered for a fresh install but stays usable and deletable."""
     selected = get_selected_model_id()
     selected_spec = MODELS[selected]
     models = [
@@ -691,9 +796,12 @@ def status() -> dict:
             "name": spec.name,
             "approx_download_mb": spec.approx_mb,
             "description": spec.description,
-            "installed": _model_installed(spec.id),
+            "installed": installed,
+            "legacy": spec.legacy,
+            "max_ctx": spec.max_ctx,
         }
         for spec in MODELS.values()
+        if (installed := _model_installed(spec.id)) or not spec.legacy or spec.id == selected
     ]
     return {
         "available": is_available(),
@@ -713,5 +821,8 @@ def status() -> dict:
         # restart is needed when the user changed it mid-session.
         "ctx_size": get_ctx_size(),
         "ctx_size_min": _MIN_CTX_SIZE,
-        "ctx_size_max": _MAX_CTX_SIZE,
+        "ctx_size_max": selected_spec.max_ctx,
+        # Lets a reloaded page re-attach to a download still running in this
+        # process (``active``), or learn how the last one ended.
+        "install": install_progress(),
     }

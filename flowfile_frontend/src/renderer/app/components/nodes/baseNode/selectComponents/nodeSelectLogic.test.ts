@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   applySelectPositions,
   createSelectInput,
+  restoreBlankName,
   restoreSourceType,
   sourceSemanticTypesFromSchema,
   sourceTypesFromSchema,
@@ -164,5 +165,35 @@ describe("restoreSourceType", () => {
 
     expect(selectInput.data_type_change).toBe(false);
     expect(selectInput.is_altered).toBe(true);
+  });
+});
+
+describe("restoreBlankName", () => {
+  it("puts the original name back when the box was cleared", () => {
+    const selectInput = input("a", "String", 0);
+    selectInput.new_name = "";
+    expect(restoreBlankName(selectInput).new_name).toBe("a");
+  });
+
+  it("treats a whitespace-only name as cleared", () => {
+    const selectInput = input("a", "String", 0);
+    selectInput.new_name = "   ";
+    expect(restoreBlankName(selectInput).new_name).toBe("a");
+  });
+
+  it("leaves a real name alone", () => {
+    const selectInput = input("a", "String", 0);
+    selectInput.new_name = "Value (EUR)";
+    expect(restoreBlankName(selectInput).new_name).toBe("Value (EUR)");
+  });
+});
+
+describe("applySelectPositions with a cleared rename box", () => {
+  it("saves the original name, not '' and not an altered flag", () => {
+    const cleared = input("a", "String", 0);
+    cleared.new_name = "";
+    const [result] = applySelectPositions([cleared], [column("a", "String")]);
+    expect(result.new_name).toBe("a");
+    expect(result.is_altered).toBe(false);
   });
 });

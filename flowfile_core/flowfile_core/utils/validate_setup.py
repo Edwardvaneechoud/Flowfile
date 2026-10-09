@@ -13,7 +13,7 @@ def check_if_node_has_add_function_in_flow_graph(node: NodeTemplate):
     if not hasattr(FlowGraph, func_name):
         raise ValueError(
             f"Node {node.name} ({node.item}) does not have a corresponding function in FlowGraph: {func_name}"
-            "Check if the function is implemented in flow_graph.py or if the node item is correct."
+            "Check if the function is implemented in flowfile/flow_graph/builders/ or if the node item is correct."
         )
 
 

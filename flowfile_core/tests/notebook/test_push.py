@@ -541,6 +541,17 @@ def test_a_described_catalog_reader_renders_its_description_and_syncs_back_keepi
     assert graph.get_node(reader).setting_input.description == "sales data"
 
 
+def test_a_cosmetic_edit_of_a_designer_configured_catalog_writer_plans_nothing(runner, designer_writer_flow, client_as):
+    """The cell carries the namespace name only; the designer's id beside it is no change to send back."""
+    graph = designer_writer_flow
+    cell_id = _cell_of(graph, _node_of_type(graph, "catalog_writer").node_id)
+    body = _body(graph, lambda cells: {**cells, cell_id: "# reviewed\n" + cells[cell_id]}, changed=[cell_id])
+
+    plan = client_as(OWNER_ID).post("/notebook/plan", json=body)
+    assert plan.status_code == 200, plan.text
+    assert plan.json()["operations"] == []
+
+
 def test_user_2_cannot_push_plan_or_run_user_3s_flow(runner, open_as, client_as):
     graph = open_as(ff.from_dict({"a": [1, 2]}).filter(ff.col("a") > 1).flow_graph, user_id=3)
     fingerprint = code_fingerprint(graph)

@@ -183,6 +183,13 @@ def _record_id(settings: dict) -> None:
         record["group_by_columns"] = []
 
 
+def _catalog_writer(settings: dict) -> None:
+    """A stored namespace name is the target (the id is only its run-time fallback), so an id beside it never counts."""
+    write = settings.get("catalog_write_settings") or {}
+    if write.get("namespace_full_name"):
+        write.pop("namespace_id", None)
+
+
 def _polars_code(settings: dict) -> None:
     """The code dedented and stripped, as it reads back from the ``def`` the notebook shows for it.
 
@@ -306,6 +313,7 @@ RULES: dict[str, tuple[Callable[[dict], None], ...]] = {
     "python_script": (_python_script,),
     "record_id": (_record_id,),
     "polars_code": (_polars_code,),
+    "catalog_writer": (_catalog_writer,),
 }
 
 

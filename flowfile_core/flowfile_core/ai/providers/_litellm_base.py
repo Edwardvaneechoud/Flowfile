@@ -85,6 +85,11 @@ class LiteLLMProvider:
     supports_streaming: ClassVar[bool] = True
     surface_models: ClassVar[dict[str, str]] = {}
     default_api_base: ClassVar[str | None] = None
+    # Vendor-wide request kwargs merged into every litellm call (e.g. Ollama's
+    # thinking switch). Empty by default, so other providers' kwargs are
+    # exactly the explicit ones; an explicit per-call kwarg is never
+    # overridden.
+    extra_params: ClassVar[dict[str, Any]] = {}
 
     def __init__(
         self,
@@ -137,6 +142,8 @@ class LiteLLMProvider:
             kwargs["stream"] = True
         if response_format is not None:
             kwargs["response_format"] = response_format
+        for key, value in self.extra_params.items():
+            kwargs.setdefault(key, value)  # type: ignore[misc]
         return kwargs
 
     async def chat(

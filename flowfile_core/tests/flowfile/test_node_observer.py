@@ -158,9 +158,11 @@ def test_failing_observer_never_corrupts_the_graph():
 
 
 def _flow_graph_methods() -> dict[str, ast.FunctionDef]:
-    tree = ast.parse(textwrap.dedent(inspect.getsource(FlowGraph)))
-    cls = tree.body[0]
-    return {item.name: item for item in cls.body if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef)}
+    methods: dict[str, ast.FunctionDef] = {}
+    for cls in reversed(FlowGraph.__mro__[:-1]):
+        tree = ast.parse(textwrap.dedent(inspect.getsource(cls)))
+        methods.update({i.name: i for i in tree.body[0].body if isinstance(i, ast.FunctionDef | ast.AsyncFunctionDef)})
+    return methods
 
 
 def _self_calls(func: ast.AST) -> set[str]:

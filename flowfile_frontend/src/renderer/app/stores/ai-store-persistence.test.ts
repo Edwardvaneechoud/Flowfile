@@ -67,6 +67,7 @@ const sampleSettings = (): PersistedAiSettings => ({
   simpleModel: "qwen2.5-coder-3b",
   selectedAgentSurface: "agent_staged",
   verifyPlanCompletion: true,
+  simpleBuildOutput: "json",
 });
 
 describe("loadPersistedAiState", () => {
@@ -509,6 +510,7 @@ describe("AI settings bucket", () => {
         simpleModel: null,
         selectedAgentSurface: null,
         verifyPlanCompletion: null,
+        simpleBuildOutput: null,
       },
       storage,
     );
@@ -516,6 +518,22 @@ describe("AI settings bucket", () => {
     expect(loaded?.selectedProvider).toBe("openai");
     expect(loaded?.selectedModel).toBeNull();
     expect(loaded?.selectedAgentSurface).toBeNull();
+    expect(loaded?.simpleBuildOutput).toBeNull();
+  });
+
+  it.each(["code", "json"] as const)("round-trips the Simple build output %s", (output) => {
+    const storage = makeStorage();
+    persistAiSettings({ ...sampleSettings(), simpleBuildOutput: output }, storage);
+    expect(loadPersistedAiSettings(storage)?.simpleBuildOutput).toBe(output);
+  });
+
+  it("drops an unknown Simple build output instead of trusting it", () => {
+    const storage = makeStorage();
+    storage.setItem(
+      SETTINGS_PERSISTENCE_KEY,
+      JSON.stringify({ ...sampleSettings(), simpleBuildOutput: "yaml" }),
+    );
+    expect(loadPersistedAiSettings(storage)?.simpleBuildOutput).toBeNull();
   });
 
   it.each(["agent_complex", "agent_staged", "agent_live"] as const)(

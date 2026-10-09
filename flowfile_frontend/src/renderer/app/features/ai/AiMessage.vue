@@ -29,6 +29,13 @@ const buildLabel = computed(() => {
   const n = props.message.buildOpCount ?? 0;
   return n > 0 ? `Add to canvas (${n} node${n === 1 ? "" : "s"})` : "Add to canvas";
 });
+// Code-mode Simple build: the FlowFrame script behind the nodes, collapsed
+// under the text; opened by default when a failure names a line in it.
+const hasCode = computed(() => isAssistant.value && !!props.message.buildCode);
+const codeLines = computed<string[]>(() =>
+  hasCode.value ? (props.message.buildCode as string).split("\n") : [],
+);
+const flaggedLine = computed<number | null>(() => props.message.buildCodeLine ?? null);
 const isUser = computed(() => props.message.role === "user");
 // Streaming caret only renders once content has started arriving; the
 // pre-content "thinking" state shows the dots animation instead.
@@ -104,6 +111,22 @@ const timeTooltip = computed<string>(() => {
       <span v-if="showEmptyHint" class="ai-message__hint">[no response]</span>
       <span v-if="showCaret" class="ai-message__caret" aria-hidden="true">▍</span>
       <div v-if="message.error" class="ai-message__error">{{ message.error }}</div>
+      <!-- Simple-build (code mode): the script the nodes came from, or the one
+           that failed with its line flagged. A plain <pre>, not an editor:
+           it is read-only and the bubble must stay light. -->
+      <details v-if="hasCode" class="ai-message__code" :open="flaggedLine !== null">
+        <summary class="ai-message__code-summary">
+          <i class="fa-solid fa-code"></i>
+          <span>{{ flaggedLine !== null ? "Generated code (failed)" : "Generated code" }}</span>
+        </summary>
+        <pre class="ai-message__code-pre"><code><span
+            v-for="(line, index) in codeLines"
+            :key="index"
+            class="ai-message__code-line"
+            :class="{ 'is-flagged': index + 1 === flaggedLine }"
+            v-text="line + '\n'"
+          /></code></pre>
+      </details>
       <!-- Simple-build: inline apply button (no separate review panel). -->
       <div v-if="hasBuild" class="ai-message__build">
         <button
@@ -235,6 +258,39 @@ const timeTooltip = computed<string>(() => {
 
 .ai-message__build {
   margin-top: 8px;
+}
+
+.ai-message__code {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.ai-message__code-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--color-text-secondary, #6b7280);
+  user-select: none;
+}
+
+.ai-message__code-pre {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background-color: var(--color-background-soft, #f6f6f9);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.ai-message__code-line.is-flagged {
+  display: inline-block;
+  width: 100%;
+  background-color: rgba(220, 38, 38, 0.12);
+  box-shadow: inset 2px 0 0 var(--color-danger, #dc2626);
 }
 
 .ai-message__build-btn {

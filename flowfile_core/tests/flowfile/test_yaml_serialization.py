@@ -1556,3 +1556,56 @@ class TestMaxParallelWorkersYaml:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+class TestBlankRenameNames:
+    """A cleared rename box arrives as '' and must mean "keep the original name" (issue #815)."""
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_blank_new_name_defaults_to_old_name(self, blank):
+        select_input = transform_schema.SelectInput(old_name="a", new_name=blank, is_altered=True)
+        assert select_input.new_name == "a"
+        assert select_input.is_altered is False
+
+    def test_blank_new_name_keeps_type_change_altered(self):
+        select_input = transform_schema.SelectInput(old_name="a", new_name="", data_type="String", data_type_change=True)
+        assert select_input.new_name == "a"
+        assert select_input.is_altered is True
+
+    def test_names_with_spaces_are_kept(self):
+        assert transform_schema.SelectInput(old_name="a", new_name="Value (EUR)").new_name == "Value (EUR)"
+
+    def test_from_yaml_dict_blank_new_name(self):
+        loaded = transform_schema.SelectInput.from_yaml_dict({"old_name": "a", "new_name": ""})
+        assert loaded.new_name == "a"
+        assert loaded.is_altered is False
+
+    def test_flow_saved_with_blank_names_reopens_clean(self, temp_dir: Path):
+        flow = create_graph(flow_id=305)
+        add_manual_input(flow, data=[{"name": "John", "age": 30}], node_id=1)
+        add_node_promise(flow, "select", node_id=2)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        flow.add_select(input_schema.NodeSelect(
+            flow_id=flow.flow_id, node_id=2, depending_on_id=1,
+            select_input=[transform_schema.SelectInput(old_name="name"), transform_schema.SelectInput(old_name="age")],
+        ))
+        yaml_path = temp_dir / "select_blank.yaml"
+        flow.save_flow(str(yaml_path))
+        with open(yaml_path) as f:
+            data = yaml.safe_load(f)
+        select_node = next(n for n in data["nodes"] if n["type"] == "select")
+        for item in select_node["setting_input"]["select_input"]:
+            item["new_name"] = ""  # an older save of a flow with cleared boxes
+        with open(yaml_path, "w") as f:
+            yaml.safe_dump(data, f)
+
+        loaded_flow = open_flow(yaml_path)
+        loaded_inputs = loaded_flow.get_node(2).setting_input.select_input
+        assert [i.new_name for i in loaded_inputs] == ["name", "age"]
+        assert not any(i.is_altered for i in loaded_inputs)
+
+        resaved_path = temp_dir / "select_blank_resaved.yaml"
+        loaded_flow.save_flow(str(resaved_path))
+        with open(resaved_path) as f:
+            resaved_node = next(n for n in yaml.safe_load(f)["nodes"] if n["type"] == "select")
+        assert all("new_name" not in item for item in resaved_node["setting_input"]["select_input"])

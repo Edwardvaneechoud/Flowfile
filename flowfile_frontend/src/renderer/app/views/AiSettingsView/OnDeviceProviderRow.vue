@@ -145,11 +145,14 @@
               <i class="fa-solid fa-microchip"></i>
               <span>{{ m.name }}</span>
               <span class="badge" :class="modelBadgeClass(m)">{{ modelBadgeLabel(m) }}</span>
+              <span v-if="m.legacy" class="badge badge--unconfigured">older model</span>
             </div>
             <div class="connection-details">
               <span>{{ m.description }}</span>
               <span class="separator">•</span>
               <span class="muted">~{{ m.approxDownloadMb }} MB download</span>
+              <span class="separator">•</span>
+              <span class="muted">up to {{ m.maxCtx.toLocaleString() }} tokens of context</span>
             </div>
           </div>
           <div class="connection-actions">
@@ -213,8 +216,8 @@
           </button>
         </div>
         <p class="hint-text">
-          {{ status.ctxSizeMin }}–{{ status.ctxSizeMax }}. Larger fits more flow context but uses
-          more RAM.
+          {{ status.ctxSizeMin }}–{{ status.ctxSizeMax }} for {{ status.modelName }}. Larger fits
+          more flow context but uses more RAM.
           <template v-if="status.running"> Applying restarts the local server.</template>
         </p>
       </div>
@@ -226,7 +229,7 @@
 // The on-device model as one row in the Providers list. It sits beside the
 // cloud providers because it *is* a provider (the same "On-device AI" the
 // model pickers offer); Manage expands the catalog and context settings.
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { useAiStore } from "../../stores/ai-store";
 import { AiDisabledError } from "./api";
@@ -240,7 +243,7 @@ import {
   stopLocalModel,
   streamLocalModelInstall,
 } from "./localModelApi";
-import type { LocalModelEntry } from "./localModelApi";
+import type { LocalModelEntry, LocalModelStatus } from "./localModelApi";
 
 // Single source of truth: the ai-store owns local status (so the Assistant
 // tab's pickers and this row never disagree). This is a read-only mirror;
@@ -296,11 +299,11 @@ const installingModel = computed(
 );
 
 // The model the one-click setup installs: the backend's selected default
-// (Qwen2.5-Coder 3B) before anything is installed.
+// (Qwen3.5 4B) before anything is installed. Never a legacy entry.
 const recommendedModel = computed(
   () =>
-    status.value?.models.find((m) => m.id === status.value?.selectedModelId) ??
-    status.value?.models[0] ??
+    status.value?.models.find((m) => m.id === status.value?.selectedModelId && !m.legacy) ??
+    status.value?.models.find((m) => !m.legacy) ??
     null,
 );
 const recommendedDownloadLabel = computed(
@@ -370,11 +373,70 @@ const handleSetCtxSize = async () => {
   }
 };
 
+// The download runs in the backend process, so a page reload mid-install
+// loses only the progress stream, not the install. When status says one is
+// still active, show its progress and poll until it ends, then finish the
+// way a stream-attached install would (status refresh + toast).
+const INSTALL_POLL_MS = 1000;
+let installPollTimer: ReturnType<typeof setTimeout> | null = null;
+
+const stopInstallPolling = (): void => {
+  if (installPollTimer !== null) {
+    clearTimeout(installPollTimer);
+    installPollTimer = null;
+  }
+};
+
+const applyInstallProgress = (st: LocalModelStatus): void => {
+  const inst = st.install;
+  if (!inst?.active) return;
+  installingModelId.value = inst.modelId;
+  installPhase.value = inst.phase;
+  installPct.value =
+    typeof inst.received === "number" && typeof inst.total === "number" && inst.total > 0
+      ? Math.min(100, Math.round((inst.received / inst.total) * 100))
+      : null;
+};
+
+const attachToRunningInstall = (st: LocalModelStatus | null): void => {
+  if (!st?.install?.active || installing.value) return;
+  installing.value = true;
+  localBusy.value = true;
+  applyInstallProgress(st);
+  const poll = async (): Promise<void> => {
+    let latest: LocalModelStatus;
+    try {
+      latest = await fetchLocalModelStatus();
+    } catch {
+      installPollTimer = setTimeout(poll, INSTALL_POLL_MS);
+      return;
+    }
+    aiStore.applyLocalModelStatus(latest);
+    if (latest.install?.active) {
+      applyInstallProgress(latest);
+      installPollTimer = setTimeout(poll, INSTALL_POLL_MS);
+      return;
+    }
+    installPollTimer = null;
+    installing.value = false;
+    localBusy.value = false;
+    installingModelId.value = null;
+    if (latest.install?.error) {
+      ElMessage.error(`Install failed: ${latest.install.error}`);
+    } else {
+      ElMessage.success("Model installed");
+    }
+  };
+  installPollTimer = setTimeout(poll, INSTALL_POLL_MS);
+};
+
 const loadLocalModel = async () => {
   localLoading.value = true;
   localError.value = null;
   try {
-    aiStore.applyLocalModelStatus(await fetchLocalModelStatus());
+    const st = await fetchLocalModelStatus();
+    aiStore.applyLocalModelStatus(st);
+    attachToRunningInstall(st);
   } catch (error) {
     if (error instanceof AiDisabledError) {
       await aiStore.loadProviders();
@@ -402,6 +464,10 @@ const handleLocalSetup = async () => {
 };
 
 const handleLocalInstall = async (modelId: string) => {
+  if (status.value?.install?.active) {
+    attachToRunningInstall(status.value);
+    return;
+  }
   installing.value = true;
   localBusy.value = true;
   installingModelId.value = modelId;
@@ -496,8 +562,11 @@ onMounted(() => {
     void loadLocalModel();
   } else {
     localLoading.value = false;
+    attachToRunningInstall(status.value);
   }
 });
+
+onBeforeUnmount(stopInstallPolling);
 </script>
 
 <style scoped>

@@ -118,7 +118,7 @@ Symptom: `"File must end with PAR1"` reading kernel input/output. Root
 cause: `write_parquet()` can leave data in OS buffers; sharing files
 between host and Docker container over a mounted volume lets the reader
 see an incomplete file. Fix: explicit `fsync` after writing parquet in both
-`flowfile_core/flowfile_core/flowfile/flow_graph.py` and
+`flowfile_core/flowfile_core/flowfile/flow_graph/` and
 `kernel_runtime/kernel_runtime/flowfile_client.py`. Evidence: `84b8e416`,
 2026-02-03. **Rule: any new host↔kernel file handoff must `fsync` before
 signalling readiness — Docker volume mounts don't guarantee write

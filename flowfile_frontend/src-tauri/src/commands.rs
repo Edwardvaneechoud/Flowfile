@@ -67,10 +67,16 @@ pub fn read_drag_paths() -> Vec<String> {
     crate::drag_paths::read()
 }
 
-// The notebook window commands are sync on purpose: a window built inside an async command
-// deadlocks on Windows, and the main thread is where window creation belongs anyway.
+// Async on purpose: a sync command runs inside the WebView2 IPC callback on Windows, where
+// building a webview deadlocks (wry#583): the new window stays blank forever. From the async
+// runtime the build is dispatched to the event loop instead. The other window commands only
+// post messages, so they stay sync.
 #[tauri::command]
-pub fn open_notebook_window(app: AppHandle, window: Window, flow_id: i64) -> Result<(), String> {
+pub async fn open_notebook_window(
+    app: AppHandle,
+    window: Window,
+    flow_id: i64,
+) -> Result<(), String> {
     require_main(&window)?;
     window::open_notebook_window(&app, flow_id)
 }

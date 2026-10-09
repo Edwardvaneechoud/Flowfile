@@ -156,6 +156,7 @@
                     :placeholder="column.old_name"
                     :aria-label="`New name for ${column.old_name}`"
                     v-bind="NO_AUTOFILL"
+                    @blur="restoreBlankName(column)"
                   />
                 </td>
 
@@ -275,7 +276,7 @@ import {
   type SelectionState,
   type SortDirection,
 } from "./columnSelection";
-import { restoreSourceType } from "./nodeSelectLogic";
+import { restoreBlankName, restoreSourceType } from "./nodeSelectLogic";
 
 const props = withDefaults(
   defineProps<{

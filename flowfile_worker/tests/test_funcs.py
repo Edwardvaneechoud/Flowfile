@@ -294,3 +294,20 @@ def test_fuzzy_join_task_error_returns_early(tmp_path):
     assert progress.value == -1
     assert error_message.value.decode().rstrip("\x00") != ""
     assert queue.empty()
+
+
+def test_fuzzy_join_task_with_an_empty_side_names_the_score_column(tmp_path):
+    """The library returns early on an empty side without naming the score columns; the task names them itself."""
+    from pl_fuzzy_frame_match import FuzzyMapping
+
+    progress = mp_context.Value('i', 0)
+    error_message = mp_context.Array('c', 1024)
+    file_path = str(tmp_path / "fuzzy.arrow")
+    left = pl.LazyFrame({"name": []}, schema={"name": pl.String})
+    right = pl.LazyFrame({"other": ["eduward"]})
+
+    fuzzy_join_task(left.serialize(), right.serialize(), [FuzzyMapping(left_col="name", right_col="other")],
+                    error_message, file_path, progress, Queue(maxsize=1), 1, 1)
+
+    assert progress.value == 100, error_message.value.decode(errors="replace")
+    assert pl.read_ipc(file_path).columns == ["name", "other", "name_vs_other_levenshtein"]

@@ -40,6 +40,7 @@ from flowfile_core import flow_file_handler
 from flowfile_core.ai.byok import ProviderNotConfiguredError, get_configured_provider
 from flowfile_core.ai.context import render_prompt_context
 from flowfile_core.ai.providers import (
+    LOCAL_PROVIDER_ID,
     Message,
     UnknownProviderError,
     is_resolvable_provider,
@@ -183,6 +184,11 @@ async def generate_documentation(
         pinned_node_ids,
         surface="docgen",
         samples_mode=body.samples_mode,
+        # Local model: shrink verbose settings + cap columns to fit its window,
+        # and take the on-device system prompt.
+        compact_settings=body.provider == LOCAL_PROVIDER_ID,
+        max_columns_per_node=12 if body.provider == LOCAL_PROVIDER_ID else None,
+        local=body.provider == LOCAL_PROVIDER_ID,
     )
 
     flow_name = _resolve_flow_name(flow, body.flow_id)

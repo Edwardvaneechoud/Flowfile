@@ -46,6 +46,15 @@ class ConverterMixinBase:
         """
         return json.dumps(value, ensure_ascii=False)
 
+    def _select_into_temp(self, frame: str, temp: str, drops: list[str], renames: dict[str, str]) -> str:
+        """``frame`` with ``drops`` dropped, then ``renames`` applied, bound to the node-local ``temp`` so a
+        fanned-out upstream frame isn't rebound; ``frame`` itself when there is nothing to apply."""
+        if not drops and not renames:
+            return frame
+        call = frame + (f".drop({drops})" if drops else "") + (f".rename({renames})" if renames else "")
+        self._add_code(f"{temp} = {call}")
+        return temp
+
     def _register_expr_stdlib_imports(self, code: str) -> None:
         """Import the stdlib modules a generated expression references.
 
