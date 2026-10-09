@@ -296,7 +296,7 @@ import {
   updateFlowSettings,
   ExecutionMode,
   ExecutionLocation,
-  updateRunStatus,
+  getRunStatus,
 } from "../../nodes/nodeLogic";
 import { MODIFIER_LABEL } from "../../../utils/shortcuts";
 
@@ -391,7 +391,10 @@ const loadFlowSettings = async (): Promise<void> => {
   if (settingsLoad && settingsLoad.id === flowId) return settingsLoad.promise;
 
   const promise = (async () => {
-    flowSettings.value = await getFlowSettings(flowId);
+    const settings = await getFlowSettings(flowId);
+    // An older request must not restore another canvas's run/cancel state.
+    if (nodeStore.flow_id !== flowId) return;
+    flowSettings.value = settings;
     if (!flowSettings.value) return;
 
     flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
@@ -400,6 +403,7 @@ const loadFlowSettings = async (): Promise<void> => {
     flowStore.setParameters(flowSettings.value.parameters);
     editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
     editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
+    editorStore.isCanceled = flowSettings.value.is_running && flowSettings.value.is_canceled;
 
     if (!runButton.value) return;
 
@@ -409,7 +413,11 @@ const loadFlowSettings = async (): Promise<void> => {
     } else {
       editorStore.isRunning = false;
       runButton.value.stopPolling();
-      updateRunStatus(flowId, nodeStore);
+      void getRunStatus(flowId).then((response) => {
+        if (nodeStore.flow_id === flowId && response.status >= 200 && response.status < 300) {
+          nodeStore.insertRunResult(response.data);
+        }
+      });
     }
   })();
 
@@ -559,11 +567,13 @@ watch(
   () => nodeStore.flow_id,
   async (newId, oldId) => {
     if (newId !== oldId && newId > 0) {
+      editorStore.isCanceled = false;
       await loadFlowSettings();
     } else if (newId <= 0) {
       // No flow open — drop the cache so the settings modal can't show
       // (or POST back) a closed flow's settings.
       flowSettings.value = null;
+      editorStore.isCanceled = false;
     }
   },
 );

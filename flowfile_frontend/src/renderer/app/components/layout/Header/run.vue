@@ -16,10 +16,13 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
-import { useFlowExecution } from "../../../composables/useFlowExecution";
+import { useEditorStore } from "../../../stores/editor-store";
+import { showCancelling, useFlowExecution } from "../../../composables/useFlowExecution";
 
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 
 const props = defineProps({
   flowId: { type: Number, required: true },
@@ -43,7 +46,7 @@ const props = defineProps({
 const {
   runFlow,
   cancelFlow,
-  isCancelling,
+  isCancelling: isCancelPending,
   showNotification,
   startPolling,
   stopPolling,
@@ -52,6 +55,11 @@ const {
   persistPolling: props.persistPolling,
   pollingKey: `run_button_${props.flowId}`,
 });
+
+// Server state survives refresh; the local pending state covers the POST round trip.
+const isCancelling = computed(() =>
+  showCancelling(nodeStore.isRunning, editorStore.isCanceled, isCancelPending.value),
+);
 
 defineEmits(["logs-start", "logs-stop"]);
 

@@ -1,4 +1,4 @@
-import { ref, onUnmounted, Ref, markRaw, type Component } from "vue";
+import { ref, computed, onUnmounted, Ref, markRaw, type Component } from "vue";
 import axios from "axios";
 import { ElNotification } from "element-plus";
 import { Promotion, DataLine } from "@element-plus/icons-vue";
@@ -68,6 +68,10 @@ class FlowExecutionState {
 
 const isResponseSuccessful = (status: number): boolean => status >= 200 && status < 300;
 
+// The server's cancel flag survives refresh but also stays set after completion.
+export const showCancelling = (running: boolean, serverCanceled: boolean, localPending: boolean) =>
+  running && (serverCanceled || localPending);
+
 // Starts in progress, marked synchronously: a second click during the pre-run save must not start a second run.
 const startsInProgress = new Set<string>();
 
@@ -86,18 +90,6 @@ const getRunStatus = async (flowId: number) => {
     params: { flow_id: flowId },
     headers: { accept: "application/json" },
   });
-  return response;
-};
-
-const updateRunStatus = async (
-  flowId: number,
-  nodeStore: { insertRunResult: (result: RunInformation) => void },
-) => {
-  const response = await getRunStatus(flowId);
-  if (isResponseSuccessful(response.status)) {
-    nodeStore.insertRunResult(response.data);
-  }
-
   return response;
 };
 
@@ -123,12 +115,21 @@ export function useFlowExecution(
   const resultsStore = useResultsStore();
   const state = FlowExecutionState.getInstance();
   const localPollingInterval = ref<number | null>(null);
+  const pollingFlowId = ref<number | null>(null);
+  const runPollingKey = ref<string | null>(null);
   const isExecuting = ref(false);
-  const isCancelling = ref(false);
+  const pendingCancelIds = ref(new Set<number>());
 
   const getFlowId = () => {
     if (typeof flowId === "function") return flowId();
     return typeof flowId === "number" ? flowId : flowId.value;
+  };
+  const isCancelling = computed(() => pendingCancelIds.value.has(getFlowId()));
+  const setCancelPending = (id: number, pending: boolean) => {
+    const next = new Set(pendingCancelIds.value);
+    if (pending) next.add(id);
+    else next.delete(id);
+    pendingCancelIds.value = next;
   };
 
   const getPollingKey = (suffix = "") => {
@@ -173,7 +174,19 @@ export function useFlowExecution(
   };
 
   // Polling management with persistence option
-  const startPolling = (checkFn: () => Promise<void>, pollingKeySuffix = "") => {
+  const startPolling = (
+    checkFn: () => Promise<void>,
+    pollingKeySuffix = "",
+    targetFlowId = getFlowId(),
+  ) => {
+    if (!pollingKeySuffix) {
+      if (pollingFlowId.value !== null && pollingFlowId.value !== targetFlowId) {
+        setCancelPending(pollingFlowId.value, false);
+        stopPolling();
+      }
+      pollingFlowId.value = targetFlowId;
+      runPollingKey.value = getPollingKey();
+    }
     const key = getPollingKey(pollingKeySuffix);
 
     if (options.persistPolling) {
@@ -194,7 +207,9 @@ export function useFlowExecution(
 
   const stopPolling = (pollingKeySuffix = "") => {
     if (options.persistPolling) {
-      const key = getPollingKey(pollingKeySuffix);
+      const key = !pollingKeySuffix
+        ? (runPollingKey.value ?? getPollingKey())
+        : getPollingKey(pollingKeySuffix);
       state.clearPollingInterval(key);
     } else {
       if (localPollingInterval.value !== null) {
@@ -202,11 +217,17 @@ export function useFlowExecution(
         localPollingInterval.value = null;
       }
     }
+    if (!pollingKeySuffix) {
+      pollingFlowId.value = null;
+      runPollingKey.value = null;
+    }
   };
 
   const isPollingActive = (pollingKeySuffix = ""): boolean => {
     if (options.persistPolling) {
-      const key = getPollingKey(pollingKeySuffix);
+      const key = !pollingKeySuffix
+        ? (runPollingKey.value ?? getPollingKey())
+        : getPollingKey(pollingKeySuffix);
       return state.getPollingInterval(key) !== null;
     }
     return localPollingInterval.value !== null;
@@ -225,6 +246,7 @@ export function useFlowExecution(
     pollingKeySuffix = "",
     focusResultPanels = true,
     onComplete?: () => void,
+    targetFlowId = pollingFlowId.value ?? getFlowId(),
   ) => {
     // Every terminal path — finished, flow gone, or a failed status call — releases
     // the same state, so callers get one completion signal instead of having to
@@ -232,20 +254,30 @@ export function useFlowExecution(
     // and 200 when done, so reaching here at all means the run is over.
     let notified = false;
     const finish = () => {
-      stopPolling(pollingKeySuffix);
-      unFreezeFlow();
-      editorStore.isRunning = false;
-      isExecuting.value = false;
-      isCancelling.value = false;
+      if (pollingKeySuffix || pollingFlowId.value === targetFlowId) stopPolling(pollingKeySuffix);
+      setCancelPending(targetFlowId, false);
+      if (getFlowId() === targetFlowId) {
+        unFreezeFlow();
+        editorStore.isRunning = false;
+        editorStore.isCanceled = false;
+        isExecuting.value = false;
+      }
       state.setExecutionState(getPollingKey(pollingKeySuffix), false);
       if (!notified) {
         notified = true;
-        onComplete?.();
+        if (getFlowId() === targetFlowId) onComplete?.();
       }
     };
 
     try {
-      const response = await updateRunStatus(getFlowId(), nodeStore);
+      const response = await getRunStatus(targetFlowId);
+      // A late response from canvas A must never overwrite canvas B's results.
+      if (!pollingKeySuffix && pollingFlowId.value !== targetFlowId) return;
+      if (getFlowId() !== targetFlowId) {
+        if (response.status === 200) finish();
+        return;
+      }
+      if (isResponseSuccessful(response.status)) nodeStore.insertRunResult(response.data);
 
       if (response.status === 200) {
         finish();
@@ -315,7 +347,9 @@ export function useFlowExecution(
 
   const startFlowRun = async () => {
     if (!(await saveOpenDrawer("Flow not started"))) return;
-    const flowSettings: FlowSettings | null = await FlowApi.getFlowSettings(getFlowId());
+    const startedFlowId = getFlowId();
+    const flowSettings: FlowSettings | null = await FlowApi.getFlowSettings(startedFlowId);
+    if (getFlowId() !== startedFlowId) return;
     if (!flowSettings) {
       throw new Error("Failed to retrieve flow settings");
     }
@@ -324,6 +358,7 @@ export function useFlowExecution(
     nodeStore.resetNodeResult();
     isExecuting.value = true;
     editorStore.isRunning = true;
+    editorStore.isCanceled = false;
     editorStore.hideLogViewerForThisRun = false;
     state.setExecutionState(getPollingKey(), true);
 
@@ -343,18 +378,27 @@ export function useFlowExecution(
 
     try {
       await axios.post("/flow/run/", null, {
-        params: { flow_id: getFlowId() },
+        params: { flow_id: startedFlowId },
         headers: { accept: "application/json" },
       });
       useTutorialStore().notify({ type: "flow-run-started" });
       nodeStore.showLogViewer();
-      startPolling(() => checkRunStatus());
+      if (getFlowId() === startedFlowId) {
+        startPolling(
+          () => checkRunStatus(undefined, "", true, undefined, startedFlowId),
+          "",
+          startedFlowId,
+        );
+      }
     } catch (error: any) {
       console.error("Error starting run:", error);
-      unFreezeFlow();
-      editorStore.isRunning = false;
+      if (getFlowId() === startedFlowId) {
+        unFreezeFlow();
+        editorStore.isRunning = false;
+      }
       isExecuting.value = false;
       state.setExecutionState(getPollingKey(), false);
+      if (getFlowId() !== startedFlowId) return;
       // 404 means the in-memory flow_id doesn't match the backend — typically
       // a stale id after Save As or a backend restart. Tell the user
       // specifically so they reopen instead of retrying blindly.
@@ -450,22 +494,36 @@ export function useFlowExecution(
   };
 
   const cancelFlow = async () => {
-    if (isCancelling.value) return;
-    isCancelling.value = true;
+    const cancelledFlowId = getFlowId();
+    if (pendingCancelIds.value.has(cancelledFlowId)) return;
+    setCancelPending(cancelledFlowId, true);
     try {
       await axios.post("/flow/cancel/", null, {
-        params: { flow_id: getFlowId() },
+        params: { flow_id: cancelledFlowId },
         headers: { accept: "application/json" },
       });
-      showNotification("Cancelling", "The operation is being cancelled");
+      if (getFlowId() === cancelledFlowId) {
+        editorStore.isCanceled = true;
+        showNotification("Cancelling", "The operation is being cancelled");
+      }
       // Cancellation is asynchronous on the server. Keep the run locked and
       // poll until run_status includes the terminal result for every node.
-      if (isCancelling.value) {
-        startPolling(() => checkRunStatus());
-        await checkRunStatus();
+      if (
+        pendingCancelIds.value.has(cancelledFlowId) &&
+        (pollingFlowId.value === null || pollingFlowId.value === cancelledFlowId)
+      ) {
+        startPolling(
+          () => checkRunStatus(undefined, "", true, undefined, cancelledFlowId),
+          "",
+          cancelledFlowId,
+        );
+        await checkRunStatus(undefined, "", true, undefined, cancelledFlowId);
       }
     } catch (error) {
-      isCancelling.value = false;
+      setCancelPending(cancelledFlowId, false);
+      if (getFlowId() === cancelledFlowId) {
+        editorStore.isCanceled = false;
+      }
       console.error("Error cancelling run:", error);
       showNotification("Error", "Failed to cancel the operation", "error");
     }
