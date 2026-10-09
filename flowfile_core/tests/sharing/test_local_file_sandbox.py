@@ -259,7 +259,8 @@ def test_the_case_fallback_never_probes_the_user_path(user_data, outside, monkey
     else:
         with pytest.raises(PermissionError, match=DENIED):
             require_local_paths_allowed(swapped)
-    assert probed, "the server-side root was never probed"
+    if os.name != "nt":  # ntpath.commonpath already ignores case, so Windows never reaches the fallback
+        assert probed, "the server-side root was never probed"
     assert not [path for path in probed if path.lower().startswith(str(outside).lower())]
     assert not [path for path in probed if "data.csv" in path.lower()]
 
