@@ -18,6 +18,8 @@ const connectionRetries = ref(0);
 const maxRetries = 5;
 const connectionStatus = ref<"connected" | "disconnected" | "error">("disconnected");
 const errorMessage = ref<string | null>(null);
+// Only the stream a run's start opened is stopped by its end; a re-read keeps going.
+let streamOpenedByRun = false;
 
 const scrollToBottom = () => {
   if (!autoScroll.value) return;
@@ -32,7 +34,12 @@ const scrollToBottom = () => {
 watch(
   () => nodeStore.isRunning,
   (isRunning) => {
-    isRunning ? startStreamingLogs() : stopStreamingLogs();
+    if (isRunning) {
+      startStreamingLogs();
+      streamOpenedByRun = true;
+    } else if (streamOpenedByRun) {
+      stopStreamingLogs();
+    }
   },
 );
 
@@ -45,8 +52,7 @@ watch(
   },
 );
 
-// A run started or ended elsewhere (the change feed): core rewrites the log file per run, so a
-// stream tailing the old file sees nothing of it. Re-read from the start instead.
+// A run elsewhere rewrites the log file (core truncates it per run): re-read it from the start.
 watch(
   () => flowStore.pendingRunStateCounter,
   () => {
@@ -56,6 +62,7 @@ watch(
 
 const startStreamingLogs = async () => {
   streamController?.abort();
+  streamOpenedByRun = false;
   const controller = new AbortController();
   streamController = controller;
 
@@ -129,6 +136,7 @@ const startStreamingLogs = async () => {
 const stopStreamingLogs = () => {
   streamController?.abort();
   streamController = null;
+  streamOpenedByRun = false;
   if (connectionStatus.value === "connected") {
     connectionStatus.value = "disconnected";
   }
