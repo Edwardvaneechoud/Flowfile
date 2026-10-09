@@ -177,11 +177,11 @@ def example_artifacts(self) -> dict:
 ### 3.1 Choosing
 
 - **`environment="local"` (default):** runs in the Flowfile process/worker. Full SDK + polars available; secrets resolve; no Docker. Use for pure-polars/stdlib transforms.
-- **`environment="kernel"`:** runs in an isolated Docker kernel. Use when you need heavy libs (sklearn, xgboost, lightgbm, statsmodels) or isolation. Declare `dependencies` (plain PyPI specs) — auto-installed **only** for kernel nodes. A kernel node **must be bound to a kernel** before it runs; the user picks the kernel (and image flavour) in the UI. Unbound → `KernelRequiredError` (raised in `flow_graph.py`).
+- **`environment="kernel"`:** runs in an isolated Docker kernel. Use when you need heavy libs (sklearn, xgboost, lightgbm, statsmodels) or isolation. Declare `dependencies` (plain PyPI specs) — auto-installed **only** for kernel nodes. A kernel node **must be bound to a kernel** before it runs; the user picks the kernel (and image flavour) in the UI. Unbound → `KernelRequiredError` (raised in `flow_graph/builders/custom_nodes.py`).
 
 ### 3.2 What is different inside a kernel (the real path)
 
-A kernel node's source **never runs directly**. Core AST-generates a self-contained script (`user_defined/kernel_codegen.py::generate_kernel_script`, invoked from `flow_graph.py`). Consequences you must design around:
+A kernel node's source **never runs directly**. Core AST-generates a self-contained script (`user_defined/kernel_codegen.py::generate_kernel_script`, invoked from `flow_graph/builders/custom_nodes.py`). Consequences you must design around:
 
 - **SDK imports are stripped**; only the node's own third-party imports + `polars`/`json`/`logging`/`sys` survive. **Do not reference SDK types inside `process`.**
 - **Only `process` + nested/helper defs are kept**; **all class-level attribute assignments are dropped.** Put every bit of logic inside `process` — nothing computed at class-body scope exists at kernel runtime.

@@ -45,7 +45,9 @@ from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_ma
 from flowfile_core.flowfile.flow_data_engine.hierarchy import explode_hierarchy_frame
 from flowfile_core.flowfile.flow_data_engine.join import (
     get_col_name_to_delete,
+    get_duplicate_output_problems,
     get_join_map_problems,
+    get_shared_output_name_problems,
     get_undo_rename_mapping_join,
     rename_df_table_for_join,
     verify_join_select_integrity,
@@ -73,7 +75,12 @@ from shared.cloud_storage import (
 from shared.cloud_storage.utils import normalize_delta_path
 from shared.cloud_storage.writers import write_to_cloud
 from shared.db_writer import write_dataframe_to_database
-from shared.path_utils import DirectoryScanUnsupportedError, assert_directory_scan_supported, is_url
+from shared.path_utils import (
+    DirectoryScanUnsupportedError,
+    assert_directory_scan_supported,
+    is_url,
+    refuse_cloud_path,
+)
 
 T = TypeVar("T", pl.DataFrame, pl.LazyFrame)
 
@@ -1256,6 +1263,7 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance with data from the file.
         """
+        refuse_cloud_path(received_table.path, received_table.file_type)
         received_table.set_absolute_filepath()
         if received_table.scan_mode == "directory":
             assert_directory_scan_supported(
@@ -2042,6 +2050,9 @@ class FlowDataEngine:
             if (v.keep or v.join_key) and v.is_available
         ]
         cross_join_input_manager.auto_rename(rename_mode="suffix")
+        duplicate_problems = get_duplicate_output_problems(cross_join_input_manager)
+        if duplicate_problems:
+            raise ValueError("Cross join is not valid: " + "; ".join(duplicate_problems))
         left = self.data_frame.select(left_select).rename(cross_join_input_manager.left_select.rename_table)
         right = other.data_frame.select(right_select).rename(cross_join_input_manager.right_select.rename_table)
 
@@ -2095,6 +2106,9 @@ class FlowDataEngine:
 
         if auto_generate_selection:
             join_manager.auto_rename()
+        duplicate_problems = get_duplicate_output_problems(join_manager)
+        if duplicate_problems:
+            raise ValueError("Join is not valid: " + "; ".join(duplicate_problems))
 
         left = left_lf.select(join_manager.left_manager.get_select_cols()).rename(
             join_manager.left_manager.get_rename_table()
@@ -3128,19 +3142,27 @@ class FlowDataEngine:
             A new `FlowDataEngine` with the transformed selection.
         """
         new_schema = deepcopy(self.schema)
+        frame_cols = set(self.data_frame.collect_schema().names())
         renames = [r for r in select_inputs.renames if r.is_available]
         if not keep_missing:
-            drop_cols = set(self.data_frame.collect_schema().names()) - set(r.old_name for r in renames).union(
+            drop_cols = frame_cols - set(r.old_name for r in renames).union(
                 set(r.old_name for r in renames if not r.keep)
             )
             keep_cols = []
         else:
-            keep_cols = list(set(self.data_frame.collect_schema().names()) - set(r.old_name for r in renames))
+            keep_cols = list(frame_cols - set(r.old_name for r in renames))
             drop_cols = set(r.old_name for r in renames if not r.keep)
 
         if len(drop_cols) > 0:
             new_schema = [s for s in new_schema if s.name not in drop_cols]
         new_schema_mapping = {v.name: v for v in new_schema}
+
+        # Only columns the frame holds reach the rename; a stale entry is skipped below, so it cannot collide.
+        output_sources = {r.old_name: r.new_name for r in renames if r.keep and r.old_name in frame_cols}
+        output_sources.update({c: c for c in keep_cols})
+        shared_names = get_shared_output_name_problems(output_sources)
+        if shared_names:
+            raise ValueError("Select is not valid: " + "; ".join(shared_names))
 
         available_renames = []
         for rename in renames:
@@ -3209,6 +3231,7 @@ class FlowDataEngine:
     @classmethod
     def create_from_path_worker(cls, received_table: input_schema.ReceivedTable, flow_id: int, node_id: int | str):
         """Creates a FlowDataEngine from a path in a worker process."""
+        refuse_cloud_path(received_table.path, received_table.file_type)
         received_table.set_absolute_filepath()
         if received_table.scan_mode == "directory":
             raise DirectoryScanUnsupportedError("Directory scan mode cannot be executed by the worker file reader.")

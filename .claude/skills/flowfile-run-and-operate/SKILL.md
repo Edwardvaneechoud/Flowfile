@@ -391,7 +391,7 @@ Volatile facts above need periodic re-verification — commands are copy-pasteab
 - **Core startup/shutdown side effects** (§4): `grep -n "cleanup_directories\|clear_all_flow_logs\|shutdown_handler" flowfile_core/flowfile_core/main.py`
 - **`docker-remote/` non-existence** (§4): `ls docker-remote 2>&1; git log --all --oneline -- docker-remote` (both should be empty) — re-read `docs/users/deployment/docker.md` for the current published-images story
 - **Compose facts** (§4): `grep -n "shm_size\|FLOWFILE_SCHEDULER_ENABLED\|FLOWFILE_ENABLE_PROJECTS" docker-compose.yml`
-- **Flow save/load format** (§5): `grep -n "def save_flow" -A 40 flowfile_core/flowfile_core/flowfile/flow_graph.py`; `sed -n '1,50p' flowfile_core/flowfile_core/flowfile/manage/io_flowfile.py` (look for `_validate_flow_path`, `open_flow`)
+- **Flow save/load format** (§5): `grep -n "def save_flow" -A 40 flowfile_core/flowfile_core/flowfile/flow_graph/persistence.py`; `sed -n '1,50p' flowfile_core/flowfile_core/flowfile/manage/io_flowfile.py` (look for `_validate_flow_path`, `open_flow`)
 - **Storage directory table** (§6): `sed -n '1,280p' shared/storage_config.py` (every `@property` under `FlowfileStorage`)
 - **DB URL resolution order + table count** (§6): `sed -n '395,420p' shared/storage_config.py`; `grep -c '__tablename__' flowfile_core/flowfile_core/database/models.py`
 - **Catalog Delta layout** (§7): `grep -n "catalog_tables_directory\|file_path\|storage_format" flowfile_core/flowfile_core/database/models.py`
