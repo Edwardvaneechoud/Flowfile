@@ -1,6 +1,6 @@
 import glob
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 
@@ -48,6 +48,8 @@ def test_is_url_handles_non_string():
         "file:///tmp/x.csv",
         "hf://datasets/org/x.parquet",
         Path("s3://bucket/sales.parquet"),
+        PureWindowsPath("s3://bucket/sales.parquet"),
+        PurePosixPath("s3://bucket/sales.parquet"),
     ],
 )
 def test_is_cloud_path_detects_non_http_uris(path):
@@ -56,7 +58,16 @@ def test_is_cloud_path_detects_non_http_uris(path):
 
 @pytest.mark.parametrize(
     "path",
-    ["/data/s3/x.csv", "s3/x.csv", "https://example.com/x.csv", "HTTPS://example.com/x.csv", "C://data/x.csv", None],
+    [
+        "/data/s3/x.csv",
+        "s3/x.csv",
+        "https://example.com/x.csv",
+        "HTTPS://example.com/x.csv",
+        "C://data/x.csv",
+        PureWindowsPath("C:/data/x.csv"),
+        PureWindowsPath("data/s3/x.csv"),
+        None,
+    ],
 )
 def test_is_cloud_path_rejects_local_paths_and_urls(path):
     assert not is_cloud_path(path)

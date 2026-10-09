@@ -71,7 +71,8 @@ def is_cloud_path(path: str | os.PathLike | None) -> bool:
     and a ``pathlib`` path whose ``//`` was already collapsed (``Path("s3://b/k")`` is ``s3:/b/k``).
     """
     if isinstance(path, os.PathLike):
-        return bool(_COLLAPSED_URI_RE.match(os.fspath(path)) or _URI_SCHEME_RE.match(os.fspath(path)))
+        text = os.fspath(path).replace("\\", "/")  # a WindowsPath renders s3:/b/k as s3:\\b\\k
+        return bool(_COLLAPSED_URI_RE.match(text) or _URI_SCHEME_RE.match(text))
     return isinstance(path, str) and bool(_URI_SCHEME_RE.match(path)) and not is_url(path.lower())
 
 
