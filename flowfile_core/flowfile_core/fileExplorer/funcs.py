@@ -432,22 +432,25 @@ def _contains(base_real: str, candidate_real: str) -> bool:
         return False
 
 
-def _has_ancestor_same_as(base_real: str, candidate_real: str) -> bool:
-    """Whether an existing ancestor of ``candidate_real`` is the directory ``base_real`` itself.
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+_ASCII_SWAP = str.maketrans(string.ascii_letters, string.ascii_uppercase + string.ascii_lowercase)
 
-    Settles what a case-sensitive string comparison cannot on a case-insensitive filesystem
-    (macOS, Windows), where ``/users/alice`` and ``/Users/Alice`` are one directory.
+
+def _contained_ignoring_ascii_case(base_real: str, candidate_real: str) -> bool:
+    """Whether ``candidate_real`` is under ``base_real`` up to ASCII letter case, on a case-insensitive filesystem.
+
+    Settles what a case-sensitive comparison cannot on macOS or Windows, where ``/users/alice`` and
+    ``/Users/Alice`` are one directory. The candidate is only compared as a string; the filesystem
+    probe touches the server-side ``base_real`` alone. Non-ASCII characters must match exactly,
+    because filesystems fold those differently from Python.
     """
-    if not os.path.isdir(base_real):
+    if not _contains(base_real.translate(_ASCII_LOWER), candidate_real.translate(_ASCII_LOWER)):
         return False
-    probe = candidate_real
-    while True:
-        if os.path.exists(probe) and os.path.samefile(probe, base_real):
-            return True
-        parent = os.path.dirname(probe)
-        if parent == probe:
-            return False
-        probe = parent
+    variant = base_real.translate(_ASCII_SWAP)
+    try:
+        return variant != base_real and os.path.samefile(variant, base_real)
+    except OSError:
+        return False
 
 
 def local_files_sandbox_root() -> Path | None:
@@ -498,7 +501,7 @@ def _require_within(base_real: str, sandbox_root: Path, path: str) -> None:
     if is_cloud_uri(path):
         raise PermissionError(f"'{path}' is an object-storage URI; use the cloud storage reader or writer node for it")
     candidate_real = os.path.realpath(os.path.expanduser(path))
-    if not (_contains(base_real, candidate_real) or _has_ancestor_same_as(base_real, candidate_real)):
+    if not (_contains(base_real, candidate_real) or _contained_ignoring_ascii_case(base_real, candidate_real)):
         raise PermissionError(
             f"Access denied: '{path}' is outside the allowed directory; local files must be under '{sandbox_root}'"
         )

@@ -240,6 +240,22 @@ def test_a_path_typed_in_another_case_is_inside_on_a_case_insensitive_filesystem
     require_local_paths_allowed(str(user_data / "data.csv").swapcase())
 
 
+def test_the_case_fallback_never_probes_the_user_path(user_data, outside, monkeypatch):
+    probed = []
+    real_samefile = os.path.samefile
+
+    def recording(a, b):
+        probed.extend([str(a), str(b)])
+        return real_samefile(a, b)
+
+    monkeypatch.setattr(os.path, "samefile", recording)
+    with pytest.raises(PermissionError, match=DENIED):
+        require_local_paths_allowed(str(outside / "secret.csv"))
+    require_local_paths_allowed(str(user_data / "data.csv").swapcase())
+    assert not [path for path in probed if path.lower().startswith(str(outside).lower())]
+    assert not [path for path in probed if "data.csv" in path.lower()]
+
+
 def test_the_excel_sheet_route_refuses_an_outside_file(users, client_for, outside, user_data):
     client = client_for("alice")
     refused = client.get("/api/get_xlsx_sheet_names", params={"path": str(outside / "secret.xlsx")})
