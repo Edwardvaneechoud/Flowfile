@@ -499,15 +499,34 @@ when it has one:
    that passes the pre-scan can make one. Widening the dialect to catalog
    readers means adding the grant check or the admin gate first.
 2. **The clean run** — `bridge.get_clean_runner().clean_run(user_id,
-   flow_id, CleanRunRequest(cells=[("build", code)], ceiling=
-   flow.node_id_ceiling, snapshot={}))`: the installed `NotebookRunner`
-   interprets the cell through `notebook/allowlist.py` and builds nodes in
-   frame build mode. No snapshot is seeded (the script never references canvas
-   nodes) and ids are renumbered by `_plan_insertions` anyway.
-3. **`spec_from_flowfile_data`** — the save-format payload becomes the
-   `{nodes, edges}` spec `oneshot._build_simple_diff` consumes (settings minus
-   identity/wiring keys, `input_ids` then `right_input_id` as edges, a
-   cwd-absolute path for a missing file turned back into what the user typed).
+   flow_id, CleanRunRequest(cells=[*canvas cells, ("build", code)],
+   provenance, ceiling=flow.node_id_ceiling, snapshot))`: the installed
+   `NotebookRunner` interprets the cells through `notebook/allowlist.py` and
+   builds nodes in frame build mode. **Canvas context** (`canvas_context`):
+   with nodes on the canvas, `notebook.render(flow)` gives the rendered cells
+   and their provenance (what a push sends), the prompt's user turn becomes
+   `## Current flow` (the same code with a `# columns:` hint per cell from
+   `push.node_schemas`, capped at `CONTEXT_CHAR_BUDGET`, newest steps kept)
+   plus `## Request`, and the model writes only the new lines continuing from
+   a variable. The rendered cells relabel onto their canvas ids, so
+   `node_ids_by_cell["build"]` are exactly the new nodes. An empty canvas
+   or an exporter failure means no context and the from-scratch build.
+   `strip_echoed` first drops every script line that restates a line of the
+   block (a 4B likes to repeat the context before adding to it; run as written
+   each repeated step would be a duplicate node), and a script that then adds
+   no node is refused into the repair round. Known limit: Simple build stages
+   additions only, so "add a column with these values" to an inline table has
+   no honest answer in the dialect and fails with its line.
+3. **`spec_from_flowfile_data(payload, new_ids)`** — the save-format payload
+   becomes the `{nodes, edges}` spec `oneshot._build_simple_diff` consumes
+   (settings minus identity/wiring keys, `input_ids` then `right_input_id` as
+   edges, a cwd-absolute path for a missing file turned back into what the user
+   typed). With `new_ids` only those become spec nodes; an input outside them is
+   a live node, carried as `canvas_upstream_ids` / `canvas_right_input_id`,
+   which `_plan_insertions` keeps verbatim (first in `upstream_ids`), anchors
+   the layout on (one column right of the live node; new roots go below the
+   lowest live node) and `_build_simple_diff` keeps through its writer filter;
+   `validate_diff_against_flow` then treats a vanished live upstream as drift.
    Any node in `REFUSED_NODE_TYPES` (writers, `polars_code`, `sql_query`,
    connection sources, custom nodes) refuses the whole script — a frame method
    such as `filter(col.str.contains(...))` or `str.to_date` still lowers to

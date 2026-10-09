@@ -57,6 +57,8 @@ totals = paid.group_by(["city"]).agg(ff.col("amount").sum().alias("total"))
 
 Models have seen far more code of this shape than Flowfile's node settings, so the result comes back faster and more often correct, especially from a small model. Flowfile **never runs that code**: it reads it the way the notebook sync does and places one node per step. Anything outside the dialect is refused before it is read at all: writers (`write_*`, `sink_*`), `collect()`, code nodes (`polars_code`, `sql`, Python scripts), database, cloud, catalog and Kafka sources, and plain Python (`def`, loops, other imports). A refused line goes back to the model once for a rewrite; if that fails too, the chat shows the message, the script and the offending line. The script behind a successful build sits collapsed under **Generated code** in the bubble.
 
+Once nodes are on the canvas, Simple build continues from them: the model sees the current flow as the same code (one line per step, with the columns each step produces) and writes only the new steps, which are inserted wired to the nodes they build on. So *"keep only hans"* after a table lands as a Filter under that table, and *"join customers.xlsx on customer_id"* adds the read and the join to the existing chain. A build you did not add to the canvas is not part of that context; the next message starts from what is on the canvas.
+
 Attach the destination (a writer node) after inserting; Simple build never creates one. **Settings → AI → Assistant → Simple build** switches the model back to writing node settings as JSON, the behaviour of earlier releases.
 
 ### Auto routing (chat ↔ agent)

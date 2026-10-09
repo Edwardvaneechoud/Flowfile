@@ -205,13 +205,23 @@ class _PlannedNode:
     pos_y: float
 
 
-def _plan_insertions(spec: dict[str, Any], start_id: int) -> list[_PlannedNode]:
+def _plan_insertions(
+    spec: dict[str, Any], start_id: int, canvas_positions: dict[int, tuple[float, float]] | None = None
+) -> list[_PlannedNode]:
     """Topologically order the spec's nodes, allocate int ids, resolve wiring.
 
     ``start_id`` is the first free node id in the target flow; ids are assigned
     sequentially in topological order. Edges become ``upstream_ids``; for
     two-input node types (join / fuzzy_match / cross_join) the second upstream
     becomes ``right_input_id``.
+
+    A spec node may also name **live canvas nodes** as inputs
+    (``canvas_upstream_ids`` for the main input, ``canvas_right_input_id`` for
+    a join's right side) — the code mode's way of continuing the flow on the
+    canvas. Those ids are kept as they are, come first in ``upstream_ids``, and
+    anchor the layout: a node sits one column right of its upstreams
+    (``canvas_positions`` gives a live node's place), on the first upstream's
+    row, siblings one row apart.
     """
     nodes: dict[str, dict[str, Any]] = {}
     order_seen: list[str] = []
@@ -223,7 +233,14 @@ def _plan_insertions(spec: dict[str, Any], start_id: int) -> list[_PlannedNode]:
         if not sid or not ntype or sid in nodes:
             continue
         settings = raw.get("settings")
-        nodes[sid] = {"type": ntype, "settings": settings if isinstance(settings, dict) else {}}
+        canvas_ups = [u for u in (raw.get("canvas_upstream_ids") or []) if isinstance(u, int)]
+        canvas_right = raw.get("canvas_right_input_id")
+        nodes[sid] = {
+            "type": ntype,
+            "settings": settings if isinstance(settings, dict) else {},
+            "canvas_upstream_ids": canvas_ups,
+            "canvas_right_input_id": canvas_right if isinstance(canvas_right, int) else None,
+        }
         order_seen.append(sid)
 
     incoming: dict[str, list[str]] = {sid: [] for sid in order_seen}
@@ -240,18 +257,32 @@ def _plan_insertions(spec: dict[str, Any], start_id: int) -> list[_PlannedNode]:
     topo = _toposort(order_seen, incoming, outgoing)
     id_map = {sid: start_id + i for i, sid in enumerate(topo)}
 
-    depth: dict[str, int] = {}
-    lane_at_depth: dict[int, int] = {}
+    positions = canvas_positions or {}
+    # Roots of a continued flow start below the lowest live node, never on top of one.
+    root_y0 = (max(y for _, y in positions.values()) + _LAYOUT_Y) if positions else _LAYOUT_Y0
+    placed: dict[str, tuple[float, float]] = {}
+    lane_at: dict[tuple[float, float], int] = {}
     planned: list[_PlannedNode] = []
     for sid in topo:
         ups = incoming[sid]
-        d = 0 if not ups else max((depth.get(u, 0) for u in ups), default=0) + 1
-        depth[sid] = d
-        lane = lane_at_depth.get(d, 0)
-        lane_at_depth[d] = lane + 1
-        up_ids = [id_map[u] for u in ups]
-        right_id: int | None = None
-        if nodes[sid]["type"] in _TWO_INPUT_TYPES and len(up_ids) >= 2:
+        canvas_ups = nodes[sid]["canvas_upstream_ids"]
+        canvas_right = nodes[sid]["canvas_right_input_id"]
+        canvas_inputs = [*canvas_ups, *([canvas_right] if canvas_right is not None else [])]
+        anchors = [placed[u] for u in ups] + [
+            positions.get(u, (_LAYOUT_X0 - _LAYOUT_X, _LAYOUT_Y0)) for u in canvas_inputs
+        ]
+        if anchors:
+            x = max(ax for ax, _ in anchors) + _LAYOUT_X
+            base_y = anchors[0][1]
+        else:
+            x, base_y = _LAYOUT_X0, root_y0
+        lane = lane_at.get((x, base_y), 0)
+        lane_at[(x, base_y)] = lane + 1
+        y = base_y + lane * _LAYOUT_Y
+        placed[sid] = (x, y)
+        up_ids = [*canvas_ups, *(id_map[u] for u in ups)]
+        right_id: int | None = canvas_right
+        if right_id is None and nodes[sid]["type"] in _TWO_INPUT_TYPES and len(up_ids) >= 2:
             right_id = up_ids[1]
             up_ids = [up_ids[0]]
         planned.append(
@@ -262,8 +293,8 @@ def _plan_insertions(spec: dict[str, Any], start_id: int) -> list[_PlannedNode]:
                 settings=nodes[sid]["settings"],
                 upstream_ids=up_ids,
                 right_input_id=right_id,
-                pos_x=_LAYOUT_X0 + d * _LAYOUT_X,
-                pos_y=_LAYOUT_Y0 + lane * _LAYOUT_Y,
+                pos_x=x,
+                pos_y=y,
             )
         )
     return planned
@@ -283,6 +314,21 @@ def _toposort(order_seen: list[str], incoming: dict[str, list[str]], outgoing: d
     if len(out) != len(order_seen):  # cycle / unreachable — append the rest in seen order
         seen = set(out)
         out.extend(sid for sid in order_seen if sid not in seen)
+    return out
+
+
+def _canvas_positions(flow: Any) -> dict[int, tuple[float, float]]:
+    """``{node_id: (pos_x, pos_y)}`` of the live nodes, for additions that continue from them."""
+    out: dict[int, tuple[float, float]] = {}
+    for node in getattr(flow, "nodes", None) or []:
+        settings = getattr(node, "setting_input", None)
+        try:
+            out[int(node.node_id)] = (
+                float(getattr(settings, "pos_x", 0.0) or 0.0),
+                float(getattr(settings, "pos_y", 0.0) or 0.0),
+            )
+        except (TypeError, ValueError, AttributeError):
+            continue
     return out
 
 
@@ -416,17 +462,22 @@ def _build_simple_diff(
     fails *then*, not now. Unknown node types and writer/sink types are dropped
     with a warning (a generated flow must never auto-create an external write).
     """
-    planned = _plan_insertions(spec, _next_node_id(flow))
+    planned = _plan_insertions(spec, _next_node_id(flow), canvas_positions=_canvas_positions(flow))
     if not planned:
         raise OneShotError("model output contained no usable nodes")
 
     # Only keep ids that survive filtering, so an addition never references a
-    # dropped (writer/unknown) upstream.
+    # dropped (writer/unknown) upstream. Live canvas ids a spec node names as
+    # its inputs are not the planner's and are always kept.
+    planner_ids = {p.node_id for p in planned}
     kept_ids = {
         p.node_id
         for p in planned
         if p.node_type not in safety.AGENT_BLOCKED_NODE_TYPES
         and get_settings_class_for_node_type(p.node_type) is not None
+    }
+    kept_ids |= {
+        u for p in planned for u in (*p.upstream_ids, p.right_input_id) if u is not None and u not in planner_ids
     }
 
     additions: list[diff_module.StagedAddition] = []

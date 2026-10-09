@@ -404,3 +404,119 @@ def test_route_code_mode_is_open_to_a_non_admin_in_docker_mode(registered_flow, 
     response = _post(client_for(user), registered_flow.flow_id, mode="code")
     assert response.status_code == 200, response.text
     assert response.json()["op_count"] == 4
+
+
+# Continuing the flow on the canvas                                           #
+
+TABLE = (
+    f"{IMPORT}\n"
+    'names = ff.from_raw_data({"columns": [{"name": "name", "data_type": "String"}], '
+    '"data": [["edward", "courtney", "hans"]]})\n'
+)
+
+
+def _flow_with_table() -> FlowGraph:
+    flow = _empty_flow()
+    first = _generate(StubProvider(fenced(TABLE)), flow)
+    diff.apply_diff(flow, diff.get_diff(first["diff_id"]))
+    assert [n.node_type for n in flow.nodes] == ["manual_input"]
+    return flow
+
+
+def test_canvas_context_is_empty_for_an_empty_canvas():
+    context = code_build.canvas_context(_empty_flow())
+    assert context.block == "" and context.cells == [] and context.provenance == {}
+    assert code_build.user_message("hi", context) == "hi"
+
+
+def test_canvas_context_renders_the_flow_with_column_hints():
+    flow = _flow_with_table()
+    context = code_build.canvas_context(flow)
+    assert context.block.startswith(IMPORT)
+    assert "source_1 = ff.from_raw_data(" in context.block
+    assert context.block.rstrip().endswith("# columns: name")
+    assert context.provenance == {"cell-1": [("manual_input", 1)]}
+    assert [cell_id for cell_id, _ in context.cells] == ["imports", "cell-1"]
+    message = code_build.user_message("keep only hans", context)
+    assert message.startswith("## Current flow\n```python\n" + IMPORT)
+    assert message.endswith("```\n## Request\nkeep only hans")
+
+
+def test_canvas_context_keeps_the_newest_steps_under_the_budget(monkeypatch):
+    flow = _flow_with_table()
+    monkeypatch.setattr(code_build, "CONTEXT_CHAR_BUDGET", 10)
+    context = code_build.canvas_context(flow)
+    assert context.block.splitlines()[:2] == [IMPORT, "# ... earlier steps omitted ..."]
+    assert len(context.cells) == 2  # the clean run still gets every cell
+
+
+def test_generate_code_flow_continues_from_a_live_node():
+    flow = _flow_with_table()
+    provider = StubProvider(fenced('only_hans = source_1.filter(ff.col("name") == "hans")'))
+    result = _generate(provider, flow, "keep only hans")
+    assert provider.calls[0][1].content.startswith("## Current flow")
+    assert [c["type"] for c in result["created"]] == ["filter"]
+    graph_diff = diff.get_diff(result["diff_id"])
+    (addition,) = graph_diff.additions
+    assert addition.insertion_context.upstream_node_ids == [1]
+    assert addition.insertion_context.pos_x > flow.get_node(1).setting_input.pos_x
+    diff.apply_diff(flow, graph_diff)
+    assert [(n.node_id, n.node_type) for n in flow.nodes] == [(1, "manual_input"), (2, "filter")]
+    assert [i.node_id for i in flow.get_node(2).node_inputs.main_inputs] == [1]
+
+
+def test_generate_code_flow_joins_a_new_read_onto_a_live_node():
+    flow = _flow_with_table()
+    code = 'ages = ff.read_csv("ages.csv")\nwith_ages = source_1.join(ages, left_on="name", right_on="name", how="left")'
+    result = _generate(StubProvider(fenced(code)), flow, "join ages.csv on name")
+    graph_diff = diff.get_diff(result["diff_id"])
+    read, join = graph_diff.additions
+    assert (read.node_type, join.node_type) == ("read", "join")
+    assert join.insertion_context.upstream_node_ids == [1]
+    assert join.insertion_context.right_input_node_id == read.settings["node_id"]
+    # A new root never lands on a live node: it goes below the canvas.
+    live = flow.get_node(1).setting_input
+    assert (read.insertion_context.pos_x, read.insertion_context.pos_y) != (live.pos_x, live.pos_y)
+    assert read.insertion_context.pos_y > live.pos_y
+    diff.apply_diff(flow, graph_diff)
+    assert flow.get_node(join.settings["node_id"]).node_inputs.right_input.node_id == read.settings["node_id"]
+
+
+def test_generate_code_flow_refuses_a_script_that_adds_nothing():
+    flow = _flow_with_table()
+    with pytest.raises(code_build.CodeBuildError) as excinfo:
+        _generate(StubProvider(fenced("x = 1"), fenced("y = 2")), flow, "nothing")
+    assert "added no new step" in excinfo.value.message
+
+
+def test_generate_code_flow_without_context_still_builds_from_scratch():
+    """A canvas the exporter cannot render falls back to the plain build."""
+    flow = _flow_with_table()
+    result = _generate(StubProvider(fenced(LINEAR)), flow, "read orders.csv")
+    assert [c["type"] for c in result["created"]] == ["read", "filter", "group_by", "sort"]
+
+
+def test_strip_echoed_drops_the_restated_context_lines_only():
+    flow = _flow_with_table()
+    context = code_build.canvas_context(flow)
+    table_line = context.block.splitlines()[1]
+    assert table_line.endswith("# columns: name")
+    echoed = (
+        f"{IMPORT}\n"
+        f"{code_build._HINT_RE.sub('', table_line)}\n"
+        f"{table_line}\n"
+        'only_hans = source_1.filter(ff.col("name") == "hans")\n'
+    )
+    assert code_build.strip_echoed(echoed, context) == (
+        f'{IMPORT}\nonly_hans = source_1.filter(ff.col("name") == "hans")'
+    )
+    assert code_build.strip_echoed(LINEAR, code_build.CanvasContext()) == LINEAR
+
+
+def test_generate_code_flow_does_not_duplicate_an_echoed_table():
+    flow = _flow_with_table()
+    context = code_build.canvas_context(flow)
+    echoed = context.block + '\nonly_hans = source_1.filter(ff.col("name") == "hans")'
+    result = _generate(StubProvider(fenced(echoed)), flow, "keep only hans")
+    assert [c["type"] for c in result["created"]] == ["filter"]
+    assert "from_raw_data" not in result["code"]

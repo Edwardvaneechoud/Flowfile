@@ -34,6 +34,7 @@ import functools
 import logging
 import os
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,9 @@ logger = logging.getLogger(__name__)
 
 SURFACE = "code_build"
 REPAIR_ROUNDS = 1
+BUILD_CELL = "build"
+CONTEXT_CHAR_BUDGET = 6000
+_COLUMN_HINT_CAP = 12
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "code_build.md"
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _FENCE_RE = re.compile(r"```[ \t]*([A-Za-z0-9_+-]*)[^\n]*\n(.*?)```", re.DOTALL)
@@ -276,9 +280,104 @@ def prescan(code: str) -> None:
                 raise CodeBuildRefusal(f"`.{attr}` {_WRITES_REASON}", line)
 
 
-def interpret_script(code: str, *, user_id: int, flow_id: int, ceiling: int) -> CleanRunResult:
-    """Interpret ``code`` as one notebook cell through the installed runner on a fresh session graph."""
-    request = CleanRunRequest(cells=[("build", code)], ceiling=ceiling, snapshot={})
+@dataclass
+class CanvasContext:
+    """The flow on the canvas as the model and the clean run see it.
+
+    ``cells`` are the notebook's rendered cells and ``provenance`` their canvas nodes, exactly what a push sends,
+    so the clean run rebuilds them onto their canvas ids; ``snapshot`` seeds the session; ``block`` is the prompt
+    text: the same code with a ``# columns:`` hint per step, capped at :data:`CONTEXT_CHAR_BUDGET` characters
+    (the oldest steps go first when it is over). An empty canvas gives an empty context.
+    """
+
+    cells: list[tuple[str, str]] = field(default_factory=list)
+    provenance: dict[str, list[tuple[str, int]]] = field(default_factory=dict)
+    snapshot: dict[str, Any] = field(default_factory=dict)
+    block: str = ""
+
+
+def canvas_context(flow: Any) -> CanvasContext:
+    """Render the live flow for the model; an empty context when there is nothing on the canvas or the exporter
+    cannot express it (logged), so a build then starts from scratch as before."""
+    if not getattr(flow, "nodes", None):
+        return CanvasContext()
+    from flowfile_core.notebook.push import node_schemas, seed_snapshot
+    from flowfile_core.notebook.render import render
+
+    try:
+        rendering = render(flow)
+        snapshot = seed_snapshot(flow)
+    except Exception:
+        logger.warning(
+            "code build: could not render flow %s for the prompt; building without context", flow.flow_id, exc_info=True
+        )
+        return CanvasContext()
+    cells = [(cell.cell_id, cell.code) for cell in rendering.cells]
+    provenance: dict[str, list[tuple[str, int]]] = {}
+    hinted: list[str] = []
+    for cell in rendering.cells:
+        text = cell.code.rstrip()
+        if cell.node_ids:
+            provenance[cell.cell_id] = [(flow.get_node(nid).node_type, nid) for nid in cell.node_ids]
+            try:
+                columns = [c["name"] for c in node_schemas(flow.get_node(cell.node_ids[-1])).get("output-0") or []]
+            except Exception:
+                columns = []
+            if columns:
+                shown = ", ".join(columns[:_COLUMN_HINT_CAP]) + (", …" if len(columns) > _COLUMN_HINT_CAP else "")
+                text = f"{text}  # columns: {shown}"
+        hinted.append(text)
+    block = "\n".join(hinted)
+    if len(block) > CONTEXT_CHAR_BUDGET:
+        kept: list[str] = []
+        size = 0
+        for text in reversed(hinted[1:]):
+            if size + len(text) > CONTEXT_CHAR_BUDGET:
+                break
+            kept.insert(0, text)
+            size += len(text) + 1
+        block = "\n".join([hinted[0], "# ... earlier steps omitted ...", *kept])
+    return CanvasContext(cells=cells, provenance=provenance, snapshot=snapshot, block=block)
+
+
+def user_message(user_request: str, context: CanvasContext) -> str:
+    """The user turn: the request alone on an empty canvas, else the current flow block first."""
+    if not context.block:
+        return user_request
+    return f"## Current flow\n```python\n{context.block}\n```\n## Request\n{user_request}"
+
+
+_HINT_RE = re.compile(r"\s*# columns:.*$")
+
+
+def strip_echoed(code: str, context: CanvasContext) -> str:
+    """The script without the lines it copied from the ``## Current flow`` block.
+
+    A small model tends to restate the context before adding to it; run as written, every restated step would
+    become a second copy of a node already on the canvas. A line is echoed when, trailing ``# columns:`` hint and
+    surrounding whitespace aside, it equals a line of the block; the import is never dropped (it is harmless and
+    the clean run's imports cell binds ``ff`` anyway).
+    """
+    if not context.block:
+        return code
+    seen = {_HINT_RE.sub("", line).strip() for line in context.block.splitlines()}
+    seen.discard(_FLOWFILE_IMPORT)
+    kept = [line for line in code.splitlines() if _HINT_RE.sub("", line).strip() not in seen]
+    return "\n".join(kept)
+
+
+def interpret_script(
+    code: str, *, user_id: int, flow_id: int, ceiling: int, context: CanvasContext | None = None
+) -> CleanRunResult:
+    """Interpret ``code`` as the last notebook cell through the installed runner, after the canvas's own cells
+    when ``context`` has them (so their nodes keep their canvas ids and the script's variables resolve)."""
+    context = context or CanvasContext()
+    request = CleanRunRequest(
+        cells=[*context.cells, (BUILD_CELL, code)],
+        provenance=context.provenance,
+        ceiling=ceiling,
+        snapshot=context.snapshot,
+    )
     return get_clean_runner().clean_run(user_id, flow_id, request)
 
 
@@ -296,16 +395,20 @@ def _relative_paths(settings: Any) -> None:
         _relative_paths(value)
 
 
-def spec_from_flowfile_data(flowfile_data: dict[str, Any]) -> dict[str, Any]:
+def spec_from_flowfile_data(flowfile_data: dict[str, Any], new_ids: set[int] | None = None) -> dict[str, Any]:
     """The clean run's save-format payload as the ``{nodes, edges}`` spec ``_build_simple_diff`` consumes.
 
     Each node keeps its ``setting_input`` minus the identity and wiring keys the diff assigns again (the ids are
     renumbered onto the target flow); edges come from ``input_ids`` and, for a join, ``right_input_id`` second.
+    With ``new_ids`` (the nodes the script's own cell built) only those become spec nodes, and an input that is
+    not one of them is a live canvas node, carried as ``canvas_upstream_ids`` / ``canvas_right_input_id``.
     Raises :class:`CodeBuildRefusal` for any node in :data:`REFUSED_NODE_TYPES` or an installed custom node.
     """
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, str]] = []
     for node in flowfile_data.get("nodes") or []:
+        if new_ids is not None and node.get("id") not in new_ids:
+            continue
         node_type = str(node.get("type") or "")
         settings = node.get("setting_input") if isinstance(node.get("setting_input"), dict) else {}
         label = node.get("description") or node_type
@@ -318,23 +421,41 @@ def spec_from_flowfile_data(flowfile_data: dict[str, Any]) -> dict[str, Any]:
         kept = {key: value for key, value in settings.items() if key not in _IDENTITY_KEYS}
         _relative_paths(kept)
         node_id = str(node["id"])
-        nodes.append({"id": node_id, "type": node_type, "settings": kept})
-        edges.extend({"source": str(upstream), "target": node_id} for upstream in node.get("input_ids") or [])
-        if node.get("right_input_id") is not None:
-            edges.append({"source": str(node["right_input_id"]), "target": node_id})
+        entry: dict[str, Any] = {"id": node_id, "type": node_type, "settings": kept}
+        is_new = lambda i: new_ids is None or i in new_ids  # noqa: E731
+        for upstream in node.get("input_ids") or []:
+            if is_new(upstream):
+                edges.append({"source": str(upstream), "target": node_id})
+            else:
+                entry.setdefault("canvas_upstream_ids", []).append(upstream)
+        right = node.get("right_input_id")
+        if right is not None:
+            if is_new(right):
+                edges.append({"source": str(right), "target": node_id})
+            else:
+                entry["canvas_right_input_id"] = right
+        nodes.append(entry)
     return {"nodes": nodes, "edges": edges}
 
 
-def _build(code: str, *, flow: Any, flow_id: int, user_id: int) -> dict[str, Any]:
-    """The three gates on one script, then the diff; raises :class:`CodeBuildRefusal` at the first failure."""
+def _build(code: str, *, flow: Any, flow_id: int, user_id: int, context: CanvasContext) -> dict[str, Any]:
+    """The three gates on one script, then the diff; raises :class:`CodeBuildRefusal` at the first failure.
+
+    A failure inside a canvas cell (the rendering changed under us) is reported without a line, since the line
+    would be in a cell the model never saw.
+    """
     from flowfile_core.ai.local_model import oneshot
 
     prescan(code)
     ceiling = int(getattr(flow, "node_id_ceiling", 0) or 0)
-    result = interpret_script(code, user_id=user_id, flow_id=flow_id, ceiling=ceiling)
+    result = interpret_script(code, user_id=user_id, flow_id=flow_id, ceiling=ceiling, context=context)
     if result.error is not None:
-        raise CodeBuildRefusal(result.error.strip().replace(_NEEDS_KERNEL, ""), result.line)
-    spec = spec_from_flowfile_data(result.flowfile_data)
+        line = result.line if result.cell_id in (None, BUILD_CELL) else None
+        raise CodeBuildRefusal(result.error.strip().replace(_NEEDS_KERNEL, ""), line)
+    new_ids = set(result.node_ids_by_cell.get(BUILD_CELL) or []) if context.cells else None
+    if new_ids is not None and not new_ids:
+        raise CodeBuildRefusal("the script added no new step; write the new lines that continue from the current flow")
+    spec = spec_from_flowfile_data(result.flowfile_data, new_ids)
     try:
         built = oneshot._build_simple_diff(
             flow=flow, flow_id=flow_id, spec=spec, rationale="Generated flow (code mode)"
@@ -369,10 +490,17 @@ async def generate_code_flow(
     Returns the ``_build_simple_diff`` result plus ``code`` (the accepted script) and ``answer`` (``None``); when the
     model answered instead of building, the answer result ``oneshot.generate_flow`` documents. A script that fails a
     gate gets one repair round; a second failure raises :class:`CodeBuildError`.
+
+    With nodes on the canvas the model sees them as the notebook's rendered code (:func:`canvas_context`) and
+    writes only the new steps; those are staged wired to the live nodes they continue from.
     """
     from flowfile_core.ai.local_model import oneshot
 
-    messages = [Message(role="system", content=system_prompt()), Message(role="user", content=user_request)]
+    context = await asyncio.to_thread(canvas_context, flow)
+    messages = [
+        Message(role="system", content=system_prompt()),
+        Message(role="user", content=user_message(user_request, context)),
+    ]
     code: str | None = None
     for attempt in range(REPAIR_ROUNDS + 1):
         response = await provider.chat(messages, max_tokens=max_tokens or 1024, surface=SURFACE, user_id=user_id)
@@ -392,9 +520,9 @@ async def generate_code_flow(
                     "code": None,
                 }
             raise CodeBuildError("the model returned no script", line=None, code=None)
-        code = ensure_import(code)
+        code = ensure_import(strip_echoed(code, context))
         try:
-            return await asyncio.to_thread(_build, code, flow=flow, flow_id=flow_id, user_id=user_id)
+            return await asyncio.to_thread(_build, code, flow=flow, flow_id=flow_id, user_id=user_id, context=context)
         except CodeBuildRefusal as refusal:
             logger.info("code build attempt %d refused at line %s: %s", attempt + 1, refusal.line, refusal.message)
             if attempt == REPAIR_ROUNDS:
