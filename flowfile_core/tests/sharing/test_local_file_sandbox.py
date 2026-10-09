@@ -234,13 +234,15 @@ def test_a_cloud_uri_points_at_the_cloud_nodes():
         require_local_paths_allowed("s3://bucket/data.parquet")
 
 
-@pytest.mark.skipif(not os.path.exists(os.path.expanduser("~").swapcase()), reason="the filesystem is case-sensitive")
 def test_a_path_typed_in_another_case_is_inside_on_a_case_insensitive_filesystem(user_data):
+    if not os.path.exists(str(user_data).swapcase()):
+        pytest.skip("the filesystem is case-sensitive")
     (user_data / "data.csv").write_text("a\n1\n")
     require_local_paths_allowed(str(user_data / "data.csv").swapcase())
 
 
 def test_the_case_fallback_never_probes_the_user_path(user_data, outside, monkeypatch):
+    case_insensitive = os.path.exists(str(user_data).swapcase())
     probed = []
     real_samefile = os.path.samefile
 
@@ -251,7 +253,13 @@ def test_the_case_fallback_never_probes_the_user_path(user_data, outside, monkey
     monkeypatch.setattr(os.path, "samefile", recording)
     with pytest.raises(PermissionError, match=DENIED):
         require_local_paths_allowed(str(outside / "secret.csv"))
-    require_local_paths_allowed(str(user_data / "data.csv").swapcase())
+    swapped = str(user_data / "data.csv").swapcase()
+    if case_insensitive:
+        require_local_paths_allowed(swapped)
+    else:
+        with pytest.raises(PermissionError, match=DENIED):
+            require_local_paths_allowed(swapped)
+    assert probed, "the server-side root was never probed"
     assert not [path for path in probed if path.lower().startswith(str(outside).lower())]
     assert not [path for path in probed if "data.csv" in path.lower()]
 
