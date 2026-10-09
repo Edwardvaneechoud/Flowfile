@@ -47,7 +47,6 @@ export const useEditorStore = defineStore("editor", {
 
     // Run state
     isRunning: false,
-    // Current flow only; restored from GET /editor/flow after navigation or refresh.
     isCanceled: false,
     showFlowResult: false,
     tableVisible: false,

@@ -392,7 +392,6 @@ const loadFlowSettings = async (): Promise<void> => {
 
   const promise = (async () => {
     const settings = await getFlowSettings(flowId);
-    // An older request must not restore another canvas's run/cancel state.
     if (nodeStore.flow_id !== flowId) return;
     flowSettings.value = settings;
     if (!flowSettings.value) return;
@@ -405,18 +404,22 @@ const loadFlowSettings = async (): Promise<void> => {
     editorStore.showEdgeLabels = flowSettings.value.show_edge_labels;
     editorStore.isCanceled = flowSettings.value.is_running && flowSettings.value.is_canceled;
 
-    if (!runButton.value) return;
+    const button = runButton.value;
+    if (!button) return;
 
     if (flowSettings.value.is_running) {
       editorStore.isRunning = true;
-      runButton.value.startPolling(runButton.value.checkRunStatus);
+      button.startPolling(
+        () => button.checkRunStatus(undefined, "", true, undefined, flowId),
+        "",
+        flowId,
+      );
     } else {
       editorStore.isRunning = false;
-      runButton.value.stopPolling();
+      button.stopPolling();
       void getRunStatus(flowId).then((response) => {
-        if (nodeStore.flow_id === flowId && response.status >= 200 && response.status < 300) {
+        if (nodeStore.flow_id === flowId && response.status === 200)
           nodeStore.insertRunResult(response.data);
-        }
       });
     }
   })();
@@ -567,13 +570,11 @@ watch(
   () => nodeStore.flow_id,
   async (newId, oldId) => {
     if (newId !== oldId && newId > 0) {
-      editorStore.isCanceled = false;
       await loadFlowSettings();
     } else if (newId <= 0) {
       // No flow open — drop the cache so the settings modal can't show
       // (or POST back) a closed flow's settings.
       flowSettings.value = null;
-      editorStore.isCanceled = false;
     }
   },
 );

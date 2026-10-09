@@ -33,7 +33,7 @@ vi.mock("../stores/tutorial-store", () => ({ useTutorialStore: () => ({ notify: 
 
 import { ref } from "vue";
 import { useEditorStore } from "../stores/editor-store";
-import { showCancelling, useFlowExecution } from "./useFlowExecution";
+import { useFlowExecution } from "./useFlowExecution";
 import { useNodeSettings } from "./useNodeSettings";
 
 const openDrawerWithSave = (save: () => Promise<unknown>) => {
@@ -45,13 +45,6 @@ const openDrawerWithSave = (save: () => Promise<unknown>) => {
 };
 
 describe("useFlowExecution.runFlow", () => {
-  it("derives Cancelling from server state while running, but not after completion", () => {
-    expect(showCancelling(true, true, false)).toBe(true);
-    expect(showCancelling(true, false, true)).toBe(true);
-    expect(showCancelling(false, true, false)).toBe(false);
-    expect(showCancelling(true, false, false)).toBe(false);
-  });
-
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.get.mockReset();
@@ -338,7 +331,7 @@ describe("useFlowExecution.runFlow", () => {
     mocks.get.mockResolvedValueOnce({ status: 202, data: { flow_id: 2 } });
     const editor = useEditorStore();
     editor.isRunning = true;
-    const execution = useFlowExecution(() => currentId.value);
+    const execution = useFlowExecution(() => currentId.value, undefined, { persistPolling: true });
 
     execution.startPolling(execution.checkRunStatus);
     const oldRequest = execution.checkRunStatus();
@@ -353,6 +346,7 @@ describe("useFlowExecution.runFlow", () => {
     expect(editor.isRunning).toBe(true);
     expect(execution.isPollingActive()).toBe(true);
     expect(mocks.notify).not.toHaveBeenCalledWith(expect.objectContaining({ title: "Error" }));
+    execution.stopPolling();
   });
 
   it("does not start the old flow if Save As rekeys during the settings request", async () => {

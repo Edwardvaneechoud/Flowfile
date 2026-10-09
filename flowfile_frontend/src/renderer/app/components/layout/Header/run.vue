@@ -1,11 +1,6 @@
 <template>
   <div class="button-group">
-    <el-button
-      size="small"
-      :disabled="nodeStore.isRunning || isCancelling"
-      round
-      @click="runFlow()"
-    >
+    <el-button size="small" :disabled="nodeStore.isRunning" round @click="runFlow()">
       <span v-if="!isCancelling" class="material-icons run-icon">play_arrow</span>
       {{ isCancelling ? "Cancelling…" : "Run" }}
     </el-button>
@@ -19,7 +14,7 @@
 import { computed } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
-import { showCancelling, useFlowExecution } from "../../../composables/useFlowExecution";
+import { useFlowExecution } from "../../../composables/useFlowExecution";
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
@@ -36,7 +31,7 @@ const props = defineProps({
   },
   persistPolling: {
     type: Boolean,
-    default: false,
+    default: true,
   },
 });
 
@@ -46,7 +41,7 @@ const props = defineProps({
 const {
   runFlow,
   cancelFlow,
-  isCancelling: isCancelPending,
+  isCancelling: cancelPending,
   showNotification,
   startPolling,
   stopPolling,
@@ -55,10 +50,8 @@ const {
   persistPolling: props.persistPolling,
   pollingKey: `run_button_${props.flowId}`,
 });
-
-// Server state survives refresh; the local pending state covers the POST round trip.
-const isCancelling = computed(() =>
-  showCancelling(nodeStore.isRunning, editorStore.isCanceled, isCancelPending.value),
+const isCancelling = computed(
+  () => nodeStore.isRunning && (editorStore.isCanceled || cancelPending.value),
 );
 
 defineEmits(["logs-start", "logs-stop"]);
