@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+from flowfile_core.fileExplorer.funcs import require_local_paths_allowed
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     results_exists,
 )
@@ -400,7 +401,13 @@ class NodeExecutor:
             # Idempotent: recomputes the pattern from the ${param}-substituted path.
             received_file.set_absolute_filepath()
 
-        return self._snapshot_source(self._get_source_path())
+        path = self._get_source_path()
+        if path and not is_url(path):
+            try:
+                require_local_paths_allowed(path)
+            except PermissionError:
+                return None  # the run refuses it; never glob or stat outside the boundary
+        return self._snapshot_source(path)
 
     def _snapshot_source(self, path: str | None) -> SourceFileInfo | None:
         """Fingerprint *path* for change detection: an aggregate in directory mode, a single stat otherwise."""

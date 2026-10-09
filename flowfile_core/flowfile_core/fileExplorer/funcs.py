@@ -10,6 +10,9 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from flowfile_core.configs import settings
+from shared.cloud_storage.uri import is_cloud_uri
+from shared.notifications.senders import validate_public_url
+from shared.path_utils import expand_glob_pattern, is_glob_pattern, is_url
 from shared.storage_config import storage
 
 
@@ -416,14 +419,103 @@ def _is_contained(base: str, candidate: str) -> bool:
     rejected here rather than followed later (M-P2), and uses ``commonpath`` rather than a bare prefix
     so a sibling dir sharing a name prefix (``/data/userX`` vs ``/data/user2``) cannot pass (M-P1).
     """
-    base = os.path.realpath(base)
-    candidate = os.path.realpath(candidate)
-    if candidate == base:
+    return _contains(os.path.realpath(base), os.path.realpath(candidate))
+
+
+def _contains(base_real: str, candidate_real: str) -> bool:
+    """:func:`_is_contained` for two paths that are already realpaths."""
+    if candidate_real == base_real:
         return True
     try:
-        return os.path.commonpath([base, candidate]) == base
+        return os.path.commonpath([base_real, candidate_real]) == base_real
     except ValueError:  # different drives / mixed abs+rel
         return False
+
+
+def _has_ancestor_same_as(base_real: str, candidate_real: str) -> bool:
+    """Whether an existing ancestor of ``candidate_real`` is the directory ``base_real`` itself.
+
+    Settles what a case-sensitive string comparison cannot on a case-insensitive filesystem
+    (macOS, Windows), where ``/users/alice`` and ``/Users/Alice`` are one directory.
+    """
+    if not os.path.isdir(base_real):
+        return False
+    probe = candidate_real
+    while True:
+        if os.path.exists(probe) and os.path.samefile(probe, base_real):
+            return True
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            return False
+        probe = parent
+
+
+def local_files_sandbox_root() -> Path | None:
+    """The boundary for local data files: the user-data directory outside electron, ``None`` (anywhere) in it.
+
+    Matches the browse routes: the desktop app reaches the whole machine, docker and package mode
+    only the user-data directory. Read live through ``sharing.sharing_enabled`` (``settings`` caches
+    the mode at import), so it follows the process's ``FLOWFILE_MODE`` like the other multi-user gates.
+    """
+    from flowfile_core.auth import sharing
+
+    return storage.user_data_directory if sharing.sharing_enabled() else None
+
+
+def require_local_paths_allowed(*paths: str | None, expand_glob: bool = False) -> None:
+    """Refuse a path a node would read or write outside :func:`local_files_sandbox_root`.
+
+    No-op in electron. Each path is realpath'd (``..``, symlinks and a working-directory-relative
+    path resolved as the reader opens it) and compared with the sandbox resolved once. A cloud URI
+    is refused with a pointer to the cloud nodes, and an HTTP(S) URL must resolve to a public
+    address (``validate_public_url``; a redirect or DNS rebind after the check is not covered).
+    With ``expand_glob``, a path holding glob metacharacters is checked first and only then
+    expanded, each match checked too, since polars globs a single-file read path.
+
+    Raises:
+        PermissionError: A path, or one of its matches, is outside the allowed directory.
+    """
+    sandbox_root = local_files_sandbox_root()
+    if sandbox_root is None:
+        return
+    base_real = os.path.realpath(sandbox_root)
+    for path in paths:
+        if not path:
+            continue
+        _require_within(base_real, sandbox_root, path)
+        if expand_glob and is_glob_pattern(path):
+            for match in expand_glob_pattern(path):
+                _require_within(base_real, sandbox_root, match)
+
+
+def _require_within(base_real: str, sandbox_root: Path, path: str) -> None:
+    """One path's check for :func:`require_local_paths_allowed`."""
+    if is_url(path):
+        error = validate_public_url(path, noun="Source")
+        if error:
+            raise PermissionError(f"Access denied: {error}")
+        return
+    if is_cloud_uri(path):
+        raise PermissionError(f"'{path}' is an object-storage URI; use the cloud storage reader or writer node for it")
+    candidate_real = os.path.realpath(os.path.expanduser(path))
+    if not (_contains(base_real, candidate_real) or _has_ancestor_same_as(base_real, candidate_real)):
+        raise PermissionError(
+            f"Access denied: '{path}' is outside the allowed directory; local files must be under '{sandbox_root}'"
+        )
+
+
+def validate_data_file_path(user_path: str) -> str:
+    """:func:`validate_path_under_cwd` for a data file a route reads, also held to :func:`local_files_sandbox_root`.
+
+    Raises:
+        HTTPException: 403 when the path is outside either boundary.
+    """
+    validated = validate_path_under_cwd(user_path)
+    try:
+        require_local_paths_allowed(validated)
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from None
+    return validated
 
 
 def _local_filesystem_roots() -> list[str]:

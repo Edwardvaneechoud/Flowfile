@@ -42,7 +42,11 @@ from flowfile_core.configs.node_store.nodes import get_source_node_types, get_so
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.events import publish
-from flowfile_core.fileExplorer.funcs import SecureFileExplorer
+from flowfile_core.fileExplorer.funcs import (
+    SecureFileExplorer,
+    local_files_sandbox_root,
+    require_local_paths_allowed,
+)
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.artifacts import ArtifactContext
 from flowfile_core.flowfile.catalog_cdc import (
@@ -226,7 +230,7 @@ from shared.google_analytics.models import (
 )
 from shared.kafka.consumer import infer_topic_schema, make_kafka_commit_callback, read_kafka_source
 from shared.kafka.models import KafkaReadSettings
-from shared.path_utils import assert_directory_scan_supported, expand_glob_pattern, is_url, is_utf8_encoding
+from shared.path_utils import assert_directory_scan_supported, expand_glob_pattern, is_utf8_encoding
 from shared.storage_config import storage
 
 __version__ = get_version()
@@ -459,7 +463,7 @@ def get_xlsx_schema_callback(
     """
 
     def schema_callback():
-        require_local_path_allowed(file_path)
+        require_local_paths_allowed(file_path)
         return get_xlsx_schema(
             engine=engine,
             file_path=file_path,
@@ -485,7 +489,7 @@ def get_directory_schema_callback(received_file: input_schema.ReceivedTable):
     """
 
     def schema_callback():
-        require_local_path_allowed(received_file.abs_file_path, expand_glob=True)
+        require_local_paths_allowed(received_file.abs_file_path)
         matches = expand_glob_pattern(received_file.abs_file_path)
         if not matches:
             return []
@@ -628,46 +632,6 @@ def list_files_schema() -> list[FlowfileColumn]:
     return [FlowfileColumn.create_from_polars_dtype(name, dtype) for name, dtype in LIST_FILES_SCHEMA]
 
 
-def _local_files_sandbox_root() -> Path | None:
-    """Run-time filesystem boundary for the nodes that touch a local path (``list_files``, ``read``, ``output``).
-
-    Mirrors ``GET /files/directory_contents/`` exactly: the desktop app browses the
-    whole machine, every other mode is confined to the user-data directory. Enforcing
-    it here too matters because a flow can be run by the scheduler or the API, which
-    never pass through the browse route. Read live through ``sharing.sharing_enabled``
-    (``configs.settings`` caches the mode at import), so the boundary follows the
-    process's ``FLOWFILE_MODE`` the way the other multi-user gates do.
-    """
-    return storage.user_data_directory if sharing.sharing_enabled() else None
-
-
-def require_local_path_allowed(path: str | None, *, expand_glob: bool = False) -> None:
-    """Refuse a local ``path`` outside :func:`_local_files_sandbox_root`.
-
-    Electron, an empty path and an HTTP(S) URL pass through. The check is
-    ``SecureFileExplorer``'s realpath comparison, so ``..`` and symlinks are resolved first
-    and a relative path counts from the working directory, as the reader and writer open it.
-    With ``expand_glob`` (readers: polars globs a single-file path too) every file the path
-    matches is checked as well, so a symlink inside the user-data directory cannot pull a file
-    in from outside it.
-
-    Raises:
-        PermissionError: ``path``, or one of its matches, resolves outside the user-data directory.
-    """
-    sandbox_root = _local_files_sandbox_root()
-    if sandbox_root is None or not path or is_url(path):
-        return
-    candidates = [path, *expand_glob_pattern(path)] if expand_glob else [path]
-    for candidate in candidates:
-        try:
-            SecureFileExplorer(candidate, sandbox_root)
-        except PermissionError:
-            raise PermissionError(
-                f"Access denied: '{candidate}' is outside the allowed directory; "
-                f"local files must be under '{sandbox_root}'"
-            ) from None
-
-
 def scan_directory_to_frame(
     settings: input_schema.NodeListFiles, cancel_check: Callable[[], bool] | None = None
 ) -> pl.DataFrame:
@@ -680,7 +644,7 @@ def scan_directory_to_frame(
     if not settings.path:
         raise HTTPException(status_code=400, detail="No folder selected")
 
-    sandbox_root = _local_files_sandbox_root()
+    sandbox_root = local_files_sandbox_root()
     try:
         explorer = SecureFileExplorer(settings.path, sandbox_root)
     except PermissionError:
@@ -5301,7 +5265,8 @@ class FlowGraph:
         """
 
         def _func(df: FlowDataEngine):
-            require_local_path_allowed(output_file.output_settings.abs_file_path)
+            output_file.output_settings.set_absolute_filepath()
+            require_local_paths_allowed(output_file.output_settings.abs_file_path)
             if self.execution_location == "local":
                 df.output(
                     output_fs=output_file.output_settings,
@@ -6656,7 +6621,10 @@ class FlowGraph:
 
         def _func():
             input_file.received_file.set_absolute_filepath()
-            require_local_path_allowed(input_file.received_file.abs_file_path, expand_glob=True)
+            require_local_paths_allowed(
+                input_file.received_file.abs_file_path,
+                expand_glob=input_file.received_file.scan_mode == "single_file",
+            )
             if self.execution_location == "local":
                 input_data = FlowDataEngine.create_from_path(
                     input_file.received_file, node_logger=self.flow_logger.get_node_logger(input_file.node_id)
@@ -6717,14 +6685,14 @@ class FlowGraph:
                 elif input_file.received_file.file_type in ("csv", "json", "parquet", "ipc", "ndjson"):
 
                     def schema_callback():
-                        require_local_path_allowed(input_file.received_file.abs_file_path, expand_glob=True)
+                        require_local_paths_allowed(input_file.received_file.abs_file_path, expand_glob=True)
                         input_data = FlowDataEngine.create_from_path(input_file.received_file)
                         return input_data.schema
 
                 elif input_file.received_file.file_type in ("avro", "ipc_stream"):
 
                     def schema_callback():
-                        require_local_path_allowed(input_file.received_file.abs_file_path, expand_glob=True)
+                        require_local_paths_allowed(input_file.received_file.abs_file_path, expand_glob=True)
                         return pl_schema_to_flowfile_columns(create_funcs.probe_eager_schema(input_file.received_file))
 
                 elif input_file.received_file.file_type in ("xlsx", "excel"):

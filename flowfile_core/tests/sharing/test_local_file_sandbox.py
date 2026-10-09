@@ -4,12 +4,14 @@ The conftest's autouse fixture puts the process in docker mode with ``tmp_path``
 directory; ``outside`` is a sibling folder the nodes must not reach. Electron keeps the whole machine.
 """
 
+import glob
 import os
 
 import polars as pl
 import pytest
 from fastapi import HTTPException
 
+from flowfile_core.fileExplorer.funcs import require_local_paths_allowed
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import (
     FlowGraph,
@@ -19,6 +21,7 @@ from flowfile_core.flowfile.flow_graph import (
 )
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas.schemas import FlowParameter
 
 DENIED = "is outside the allowed directory"
 LOCATIONS = pytest.mark.parametrize("location", ["local", "remote"])
@@ -55,6 +58,11 @@ def _read_graph(path, location: str = "local", **received) -> FlowGraph:
     for field, value in received.items():
         setattr(received_file, field, value)
     graph.add_read(input_schema.NodeRead(flow_id=1, node_id=1, received_file=received_file))
+    return graph
+
+
+def _with_parameter(graph: FlowGraph, name: str, value) -> FlowGraph:
+    graph.flow_settings.parameters = [FlowParameter(name=name, default_value=str(value), type="string")]
     return graph
 
 
@@ -110,6 +118,24 @@ class TestReadNode:
         predicted = graph.get_node(1).get_predicted_schema() or []
         assert "secret_col" not in [column.column_name for column in predicted]
 
+    def test_a_parameter_resolved_at_run_time_is_checked(self, outside):
+        graph = _with_parameter(_read_graph("${src}/secret.parquet"), "src", outside)
+        error = _node_error(graph.run_graph(), 1)
+        assert DENIED in error and str(outside) in error
+
+    def test_a_parameter_resolving_inside_runs(self, user_data):
+        pl.DataFrame({"a": [7]}).write_parquet(user_data / "data.parquet")
+        graph = _with_parameter(_read_graph("${src}/data.parquet"), "src", user_data)
+        run_info = graph.run_graph()
+        assert run_info.success, [r.error for r in run_info.node_step_result]
+
+    def test_a_relative_path_resolves_against_the_working_directory(self):
+        assert DENIED in _node_error(_read_graph("relative_secret.parquet").run_graph(), 1)
+
+    def test_a_url_to_a_private_address_is_refused(self):
+        run_info = _read_graph("http://127.0.0.1:9/data.csv", file_type="csv").run_graph()
+        assert "non-public address" in _node_error(run_info, 1)
+
 
 class TestDirectoryScan:
     def test_a_folder_under_the_user_data_directory_runs(self, user_data):
@@ -140,6 +166,19 @@ class TestDirectoryScan:
         predicted = graph.get_node(1).get_predicted_schema() or []
         assert "secret_col" not in [column.column_name for column in predicted]
 
+    def test_an_outside_pattern_is_refused_before_it_is_globbed(self, outside, monkeypatch):
+        patterns = []
+        real_glob = glob.glob
+
+        def recording(pattern, *args, **kwargs):
+            patterns.append(pattern)
+            return real_glob(pattern, *args, **kwargs)
+
+        monkeypatch.setattr(glob, "glob", recording)
+        run_info = _read_graph(outside, scan_mode="directory").run_graph()
+        assert DENIED in _node_error(run_info, 1)
+        assert not [pattern for pattern in patterns if pattern.startswith(str(outside))]
+
 
 class TestOutputNode:
     def test_a_folder_under_the_user_data_directory_is_written(self, user_data):
@@ -158,6 +197,12 @@ class TestOutputNode:
         with pytest.raises(PermissionError, match=DENIED):
             node.function(FlowDataEngine(pl.LazyFrame({"a": [1]})))
         assert not (outside / "out.csv").exists()
+
+    def test_a_parameter_directory_is_resolved_before_the_check(self, user_data):
+        graph = _with_parameter(_write_graph("${out_dir}"), "out_dir", user_data)
+        run_info = graph.run_graph()
+        assert run_info.success, [r.error for r in run_info.node_step_result]
+        assert (user_data / "out.csv").exists()
 
 
 def test_the_excel_schema_probe_refuses_an_outside_file(outside):
@@ -182,6 +227,33 @@ def test_list_files_follows_the_live_mode(outside, monkeypatch):
     assert refused.value.status_code == 403
     monkeypatch.setenv("FLOWFILE_MODE", "electron")
     assert "secret.csv" in scan_directory_to_frame(settings)["file_name"].to_list()
+
+
+def test_a_cloud_uri_points_at_the_cloud_nodes():
+    with pytest.raises(PermissionError, match="cloud storage reader or writer"):
+        require_local_paths_allowed("s3://bucket/data.parquet")
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.expanduser("~").swapcase()), reason="the filesystem is case-sensitive")
+def test_a_path_typed_in_another_case_is_inside_on_a_case_insensitive_filesystem(user_data):
+    (user_data / "data.csv").write_text("a\n1\n")
+    require_local_paths_allowed(str(user_data / "data.csv").swapcase())
+
+
+def test_the_excel_sheet_route_refuses_an_outside_file(users, client_for, outside, user_data):
+    client = client_for("alice")
+    refused = client.get("/api/get_xlsx_sheet_names", params={"path": str(outside / "secret.xlsx")})
+    assert refused.status_code == 403 and DENIED in refused.json()["detail"]
+    missing = client.get("/api/get_xlsx_sheet_names", params={"path": str(user_data / "missing.xlsx")})
+    assert missing.status_code == 404
+
+
+def test_registering_an_outside_file_as_a_catalog_table_is_refused(users, client_for, outside):
+    response = client_for("alice").post(
+        "/catalog/tables",
+        json={"name": "stolen", "file_path": str(outside / "secret.csv"), "namespace_id": 1},
+    )
+    assert response.status_code == 403 and DENIED in response.json()["detail"]
 
 
 class TestElectronIsUnaffected:
