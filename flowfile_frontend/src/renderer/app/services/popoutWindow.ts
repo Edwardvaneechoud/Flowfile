@@ -1,23 +1,54 @@
 /**
- * The notebook pop-out window: one flow's canvas notebook at `#/notebook?flow=<id>`, opened from the
- * designer's code dock as a second browser window or a native desktop window. Pure helpers only, so
- * the client id (read at module load) and the views can share them without pulling in the stores.
+ * Pop-out windows: one flow's notebook, data preview, logs or AI assistant in its own window
+ * (`#/notebook?flow=<id>`, `#/popout/<kind>?flow=<id>`), opened from the designer as a second
+ * browser window or a native desktop window. Pure helpers only, so the client id (read at module
+ * load) and the views can share them without pulling in the stores.
  */
 
-export const POPOUT_ROUTE_PATH = "/notebook";
+export type PopoutKind = "notebook" | "table" | "logs" | "ai";
 
-/** True for the hash of a pop-out window's URL (`#/notebook?flow=3`). */
+export const POPOUT_KINDS: readonly PopoutKind[] = ["notebook", "table", "logs", "ai"];
+
+export const isPopoutKind = (value: unknown): value is PopoutKind =>
+  typeof value === "string" && (POPOUT_KINDS as readonly string[]).includes(value);
+
+/** Each kind's window route. `clientId.ts` keys its storage on these, so every kind must be here. */
+export const POPOUT_ROUTES: Record<PopoutKind, string> = {
+  notebook: "/notebook",
+  table: "/popout/table",
+  logs: "/popout/logs",
+  ai: "/popout/ai",
+};
+
+export const POPOUT_TITLES: Record<PopoutKind, string> = {
+  notebook: "Notebook",
+  table: "Data",
+  logs: "Logs",
+  ai: "AI Assistant",
+};
+
+/** True for the hash of a pop-out window's URL (`#/notebook?flow=3`, `#/popout/logs?flow=3`). */
 export const isPopoutHash = (hash: string): boolean =>
-  hash === `#${POPOUT_ROUTE_PATH}` || hash.startsWith(`#${POPOUT_ROUTE_PATH}?`);
+  POPOUT_KINDS.some((kind) => {
+    const route = `#${POPOUT_ROUTES[kind]}`;
+    return hash === route || hash.startsWith(`${route}?`);
+  });
 
-/** The `window.open` target name of a flow's pop-out: reopening focuses it instead of adding one. */
-export const notebookWindowName = (flowId: number): string => `flowfile-notebook-${flowId}`;
+/** The `window.open` target name of a flow's window of one kind: reopening focuses it instead of adding one. */
+export const popoutWindowName = (kind: PopoutKind, flowId: number): string =>
+  `flowfile-${kind}-${flowId}`;
 
-/** The pop-out URL for this page's origin and path (web mode; the desktop shell builds its own). */
-export const notebookWindowUrl = (
+/** The window URL for this page's origin and path (web mode; the desktop shell builds its own). */
+export const popoutWindowUrl = (
+  kind: PopoutKind,
   flowId: number,
   location: { origin: string; pathname: string },
-): string => `${location.origin}${location.pathname}#${POPOUT_ROUTE_PATH}?flow=${flowId}`;
+  query: Record<string, string | number> = {},
+): string => {
+  const params = new URLSearchParams({ flow: String(flowId) });
+  for (const [key, value] of Object.entries(query)) params.set(key, String(value));
+  return `${location.origin}${location.pathname}#${POPOUT_ROUTES[kind]}?${params}`;
+};
 
 /** The flow id in the route query, or -1 when it is missing or not a positive integer. */
 export const parseFlowQuery = (value: unknown): number => {
@@ -31,5 +62,5 @@ export const parseFlowQuery = (value: unknown): number => {
 export const flowLabel = (flow: { name: string; display_name?: string | null }): string =>
   flow.display_name || flow.name;
 
-export const windowTitle = (label: string | null | undefined): string =>
-  label ? `Notebook – ${label}` : "Notebook";
+export const windowTitle = (kind: PopoutKind, label: string | null | undefined): string =>
+  label ? `${POPOUT_TITLES[kind]} – ${label}` : POPOUT_TITLES[kind];

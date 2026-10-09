@@ -7,6 +7,7 @@
 import type { Update } from "@tauri-apps/plugin-updater";
 
 import type { ServicesStatus } from "../typings/desktop";
+import { isPopoutKind, POPOUT_TITLES, type PopoutKind } from "../app/services/popoutWindow";
 
 type TauriInternals = unknown;
 
@@ -125,11 +126,23 @@ async function listen<T>(event: string, handler: (payload: T) => void): Promise<
   return rt.event.listen<T>(event, (e) => handler(e.payload));
 }
 
-// Web mode's pop-out notebook windows (`window.open` handles) and who wants to know when one closes.
-const webPopouts = new Map<number, Window>();
-// Web mode's "Return to designer": the pop-out posts this to its opener before closing itself.
-const NOTEBOOK_RETURN_MESSAGE = "flowfile:notebook-return";
-const popoutClosedHandlers = new Set<(flowId: number) => void>();
+/** A flow's pop-out window of one kind, as the shell and the web handle map identify it. */
+export interface PopoutRef {
+  kind: PopoutKind;
+  flowId: number;
+}
+
+// Web mode's pop-out windows (`window.open` handles) by `<kind>:<flowId>`, and who wants to know
+// when one closes.
+const webPopouts = new Map<string, { ref: PopoutRef; handle: Window }>();
+const popoutKey = (kind: PopoutKind, flowId: number): string => `${kind}:${flowId}`;
+// Web mode's messages from a pop-out to its opener: today only "Return to designer".
+const POPOUT_MESSAGE_TYPE = "flowfile:popout";
+interface PopoutWire extends PopoutRef {
+  type: typeof POPOUT_MESSAGE_TYPE;
+  event: "returned";
+}
+const popoutClosedHandlers = new Set<(popout: PopoutRef) => void>();
 let popoutPoll: ReturnType<typeof setInterval> | null = null;
 
 const isBlankWindow = (handle: Window): boolean => {
@@ -143,16 +156,31 @@ const isBlankWindow = (handle: Window): boolean => {
 function watchWebPopouts(): void {
   if (popoutPoll) return;
   popoutPoll = setInterval(() => {
-    for (const [flowId, handle] of webPopouts) {
+    for (const [key, { ref, handle }] of webPopouts) {
       if (!handle.closed) continue;
-      webPopouts.delete(flowId);
-      for (const handler of popoutClosedHandlers) handler(flowId);
+      webPopouts.delete(key);
+      for (const handler of popoutClosedHandlers) handler(ref);
     }
     if (!webPopouts.size && popoutPoll) {
       clearInterval(popoutPoll);
       popoutPoll = null;
     }
   }, 1000);
+}
+
+const readPopoutWire = (event: MessageEvent): PopoutWire | null => {
+  if (event.origin !== window.location.origin) return null;
+  const data = event.data as Partial<PopoutWire> | null;
+  if (data?.type !== POPOUT_MESSAGE_TYPE || data.event !== "returned") return null;
+  if (!isPopoutKind(data.kind) || typeof data.flowId !== "number") return null;
+  return { type: POPOUT_MESSAGE_TYPE, event: "returned", kind: data.kind, flowId: data.flowId };
+};
+
+// The shell's window commands are the notebook's only until it gains kind-aware ones.
+function requireDesktopKind(kind: PopoutKind): void {
+  if (kind !== "notebook") {
+    throw new Error(`${POPOUT_TITLES[kind]} windows are not available on desktop yet`);
+  }
 }
 
 export const desktop = {
@@ -395,57 +423,73 @@ export const desktop = {
   },
 
   /**
-   * Open (or focus) the notebook window of a flow. Desktop: a native `notebook-<id>` window the
-   * shell builds with the same injected ports as the main window (`open_notebook_window`). Web:
-   * `window.open` on the pop-out route with a per-flow target name, so a second click focuses the
-   * window that is already there instead of opening another.
+   * Open (or focus) a flow's pop-out window of one kind. Desktop: a native window the shell builds
+   * with the same injected ports as the main window (`open_notebook_window`; the notebook is the
+   * only kind the shell knows). Web: `window.open` on the kind's route with a per-flow target name,
+   * so a second click focuses the window that is already there instead of opening another.
    */
-  async openNotebookWindow(flowId: number, web: { url: string; name: string }): Promise<void> {
+  async openPopoutWindow(
+    kind: PopoutKind,
+    flowId: number,
+    web: { url: string; name: string },
+  ): Promise<void> {
     if (isDesktop) {
+      requireDesktopKind(kind);
       await invoke<void>("open_notebook_window", { flowId });
       return;
     }
-    const existing = webPopouts.get(flowId);
-    if (existing && !existing.closed) {
-      existing.focus();
+    const key = popoutKey(kind, flowId);
+    const existing = webPopouts.get(key);
+    if (existing && !existing.handle.closed) {
+      existing.handle.focus();
       return;
     }
     // An empty URL hands back the named window as is (one forgotten over a reload), else a blank one.
     const handle = window.open("", web.name, "popup=yes,width=1100,height=800");
-    if (!handle) throw new Error("The browser blocked the notebook window");
+    if (!handle) throw new Error(`The browser blocked the ${POPOUT_TITLES[kind]} window`);
     if (isBlankWindow(handle)) handle.location.assign(web.url);
     else handle.focus();
-    webPopouts.set(flowId, handle);
+    webPopouts.set(key, { ref: { kind, flowId }, handle });
     watchWebPopouts();
   },
 
-  async focusNotebookWindow(flowId: number): Promise<void> {
+  async focusPopoutWindow(kind: PopoutKind, flowId: number): Promise<void> {
     if (isDesktop) {
+      requireDesktopKind(kind);
       await invoke<void>("focus_notebook_window", { flowId });
       return;
     }
-    webPopouts.get(flowId)?.focus();
+    webPopouts.get(popoutKey(kind, flowId))?.handle.focus();
   },
 
-  async closeNotebookWindow(flowId: number): Promise<void> {
+  async closePopoutWindow(kind: PopoutKind, flowId: number): Promise<void> {
     if (isDesktop) {
+      requireDesktopKind(kind);
       await invoke<void>("close_notebook_window", { flowId });
       return;
     }
-    const handle = webPopouts.get(flowId);
-    webPopouts.delete(flowId);
-    if (handle && !handle.closed) handle.close();
+    const key = popoutKey(kind, flowId);
+    const popout = webPopouts.get(key);
+    webPopouts.delete(key);
+    if (popout && !popout.handle.closed) popout.handle.close();
   },
 
-  /** The flows whose notebook window is open right now (desktop: the shell's `notebook-*` windows). */
-  async listNotebookWindows(): Promise<number[]> {
-    if (isDesktop) return invoke<number[]>("list_notebook_windows");
-    return [...webPopouts].filter(([, handle]) => !handle.closed).map(([flowId]) => flowId);
+  /** The pop-out windows open right now (desktop: the shell's `notebook-*` windows). */
+  async listPopoutWindows(): Promise<PopoutRef[]> {
+    if (isDesktop) {
+      const flowIds = await invoke<number[]>("list_notebook_windows");
+      return flowIds.map((flowId) => ({ kind: "notebook", flowId }));
+    }
+    return [...webPopouts.values()].filter(({ handle }) => !handle.closed).map(({ ref }) => ref);
   },
 
-  /** A notebook window went away: the shell's `notebook-window-closed`, or the web handle's `closed`. */
-  onNotebookWindowClosed(handler: (flowId: number) => void): Promise<() => void> {
-    if (isDesktop) return listen<number>("notebook-window-closed", handler);
+  /** A pop-out window went away: the shell's `notebook-window-closed`, or the web handle's `closed`. */
+  onPopoutWindowClosed(handler: (popout: PopoutRef) => void): Promise<() => void> {
+    if (isDesktop) {
+      return listen<number>("notebook-window-closed", (flowId) =>
+        handler({ kind: "notebook", flowId }),
+      );
+    }
     popoutClosedHandlers.add(handler);
     return Promise.resolve(() => {
       popoutClosedHandlers.delete(handler);
@@ -453,31 +497,36 @@ export const desktop = {
   },
 
   /**
-   * A notebook window's "Return to designer": the shell's `notebook-window-returned` on `main`, or
-   * the pop-out's message to its opener. The dock reopens on that flow; the window closes after.
+   * A pop-out window's "Return to designer": the shell's `notebook-window-returned` on `main`, or
+   * the pop-out's message to its opener. The designer reopens the panel on that flow; the window
+   * closes after.
    */
-  onNotebookWindowReturned(handler: (flowId: number) => void): Promise<() => void> {
-    if (isDesktop) return listen<number>("notebook-window-returned", handler);
+  onPopoutWindowReturned(handler: (popout: PopoutRef) => void): Promise<() => void> {
+    if (isDesktop) {
+      return listen<number>("notebook-window-returned", (flowId) =>
+        handler({ kind: "notebook", flowId }),
+      );
+    }
     const onMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
-      const data = event.data as { type?: unknown; flowId?: unknown } | null;
-      if (data?.type !== NOTEBOOK_RETURN_MESSAGE || typeof data.flowId !== "number") return;
-      handler(data.flowId);
+      const wire = readPopoutWire(event);
+      if (wire) handler({ kind: wire.kind, flowId: wire.flowId });
     };
     window.addEventListener("message", onMessage);
     return Promise.resolve(() => window.removeEventListener("message", onMessage));
   },
 
   /**
-   * Hand this notebook window's flow back to the designer and close the window. Desktop: the shell
+   * Hand this pop-out window's flow back to the designer and close the window. Desktop: the shell
    * tells `main`, focuses it and closes this window. Web: a message to the opener, then `close()`.
    */
-  async returnNotebookToDesigner(flowId: number): Promise<void> {
+  async returnPopoutToDesigner(kind: PopoutKind, flowId: number): Promise<void> {
     if (isDesktop) {
+      requireDesktopKind(kind);
       await invoke<void>("return_notebook_window", { flowId });
       return;
     }
-    window.opener?.postMessage({ type: NOTEBOOK_RETURN_MESSAGE, flowId }, window.location.origin);
+    const wire: PopoutWire = { type: POPOUT_MESSAGE_TYPE, event: "returned", kind, flowId };
+    window.opener?.postMessage(wire, window.location.origin);
     window.close();
   },
 

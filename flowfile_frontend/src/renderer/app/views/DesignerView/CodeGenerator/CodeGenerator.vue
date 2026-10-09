@@ -119,7 +119,7 @@ import { EditorView } from "@codemirror/view";
 import { flowfileEditorTheme } from "@/utils/codemirrorTheme";
 import ProjectExport from "./ProjectExport.vue";
 import NotebookPoppedOutStub from "./NotebookPoppedOutStub.vue";
-import { useNotebookPopout } from "../../../composables/useNotebookPopout";
+import { usePopout } from "../../../composables/usePopout";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 
@@ -149,8 +149,8 @@ const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const lastLoadedFlowId = ref<number | null>(null);
 // The notebook moved to its own window: the dock shows the stub, never a second host.
-const { popOut } = useNotebookPopout();
-const poppedOut = computed(() => editorStore.isNotebookPoppedOut(nodeStore.flow_id));
+const { popOut } = usePopout("notebook");
+const poppedOut = computed(() => editorStore.isPoppedOut("notebook", nodeStore.flow_id));
 
 const extensions = [
   python(),

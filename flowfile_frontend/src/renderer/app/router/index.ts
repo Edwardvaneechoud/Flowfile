@@ -29,7 +29,7 @@ const routes: Array<RouteRecordRaw> = [
     // no sidebar, no app-wide modals, no update check.
     path: "/notebook",
     name: "notebookWindow",
-    component: () => import("../views/NotebookWindowView/NotebookWindowView.vue"),
+    component: () => import("../views/PopoutWindow/NotebookWindowView.vue"),
     meta: { requiresAuth: true },
   },
   {

@@ -6,6 +6,7 @@ import type { Component } from "vue";
 import type { NodeTitleInfo } from "../types";
 import type { DrawerCloseOptions } from "../composables/settingsDrawerSession";
 import type { CodeMode } from "../views/DesignerView/CodeGenerator/codeMode";
+import type { PopoutKind } from "../services/popoutWindow";
 
 // One leave attempt at a time: a double-click must not save (or refuse) the same drawer three times.
 let leaveInFlight: Promise<boolean> | null = null;
@@ -39,8 +40,9 @@ export const useEditorStore = defineStore("editor", {
     // A request to show the pane in one mode (the catalog's "Modify in notebook"); CodeGenerator
     // applies it on mount or live and then consumes it. Not persisted: the pane keeps its own mode.
     codePaneRequest: null as { mode: CodeMode; token: number } | null,
-    // Flows whose notebook moved to its own window: the dock shows a stub for them, not a second host.
-    poppedOutNotebooks: [] as number[],
+    // Flows whose notebook, data preview, logs or AI assistant moved to its own window, per kind:
+    // the designer shows a stub or hides the tab for them, never a second host.
+    poppedOut: { notebook: [], table: [], logs: [], ai: [] } as Record<PopoutKind, number[]>,
 
     // Edge label state
     showEdgeLabels: false,
@@ -263,17 +265,17 @@ export const useEditorStore = defineStore("editor", {
       this.codePaneRequest = null;
     },
 
-    // ========== Notebook pop-out ==========
-    markNotebookPoppedOut(flowId: number) {
-      if (!this.poppedOutNotebooks.includes(flowId)) this.poppedOutNotebooks.push(flowId);
+    // ========== Pop-out windows ==========
+    markPoppedOut(kind: PopoutKind, flowId: number) {
+      if (!this.poppedOut[kind].includes(flowId)) this.poppedOut[kind].push(flowId);
     },
 
-    clearNotebookPoppedOut(flowId: number) {
-      this.poppedOutNotebooks = this.poppedOutNotebooks.filter((id) => id !== flowId);
+    clearPoppedOut(kind: PopoutKind, flowId: number) {
+      this.poppedOut[kind] = this.poppedOut[kind].filter((id) => id !== flowId);
     },
 
-    isNotebookPoppedOut(flowId: number): boolean {
-      return this.poppedOutNotebooks.includes(flowId);
+    isPoppedOut(kind: PopoutKind, flowId: number): boolean {
+      return this.poppedOut[kind].includes(flowId);
     },
 
     // ========== Log Viewer ==========
