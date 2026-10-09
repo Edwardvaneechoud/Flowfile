@@ -8,6 +8,7 @@ import { View, Minus } from "@element-plus/icons-vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useItemStore } from "../../common/DraggableItem/stateStore";
+import { usePopout } from "../../../composables/usePopout";
 import AiAssistantTrigger from "../../../features/ai/AiAssistantTrigger.vue";
 import RunButton from "./run.vue";
 import PopOver from "../../../features/designer/editor/PopOver.vue";
@@ -39,10 +40,14 @@ const runFlow = (): void => {
 const toggleResults = (): void => {
   editorStore.showFlowResult = !editorStore.showFlowResult;
   editorStore.isShowingLogViewer = editorStore.showFlowResult;
-  if (editorStore.isShowingLogViewer) {
-    draggableItemStore.bringToFront("bottomDock");
-    draggableItemStore.bringToFront("rightDrawer");
+  if (!editorStore.isShowingLogViewer) return;
+  // The logs live in their own window: show that one; the dock stays closed for them.
+  if (editorStore.isPoppedOut("logs", nodeStore.flow_id)) {
+    void usePopout("logs").focus(nodeStore.flow_id);
+    return;
   }
+  draggableItemStore.bringToFront("bottomDock");
+  draggableItemStore.bringToFront("rightDrawer");
 };
 
 defineExpose({

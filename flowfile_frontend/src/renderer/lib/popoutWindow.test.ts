@@ -5,6 +5,7 @@ import {
   flowLabel,
   isPopoutHash,
   isPopoutKind,
+  isPopoutMessage,
   parseFlowQuery,
   popoutWindowHash,
   popoutWindowName,
@@ -67,6 +68,24 @@ describe("popoutWindow", () => {
     expect(windowTitle("table", "orders")).toBe("Data – orders");
     expect(windowTitle("logs", undefined)).toBe("Logs");
     expect(windowTitle("ai", "orders")).toBe("AI Assistant – orders");
+  });
+
+  it("accepts a selection message and nothing else", () => {
+    expect(isPopoutMessage({ type: "selection", previewNodeId: 3, selectedNodeIds: [3, 4] })).toBe(
+      true,
+    );
+    expect(isPopoutMessage({ type: "selection", previewNodeId: null, selectedNodeIds: [] })).toBe(
+      true,
+    );
+    expect(isPopoutMessage({ type: "preview", previewNodeId: 3, selectedNodeIds: [] })).toBe(false);
+    expect(isPopoutMessage({ type: "selection", previewNodeId: "3", selectedNodeIds: [] })).toBe(
+      false,
+    );
+    expect(isPopoutMessage({ type: "selection", previewNodeId: 3, selectedNodeIds: ["3"] })).toBe(
+      false,
+    );
+    expect(isPopoutMessage({ type: "selection", previewNodeId: 3 })).toBe(false);
+    expect(isPopoutMessage(null)).toBe(false);
   });
 
   it("labels the flow as the designer's tab bar does", () => {

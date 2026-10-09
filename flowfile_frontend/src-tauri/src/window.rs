@@ -156,6 +156,43 @@ pub fn rekey_popout_window(app: &AppHandle, label: &str, to: i64) -> Result<(), 
     Ok(())
 }
 
+/// The designer's message to the window hosting `(kind, flow_id)` (a selection to follow), emitted to
+/// that window alone. No window for the pair is an error, so the caller knows nothing heard it.
+pub fn post_to_popout_window(
+    app: &AppHandle,
+    kind: &str,
+    flow_id: i64,
+    message: serde_json::Value,
+) -> Result<(), String> {
+    popout::validate_kind(kind)?;
+    let label = app
+        .state::<Arc<AppState>>()
+        .popouts
+        .lock()
+        .find(kind, flow_id)
+        .ok_or_else(|| format!("no {kind} window hosts flow {flow_id}"))?;
+    app.emit_to(EventTarget::webview_window(label), "popout-message", message)
+        .map_err(|e| e.to_string())
+}
+
+/// The calling pop-out listens now, so `main` answers with what the window should show (a message
+/// emitted before a window listens is lost). An unregistered window is refused.
+pub fn popout_window_ready(app: &AppHandle, label: &str) -> Result<(), String> {
+    let ready = app
+        .state::<Arc<AppState>>()
+        .popouts
+        .lock()
+        .get(label)
+        .cloned()
+        .ok_or_else(|| format!("window '{label}' is not a pop-out window"))?;
+    app.emit_to(
+        EventTarget::webview_window("main"),
+        "popout-window-ready",
+        ready,
+    )
+    .map_err(|e| e.to_string())
+}
+
 /// The pop-out windows open right now, by kind then flow id.
 pub fn popout_windows(app: &AppHandle) -> Vec<PopoutRef> {
     let listed = app.state::<Arc<AppState>>().popouts.lock().list();

@@ -12,17 +12,35 @@ import {
   popoutWindowHash,
   popoutWindowName,
   type PopoutKind,
+  type SelectionMessage,
 } from "../../lib/popoutWindow";
+import { useDrawerStore } from "../stores/drawer-store";
 import { useEditorStore } from "../stores/editor-store";
 import { useFlowStore } from "../stores/flow-store";
 
 interface PopoutKindDef {
+  /** Extra query for the window's route (the Data window's `node`). */
+  windowQuery?: (flowId: number) => Record<string, string | number>;
   /** The designer's side of the move, once the window opened. */
   afterPopOut?: (flowId: number) => void;
   /** Reopen the panel in the designer after its window was closed on request. */
   bringBack: (flowId: number) => void;
   /** A window's "Return to designer": reopen the panel on that flow, switching to it when needed. */
   adoptReturn: (flowId: number) => void;
+  /** The window is told the node the designer sent it and the canvas selection (`selectionFor`). */
+  followsSelection?: boolean;
+}
+
+/** The designer shows that flow, on its own page. */
+function showFlow(flowId: number): void {
+  useFlowStore().setFlowId(flowId);
+  if (router.currentRoute.value.name !== "designer") void router.push({ name: "designer" });
+}
+
+/** The node the flow's Data window was last given: what a Return reopens the dock on. */
+function windowNode(flowId: number): number | undefined {
+  const preview = useDrawerStore().popoutPreview;
+  return preview?.flowId === flowId ? preview.nodeId : undefined;
 }
 
 // `null` marks a kind that has no window yet; the record keeps the table exhaustive.
@@ -31,13 +49,33 @@ const KINDS: Record<PopoutKind, PopoutKindDef | null> = {
     afterPopOut: () => useEditorStore().setCodeGeneratorVisibility(false),
     bringBack: () => useEditorStore().openCodePane("notebook"),
     adoptReturn: (flowId) => {
-      useFlowStore().setFlowId(flowId);
+      showFlow(flowId);
       useEditorStore().openCodePane("notebook");
-      if (router.currentRoute.value.name !== "designer") void router.push({ name: "designer" });
     },
   },
-  table: null,
-  logs: null,
+  table: {
+    followsSelection: true,
+    windowQuery: (): Record<string, number> => {
+      const nodeId = useDrawerStore().previewNodeId;
+      return nodeId === null ? {} : { node: nodeId };
+    },
+    afterPopOut: (flowId) => useDrawerStore().divertPreviewToWindow(flowId),
+    bringBack: (flowId) =>
+      useDrawerStore().requestDock({ flowId, tab: "data", nodeId: windowNode(flowId) }),
+    adoptReturn: (flowId) => {
+      const nodeId = windowNode(flowId);
+      showFlow(flowId);
+      useDrawerStore().requestDock({ flowId, tab: "data", nodeId });
+    },
+  },
+  logs: {
+    afterPopOut: () => useEditorStore().hideLogViewer(),
+    bringBack: (flowId) => useDrawerStore().requestDock({ flowId, tab: "logs" }),
+    adoptReturn: (flowId) => {
+      showFlow(flowId);
+      useDrawerStore().requestDock({ flowId, tab: "logs" });
+    },
+  },
   ai: null,
 };
 
@@ -60,11 +98,43 @@ function moveMark({ kind, from, to }: PopoutMove): void {
   editorStore.markPoppedOut(kind, to);
 }
 
+/** What a window following the canvas is told: the node the designer sent it and the canvas selection. */
+export function selectionFor(flowId: number): SelectionMessage {
+  const preview = useDrawerStore().popoutPreview;
+  return {
+    type: "selection",
+    previewNodeId: preview?.flowId === flowId ? preview.nodeId : null,
+    selectedNodeIds: [...useFlowStore().selectedNodeIds],
+  };
+}
+
+function sendSelection({ kind, flowId }: PopoutRef): void {
+  void desktop
+    .postToPopoutWindow(kind, flowId, selectionFor(flowId))
+    .catch((error) => console.warn(`[popout] selection not delivered to the ${kind} window:`, error));
+}
+
+/** Tell every popped-out window of the flow that follows the canvas; `Canvas` calls this on a change. */
+export function broadcastSelection(flowId: number): void {
+  if (flowId <= 0) return;
+  const editorStore = useEditorStore();
+  for (const kind of Object.keys(KINDS) as PopoutKind[]) {
+    if (KINDS[kind]?.followsSelection && editorStore.isPoppedOut(kind, flowId)) {
+      sendSelection({ kind, flowId });
+    }
+  }
+}
+
+// A window listens now (it just opened or reloaded): a following kind gets the current selection.
+function onReady(ref: PopoutRef): void {
+  if (KINDS[ref.kind]?.followsSelection) sendSelection(ref);
+}
+
 /**
- * Once per window, from `AppLayout`: follow closed, returned and rekeyed pop-outs, adopt the ones
- * already open. The marks follow only what the windows report (the shell's registry, the opener's
- * handle map), never this window's own feed, so they cannot run ahead of a pop-out that has not
- * followed a Save As yet.
+ * Once per window, from `AppLayout`: follow closed, returned, rekeyed and ready pop-outs, adopt the
+ * ones already open. The marks follow only what the windows report (the shell's registry, the
+ * opener's handle map), never this window's own feed, so they cannot run ahead of a pop-out that
+ * has not followed a Save As yet.
  */
 export function installPopoutListeners(): void {
   if (installed) return;
@@ -72,6 +142,7 @@ export function installPopoutListeners(): void {
   void desktop.onPopoutWindowClosed(onClosed);
   void desktop.onPopoutWindowReturned(onReturned);
   void desktop.onPopoutWindowRekeyed(moveMark);
+  void desktop.onPopoutWindowReady(onReady);
   void desktop
     .listPopoutWindows()
     .then((open) => {
@@ -96,7 +167,7 @@ export function usePopout(kind: PopoutKind) {
     }
     try {
       await desktop.openPopoutWindow(kind, flowId, {
-        hash: popoutWindowHash(kind, flowId),
+        hash: popoutWindowHash(kind, flowId, def.windowQuery?.(flowId) ?? {}),
         name: popoutWindowName(kind, flowId),
       });
     } catch (error) {

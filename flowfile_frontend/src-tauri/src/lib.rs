@@ -64,6 +64,8 @@ pub fn run() {
             commands::list_popout_windows,
             commands::return_popout_window,
             commands::rekey_popout_window,
+            commands::popout_window_ready,
+            commands::post_to_popout_window,
         ])
         .menu(menu::build)
         .on_menu_event(|app, event| menu::on_menu_event(app, event.id().as_ref()))

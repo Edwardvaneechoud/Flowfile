@@ -2,13 +2,16 @@
 import { ref, onUnmounted, nextTick, onMounted, watch } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
+import { useFlowStore } from "../../../stores/flow-store";
 import authService from "../../../services/auth.service";
 import { streamFlowLogs } from "../../../services/logStreamClient";
 
 // Store & Refs
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
+const flowStore = useFlowStore();
 const logs = ref<string>("");
+const container = ref<HTMLElement | null>(null);
 let streamController: AbortController | null = null;
 const autoScroll = ref(true);
 const connectionRetries = ref(0);
@@ -20,8 +23,8 @@ const scrollToBottom = () => {
   if (!autoScroll.value) return;
   nextTick(() => {
     requestAnimationFrame(() => {
-      const container = document.querySelector(".log-container");
-      if (container) container.scrollTop = container.scrollHeight;
+      const el = container.value;
+      if (el) el.scrollTop = el.scrollHeight;
     });
   });
 };
@@ -39,6 +42,15 @@ watch(
   () => editorStore.isShowingLogViewer,
   (show) => {
     if (show && !nodeStore.isRunning && !streamController) startStreamingLogs();
+  },
+);
+
+// A run started or ended elsewhere (the change feed): core rewrites the log file per run, so a
+// stream tailing the old file sees nothing of it. Re-read from the start instead.
+watch(
+  () => flowStore.pendingRunStateCounter,
+  () => {
+    if (editorStore.isShowingLogViewer || nodeStore.isRunning) startStreamingLogs();
   },
 );
 
@@ -188,7 +200,7 @@ const isWarningLine = (line: string): boolean => {
 </script>
 
 <template>
-  <div class="log-container" @scroll="handleScroll">
+  <div ref="container" class="log-container" @scroll="handleScroll">
     <div class="log-header">
       <div class="log-status">
         <span

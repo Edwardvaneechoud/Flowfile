@@ -33,6 +33,19 @@ const routes: Array<RouteRecordRaw> = [
     meta: { requiresAuth: true },
   },
   {
+    // The bottom dock's pop-outs: one flow's data preview or run logs, outside AppLayout like the notebook.
+    path: "/popout/table",
+    name: "tableWindow",
+    component: () => import("../views/PopoutWindow/TableWindowView.vue"),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/popout/logs",
+    name: "logsWindow",
+    component: () => import("../views/PopoutWindow/LogsWindowView.vue"),
+    meta: { requiresAuth: true },
+  },
+  {
     path: "/main",
     component: AppLayout,
     meta: { requiresAuth: true },

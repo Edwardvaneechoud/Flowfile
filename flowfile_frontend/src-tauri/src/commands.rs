@@ -127,3 +127,22 @@ pub fn return_popout_window(app: AppHandle, window: Window) -> Result<(), String
 pub fn rekey_popout_window(app: AppHandle, window: Window, to: i64) -> Result<(), String> {
     window::rekey_popout_window(&app, window.label(), to)
 }
+
+/// The calling pop-out listens for the designer's messages now; `main` answers with the current state.
+#[tauri::command]
+pub fn popout_window_ready(app: AppHandle, window: Window) -> Result<(), String> {
+    window::popout_window_ready(&app, window.label())
+}
+
+/// The designer's message to a flow's pop-out window of one kind (a selection to follow).
+#[tauri::command]
+pub fn post_to_popout_window(
+    app: AppHandle,
+    window: Window,
+    kind: String,
+    flow_id: i64,
+    message: serde_json::Value,
+) -> Result<(), String> {
+    require_main(&window)?;
+    window::post_to_popout_window(&app, &kind, flow_id, message)
+}

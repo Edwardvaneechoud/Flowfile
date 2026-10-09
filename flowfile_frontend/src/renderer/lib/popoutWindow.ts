@@ -69,3 +69,22 @@ export const flowLabel = (flow: { name: string; display_name?: string | null }):
 
 export const windowTitle = (kind: PopoutKind, label: string | null | undefined): string =>
   label ? `${POPOUT_TITLES[kind]} – ${label}` : POPOUT_TITLES[kind];
+
+/** What the designer sends a window that follows the canvas: the previewed node and the selection. */
+export interface SelectionMessage {
+  type: "selection";
+  previewNodeId: number | null;
+  selectedNodeIds: number[];
+}
+
+export type PopoutMessage = SelectionMessage;
+
+export const isPopoutMessage = (value: unknown): value is PopoutMessage => {
+  const message = value as Partial<SelectionMessage> | null;
+  return (
+    message?.type === "selection" &&
+    (message.previewNodeId === null || typeof message.previewNodeId === "number") &&
+    Array.isArray(message.selectedNodeIds) &&
+    message.selectedNodeIds.every((id) => typeof id === "number")
+  );
+};

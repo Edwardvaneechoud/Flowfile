@@ -1,11 +1,13 @@
 // @vitest-environment happy-dom
 // Web mode's pop-out windows: `window.open` handles by kind and flow, a closed poll, the opener messages.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SelectionMessage } from "./popoutWindow";
 
 type FakeHandle = {
   closed: boolean;
   focus: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
+  postMessage: ReturnType<typeof vi.fn>;
   location: { href: string; assign: ReturnType<typeof vi.fn> };
 };
 
@@ -16,10 +18,13 @@ const fakeHandle = (href = "about:blank"): FakeHandle => {
     close: vi.fn(() => {
       handle.closed = true;
     }),
+    postMessage: vi.fn(),
     location: { href, assign: vi.fn() },
   };
   return handle;
 };
+
+const selection: SelectionMessage = { type: "selection", previewNodeId: 2, selectedNodeIds: [2, 3] };
 
 const load = async () => {
   vi.resetModules();
@@ -271,6 +276,82 @@ describe("desktop pop-out windows (web mode)", () => {
 
     await on(desktop.onPopoutWindowRekeyed(vi.fn()));
     expect(messages(added)).toHaveLength(2);
+  });
+
+  it("answers a held window's ready report and not an untracked one's", async () => {
+    const desktop = await load();
+    openSpy.mockReturnValue(fakeHandle());
+    const onReady = vi.fn();
+    const unlisten = await on(desktop.onPopoutWindowReady(onReady));
+    await desktop.openPopoutWindow("table", 4, web("#/popout/table?flow=4", "flowfile-table-4"));
+
+    post({ type: "flowfile:popout", event: "ready", kind: "table", flowId: 9 });
+    post({ type: "flowfile:popout", event: "ready", kind: "logs", flowId: 4 });
+    expect(onReady).not.toHaveBeenCalled();
+    post({ type: "flowfile:popout", event: "ready", kind: "table", flowId: 4 });
+    expect(onReady).toHaveBeenCalledExactlyOnceWith({ kind: "table", flowId: 4 });
+
+    unlisten();
+    post({ type: "flowfile:popout", event: "ready", kind: "table", flowId: 4 });
+    expect(onReady).toHaveBeenCalledOnce();
+  });
+
+  it("posts a message to the window it holds and to no other", async () => {
+    const desktop = await load();
+    const handle = fakeHandle();
+    openSpy.mockReturnValue(handle);
+    await desktop.postToPopoutWindow("table", 4, selection);
+    expect(handle.postMessage).not.toHaveBeenCalled();
+
+    await desktop.openPopoutWindow("table", 4, web("#/popout/table?flow=4", "flowfile-table-4"));
+    await desktop.postToPopoutWindow("table", 4, selection);
+    expect(handle.postMessage).toHaveBeenCalledExactlyOnceWith(
+      { type: "flowfile:popout-message", kind: "table", flowId: 4, message: selection },
+      window.location.origin,
+    );
+
+    handle.closed = true;
+    await desktop.postToPopoutWindow("table", 4, selection);
+    expect(handle.postMessage).toHaveBeenCalledOnce();
+  });
+
+  it("a window hears well-formed messages from its origin until it stops listening", async () => {
+    const desktop = await load();
+    const onMessage = vi.fn();
+    const off = await desktop.onPopoutMessage(onMessage);
+    const wire = { type: "flowfile:popout-message", kind: "table", flowId: 4, message: selection };
+
+    post(wire, "https://elsewhere.example");
+    post({ ...wire, type: "flowfile:popout" });
+    post({ ...wire, kind: "settings" });
+    post({ ...wire, message: { ...selection, previewNodeId: "2" } });
+    post({ ...wire, message: undefined });
+    expect(onMessage).not.toHaveBeenCalled();
+
+    post(wire);
+    expect(onMessage).toHaveBeenCalledExactlyOnceWith(selection);
+
+    off();
+    post(wire);
+    expect(onMessage).toHaveBeenCalledOnce();
+  });
+
+  it("a pop-out's ready report reaches its opener's listener", async () => {
+    const desktop = await load();
+    openSpy.mockReturnValue(fakeHandle());
+    const postMessage = vi.fn();
+    vi.stubGlobal("opener", { postMessage });
+    const onReady = vi.fn();
+    await on(desktop.onPopoutWindowReady(onReady));
+    await desktop.openPopoutWindow("table", 4, web("#/popout/table?flow=4", "flowfile-table-4"));
+
+    await desktop.reportPopoutReady("table", 4);
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith(
+      { type: "flowfile:popout", event: "ready", kind: "table", flowId: 4 },
+      window.location.origin,
+    );
+    post(postMessage.mock.calls[0][0]);
+    expect(onReady).toHaveBeenCalledExactlyOnceWith({ kind: "table", flowId: 4 });
   });
 
   it("a pop-out's Save As renames the window and reaches its opener's listener", async () => {
