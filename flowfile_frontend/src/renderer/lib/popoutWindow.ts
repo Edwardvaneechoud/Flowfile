@@ -1,13 +1,13 @@
 /**
  * Pop-out windows: one flow's notebook, data preview, logs or AI assistant in its own window
  * (`#/notebook?flow=<id>`, `#/popout/<kind>?flow=<id>`), opened from the designer as a second
- * browser window or a native desktop window. Pure helpers only, so the client id (read at module
- * load) and the views can share them without pulling in the stores.
+ * browser window or a native desktop window. Pure and dependency-free, so `desktop.ts`, the client
+ * id (read at module load) and the views can share them without pulling in the stores.
  */
 
-export type PopoutKind = "notebook" | "table" | "logs" | "ai";
+export const POPOUT_KINDS = ["notebook", "table", "logs", "ai"] as const;
 
-export const POPOUT_KINDS: readonly PopoutKind[] = ["notebook", "table", "logs", "ai"];
+export type PopoutKind = (typeof POPOUT_KINDS)[number];
 
 export const isPopoutKind = (value: unknown): value is PopoutKind =>
   typeof value === "string" && (POPOUT_KINDS as readonly string[]).includes(value);

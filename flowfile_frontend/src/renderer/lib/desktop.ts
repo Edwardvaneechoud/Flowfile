@@ -7,7 +7,7 @@
 import type { Update } from "@tauri-apps/plugin-updater";
 
 import type { ServicesStatus } from "../typings/desktop";
-import { isPopoutKind, POPOUT_TITLES, type PopoutKind } from "../app/services/popoutWindow";
+import { isPopoutKind, POPOUT_TITLES, type PopoutKind } from "./popoutWindow";
 
 type TauriInternals = unknown;
 
@@ -132,8 +132,7 @@ export interface PopoutRef {
   flowId: number;
 }
 
-// Web mode's pop-out windows (`window.open` handles) by `<kind>:<flowId>`, and who wants to know
-// when one closes.
+// Web mode's pop-out handles by `<kind>:<flowId>`, and who wants to know when one closes.
 const webPopouts = new Map<string, { ref: PopoutRef; handle: Window }>();
 const popoutKey = (kind: PopoutKind, flowId: number): string => `${kind}:${flowId}`;
 // Web mode's messages from a pop-out to its opener: today only "Return to designer".

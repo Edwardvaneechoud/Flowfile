@@ -12,7 +12,7 @@ import {
   popoutWindowName,
   popoutWindowUrl,
   type PopoutKind,
-} from "../services/popoutWindow";
+} from "../../lib/popoutWindow";
 import { useEditorStore } from "../stores/editor-store";
 import { useFlowStore } from "../stores/flow-store";
 
@@ -52,7 +52,7 @@ function onReturned({ kind, flowId }: PopoutRef): void {
   KINDS[kind]?.adoptReturn(flowId);
 }
 
-/** Once per window: follow closed and returned pop-outs, adopt the ones already open. */
+/** Once per window, from `AppLayout`: follow closed and returned pop-outs, adopt the ones already open. */
 export function installPopoutListeners(): void {
   if (installed) return;
   installed = true;
@@ -72,7 +72,6 @@ export function _resetForTests(): void {
 
 export function usePopout(kind: PopoutKind) {
   const editorStore = useEditorStore();
-  installPopoutListeners();
   const def = KINDS[kind];
   const title = POPOUT_TITLES[kind];
 

@@ -8,12 +8,7 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { FlowApi } from "../../api";
 import { desktop } from "../../../lib/desktop";
-import {
-  flowLabel,
-  parseFlowQuery,
-  windowTitle,
-  type PopoutKind,
-} from "../../services/popoutWindow";
+import { flowLabel, parseFlowQuery, windowTitle, type PopoutKind } from "../../../lib/popoutWindow";
 import { useEditorStore } from "../../stores/editor-store";
 import { useFlowStore } from "../../stores/flow-store";
 import { useFlowSyncStore } from "../../stores/flow-sync-store";
@@ -24,7 +19,7 @@ export interface PopoutWindowHostOptions {
   kind: PopoutKind;
   /** A reload request from the feed; there is no canvas here, so the view says what to refresh. */
   onReload?: () => void;
-  /** The flow started or stopped running elsewhere (the re-read `is_running`). */
+  /** Called whenever the host reads `is_running`: the flow's load and every run-state event. */
   onRunStateChanged?: (isRunning: boolean) => void;
   /** The flow moved to another id (a Save As); the URL follows after this. */
   onRekey?: (moved: { from: number; to: number }) => void;
@@ -32,22 +27,26 @@ export interface PopoutWindowHostOptions {
   beforeReturn?: () => Promise<boolean> | boolean;
 }
 
+/**
+ * Pins the URL's flow before the change feed starts: the flow store boots from the opener's copied
+ * `last_flow_id`, and the sync store follows the store's flow from the moment it exists. An unusable
+ * query pins -1, so the feed follows no flow at all.
+ */
 export function usePopoutWindowHost(options: PopoutWindowHostOptions) {
   const route = useRoute();
   const router = useRouter();
   const flowStore = useFlowStore();
   const editorStore = useEditorStore();
 
-  // Pin the URL's flow before the feed starts: the flow store boots from the opener's copied
-  // `last_flow_id`, and the sync store follows the store's flow from the moment it exists.
-  const initialFlowId = parseFlowQuery(route.query.flow);
-  if (initialFlowId > 0) flowStore.setFlowId(initialFlowId);
-  const flowSync = useFlowSyncStore();
-
   const flowId = computed(() => parseFlowQuery(route.query.flow));
   const flowName = ref<string | null>(null);
   const state = ref<PopoutWindowState>("loading");
   const title = computed(() => windowTitle(options.kind, flowName.value));
+
+  function applyRunState(isRunning: boolean): void {
+    editorStore.isRunning = isRunning;
+    options.onRunStateChanged?.(isRunning);
+  }
 
   async function loadFlow(id: number): Promise<void> {
     state.value = "loading";
@@ -59,17 +58,18 @@ export function usePopoutWindowHost(options: PopoutWindowHostOptions) {
       return;
     }
     flowName.value = flowLabel(settings);
-    editorStore.isRunning = !!settings.is_running;
+    applyRunState(!!settings.is_running);
     void desktop.setWindowTitle(title.value);
     state.value = "ready";
   }
 
   // What the designer's header does on a run-state event: re-read whether the flow runs.
   async function refreshRunState(): Promise<void> {
-    const settings = await FlowApi.getFlowSettings(flowId.value);
-    if (!settings) return;
-    editorStore.isRunning = !!settings.is_running;
-    options.onRunStateChanged?.(editorStore.isRunning);
+    const id = flowId.value;
+    if (id <= 0) return;
+    const settings = await FlowApi.getFlowSettings(id);
+    if (!settings || flowId.value !== id) return;
+    applyRunState(!!settings.is_running);
   }
 
   async function closeThisWindow(): Promise<void> {
@@ -89,15 +89,14 @@ export function usePopoutWindowHost(options: PopoutWindowHostOptions) {
   watch(
     flowId,
     (id) => {
-      if (id > 0) {
-        flowStore.setFlowId(id);
-        void loadFlow(id);
-      } else {
-        state.value = "missing";
-      }
+      flowStore.setFlowId(id > 0 ? id : -1);
+      if (id > 0) void loadFlow(id);
+      else state.value = "missing";
     },
     { immediate: true },
   );
+
+  const flowSync = useFlowSyncStore();
 
   watch(
     () => flowStore.pendingReloadCounter,

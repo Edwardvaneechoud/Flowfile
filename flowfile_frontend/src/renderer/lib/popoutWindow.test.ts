@@ -37,9 +37,9 @@ describe("popoutWindow", () => {
   it("builds the window name and url for a flow of each kind", () => {
     expect(popoutWindowName("notebook", 12)).toBe("flowfile-notebook-12");
     expect(popoutWindowName("logs", 12)).toBe("flowfile-logs-12");
-    expect(popoutWindowUrl("notebook", 12, { origin: "http://localhost:8080", pathname: "/" })).toBe(
-      "http://localhost:8080/#/notebook?flow=12",
-    );
+    expect(
+      popoutWindowUrl("notebook", 12, { origin: "http://localhost:8080", pathname: "/" }),
+    ).toBe("http://localhost:8080/#/notebook?flow=12");
     expect(
       popoutWindowUrl("notebook", 12, { origin: "tauri://localhost", pathname: "/index.html" }),
     ).toBe("tauri://localhost/index.html#/notebook?flow=12");

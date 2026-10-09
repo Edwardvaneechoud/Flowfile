@@ -11,8 +11,7 @@
 </template>
 
 <script lang="ts" setup>
-// One flow's canvas notebook in its own window. Unpushed cell edits die with the window, so
-// "Return to designer" asks first.
+// One flow's canvas notebook in its own window; Return asks first, since unpushed edits die with it.
 import { onMounted } from "vue";
 import { ElMessageBox } from "element-plus";
 import NotebookPanel from "../CatalogView/NotebookPanel.vue";

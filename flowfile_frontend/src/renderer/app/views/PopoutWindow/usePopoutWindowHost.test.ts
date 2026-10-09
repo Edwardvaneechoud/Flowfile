@@ -83,26 +83,59 @@ describe("usePopoutWindowHost", () => {
     expect(h.desktop.setWindowTitle).toHaveBeenCalledWith("Logs");
   });
 
-  it("has no flow without a usable query and does not start the feed on another's", () => {
+  it("pins no flow before the feed starts when the query is unusable", () => {
     h.route.query = { flow: "abc" };
     const host = usePopoutWindowHost({ kind: "notebook" });
+    expect(h.log).toEqual(["setFlowId:-1", "flowSync"]);
     expect(host.flowId.value).toBe(-1);
     expect(host.state.value).toBe("missing");
-    expect(h.flowStore.setFlowId).not.toHaveBeenCalled();
     expect(h.getFlowSettings).not.toHaveBeenCalled();
   });
 
-  it("re-reads the run state on the feed's signal and tells the view", async () => {
+  it("does not re-read the run state without a flow", async () => {
+    h.route.query = {};
+    usePopoutWindowHost({ kind: "notebook" });
+    h.flowStore.pendingRunStateCounter += 1;
+    await settle();
+    expect(h.getFlowSettings).not.toHaveBeenCalled();
+  });
+
+  it("tells the view the run state on load and on the feed's signal", async () => {
     const onRunStateChanged = vi.fn();
     usePopoutWindowHost({ kind: "notebook", onRunStateChanged });
     await settle();
     expect(h.editorStore.isRunning).toBe(true);
+    expect(onRunStateChanged).toHaveBeenCalledWith(true);
 
     h.getFlowSettings.mockResolvedValue({ name: "salary", display_name: null, is_running: false });
     h.flowStore.pendingRunStateCounter += 1;
     await settle();
     expect(h.editorStore.isRunning).toBe(false);
     expect(onRunStateChanged).toHaveBeenCalledWith(false);
+  });
+
+  it("drops a run-state read that lands after the flow changed", async () => {
+    h.route = reactive({ query: { flow: "4" } as Record<string, string> });
+    const onRunStateChanged = vi.fn();
+    const host = usePopoutWindowHost({ kind: "notebook", onRunStateChanged });
+    await settle();
+    onRunStateChanged.mockClear();
+
+    let resolveStale!: (value: unknown) => void;
+    h.getFlowSettings.mockReturnValueOnce(new Promise((resolve) => (resolveStale = resolve)));
+    h.flowStore.pendingRunStateCounter += 1;
+    await settle();
+
+    h.getFlowSettings.mockResolvedValue({ name: "copy", display_name: null, is_running: false });
+    h.route.query = { flow: "9" };
+    await settle();
+    expect(host.flowId.value).toBe(9);
+    expect(onRunStateChanged).toHaveBeenLastCalledWith(false);
+
+    resolveStale({ name: "salary", display_name: null, is_running: true });
+    await settle();
+    expect(h.editorStore.isRunning).toBe(false);
+    expect(onRunStateChanged).toHaveBeenCalledTimes(1);
   });
 
   it("turns a reload request into the view's hook", async () => {

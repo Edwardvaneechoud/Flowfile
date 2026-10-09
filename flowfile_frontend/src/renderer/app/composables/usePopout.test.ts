@@ -106,6 +106,7 @@ describe("usePopout", () => {
 
   it("forgets a flow whose window closed by itself, one kind at a time", async () => {
     mocks.desktop.listPopoutWindows.mockResolvedValue([{ kind: "table", flowId: 4 }]);
+    installPopoutListeners();
     const { popOut, isPoppedOut } = usePopout("notebook");
     await popOut(4);
     await settle();
@@ -137,6 +138,7 @@ describe("usePopout", () => {
   });
 
   it("a window's Return to designer reopens the pane on its flow", async () => {
+    installPopoutListeners();
     const { popOut, isPoppedOut } = usePopout("notebook");
     await popOut(4);
     await settle();
@@ -151,7 +153,7 @@ describe("usePopout", () => {
 
   it("a returned notebook brings the designer page back when it was left", async () => {
     mocks.router.currentRoute.value.name = "catalog";
-    usePopout("notebook");
+    installPopoutListeners();
     await settle();
 
     onReturned!({ kind: "notebook", flowId: 4 });
@@ -172,6 +174,12 @@ describe("usePopout", () => {
     expect(mocks.editorStore.openCodePane).not.toHaveBeenCalled();
   });
 
+  it("leaves the listeners to the layout", () => {
+    usePopout("notebook");
+    expect(mocks.desktop.onPopoutWindowClosed).not.toHaveBeenCalled();
+    expect(mocks.desktop.listPopoutWindows).not.toHaveBeenCalled();
+  });
+
   it("adopts the windows already open and installs the listeners once", async () => {
     mocks.desktop.listPopoutWindows.mockResolvedValue([
       { kind: "notebook", flowId: 2 },
@@ -183,7 +191,6 @@ describe("usePopout", () => {
     expect(first.isPoppedOut(2)).toBe(true);
     expect(first.isPoppedOut(3)).toBe(true);
 
-    usePopout("notebook");
     installPopoutListeners();
     expect(mocks.desktop.onPopoutWindowClosed).toHaveBeenCalledTimes(1);
     expect(mocks.desktop.onPopoutWindowReturned).toHaveBeenCalledTimes(1);

@@ -6,7 +6,7 @@ import type { Component } from "vue";
 import type { NodeTitleInfo } from "../types";
 import type { DrawerCloseOptions } from "../composables/settingsDrawerSession";
 import type { CodeMode } from "../views/DesignerView/CodeGenerator/codeMode";
-import type { PopoutKind } from "../services/popoutWindow";
+import type { PopoutKind } from "../../lib/popoutWindow";
 
 // One leave attempt at a time: a double-click must not save (or refuse) the same drawer three times.
 let leaveInFlight: Promise<boolean> | null = null;
@@ -40,8 +40,7 @@ export const useEditorStore = defineStore("editor", {
     // A request to show the pane in one mode (the catalog's "Modify in notebook"); CodeGenerator
     // applies it on mount or live and then consumes it. Not persisted: the pane keeps its own mode.
     codePaneRequest: null as { mode: CodeMode; token: number } | null,
-    // Flows whose notebook, data preview, logs or AI assistant moved to its own window, per kind:
-    // the designer shows a stub or hides the tab for them, never a second host.
+    // Per kind, the flows whose panel moved to its own window: the designer never hosts a second.
     poppedOut: { notebook: [], table: [], logs: [], ai: [] } as Record<PopoutKind, number[]>,
 
     // Edge label state

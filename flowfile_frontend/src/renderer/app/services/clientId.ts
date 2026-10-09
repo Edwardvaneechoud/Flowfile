@@ -6,7 +6,7 @@
  * would each take the other's changes for their own.
  */
 
-import { isPopoutHash } from "./popoutWindow";
+import { isPopoutHash } from "../../lib/popoutWindow";
 
 export const CLIENT_HEADER = "X-Flowfile-Client";
 
