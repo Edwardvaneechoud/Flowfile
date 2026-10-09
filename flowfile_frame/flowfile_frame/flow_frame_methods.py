@@ -85,6 +85,19 @@ def _resolve_scan_mode(source: str, *, glob: bool = True) -> Literal["single_fil
     return "directory" if Path(source).expanduser().is_dir() else "single_file"
 
 
+def _refuse_cloud_sources(source: Any, file_type: str) -> None:
+    """Refuse a non-local URI while building, so the error names the cloud readers.
+
+    A notebook push keeps paths as written instead: a flow holding such a read node must still round-trip,
+    and core refuses the path when the node runs.
+    """
+    if input_schema.keep_paths_as_written.get():
+        return
+    for path in source if isinstance(source, list) else [source]:
+        if isinstance(path, str | os.PathLike):
+            refuse_cloud_path(path, file_type)
+
+
 def read_csv(
     source: str | Path | IO[bytes] | bytes | list[str | Path | IO[bytes] | bytes],
     *,
@@ -189,12 +202,15 @@ def read_csv(
         if "~" in current_source_path_for_native:
             current_source_path_for_native = _expand_user(current_source_path_for_native)
     elif isinstance(source, list) and all(isinstance(s, str | os.PathLike) for s in source):
-        current_source_path_for_native = str(source[0]) if source else None
+        # The native read node takes one path; a longer list goes to scan_csv, which reads them all.
+        current_source_path_for_native = str(source[0]) if len(source) == 1 else None
         if current_source_path_for_native and "~" in current_source_path_for_native:
             current_source_path_for_native = _expand_user(current_source_path_for_native)
     elif isinstance(source, io.BytesIO | io.StringIO):
         logger.warning("Read from bytes io from csv not supported, converting data to raw data")
         return from_dict(pl.read_csv(source), flow_graph=flow_graph, description=description)
+    if storage_options is None:
+        _refuse_cloud_sources(source, "csv")
     include_file_paths = (include_file_paths or "").strip() or None
     # Only a single path is inferred from; a list source keeps its existing single-file handling.
     if scan_mode is None and isinstance(source, str | os.PathLike):
@@ -228,7 +244,6 @@ def read_csv(
         and glob is True
     )
     if can_use_native and current_source_path_for_native:
-        refuse_cloud_path(current_source_path_for_native, "csv")
         received_table = input_schema.ReceivedTable(
             file_type="csv",
             path=current_source_path_for_native,
@@ -459,40 +474,16 @@ def read_parquet(
     Returns:
         A FlowFrame with the Parquet data
     """
-    refuse_cloud_path(str(source), "parquet")
-    if "~" in source:
-        os.path.expanduser(source)
-    node_id = generate_node_id()
-
-    if flow_graph is None:
-        flow_graph = _implicit_graph()
-
-    flow_id = flow_graph.flow_id
-
-    received_table = input_schema.ReceivedTable(
-        file_type="parquet",
-        path=source,
-        name=Path(source).name,
+    return _read_simple_file(
+        source,
+        "parquet",
+        input_schema.InputParquetTable(),
+        flow_graph=flow_graph,
+        description=description,
+        convert_to_absolute_path=convert_to_absolute_path,
         scan_mode=scan_mode or _resolve_scan_mode(str(source)),
         include_file_paths=include_file_paths,
-        table_settings=input_schema.InputParquetTable(),
     )
-    if convert_to_absolute_path and not input_schema.keep_paths_as_written.get():
-        received_table.path = received_table.abs_file_path
-
-    read_node = input_schema.NodeRead(
-        flow_id=flow_id,
-        node_id=node_id,
-        received_file=received_table,
-        pos_x=100,
-        pos_y=100,
-        is_setup=True,
-        description=description,
-    )
-
-    flow_graph.add_read(read_node)
-
-    return source_frame(flow_graph, node_id)
 
 
 def _read_simple_file(
@@ -506,12 +497,12 @@ def _read_simple_file(
     scan_mode: Literal["single_file", "directory"] | None = None,
     include_file_paths: str | None = None,
 ) -> FlowFrame:
-    """Shared reader for option-less file formats (ipc/ndjson/avro/ipc_stream).
+    """Shared native reader for parquet, excel, ipc, ndjson, avro and ipc_stream.
 
     Only directory-capable formats pass ``scan_mode``/``include_file_paths``; the rest leave them
     at their single-file defaults.
     """
-    refuse_cloud_path(str(source), file_type)
+    _refuse_cloud_sources(source, file_type)
     if isinstance(source, str) and "~" in source:
         source = _expand_user(source)
     node_id = generate_node_id()
@@ -686,38 +677,14 @@ def read_excel(
     Returns:
         A FlowFrame with the Excel data
     """
-    refuse_cloud_path(str(source), "excel")
-    if "~" in source:
-        os.path.expanduser(source)
-    node_id = generate_node_id()
-
-    if flow_graph is None:
-        flow_graph = _implicit_graph()
-
-    flow_id = flow_graph.flow_id
-
-    received_table = input_schema.ReceivedTable(
-        file_type="excel",
-        path=source,
-        name=Path(source).name,
-        table_settings=input_schema.InputExcelTable(sheet_name=sheet_name, has_headers=has_header),
-    )
-    if convert_to_absolute_path and not input_schema.keep_paths_as_written.get():
-        received_table.path = received_table.abs_file_path
-
-    read_node = input_schema.NodeRead(
-        flow_id=flow_id,
-        node_id=node_id,
-        received_file=received_table,
-        pos_x=100,
-        pos_y=100,
-        is_setup=True,
+    return _read_simple_file(
+        source,
+        "excel",
+        input_schema.InputExcelTable(sheet_name=sheet_name, has_headers=has_header),
+        flow_graph=flow_graph,
         description=description,
+        convert_to_absolute_path=convert_to_absolute_path,
     )
-
-    flow_graph.add_read(read_node)
-
-    return source_frame(flow_graph, node_id)
 
 
 def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) -> FlowFrame:
