@@ -24,7 +24,7 @@ const fakeHandle = (href = "about:blank"): FakeHandle => {
   return handle;
 };
 
-const selection: SelectionMessage = { type: "selection", previewNodeId: 2, selectedNodeIds: [2, 3] };
+const selection: SelectionMessage = { type: "selection", previewNodeId: 2, previewToken: 1 };
 
 const load = async () => {
   vi.resetModules();

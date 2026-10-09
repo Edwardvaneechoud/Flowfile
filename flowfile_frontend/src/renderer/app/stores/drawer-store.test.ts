@@ -57,10 +57,10 @@ describe("setPreviewNode while the flow's Data window is out", () => {
     const drawer = useDrawerStore();
     drawer.setPreviewNode(3);
     expect(drawer.previewNodeId).toBeNull();
-    expect(drawer.popoutPreview).toEqual({ flowId: 4, nodeId: 3, token: 1 });
+    expect(drawer.popoutPreview).toEqual({ 4: { nodeId: 3, token: 1 } });
 
     drawer.setPreviewNode(3);
-    expect(drawer.popoutPreview).toEqual({ flowId: 4, nodeId: 3, token: 2 });
+    expect(drawer.popoutPreview[4]).toEqual({ nodeId: 3, token: 2 });
     expect(drawer.previewRefreshToken).toBe(0);
   });
 
@@ -69,7 +69,7 @@ describe("setPreviewNode while the flow's Data window is out", () => {
     const drawer = useDrawerStore();
     drawer.setPreviewNode(3);
     expect(drawer.previewNodeId).toBe(3);
-    expect(drawer.popoutPreview).toBeNull();
+    expect(drawer.popoutPreview).toEqual({});
   });
 
   it("a canvas deselect never blanks the window", () => {
@@ -78,7 +78,7 @@ describe("setPreviewNode while the flow's Data window is out", () => {
     drawer.setPreviewNode(3);
     drawer.clearPreview();
     drawer.setPreviewNode(null);
-    expect(drawer.popoutPreview?.nodeId).toBe(3);
+    expect(drawer.popoutPreview[4]?.nodeId).toBe(3);
   });
 
   it("a results row click goes to the window too", () => {
@@ -86,24 +86,50 @@ describe("setPreviewNode while the flow's Data window is out", () => {
     const drawer = useDrawerStore();
     drawer.selectNodeForPreview(3);
     expect(drawer.previewNodeId).toBeNull();
-    expect(drawer.popoutPreview?.nodeId).toBe(3);
+    expect(drawer.popoutPreview[4]?.nodeId).toBe(3);
   });
 });
 
-describe("the Data tab's move and a window's Return", () => {
+describe("the Data tab's move, a Save As and a window's Return", () => {
   beforeEach(() => {
     setActivePinia(createPinia());
   });
 
-  it("takes the previewed node along when the tab pops out", () => {
+  it("takes the previewed node along when the tab pops out, and nothing when there is none", () => {
     const drawer = useDrawerStore();
     drawer.setPreviewNode(3);
     drawer.divertPreviewToWindow(4);
     expect(drawer.previewNodeId).toBeNull();
-    expect(drawer.popoutPreview).toEqual({ flowId: 4, nodeId: 3, token: 1 });
+    expect(drawer.popoutPreview).toEqual({ 4: { nodeId: 3, token: 1 } });
 
     drawer.divertPreviewToWindow(4);
-    expect(drawer.popoutPreview).toEqual({ flowId: 4, nodeId: 3, token: 1 });
+    expect(drawer.popoutPreview).toEqual({});
+  });
+
+  it("keeps each flow's window on its own node", () => {
+    const drawer = useDrawerStore();
+    drawer.setPreviewNode(3);
+    drawer.divertPreviewToWindow(4);
+    drawer.setPreviewNode(5);
+    drawer.divertPreviewToWindow(9);
+    expect(drawer.popoutPreview).toEqual({
+      4: { nodeId: 3, token: 1 },
+      9: { nodeId: 5, token: 1 },
+    });
+  });
+
+  it("moves the window's node with a Save As and forgets it with the window", () => {
+    const drawer = useDrawerStore();
+    drawer.setPreviewNode(3);
+    drawer.divertPreviewToWindow(4);
+    drawer.movePopoutPreview(4, 9);
+    expect(drawer.popoutPreview).toEqual({ 9: { nodeId: 3, token: 1 } });
+
+    drawer.movePopoutPreview(4, 11);
+    expect(drawer.popoutPreview).toEqual({ 9: { nodeId: 3, token: 1 } });
+
+    drawer.forgetPopoutPreview(9);
+    expect(drawer.popoutPreview).toEqual({});
   });
 
   it("numbers dock requests and forgets a consumed one", () => {

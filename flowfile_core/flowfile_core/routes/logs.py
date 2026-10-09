@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import aiofiles
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from flowfile_core import ServerRun, flow_file_handler
@@ -117,38 +117,56 @@ async def stream_log_file(
         raise HTTPException(status_code=500, detail=f"Error reading log file: {e}") from e
 
 
+async def wait_for_run_start(flow, seconds: float) -> None:
+    """Give the run the client just asked for time to be claimed.
+
+    The designer opens a run's stream as it posts ``/flow/run/``, and that route queues the run as a
+    background task, so the claim lands after the response: without this wait the stream would find
+    an idle flow, send the previous run's file and close.
+    """
+    deadline = time.monotonic() + seconds
+    while not flow.flow_settings.is_running and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+
+
 @router.get("/logs/{flow_id}", tags=["flow_logging"])
-async def stream_logs(flow_id: int, idle_timeout: int = 300, current_user=Depends(get_current_active_user)):
+async def stream_logs(
+    flow_id: int,
+    idle_timeout: int = 300,
+    wait_for_run: float = Query(0, ge=0, le=30),
+    current_user=Depends(get_current_active_user),
+):
     """
     Streams logs for a given flow_id using Server-Sent Events.
     Requires a Bearer token header (the renderer reads the stream with fetch, not EventSource,
     so the token never goes in the URL). Only flows open in the caller's session are served.
+
+    Core owns the stream's end: opened while the flow runs, the stream follows the run and ends with
+    it (``idle_timeout`` only bounds a run that stays silent); opened while the flow is idle, it sends
+    the file once and closes. ``wait_for_run`` first waits that many seconds for a run to be claimed.
     The connection will close gracefully if the server shuts down.
     """
     logger.info(f"Starting log stream for flow_id: {flow_id} by user: {current_user.username}")
-    await asyncio.sleep(0.3)
     flow = flow_file_handler.get_flow(flow_id, current_user.id)
-    logger.info("Streaming logs")
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
+    if wait_for_run > 0:
+        await wait_for_run_start(flow, wait_for_run)
+    # A run claims its slot before it truncates the log: let the file be rewritten before it is read.
+    await asyncio.sleep(0.3)
 
     log_file_path = flow.flow_logger.get_log_filepath()
     if not Path(log_file_path).exists():
         raise HTTPException(status_code=404, detail="Log file not found")
 
-    class RunningState:
-        def __init__(self):
-            self.has_started = False
+    follows_run = flow.flow_settings.is_running
+    logger.info("Streaming logs" if follows_run else "Sending the log once: the flow is idle")
 
-        def is_running(self):
-            if flow.flow_settings.is_running:
-                self.has_started = True
-            return flow.flow_settings.is_running or not self.has_started
-
-    running_state = RunningState()
+    def is_running() -> bool:
+        return follows_run and flow.flow_settings.is_running
 
     return StreamingResponse(
-        stream_log_file(log_file_path, running_state.is_running, idle_timeout),
+        stream_log_file(log_file_path, is_running, idle_timeout),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../config/constants", () => ({ flowfileCorebaseURL: "http://127.0.0.1:63578/" }));
 
-import { LogStreamHttpError, readSseData, streamFlowLogs } from "./logStreamClient";
+import {
+  LogStreamHttpError,
+  RUN_START_WAIT_SECONDS,
+  readSseData,
+  streamFlowLogs,
+} from "./logStreamClient";
 
 const streamOf = (...chunks: (string | Uint8Array)[]): ReadableStream<Uint8Array> => {
   const encoder = new TextEncoder();
@@ -69,6 +74,20 @@ describe("streamFlowLogs", () => {
     expect(init.headers.Authorization).toBe("Bearer jwt-value");
     expect(onOpen).toHaveBeenCalledOnce();
     expect(seen).toEqual(["line 1", "line 2"]);
+  });
+
+  it("asks core to wait for the run it is about to follow, and only then", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(streamOf())));
+    vi.stubGlobal("fetch", fetchMock);
+    const base = { flowId: 7, token: "jwt-value", signal: new AbortController().signal, onData: vi.fn() };
+
+    await streamFlowLogs({ ...base, waitForRun: true });
+    await streamFlowLogs(base);
+
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      `http://127.0.0.1:63578/logs/7?wait_for_run=${RUN_START_WAIT_SECONDS}`,
+    );
+    expect(String(fetchMock.mock.calls[1][0])).toBe("http://127.0.0.1:63578/logs/7");
   });
 
   it("rejects a non-2xx response without opening", async () => {

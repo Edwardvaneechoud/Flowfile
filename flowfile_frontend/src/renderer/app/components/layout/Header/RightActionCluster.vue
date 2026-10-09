@@ -44,9 +44,9 @@ const toggleResults = (): void => {
   // The logs live in their own window: show that one; the dock stays closed for them.
   if (editorStore.isPoppedOut("logs", nodeStore.flow_id)) {
     void usePopout("logs").focus(nodeStore.flow_id);
-    return;
+  } else {
+    draggableItemStore.bringToFront("bottomDock");
   }
-  draggableItemStore.bringToFront("bottomDock");
   draggableItemStore.bringToFront("rightDrawer");
 };
 

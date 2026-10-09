@@ -59,7 +59,7 @@ describe("usePopoutChannel", () => {
     expect(h.log).toEqual(["listen", "ready:4"]);
     expect(h.desktop.reportPopoutReady).toHaveBeenCalledWith("table", 4);
 
-    const message = { type: "selection", previewNodeId: 2, selectedNodeIds: [2] };
+    const message = { type: "selection", previewNodeId: 2, previewToken: 1 };
     handler!(message);
     expect(onMessage).toHaveBeenCalledExactlyOnceWith(message);
   });

@@ -34,11 +34,13 @@ const mocks = vi.hoisted(() => ({
     openCodePane: vi.fn(),
     hideLogViewer: vi.fn(),
   },
-  flowStore: { setFlowId: vi.fn(), selectedNodeIds: [] as number[] },
+  flowStore: { setFlowId: vi.fn() },
   drawerStore: {
     previewNodeId: null as number | null,
-    popoutPreview: null as { flowId: number; nodeId: number; token: number } | null,
+    popoutPreview: {} as Record<number, { nodeId: number; token: number }>,
     divertPreviewToWindow: vi.fn(),
+    movePopoutPreview: vi.fn(),
+    forgetPopoutPreview: vi.fn(),
     requestDock: vi.fn(),
   },
   router: { currentRoute: { value: { name: "designer" as string } }, push: vi.fn() },
@@ -73,9 +75,8 @@ describe("usePopout", () => {
     vi.clearAllMocks();
     _resetForTests();
     mocks.editorStore.poppedOut = {};
-    mocks.flowStore.selectedNodeIds = [];
     mocks.drawerStore.previewNodeId = null;
-    mocks.drawerStore.popoutPreview = null;
+    mocks.drawerStore.popoutPreview = {};
     mocks.router.currentRoute.value.name = "designer";
     onClosed = null;
     onReturned = null;
@@ -239,9 +240,8 @@ describe("usePopout", () => {
     expect(mocks.editorStore.hideLogViewer).toHaveBeenCalledOnce();
   });
 
-  it("a Data window that listens is told its node and the selection; other kinds nothing", async () => {
-    mocks.drawerStore.popoutPreview = { flowId: 4, nodeId: 3, token: 1 };
-    mocks.flowStore.selectedNodeIds = [3, 5];
+  it("a Data window that listens is told its node and the send count; other kinds nothing", async () => {
+    mocks.drawerStore.popoutPreview = { 4: { nodeId: 3, token: 2 } };
     installPopoutListeners();
     await settle();
 
@@ -250,7 +250,7 @@ describe("usePopout", () => {
     expect(mocks.desktop.postToPopoutWindow).toHaveBeenCalledExactlyOnceWith("table", 4, {
       type: "selection",
       previewNodeId: 3,
-      selectedNodeIds: [3, 5],
+      previewToken: 2,
     });
 
     onReady!({ kind: "logs", flowId: 4 });
@@ -261,7 +261,7 @@ describe("usePopout", () => {
     expect(mocks.desktop.postToPopoutWindow).toHaveBeenLastCalledWith("table", 9, {
       type: "selection",
       previewNodeId: null,
-      selectedNodeIds: [3, 5],
+      previewToken: 0,
     });
   });
 
@@ -280,33 +280,71 @@ describe("usePopout", () => {
   });
 
   it("a Data window's Return reopens the dock on its node, a Logs window's on the logs", async () => {
-    mocks.drawerStore.popoutPreview = { flowId: 4, nodeId: 3, token: 1 };
+    mocks.drawerStore.popoutPreview = { 4: { nodeId: 3, token: 1 } };
     installPopoutListeners();
     await settle();
 
     onReturned!({ kind: "table", flowId: 4 });
     expect(mocks.flowStore.setFlowId).toHaveBeenCalledWith(4);
     expect(mocks.drawerStore.requestDock).toHaveBeenCalledWith({ flowId: 4, tab: "data", nodeId: 3 });
+    expect(mocks.drawerStore.forgetPopoutPreview).toHaveBeenCalledExactlyOnceWith(4);
 
     onReturned!({ kind: "logs", flowId: 4 });
     expect(mocks.drawerStore.requestDock).toHaveBeenLastCalledWith({ flowId: 4, tab: "logs" });
     expect(mocks.router.push).not.toHaveBeenCalled();
   });
 
-  it("a Data window returned for another flow asks for the dock without a node", async () => {
-    mocks.drawerStore.popoutPreview = { flowId: 4, nodeId: 3, token: 1 };
+  it("a Data window returned for another flow reopens the dock on that flow's node", async () => {
+    mocks.drawerStore.popoutPreview = { 4: { nodeId: 3, token: 1 }, 9: { nodeId: 7, token: 1 } };
     mocks.router.currentRoute.value.name = "catalog";
     installPopoutListeners();
     await settle();
 
     onReturned!({ kind: "table", flowId: 9 });
     expect(mocks.flowStore.setFlowId).toHaveBeenCalledWith(9);
-    expect(mocks.drawerStore.requestDock).toHaveBeenCalledWith({
-      flowId: 9,
-      tab: "data",
-      nodeId: undefined,
-    });
+    expect(mocks.drawerStore.requestDock).toHaveBeenCalledWith({ flowId: 9, tab: "data", nodeId: 7 });
+    expect(mocks.drawerStore.forgetPopoutPreview).toHaveBeenCalledExactlyOnceWith(9);
     expect(mocks.router.push).toHaveBeenCalledWith({ name: "designer" });
+  });
+
+  it("a Logs window closed by hand hides the dock's logs; a close after Bring back changes nothing", async () => {
+    installPopoutListeners();
+    const { popOut, bringBack } = usePopout("logs");
+    await popOut(4);
+    await settle();
+    mocks.editorStore.hideLogViewer.mockClear();
+
+    onClosed!({ kind: "logs", flowId: 4 });
+    expect(mocks.editorStore.isPoppedOut("logs", 4)).toBe(false);
+    expect(mocks.editorStore.hideLogViewer).toHaveBeenCalledOnce();
+
+    await popOut(4);
+    mocks.editorStore.hideLogViewer.mockClear();
+    await bringBack(4);
+    onClosed!({ kind: "logs", flowId: 4 });
+    expect(mocks.editorStore.hideLogViewer).not.toHaveBeenCalled();
+    expect(mocks.drawerStore.requestDock).toHaveBeenLastCalledWith({ flowId: 4, tab: "logs" });
+  });
+
+  it("a Data window closed by hand forgets its node; Bring back reopens the dock on it first", async () => {
+    installPopoutListeners();
+    await settle();
+    mocks.drawerStore.popoutPreview = { 4: { nodeId: 3, token: 1 } };
+    const { popOut, bringBack } = usePopout("table");
+    await popOut(4);
+
+    onClosed!({ kind: "table", flowId: 4 });
+    expect(mocks.editorStore.isPoppedOut("table", 4)).toBe(false);
+    expect(mocks.drawerStore.forgetPopoutPreview).toHaveBeenCalledExactlyOnceWith(4);
+
+    await popOut(4);
+    await bringBack(4);
+    expect(mocks.drawerStore.requestDock).toHaveBeenLastCalledWith({
+      flowId: 4,
+      tab: "data",
+      nodeId: 3,
+    });
+    expect(mocks.drawerStore.forgetPopoutPreview).toHaveBeenCalledTimes(2);
   });
 
   it("bringing the Logs window back asks for the dock on the logs", async () => {
@@ -317,7 +355,7 @@ describe("usePopout", () => {
     expect(mocks.drawerStore.requestDock).toHaveBeenCalledWith({ flowId: 4, tab: "logs" });
   });
 
-  it("a window's Save As moves the mark of its kind only", async () => {
+  it("a window's Save As moves the mark of its kind only, and the Data window's node", async () => {
     mocks.desktop.listPopoutWindows.mockResolvedValue([
       { kind: "notebook", flowId: 4 },
       { kind: "table", flowId: 4 },
@@ -331,6 +369,11 @@ describe("usePopout", () => {
     expect(mocks.editorStore.isPoppedOut("notebook", 9)).toBe(true);
     expect(mocks.editorStore.isPoppedOut("table", 4)).toBe(true);
     expect(mocks.editorStore.isPoppedOut("table", 9)).toBe(false);
+    expect(mocks.drawerStore.movePopoutPreview).not.toHaveBeenCalled();
+
+    onRekeyed!({ kind: "table", from: 4, to: 9 });
+    expect(mocks.editorStore.isPoppedOut("table", 9)).toBe(true);
+    expect(mocks.drawerStore.movePopoutPreview).toHaveBeenCalledExactlyOnceWith(4, 9);
   });
 
   it("an untracked window's Save As marks nothing", async () => {
@@ -338,8 +381,10 @@ describe("usePopout", () => {
     await settle();
 
     onRekeyed!({ kind: "logs", from: 4, to: 9 });
+    onRekeyed!({ kind: "table", from: 4, to: 9 });
     expect(mocks.editorStore.isPoppedOut("logs", 9)).toBe(false);
     expect(mocks.editorStore.markPoppedOut).not.toHaveBeenCalled();
+    expect(mocks.drawerStore.movePopoutPreview).not.toHaveBeenCalled();
   });
 
   it("leaves the listeners to the layout", () => {

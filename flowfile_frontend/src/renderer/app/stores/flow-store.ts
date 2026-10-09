@@ -60,8 +60,6 @@ export const useFlowStore = defineStore("flow", {
       pendingLayoutResetCounter: 0,
       // A run started or ended elsewhere; HeaderButtons re-reads the run state on it.
       pendingRunStateCounter: 0,
-      // The canvas's selected nodes, written by Canvas: what a window following the canvas reads.
-      selectedNodeIds: [] as number[],
     };
   },
 
@@ -85,15 +83,6 @@ export const useFlowStore = defineStore("flow", {
       this.historyState = { ...defaultHistoryState };
       this.artifactData = { ...defaultArtifactData };
       this.parameters = [];
-      this.selectedNodeIds = [];
-    },
-
-    // Unchanged ids are left alone, so a watcher on the list fires only for a real change.
-    setSelectedNodeIds(ids: number[]) {
-      const same =
-        ids.length === this.selectedNodeIds.length &&
-        ids.every((id, index) => id === this.selectedNodeIds[index]);
-      if (!same) this.selectedNodeIds = ids;
     },
 
     setParameters(parameters: FlowParameter[]) {

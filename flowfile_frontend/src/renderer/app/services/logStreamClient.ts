@@ -46,23 +46,34 @@ export const readSseData = async (
   }
 };
 
+/** How long core waits for the run this window just posted before it treats the flow as idle. */
+export const RUN_START_WAIT_SECONDS = 5;
+
 export interface FlowLogStreamOptions {
   flowId: number;
   token: string;
   signal: AbortSignal;
+  /** The stream is for a run this window just asked for, which core may not have claimed yet. */
+  waitForRun?: boolean;
   onOpen?: () => void;
   onData: (data: string) => void;
 }
 
-/** Resolves when core closes the stream; rejects on a non-2xx response, a network error or an abort. */
+/**
+ * Resolves when core closes the stream: at the run's end for a running flow, right after the file for
+ * an idle one. Rejects on a non-2xx response, a network error or an abort.
+ */
 export const streamFlowLogs = async ({
   flowId,
   token,
   signal,
+  waitForRun = false,
   onOpen,
   onData,
 }: FlowLogStreamOptions): Promise<void> => {
-  const response = await fetch(new URL(`logs/${flowId}`, flowfileCorebaseURL), {
+  const url = new URL(`logs/${flowId}`, flowfileCorebaseURL);
+  if (waitForRun) url.searchParams.set("wait_for_run", String(RUN_START_WAIT_SECONDS));
+  const response = await fetch(url, {
     headers: { Accept: "text/event-stream", Authorization: `Bearer ${token}` },
     signal,
   });

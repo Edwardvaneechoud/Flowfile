@@ -22,15 +22,14 @@
 </template>
 
 <script lang="ts" setup>
-// One flow's data preview in its own window: it shows the node the designer sends it and follows
-// the canvas through the designer's selection messages.
+// One flow's data preview in its own window, on the node the designer sends it.
 import { computed, ref, shallowRef, watch } from "vue";
 import { useRoute } from "vue-router";
 import DataPreview from "../../features/designer/dataPreview.vue";
 import PopoutWindowFrame from "./PopoutWindowFrame.vue";
 import { usePopoutWindowHost } from "./usePopoutWindowHost";
 import { usePopoutChannel } from "./usePopoutChannel";
-import { nextNodeId, outputsForNode } from "./tableWindow";
+import { applySelection, outputsForNode, type ShownPreview } from "./tableWindow";
 import { FlowApi } from "../../api";
 import { parseFlowQuery } from "../../../lib/popoutWindow";
 import { useFlowStore } from "../../stores/flow-store";
@@ -39,7 +38,8 @@ import type { VueFlowInput } from "../../types/flow.types";
 const route = useRoute();
 const flowStore = useFlowStore();
 const initialNode = parseFlowQuery(route.query.node);
-const nodeId = ref<number | null>(initialNode > 0 ? initialNode : null);
+const shown = ref<ShownPreview>({ nodeId: initialNode > 0 ? initialNode : null, token: null });
+const nodeId = computed(() => shown.value.nodeId);
 const refreshToken = ref(0);
 const flowData = shallowRef<VueFlowInput | null>(null);
 let wasRunning = false;
@@ -79,7 +79,9 @@ usePopoutChannel({
   kind: "table",
   flowId,
   onMessage: (message) => {
-    nodeId.value = nextNodeId(nodeId.value, message);
+    const { preview, refetch } = applySelection(shown.value, message);
+    shown.value = preview;
+    if (refetch) refreshToken.value += 1;
   },
 });
 

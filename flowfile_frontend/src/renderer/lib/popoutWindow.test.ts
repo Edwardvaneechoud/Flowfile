@@ -71,19 +71,11 @@ describe("popoutWindow", () => {
   });
 
   it("accepts a selection message and nothing else", () => {
-    expect(isPopoutMessage({ type: "selection", previewNodeId: 3, selectedNodeIds: [3, 4] })).toBe(
-      true,
-    );
-    expect(isPopoutMessage({ type: "selection", previewNodeId: null, selectedNodeIds: [] })).toBe(
-      true,
-    );
-    expect(isPopoutMessage({ type: "preview", previewNodeId: 3, selectedNodeIds: [] })).toBe(false);
-    expect(isPopoutMessage({ type: "selection", previewNodeId: "3", selectedNodeIds: [] })).toBe(
-      false,
-    );
-    expect(isPopoutMessage({ type: "selection", previewNodeId: 3, selectedNodeIds: ["3"] })).toBe(
-      false,
-    );
+    expect(isPopoutMessage({ type: "selection", previewNodeId: 3, previewToken: 2 })).toBe(true);
+    expect(isPopoutMessage({ type: "selection", previewNodeId: null, previewToken: 0 })).toBe(true);
+    expect(isPopoutMessage({ type: "preview", previewNodeId: 3, previewToken: 1 })).toBe(false);
+    expect(isPopoutMessage({ type: "selection", previewNodeId: "3", previewToken: 1 })).toBe(false);
+    expect(isPopoutMessage({ type: "selection", previewNodeId: 3, previewToken: "1" })).toBe(false);
     expect(isPopoutMessage({ type: "selection", previewNodeId: 3 })).toBe(false);
     expect(isPopoutMessage(null)).toBe(false);
   });

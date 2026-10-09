@@ -14,7 +14,7 @@ import {
   type PopoutKind,
   type SelectionMessage,
 } from "../../lib/popoutWindow";
-import { useDrawerStore } from "../stores/drawer-store";
+import { useDrawerStore, type WindowPreview } from "../stores/drawer-store";
 import { useEditorStore } from "../stores/editor-store";
 import { useFlowStore } from "../stores/flow-store";
 
@@ -27,7 +27,11 @@ interface PopoutKindDef {
   bringBack: (flowId: number) => void;
   /** A window's "Return to designer": reopen the panel on that flow, switching to it when needed. */
   adoptReturn: (flowId: number) => void;
-  /** The window is told the node the designer sent it and the canvas selection (`selectionFor`). */
+  /** The window went away without a Return or a "Bring back": the panel stays closed. */
+  onClosed?: (flowId: number) => void;
+  /** A tracked window's flow moved to a new id (a Save As). */
+  onRekey?: (from: number, to: number) => void;
+  /** The window is told the node the designer sent it (`selectionFor`). */
   followsSelection?: boolean;
 }
 
@@ -37,10 +41,16 @@ function showFlow(flowId: number): void {
   if (router.currentRoute.value.name !== "designer") void router.push({ name: "designer" });
 }
 
-/** The node the flow's Data window was last given: what a Return reopens the dock on. */
-function windowNode(flowId: number): number | undefined {
-  const preview = useDrawerStore().popoutPreview;
-  return preview?.flowId === flowId ? preview.nodeId : undefined;
+/** What the flow's Data window shows, as the designer last sent it. */
+function windowPreview(flowId: number): WindowPreview | undefined {
+  return useDrawerStore().popoutPreview[flowId];
+}
+
+/** The node the flow's Data window showed, taken back: what a Return reopens the dock on. */
+function takeWindowNode(flowId: number): number | undefined {
+  const nodeId = windowPreview(flowId)?.nodeId;
+  useDrawerStore().forgetPopoutPreview(flowId);
+  return nodeId;
 }
 
 // `null` marks a kind that has no window yet; the record keeps the table exhaustive.
@@ -61,12 +71,14 @@ const KINDS: Record<PopoutKind, PopoutKindDef | null> = {
     },
     afterPopOut: (flowId) => useDrawerStore().divertPreviewToWindow(flowId),
     bringBack: (flowId) =>
-      useDrawerStore().requestDock({ flowId, tab: "data", nodeId: windowNode(flowId) }),
+      useDrawerStore().requestDock({ flowId, tab: "data", nodeId: takeWindowNode(flowId) }),
     adoptReturn: (flowId) => {
-      const nodeId = windowNode(flowId);
+      const nodeId = takeWindowNode(flowId);
       showFlow(flowId);
       useDrawerStore().requestDock({ flowId, tab: "data", nodeId });
     },
+    onClosed: (flowId) => useDrawerStore().forgetPopoutPreview(flowId),
+    onRekey: (from, to) => useDrawerStore().movePopoutPreview(from, to),
   },
   logs: {
     afterPopOut: () => useEditorStore().hideLogViewer(),
@@ -75,14 +87,23 @@ const KINDS: Record<PopoutKind, PopoutKindDef | null> = {
       showFlow(flowId);
       useDrawerStore().requestDock({ flowId, tab: "logs" });
     },
+    // A run while the window was out set the viewer flag; the dock must not spring open on a close.
+    onClosed: () => useEditorStore().hideLogViewer(),
   },
   ai: null,
 };
 
 let installed = false;
 
+/**
+ * A window went away. After a Return or a "Bring back" the mark is already clear and the dock
+ * request filed, so the shell's later close report changes nothing.
+ */
 function onClosed({ kind, flowId }: PopoutRef): void {
-  useEditorStore().clearPoppedOut(kind, flowId);
+  const editorStore = useEditorStore();
+  if (!editorStore.isPoppedOut(kind, flowId)) return;
+  editorStore.clearPoppedOut(kind, flowId);
+  KINDS[kind]?.onClosed?.(flowId);
 }
 
 function onReturned({ kind, flowId }: PopoutRef): void {
@@ -96,15 +117,16 @@ function moveMark({ kind, from, to }: PopoutMove): void {
   if (!editorStore.isPoppedOut(kind, from)) return;
   editorStore.clearPoppedOut(kind, from);
   editorStore.markPoppedOut(kind, to);
+  KINDS[kind]?.onRekey?.(from, to);
 }
 
-/** What a window following the canvas is told: the node the designer sent it and the canvas selection. */
+/** What a window following the canvas is told: the node the designer sent it, and how often. */
 export function selectionFor(flowId: number): SelectionMessage {
-  const preview = useDrawerStore().popoutPreview;
+  const preview = windowPreview(flowId);
   return {
     type: "selection",
-    previewNodeId: preview?.flowId === flowId ? preview.nodeId : null,
-    selectedNodeIds: [...useFlowStore().selectedNodeIds],
+    previewNodeId: preview?.nodeId ?? null,
+    previewToken: preview?.token ?? 0,
   };
 }
 

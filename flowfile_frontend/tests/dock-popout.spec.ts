@@ -55,10 +55,15 @@ async function useDevelopmentMode(request: any, token: string, flowId: number) {
   expect(write.ok()).toBe(true);
 }
 
+/**
+ * A run from the designer's button, over both on the API and in the designer's own poll, which
+ * shows the logs on the end.
+ */
 async function runFlow(page: Page, request: any, token: string, flowId: number) {
   const before = await lastRunStart(request, token, flowId);
   await clickRun(page);
   await waitForRun(request, token, flowId, before);
+  await expect(page.locator("[data-tutorial='run-btn'] button", { hasText: "Run" })).toBeEnabled();
 }
 
 test.describe("Dock pop-outs", () => {
@@ -104,6 +109,13 @@ test.describe("Dock pop-outs", () => {
     await expect(dockTab(page, "Data")).toHaveCount(0);
     await expect(page.locator(`${DOCK} .dp-status-bar`)).toHaveCount(0);
 
+    // Clicking the shown node again is a re-read of its rows in the window.
+    const reread = popup.waitForResponse((response) =>
+      new URL(response.url()).pathname.endsWith("/node/data"),
+    );
+    await node(page, 2).click();
+    expect((await reread).ok()).toBe(true);
+
     // A reloaded window asks the designer for its node again (it was opened on node 1).
     await popup.reload();
     await popup.waitForLoadState("load");
@@ -131,17 +143,22 @@ test.describe("Dock pop-outs", () => {
       .toBeGreaterThan(0);
     const logsBefore = await windowLogs(popup).innerText();
 
-    // A run started in the designer shows up in the window, not in the dock: core rewrites the
-    // flow's log per run, and the window re-reads it on the run's signals.
+    // A designer run shows up in the window (core rewrites the log per run), not in the dock, and
+    // the window settles on the finished run: its last line, with core's stream closed after it.
     await runFlow(page, request, token, flowId);
-    await expect
-      .poll(() => windowLogs(popup).innerText(), { timeout: 20_000 })
-      .not.toBe(logsBefore);
-    await expect.poll(() => windowLogs(popup).locator("div").count()).toBeGreaterThan(0);
+    await expect(windowLogs(popup).locator("div").last()).toContainText("Flow completed!", {
+      timeout: 20_000,
+    });
+    await expect(popup.locator("[data-testid='logs-window'] .log-status")).toContainText(
+      "Disconnected",
+    );
+    expect(await windowLogs(popup).innerText()).not.toBe(logsBefore);
     await expect(page.locator(DOCK)).toHaveCount(0);
 
-    // Closing the window by hand hands the logs back to the dock on the next run.
+    // A close by hand leaves the dock closed, run flag or not; the next run brings the logs back.
     await popup.close();
+    await page.waitForTimeout(2_500); // past the opener's 1 s closed poll
+    await expect(page.locator(DOCK)).toHaveCount(0);
     await runFlow(page, request, token, flowId);
     await expect(page.locator(DOCK)).toBeVisible({ timeout: 10_000 });
     await expect(page.locator(`${DOCK} .log-container`)).toBeVisible();

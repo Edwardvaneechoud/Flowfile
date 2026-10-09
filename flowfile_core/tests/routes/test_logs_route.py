@@ -3,6 +3,7 @@
 import json
 import socket
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -139,3 +140,57 @@ def test_worker_log_handler_lands_lines_in_core(own_flow, live_core, monkeypatch
     monkeypatch.setattr(flow_logger, "LOGGING_URL", f"{live_core}/raw_logs")
     flow_logger.get_worker_logger(own_flow, 4).warning("shipped by the worker")
     assert "shipped by the worker" in _flow_log_text(own_flow)
+
+
+def _events(response) -> list[str]:
+    return [json.loads(block.removeprefix("data: ")) for block in response.text.split("\n\n") if block]
+
+
+def _run(flow_id: int, after: float, line: str, for_seconds: float) -> threading.Thread:
+    """Claim the flow after a delay, log a line into the run, release it later."""
+
+    def run():
+        flow = flow_file_handler.get_flow(flow_id)
+        time.sleep(after)
+        flow.flow_settings.is_running = True
+        flow.flow_logger.info(line)
+        time.sleep(for_seconds)
+        flow.flow_settings.is_running = False
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
+
+
+def test_idle_stream_sends_the_file_once_and_closes(own_flow):
+    started = time.monotonic()
+    response = client.get(f"/logs/{own_flow}", params={"idle_timeout": 5}, headers=headers)
+    events = _events(response)
+    assert response.status_code == 200
+    assert any(event.endswith(f"INFO - {LOG_LINE}") for event in events)
+    assert not any("timed out" in event for event in events)
+    assert time.monotonic() - started < 4  # closed with the file, not at the idle timeout
+
+
+def test_stream_opened_during_a_run_follows_it_and_ends_with_it(own_flow):
+    thread = _run(own_flow, after=0, line="written while running", for_seconds=1.0)
+    time.sleep(0.1)
+    response = client.get(f"/logs/{own_flow}", params={"idle_timeout": 5}, headers=headers)
+    thread.join()
+    events = _events(response)
+    assert any(event.endswith("written while running") for event in events)
+    assert not any("timed out" in event for event in events)
+
+
+def test_wait_for_run_follows_a_run_claimed_after_the_stream_opened(own_flow):
+    thread = _run(own_flow, after=0.5, line="first line of the run", for_seconds=1.0)
+    response = client.get(f"/logs/{own_flow}", params={"idle_timeout": 5, "wait_for_run": 3}, headers=headers)
+    thread.join()
+    events = _events(response)
+    assert any(event.endswith("first line of the run") for event in events)
+    assert not any("timed out" in event for event in events)
+
+
+def test_wait_for_run_is_bounded(own_flow):
+    response = client.get(f"/logs/{own_flow}", params={"wait_for_run": 99}, headers=headers)
+    assert response.status_code == 422
