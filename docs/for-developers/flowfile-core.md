@@ -516,6 +516,10 @@ While `FlowGraph`, `FlowNode`, and `FlowDataEngine` power the core pipeline logi
 - **Security** – Handles authentication and authorization so only the right users can access or modify flows.
 - **Data previews** – When you view a node's output in the UI, the API calls `.get_resulting_data()` on the corresponding `FlowNode` and returns a sample to the client.
 
+### Run and cancel state in the canvas
+
+`POST /flow/cancel/` requests cancellation; it does not mean the executing node has stopped. `GET /flow_settings` supplies `is_running` and `is_canceled` for the *selected* flow when the editor opens, refreshes, or changes tabs. Show **Cancelling…** only when both are true (the cancel flag can remain true after completion). Poll `GET /flow/run_status/` for the flow ID that started the run: it returns HTTP 202 while running and 200 with final node results afterward. Apply those results before unlocking Run. When switching flows, do not apply an old flow's late response or notification to the new canvas. After Save As, new run/cancel requests must use the re-keyed flow ID.
+
 ## The canvas notebook package
 
 `flowfile_core/notebook/` turns an open `FlowGraph` into notebook cells and back. Each step is a separate module:
