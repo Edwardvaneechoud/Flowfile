@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
 // Popping out is a move: the designer remembers the flow per kind until its window is gone again.
+import { nextTick, reactive } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type Ref = { kind: string; flowId: number };
+type Move = { kind: string; from: number; to: number };
 
 const mocks = vi.hoisted(() => ({
   desktop: {
@@ -12,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     listPopoutWindows: vi.fn(),
     onPopoutWindowClosed: vi.fn(),
     onPopoutWindowReturned: vi.fn(),
+    onPopoutWindowRekeyed: vi.fn(),
   },
   editorStore: {
     poppedOut: {} as Record<string, number[]>,
@@ -30,6 +33,7 @@ const mocks = vi.hoisted(() => ({
     openCodePane: vi.fn(),
   },
   flowStore: { setFlowId: vi.fn() },
+  flowSync: {} as { rekeyedTo: Move | null },
   router: { currentRoute: { value: { name: "designer" as string } }, push: vi.fn() },
   messageError: vi.fn(),
 }));
@@ -37,6 +41,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../lib/desktop", () => ({ desktop: mocks.desktop }));
 vi.mock("../stores/editor-store", () => ({ useEditorStore: () => mocks.editorStore }));
 vi.mock("../stores/flow-store", () => ({ useFlowStore: () => mocks.flowStore }));
+vi.mock("../stores/flow-sync-store", () => ({ useFlowSyncStore: () => mocks.flowSync }));
 vi.mock("../router", () => ({ default: mocks.router }));
 vi.mock("element-plus", () => ({ ElMessage: { error: mocks.messageError } }));
 
@@ -44,25 +49,33 @@ import { _resetForTests, installPopoutListeners, usePopout } from "./usePopout";
 
 const settle = async () => {
   for (let i = 0; i < 5; i++) await Promise.resolve();
+  await nextTick();
 };
 
 describe("usePopout", () => {
   let onClosed: ((popout: Ref) => void) | null = null;
   let onReturned: ((popout: Ref) => void) | null = null;
+  let onRekeyed: ((move: Move) => void) | null = null;
 
   beforeEach(() => {
     vi.clearAllMocks();
     _resetForTests();
     mocks.editorStore.poppedOut = {};
+    mocks.flowSync = reactive({ rekeyedTo: null });
     mocks.router.currentRoute.value.name = "designer";
     onClosed = null;
     onReturned = null;
+    onRekeyed = null;
     mocks.desktop.onPopoutWindowClosed.mockImplementation(async (handler) => {
       onClosed = handler;
       return () => undefined;
     });
     mocks.desktop.onPopoutWindowReturned.mockImplementation(async (handler) => {
       onReturned = handler;
+      return () => undefined;
+    });
+    mocks.desktop.onPopoutWindowRekeyed.mockImplementation(async (handler) => {
+      onRekeyed = handler;
       return () => undefined;
     });
     mocks.desktop.listPopoutWindows.mockResolvedValue([]);
@@ -77,7 +90,7 @@ describe("usePopout", () => {
 
     expect(await popOut(4)).toBe(true);
     expect(mocks.desktop.openPopoutWindow).toHaveBeenCalledWith("notebook", 4, {
-      url: `${window.location.origin}${window.location.pathname}#/notebook?flow=4`,
+      hash: "#/notebook?flow=4",
       name: "flowfile-notebook-4",
     });
     expect(isPoppedOut(4)).toBe(true);
@@ -174,9 +187,52 @@ describe("usePopout", () => {
     expect(mocks.editorStore.openCodePane).not.toHaveBeenCalled();
   });
 
+  it("a window's Save As moves the mark of its kind only", async () => {
+    mocks.desktop.listPopoutWindows.mockResolvedValue([
+      { kind: "notebook", flowId: 4 },
+      { kind: "table", flowId: 4 },
+    ]);
+    installPopoutListeners();
+    await settle();
+
+    expect(onRekeyed).not.toBeNull();
+    onRekeyed!({ kind: "notebook", from: 4, to: 9 });
+    expect(mocks.editorStore.isPoppedOut("notebook", 4)).toBe(false);
+    expect(mocks.editorStore.isPoppedOut("notebook", 9)).toBe(true);
+    expect(mocks.editorStore.isPoppedOut("table", 4)).toBe(true);
+    expect(mocks.editorStore.isPoppedOut("table", 9)).toBe(false);
+  });
+
+  it("an untracked window's Save As marks nothing", async () => {
+    installPopoutListeners();
+    await settle();
+
+    onRekeyed!({ kind: "logs", from: 4, to: 9 });
+    expect(mocks.editorStore.isPoppedOut("logs", 9)).toBe(false);
+    expect(mocks.editorStore.markPoppedOut).not.toHaveBeenCalled();
+  });
+
+  it("this window's own feed moves every kind marked on the old id", async () => {
+    mocks.desktop.listPopoutWindows.mockResolvedValue([
+      { kind: "notebook", flowId: 4 },
+      { kind: "logs", flowId: 4 },
+      { kind: "ai", flowId: 7 },
+    ]);
+    installPopoutListeners();
+    await settle();
+
+    mocks.flowSync.rekeyedTo = { kind: "ignored", from: 4, to: 9 };
+    await settle();
+    expect(mocks.editorStore.poppedOut).toEqual({ notebook: [9], logs: [9], ai: [7] });
+
+    onRekeyed!({ kind: "notebook", from: 4, to: 9 });
+    expect(mocks.editorStore.poppedOut).toEqual({ notebook: [9], logs: [9], ai: [7] });
+  });
+
   it("leaves the listeners to the layout", () => {
     usePopout("notebook");
     expect(mocks.desktop.onPopoutWindowClosed).not.toHaveBeenCalled();
+    expect(mocks.desktop.onPopoutWindowRekeyed).not.toHaveBeenCalled();
     expect(mocks.desktop.listPopoutWindows).not.toHaveBeenCalled();
   });
 
@@ -194,6 +250,7 @@ describe("usePopout", () => {
     installPopoutListeners();
     expect(mocks.desktop.onPopoutWindowClosed).toHaveBeenCalledTimes(1);
     expect(mocks.desktop.onPopoutWindowReturned).toHaveBeenCalledTimes(1);
+    expect(mocks.desktop.onPopoutWindowRekeyed).toHaveBeenCalledTimes(1);
     expect(mocks.desktop.listPopoutWindows).toHaveBeenCalledTimes(1);
   });
 });

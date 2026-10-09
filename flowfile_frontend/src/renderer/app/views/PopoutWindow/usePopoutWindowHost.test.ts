@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
     setWindowTitle: vi.fn(),
     closeCurrentWindow: vi.fn(),
     returnPopoutToDesigner: vi.fn(),
+    rekeyPopoutWindow: vi.fn(),
   },
   messageInfo: vi.fn(),
 }));
@@ -59,6 +60,7 @@ describe("usePopoutWindowHost", () => {
     h.desktop.setWindowTitle.mockResolvedValue(undefined);
     h.desktop.closeCurrentWindow.mockResolvedValue(undefined);
     h.desktop.returnPopoutToDesigner.mockResolvedValue(undefined);
+    h.desktop.rekeyPopoutWindow.mockResolvedValue(undefined);
   });
 
   it("pins the URL's flow before the feed starts, then loads it", async () => {
@@ -163,7 +165,7 @@ describe("usePopoutWindowHost", () => {
     expect(h.desktop.closeCurrentWindow).toHaveBeenCalledOnce();
   });
 
-  it("follows a Save As of its own flow to the new id", async () => {
+  it("follows a Save As of its own flow to the new id and reports it", async () => {
     const onRekey = vi.fn();
     usePopoutWindowHost({ kind: "notebook", onRekey });
     await settle();
@@ -171,12 +173,26 @@ describe("usePopoutWindowHost", () => {
     h.flowSync.rekeyedTo = { from: 7, to: 9 };
     await settle();
     expect(onRekey).not.toHaveBeenCalled();
+    expect(h.desktop.rekeyPopoutWindow).not.toHaveBeenCalled();
     expect(h.router.replace).not.toHaveBeenCalled();
 
     h.flowSync.rekeyedTo = { from: 4, to: 9 };
     await settle();
     expect(onRekey).toHaveBeenCalledWith({ from: 4, to: 9 });
+    expect(h.desktop.rekeyPopoutWindow).toHaveBeenCalledExactlyOnceWith("notebook", 4, 9);
     expect(h.router.replace).toHaveBeenCalledWith({ query: { flow: "9" } });
+  });
+
+  it("keeps following a Save As the designer could not be told about", async () => {
+    h.desktop.rekeyPopoutWindow.mockRejectedValue(new Error("no shell"));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    usePopoutWindowHost({ kind: "notebook" });
+    await settle();
+
+    h.flowSync.rekeyedTo = { from: 4, to: 9 };
+    await settle();
+    expect(h.router.replace).toHaveBeenCalledWith({ query: { flow: "9" } });
+    expect(console.warn).toHaveBeenCalledOnce();
   });
 
   it("returns to the designer unless the view's guard says no", async () => {

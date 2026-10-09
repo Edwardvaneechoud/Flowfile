@@ -4,17 +4,20 @@
  * designer shows a stub or hides the tab for that flow until the window comes back, so one window
  * hosts a flow's panel at a time. Each kind says here what the designer does around the move.
  */
+import { watch } from "vue";
 import { ElMessage } from "element-plus";
-import { desktop, type PopoutRef } from "../../lib/desktop";
+import { desktop, type PopoutMove, type PopoutRef } from "../../lib/desktop";
 import router from "../router";
 import {
+  POPOUT_KINDS,
   POPOUT_TITLES,
+  popoutWindowHash,
   popoutWindowName,
-  popoutWindowUrl,
   type PopoutKind,
 } from "../../lib/popoutWindow";
 import { useEditorStore } from "../stores/editor-store";
 import { useFlowStore } from "../stores/flow-store";
+import { useFlowSyncStore } from "../stores/flow-sync-store";
 
 interface PopoutKindDef {
   /** The designer's side of the move, once the window opened. */
@@ -52,12 +55,34 @@ function onReturned({ kind, flowId }: PopoutRef): void {
   KINDS[kind]?.adoptReturn(flowId);
 }
 
-/** Once per window, from `AppLayout`: follow closed and returned pop-outs, adopt the ones already open. */
+/** A tracked window's flow moved (a Save As): the mark follows; an untracked window stays untracked. */
+function moveMark({ kind, from, to }: PopoutMove): void {
+  const editorStore = useEditorStore();
+  if (!editorStore.isPoppedOut(kind, from)) return;
+  editorStore.clearPoppedOut(kind, from);
+  editorStore.markPoppedOut(kind, to);
+}
+
+/**
+ * Once per window, from `AppLayout`: follow closed, returned and rekeyed pop-outs, adopt the ones
+ * already open. A Save As reaches the marks twice, idempotently: the window reports its own (the
+ * only report that always comes, also for a flow this window has open but not active), and this
+ * window's own feed is the fast path, in the same flush as the tab bar's switch to the new id.
+ */
 export function installPopoutListeners(): void {
   if (installed) return;
   installed = true;
   void desktop.onPopoutWindowClosed(onClosed);
   void desktop.onPopoutWindowReturned(onReturned);
+  void desktop.onPopoutWindowRekeyed(moveMark);
+  const flowSync = useFlowSyncStore();
+  watch(
+    () => flowSync.rekeyedTo,
+    (moved) => {
+      if (!moved) return;
+      for (const kind of POPOUT_KINDS) moveMark({ kind, from: moved.from, to: moved.to });
+    },
+  );
   void desktop
     .listPopoutWindows()
     .then((open) => {
@@ -82,7 +107,7 @@ export function usePopout(kind: PopoutKind) {
     }
     try {
       await desktop.openPopoutWindow(kind, flowId, {
-        url: popoutWindowUrl(kind, flowId, window.location),
+        hash: popoutWindowHash(kind, flowId),
         name: popoutWindowName(kind, flowId),
       });
     } catch (error) {

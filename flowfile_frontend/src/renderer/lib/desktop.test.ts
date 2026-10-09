@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// Web mode's pop-out windows: `window.open` handles by kind and flow, a closed poll, one opener message.
+// Web mode's pop-out windows: `window.open` handles by kind and flow, a closed poll, the opener messages.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type FakeHandle = {
@@ -26,7 +26,8 @@ const load = async () => {
   return (await import("./desktop")).desktop;
 };
 
-const web = (url: string, name: string) => ({ url, name });
+const web = (hash: string, name: string) => ({ hash, name });
+const pageUrl = (hash: string) => `${window.location.origin}${window.location.pathname}${hash}`;
 
 const post = (data: unknown, origin = window.location.origin) =>
   window.dispatchEvent(new MessageEvent("message", { data, origin }));
@@ -50,12 +51,12 @@ describe("desktop pop-out windows (web mode)", () => {
     const handle = fakeHandle();
     openSpy.mockReturnValue(handle);
 
-    await desktop.openPopoutWindow("notebook", 4, web("u4", "flowfile-notebook-4"));
+    await desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "flowfile-notebook-4"));
     expect(openSpy).toHaveBeenCalledWith("", "flowfile-notebook-4", expect.any(String));
-    expect(handle.location.assign).toHaveBeenCalledWith("u4");
+    expect(handle.location.assign).toHaveBeenCalledWith(pageUrl("#/notebook?flow=4"));
     expect(await desktop.listPopoutWindows()).toEqual([{ kind: "notebook", flowId: 4 }]);
 
-    await desktop.openPopoutWindow("notebook", 4, web("u4", "flowfile-notebook-4"));
+    await desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "flowfile-notebook-4"));
     expect(openSpy).toHaveBeenCalledOnce();
     expect(handle.focus).toHaveBeenCalledOnce();
   });
@@ -81,7 +82,7 @@ describe("desktop pop-out windows (web mode)", () => {
     const handle = fakeHandle(`${window.location.origin}/#/notebook?flow=4`);
     openSpy.mockReturnValue(handle);
 
-    await desktop.openPopoutWindow("notebook", 4, web("u4", "flowfile-notebook-4"));
+    await desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "flowfile-notebook-4"));
     expect(handle.location.assign).not.toHaveBeenCalled();
     expect(handle.focus).toHaveBeenCalledOnce();
   });
@@ -90,7 +91,7 @@ describe("desktop pop-out windows (web mode)", () => {
     const desktop = await load();
     openSpy.mockReturnValue(null);
 
-    await expect(desktop.openPopoutWindow("notebook", 4, web("u4", "n"))).rejects.toThrow(
+    await expect(desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "n"))).rejects.toThrow(
       "The browser blocked the Notebook window",
     );
     expect(await desktop.listPopoutWindows()).toEqual([]);
@@ -103,7 +104,7 @@ describe("desktop pop-out windows (web mode)", () => {
     const onClosed = vi.fn();
     const unlisten = await desktop.onPopoutWindowClosed(onClosed);
 
-    await desktop.openPopoutWindow("notebook", 4, web("u4", "flowfile-notebook-4"));
+    await desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "flowfile-notebook-4"));
     vi.advanceTimersByTime(1000);
     expect(onClosed).not.toHaveBeenCalled();
 
@@ -124,7 +125,7 @@ describe("desktop pop-out windows (web mode)", () => {
     const onClosed = vi.fn();
     await desktop.onPopoutWindowClosed(onClosed);
 
-    await desktop.openPopoutWindow("notebook", 4, web("u4", "flowfile-notebook-4"));
+    await desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "flowfile-notebook-4"));
     await desktop.closePopoutWindow("notebook", 4);
     vi.advanceTimersByTime(1000);
     expect(handle.close).toHaveBeenCalledOnce();
@@ -142,6 +143,7 @@ describe("desktop pop-out windows (web mode)", () => {
     post({ ...valid, event: "opened" });
     post({ ...valid, kind: "settings" });
     post({ ...valid, flowId: "4" });
+    post({ ...valid, event: "rekeyed", to: 9 });
     post(null);
     post("flowfile:popout");
     expect(onReturned).not.toHaveBeenCalled();
@@ -169,5 +171,73 @@ describe("desktop pop-out windows (web mode)", () => {
 
     post(postMessage.mock.calls[0][0]);
     expect(onReturned).toHaveBeenCalledExactlyOnceWith({ kind: "logs", flowId: 7 });
+  });
+
+  it("a rekeyed message moves the handle to the new flow before anyone hears of it", async () => {
+    const desktop = await load();
+    const handle = fakeHandle();
+    openSpy.mockReturnValueOnce(handle).mockReturnValueOnce(fakeHandle());
+    const onClosed = vi.fn();
+    await desktop.onPopoutWindowClosed(onClosed);
+    let openDuringHandler: Promise<unknown> | null = null;
+    const onRekeyed = vi.fn(() => {
+      openDuringHandler = desktop.listPopoutWindows();
+    });
+    const unlisten = await desktop.onPopoutWindowRekeyed(onRekeyed);
+    await desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "flowfile-notebook-4"));
+    await desktop.openPopoutWindow("logs", 4, web("#/popout/logs?flow=4", "flowfile-logs-4"));
+
+    post({ type: "flowfile:popout", event: "rekeyed", kind: "notebook", flowId: 4, to: 9 });
+    expect(onRekeyed).toHaveBeenCalledExactlyOnceWith({ kind: "notebook", from: 4, to: 9 });
+    const moved = [
+      { kind: "logs", flowId: 4 },
+      { kind: "notebook", flowId: 9 },
+    ];
+    expect(await openDuringHandler).toEqual(moved);
+    expect(await desktop.listPopoutWindows()).toEqual(moved);
+
+    await desktop.openPopoutWindow("notebook", 9, web("#/notebook?flow=9", "flowfile-notebook-9"));
+    expect(openSpy).toHaveBeenCalledTimes(2);
+    expect(handle.focus).toHaveBeenCalledOnce();
+
+    handle.closed = true;
+    vi.advanceTimersByTime(1000);
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith({ kind: "notebook", flowId: 9 });
+
+    unlisten();
+    post({ type: "flowfile:popout", event: "rekeyed", kind: "logs", flowId: 4, to: 9 });
+    expect(onRekeyed).toHaveBeenCalledOnce();
+  });
+
+  it("ignores a rekeyed message without a new id and one for an untracked window", async () => {
+    const desktop = await load();
+    openSpy.mockImplementation(() => fakeHandle());
+    const onRekeyed = vi.fn();
+    await desktop.onPopoutWindowRekeyed(onRekeyed);
+    await desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "flowfile-notebook-4"));
+
+    post({ type: "flowfile:popout", event: "rekeyed", kind: "notebook", flowId: 4 });
+    post({ type: "flowfile:popout", event: "rekeyed", kind: "notebook", flowId: 4, to: "9" });
+    expect(onRekeyed).not.toHaveBeenCalled();
+    expect(await desktop.listPopoutWindows()).toEqual([{ kind: "notebook", flowId: 4 }]);
+
+    post({ type: "flowfile:popout", event: "rekeyed", kind: "table", flowId: 4, to: 9 });
+    expect(onRekeyed).toHaveBeenCalledExactlyOnceWith({ kind: "table", from: 4, to: 9 });
+    expect(await desktop.listPopoutWindows()).toEqual([{ kind: "notebook", flowId: 4 }]);
+  });
+
+  it("a pop-out's Save As renames the window and reaches its opener's listener", async () => {
+    const desktop = await load();
+    const postMessage = vi.fn();
+    vi.stubGlobal("opener", { postMessage });
+    const onRekeyed = vi.fn();
+    await desktop.onPopoutWindowRekeyed(onRekeyed);
+
+    await desktop.rekeyPopoutWindow("notebook", 4, 9);
+    expect(window.name).toBe("flowfile-notebook-9");
+    expect(postMessage).toHaveBeenCalledWith(expect.any(Object), window.location.origin);
+
+    post(postMessage.mock.calls[0][0]);
+    expect(onRekeyed).toHaveBeenCalledExactlyOnceWith({ kind: "notebook", from: 4, to: 9 });
   });
 });

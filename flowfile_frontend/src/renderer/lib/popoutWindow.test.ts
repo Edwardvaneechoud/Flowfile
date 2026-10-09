@@ -6,6 +6,7 @@ import {
   isPopoutHash,
   isPopoutKind,
   parseFlowQuery,
+  popoutWindowHash,
   popoutWindowName,
   popoutWindowUrl,
   windowTitle,
@@ -34,18 +35,17 @@ describe("popoutWindow", () => {
     expect(isPopoutKind(undefined)).toBe(false);
   });
 
-  it("builds the window name and url for a flow of each kind", () => {
+  it("builds the window name, route hash and url for a flow of each kind", () => {
     expect(popoutWindowName("notebook", 12)).toBe("flowfile-notebook-12");
     expect(popoutWindowName("logs", 12)).toBe("flowfile-logs-12");
+    expect(popoutWindowHash("notebook", 12)).toBe("#/notebook?flow=12");
+    expect(popoutWindowHash("table", 12, { node: 3 })).toBe("#/popout/table?flow=12&node=3");
     expect(
-      popoutWindowUrl("notebook", 12, { origin: "http://localhost:8080", pathname: "/" }),
+      popoutWindowUrl("#/notebook?flow=12", { origin: "http://localhost:8080", pathname: "/" }),
     ).toBe("http://localhost:8080/#/notebook?flow=12");
     expect(
-      popoutWindowUrl("notebook", 12, { origin: "tauri://localhost", pathname: "/index.html" }),
+      popoutWindowUrl("#/notebook?flow=12", { origin: "tauri://localhost", pathname: "/index.html" }),
     ).toBe("tauri://localhost/index.html#/notebook?flow=12");
-    expect(
-      popoutWindowUrl("table", 12, { origin: "http://localhost:8080", pathname: "/" }, { node: 3 }),
-    ).toBe("http://localhost:8080/#/popout/table?flow=12&node=3");
   });
 
   it("reads a positive integer flow id from the query and -1 otherwise", () => {

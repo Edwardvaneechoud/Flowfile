@@ -7,7 +7,13 @@
 import type { Update } from "@tauri-apps/plugin-updater";
 
 import type { ServicesStatus } from "../typings/desktop";
-import { isPopoutKind, POPOUT_TITLES, type PopoutKind } from "./popoutWindow";
+import {
+  isPopoutKind,
+  POPOUT_TITLES,
+  popoutWindowName,
+  popoutWindowUrl,
+  type PopoutKind,
+} from "./popoutWindow";
 
 type TauriInternals = unknown;
 
@@ -132,17 +138,37 @@ export interface PopoutRef {
   flowId: number;
 }
 
+/** A pop-out window's flow moved to another id (a Save As). */
+export interface PopoutMove {
+  kind: PopoutKind;
+  from: number;
+  to: number;
+}
+
+const isPopoutRef = (value: unknown): value is PopoutRef => {
+  const ref = value as Partial<PopoutRef> | null;
+  return isPopoutKind(ref?.kind) && typeof ref?.flowId === "number";
+};
+
+const isPopoutMove = (value: unknown): value is PopoutMove => {
+  const move = value as Partial<PopoutMove> | null;
+  return isPopoutKind(move?.kind) && typeof move?.from === "number" && typeof move?.to === "number";
+};
+
 // Web mode's pop-out handles by `<kind>:<flowId>`, and who wants to know when one closes.
 const webPopouts = new Map<string, { ref: PopoutRef; handle: Window }>();
 const popoutKey = (kind: PopoutKind, flowId: number): string => `${kind}:${flowId}`;
-// Web mode's messages from a pop-out to its opener: today only "Return to designer".
+// Web mode's messages from a pop-out to its opener: "Return to designer" and a Save As.
 const POPOUT_MESSAGE_TYPE = "flowfile:popout";
-interface PopoutWire extends PopoutRef {
-  type: typeof POPOUT_MESSAGE_TYPE;
-  event: "returned";
-}
+type PopoutWire = PopoutRef & { type: typeof POPOUT_MESSAGE_TYPE } & (
+    | { event: "returned" }
+    | { event: "rekeyed"; to: number }
+  );
 const popoutClosedHandlers = new Set<(popout: PopoutRef) => void>();
+const popoutReturnedHandlers = new Set<(popout: PopoutRef) => void>();
+const popoutRekeyedHandlers = new Set<(move: PopoutMove) => void>();
 let popoutPoll: ReturnType<typeof setInterval> | null = null;
+let wireListening = false;
 
 const isBlankWindow = (handle: Window): boolean => {
   try {
@@ -169,17 +195,46 @@ function watchWebPopouts(): void {
 
 const readPopoutWire = (event: MessageEvent): PopoutWire | null => {
   if (event.origin !== window.location.origin) return null;
-  const data = event.data as Partial<PopoutWire> | null;
-  if (data?.type !== POPOUT_MESSAGE_TYPE || data.event !== "returned") return null;
+  const data = event.data as {
+    type?: unknown;
+    event?: unknown;
+    kind?: unknown;
+    flowId?: unknown;
+    to?: unknown;
+  } | null;
+  if (data?.type !== POPOUT_MESSAGE_TYPE) return null;
   if (!isPopoutKind(data.kind) || typeof data.flowId !== "number") return null;
-  return { type: POPOUT_MESSAGE_TYPE, event: "returned", kind: data.kind, flowId: data.flowId };
+  const ref = { type: POPOUT_MESSAGE_TYPE, kind: data.kind, flowId: data.flowId } as const;
+  if (data.event === "returned") return { ...ref, event: "returned" };
+  if (data.event === "rekeyed" && typeof data.to === "number") {
+    return { ...ref, event: "rekeyed", to: data.to };
+  }
+  return null;
 };
 
-// The shell's window commands are the notebook's only until it gains kind-aware ones.
-function requireDesktopKind(kind: PopoutKind): void {
-  if (kind !== "notebook") {
-    throw new Error(`${POPOUT_TITLES[kind]} windows are not available on desktop yet`);
-  }
+function rekeyWebPopout({ kind, from, to }: PopoutMove): void {
+  const popout = webPopouts.get(popoutKey(kind, from));
+  if (!popout) return;
+  webPopouts.delete(popoutKey(kind, from));
+  webPopouts.set(popoutKey(kind, to), { ref: { kind, flowId: to }, handle: popout.handle });
+}
+
+// One listener for every pop-out's message; the handle map moves before anyone hears of a rekey.
+function listenWire(): void {
+  if (wireListening) return;
+  wireListening = true;
+  window.addEventListener("message", (event: MessageEvent) => {
+    const wire = readPopoutWire(event);
+    if (!wire) return;
+    if (wire.event === "returned") {
+      const ref: PopoutRef = { kind: wire.kind, flowId: wire.flowId };
+      for (const handler of popoutReturnedHandlers) handler(ref);
+      return;
+    }
+    const move: PopoutMove = { kind: wire.kind, from: wire.flowId, to: wire.to };
+    rekeyWebPopout(move);
+    for (const handler of popoutRekeyedHandlers) handler(move);
+  });
 }
 
 export const desktop = {
@@ -423,18 +478,22 @@ export const desktop = {
 
   /**
    * Open (or focus) a flow's pop-out window of one kind. Desktop: a native window the shell builds
-   * with the same injected ports as the main window (`open_notebook_window`; the notebook is the
-   * only kind the shell knows). Web: `window.open` on the kind's route with a per-flow target name,
+   * with the same injected ports as the main window, on the route `hash` the renderer passes (the
+   * shell knows no kinds or routes). Web: `window.open` on that route with a per-flow target name,
    * so a second click focuses the window that is already there instead of opening another.
    */
   async openPopoutWindow(
     kind: PopoutKind,
     flowId: number,
-    web: { url: string; name: string },
+    target: { hash: string; name: string },
   ): Promise<void> {
     if (isDesktop) {
-      requireDesktopKind(kind);
-      await invoke<void>("open_notebook_window", { flowId });
+      await invoke<void>("open_popout_window", {
+        kind,
+        flowId,
+        hash: target.hash,
+        title: POPOUT_TITLES[kind],
+      });
       return;
     }
     const key = popoutKey(kind, flowId);
@@ -444,9 +503,9 @@ export const desktop = {
       return;
     }
     // An empty URL hands back the named window as is (one forgotten over a reload), else a blank one.
-    const handle = window.open("", web.name, "popup=yes,width=1100,height=800");
+    const handle = window.open("", target.name, "popup=yes,width=1100,height=800");
     if (!handle) throw new Error(`The browser blocked the ${POPOUT_TITLES[kind]} window`);
-    if (isBlankWindow(handle)) handle.location.assign(web.url);
+    if (isBlankWindow(handle)) handle.location.assign(popoutWindowUrl(target.hash, window.location));
     else handle.focus();
     webPopouts.set(key, { ref: { kind, flowId }, handle });
     watchWebPopouts();
@@ -454,8 +513,7 @@ export const desktop = {
 
   async focusPopoutWindow(kind: PopoutKind, flowId: number): Promise<void> {
     if (isDesktop) {
-      requireDesktopKind(kind);
-      await invoke<void>("focus_notebook_window", { flowId });
+      await invoke<void>("focus_popout_window", { kind, flowId });
       return;
     }
     webPopouts.get(popoutKey(kind, flowId))?.handle.focus();
@@ -463,8 +521,7 @@ export const desktop = {
 
   async closePopoutWindow(kind: PopoutKind, flowId: number): Promise<void> {
     if (isDesktop) {
-      requireDesktopKind(kind);
-      await invoke<void>("close_notebook_window", { flowId });
+      await invoke<void>("close_popout_window", { kind, flowId });
       return;
     }
     const key = popoutKey(kind, flowId);
@@ -473,21 +530,21 @@ export const desktop = {
     if (popout && !popout.handle.closed) popout.handle.close();
   },
 
-  /** The pop-out windows open right now (desktop: the shell's `notebook-*` windows). */
+  /** The pop-out windows open right now (desktop: the shell's registry, kinds this renderer knows). */
   async listPopoutWindows(): Promise<PopoutRef[]> {
     if (isDesktop) {
-      const flowIds = await invoke<number[]>("list_notebook_windows");
-      return flowIds.map((flowId) => ({ kind: "notebook", flowId }));
+      const open = await invoke<unknown[]>("list_popout_windows");
+      return open.filter(isPopoutRef);
     }
     return [...webPopouts.values()].filter(({ handle }) => !handle.closed).map(({ ref }) => ref);
   },
 
-  /** A pop-out window went away: the shell's `notebook-window-closed`, or the web handle's `closed`. */
+  /** A pop-out window went away: the shell's `popout-window-closed`, or the web handle's `closed`. */
   onPopoutWindowClosed(handler: (popout: PopoutRef) => void): Promise<() => void> {
     if (isDesktop) {
-      return listen<number>("notebook-window-closed", (flowId) =>
-        handler({ kind: "notebook", flowId }),
-      );
+      return listen<unknown>("popout-window-closed", (popout) => {
+        if (isPopoutRef(popout)) handler(popout);
+      });
     }
     popoutClosedHandlers.add(handler);
     return Promise.resolve(() => {
@@ -496,22 +553,39 @@ export const desktop = {
   },
 
   /**
-   * A pop-out window's "Return to designer": the shell's `notebook-window-returned` on `main`, or
-   * the pop-out's message to its opener. The designer reopens the panel on that flow; the window
-   * closes after.
+   * A pop-out window's "Return to designer": the shell's `popout-window-returned` on `main`, or the
+   * pop-out's message to its opener. The designer reopens the panel on that flow; the window closes
+   * after.
    */
   onPopoutWindowReturned(handler: (popout: PopoutRef) => void): Promise<() => void> {
     if (isDesktop) {
-      return listen<number>("notebook-window-returned", (flowId) =>
-        handler({ kind: "notebook", flowId }),
-      );
+      return listen<unknown>("popout-window-returned", (popout) => {
+        if (isPopoutRef(popout)) handler(popout);
+      });
     }
-    const onMessage = (event: MessageEvent) => {
-      const wire = readPopoutWire(event);
-      if (wire) handler({ kind: wire.kind, flowId: wire.flowId });
-    };
-    window.addEventListener("message", onMessage);
-    return Promise.resolve(() => window.removeEventListener("message", onMessage));
+    listenWire();
+    popoutReturnedHandlers.add(handler);
+    return Promise.resolve(() => {
+      popoutReturnedHandlers.delete(handler);
+    });
+  },
+
+  /**
+   * A pop-out window's flow moved to another id (a Save As it followed): the shell's
+   * `popout-window-rekeyed` on `main`, or the pop-out's message to its opener, whose handle for the
+   * window is re-keyed before the handler runs.
+   */
+  onPopoutWindowRekeyed(handler: (move: PopoutMove) => void): Promise<() => void> {
+    if (isDesktop) {
+      return listen<unknown>("popout-window-rekeyed", (move) => {
+        if (isPopoutMove(move)) handler(move);
+      });
+    }
+    listenWire();
+    popoutRekeyedHandlers.add(handler);
+    return Promise.resolve(() => {
+      popoutRekeyedHandlers.delete(handler);
+    });
   },
 
   /**
@@ -520,13 +594,28 @@ export const desktop = {
    */
   async returnPopoutToDesigner(kind: PopoutKind, flowId: number): Promise<void> {
     if (isDesktop) {
-      requireDesktopKind(kind);
-      await invoke<void>("return_notebook_window", { flowId });
+      await invoke<void>("return_popout_window", { kind, flowId });
       return;
     }
     const wire: PopoutWire = { type: POPOUT_MESSAGE_TYPE, event: "returned", kind, flowId };
     window.opener?.postMessage(wire, window.location.origin);
     window.close();
+  },
+
+  /**
+   * This pop-out window's flow moved to another id (a Save As). Desktop: the shell's registry
+   * follows (a window's label cannot change) and tells `main`. Web: the window takes the new id's
+   * name, so the designer finds it by name again after a reload, and tells its opener, which
+   * re-keys its handle.
+   */
+  async rekeyPopoutWindow(kind: PopoutKind, from: number, to: number): Promise<void> {
+    if (isDesktop) {
+      await invoke<void>("rekey_popout_window", { kind, from, to });
+      return;
+    }
+    window.name = popoutWindowName(kind, to);
+    const wire: PopoutWire = { type: POPOUT_MESSAGE_TYPE, event: "rekeyed", kind, flowId: from, to };
+    window.opener?.postMessage(wire, window.location.origin);
   },
 
   /** Title this window: `document.title`, and on desktop the native window title with it. */

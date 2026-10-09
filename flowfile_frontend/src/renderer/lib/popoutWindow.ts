@@ -38,17 +38,22 @@ export const isPopoutHash = (hash: string): boolean =>
 export const popoutWindowName = (kind: PopoutKind, flowId: number): string =>
   `flowfile-${kind}-${flowId}`;
 
-/** The window URL for this page's origin and path (web mode; the desktop shell builds its own). */
-export const popoutWindowUrl = (
+/** The route hash of a flow's window of one kind (`#/notebook?flow=4`): what the desktop shell opens the window on. */
+export const popoutWindowHash = (
   kind: PopoutKind,
   flowId: number,
-  location: { origin: string; pathname: string },
   query: Record<string, string | number> = {},
 ): string => {
   const params = new URLSearchParams({ flow: String(flowId) });
   for (const [key, value] of Object.entries(query)) params.set(key, String(value));
-  return `${location.origin}${location.pathname}#${POPOUT_ROUTES[kind]}?${params}`;
+  return `#${POPOUT_ROUTES[kind]}?${params}`;
 };
+
+/** The full window URL for this page's origin and path (web mode's `window.open`). */
+export const popoutWindowUrl = (
+  hash: string,
+  location: { origin: string; pathname: string },
+): string => `${location.origin}${location.pathname}${hash}`;
 
 /** The flow id in the route query, or -1 when it is missing or not a positive integer. */
 export const parseFlowQuery = (value: unknown): number => {

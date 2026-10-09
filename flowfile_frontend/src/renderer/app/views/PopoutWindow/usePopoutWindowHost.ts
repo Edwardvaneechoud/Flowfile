@@ -122,6 +122,10 @@ export function usePopoutWindowHost(options: PopoutWindowHostOptions) {
     (moved) => {
       if (!moved || moved.from !== flowId.value) return;
       options.onRekey?.(moved);
+      // The shell's registry and the designer's mark follow this window to the new id.
+      void desktop
+        .rekeyPopoutWindow(options.kind, moved.from, moved.to)
+        .catch((error) => console.warn("[popout] Save As not reported to the designer:", error));
       void router.replace({ query: { ...route.query, flow: String(moved.to) } });
     },
   );

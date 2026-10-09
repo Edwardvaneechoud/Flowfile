@@ -115,6 +115,8 @@ pub struct AppState {
     pub ports: Mutex<ServicePorts>,
     pub core_restarts: Mutex<RestartCounter>,
     pub worker_restarts: Mutex<RestartCounter>,
+    /// The open pop-out windows by label (`popout.rs`): what each hosts, kept current over a Save As.
+    pub popouts: Mutex<crate::popout::PopoutRegistry>,
 }
 
 // Re-export commonly used handle alias. Suppress the unused warning — we use
