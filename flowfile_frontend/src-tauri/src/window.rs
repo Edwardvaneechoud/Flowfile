@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, EventTarget, Manager, WebviewWindow, WindowEvent};
 
-use crate::popout::{self, PopoutRef};
+use crate::popout::{self, PopoutRef, Registration};
 use crate::state::AppState;
 
 /// Hide the loading window and reveal the main window. Idempotent.
@@ -43,18 +43,19 @@ pub fn open_popout_window(
         return Err(format!("'{hash}' is not a renderer route"));
     }
     let state = app.state::<Arc<AppState>>();
-    let registered = state.popouts.lock().find(kind, flow_id);
-    if let Some(label) = registered {
-        if let Some(existing) = app.get_webview_window(&label) {
-            let _ = existing.show();
-            let _ = existing.set_focus();
+    let registration = state.popouts.lock().find_or_register(kind, flow_id);
+    let label = match registration {
+        Registration::Existing(label) => {
+            // Open, or still being built by a concurrent open: focus what is there, never a second one.
+            if let Some(existing) = app.get_webview_window(&label) {
+                let _ = existing.show();
+                let _ = existing.set_focus();
+            }
             return Ok(());
         }
-        // Registered but gone (its Destroyed never ran): forget it and open afresh.
-        state.popouts.lock().remove(&label);
-    }
+        Registration::New(label) => label,
+    };
     let ports = *state.ports.lock();
-    let label = state.popouts.lock().register(kind, flow_id);
     let built = crate::build_app_window(app, &label, &format!("index.html{hash}"), ports)
         .title(title)
         .inner_size(1100.0, 800.0)
@@ -73,7 +74,11 @@ pub fn open_popout_window(
     let handle = app.clone();
     window.on_window_event(move |event| {
         if let WindowEvent::Destroyed = event {
-            let removed = handle.state::<Arc<AppState>>().popouts.lock().remove(&label);
+            let removed = handle
+                .state::<Arc<AppState>>()
+                .popouts
+                .lock()
+                .remove(&label);
             if let Some(closed) = removed {
                 let _ = handle.emit_to(
                     EventTarget::webview_window("main"),
@@ -108,14 +113,17 @@ pub fn close_popout_window(app: &AppHandle, kind: &str, flow_id: i64) {
     }
 }
 
-/// The pop-out's "Return to designer": `main` reopens its panel on that flow
-/// (`popout-window-returned`) and comes to the front, then the window closes (its `Destroyed`
-/// still reports the close).
-pub fn return_popout_window(app: &AppHandle, kind: &str, flow_id: i64) {
-    let returned = PopoutRef {
-        kind: kind.to_string(),
-        flow_id,
-    };
+/// The calling pop-out's "Return to designer", by its label: `main` reopens its panel on the flow
+/// the registry says that window hosts (`popout-window-returned`) and comes to the front, then the
+/// window closes (its `Destroyed` still reports the close). An unregistered window is refused.
+pub fn return_popout_window(app: &AppHandle, label: &str) -> Result<(), String> {
+    let returned = app
+        .state::<Arc<AppState>>()
+        .popouts
+        .lock()
+        .get(label)
+        .cloned()
+        .ok_or_else(|| format!("window '{label}' is not a pop-out window"))?;
     let _ = app.emit_to(
         EventTarget::webview_window("main"),
         "popout-window-returned",
@@ -125,22 +133,21 @@ pub fn return_popout_window(app: &AppHandle, kind: &str, flow_id: i64) {
         let _ = main.show();
         let _ = main.set_focus();
     }
-    close_popout_window(app, kind, flow_id);
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.close();
+    }
+    Ok(())
 }
 
-/// The window's flow moved to another id (a Save As): the label stays, the registry follows, and
-/// `main` moves its mark (`popout-window-rekeyed`).
+/// The calling pop-out's flow moved to another id (a Save As): the label stays, the registry
+/// follows (refusing a flow another window of that kind hosts) and `main` moves its mark
+/// (`popout-window-rekeyed`).
 pub fn rekey_popout_window(app: &AppHandle, label: &str, to: i64) -> Result<(), String> {
-    let state = app.state::<Arc<AppState>>();
-    let before = {
-        let mut popouts = state.popouts.lock();
-        let before = popouts
-            .get(label)
-            .cloned()
-            .ok_or_else(|| format!("window '{label}' is not a pop-out window"))?;
-        popouts.rekey(label, to);
-        before
-    };
+    let before = app
+        .state::<Arc<AppState>>()
+        .popouts
+        .lock()
+        .rekey(label, to)?;
     let _ = app.emit_to(
         EventTarget::webview_window("main"),
         "popout-window-rekeyed",

@@ -3,7 +3,7 @@ use crate::popout::PopoutRef;
 use crate::state::{AppState, ServicePorts, ServicesStatus};
 use crate::window;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State, WebviewWindow, Window};
+use tauri::{AppHandle, State, WebviewWindow, Window};
 
 /// Commands are not gated by the capability files, so the ones that end or reshape the app check
 /// the calling window themselves: a pop-out window must never quit or update the app.
@@ -12,23 +12,6 @@ fn require_main(window: &Window) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("window '{}' may not do this", window.label()))
-    }
-}
-
-/// Only the pop-out window hosting that flow of that kind may hand itself back or report its Save As.
-fn require_popout(window: &Window, kind: &str, flow_id: i64) -> Result<(), String> {
-    let state = window.app_handle().state::<Arc<AppState>>();
-    let hosted = state.popouts.lock().get(window.label()).cloned();
-    if hosted
-        .as_ref()
-        .is_some_and(|p| p.kind == kind && p.flow_id == flow_id)
-    {
-        Ok(())
-    } else {
-        Err(format!(
-            "window '{}' is not the {kind} window of flow {flow_id}",
-            window.label()
-        ))
     }
 }
 
@@ -132,27 +115,15 @@ pub fn list_popout_windows(app: AppHandle, window: Window) -> Result<Vec<PopoutR
     Ok(window::popout_windows(&app))
 }
 
+// A pop-out acts on itself: the registry entry of the calling window's label says what it hosts,
+// so the caller names no kind or flow, and a window without an entry (`main`) is refused there.
 #[tauri::command]
-pub fn return_popout_window(
-    app: AppHandle,
-    window: Window,
-    kind: String,
-    flow_id: i64,
-) -> Result<(), String> {
-    require_popout(&window, &kind, flow_id)?;
-    window::return_popout_window(&app, &kind, flow_id);
-    Ok(())
+pub fn return_popout_window(app: AppHandle, window: Window) -> Result<(), String> {
+    window::return_popout_window(&app, window.label())
 }
 
-/// The calling pop-out followed its flow's Save As; the registry follows and `main` is told.
+/// The calling pop-out followed its flow's Save As to `to`; the registry follows and `main` is told.
 #[tauri::command]
-pub fn rekey_popout_window(
-    app: AppHandle,
-    window: Window,
-    kind: String,
-    from: i64,
-    to: i64,
-) -> Result<(), String> {
-    require_popout(&window, &kind, from)?;
+pub fn rekey_popout_window(app: AppHandle, window: Window, to: i64) -> Result<(), String> {
     window::rekey_popout_window(&app, window.label(), to)
 }

@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
     rekeyPopoutWindow: vi.fn(),
   },
   messageInfo: vi.fn(),
+  messageError: vi.fn(),
 }));
 
 vi.mock("vue-router", () => ({ useRoute: () => h.route, useRouter: () => h.router }));
@@ -31,7 +32,9 @@ vi.mock("../../stores/flow-sync-store", () => ({
     return h.flowSync;
   },
 }));
-vi.mock("element-plus", () => ({ ElMessage: { info: h.messageInfo } }));
+vi.mock("element-plus", () => ({
+  ElMessage: { info: h.messageInfo, error: h.messageError },
+}));
 
 import { usePopoutWindowHost } from "./usePopoutWindowHost";
 
@@ -204,6 +207,17 @@ describe("usePopoutWindowHost", () => {
     const open = usePopoutWindowHost({ kind: "notebook" });
     await open.returnToDesigner();
     expect(h.desktop.returnPopoutToDesigner).toHaveBeenCalledWith("notebook", 4);
+  });
+
+  it("tells the user when the return could not be made", async () => {
+    h.desktop.returnPopoutToDesigner.mockRejectedValue(new Error("no shell"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const host = usePopoutWindowHost({ kind: "notebook" });
+    await settle();
+
+    await host.returnToDesigner();
+    expect(h.messageError).toHaveBeenCalledOnce();
+    expect(h.desktop.closeCurrentWindow).not.toHaveBeenCalled();
   });
 
   it("just closes on Return when it has no flow", async () => {

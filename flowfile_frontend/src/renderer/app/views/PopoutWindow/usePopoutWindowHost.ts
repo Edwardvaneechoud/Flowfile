@@ -83,7 +83,12 @@ export function usePopoutWindowHost(options: PopoutWindowHostOptions) {
       return;
     }
     if (options.beforeReturn && !(await options.beforeReturn())) return;
-    await desktop.returnPopoutToDesigner(options.kind, flowId.value);
+    try {
+      await desktop.returnPopoutToDesigner(options.kind, flowId.value);
+    } catch (error) {
+      console.error("[popout] Return to designer failed:", error);
+      ElMessage.error({ message: "Could not return to the designer.", showClose: true });
+    }
   }
 
   watch(

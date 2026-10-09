@@ -29,6 +29,14 @@ const load = async () => {
 const web = (hash: string, name: string) => ({ hash, name });
 const pageUrl = (hash: string) => `${window.location.origin}${window.location.pathname}${hash}`;
 
+// Every subscription is undone after its test: a module instance's wire listener must not outlive it.
+const unlisteners: Array<() => void> = [];
+const on = async (subscription: Promise<() => void>): Promise<() => void> => {
+  const off = await subscription;
+  unlisteners.push(off);
+  return off;
+};
+
 const post = (data: unknown, origin = window.location.origin) =>
   window.dispatchEvent(new MessageEvent("message", { data, origin }));
 
@@ -42,6 +50,9 @@ describe("desktop pop-out windows (web mode)", () => {
   });
 
   afterEach(() => {
+    for (const off of unlisteners.splice(0)) off();
+    window.name = "";
+    vi.restoreAllMocks();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -91,9 +102,9 @@ describe("desktop pop-out windows (web mode)", () => {
     const desktop = await load();
     openSpy.mockReturnValue(null);
 
-    await expect(desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "n"))).rejects.toThrow(
-      "The browser blocked the Notebook window",
-    );
+    await expect(
+      desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "n")),
+    ).rejects.toThrow("The browser blocked the Notebook window");
     expect(await desktop.listPopoutWindows()).toEqual([]);
   });
 
@@ -102,7 +113,7 @@ describe("desktop pop-out windows (web mode)", () => {
     const handle = fakeHandle();
     openSpy.mockReturnValue(handle);
     const onClosed = vi.fn();
-    const unlisten = await desktop.onPopoutWindowClosed(onClosed);
+    const unlisten = await on(desktop.onPopoutWindowClosed(onClosed));
 
     await desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "flowfile-notebook-4"));
     vi.advanceTimersByTime(1000);
@@ -123,7 +134,7 @@ describe("desktop pop-out windows (web mode)", () => {
     const handle = fakeHandle();
     openSpy.mockReturnValue(handle);
     const onClosed = vi.fn();
-    await desktop.onPopoutWindowClosed(onClosed);
+    await on(desktop.onPopoutWindowClosed(onClosed));
 
     await desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "flowfile-notebook-4"));
     await desktop.closePopoutWindow("notebook", 4);
@@ -135,7 +146,7 @@ describe("desktop pop-out windows (web mode)", () => {
   it("accepts only a well-formed return message from this origin", async () => {
     const desktop = await load();
     const onReturned = vi.fn();
-    const unlisten = await desktop.onPopoutWindowReturned(onReturned);
+    const unlisten = await on(desktop.onPopoutWindowReturned(onReturned));
     const valid = { type: "flowfile:popout", event: "returned", kind: "notebook", flowId: 4 };
 
     post(valid, "https://elsewhere.example");
@@ -163,7 +174,7 @@ describe("desktop pop-out windows (web mode)", () => {
     vi.stubGlobal("opener", { postMessage });
     vi.stubGlobal("close", close);
     const onReturned = vi.fn();
-    await desktop.onPopoutWindowReturned(onReturned);
+    await on(desktop.onPopoutWindowReturned(onReturned));
 
     await desktop.returnPopoutToDesigner("logs", 7);
     expect(postMessage).toHaveBeenCalledWith(expect.any(Object), window.location.origin);
@@ -178,12 +189,12 @@ describe("desktop pop-out windows (web mode)", () => {
     const handle = fakeHandle();
     openSpy.mockReturnValueOnce(handle).mockReturnValueOnce(fakeHandle());
     const onClosed = vi.fn();
-    await desktop.onPopoutWindowClosed(onClosed);
+    await on(desktop.onPopoutWindowClosed(onClosed));
     let openDuringHandler: Promise<unknown> | null = null;
     const onRekeyed = vi.fn(() => {
       openDuringHandler = desktop.listPopoutWindows();
     });
-    const unlisten = await desktop.onPopoutWindowRekeyed(onRekeyed);
+    const unlisten = await on(desktop.onPopoutWindowRekeyed(onRekeyed));
     await desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "flowfile-notebook-4"));
     await desktop.openPopoutWindow("logs", 4, web("#/popout/logs?flow=4", "flowfile-logs-4"));
 
@@ -213,7 +224,7 @@ describe("desktop pop-out windows (web mode)", () => {
     const desktop = await load();
     openSpy.mockImplementation(() => fakeHandle());
     const onRekeyed = vi.fn();
-    await desktop.onPopoutWindowRekeyed(onRekeyed);
+    await on(desktop.onPopoutWindowRekeyed(onRekeyed));
     await desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "flowfile-notebook-4"));
 
     post({ type: "flowfile:popout", event: "rekeyed", kind: "notebook", flowId: 4 });
@@ -222,16 +233,54 @@ describe("desktop pop-out windows (web mode)", () => {
     expect(await desktop.listPopoutWindows()).toEqual([{ kind: "notebook", flowId: 4 }]);
 
     post({ type: "flowfile:popout", event: "rekeyed", kind: "table", flowId: 4, to: 9 });
-    expect(onRekeyed).toHaveBeenCalledExactlyOnceWith({ kind: "table", from: 4, to: 9 });
+    expect(onRekeyed).not.toHaveBeenCalled();
     expect(await desktop.listPopoutWindows()).toEqual([{ kind: "notebook", flowId: 4 }]);
+  });
+
+  it("refuses a rekey into a flow that already has a window of that kind", async () => {
+    const desktop = await load();
+    openSpy.mockImplementation(() => fakeHandle());
+    const onRekeyed = vi.fn();
+    await on(desktop.onPopoutWindowRekeyed(onRekeyed));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "flowfile-notebook-4"));
+    await desktop.openPopoutWindow("notebook", 9, web("#/notebook?flow=9", "flowfile-notebook-9"));
+
+    post({ type: "flowfile:popout", event: "rekeyed", kind: "notebook", flowId: 4, to: 9 });
+    expect(onRekeyed).not.toHaveBeenCalled();
+    expect(console.warn).toHaveBeenCalledOnce();
+    expect(await desktop.listPopoutWindows()).toEqual([
+      { kind: "notebook", flowId: 4 },
+      { kind: "notebook", flowId: 9 },
+    ]);
+  });
+
+  it("listens for opener messages only while someone subscribes", async () => {
+    const desktop = await load();
+    const added = vi.spyOn(window, "addEventListener");
+    const removed = vi.spyOn(window, "removeEventListener");
+    const messages = (spy: typeof added) => spy.mock.calls.filter(([type]) => type === "message");
+
+    const offReturned = await on(desktop.onPopoutWindowReturned(vi.fn()));
+    const offClosed = await on(desktop.onPopoutWindowClosed(vi.fn()));
+    expect(messages(added)).toHaveLength(1);
+    offReturned();
+    expect(messages(removed)).toHaveLength(0);
+    offClosed();
+    expect(messages(removed)).toHaveLength(1);
+
+    await on(desktop.onPopoutWindowRekeyed(vi.fn()));
+    expect(messages(added)).toHaveLength(2);
   });
 
   it("a pop-out's Save As renames the window and reaches its opener's listener", async () => {
     const desktop = await load();
+    openSpy.mockReturnValue(fakeHandle());
     const postMessage = vi.fn();
     vi.stubGlobal("opener", { postMessage });
     const onRekeyed = vi.fn();
-    await desktop.onPopoutWindowRekeyed(onRekeyed);
+    await on(desktop.onPopoutWindowRekeyed(onRekeyed));
+    await desktop.openPopoutWindow("notebook", 4, web("#/notebook?flow=4", "flowfile-notebook-4"));
 
     await desktop.rekeyPopoutWindow("notebook", 4, 9);
     expect(window.name).toBe("flowfile-notebook-9");
@@ -239,5 +288,6 @@ describe("desktop pop-out windows (web mode)", () => {
 
     post(postMessage.mock.calls[0][0]);
     expect(onRekeyed).toHaveBeenCalledExactlyOnceWith({ kind: "notebook", from: 4, to: 9 });
+    expect(await desktop.listPopoutWindows()).toEqual([{ kind: "notebook", flowId: 9 }]);
   });
 });

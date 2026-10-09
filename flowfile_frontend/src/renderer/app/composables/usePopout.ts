@@ -4,12 +4,10 @@
  * designer shows a stub or hides the tab for that flow until the window comes back, so one window
  * hosts a flow's panel at a time. Each kind says here what the designer does around the move.
  */
-import { watch } from "vue";
 import { ElMessage } from "element-plus";
 import { desktop, type PopoutMove, type PopoutRef } from "../../lib/desktop";
 import router from "../router";
 import {
-  POPOUT_KINDS,
   POPOUT_TITLES,
   popoutWindowHash,
   popoutWindowName,
@@ -17,7 +15,6 @@ import {
 } from "../../lib/popoutWindow";
 import { useEditorStore } from "../stores/editor-store";
 import { useFlowStore } from "../stores/flow-store";
-import { useFlowSyncStore } from "../stores/flow-sync-store";
 
 interface PopoutKindDef {
   /** The designer's side of the move, once the window opened. */
@@ -65,9 +62,9 @@ function moveMark({ kind, from, to }: PopoutMove): void {
 
 /**
  * Once per window, from `AppLayout`: follow closed, returned and rekeyed pop-outs, adopt the ones
- * already open. A Save As reaches the marks twice, idempotently: the window reports its own (the
- * only report that always comes, also for a flow this window has open but not active), and this
- * window's own feed is the fast path, in the same flush as the tab bar's switch to the new id.
+ * already open. The marks follow only what the windows report (the shell's registry, the opener's
+ * handle map), never this window's own feed, so they cannot run ahead of a pop-out that has not
+ * followed a Save As yet.
  */
 export function installPopoutListeners(): void {
   if (installed) return;
@@ -75,14 +72,6 @@ export function installPopoutListeners(): void {
   void desktop.onPopoutWindowClosed(onClosed);
   void desktop.onPopoutWindowReturned(onReturned);
   void desktop.onPopoutWindowRekeyed(moveMark);
-  const flowSync = useFlowSyncStore();
-  watch(
-    () => flowSync.rekeyedTo,
-    (moved) => {
-      if (!moved) return;
-      for (const kind of POPOUT_KINDS) moveMark({ kind, from: moved.from, to: moved.to });
-    },
-  );
   void desktop
     .listPopoutWindows()
     .then((open) => {

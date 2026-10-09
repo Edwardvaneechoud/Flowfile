@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
 // Popping out is a move: the designer remembers the flow per kind until its window is gone again.
-import { nextTick, reactive } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type Ref = { kind: string; flowId: number };
@@ -33,7 +32,6 @@ const mocks = vi.hoisted(() => ({
     openCodePane: vi.fn(),
   },
   flowStore: { setFlowId: vi.fn() },
-  flowSync: {} as { rekeyedTo: Move | null },
   router: { currentRoute: { value: { name: "designer" as string } }, push: vi.fn() },
   messageError: vi.fn(),
 }));
@@ -41,7 +39,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../lib/desktop", () => ({ desktop: mocks.desktop }));
 vi.mock("../stores/editor-store", () => ({ useEditorStore: () => mocks.editorStore }));
 vi.mock("../stores/flow-store", () => ({ useFlowStore: () => mocks.flowStore }));
-vi.mock("../stores/flow-sync-store", () => ({ useFlowSyncStore: () => mocks.flowSync }));
 vi.mock("../router", () => ({ default: mocks.router }));
 vi.mock("element-plus", () => ({ ElMessage: { error: mocks.messageError } }));
 
@@ -49,7 +46,6 @@ import { _resetForTests, installPopoutListeners, usePopout } from "./usePopout";
 
 const settle = async () => {
   for (let i = 0; i < 5; i++) await Promise.resolve();
-  await nextTick();
 };
 
 describe("usePopout", () => {
@@ -61,7 +57,6 @@ describe("usePopout", () => {
     vi.clearAllMocks();
     _resetForTests();
     mocks.editorStore.poppedOut = {};
-    mocks.flowSync = reactive({ rekeyedTo: null });
     mocks.router.currentRoute.value.name = "designer";
     onClosed = null;
     onReturned = null;
@@ -210,23 +205,6 @@ describe("usePopout", () => {
     onRekeyed!({ kind: "logs", from: 4, to: 9 });
     expect(mocks.editorStore.isPoppedOut("logs", 9)).toBe(false);
     expect(mocks.editorStore.markPoppedOut).not.toHaveBeenCalled();
-  });
-
-  it("this window's own feed moves every kind marked on the old id", async () => {
-    mocks.desktop.listPopoutWindows.mockResolvedValue([
-      { kind: "notebook", flowId: 4 },
-      { kind: "logs", flowId: 4 },
-      { kind: "ai", flowId: 7 },
-    ]);
-    installPopoutListeners();
-    await settle();
-
-    mocks.flowSync.rekeyedTo = { kind: "ignored", from: 4, to: 9 };
-    await settle();
-    expect(mocks.editorStore.poppedOut).toEqual({ notebook: [9], logs: [9], ai: [7] });
-
-    onRekeyed!({ kind: "notebook", from: 4, to: 9 });
-    expect(mocks.editorStore.poppedOut).toEqual({ notebook: [9], logs: [9], ai: [7] });
   });
 
   it("leaves the listeners to the layout", () => {
