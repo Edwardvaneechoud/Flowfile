@@ -142,3 +142,11 @@ export const createNewSelect = (org_node_select: NodeSelect, node_id: number): N
   newNodeSelect.value.node_id = node_id;
   return newNodeSelect.value;
 };
+
+/** A cleared rename box means "keep the name": show it as real text instead of the placeholder. */
+export const restoreBlankName = (selectInput: SelectInput): SelectInput => {
+  if (!selectInput.new_name?.trim()) {
+    selectInput.new_name = selectInput.old_name;
+  }
+  return selectInput;
+};

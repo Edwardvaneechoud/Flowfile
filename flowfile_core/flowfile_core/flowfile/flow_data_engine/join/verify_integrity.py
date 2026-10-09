@@ -69,6 +69,37 @@ def get_join_map_problems(
     return problems
 
 
+def _shared_output_names(rename_table: dict[str, str], side: str) -> list[str]:
+    sources_by_output: dict[str, list[str]] = {}
+    for old_name, new_name in rename_table.items():
+        sources_by_output.setdefault(new_name, []).append(old_name)
+    return [
+        f"{side} columns {', '.join(repr(s) for s in sources)} share the output name '{new_name}'"
+        for new_name, sources in sources_by_output.items()
+        if len(sources) > 1
+    ]
+
+
+def get_duplicate_output_problems(
+    manager: transform_schema.JoinInputManager | transform_schema.CrossJoinInputManager,
+) -> list[str]:
+    """Collect human-readable reasons the selected output names collide.
+
+    Checked after any auto-rename: two columns on one side renamed to the same
+    name, or a kept name present on both sides, would otherwise surface as a
+    bare Polars duplicate-column error.
+
+    Returns:
+        list[str]: One message per collision; empty when every output name is unique.
+    """
+    problems = _shared_output_names(manager.left_manager.get_rename_table(), "left")
+    problems += _shared_output_names(manager.right_manager.get_rename_table(), "right")
+    overlapping = sorted(manager.get_overlapping_columns())
+    if overlapping:
+        problems.append(f"columns {', '.join(repr(c) for c in overlapping)} are kept on both sides")
+    return problems
+
+
 def verify_join_map_integrity(
     join_input: transform_schema.JoinInput | transform_schema.FuzzyMatchInput | transform_schema.JoinInputManager,
     left_columns: list[FlowfileColumn],

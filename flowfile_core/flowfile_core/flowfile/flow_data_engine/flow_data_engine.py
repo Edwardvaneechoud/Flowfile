@@ -45,6 +45,7 @@ from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_ma
 from flowfile_core.flowfile.flow_data_engine.hierarchy import explode_hierarchy_frame
 from flowfile_core.flowfile.flow_data_engine.join import (
     get_col_name_to_delete,
+    get_duplicate_output_problems,
     get_join_map_problems,
     get_undo_rename_mapping_join,
     rename_df_table_for_join,
@@ -2048,6 +2049,9 @@ class FlowDataEngine:
             if (v.keep or v.join_key) and v.is_available
         ]
         cross_join_input_manager.auto_rename(rename_mode="suffix")
+        duplicate_problems = get_duplicate_output_problems(cross_join_input_manager)
+        if duplicate_problems:
+            raise Exception("Cross join is not valid: " + "; ".join(duplicate_problems))
         left = self.data_frame.select(left_select).rename(cross_join_input_manager.left_select.rename_table)
         right = other.data_frame.select(right_select).rename(cross_join_input_manager.right_select.rename_table)
 
@@ -2101,6 +2105,9 @@ class FlowDataEngine:
 
         if auto_generate_selection:
             join_manager.auto_rename()
+        duplicate_problems = get_duplicate_output_problems(join_manager)
+        if duplicate_problems:
+            raise Exception("Join is not valid: " + "; ".join(duplicate_problems))
 
         left = left_lf.select(join_manager.left_manager.get_select_cols()).rename(
             join_manager.left_manager.get_rename_table()
@@ -3147,6 +3154,20 @@ class FlowDataEngine:
         if len(drop_cols) > 0:
             new_schema = [s for s in new_schema if s.name not in drop_cols]
         new_schema_mapping = {v.name: v for v in new_schema}
+
+        sources_by_output: dict[str, list[str]] = {}
+        for rename in renames:
+            if rename.keep:
+                sources_by_output.setdefault(rename.new_name, []).append(rename.old_name)
+        for kept_col in keep_cols:
+            sources_by_output.setdefault(kept_col, []).append(kept_col)
+        shared_names = [
+            f"columns {', '.join(repr(s) for s in sources)} share the output name '{new_name}'"
+            for new_name, sources in sources_by_output.items()
+            if len(sources) > 1
+        ]
+        if shared_names:
+            raise ValueError("Select is not valid: " + "; ".join(shared_names))
 
         available_renames = []
         for rename in renames:
