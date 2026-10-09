@@ -1,6 +1,4 @@
-"""Row and column transforms: reshaping, filtering, formulas, sorting, sampling, renaming and cleansing
-nodes.
-"""
+"""Row and column transform nodes."""
 
 from copy import deepcopy
 from typing import TYPE_CHECKING

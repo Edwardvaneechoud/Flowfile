@@ -1,6 +1,4 @@
-"""Cloud storage nodes: connection resolution for a node (own-first, group-granted, ambient), change-
-feed read targets and the cloud Delta write dispatch.
-"""
+"""Cloud storage nodes: connection resolution, change-feed read targets and cloud Delta writes."""
 
 from __future__ import annotations
 

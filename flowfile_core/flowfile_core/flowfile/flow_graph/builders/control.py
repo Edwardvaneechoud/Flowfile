@@ -1,6 +1,4 @@
-"""Control and inspection nodes: gate (conditional routing), wait-for and the Explore Data analysis
-node.
-"""
+"""Control and inspection nodes: gate, wait-for and Explore Data."""
 
 from typing import TYPE_CHECKING
 

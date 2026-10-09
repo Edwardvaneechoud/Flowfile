@@ -1,6 +1,4 @@
-"""Catalog writer execution: SCD2 shaping, Delta writes (local or on the worker), table registration,
-change-feed enablement and the virtual/physical table write handlers.
-"""
+"""Catalog writer execution: SCD2 shaping, Delta writes, table registration and the write handlers."""
 
 import datetime
 import io as _io

@@ -1,4 +1,4 @@
-"""Machine-learning nodes: train, apply and evaluate a model, with the model artifact path they share."""
+"""Machine-learning nodes: train, apply and evaluate a model."""
 
 import os
 from pathlib import Path

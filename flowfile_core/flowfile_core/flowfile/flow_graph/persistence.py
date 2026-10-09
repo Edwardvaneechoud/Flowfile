@@ -1,6 +1,4 @@
-"""Serialisation of a FlowGraph: the YAML flow file (save, rename, catalog registration ownership), the
-FlowfileData and frontend payloads, node data and code export.
-"""
+"""Serialisation of a `FlowGraph`: the YAML file, `FlowfileData`, frontend payloads and code export."""
 
 import datetime
 import json

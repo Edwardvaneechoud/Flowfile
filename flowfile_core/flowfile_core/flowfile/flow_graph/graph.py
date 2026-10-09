@@ -1,8 +1,4 @@
-"""The FlowGraph class: construction, settings, node lifecycle and observers.
-
-The concern mixins it is composed from live beside it; the package root (``__init__``) is the
-import facade and the bind surface for swappable collaborators (see ``_root.py``).
-"""
+"""The `FlowGraph` class: construction, settings, node lifecycle and observers."""
 
 import datetime
 import threading

@@ -1,11 +1,4 @@
-"""Shared graph surface for the FlowGraph concern mixins.
-
-``FlowGraph`` is composed from mixins (history, canvas, node builders, execution, persistence), each
-reading graph state and calling a few primitives the composed class provides. This base only
-*declares* that surface (under ``TYPE_CHECKING``) so cross-mixin ``self.*`` references resolve for
-static analysis; the real state and methods live on ``FlowGraph`` (``graph.py``) and the other mixins
-and win at runtime via the MRO. Declare only names that really exist on the composed class.
-"""
+"""Type-only declaration of the graph surface the concern mixins share; the real state lives on `FlowGraph`."""
 
 from typing import TYPE_CHECKING
 

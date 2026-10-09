@@ -1,6 +1,4 @@
-"""Catalog lookups a flow needs while building and running: table and SQL-view resolution, access
-checks, virtual-table plan resolution and the change-feed column contract.
-"""
+"""Catalog lookups while building and running: table and SQL-view resolution, access checks, virtual plans."""
 
 import io as _io
 import json

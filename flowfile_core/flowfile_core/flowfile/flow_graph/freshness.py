@@ -1,6 +1,4 @@
-"""Source fingerprints that decide whether a catalog or cloud Delta reader must re-run: Delta head
-versions, change-feed cursor state and virtual-source plans.
-"""
+"""Source fingerprints that decide whether a catalog or cloud Delta reader must re-run."""
 
 import hashlib
 import json

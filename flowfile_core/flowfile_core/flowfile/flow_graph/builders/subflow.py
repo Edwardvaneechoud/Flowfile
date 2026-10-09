@@ -1,6 +1,4 @@
-"""Subflow interface nodes: flow input, flow output and the run-flow node that executes a registered
-flow.
-"""
+"""Subflow interface nodes: flow input, flow output and run-flow."""
 
 from typing import TYPE_CHECKING
 

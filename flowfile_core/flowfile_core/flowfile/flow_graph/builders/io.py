@@ -1,6 +1,4 @@
-"""Local file sources and sinks plus the generic external-source node: read, datasource, manual input,
-list files, output and API response, with the Excel and directory schema callbacks they use.
-"""
+"""Local file sources and sinks, the generic external source, and their schema callbacks."""
 
 from collections.abc import Callable
 from functools import partial

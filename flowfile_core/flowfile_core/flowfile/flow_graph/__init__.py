@@ -1,12 +1,5 @@
-"""Flow graph package: the DAG a flow is edited and run as.
-
-``FlowGraph`` (``graph.py``) is composed from concern mixins — history, canvas, the node builders,
-execution and persistence — with the catalog, cloud, freshness and connection helpers as plain
-modules beside them. This root is the import facade every other package uses, and the **bind
-surface** for the swappable collaborators listed at the end of ``__all__``: the worker fetchers,
-the kernel manager accessor, the custom-node registry, the DB session factory and the remote
-Delta writers are bound here and nowhere else, and submodules read them through ``_root.root()``
-at call time, so a test or the notebook build mode patches one place.
+"""The flow graph package: `FlowGraph` plus its concern mixins; this root is the import facade and the
+bind surface for the collaborators tests patch (read through ``_root.root()``).
 """
 
 from flowfile_core.catalog import CatalogService

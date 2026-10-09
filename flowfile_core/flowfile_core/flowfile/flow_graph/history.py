@@ -1,7 +1,4 @@
-"""Edit history of a FlowGraph: the per-flow edit lock, the one-step-per-mutation transaction,
-undo/redo, revision counting and snapshot restore (through the single graph builder in
-manage.io_flowfile).
-"""
+"""Edit history of a `FlowGraph`: edit lock, transactions, undo/redo, revision and snapshot restore."""
 
 import asyncio
 import functools

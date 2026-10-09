@@ -1,6 +1,4 @@
-"""User-defined (custom) nodes: placement from the registry, schema prediction, local or worker
-execution and kernel execution of kernel-environment nodes.
-"""
+"""User-defined (custom) nodes: placement, schema prediction, local, worker and kernel execution."""
 
 import os
 import threading

@@ -1,6 +1,4 @@
-"""Object-storage reader and writer nodes (S3, ADLS, GCS), including Delta merge modes and change-feed
-reads on a bare path.
-"""
+"""Object-storage reader and writer nodes (S3, ADLS, GCS)."""
 
 from typing import TYPE_CHECKING
 

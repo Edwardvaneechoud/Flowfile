@@ -1,4 +1,4 @@
-"""Catalog reader (table, SQL view, change feed) and catalog writer nodes."""
+"""Catalog reader and writer nodes."""
 
 import json
 from typing import TYPE_CHECKING

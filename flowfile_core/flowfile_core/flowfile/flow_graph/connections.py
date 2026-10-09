@@ -1,4 +1,4 @@
-"""Edge helpers: validate, add, splice, restore and delete connections between nodes of a FlowGraph."""
+"""Edge helpers: validate, add, splice, restore and delete connections between nodes."""
 
 from __future__ import annotations
 

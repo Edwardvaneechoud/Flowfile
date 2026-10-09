@@ -1,6 +1,4 @@
-"""Canvas organisation of a FlowGraph: node groups, comments, positions and automatic layout.
-Organisational only; the executor never reads any of it.
-"""
+"""Canvas organisation of a `FlowGraph`: groups, comments, positions and layout (never read by the executor)."""
 
 from time import time
 from typing import TYPE_CHECKING

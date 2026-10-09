@@ -1,7 +1,4 @@
-"""Running a FlowGraph: run claiming, source freshness probes, gate routing, the staged execution plan,
-per-node execution with parameter substitution, post-run source commits, single-node fetches and
-cancellation.
-"""
+"""Running a `FlowGraph`: run claiming, freshness probes, gate routing, staged execution and fetch-one."""
 
 import datetime
 import threading

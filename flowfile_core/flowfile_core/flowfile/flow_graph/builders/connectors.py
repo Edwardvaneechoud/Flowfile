@@ -1,6 +1,4 @@
-"""Connection-backed sources and sinks whose fetching runs on the worker: database reader and writer,
-Kafka, Google Analytics and REST API.
-"""
+"""Connection-backed sources and sinks fetched on the worker: database, Kafka, Google Analytics, REST."""
 
 import os
 import threading
