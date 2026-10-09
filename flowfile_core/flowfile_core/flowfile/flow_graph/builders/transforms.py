@@ -63,8 +63,7 @@ class TransformBuildersMixin(GraphMixinBase):
                 node.results.warnings = reason
                 return []
             input_data = node.singular_main_input.get_resulting_data()
-            # Runs on a background thread: never mutate the shared memoized
-            # engine (input_data.lazy = ...); build a local lazy frame instead.
+            # Background thread: never mutate the shared memoized engine; build a local lazy frame.
             input_lf = input_data.data_frame.lazy()
             return pre_calculate_pivot_schema(input_data.schema, pivot_settings.pivot_input, input_lf=input_lf)
 

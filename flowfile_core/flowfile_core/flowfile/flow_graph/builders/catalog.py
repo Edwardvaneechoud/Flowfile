@@ -86,8 +86,7 @@ class CatalogBuildersMixin(GraphMixinBase):
         virtual_tables = resolved.virtual_tables
         table_namespaces = resolved.table_namespaces
 
-        # Resolve cloud storage options per source namespace at wiring time, memoized by namespace_id
-        # (a SQL query can join tables from different catalogs, each with its own storage).
+        # Memoized per namespace: one SQL query can join tables from catalogs with different storage.
         storage_options_by_name: dict[str, dict | None] = {}
         _opts_by_namespace: dict[int | None, dict | None] = {}
         for _name, _path in table_paths.items():
@@ -156,8 +155,7 @@ class CatalogBuildersMixin(GraphMixinBase):
 
         info = _resolve_catalog_table_info(node_catalog_reader)
 
-        # Back-fill id from a name-only reference so the settings form and read
-        # lineage (both keyed on catalog_table_id) work.
+        # Back-fill the id from a name-only reference; the form and read lineage key on catalog_table_id.
         if node_catalog_reader.catalog_table_id is None and info.table_id is not None:
             node_catalog_reader.catalog_table_id = info.table_id
             if node_catalog_reader.catalog_namespace_id is None:
@@ -354,9 +352,7 @@ class CatalogBuildersMixin(GraphMixinBase):
             settings = node_catalog_writer.catalog_write_settings
             if settings.write_mode != "scd2":
                 return schema
-            # An SCD2 write hands the four generated columns downstream, so the canvas must show
-            # them before the run. A name already upstream is left out: the write rejects that
-            # collision anyway, and inventing a duplicate column here would only hide the reason.
+            # SCD2 adds four generated columns; a name already upstream is left out (the write rejects it anyway).
             upstream = {c.column_name for c in schema}
             generated = _scd2_system_column_dtypes(settings.scd2 or input_schema.Scd2Settings())
             return [

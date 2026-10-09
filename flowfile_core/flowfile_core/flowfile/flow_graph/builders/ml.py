@@ -55,10 +55,7 @@ class MlBuildersMixin(GraphMixinBase):
         """
 
         def _func(data: FlowDataEngine) -> FlowDataEngine:
-            # Imports are deferred to runtime: importing flowfile_core.artifacts
-            # at module top would trigger Alembic migrations and SQLAlchemy
-            # engine setup (~3.5s), slowing every flow_graph import — including
-            # CLI startup. Keep these inside _func.
+            # Function-local: importing flowfile_core.artifacts at module top runs migrations (~3.5s).
             import shutil
 
             from flowfile_core.artifacts import get_storage_backend
@@ -79,18 +76,14 @@ class MlBuildersMixin(GraphMixinBase):
             if settings.publish_to_catalog and not settings.model_name:
                 raise ValueError("Train Model: 'model_name' is required when 'publish_to_catalog' is enabled.")
 
-            # Validate model_type and hyperparameters early so the user gets
-            # a clear error from core, not a worker-side stack trace.
+            # Validate early so the user sees a core error, not a worker stack trace.
             trainer = get_trainer(settings.model_type)
             try:
                 trainer.params_class(**settings.params)
             except Exception as e:
                 raise ValueError(f"Train Model: invalid params for model_type={settings.model_type!r}: {e}") from e
 
-            # Always write the model to a flow-scoped path keyed off this node's id;
-            # downstream Apply Model nodes in this flow read from there, no catalog
-            # required. The same path is used as the staging path when publishing
-            # so we only fit once.
+            # Flow-scoped model path keyed by node id; also the publish staging path, so we fit once.
             flow_path = ml_flow_model_path(self.flow_id, train_settings.node_id)
             flow_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -100,11 +93,7 @@ class MlBuildersMixin(GraphMixinBase):
             storage_backend = get_storage_backend()
 
             if settings.publish_to_catalog:
-                # If the flow has a path on disk but no registration yet,
-                # auto-register it (idempotently — same mechanism the open/save
-                # routes use). This routes scratch flows under "General >
-                # Unnamed Flows" / "Local Flows" so artifacts have a stable
-                # lineage without forcing the user to explicitly register first.
+                # Auto-register an unregistered on-disk flow (as open/save do) so artifacts get a stable lineage.
                 registration_id = self._flow_settings.source_registration_id
                 if registration_id is None and self._flow_settings.path:
                     auto_register_flow(
@@ -125,8 +114,7 @@ class MlBuildersMixin(GraphMixinBase):
                     effective_namespace_id = _effective_namespace_id(
                         CatalogService(SQLAlchemyCatalogRepository(_ns_db)), settings
                     )
-                    # A published model is a new catalog artifact — gate the target
-                    # namespace on the executing principal, mirroring the catalog writer.
+                    # A published model is a catalog artifact: gate the namespace like the catalog writer.
                     _authorize_catalog_write(
                         _ns_db, train_settings.user_id, existing=None, namespace_id=effective_namespace_id
                     )
@@ -146,17 +134,14 @@ class MlBuildersMixin(GraphMixinBase):
                 with get_db_context() as db:
                     prepared = ArtifactService(db, storage_backend).prepare_upload(prepare_request, owner_id=owner_id)
                 if prepared.method != "file":
-                    # v1 only supports the shared-filesystem backend; S3 needs a
-                    # presigned-URL path on the worker which we haven't wired yet.
+                    # v1 supports the shared-filesystem backend only; S3 needs a presigned-URL path on the worker.
                     with get_db_context() as db:
                         ArtifactService(db, storage_backend).delete_artifact(prepared.artifact_id)
                     raise ValueError(
                         "Train Model currently requires the filesystem artifact backend "
                         "(FLOWFILE_ARTIFACT_STORAGE=filesystem). S3 support is not implemented."
                     )
-                # Train into the catalog staging path; we'll copy to the flow
-                # path after success so finalize_upload (which moves the
-                # staging file to the permanent location) still works.
+                # Train into the staging path and copy to flow_path after success so finalize_upload still works.
                 staging_path = Path(prepared.path)
 
             node = self.get_node(node_id=train_settings.node_id)
@@ -180,11 +165,7 @@ class MlBuildersMixin(GraphMixinBase):
                     raise RuntimeError(f"Worker did not return expected sha256/size_bytes payload, got: {result!r}")
 
                 if prepared is not None:
-                    # The staging file is also our flow-scoped copy. Atomically
-                    # replace flow_path (write to .tmp, then os.replace) so a
-                    # concurrent Apply Model reader can't see a half-written
-                    # file. Done before finalize_upload (which moves the
-                    # staging file away).
+                    # Atomically replace flow_path (.tmp + os.replace) before finalize_upload moves the staging file.
                     flow_tmp = flow_path.with_suffix(flow_path.suffix + ".tmp")
                     shutil.copyfile(staging_path, flow_tmp)
                     os.replace(flow_tmp, flow_path)
@@ -198,17 +179,13 @@ class MlBuildersMixin(GraphMixinBase):
                         )
             except Exception:
                 if prepared is not None:
-                    # Roll back the pending row on any failure so the user
-                    # doesn't see ghost artifacts; subsequent re-runs auto-clean
-                    # pending rows too.
+                    # Roll back the pending row on failure so no ghost artifact is shown.
                     with get_db_context() as db:
                         try:
                             ArtifactService(db, storage_backend).delete_artifact(prepared.artifact_id)
                         except Exception:
                             logger.exception("Failed to roll back pending artifact %s", prepared.artifact_id)
-                    # Also roll back the flow_path copy if we wrote it; otherwise
-                    # the next Apply Model run could quietly use the artifact
-                    # whose catalog row we just deleted.
+                    # Roll back the flow_path copy too, or the next Apply Model would use the deleted artifact.
                     if flow_path_written:
                         try:
                             flow_path.unlink(missing_ok=True)
@@ -227,8 +204,7 @@ class MlBuildersMixin(GraphMixinBase):
                 self.flow_logger.info(f"Train Model: wrote {result['size_bytes']}B to flow path {flow_path}")
                 artifact_name = f"{settings.model_type} (flow only)"
 
-            # Surface the trained model in the node's Artifacts tab + canvas badge.
-            # Re-runs replace any prior entry rather than accumulating duplicates.
+            # Surface the model in the Artifacts tab; re-runs replace the prior entry.
             self.artifact_context.clear_nodes({train_settings.node_id})
             self.artifact_context.record_published(
                 node_id=train_settings.node_id,
@@ -353,10 +329,7 @@ class MlBuildersMixin(GraphMixinBase):
             input_schema_cols = list(input_node.schema)
             s = apply_settings.apply_input
             output_column = s.output_column or "prediction"
-            # source='upstream' lets us read the trainer's declared output_dtype
-            # so a future non-Float64 trainer (e.g. classification) gets the
-            # right schema. source='catalog' falls back to Float64 — resolving
-            # via the catalog DB at schema-resolve time would be too eager.
+            # source='upstream' reads the trainer's output_dtype; 'catalog' falls back to Float64.
             output_dtype = "Float64"
             if s.source == "upstream" and s.upstream_node_id is not None:
                 upstream = self.get_node(s.upstream_node_id)

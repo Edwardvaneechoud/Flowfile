@@ -193,12 +193,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
         node_type = "database_reader"
         database_settings: input_schema.DatabaseSettings = node_database_reader.database_settings
 
-        # Resolve the connection lazily so opening/undoing a flow never requires
-        # the current session to own the connection. Memoized so ``_func`` and
-        # ``schema_callback`` share a single lookup; the lock matters because the
-        # schema callback runs on a background thread (``SingleExecutionFuture``)
-        # while ``_func`` runs on the execution thread. Runs under the node's
-        # ``user_id`` (the flow owner at execution time).
+        # Lazy and lock-memoized under the node's user_id: the schema callback runs on another thread.
         _creds: dict = {}
         _creds_lock = threading.Lock()
 
@@ -217,8 +212,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 fields=node_database_reader.fields,
             )
 
-            # Local and worker reads share shared.db_reader.read_sql_with_fallback
-            # (via SqlSource here, via read_sql_source in the worker).
+            # Local and worker reads share shared.db_reader.read_sql_with_fallback.
             if self.execution_location == "local":
                 local_source = SqlSource(
                     connection_string=sql_utils.construct_sql_uri(
@@ -263,9 +257,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
             return fl
 
         def schema_callback():
-            # Prefer the schema cached on the node so opening a saved flow renders
-            # columns without a live connection. Fall back to the connection only
-            # when fields were never captured (failures here are caught per-node).
+            # Prefer the cached schema so a saved flow renders columns without a live connection.
             if node_database_reader.fields:
                 return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_database_reader.fields]
             database_connection, encrypted_password, _ = _get_creds()
@@ -331,12 +323,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
         node_type = "kafka_source"
         kafka_settings = node_kafka_source.kafka_settings
 
-        # Settings updates may echo back ``fields`` cached from a previous topic /
-        # format / connection (the UI clears them, but programmatic callers may
-        # not). Stale fields would make ``schema_callback`` report the old topic's
-        # columns, so drop them whenever a schema-affecting setting changed.
-        # Open/undo replays keep their fields: the replayed settings match the
-        # node's previous ones (or the prior node is just a promise).
+        # Drop echoed fields when a schema-affecting setting changed, or the old topic's columns stick.
         prior_settings = getattr(self.get_node(node_kafka_source.node_id), "setting_input", None)
         if node_kafka_source.fields and isinstance(prior_settings, input_schema.NodeKafkaSource):
             prior_kafka = prior_settings.kafka_settings
@@ -348,12 +335,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
             ):
                 node_kafka_source.fields = None
 
-        # Resolve the connection lazily so opening/undoing a flow never requires
-        # the current session to own the connection. Memoized so ``_func`` and
-        # ``schema_callback`` share a single lookup; the lock matters because the
-        # schema callback runs on a background thread (``SingleExecutionFuture``)
-        # while ``_func`` runs on the execution thread. Runs under the node's
-        # ``user_id`` (the flow owner at execution time).
+        # Lazy and lock-memoized under the node's user_id: the schema callback runs on another thread.
         _read_settings: dict = {}
         _read_settings_lock = threading.Lock()
 
@@ -424,9 +406,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
                         self.flow_logger,
                         _decrypt_fn,
                     )
-            # The worker DataFrame may have fewer columns than the inferred
-            # schema (e.g. empty topic or starting at "latest"). Align to
-            # the schema_callback result so downstream nodes see stable columns.
+            # The worker frame may have fewer columns than inferred (empty topic); align to the schema.
             expected_columns = schema_callback()
             fl = fl.align_to_schema(expected_columns)
             node_kafka_source.fields = [c.get_minimal_field_info() for c in fl.schema]
@@ -436,9 +416,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
             return decrypt_secret(encrypted).get_secret_value()
 
         def schema_callback():
-            # Prefer the schema cached on the node so opening a saved flow renders
-            # columns without sampling the topic (a live connection). Sampling only
-            # runs when fields were never captured (failures are caught per-node).
+            # Prefer the cached schema so a saved flow renders columns without sampling the topic.
             if node_kafka_source.fields:
                 return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_kafka_source.fields]
             schema_pairs = root().infer_topic_schema(_get_kafka_read_settings(), sample_size=10, decrypt_fn=_decrypt_fn)
@@ -495,10 +473,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
         ga_settings = node_ga_reader.google_analytics_settings
 
         def _build_worker_settings() -> WorkerGoogleAnalyticsReadSettings:
-            # Connection resolution is deferred to run time so that *opening* or
-            # *undoing* a flow never requires the current session to own the
-            # connection (mirrors ``add_cloud_storage_reader``). It runs under
-            # ``node_ga_reader.user_id`` — the flow owner at execution time.
+            # Deferred to run time under node_ga_reader.user_id: opening a flow never needs the connection.
             with get_db_context() as db:
                 db_conn = get_ga_connection(db, ga_settings.ga_connection_name, node_ga_reader.user_id)
                 if db_conn is None:
@@ -520,9 +495,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
                             f"Google Analytics connection '{ga_settings.ga_connection_name}' has no stored credential"
                         ),
                     )
-                # OAuth needs the per-instance client config; service accounts don't.
-                # Resolved from the CONNECTION OWNER, not the run user: a group-shared
-                # OAuth connection must use the owner's Google client config.
+                # OAuth client config comes from the connection OWNER, not the run user (group-shared connections).
                 oauth_cfg = get_google_oauth_config(db, db_conn.user_id) if auth_method == "oauth" else None
 
             common_kwargs = dict(
@@ -555,8 +528,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
                     service_account_key_encrypted=encrypted_credential,
                     **common_kwargs,
                 )
-            # ``oauth_cfg`` is only fetched for the oauth auth method; guard against
-            # an unknown auth_method value reaching this branch with ``None``.
+            # oauth_cfg exists only for the oauth auth method; guard an unknown auth_method.
             if not oauth_cfg or not oauth_cfg["client_id"] or not oauth_cfg["client_secret"]:
                 raise HTTPException(
                     status_code=500,
@@ -573,29 +545,20 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 **common_kwargs,
             )
 
-        # Stamp the predicted schema onto the setting object now, so downstream
-        # nodes can introspect columns without ever invoking ``_func`` (which
-        # would trigger a worker → Google round-trip). ``derive_schema`` is
-        # pure-Python and runs against the chosen metrics/dimensions only — no DB,
-        # so it stays eager and keeps flow-open connection-free.
+        # Stamp the predicted schema so downstream never needs _func (a worker -> Google round-trip).
         predicted_columns = derive_schema(metrics=ga_settings.metrics, dimensions=ga_settings.dimensions)
         node_ga_reader.fields = [c.get_minimal_field_info() for c in predicted_columns]
 
         def _func() -> FlowDataEngine:
             fetcher = root().ExternalGoogleAnalyticsFetcher(_build_worker_settings(), wait_on_completion=False)
             node._fetch_cached_df = fetcher
-            # ``get_result()`` returns a ``pl.LazyFrame`` deserialised from the
-            # worker's Arrow IPC file — never collect on the core service.
+            # A LazyFrame over the worker's Arrow IPC file; never collect in core.
             fl = FlowDataEngine(fetcher.get_result())
-            # Align to the predicted schema so downstream nodes see stable columns
-            # even when the report is empty. ``align_to_schema`` lowers to lazy
-            # ``with_columns``/``select`` calls, so this stays lazy.
+            # Align (lazily) to the predicted schema so an empty report still yields stable columns.
             return fl.align_to_schema(schema_callback())
 
         def schema_callback() -> list[FlowfileColumn]:
-            # Prefer the cached placeholder so repeated schema lookups don't
-            # re-walk the heuristic table. ``derive_schema`` is the fallback
-            # for the (rare) case where ``fields`` got cleared.
+            # Prefer the cached placeholder; derive_schema is the fallback when fields were cleared.
             if node_ga_reader.fields:
                 return [FlowfileColumn.from_input(f.name, f.data_type) for f in node_ga_reader.fields]
             return derive_schema(metrics=ga_settings.metrics, dimensions=ga_settings.dimensions)
@@ -644,11 +607,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
         node_type = "rest_api_reader"
         auth = node_rest_api_reader.rest_api_settings.auth
 
-        # Encrypt any *inline* plaintext credential eagerly and null it out so it is
-        # never persisted on the node (a security guarantee, independent of who owns
-        # the flow). The *by-name* secret-store lookup is deferred to run time so
-        # opening/undoing a flow never requires the current session to own the
-        # secret — it resolves under the node's ``user_id`` (the flow owner).
+        # Inline plaintext is encrypted eagerly and nulled; the by-name lookup is deferred to run time.
         _inline_encrypted = _encrypt_with_master_key(auth.secret) if (auth.secret and not auth.secret_name) else None
         auth.secret = None
 
@@ -671,8 +630,7 @@ class ConnectorBuildersMixin(GraphMixinBase):
                 node._fetch_cached_df = fetcher
                 fl = FlowDataEngine(fetcher.get_result())
             cols = schema_callback()
-            # Align to the sampled schema (if any) so downstream nodes see stable
-            # columns; with no sample yet, the fetched frame defines the schema.
+            # Align to the sampled schema when there is one; otherwise the fetched frame defines it.
             if cols:
                 return fl.align_to_schema(cols)
             node_rest_api_reader.fields = [c.get_minimal_field_info() for c in fl.schema]

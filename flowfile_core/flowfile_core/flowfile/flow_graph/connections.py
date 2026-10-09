@@ -218,9 +218,7 @@ def restore_dynamic_input_connections(graph: FlowGraph, flow_info: schemas.FlowI
                 logger.warning(f"Node {node_id}: dropping keyed edge with invalid handle {connection.input_handle!r}")
                 continue
             if handle_index > slot_count:
-                # No lead exists for this never-restored edge; calling
-                # delete_lead_to_node here would strip a valid keyed edge
-                # restored earlier from the same source node.
+                # No lead for this never-restored edge; delete_lead_to_node would strip a valid keyed edge.
                 logger.warning(
                     f"Node {node_id}: dropping keyed edge on {connection.input_handle} "
                     f"(only {slot_count} input slots)"
@@ -264,9 +262,7 @@ def delete_connection(graph, node_connection: input_schema.NodeConnection):
     graph._note_graph_write()
     from_node = graph.get_node(node_connection.output_connection.node_id)
     to_node = graph.get_node(node_connection.input_connection.node_id)
-    # Without these guards a stale delete (e.g. after the target node was
-    # already removed) surfaces as an AttributeError → 500, which also drops
-    # CORS headers and shows up as a CORS error in the browser.
+    # A stale delete must not raise: an AttributeError 500 drops CORS headers and reads as a CORS error.
     if from_node is None or to_node is None:
         raise HTTPException(422, "Connection does not exist on the input node")
     if to_node.accepts_dynamic_inputs:

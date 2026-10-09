@@ -180,18 +180,15 @@ class CatalogTableInfo(NamedTuple):
     serialized_lf: bytes | None
     is_optimized: bool
     source_table_versions: str | None = None
-    # False when the executing principal may not read the table; the reader
-    # node's compute then fails closed instead of scanning the data.
+    # False when the principal may not read the table; the reader then fails closed.
     authorized: bool = True
     # Resolved identity, surfaced for back-filling name-only readers.
     table_id: int | None = None
     namespace_id: int | None = None
     table_name: str | None = None
-    # SCD2 shape of the table, straight off the catalog record — the single source of truth for
-    # generated column names. ``None`` => not an SCD2 table.
+    # SCD2 shape off the catalog record (source of truth for generated names); None => not SCD2.
     scd2_config: dict | None = None
-    # Persisted column schema (JSON ``[{"name", "dtype"}]``), used to predict a change reader's
-    # output without opening the feed.
+    # Persisted column schema (JSON [{name, dtype}]) to predict a change reader without opening the feed.
     schema_json: str | None = None
 
 
@@ -278,16 +275,13 @@ def _resolve_catalog_table_info(node_catalog_reader: "input_schema.NodeCatalogRe
                             exc_info=True,
                         )
 
-            # Authorize the executing principal (node.user_id, server-stamped and
-            # excluded from serialization) against the resolved table. user_id None
-            # → internal/scheduler/CLI run or electron mode → unrestricted.
+            # Authorize node.user_id (server-stamped) against the table; None => unrestricted internal run.
             effective_id = table_record.id if table_record is not None else node_catalog_reader.catalog_table_id
             if effective_id is not None:
                 if not sharing.user_id_can_use(db, node_catalog_reader.user_id, "catalog_table", effective_id):
                     return CatalogTableInfo(None, "physical", None, False, None, authorized=False)
             elif sharing.sharing_enabled() and node_catalog_reader.user_id is not None:
-                # Restricted run resolving purely by name with no concrete table id
-                # to authorize: fail closed instead of falling through to a path.
+                # Restricted run with no table id to authorize: fail closed rather than fall through to a path.
                 return CatalogTableInfo(None, "physical", None, False, None, authorized=False)
 
             if table_record is not None:

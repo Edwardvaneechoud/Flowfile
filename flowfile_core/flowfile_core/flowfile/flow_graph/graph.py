@@ -165,24 +165,18 @@ class FlowGraph(
         self._node_db = {}
         # Highest node id that ever left the canvas; with the live ids it gives `node_id_ceiling`.
         self._node_id_seq: int = 0
-        # Last run's surviving-input signature per ANY-rule node (union). A gate
-        # flip changes which inputs survive without changing any hash, so a
-        # signature change must invalidate the node or dev-mode serves the
-        # previous run's partial concat. In-memory only: a fresh graph instance
-        # rotates parent_uuid, so caches are cold anyway.
+        # Per-union surviving-input signature; a gate flip changes it without changing any hash.
         self._any_input_liveness: dict[str | int, frozenset] = {}
         # Gate id -> dead output handles of the last run_graph (parameter and formula gates).
         self._last_closed_gate_handles: dict[str | int, frozenset[str]] = {}
-        # Visual node groups: organizational only, never read by the executor.
-        # Membership lives on each node's setting_input.group_id; this is the box registry.
+        # Visual groups (box registry; membership lives on setting_input.group_id). Never read by the executor.
         self._groups: dict[int, schemas.GroupInformation] = {}
         self._group_id_seq: int = 0  # monotonic group-id allocator; never reuses a freed id
         self._active_group_id: int | None = None
         # Canvas comments: free text notes, organizational only, never read by the executor.
         self._comments: dict[int, schemas.CommentInformation] = {}
         self._comment_id_seq: int = 0
-        # Serializes claiming flow_settings.is_running: the bare check-then-set in the
-        # run entry points raced when callers arrive from non-asyncio threads.
+        # The bare check-then-set on is_running raced from non-asyncio threads.
         self._run_claim_lock = threading.Lock()
         # Serializes graph mutations, undo/redo and saves; always taken before _run_claim_lock.
         self._edit_lock = threading.RLock()
@@ -196,17 +190,13 @@ class FlowGraph(
         self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
         self.artifact_context = ArtifactContext()
-        # Subflow recursion guards: resolved paths of every ancestor flow file and
-        # this graph's nesting depth. Attributes (not contextvars) because stages
-        # execute on ThreadPoolExecutor threads.
+        # Subflow recursion guards; attributes, not contextvars, because stages run on executor threads.
         self._subflow_ancestry: frozenset[str] = frozenset()
         self._subflow_depth: int = 0
         # The claimed run's kernel_hold and commit_sources (run_graph); a subflow's run inherits both.
         self._kernel_hold: KernelHold | None = None
         self._commit_sources: bool = True
-        # Last user_id seen on any node settings (stamped by the editor routes /
-        # open_flow). Lets restore_from_snapshot re-stamp the owner even when the
-        # live graph is empty at undo time (snapshots intentionally omit user_id).
+        # Last user_id seen on node settings, so restore_from_snapshot can re-stamp an empty graph.
         self._owner_user_id: int | None = None
         self._node_observers: list[NodeObserver] = []
         # Off only on a graph `notebook_cells.seed_session` seeded, where cells re-place the seeded ports.
@@ -223,8 +213,7 @@ class FlowGraph(
         elif input_flow is not None:
             self.add_datasource(input_file=input_flow)
 
-        # Mark the empty initial state as the saved baseline so an unmodified
-        # flow is not considered dirty.
+        # The empty initial state is the saved baseline, so an untouched flow is not dirty.
         self._history_manager.mark_saved(self)
 
     @property
@@ -259,16 +248,7 @@ class FlowGraph(
         """The highest node id this canvas has held; a new node numbers above it, deleted ids are never reused."""
         return max([self._node_id_seq, *(node_id for node_id in self._node_db if isinstance(node_id, int))], default=0)
 
-    # ==================== Group Management Methods ====================
-    # Groups are purely visual containers. They never affect execution; the only
-    # link to a node is that node's setting_input.group_id. The group box props
-    # (name/color/bounds) live in self._groups and ride along in FlowfileData.
-
     # ==================== End Group Management Methods ====================
-
-    # ==================== Comment Management Methods ====================
-    # Comments are free-floating canvas notes. They are not nodes and never affect
-    # execution; they only ride along in FlowfileData and the VueFlow payload.
 
     # ==================== End Comment Management Methods ====================
 
@@ -569,8 +549,7 @@ class FlowGraph(
             f"has_schema_callback={schema_callback is not None}"
         )
 
-        # IMPORTANT: Always create wrapped callback if output_field_config exists (even if enabled=False)
-        # This ensures nodes like PolarsCode get a schema callback when output_field_config is defined
+        # Always wrap when output_field_config exists (even disabled) so e.g. PolarsCode gets a callback.
         if output_field_config:
             if output_field_config.enabled:
                 logger.info(
@@ -633,11 +612,7 @@ class FlowGraph(
             raise Exception("No data initialized")
         self._node_db[node_id] = node
         self._node_ids.append(node_id)
-        # Give the node a callable that returns the current flow parameters so
-        # that lazy schema prediction (_predicted_data_getter) can substitute
-        # ${...} refs. Using a callable (rather than a copy of the dict) means
-        # the node always reads the LATEST parameters, whether they were set via
-        # the flow_settings.setter or mutated directly on flow_settings.parameters.
+        # A callable, not a copy, so lazy schema prediction always reads the latest parameters.
         _graph = self
 
         def _get_params() -> dict[str, ParamValue]:
@@ -697,8 +672,7 @@ class FlowGraph(
             existing_setting_input: The settings object from the node being copied.
             node_type: The type of the node being copied.
         """
-        # A custom node whose type isn't installed needs a placeholder template before
-        # the promise can be placed (mirrors the flow-restore path).
+        # An uninstalled custom type needs a placeholder template before the promise can be placed.
         if getattr(existing_setting_input, "is_user_defined", False) and node_type not in CUSTOM_NODE_STORE:
             register_missing_node_template(node_type)
         self.add_node_promise(new_node_settings)

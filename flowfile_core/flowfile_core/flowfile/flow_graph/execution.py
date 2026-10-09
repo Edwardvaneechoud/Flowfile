@@ -479,9 +479,7 @@ class ExecutionMixin(GraphMixinBase):
         """
         rerun_node_ids = self._compute_rerun_python_script_node_ids(plan_skip_ids)
 
-        # Expand re-run set: if a re-running node previously deleted
-        # artifacts, the original producer nodes must also re-run so
-        # those artifacts are available again in the kernel store.
+        # A re-running node that deleted artifacts needs their producers re-run too.
         while True:
             deleted_producers = self.artifact_context.get_producer_nodes_for_deletions(
                 rerun_node_ids,
@@ -491,15 +489,13 @@ class ExecutionMixin(GraphMixinBase):
                 break
             rerun_node_ids |= new_ids
 
-        # Force producer nodes (added due to artifact deletions) to
-        # actually re-execute by marking their execution state stale.
+        # Mark the added producers stale so they really re-execute.
         for nid in rerun_node_ids:
             node = self.get_node(nid)
             if node is not None and node._execution_state.has_run_with_current_setup:
                 node._execution_state.has_run_with_current_setup = False
 
-        # Also purge stale metadata for nodes not in this graph
-        # (e.g. injected externally or left over from removed nodes).
+        # Purge metadata of nodes no longer in this graph.
         graph_node_ids = set(self._node_db.keys())
         stale_node_ids = {nid for nid in self.artifact_context._node_states if nid not in graph_node_ids}
         nodes_to_clear = rerun_node_ids | stale_node_ids
@@ -626,11 +622,7 @@ class ExecutionMixin(GraphMixinBase):
                     if node_result.success:
                         statuses[node.node_id] = NodeRunStatus.RUN
                         if node.node_type == GATE_NODE_TYPE and self._gate_routes_on_formula(node):
-                            # Evaluate routing from the source node's actual
-                            # result, never from state stashed during the gate's
-                            # own execution — executor/worker cache branches can
-                            # legitimately skip the gate's function, and a stale
-                            # stash would replay last run's routing decision.
+                            # Route from the actual result, never a stash: cache branches can skip the gate's function.
                             try:
                                 closed = self._formula_gate_is_closed(node, params or None)
                             except Exception as e:
@@ -660,10 +652,7 @@ class ExecutionMixin(GraphMixinBase):
                         failed_node_ids.add(node.node_id)
                         skip_node_ids.add(node.node_id)
         finally:
-            # A node that did not execute this run has not run: clear the run
-            # flags of every skipped node so the next run re-executes it instead
-            # of serving the previous run's frame from the dev-mode cache.
-            # Failed nodes are already handled by mark_failed.
+            # A skipped node has not run: clear its run flags or dev-mode serves last run's frame.
             for node_id in skip_node_ids - failed_node_ids:
                 node = self.get_node(node_id)
                 if node is None:
@@ -715,9 +704,7 @@ class ExecutionMixin(GraphMixinBase):
             )
             node.invalidate_cache()
         elif previous is None and node._skipped_input_ids_this_run:
-            # No liveness history (fresh graph, undo-rebuilt nodes) but running
-            # with a partial input set: any surviving cache may hold a concat
-            # built under a different gate topology — invalidate to be safe.
+            # No liveness history but a partial input set: a cached concat may predate this gate topology.
             node.invalidate_cache()
         self._any_input_liveness[node.node_id] = surviving
 
@@ -778,12 +765,7 @@ class ExecutionMixin(GraphMixinBase):
                 if dead:
                     closed[node.node_id] = dead
             except ValueError:
-                # A broken condition must fail loudly, and the gate's own hash
-                # does not fold flow parameters — after one green run the
-                # dev-mode cache would skip its function and silently treat
-                # the gate as open. Invalidate so it re-executes (defeating
-                # the dev-mode skip and any cache_results hit) and raises the
-                # validation error on the canvas.
+                # The gate's hash ignores flow parameters; invalidate so a broken condition re-raises, not caches.
                 node.invalidate_cache()
                 continue
         return closed
@@ -1054,9 +1036,7 @@ class ExecutionMixin(GraphMixinBase):
             self._refresh_read_source_freshness(run_nodes)
 
             params: dict[str, ParamValue] = typed_parameter_values(self.flow_settings.parameters)
-            # Parameter-mode gates are routed before anything runs; the plan
-            # classifies each dead handle's downstream as deliberately skipped
-            # (green, not failed). Formula gates are decided when they execute.
+            # Parameter gates are routed before the run (dead sides deliberately skipped); formula gates at execution.
             closed_gate_handles = self._evaluate_gate_conditions(run_nodes)
             # Same dict the stage loop folds formula-gate decisions into, so it ends as the run's final routing.
             self._last_closed_gate_handles = closed_gate_handles

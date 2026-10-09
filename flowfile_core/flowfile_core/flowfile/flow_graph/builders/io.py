@@ -608,16 +608,11 @@ class FileIoBuildersMixin(GraphMixinBase):
             return list_files_schema()
 
         def _func() -> FlowDataEngine:
-            # The walk runs here in core, so it must poll for cancellation itself —
-            # there is no worker subprocess to kill (cf. add_database_reader).
+            # The walk runs in core, so it polls for cancellation itself (no worker subprocess to kill).
             def is_cancelled() -> bool:
                 if node._execution_state.is_canceled:
                     return True
-                # The graph flag is only cleared when the *next* run starts, so honour it
-                # while a run is in flight — otherwise a preview after a cancelled run
-                # would abort before reading anything. FlowGraph.cancel sets it before it
-                # reaches this node, so mirror it onto the node: the executor reclassifies
-                # a failure as a clean cancel off the node flag alone.
+                # The graph flag clears only when the next run starts: honour it mid-run and mirror it onto the node.
                 if self.flow_settings.is_running and self.flow_settings.is_canceled:
                     node._execution_state.is_canceled = True
                     return True

@@ -69,8 +69,7 @@ class CodeBuildersMixin(GraphMixinBase):
         node = self.get_node(node_id=node_sql_query.node_id)
 
         def schema_callback() -> list[FlowfileColumn]:
-            # Resolve the output schema by running the query plan lazily over
-            # 0-row upstream frames (input_1..N); no data is collected.
+            # Resolve the schema by planning over 0-row upstream frames; nothing is collected.
             inputs = [
                 v.get_predicted_resulting_data(src_handle) if v is not None else FlowDataEngine()
                 for v, src_handle in node._slot_input_pairs()

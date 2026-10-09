@@ -66,8 +66,7 @@ def with_history_capture(action_type: "HistoryActionType", description_template:
             if check is not None:
                 check(settings_input)
 
-            # Remember the session owner so restore_from_snapshot can re-stamp
-            # user_id even when the live graph holds no nodes.
+            # Remember the owner so restore_from_snapshot can re-stamp user_id on an empty graph.
             owner_uid = getattr(settings_input, "user_id", None) if settings_input else None
             if owner_uid is not None:
                 self._owner_user_id = owner_uid

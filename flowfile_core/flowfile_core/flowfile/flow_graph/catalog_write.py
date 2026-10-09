@@ -100,8 +100,7 @@ def _scd2_row_filter(
     valid_to = cfg["valid_to_column"]
     if view == "active":
         return pl.col(valid_to).is_null()
-    # "active_at": half-open [valid_from, valid_to) — a row closed exactly at ts is superseded.
-    # "Z" is normalized for Python 3.10's fromisoformat; a naive instant is interpreted as UTC.
+    # Half-open [valid_from, valid_to); "Z" normalized for 3.10's fromisoformat, naive instants are UTC.
     ts = pl.lit(datetime.datetime.fromisoformat(as_of.replace("Z", "+00:00"))).cast(pl.Datetime("us", time_zone="UTC"))
     return (pl.col(valid_from) <= ts) & (pl.col(valid_to).is_null() | (pl.col(valid_to) > ts))
 
@@ -170,8 +169,7 @@ def _scd2_writer_output(
         current = (
             table.filter(pl.col(is_current))
             .select(keys + list(system_dtypes))
-            # A key stored wider than it arrives (Int32 into Int64) must come back to the input's
-            # own dtype, or the join has nothing to match on.
+            # Cast keys back to the input's dtype (Int32 stored as Int64) or the join matches nothing.
             .with_columns(pl.col(k).cast(input_dtypes[k], strict=False) for k in keys)
         )
         joined = df.data_frame.join(current, on=keys, how="left", maintain_order="left")
@@ -222,8 +220,7 @@ def _write_catalog_delta_local(
     """
     dest = str(dest_path)
     if delta_mode == "scd2":
-        # The sanctioned local-execution collect: SCD2 classification needs materialized rows,
-        # and a standalone CLI/scheduler run has no worker to offload to.
+        # The sanctioned local collect: SCD2 classification needs rows and a CLI run has no worker.
         result = scd2_into_delta(
             df.data_frame.collect(),
             dest,
@@ -313,8 +310,7 @@ def _write_catalog_delta_remote(
         return CatalogDeltaWrite(None, scd2_version)
     meta: TableWriteMetadata = {}
     if isinstance(result, dict):
-        # The whitelist stays four keys wide: everything here reaches the catalog service
-        # methods as **meta_kwargs, and they take explicit keyword arguments only.
+        # Exactly these four keys reach the catalog service as **meta_kwargs (explicit keywords only).
         meta = {k: result.get(k) for k in ("schema", "row_count", "column_count", "size_bytes")}
         if result.get("scd2_metrics"):
             meta["scd2_metrics"] = result["scd2_metrics"]
@@ -498,8 +494,7 @@ def _register_catalog_table(
 
     old_path = getattr(existing, "file_path", None) if existing is not None else None
     if old_path and str(old_path) != str(dest_path) and not _is_cloud_uri(str(old_path)) and is_delta_table(old_path):
-        # The write landed in a fresh directory (SCD2 rebuild); the superseded local Delta dir is
-        # unreferenced now. Cloud objects are left behind, mirroring the delete posture.
+        # SCD2 rebuilt into a fresh directory; the superseded local dir is unreferenced (cloud objects stay).
         try:
             delete_table_storage(Path(old_path))
         except OSError:
@@ -661,9 +656,7 @@ def _handle_virtual_table_write(
     settings = node_catalog_writer.catalog_write_settings
     reg_id = graph._flow_settings.source_registration_id
     if not reg_id:
-        # Python-built flows have no catalog registration on creation. Try to
-        # auto-register under "General > Python Editor" so the user does not
-        # need to manually save+register before calling write_mode='virtual'.
+        # Python-built flows have no registration: auto-register under "General > Python Editor".
         try:
             from flowfile_core.flowfile.catalog_helpers import register_python_editor_flow
 
@@ -773,11 +766,9 @@ def _handle_physical_table_write(
             write_mode=settings.write_mode,
             target=target,
         )
-        # Before any dispatch: neither the worker nor the local writer may
-        # receive a destination the executing principal cannot write.
+        # Authorize before any dispatch: neither writer may get a destination the principal cannot write.
         _authorize_catalog_write(db, node_catalog_writer.user_id, existing=existing, namespace_id=namespace_id)
-        # Both SCD2 gates read the persisted catalog record, so they run inside the session and
-        # before any dispatch: neither writer branch may be handed a doomed destination.
+        # Both SCD2 gates read the catalog record, so they run inside the session and before dispatch.
         scd2_config = _resolve_scd2_config(settings, df, existing) if settings.write_mode == "scd2" else None
         _reject_non_scd2_write_to_scd2_table(settings, existing)
 
@@ -800,16 +791,13 @@ def _handle_physical_table_write(
         # Enable before the write so this write's own commit lands above the cursor floor.
         _ensure_catalog_cdc_enabled(settings.table_name, namespace_id, dest_path, storage_options)
 
-    # One processing instant for the whole write, generated before the local/remote fork: the
-    # surrogate key is a function of (business key, valid_from), so a second clock read would mint
-    # different keys on the two branches of the same write.
+    # One instant for the whole write: the surrogate key depends on valid_from, so both branches agree.
     run_timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     scd2_kwargs = _scd2_primitive_kwargs(scd2_config, run_timestamp) if delta_mode == "scd2" else None
     if delta_mode == "scd2":
         op_type = "scd2_delta"
-        # The worker's scd2_delta takes the same fields; only the instant is spelled differently
-        # (``run_timestamp`` there, ``valid_from_iso`` on the primitive it calls).
+        # The worker's scd2_delta takes the same fields; only the instant is named run_timestamp there.
         op_kwargs = {k: v for k, v in scd2_kwargs.items() if k != "valid_from_iso"}
         op_kwargs["run_timestamp"] = scd2_kwargs["valid_from_iso"]
         op_kwargs["output_path"] = dest_path
@@ -825,8 +813,7 @@ def _handle_physical_table_write(
     if storage_payload is not None:
         op_kwargs["storage_payload"] = storage_payload
 
-    # The write follows execution_location like every other writer node; a cloud destination only
-    # decides whether storage_options are threaded through, it never forces the worker.
+    # Follows execution_location like every writer; a cloud destination only threads storage_options.
     if graph.flow_settings.execution_location != "local":
         written = root()._write_catalog_delta_remote(
             flow_id=graph.flow_id,

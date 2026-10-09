@@ -111,8 +111,7 @@ def _catalog_reader_source_fingerprint(
         physical = {n: p for n, p in resolved.table_paths.items() if _referenced(n)}
         virtual = {n: v for n, v in resolved.virtual_tables.items() if _referenced(n)}
         if not physical and not virtual:
-            # Conservative: no name matched the query text — treat every
-            # registered table as a potential source (over-fresh, never stale).
+            # No name matched the query text: treat every registered table as a source (over-fresh, never stale).
             physical, virtual = resolved.table_paths, resolved.virtual_tables
 
         for name, path in sorted(physical.items()):

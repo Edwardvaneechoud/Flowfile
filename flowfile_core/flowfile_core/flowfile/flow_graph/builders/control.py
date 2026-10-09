@@ -104,8 +104,7 @@ class ControlBuildersMixin(GraphMixinBase):
         """
 
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
-            # *right* is intentionally unused — its only job is to make sure
-            # the framework waits for the dependency node to finish.
+            # `right` is only there so the framework waits for the dependency node.
             del right
             return main
 

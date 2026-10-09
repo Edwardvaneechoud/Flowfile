@@ -76,8 +76,7 @@ class CustomNodeBuildersMixin(GraphMixinBase):
         if registry_entry is not None and registry_entry.source_hash:
             user_defined_node_settings.node_source_hash = registry_entry.source_hash
 
-        # Output handles are structural — the node class declares them; the settings
-        # copy is a persistence snapshot kept in sync for save/codegen.
+        # Output handles are structural (declared by the class); the settings copy is a persistence snapshot.
         output_names = list(custom_node.output_names or user_defined_node_settings.output_names)
         user_defined_node_settings.output_names = output_names
 
@@ -97,9 +96,7 @@ class CustomNodeBuildersMixin(GraphMixinBase):
                 registry_entry=registry_entry,
             )
 
-        # Wire the hook through add_node_step so user_provided_schema_callback is set
-        # BEFORE setting_input triggers reset(): otherwise a 0-input node's eager
-        # schema prefetch would run the real function (kernel/worker) in the background.
+        # Set via add_node_step so the hook exists BEFORE reset(), or a 0-input node would run for real.
         schema_callback = None
         if type(custom_node).predict_output_schema is not CustomNodeBase.predict_output_schema:
             schema_callback = self._make_user_defined_schema_callback(
@@ -113,8 +110,7 @@ class CustomNodeBuildersMixin(GraphMixinBase):
                 node_id=user_defined_node_settings.node_id, on_kernel=bool(kernel_id)
             )
         else:
-            # Traceability: a stale registry class (or a genuinely hook-less node)
-            # lands here and schema prediction degrades to the execution tier.
+            # A stale registry class or hook-less node lands here; prediction degrades to the execution tier.
             logger.info(
                 f"custom node {custom_node.item}: no predict_output_schema override on "
                 f"{type(custom_node).__module__}.{type(custom_node).__name__}; "
@@ -253,10 +249,7 @@ class CustomNodeBuildersMixin(GraphMixinBase):
             return type(custom_node).from_settings(resolved)
 
         def _hook_input_frame(input_node: FlowNode, src_handle: str) -> pl.LazyFrame:
-            # Real lazy data when the upstream has run (worker results are
-            # scan_ipc plans, cheap to sample). For data-needing hooks on a
-            # kernel-free chain, materialize the un-run upstream in-core,
-            # pivot-style — the hook's own collect bounds what is computed.
+            # Real lazy data once upstream ran; otherwise materialize the un-run upstream in-core, pivot-style.
             if input_node.node_stats.has_completed_last_run:
                 engine = (input_node._named_outputs or {}).get(src_handle) or input_node.results.resulting_data
                 if engine is not None:
@@ -277,8 +270,7 @@ class CustomNodeBuildersMixin(GraphMixinBase):
             if requires_data:
                 reason = kernel_block_reason(node, include_self=False)
                 if reason:
-                    # Never execute a kernel implicitly for prediction: surface
-                    # the warning and let the exec-tier gate suppress fallback.
+                    # Never run a kernel implicitly for prediction; the exec-tier gate suppresses the fallback.
                     node._schema_prediction_blocked = reason
                     node.results.warnings = reason
                     return []
@@ -424,9 +416,7 @@ class CustomNodeBuildersMixin(GraphMixinBase):
             hold.check(self.flow_id, node_id, kernel_id)
         manager = root().get_kernel_manager()
         if required_dependencies:
-            # Fail fast with a clear message instead of a ModuleNotFoundError
-            # from inside process(). Only provable mismatches block; an unknown
-            # kernel id falls through to execute_sync's own error path.
+            # Fail fast on provable dependency mismatches; an unknown kernel id falls through to execute_sync.
             kernel_info = manager.get_kernel_sync(kernel_id)
             if kernel_info is not None:
                 missing = verify_kernel_for_node(kernel_info, required_dependencies)
