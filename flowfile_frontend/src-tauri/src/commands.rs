@@ -70,8 +70,9 @@ pub fn read_drag_paths() -> Vec<String> {
 
 // Async on purpose: a sync command runs inside the WebView2 IPC callback on Windows, where
 // building a webview deadlocks (wry#583): the new window stays blank forever. From the async
-// runtime the build is dispatched to the event loop instead. The other window commands only
-// post messages, so they stay sync.
+// runtime the build is dispatched to the event loop instead. The same holds for closing one:
+// tauri's own window `close` command is async for it, so the commands that close a window are
+// async too, while the ones that only post messages stay sync.
 #[tauri::command]
 pub async fn open_popout_window(
     app: AppHandle,
@@ -98,7 +99,7 @@ pub fn focus_popout_window(
 }
 
 #[tauri::command]
-pub fn close_popout_window(
+pub async fn close_popout_window(
     app: AppHandle,
     window: Window,
     kind: String,
@@ -117,8 +118,9 @@ pub fn list_popout_windows(app: AppHandle, window: Window) -> Result<Vec<PopoutR
 
 // A pop-out acts on itself: the registry entry of the calling window's label says what it hosts,
 // so the caller names no kind or flow, and a window without an entry (`main`) is refused there.
+// Async: it closes the calling window (see `open_popout_window`).
 #[tauri::command]
-pub fn return_popout_window(app: AppHandle, window: Window) -> Result<(), String> {
+pub async fn return_popout_window(app: AppHandle, window: Window) -> Result<(), String> {
     window::return_popout_window(&app, window.label())
 }
 

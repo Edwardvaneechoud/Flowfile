@@ -321,7 +321,6 @@ export function useFlowExecution(
     freezeFlow();
     nodeStore.resetNodeResult();
     isExecuting.value = true;
-    editorStore.isRunning = true;
     editorStore.hideLogViewerForThisRun = false;
     state.setExecutionState(getPollingKey(), true);
 
@@ -344,13 +343,14 @@ export function useFlowExecution(
         params: { flow_id: getFlowId() },
         headers: { accept: "application/json" },
       });
+      // Core claimed the run before answering: the log viewer opens its stream on this flag.
+      editorStore.isRunning = true;
       useTutorialStore().notify({ type: "flow-run-started" });
       nodeStore.showLogViewer();
       startPolling(() => checkRunStatus());
     } catch (error: any) {
       console.error("Error starting run:", error);
       unFreezeFlow();
-      editorStore.isRunning = false;
       isExecuting.value = false;
       state.setExecutionState(getPollingKey(), false);
       // 404 means the in-memory flow_id doesn't match the backend — typically
@@ -400,7 +400,6 @@ export function useFlowExecution(
     freezeFlow();
     nodeStore.resetNodeResult();
     isExecuting.value = true;
-    editorStore.isRunning = true;
     state.setExecutionState(getPollingKey(pollingKeySuffix), true);
 
     showNotification(
@@ -420,6 +419,7 @@ export function useFlowExecution(
         },
         headers: { accept: "application/json" },
       });
+      editorStore.isRunning = true;
 
       if (focusResultPanels) {
         nodeStore.showLogViewer();
@@ -437,7 +437,6 @@ export function useFlowExecution(
     } catch (error: any) {
       console.error("Error triggering node fetch:", error);
       unFreezeFlow();
-      editorStore.isRunning = false;
       isExecuting.value = false;
       state.setExecutionState(getPollingKey(pollingKeySuffix), false);
 

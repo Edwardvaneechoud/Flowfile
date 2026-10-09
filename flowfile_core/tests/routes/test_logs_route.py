@@ -164,33 +164,71 @@ def _run(flow_id: int, after: float, line: str, for_seconds: float) -> threading
 
 def test_idle_stream_sends_the_file_once_and_closes(own_flow):
     started = time.monotonic()
-    response = client.get(f"/logs/{own_flow}", params={"idle_timeout": 5}, headers=headers)
+    response = client.get(f"/logs/{own_flow}", headers=headers)
     events = _events(response)
     assert response.status_code == 200
     assert any(event.endswith(f"INFO - {LOG_LINE}") for event in events)
-    assert not any("timed out" in event for event in events)
-    assert time.monotonic() - started < 4  # closed with the file, not at the idle timeout
+    assert time.monotonic() - started < 2  # closed with the file
 
 
 def test_stream_opened_during_a_run_follows_it_and_ends_with_it(own_flow):
     thread = _run(own_flow, after=0, line="written while running", for_seconds=1.0)
     time.sleep(0.1)
-    response = client.get(f"/logs/{own_flow}", params={"idle_timeout": 5}, headers=headers)
+    response = client.get(f"/logs/{own_flow}", headers=headers)
     thread.join()
     events = _events(response)
     assert any(event.endswith("written while running") for event in events)
-    assert not any("timed out" in event for event in events)
 
 
-def test_wait_for_run_follows_a_run_claimed_after_the_stream_opened(own_flow):
-    thread = _run(own_flow, after=0.5, line="first line of the run", for_seconds=1.0)
-    response = client.get(f"/logs/{own_flow}", params={"idle_timeout": 5, "wait_for_run": 3}, headers=headers)
-    thread.join()
-    events = _events(response)
-    assert any(event.endswith("first line of the run") for event in events)
-    assert not any("timed out" in event for event in events)
+def test_run_request_claims_the_run_and_rewrites_its_log_before_it_answers(own_flow, monkeypatch):
+    """The queued task finds the run claimed and the log file truncated: so does a client the response reached."""
+    from flowfile_core.routes import routes
+
+    seen: dict[str, object] = {}
+
+    def run_and_track(flow, user_id, node_ids=None):
+        seen["running"] = flow.flow_settings.is_running
+        seen["log"] = _flow_log_text(own_flow)
+        flow.release_run()
+
+    monkeypatch.setattr(routes, "_run_and_track", run_and_track)
+    response = client.post("/flow/run/", params={"flow_id": own_flow}, headers=headers)
+    assert response.status_code == 200
+    assert seen == {"running": True, "log": ""}
+    assert flow_file_handler.get_flow(own_flow).flow_settings.is_running is False
 
 
-def test_wait_for_run_is_bounded(own_flow):
-    response = client.get(f"/logs/{own_flow}", params={"wait_for_run": 99}, headers=headers)
-    assert response.status_code == 422
+def test_a_run_whose_pre_work_fails_releases_the_claim(own_flow, monkeypatch):
+    from flowfile_core.routes import routes
+
+    def failing_pre_work(flow, user_id, node_ids):
+        raise RuntimeError("registration broke")
+
+    monkeypatch.setattr(routes, "_open_run_record", failing_pre_work)
+    with pytest.raises(RuntimeError, match="registration broke"):
+        client.post("/flow/run/", params={"flow_id": own_flow}, headers=headers)
+    assert flow_file_handler.get_flow(own_flow).flow_settings.is_running is False
+
+
+def test_a_second_run_request_is_refused_while_the_first_is_claimed(own_flow):
+    flow = flow_file_handler.get_flow(own_flow)
+    assert flow.try_claim_run()
+    try:
+        response = client.post("/flow/run/", params={"flow_id": own_flow}, headers=headers)
+        assert response.status_code == 422
+    finally:
+        flow.release_run()
+
+
+def test_stream_opened_after_the_run_request_reads_that_run(own_flow, live_core):
+    """Over a real server the task runs after the response: the stream still never sees the previous file."""
+    import httpx
+
+    posted = httpx.post(f"{live_core}/flow/run/", params={"flow_id": own_flow}, headers=headers, timeout=30)
+    assert posted.status_code == 200, posted.text
+    events: list[str] = []
+    with httpx.stream("GET", f"{live_core}/logs/{own_flow}", headers=headers, timeout=60) as stream:
+        for block in stream.iter_text():
+            events.extend(json.loads(line.removeprefix("data: ")) for line in block.split("\n\n") if line.strip())
+    assert not any(LOG_LINE in event for event in events)
+    assert any("Flow completed!" in event for event in events), events

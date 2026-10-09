@@ -43,7 +43,19 @@ pub fn open_popout_window(
         return Err(format!("'{hash}' is not a renderer route"));
     }
     let state = app.state::<Arc<AppState>>();
-    let registration = state.popouts.lock().find_or_register(kind, flow_id);
+    let registration = {
+        let mut popouts = state.popouts.lock();
+        match popouts.find_or_register(kind, flow_id) {
+            // Its window is gone and its close is not reported yet: a stale entry, replaced.
+            Registration::Existing(label)
+                if !popouts.is_building(&label) && app.get_webview_window(&label).is_none() =>
+            {
+                popouts.remove(&label);
+                popouts.find_or_register(kind, flow_id)
+            }
+            registration => registration,
+        }
+    };
     let label = match registration {
         Registration::Existing(label) => {
             // Open, or still being built by a concurrent open: focus what is there, never a second one.
@@ -69,6 +81,7 @@ pub fn open_popout_window(
             return Err(err.to_string());
         }
     };
+    state.popouts.lock().mark_built(&label);
 
     // The designer's stub needs the close, reported under the flow id the window carries by then.
     let handle = app.clone();

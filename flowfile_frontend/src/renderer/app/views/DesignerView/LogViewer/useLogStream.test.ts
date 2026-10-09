@@ -1,11 +1,10 @@
 // @vitest-environment happy-dom
-// The viewer only opens log streams; core ends them. A run here waits for its claim, a run elsewhere
+// The viewer only opens log streams; core ends them. A run here opens one, a run elsewhere
 // re-reads the file, a run's end stops nothing, and a retry dies with the viewer.
 import { createApp, defineComponent, reactive, type App } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface Stream {
-  waitForRun?: boolean;
   signal: AbortSignal;
   onOpen?: () => void;
   onData: (data: string) => void;
@@ -85,7 +84,6 @@ describe("useLogStream", () => {
     h.stores.editor.isShowingLogViewer = true;
     await settle();
     expect(h.streams).toHaveLength(1);
-    expect(h.streams[0].waitForRun).toBe(false);
 
     h.streams[0].onOpen?.();
     h.streams[0].onData('"line one"');
@@ -96,13 +94,12 @@ describe("useLogStream", () => {
     expect(api.errorMessage.value).toBeNull();
   });
 
-  it("a run started here waits for its claim, and the run's end stops nothing", async () => {
+  it("a run started here opens its stream, and the run's end stops nothing", async () => {
     mount();
     await settle();
     h.stores.node.isRunning = true;
     await settle();
     expect(h.streams).toHaveLength(1);
-    expect(h.streams[0].waitForRun).toBe(true);
 
     h.stores.node.isRunning = false;
     await settle();
@@ -123,7 +120,6 @@ describe("useLogStream", () => {
     await settle();
     expect(h.streams).toHaveLength(2);
     expect(h.streams[0].signal.aborted).toBe(true);
-    expect(h.streams[1].waitForRun).toBe(false);
     expect(api.logs.value).toBe("");
 
     h.stores.node.isRunning = true;
@@ -131,7 +127,6 @@ describe("useLogStream", () => {
     h.stores.node.isRunning = false;
     await settle();
     expect(h.streams).toHaveLength(3);
-    expect(h.streams[2].waitForRun).toBe(true);
     expect(h.streams[2].signal.aborted).toBe(false);
   });
 
@@ -148,7 +143,6 @@ describe("useLogStream", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await settle();
     expect(h.streams).toHaveLength(2);
-    expect(h.streams[1].waitForRun).toBe(true);
 
     h.streams[1].end();
     await settle();

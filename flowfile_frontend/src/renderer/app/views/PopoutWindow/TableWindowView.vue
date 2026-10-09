@@ -24,7 +24,7 @@
 <script lang="ts" setup>
 // One flow's data preview in its own window, on the node the designer sends it.
 import { computed, ref, shallowRef, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import DataPreview from "../../features/designer/dataPreview.vue";
 import PopoutWindowFrame from "./PopoutWindowFrame.vue";
 import { usePopoutWindowHost } from "./usePopoutWindowHost";
@@ -36,6 +36,7 @@ import { useFlowStore } from "../../stores/flow-store";
 import type { VueFlowInput } from "../../types/flow.types";
 
 const route = useRoute();
+const router = useRouter();
 const flowStore = useFlowStore();
 const initialNode = parseFlowQuery(route.query.node);
 const shown = ref<ShownPreview>({ nodeId: initialNode > 0 ? initialNode : null, token: null });
@@ -83,6 +84,14 @@ usePopoutChannel({
     shown.value = preview;
     if (refetch) refreshToken.value += 1;
   },
+});
+
+// The URL names the shown node, so a reload comes back on it before the designer answers the ready.
+watch(nodeId, (id) => {
+  const current = parseFlowQuery(route.query.node);
+  if (id === (current > 0 ? current : null)) return;
+  const query = { ...route.query, node: id === null ? undefined : String(id) };
+  void router.replace({ query });
 });
 
 // `/node/data` fails for a node that is gone, so a node not on the canvas is never asked for.

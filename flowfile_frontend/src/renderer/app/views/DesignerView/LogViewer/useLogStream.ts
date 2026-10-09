@@ -2,9 +2,9 @@
  * One flow's log stream for the viewer (`GET /logs/{flow_id}`). Core owns a stream's end: opened
  * while the flow runs it ends when the run does, opened while the flow is idle it ends once the file
  * is sent. The viewer only opens streams — on mount, when the logs are shown, when a run starts here
- * (asking core to wait for the run it just posted, since that claim lands after the response) and on
- * a run signal from elsewhere (core rewrites the file per run, so it is read again from the start) —
- * and closes them only on unmount or when a newer one replaces them.
+ * (the run routes claim the run before they answer, so the flag that opens the stream is set once
+ * the request returned) and on a run signal from elsewhere (core rewrites the file per run, so it is
+ * read again from the start) — and closes them only on unmount or when a newer one replaces them.
  */
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
@@ -46,7 +46,7 @@ export function useLogStream() {
     markDisconnected();
   };
 
-  const open = async (waitForRun: boolean, attempt: number): Promise<void> => {
+  const open = async (attempt: number): Promise<void> => {
     cancelRetry();
     streamController?.abort();
     const controller = new AbortController();
@@ -74,7 +74,6 @@ export function useLogStream() {
         flowId: nodeStore.flow_id,
         token,
         signal: controller.signal,
-        waitForRun,
         onOpen: () => {
           connectionStatus.value = "connected";
         },
@@ -110,23 +109,22 @@ export function useLogStream() {
     connectionStatus.value = "error";
     retryTimer = setTimeout(() => {
       retryTimer = null;
-      void open(waitForRun, next);
+      void open(next);
     }, 1000 * next);
   };
 
   /** Replace the stream; a re-read starts from the file's first line. */
-  const startStreamingLogs = ({ waitForRun = false }: { waitForRun?: boolean } = {}) =>
-    open(waitForRun, 0);
+  const startStreamingLogs = () => open(0);
 
   const clearLogs = () => {
     logs.value = "";
   };
 
-  // A run started here: core may not have claimed it yet (the POST queues it), so the stream waits.
+  // A run started here: set once core answered the run request, with the run claimed and its log rewritten.
   watch(
     () => nodeStore.isRunning,
     (isRunning) => {
-      if (isRunning) void startStreamingLogs({ waitForRun: true });
+      if (isRunning) void startStreamingLogs();
     },
   );
 
@@ -148,9 +146,7 @@ export function useLogStream() {
 
   onMounted(() => {
     // A dock opened for a data preview opens no stream; a run or the shown logs do.
-    if (nodeStore.isRunning || editorStore.isShowingLogViewer) {
-      void startStreamingLogs({ waitForRun: nodeStore.isRunning });
-    }
+    if (nodeStore.isRunning || editorStore.isShowingLogViewer) void startStreamingLogs();
     tokenCheck = setInterval(async () => {
       if (streamController && !authService.hasValidToken()) {
         stopStreamingLogs();

@@ -4,7 +4,7 @@
 //! moves a flow to a new id, so the label is the key and this registry carries the `(kind, flow
 //! id)` a window hosts right now.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
@@ -48,6 +48,9 @@ pub enum Registration {
 pub struct PopoutRegistry {
     seq: u64,
     windows: HashMap<String, PopoutRef>,
+    /// Labels registered whose window is not built yet, so an open can tell a window still being
+    /// built (share it) from one already destroyed whose close has not been reported (replace it).
+    building: HashSet<String>,
 }
 
 impl PopoutRegistry {
@@ -64,7 +67,17 @@ impl PopoutRegistry {
             flow_id,
         };
         self.windows.insert(label.clone(), popout);
+        self.building.insert(label.clone());
         Registration::New(label)
+    }
+
+    /// The window of a label from `find_or_register` exists now.
+    pub fn mark_built(&mut self, label: &str) {
+        self.building.remove(label);
+    }
+
+    pub fn is_building(&self, label: &str) -> bool {
+        self.building.contains(label)
     }
 
     pub fn get(&self, label: &str) -> Option<&PopoutRef> {
@@ -99,6 +112,7 @@ impl PopoutRegistry {
     }
 
     pub fn remove(&mut self, label: &str) -> Option<PopoutRef> {
+        self.building.remove(label);
         self.windows.remove(label)
     }
 
@@ -184,6 +198,25 @@ mod tests {
             registry.find_or_register("notebook", 4),
             Registration::New("popout-notebook-3".to_string())
         );
+    }
+
+    #[test]
+    fn a_label_is_building_until_marked_built_and_again_when_reused() {
+        let mut registry = PopoutRegistry::default();
+        let Registration::New(label) = registry.find_or_register("table", 4) else {
+            panic!("fresh registry");
+        };
+        assert!(registry.is_building(&label));
+        registry.mark_built(&label);
+        assert!(!registry.is_building(&label));
+        assert!(!registry.is_building("popout-table-99"));
+
+        registry.remove(&label);
+        let Registration::New(again) = registry.find_or_register("table", 4) else {
+            panic!("removed");
+        };
+        assert_ne!(again, label);
+        assert!(registry.is_building(&again));
     }
 
     #[test]
