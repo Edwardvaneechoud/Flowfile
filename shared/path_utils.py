@@ -20,6 +20,10 @@ class NoFilesMatchedError(FileNotFoundError):
     """Raised when a directory/glob pattern expands to zero files."""
 
 
+class CloudPathNotSupportedError(ValueError):
+    """Raised when a local file reader is handed an object-storage URI such as ``s3://bucket/key``."""
+
+
 DIRECTORY_SCAN_FILE_TYPES = frozenset({"csv", "parquet", "ipc"})
 
 _UTF8_ENCODINGS = frozenset({"UTF-8", "UTF8", "UTF8-LOSSY", "UTF-8-LOSSY"})
@@ -46,6 +50,44 @@ def is_url(path: str | None) -> bool:
     so callers use this to skip local-path resolution and ``os.path.getsize`` checks.
     """
     return isinstance(path, str) and path.startswith(("http://", "https://"))
+
+
+_CLOUD_READER_HINTS = {
+    "parquet": "ff.scan_parquet_from_cloud_storage",
+    "csv": "ff.scan_csv_from_cloud_storage",
+}
+
+
+def is_cloud_path(path: str | None) -> bool:
+    """Return True if ``path`` is an object-storage URI (``s3://``, ``gs://``, ``az://``, ``abfss://``, ...).
+
+    The scheme list lives in ``shared.cloud_storage.uri``; it is imported here on first call so this
+    module stays import-light.
+    """
+    if not isinstance(path, str):
+        return False
+    from shared.cloud_storage.uri import is_cloud_uri
+
+    return is_cloud_uri(path)
+
+
+def refuse_cloud_path(path: str | None, file_type: str | None = None) -> None:
+    """Raise ``CloudPathNotSupportedError`` when a local file reader is given an object-storage URI.
+
+    Local path resolution would otherwise join ``s3://bucket/key`` onto the working directory and
+    collapse the ``//``, so the read fails with a misleading "file not found" for a local path.
+    """
+    if not is_cloud_path(path):
+        return
+    reader = _CLOUD_READER_HINTS.get(file_type or "")
+    python_hint = (
+        f"{reader}(...)" if reader else "ff.scan_parquet_from_cloud_storage(...) / ff.scan_csv_from_cloud_storage(...)"
+    )
+    raise CloudPathNotSupportedError(
+        f"'{path}' is a cloud storage location, which the local file reader cannot read. "
+        f"Use {python_hint} with a cloud storage connection in Python, "
+        "or a Cloud Storage Reader node in the designer."
+    )
 
 
 def is_glob_pattern(path: str) -> bool:

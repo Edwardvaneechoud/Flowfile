@@ -5,15 +5,18 @@ import pytest
 
 from shared.path_utils import (
     DIRECTORY_SCAN_FILE_TYPES,
+    CloudPathNotSupportedError,
     DirectoryScanUnsupportedError,
     NoFilesMatchedError,
     assert_directory_scan_supported,
     default_scan_extension,
     ensure_glob_pattern,
     expand_glob_pattern,
+    is_cloud_path,
     is_glob_pattern,
     is_url,
     is_utf8_encoding,
+    refuse_cloud_path,
 )
 
 
@@ -31,6 +34,31 @@ def test_is_url_rejects_local_paths():
 
 def test_is_url_handles_non_string():
     assert not is_url(None)
+
+
+@pytest.mark.parametrize(
+    "path", ["s3://bucket/sales.parquet", "gs://bucket/x.csv", "az://container/x.csv", "abfss://c@acct/x.csv"]
+)
+def test_is_cloud_path_detects_object_storage_uris(path):
+    assert is_cloud_path(path)
+
+
+@pytest.mark.parametrize("path", ["/data/s3/x.csv", "s3/x.csv", "https://example.com/x.csv", None])
+def test_is_cloud_path_rejects_local_paths_and_urls(path):
+    assert not is_cloud_path(path)
+
+
+def test_refuse_cloud_path_names_the_matching_cloud_reader():
+    with pytest.raises(CloudPathNotSupportedError, match="ff.scan_parquet_from_cloud_storage") as exc:
+        refuse_cloud_path("s3://bucket/sales.parquet", "parquet")
+    assert "s3://bucket/sales.parquet" in str(exc.value)
+    with pytest.raises(CloudPathNotSupportedError, match="ff.scan_csv_from_cloud_storage"):
+        refuse_cloud_path("gs://bucket/sales.csv", "csv")
+
+
+def test_refuse_cloud_path_passes_local_paths_and_urls():
+    refuse_cloud_path("/data/sales.parquet", "parquet")
+    refuse_cloud_path("https://example.com/sales.csv", "csv")
 
 
 def test_is_glob_pattern_detects_metacharacters():

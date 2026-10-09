@@ -18,7 +18,14 @@ from flowfile_frame.expr import col
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.native import source_frame
 from flowfile_frame.utils import _expand_user, _implicit_graph, generate_node_id
-from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_glob_pattern, is_url
+from shared.path_utils import (
+    default_scan_extension,
+    ensure_glob_pattern,
+    is_cloud_path,
+    is_glob_pattern,
+    is_url,
+    refuse_cloud_path,
+)
 
 
 def sum(expr):
@@ -70,6 +77,8 @@ def _resolve_scan_mode(source: str, *, glob: bool = True) -> Literal["single_fil
         return "single_file"
     if is_glob_pattern(source) or source.endswith(("/", os.sep)):
         return "directory"
+    if is_cloud_path(source):
+        return "single_file"
     if input_schema.keep_paths_as_written.get():
         # In a notebook kernel the folder is probed on the user's machine, by core; a Windows one may end in "\".
         return "directory" if source.endswith("\\") or _metadata.is_directory(source) else "single_file"
@@ -219,6 +228,7 @@ def read_csv(
         and glob is True
     )
     if can_use_native and current_source_path_for_native:
+        refuse_cloud_path(current_source_path_for_native, "csv")
         received_table = input_schema.ReceivedTable(
             file_type="csv",
             path=current_source_path_for_native,
@@ -449,6 +459,7 @@ def read_parquet(
     Returns:
         A FlowFrame with the Parquet data
     """
+    refuse_cloud_path(str(source), "parquet")
     if "~" in source:
         os.path.expanduser(source)
     node_id = generate_node_id()
@@ -500,6 +511,7 @@ def _read_simple_file(
     Only directory-capable formats pass ``scan_mode``/``include_file_paths``; the rest leave them
     at their single-file defaults.
     """
+    refuse_cloud_path(str(source), file_type)
     if isinstance(source, str) and "~" in source:
         source = _expand_user(source)
     node_id = generate_node_id()
@@ -674,6 +686,7 @@ def read_excel(
     Returns:
         A FlowFrame with the Excel data
     """
+    refuse_cloud_path(str(source), "excel")
     if "~" in source:
         os.path.expanduser(source)
     node_id = generate_node_id()
