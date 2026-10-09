@@ -66,7 +66,7 @@ The report has a reusable interface: invoices in, one threshold, city report out
 flowfile_frame/flowfile_frame/run_flow.py: FlowInput, _to_flow_output, register_flow, RunFlow,
 _parameter_bindings; parameters.py: parameter forwarding; flow_frame.py: collect.
 Registration defaults/files: run_flow.py: _registration_path, register_flow.
-Iteration execution: flowfile_core/flowfile_core/flowfile/flow_graph.py: add_run_flow.
+Iteration execution: flowfile_core/flowfile_core/flowfile/flow_graph/builders/subflow.py: add_run_flow.
 Displayed output: docs/examples/output/tutorial_08.txt, compared with the script's stdout by
 flowfile_core/tests/docs_examples/test_docs_examples.py.
 -->
