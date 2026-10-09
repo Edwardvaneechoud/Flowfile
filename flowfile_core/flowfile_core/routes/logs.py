@@ -97,14 +97,14 @@ async def stream_log_file(log_file_path: Path, is_running_callable: callable) ->
 
             logger.info("Streaming completed")
 
+    # The response has started by the time the file is read, so a failure can only end the stream; the
+    # cause stays in core's log, never in the event (no server path, no exception text).
     except FileNotFoundError:
-        error_msg = await format_sse_message(f"Log file not found: {log_file_path}")
-        yield error_msg
-        raise HTTPException(status_code=404, detail=f"Log file not found: {log_file_path}") from None
-    except Exception as e:
-        error_msg = await format_sse_message(f"Error reading log file: {str(e)}")
-        yield error_msg
-        raise HTTPException(status_code=500, detail=f"Error reading log file: {e}") from e
+        logger.warning(f"Log file not found while streaming: {log_file_path}")
+        yield await format_sse_message("Log file not found.")
+    except Exception:
+        logger.exception(f"Error reading log file {log_file_path}")
+        yield await format_sse_message("Error reading log file.")
 
 
 @router.get("/logs/{flow_id}", tags=["flow_logging"])

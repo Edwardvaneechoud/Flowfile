@@ -224,17 +224,24 @@ class ExecutionMixin(GraphMixinBase):
             run_type="init",
         )
 
-    def try_claim_run(self) -> bool:
+    def try_claim_run(self, *, kernel_hold: KernelHold | None = None, commit_sources: bool = True) -> bool:
         """Atomically claim the flow's single-run slot; False when a run is already in flight.
 
         Waits for an in-flight edit first, so a run never starts on a half-applied mutation
-        (lock order: edit lock, then claim lock). The flow's log file is truncated before the claim
+        (lock order: edit lock, then claim lock). Everything a caller may read off a running flow is
+        set under the same lock, before the claim is visible: the cancel flag is cleared, so a
+        ``cancel`` that lands once ``is_running`` is seen is never wiped by the run's own start, and
+        the run's ``kernel_hold`` and ``commit_sources`` are in place, so a notebook interrupt that
+        sees the run also sees the kernel it holds. The flow's log file is truncated before the claim
         is announced (``run_started``): a log stream opened on ``is_running`` or on that event reads
         this run's file from its first line, never the previous run's.
         """
         with self.edit_lock(bounded=False), self._run_claim_lock:
             if self.flow_settings.is_running:
                 return False
+            self._kernel_hold = kernel_hold
+            self._commit_sources = commit_sources
+            self.flow_settings.is_canceled = False
             self.flow_settings.is_running = True
         self.flow_logger.clear_log_file()
         self._bump_revision("run_started")
@@ -272,7 +279,6 @@ class ExecutionMixin(GraphMixinBase):
             raise Exception("Flow is already running")
         try:
             flow_node = self.get_node(node_id)
-            self.flow_settings.is_canceled = False
             self.latest_run_info = self.create_initial_run_information(1, "fetch_one")
             node_logger = self.flow_logger.get_node_logger(flow_node.node_id)
             node_result = NodeResult(
@@ -1025,16 +1031,17 @@ class ExecutionMixin(GraphMixinBase):
         Raises:
             Exception: If the flow is already running.
         """
-        if not claimed and not self.try_claim_run():
-            raise Exception("Flow is already running")
         if kernel_hold is None:
             kernel_hold = ambient_kernel_hold.get()
-        self._kernel_hold = kernel_hold
-        self._commit_sources = commit_sources
+        if claimed:
+            # The route claimed with no hold (a route runs outside any kernel session): set the run's own.
+            self._kernel_hold = kernel_hold
+            self._commit_sources = commit_sources
+        elif not self.try_claim_run(kernel_hold=kernel_hold, commit_sources=commit_sources):
+            raise Exception("Flow is already running")
         ambient = ambient_kernel_hold.set(kernel_hold)
         released = False
         try:
-            self.flow_settings.is_canceled = False
             self.flow_logger.info("Starting to run flowfile flow...")
 
             publish("flow_run_started", graph=self)
