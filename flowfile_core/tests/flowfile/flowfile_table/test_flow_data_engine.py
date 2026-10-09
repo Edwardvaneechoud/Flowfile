@@ -1113,3 +1113,126 @@ class TestRawDataNestedTypes:
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def _cleared_rename(old_name: str, keep: bool = True) -> dict:
+    # What the drawer sends for a rename box the user emptied (the placeholder shows old_name).
+    return {"old_name": old_name, "new_name": "", "keep": keep, "is_altered": True, "data_type_change": False,
+            "is_available": True, "join_key": False, "position": None, "original_position": None, "data_type": None}
+
+
+def test_join_cleared_rename_boxes_keep_original_names():
+    # Regression for #815: cleared rename boxes used to rename every column to "".
+    left = FlowDataEngine(pl.DataFrame({"Company Code": ["A"], "Plant": ["P1"], "Vendor Name": ["V"]}))
+    right = FlowDataEngine(pl.DataFrame({"Company Code": ["A"], "Plant": ["P1"], "Value": [1.0]}))
+    node = input_schema.NodeJoin.model_validate({
+        "flow_id": 1, "node_id": 3, "depending_on_ids": [1, 2],
+        "join_input": {
+            "join_mapping": [{"left_col": "Plant", "right_col": "Plant"}],
+            "left_select": {"renames": [_cleared_rename("Company Code"), _cleared_rename("Plant"),
+                                        _cleared_rename("Vendor Name")]},
+            "right_select": {"renames": [_cleared_rename("Company Code", keep=False),
+                                         _cleared_rename("Plant", keep=False), _cleared_rename("Value")]},
+            "how": "inner",
+        },
+    })
+    assert [r.new_name for r in node.join_input.left_select.renames] == ["Company Code", "Plant", "Vendor Name"]
+    assert not any(r.is_altered for r in node.join_input.left_select.renames)
+    result = left.join(node.join_input, auto_generate_selection=True, verify_integrity=False, other=right)
+    assert result.columns == ["Company Code", "Plant", "Vendor Name", "Value"]
+    result.assert_equal(FlowDataEngine([{"Company Code": "A", "Plant": "P1", "Vendor Name": "V", "Value": 1.0}]))
+
+
+def test_select_cleared_rename_boxes_keep_original_names():
+    df = FlowDataEngine(pl.DataFrame({"a": [1], "b": [2], "c": [3]}))
+    select_inputs = transform_schema.SelectInputs(
+        renames=[transform_schema.SelectInput(**_cleared_rename("a")), transform_schema.SelectInput(**_cleared_rename("b"))]
+    )
+    assert df.do_select(select_inputs, keep_missing=False).columns == ["a", "b"]
+
+
+def test_join_duplicate_output_names_raises_readable_error():
+    left = FlowDataEngine(pl.DataFrame({"id": [1], "a": [1], "b": [2]}))
+    right = FlowDataEngine(pl.DataFrame({"id": [1], "c": [3]}))
+    join_input = transform_schema.JoinInput(
+        join_mapping="id",
+        left_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("a", "X"),
+                     transform_schema.SelectInput("b", "X")],
+        right_select=[transform_schema.SelectInput("id", keep=False), transform_schema.SelectInput("c")],
+    )
+    with pytest.raises(Exception, match=r"Join is not valid: left columns 'a', 'b' share the output name 'X'"):
+        left.join(join_input, auto_generate_selection=True, verify_integrity=False, other=right)
+
+
+def test_join_without_auto_selection_reports_names_kept_on_both_sides():
+    left = FlowDataEngine(pl.DataFrame({"id": [1], "a": [1]}))
+    right = FlowDataEngine(pl.DataFrame({"id": [1], "a": [2]}))
+    join_input = transform_schema.JoinInput(
+        join_mapping="id",
+        left_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("a")],
+        right_select=[transform_schema.SelectInput("id", keep=False), transform_schema.SelectInput("a")],
+    )
+    with pytest.raises(Exception, match=r"Join is not valid: columns 'a' are kept on both sides"):
+        left.join(join_input, auto_generate_selection=False, verify_integrity=False, other=right)
+
+
+def test_cross_join_duplicate_output_names_raises_readable_error():
+    left = FlowDataEngine(pl.DataFrame({"a": [1]}))
+    right = FlowDataEngine(pl.DataFrame({"c": [3], "d": [4]}))
+    cross_join_input = transform_schema.CrossJoinInput(
+        left_select=[transform_schema.SelectInput("a")],
+        right_select=[transform_schema.SelectInput("c", "Y"), transform_schema.SelectInput("d", "Y")],
+    )
+    with pytest.raises(Exception, match=r"Cross join is not valid: right columns 'c', 'd' share the output name 'Y'"):
+        left.do_cross_join(cross_join_input, auto_generate_selection=True, verify_integrity=False, other=right)
+
+
+def test_select_duplicate_output_names_raises_readable_error():
+    df = FlowDataEngine(pl.DataFrame({"a": [1], "b": [2], "c": [3]}))
+    select_inputs = transform_schema.SelectInputs(
+        renames=[transform_schema.SelectInput("a", "X"), transform_schema.SelectInput("b", "X")]
+    )
+    with pytest.raises(ValueError, match=r"Select is not valid: columns 'a', 'b' share the output name 'X'"):
+        df.do_select(select_inputs)
+
+
+def test_select_rename_onto_unmentioned_kept_column_raises_readable_error():
+    df = FlowDataEngine(pl.DataFrame({"a": [1], "b": [2]}))
+    select_inputs = transform_schema.SelectInputs(renames=[transform_schema.SelectInput("a", "b")])
+    with pytest.raises(ValueError, match=r"Select is not valid: columns 'a', 'b' share the output name 'b'"):
+        df.do_select(select_inputs, keep_missing=True)
+    # Without keep_missing the unmentioned b is dropped first, so the rename is fine.
+    assert df.do_select(select_inputs, keep_missing=False).columns == ["b"]
+
+
+def test_join_stale_kept_column_does_not_count_as_duplicate():
+    # Left still lists 'a' from an older schema; it is unavailable, so the right 'a' is the only one kept.
+    left = FlowDataEngine(pl.DataFrame({"id": [1], "b": [1]}))
+    right = FlowDataEngine(pl.DataFrame({"id": [1], "a": [2]}))
+    join_input = transform_schema.JoinInput(
+        join_mapping="id",
+        left_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("b"),
+                     transform_schema.SelectInput("a")],
+        right_select=[transform_schema.SelectInput("id", keep=False), transform_schema.SelectInput("a")],
+    )
+    result = left.join(join_input, auto_generate_selection=False, verify_integrity=False, other=right)
+    assert result.columns == ["id", "b", "a"]
+
+
+def test_cross_join_stale_renamed_column_does_not_count_as_duplicate():
+    left = FlowDataEngine(pl.DataFrame({"a": [1]}))
+    right = FlowDataEngine(pl.DataFrame({"c": [3]}))
+    cross_join_input = transform_schema.CrossJoinInput(
+        left_select=[transform_schema.SelectInput("a")],
+        right_select=[transform_schema.SelectInput("c", "Y"), transform_schema.SelectInput("gone", "Y")],
+    )
+    result = left.do_cross_join(cross_join_input, auto_generate_selection=True, verify_integrity=False, other=right)
+    assert result.columns == ["a", "Y"]
+
+
+def test_select_stale_rename_does_not_count_as_duplicate():
+    df = FlowDataEngine(pl.DataFrame({"a": [1], "b": [2]}))
+    select_inputs = transform_schema.SelectInputs(
+        renames=[transform_schema.SelectInput("gone", "b"), transform_schema.SelectInput("a")]
+    )
+    assert sorted(df.do_select(select_inputs, keep_missing=True).columns) == ["a", "b"]
