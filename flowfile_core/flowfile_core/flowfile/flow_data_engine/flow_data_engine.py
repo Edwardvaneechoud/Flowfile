@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 import polars as pl
 from loky import Future
 from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
+from pl_fuzzy_frame_match.output_column_name_utils import set_name_in_fuzzy_mappings
 from polars.exceptions import PanicException
 from polars_expr_transformer import simple_function_to_expr as to_expr
 from polars_grouper import graph_solver
@@ -1989,6 +1990,8 @@ class FlowDataEngine:
             left=self, right=other, fuzzy_match_input_manager=fuzzy_match_input_manager
         )
         fuzzy_mappings = [FuzzyMapping(**fm.__dict__) for fm in fuzzy_match_input_manager.fuzzy_maps]
+        # fuzzy_match_dfs skips naming the score columns when a side is empty
+        set_name_in_fuzzy_mappings(fuzzy_mappings)
         return FlowDataEngine(
             fuzzy_match_dfs(
                 left_df, right_df, fuzzy_maps=fuzzy_mappings, logger=node_logger.logger if node_logger else logger
