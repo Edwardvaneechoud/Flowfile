@@ -370,7 +370,7 @@ events** and must call the cleanup explicitly.
 
 | Weak point | What it means in practice |
 |---|---|
-| **`flow_graph.py` god file** (largest module in the repo) | Holds the DAG engine, the `add_*` node builders, catalog Delta write helpers, ML train/apply plumbing, kernel execution, YAML serialization, groups, layout, history, and codegen entry all in one file. Navigate it with `grep -n "def add_" flowfile_core/flowfile_core/flowfile/flow_graph.py` — that's the practical index; don't try to read it top to bottom. |
+| **`flow_graph` was a god file** (split 2026-10-09) | `flowfile/flow_graph/` is now a package: `graph.py` (`FlowGraph`, composed from mixins), `history.py`, `canvas.py`, `builders/*.py` (one mixin per node family), `execution.py`, `persistence.py`, plus plain helper modules (`connections`, `catalog_resolution`, `catalog_write`, `cloud`, `freshness`). `__init__.py` is the facade and the bind surface: collaborators tests patch are bound there only and read through `_root.root()` at call time. The inline `execution_location == "local"` branches still exist, now concentrated in `builders/connectors.py`, `builders/io.py`, `builders/cloud_storage.py`, `cloud.py` and `catalog_write.py` — the roadmap's execution-interface seam is the follow-up. |
 | **Skip-list shallowness** | The pre-run skip pass (`util/node_skipper.py`) only expands one transitive level of "leads to" from incorrectly-configured nodes. Correctness for deeper chains relies on `_execute_stages` re-checking dependents of every failed/skipped node at run time — a genuine belt-and-suspenders design, not a hole, but don't assume the skip pre-pass alone is a complete skip set. |
 | **`results_exists` swallows worker downtime** | Returns `False` on an HTTP connection error, same as a genuine cache miss. In Development mode this silently degrades "should skip, cached" decisions into full re-runs whenever the worker is briefly unreachable — no error surfaces, just unexpectedly slower runs. |
 | **HTTP 419 on add-node failure** | `POST /update_settings/` raises the non-standard status code `419` (not `422`/`500`) when the node's `add_<type>` function itself raises — handle it explicitly in frontend/AI tool wrappers. Full dispatch-trap mechanics: `flowfile-node-development` §1.6. |
@@ -614,7 +614,7 @@ line numbers and the pending-branch status will drift fastest.
 grep -rn "create_engine|Session|shared.models" flowfile_worker/flowfile_worker/ | grep -v __pycache__
 
 # core-never-collects: god-file sizing
-wc -l flowfile_core/flowfile_core/flowfile/flow_graph.py \
+wc -l flowfile_core/flowfile_core/flowfile/flow_graph/*.py flowfile_core/flowfile_core/flowfile/flow_graph/builders/*.py \
       flowfile_core/flowfile_core/flowfile/flow_node/flow_node.py \
       flowfile_core/flowfile_core/flowfile/flow_data_engine/flow_data_engine.py
 
