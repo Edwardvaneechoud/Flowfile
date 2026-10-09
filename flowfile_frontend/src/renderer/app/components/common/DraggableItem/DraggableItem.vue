@@ -69,7 +69,7 @@
         data-tooltip-text="Toggle Full Screen"
         @click="toggleFullScreen"
       >
-        <span class="icon">⬜</span>
+        <span class="material-icons icon" aria-hidden="true">fullscreen</span>
       </button>
       <button
         v-if="allowFullScreen && intent.fullScreen"
@@ -78,7 +78,7 @@
         data-tooltip-text="Exit Full Screen"
         @click="toggleFullScreen"
       >
-        <span class="icon">❐</span>
+        <span class="material-icons icon" aria-hidden="true">fullscreen_exit</span>
       </button>
       <div v-if="tabs.length" class="dragitem-tabs" @mousedown.stop>
         <button
