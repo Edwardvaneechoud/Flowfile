@@ -35,7 +35,7 @@ import logging
 import re
 import uuid
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +46,9 @@ from flowfile_core.ai import safety
 from flowfile_core.ai.providers.base import Message, Provider
 from flowfile_core.ai.tools.dry_run import DryRunCache
 from flowfile_core.ai.tools.executor import InsertionContext, execute_tool_call
+from flowfile_core.ai.tools.executor._internal import _canvas_placer
+from flowfile_core.flowfile.util.layout.placement import Placer
+from flowfile_core.schemas import input_schema
 from flowfile_core.schemas.schemas import get_settings_class_for_node_type
 
 logger = logging.getLogger(__name__)
@@ -53,11 +56,8 @@ logger = logging.getLogger(__name__)
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "local_oneshot.md"
 _ADD_PREFIX = "flowfile.graph.add_"
 _TWO_INPUT_TYPES = frozenset({"join", "fuzzy_match", "cross_join"})
+_DEFAULT_OUTPUT_HANDLE = "output-0"
 
-_LAYOUT_X0 = 50.0
-_LAYOUT_Y0 = 50.0
-_LAYOUT_X = 250.0
-_LAYOUT_Y = 130.0
 
 _FALLBACK_PROMPT = (
     "You convert a plain-English data-pipeline request into ONE JSON object: "
@@ -203,25 +203,29 @@ class _PlannedNode:
     right_input_id: int | None
     pos_x: float
     pos_y: float
+    source_handles: dict[int, str] = field(default_factory=dict)
+    """Upstream id -> the output handle it feeds from, for the inputs that leave a source's ``output-0``."""
 
 
-def _plan_insertions(
-    spec: dict[str, Any], start_id: int, canvas_positions: dict[int, tuple[float, float]] | None = None
-) -> list[_PlannedNode]:
+def _plan_insertions(spec: dict[str, Any], start_id: int, placer: Placer | None = None) -> list[_PlannedNode]:
     """Topologically order the spec's nodes, allocate int ids, resolve wiring.
 
     ``start_id`` is the first free node id in the target flow; ids are assigned
     sequentially in topological order. Edges become ``upstream_ids``; for
     two-input node types (join / fuzzy_match / cross_join) the second upstream
-    becomes ``right_input_id``.
+    becomes ``right_input_id``. An edge may name the ``source_handle`` it leaves
+    from; the ones that are not ``output-0`` are kept on ``source_handles``.
 
     A spec node may also name **live canvas nodes** as inputs
     (``canvas_upstream_ids`` for the main input, ``canvas_right_input_id`` for
-    a join's right side) — the code mode's way of continuing the flow on the
-    canvas. Those ids are kept as they are, come first in ``upstream_ids``, and
-    anchor the layout: a node sits one column right of its upstreams
-    (``canvas_positions`` gives a live node's place), on the first upstream's
-    row, siblings one row apart.
+    a join's right side, ``canvas_source_handles`` for their handles) — the code
+    mode's way of continuing the flow on the canvas. Those ids are kept as they
+    are and come first in ``upstream_ids``.
+
+    Positions come from ``placer`` (the live canvas, its comments and collapsed
+    groups; an empty one for a fresh canvas): each node takes the free slot
+    nearest to one column right of its inputs, a root the band below the
+    canvas, so nothing staged covers a live node or another staged node.
     """
     nodes: dict[str, dict[str, Any]] = {}
     order_seen: list[str] = []
@@ -235,16 +239,21 @@ def _plan_insertions(
         settings = raw.get("settings")
         canvas_ups = [u for u in (raw.get("canvas_upstream_ids") or []) if isinstance(u, int)]
         canvas_right = raw.get("canvas_right_input_id")
+        canvas_handles = raw.get("canvas_source_handles")
         nodes[sid] = {
             "type": ntype,
             "settings": settings if isinstance(settings, dict) else {},
             "canvas_upstream_ids": canvas_ups,
             "canvas_right_input_id": canvas_right if isinstance(canvas_right, int) else None,
+            "canvas_source_handles": {
+                int(k): str(v) for k, v in (canvas_handles.items() if isinstance(canvas_handles, dict) else ())
+            },
         }
         order_seen.append(sid)
 
     incoming: dict[str, list[str]] = {sid: [] for sid in order_seen}
     outgoing: dict[str, list[str]] = {sid: [] for sid in order_seen}
+    edge_handles: dict[tuple[str, str], str] = {}
     for raw in spec.get("edges") or []:
         if not isinstance(raw, dict):
             continue
@@ -253,34 +262,26 @@ def _plan_insertions(
         if s in nodes and t in nodes and s != t:
             incoming[t].append(s)
             outgoing[s].append(t)
+            handle = raw.get("source_handle")
+            if isinstance(handle, str) and handle and handle != _DEFAULT_OUTPUT_HANDLE:
+                edge_handles[(s, t)] = handle
 
     topo = _toposort(order_seen, incoming, outgoing)
     id_map = {sid: start_id + i for i, sid in enumerate(topo)}
 
-    positions = canvas_positions or {}
-    # Roots of a continued flow start below the lowest live node, never on top of one.
-    root_y0 = (max(y for _, y in positions.values()) + _LAYOUT_Y) if positions else _LAYOUT_Y0
-    placed: dict[str, tuple[float, float]] = {}
-    lane_at: dict[tuple[float, float], int] = {}
+    placer = placer or Placer()
     planned: list[_PlannedNode] = []
     for sid in topo:
         ups = incoming[sid]
         canvas_ups = nodes[sid]["canvas_upstream_ids"]
         canvas_right = nodes[sid]["canvas_right_input_id"]
         canvas_inputs = [*canvas_ups, *([canvas_right] if canvas_right is not None else [])]
-        anchors = [placed[u] for u in ups] + [
-            positions.get(u, (_LAYOUT_X0 - _LAYOUT_X, _LAYOUT_Y0)) for u in canvas_inputs
-        ]
-        if anchors:
-            x = max(ax for ax, _ in anchors) + _LAYOUT_X
-            base_y = anchors[0][1]
-        else:
-            x, base_y = _LAYOUT_X0, root_y0
-        lane = lane_at.get((x, base_y), 0)
-        lane_at[(x, base_y)] = lane + 1
-        y = base_y + lane * _LAYOUT_Y
-        placed[sid] = (x, y)
+        x, y = placer.place(id_map[sid], inputs=[*canvas_inputs, *(id_map[u] for u in ups)])
         up_ids = [*canvas_ups, *(id_map[u] for u in ups)]
+        handles = {
+            **{u: h for u, h in nodes[sid]["canvas_source_handles"].items() if u in canvas_inputs},
+            **{id_map[u]: edge_handles[(u, sid)] for u in ups if (u, sid) in edge_handles},
+        }
         right_id: int | None = canvas_right
         if right_id is None and nodes[sid]["type"] in _TWO_INPUT_TYPES and len(up_ids) >= 2:
             right_id = up_ids[1]
@@ -293,8 +294,9 @@ def _plan_insertions(
                 settings=nodes[sid]["settings"],
                 upstream_ids=up_ids,
                 right_input_id=right_id,
-                pos_x=x,
-                pos_y=y,
+                pos_x=float(x),
+                pos_y=float(y),
+                source_handles=handles,
             )
         )
     return planned
@@ -317,22 +319,12 @@ def _toposort(order_seen: list[str], incoming: dict[str, list[str]], outgoing: d
     return out
 
 
-def _canvas_positions(flow: Any) -> dict[int, tuple[float, float]]:
-    """``{node_id: (pos_x, pos_y)}`` of the live nodes, for additions that continue from them."""
-    out: dict[int, tuple[float, float]] = {}
-    for node in getattr(flow, "nodes", None) or []:
-        settings = getattr(node, "setting_input", None)
-        try:
-            out[int(node.node_id)] = (
-                float(getattr(settings, "pos_x", 0.0) or 0.0),
-                float(getattr(settings, "pos_y", 0.0) or 0.0),
-            )
-        except (TypeError, ValueError, AttributeError):
-            continue
-    return out
-
-
 def _next_node_id(flow: Any) -> int:
+    """The first id a staged node may take: above every id the canvas has held, so a deleted or undone id is
+    never reused (``FlowGraph.node_id_ceiling``); the live ids alone for a flow-like object without one."""
+    ceiling = getattr(flow, "node_id_ceiling", None)
+    if isinstance(ceiling, int) and not isinstance(ceiling, bool):
+        return ceiling + 1
     used: set[int] = set()
     for node in getattr(flow, "nodes", None) or []:
         try:
@@ -462,7 +454,7 @@ def _build_simple_diff(
     fails *then*, not now. Unknown node types and writer/sink types are dropped
     with a warning (a generated flow must never auto-create an external write).
     """
-    planned = _plan_insertions(spec, _next_node_id(flow), canvas_positions=_canvas_positions(flow))
+    planned = _plan_insertions(spec, _next_node_id(flow), placer=_canvas_placer(flow, {}))
     if not planned:
         raise OneShotError("model output contained no usable nodes")
 
@@ -481,6 +473,7 @@ def _build_simple_diff(
     }
 
     additions: list[diff_module.StagedAddition] = []
+    connections: list[diff_module.StagedConnection] = []
     created: list[dict[str, Any]] = []
     warnings: list[str] = []
 
@@ -497,6 +490,21 @@ def _build_simple_diff(
         # filtered-out upstreams.
         upstream_ids = [u for u in p.upstream_ids if u in kept_ids]
         right_id = p.right_input_id if (p.right_input_id in kept_ids) else None
+        # An input that leaves a source's output-0 (a split's second frame, a gate's else side) is wired
+        # as a connection op, since insertion_context only knows output-0.
+        for uid, handle in p.source_handles.items():
+            if uid == right_id:
+                right_id = None
+                slot = "right"
+            elif uid in upstream_ids:
+                upstream_ids.remove(uid)
+                slot = "main"
+            else:
+                continue
+            connection = input_schema.NodeConnection.create_from_simple_input(
+                from_id=uid, to_id=p.node_id, input_type=slot, output_handle=handle
+            )
+            connections.append(diff_module.StagedConnection(connection=connection.model_dump(mode="json")))
         settings = {
             **p.settings,
             "flow_id": flow_id,
@@ -527,6 +535,7 @@ def _build_simple_diff(
         session_id=session_id,
         flow_id=flow_id,
         additions=additions,
+        connections_added=connections,
         rationale=rationale,
     )
     diff_id = diff_module.register_diff(graph_diff)

@@ -13,6 +13,9 @@ Nothing the model writes ever executes in core. The script passes three gates, i
    place code that runs (``polars_code``, ``sql``, ``PythonScript``) or run the flow (``collect``). This is what keeps
    ``POST /ai/generate`` JWT-only in every mode: the notebook's ``require_notebook_sync`` admin gate exists because
    the frame's catalog lookups do not check the caller's grants, and nothing the pre-scan lets through can make one.
+   The canvas's own rendered cells are not scanned, so where sharing is enabled a canvas holding a node that reaches
+   a stored resource (:data:`STORED_RESOURCE_NODE_TYPES`, a custom node) gets no context at all
+   (:func:`canvas_context`) and the build starts from scratch.
 2. The notebook's clean run (:func:`~flowfile_core.notebook.bridge.get_clean_runner`): the installed
    :class:`~flowfile_core.notebook.runner.NotebookRunner` interprets the cell through
    :mod:`flowfile_core.notebook.allowlist` and builds the nodes in frame build mode, executing none of them.
@@ -40,7 +43,8 @@ from typing import Any
 
 from flowfile_core.ai import safety
 from flowfile_core.ai.providers.base import Message, Provider
-from flowfile_core.notebook import allowlist
+from flowfile_core.auth import sharing
+from flowfile_core.notebook import allowlist, reconcile
 from flowfile_core.notebook.bridge import CleanRunRequest, CleanRunResult, get_clean_runner
 
 logger = logging.getLogger(__name__)
@@ -53,6 +57,7 @@ _COLUMN_HINT_CAP = 12
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "code_build.md"
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _FENCE_RE = re.compile(r"```[ \t]*([A-Za-z0-9_+-]*)[^\n]*\n(.*?)```", re.DOTALL)
+_OPEN_FENCE_RE = re.compile(r"```[ \t]*([A-Za-z0-9_+-]*)[^\n]*\n([^`]*)\Z", re.DOTALL)
 _IMPORT_RE = re.compile(r"^\s*import flowfile\b", re.MULTILINE)
 _FLOWFILE_IMPORT = "import flowfile as ff"
 _NEEDS_KERNEL = "; this needs a kernel"
@@ -116,6 +121,15 @@ REFUSED_NODE_TYPES: frozenset[str] = safety.AGENT_BLOCKED_NODE_TYPES | frozenset
 """Node types a clean run may still produce that Simple build never places (the pre-scan catches the direct routes;
 this is the second net, for a frame method that falls back to a Polars Code node)."""
 
+STORED_RESOURCE_NODE_TYPES: frozenset[str] = frozenset(
+    {
+        "database_reader", "database_writer", "cloud_storage_reader", "cloud_storage_writer", "catalog_reader",
+        "catalog_writer", "kafka_reader", "rest_api_reader", "google_analytics", "external_source", "run_flow",
+    }
+)  # fmt: skip
+"""Live node types whose rendered cell makes a grant-less lookup when the clean run rebuilds it; with sharing
+enabled such a canvas gets no context (the push of the same cells is admin-only)."""
+
 _ALLOWED_IMPORTS = frozenset((module, alias) for (module, alias), kind in allowlist.IMPORTS.items() if kind != "inert")
 _IDENTITY_KEYS = frozenset(
     {"flow_id", "node_id", "pos_x", "pos_y", "is_setup", "user_id", "depending_on_id", "depending_on_ids"}
@@ -160,6 +174,10 @@ class CodeBuildRefusal(Exception):
         super().__init__(message)
         self.message = message
         self.line = line
+
+
+class CanvasCellFailure(CodeBuildRefusal):
+    """A canvas cell, not the script, failed in the clean run: the context is dropped and the build restarts."""
 
 
 class CodeBuildError(RuntimeError):
@@ -230,6 +248,13 @@ def extract_code(text: str) -> str | None:
             return body or None
     if _IMPORT_RE.search(text) and "```" not in text:
         return text
+    # A fence the reply never closed (the output was cut off): the script so far, so the gates report the
+    # broken line and the repair round rewrites it, instead of the half script passing for an answer.
+    unclosed = _OPEN_FENCE_RE.search(text)
+    if unclosed and text.count("```") % 2 == 1:
+        lang, body = unclosed.group(1), unclosed.group(2).strip()
+        if lang.lower() in ("python", "py") or (not lang and _IMPORT_RE.search(body)):
+            return body or None
     return None
 
 
@@ -296,12 +321,26 @@ class CanvasContext:
     block: str = ""
 
 
+def stored_resource_nodes(flow: Any) -> list[str]:
+    """The live nodes whose cell would reach a stored resource in the clean run, as ``type:id``."""
+    found = []
+    for node in getattr(flow, "nodes", None) or []:
+        node_type = getattr(node, "node_type", None)
+        if node_type in STORED_RESOURCE_NODE_TYPES or getattr(node.setting_input, "is_user_defined", False):
+            found.append(f"{node_type}:{node.node_id}")
+    return found
+
+
 def canvas_context(flow: Any) -> CanvasContext:
-    """Render the live flow for the model; an empty context when there is nothing on the canvas or the exporter
-    cannot express it (logged), so a build then starts from scratch as before."""
+    """Render the live flow for the model; an empty context when there is nothing on the canvas, the exporter
+    cannot express it (logged), or sharing is enabled and a live node reaches a stored resource (its cell would
+    make the grant-less lookup the pre-scan keeps out of the model's code), so a build then starts from scratch."""
     if not getattr(flow, "nodes", None):
         return CanvasContext()
-    from flowfile_core.notebook.push import node_schemas, seed_snapshot
+    if sharing.sharing_enabled() and (stored := stored_resource_nodes(flow)):
+        logger.info("code build: flow %s holds %s; building without context", flow.flow_id, ", ".join(stored))
+        return CanvasContext()
+    from flowfile_core.notebook.push import seed_snapshot
     from flowfile_core.notebook.render import render
 
     try:
@@ -319,10 +358,7 @@ def canvas_context(flow: Any) -> CanvasContext:
         text = cell.code.rstrip()
         if cell.node_ids:
             provenance[cell.cell_id] = [(flow.get_node(nid).node_type, nid) for nid in cell.node_ids]
-            try:
-                columns = [c["name"] for c in node_schemas(flow.get_node(cell.node_ids[-1])).get("output-0") or []]
-            except Exception:
-                columns = []
+            columns = [c["name"] for c in (snapshot["schemas"].get(cell.node_ids[-1]) or {}).get("output-0") or []]
             if columns:
                 shown = ", ".join(columns[:_COLUMN_HINT_CAP]) + (", …" if len(columns) > _COLUMN_HINT_CAP else "")
                 text = f"{text}  # columns: {shown}"
@@ -399,14 +435,17 @@ def spec_from_flowfile_data(flowfile_data: dict[str, Any], new_ids: set[int] | N
     """The clean run's save-format payload as the ``{nodes, edges}`` spec ``_build_simple_diff`` consumes.
 
     Each node keeps its ``setting_input`` minus the identity and wiring keys the diff assigns again (the ids are
-    renumbered onto the target flow); edges come from ``input_ids`` and, for a join, ``right_input_id`` second.
-    With ``new_ids`` (the nodes the script's own cell built) only those become spec nodes, and an input that is
-    not one of them is a live canvas node, carried as ``canvas_upstream_ids`` / ``canvas_right_input_id``.
+    renumbered onto the target flow); edges come from ``input_ids`` and, for a join, ``right_input_id`` second,
+    each with the source handle it leaves from (``source_handle`` on the edge when it is not ``output-0``: a
+    split's second frame, a gate's else side). With ``new_ids`` (the nodes the script's own cell built) only
+    those become spec nodes, and an input that is not one of them is a live canvas node, carried as
+    ``canvas_upstream_ids`` / ``canvas_right_input_id`` with ``canvas_source_handles``.
     Raises :class:`CodeBuildRefusal` for any node in :data:`REFUSED_NODE_TYPES` or an installed custom node.
     """
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, str]] = []
-    for node in flowfile_data.get("nodes") or []:
+    by_id = {node["id"]: node for node in flowfile_data.get("nodes") or [] if isinstance(node, dict) and "id" in node}
+    for node in by_id.values():
         if new_ids is not None and node.get("id") not in new_ids:
             continue
         node_type = str(node.get("type") or "")
@@ -422,18 +461,21 @@ def spec_from_flowfile_data(flowfile_data: dict[str, Any], new_ids: set[int] | N
         _relative_paths(kept)
         node_id = str(node["id"])
         entry: dict[str, Any] = {"id": node_id, "type": node_type, "settings": kept}
-        is_new = lambda i: new_ids is None or i in new_ids  # noqa: E731
-        for upstream in node.get("input_ids") or []:
-            if is_new(upstream):
-                edges.append({"source": str(upstream), "target": node_id})
-            else:
-                entry.setdefault("canvas_upstream_ids", []).append(upstream)
-        right = node.get("right_input_id")
-        if right is not None:
-            if is_new(right):
-                edges.append({"source": str(right), "target": node_id})
-            else:
-                entry["canvas_right_input_id"] = right
+        incoming = reconcile.incoming_edges(node, by_id)
+        for slot in (reconcile.MAIN, reconcile.RIGHT):
+            for upstream, handle in incoming.get(slot) or []:
+                if new_ids is None or upstream in new_ids:
+                    edge = {"source": str(upstream), "target": node_id}
+                    if handle != reconcile.DEFAULT_HANDLE:
+                        edge["source_handle"] = handle
+                    edges.append(edge)
+                    continue
+                if slot == reconcile.MAIN:
+                    entry.setdefault("canvas_upstream_ids", []).append(upstream)
+                else:
+                    entry["canvas_right_input_id"] = upstream
+                if handle != reconcile.DEFAULT_HANDLE:
+                    entry.setdefault("canvas_source_handles", {})[upstream] = handle
         nodes.append(entry)
     return {"nodes": nodes, "edges": edges}
 
@@ -441,8 +483,8 @@ def spec_from_flowfile_data(flowfile_data: dict[str, Any], new_ids: set[int] | N
 def _build(code: str, *, flow: Any, flow_id: int, user_id: int, context: CanvasContext) -> dict[str, Any]:
     """The three gates on one script, then the diff; raises :class:`CodeBuildRefusal` at the first failure.
 
-    A failure inside a canvas cell (the rendering changed under us) is reported without a line, since the line
-    would be in a cell the model never saw.
+    A failure inside a canvas cell (a live node this caller's clean run cannot rebuild) is a
+    :class:`CanvasCellFailure`: not the script's fault, so the caller builds again without the context.
     """
     from flowfile_core.ai.local_model import oneshot
 
@@ -450,8 +492,10 @@ def _build(code: str, *, flow: Any, flow_id: int, user_id: int, context: CanvasC
     ceiling = int(getattr(flow, "node_id_ceiling", 0) or 0)
     result = interpret_script(code, user_id=user_id, flow_id=flow_id, ceiling=ceiling, context=context)
     if result.error is not None:
-        line = result.line if result.cell_id in (None, BUILD_CELL) else None
-        raise CodeBuildRefusal(result.error.strip().replace(_NEEDS_KERNEL, ""), line)
+        message = result.error.strip().replace(_NEEDS_KERNEL, "")
+        if result.cell_id not in (None, BUILD_CELL):
+            raise CanvasCellFailure(f"cell {result.cell_id}: {message}", result.line)
+        raise CodeBuildRefusal(message, result.line)
     new_ids = set(result.node_ids_by_cell.get(BUILD_CELL) or []) if context.cells else None
     if new_ids is not None and not new_ids:
         raise CodeBuildRefusal("the script added no new step; write the new lines that continue from the current flow")
@@ -489,19 +533,47 @@ async def generate_code_flow(
 
     Returns the ``_build_simple_diff`` result plus ``code`` (the accepted script) and ``answer`` (``None``); when the
     model answered instead of building, the answer result ``oneshot.generate_flow`` documents. A script that fails a
-    gate gets one repair round; a second failure raises :class:`CodeBuildError`.
+    gate, or a reply without one, gets one repair round; a second failure raises :class:`CodeBuildError`.
 
     With nodes on the canvas the model sees them as the notebook's rendered code (:func:`canvas_context`) and
-    writes only the new steps; those are staged wired to the live nodes they continue from.
+    writes only the new steps; those are staged wired to the live nodes they continue from. A canvas cell the
+    clean run cannot rebuild drops the context and the build starts over from scratch (logged).
     """
+    context = await asyncio.to_thread(canvas_context, flow)
+    while True:
+        try:
+            return await _generate_with(
+                provider,
+                context,
+                flow=flow,
+                flow_id=flow_id,
+                user_id=user_id,
+                user_request=user_request,
+                max_tokens=max_tokens,
+            )
+        except CanvasCellFailure as failure:
+            logger.warning("code build: flow %s canvas failed in the clean run (%s); retrying without context",
+                           flow_id, failure.message)  # fmt: skip
+            context = CanvasContext()
+
+
+async def _generate_with(
+    provider: Provider,
+    context: CanvasContext,
+    *,
+    flow: Any,
+    flow_id: int,
+    user_id: int,
+    user_request: str,
+    max_tokens: int | None,
+) -> dict[str, Any]:
+    """One generation with ``context``: the model call, the gates and the repair round."""
     from flowfile_core.ai.local_model import oneshot
 
-    context = await asyncio.to_thread(canvas_context, flow)
     messages = [
         Message(role="system", content=system_prompt()),
         Message(role="user", content=user_message(user_request, context)),
     ]
-    code: str | None = None
     for attempt in range(REPAIR_ROUNDS + 1):
         response = await provider.chat(messages, max_tokens=max_tokens or 1024, surface=SURFACE, user_id=user_id)
         content = response.content or ""
@@ -519,17 +591,23 @@ async def generate_code_flow(
                     "answer": answer,
                     "code": None,
                 }
-            raise CodeBuildError("the model returned no script", line=None, code=None)
-        code = ensure_import(strip_echoed(code, context))
-        try:
-            return await asyncio.to_thread(_build, code, flow=flow, flow_id=flow_id, user_id=user_id, context=context)
-        except CodeBuildRefusal as refusal:
-            logger.info("code build attempt %d refused at line %s: %s", attempt + 1, refusal.line, refusal.message)
-            if attempt == REPAIR_ROUNDS:
-                raise CodeBuildError(refusal.message, line=refusal.line, code=code) from refusal
-            messages = [
-                *messages,
-                Message(role="assistant", content=content),
-                Message(role="user", content=_repair_message(refusal)),
-            ]
-    raise CodeBuildError("the model returned no script", line=None, code=code)  # pragma: no cover
+            refusal = CodeBuildRefusal("the reply held no ```python block with the script")
+        else:
+            code = ensure_import(strip_echoed(code, context))
+            try:
+                return await asyncio.to_thread(
+                    _build, code, flow=flow, flow_id=flow_id, user_id=user_id, context=context
+                )
+            except CanvasCellFailure:
+                raise
+            except CodeBuildRefusal as exc:
+                refusal = exc
+        logger.info("code build attempt %d refused at line %s: %s", attempt + 1, refusal.line, refusal.message)
+        if attempt == REPAIR_ROUNDS:
+            raise CodeBuildError(refusal.message, line=refusal.line, code=code) from refusal
+        messages = [
+            *messages,
+            Message(role="assistant", content=content),
+            Message(role="user", content=_repair_message(refusal)),
+        ]
+    raise AssertionError("unreachable")  # pragma: no cover

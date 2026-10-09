@@ -190,10 +190,7 @@ export const useAiStore = defineStore("ai", () => {
   const simpleProvider = ref<string | null>(null);
   const simpleModel = ref<string | null>(null);
 
-  // What Simple build asks the model for. ``code`` (default): FlowFrame code
-  // that core turns into nodes without running it; ``json``: the node
-  // settings object of earlier releases. Device-wide, persisted with the
-  // other AI settings; Settings → AI → Assistant flips it.
+  // Simple build output (see PersistedSimpleBuildOutput); Settings → AI → Assistant flips it.
   const simpleBuildOutput = ref<PersistedSimpleBuildOutput>("code");
 
   // Local model (offline llama.cpp) status. Surfaced as a synthetic

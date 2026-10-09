@@ -33,8 +33,9 @@ def require_notebook_sync(current_user=Depends(get_current_active_user)):
 
     The AI's Simple build (``POST /ai/generate``, ``mode="code"``) runs model-written cells through the same
     runner without this gate: its pre-scan (``ai/local_model/code_build.py``) refuses every call that could
-    reach a stored resource, so none of those lookups can happen there. Widening that dialect to catalog
-    readers means adding the grant check or this gate first.
+    reach a stored resource, and where sharing is enabled a canvas holding such a node is not sent along as
+    context, so none of those lookups can happen there. Widening that dialect to catalog readers means adding
+    the grant check or this gate first.
     """
     if sharing.sharing_enabled():
         require_admin(current_user)

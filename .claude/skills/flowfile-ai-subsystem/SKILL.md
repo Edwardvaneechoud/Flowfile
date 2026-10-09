@@ -509,8 +509,12 @@ when it has one:
    `push.node_schemas`, capped at `CONTEXT_CHAR_BUDGET`, newest steps kept)
    plus `## Request`, and the model writes only the new lines continuing from
    a variable. The rendered cells relabel onto their canvas ids, so
-   `node_ids_by_cell["build"]` are exactly the new nodes. An empty canvas
-   or an exporter failure means no context and the from-scratch build.
+   `node_ids_by_cell["build"]` are exactly the new nodes. An empty canvas,
+   an exporter failure, a canvas cell the caller's clean run cannot rebuild
+   (`CanvasCellFailure`, retried without context), or, with sharing enabled,
+   a live node in `STORED_RESOURCE_NODE_TYPES` / a custom node (its cell
+   would make the grant-less lookup) all mean no context and the
+   from-scratch build.
    `strip_echoed` first drops every script line that restates a line of the
    block (a 4B likes to repeat the context before adding to it; run as written
    each repeated step would be a duplicate node), and a script that then adds
@@ -519,13 +523,17 @@ when it has one:
    no honest answer in the dialect and fails with its line.
 3. **`spec_from_flowfile_data(payload, new_ids)`** — the save-format payload
    becomes the `{nodes, edges}` spec `oneshot._build_simple_diff` consumes
-   (settings minus identity/wiring keys, `input_ids` then `right_input_id` as
-   edges, a cwd-absolute path for a missing file turned back into what the user
+   (settings minus identity/wiring keys, `reconcile.incoming_edges` for the
+   main and right inputs with their source handles — a split's second frame
+   or a gate's else side rides as `source_handle` and becomes a
+   `connections_added` op, since `insertion_context` wires `output-0` only —
+   a cwd-absolute path for a missing file turned back into what the user
    typed). With `new_ids` only those become spec nodes; an input outside them is
-   a live node, carried as `canvas_upstream_ids` / `canvas_right_input_id`,
-   which `_plan_insertions` keeps verbatim (first in `upstream_ids`), anchors
-   the layout on (one column right of the live node; new roots go below the
-   lowest live node) and `_build_simple_diff` keeps through its writer filter;
+   a live node, carried as `canvas_upstream_ids` / `canvas_right_input_id` /
+   `canvas_source_handles`, which `_plan_insertions` keeps verbatim (first in
+   `upstream_ids`) and `_build_simple_diff` keeps through its writer filter;
+   positions come from the layout `Placer` over the live canvas
+   (`_canvas_placer`), ids from `node_id_ceiling + 1`, and
    `validate_diff_against_flow` then treats a vanished live upstream as drift.
    Any node in `REFUSED_NODE_TYPES` (writers, `polars_code`, `sql_query`,
    connection sources, custom nodes) refuses the whole script — a frame method

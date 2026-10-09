@@ -111,6 +111,13 @@ def test_extract_code_takes_bare_code_and_strips_think_blocks():
     assert code_build.extract_code(f"<think>let me think {{}}</think>\n{fenced(LINEAR)}") == LINEAR.strip()
 
 
+def test_extract_code_takes_a_fence_the_reply_never_closed():
+    cut = '```python\nimport flowfile as ff\norders = ff.read_csv("orders.csv")\npaid = orders.filter(ff.col("a"'
+    assert code_build.extract_code(cut) == cut.split("\n", 1)[1]
+    assert code_build.extract_code("```json\n{\"answer\": \"hi\"}\n```\n```python\nx = 1") == "x = 1"
+    assert oneshot.extract_answer(cut) is not None  # what the answer path would have shown
+
+
 def test_extract_code_is_none_for_answers_and_prose():
     assert code_build.extract_code('```json\n{"answer": "hi"}\n```') is None
     assert code_build.extract_code("I build flows from a description.") is None
@@ -346,10 +353,14 @@ def test_hostile_code_never_reaches_the_clean_run_or_exec(monkeypatch):
 def registered_flow() -> Iterator[FlowGraph]:
     flow = _empty_flow(flow_id=9801)
     flow_file_handler._flows[flow.flow_id] = flow
+    for user_id in (1, 2):
+        flow_file_handler._register_user_session(user_id, flow.flow_id)
     try:
         yield flow
     finally:
         flow_file_handler._flows.pop(flow.flow_id, None)
+        for user_id in (1, 2):
+            flow_file_handler._unregister_user_session(user_id, flow.flow_id)
 
 
 @pytest.fixture
@@ -393,6 +404,12 @@ def test_route_default_mode_is_still_the_json_path(registered_flow, client_for, 
     response = _post(client_for(PydanticUser(id=1, username="u")), registered_flow.flow_id)
     assert response.status_code == 200, response.text
     assert response.json()["rationale"] == "Generated flow (simple mode)"
+
+
+def test_route_refuses_a_flow_open_only_in_another_session(registered_flow, client_for, monkeypatch):
+    monkeypatch.setattr(generate_routes_module, "get_configured_provider", lambda *a, **k: StubProvider(fenced(LINEAR)))
+    response = _post(client_for(PydanticUser(id=3, username="other")), registered_flow.flow_id, mode="code")
+    assert response.status_code == 422 and "not found" in response.json()["detail"]
 
 
 def test_route_code_mode_is_open_to_a_non_admin_in_docker_mode(registered_flow, client_for, monkeypatch):
@@ -489,11 +506,91 @@ def test_generate_code_flow_refuses_a_script_that_adds_nothing():
     assert "added no new step" in excinfo.value.message
 
 
-def test_generate_code_flow_without_context_still_builds_from_scratch():
+def test_generate_code_flow_without_context_still_builds_from_scratch(monkeypatch):
     """A canvas the exporter cannot render falls back to the plain build."""
+    from flowfile_core.notebook import render as render_module
+
+    def broken(flow):
+        raise RuntimeError("no export for this node")
+
+    monkeypatch.setattr(render_module, "render", broken)
     flow = _flow_with_table()
-    result = _generate(StubProvider(fenced(LINEAR)), flow, "read orders.csv")
+    assert code_build.canvas_context(flow) == code_build.CanvasContext()
+    provider = StubProvider(fenced(LINEAR))
+    result = _generate(provider, flow, "read orders.csv")
+    assert provider.calls[0][1].content == "read orders.csv"
     assert [c["type"] for c in result["created"]] == ["read", "filter", "group_by", "sort"]
+
+
+def test_generate_code_flow_retries_without_context_when_a_canvas_cell_fails(monkeypatch):
+    flow = _flow_with_table()
+    broken = code_build.CanvasContext(cells=[("imports", IMPORT), ("cell-1", "source_1 = no_such_name")], block="x")
+    monkeypatch.setattr(code_build, "canvas_context", lambda flow: broken)
+    provider = StubProvider(fenced('only_hans = source_1.filter(ff.col("name") == "hans")'), fenced(LINEAR))
+    result = _generate(provider, flow, "keep only hans")
+    assert provider.calls[0][1].content.startswith("## Current flow")
+    assert provider.calls[1][1].content == "keep only hans"
+    assert [c["type"] for c in result["created"]] == ["read", "filter", "group_by", "sort"]
+
+
+def test_generate_code_flow_repairs_a_reply_without_a_script():
+    provider = StubProvider("Sure! Here is the flow:\n```python\n```", fenced(LINEAR))
+    result = _generate(provider)
+    assert result["op_count"] == 4 and len(provider.calls) == 2
+    assert "no ```python block" in provider.calls[1][-1].content
+
+
+def test_canvas_context_is_withheld_for_a_stored_resource_node_where_sharing_is_enabled(monkeypatch):
+    flow = _flow_with_table()
+    monkeypatch.setattr(code_build.sharing, "sharing_enabled", lambda: True)
+    assert code_build.canvas_context(flow).cells  # a table reaches nothing
+    monkeypatch.setattr(code_build, "STORED_RESOURCE_NODE_TYPES", frozenset({"manual_input"}))
+    assert code_build.stored_resource_nodes(flow) == ["manual_input:1"]
+    assert code_build.canvas_context(flow) == code_build.CanvasContext()
+    monkeypatch.setattr(code_build.sharing, "sharing_enabled", lambda: False)
+    assert code_build.canvas_context(flow).cells
+
+
+def test_split_second_frame_is_wired_from_its_own_handle():
+    flow = _empty_flow()
+    code = (
+        f"{IMPORT}\n"
+        'orders = ff.read_csv("orders.csv")\n'
+        'big, small = orders.filter_split(ff.col("amount") > 100)\n'
+        'ranked = small.sort(["amount"], descending=[True])\n'
+    )
+    result = _generate(StubProvider(fenced(code)), flow)
+    graph_diff = diff.get_diff(result["diff_id"])
+    sort = next(a for a in graph_diff.additions if a.node_type == "sort")
+    split = next(a for a in graph_diff.additions if a.node_type == "filter")  # a split is a two-exit filter
+    assert sort.insertion_context.upstream_node_ids == []
+    (connection,) = graph_diff.connections_added
+    assert connection.connection["output_connection"]["node_id"] == split.settings["node_id"]
+    assert connection.connection["output_connection"]["connection_class"] == "output-1"
+    assert connection.connection["input_connection"]["node_id"] == sort.settings["node_id"]
+    diff.apply_diff(flow, graph_diff)
+    sort_node = flow.get_node(sort.settings["node_id"])
+    assert [i.node_id for i in sort_node.node_inputs.main_inputs] == [split.settings["node_id"]]
+    assert flow.get_node(split.settings["node_id"]).node_information.output_handles == ["output-1"]
+
+
+def test_staged_nodes_never_cover_each_other_or_a_live_node():
+    spec = {
+        "nodes": [{"id": i, "type": "read", "settings": {}} for i in ("a", "b")]
+        + [{"id": i, "type": "filter", "settings": {}} for i in ("a1", "a2", "b1")],
+        "edges": [{"source": "a", "target": "a1"}, {"source": "a", "target": "a2"}, {"source": "b", "target": "b1"}],
+    }
+    planned = oneshot._plan_insertions(spec, 1)
+    positions = [(p.pos_x, p.pos_y) for p in planned]
+    assert len(set(positions)) == len(positions)
+    flow = _flow_with_table()
+    first = _generate(StubProvider(fenced('a = source_1.filter(ff.col("name") == "a")')), flow, "a")
+    diff.apply_diff(flow, diff.get_diff(first["diff_id"]))
+    second = _generate(StubProvider(fenced('b = source_1.filter(ff.col("name") == "b")')), flow, "b")
+    (addition,) = diff.get_diff(second["diff_id"]).additions
+    live = {(n.setting_input.pos_x, n.setting_input.pos_y) for n in flow.nodes}
+    assert (addition.insertion_context.pos_x, addition.insertion_context.pos_y) not in live
+    assert addition.settings["node_id"] == flow.node_id_ceiling + 1
 
 
 def test_strip_echoed_drops_the_restated_context_lines_only():

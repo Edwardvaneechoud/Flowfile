@@ -75,7 +75,8 @@ async def generate_flow_route(
     destination after inserting.
 
     Errors: 404 unknown provider · 409 provider not configured / local model
-    not installed · 422 flow not found / unparseable model output (a string
+    not installed · 422 flow not found (not open in the caller's session; the
+    code mode reads the whole flow) / unparseable model output (a string
     detail), or in ``code`` mode a script that still fails after its repair
     round (detail ``{message, line, kind: "code", code}``) · 503 AI off or
     local server failed to boot.
@@ -86,7 +87,7 @@ async def generate_flow_route(
             detail=f"Unknown provider {body.provider!r}; supported: {resolvable_provider_names()}",
         )
 
-    flow = flow_file_handler.get_flow(body.flow_id)
+    flow = flow_file_handler.get_flow(body.flow_id, current_user.id)
     if flow is None:
         raise HTTPException(status_code=422, detail=f"Flow {body.flow_id} not found")
 
