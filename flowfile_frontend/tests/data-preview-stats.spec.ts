@@ -26,7 +26,7 @@ async function authGet(request: APIRequestContext, url: string, token: string) {
 
 async function navigateWithAuth(page: Page, token: string, targetUrl: string) {
   await page.goto(targetUrl);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   const expiration = Date.now() + 60 * 60 * 1000;
   await page.evaluate(
     ({ token, expiration }: { token: string; expiration: number }) => {
@@ -36,7 +36,7 @@ async function navigateWithAuth(page: Page, token: string, targetUrl: string) {
     { token, expiration },
   );
   await page.reload();
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
 }
 
 /** Creates a flow with one 4-row manual-input node (id 1) and runs it. */

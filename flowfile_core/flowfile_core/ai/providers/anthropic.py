@@ -1,10 +1,14 @@
-"""Anthropic adapter (Claude Opus 4.7, Sonnet 4.6, Haiku 4.5).
+"""Anthropic adapter (Claude Sonnet 5.5, Opus 4.7, Haiku 4.5).
 
 Surface → default model mapping:
 
-* ``cmd_k`` / ``ghost_node`` → Haiku 4.5 (sub-1s TTFB target).
-* ``explain`` / ``docgen`` → Sonnet 4.6.
-* ``agent_complex`` → Opus 4.7.
+* ``cmd_k`` / ``ghost_node`` → Haiku 4.5 (sub-1s TTFB target). Haiku 5.5
+  thinks by default and the intent router allows 96 output tokens, so the
+  quick surfaces stay on 4.5 until a per-surface thinking control exists.
+* ``explain`` / ``docgen`` / ``lineage`` → Sonnet 5.5.
+* ``agent_complex`` → Opus 4.7. Opus 5.5 always thinks and ``Message``
+  (``providers/base.py``) drops thinking blocks between tool turns; the
+  switch waits on a real multi-turn tool-use check against litellm.
 
 Tool use and streaming-with-tools are both first-class on Anthropic.
 """
@@ -16,14 +20,14 @@ from flowfile_core.ai.providers._litellm_base import LiteLLMProvider
 
 class AnthropicProvider(LiteLLMProvider):
     name: ClassVar[str] = "anthropic"
-    default_model: ClassVar[str] = "claude-sonnet-4-6"
+    default_model: ClassVar[str] = "claude-sonnet-5-5"
     model_prefix: ClassVar[str] = "anthropic/"
     supports_tools: ClassVar[bool] = True
     supports_streaming: ClassVar[bool] = True
     surface_models: ClassVar[dict[str, str]] = {
         "cmd_k": "claude-haiku-4-5",
         "ghost_node": "claude-haiku-4-5",
-        "explain": "claude-sonnet-4-6",
+        "explain": "claude-sonnet-5-5",
         "agent_complex": "claude-opus-4-7",
         # ``agent_staged`` exposes one tool per stage so each round is
         # a tightly-scoped decision. Haiku is plenty for stages 0/1/2
@@ -35,9 +39,9 @@ class AnthropicProvider(LiteLLMProvider):
         # explicitly want Sonnet can override via the model picker
         # (``model=`` on the request).
         "agent_staged": "claude-haiku-4-5",
-        "docgen": "claude-sonnet-4-6",
+        "docgen": "claude-sonnet-5-5",
         "settings_autocomplete": "claude-haiku-4-5",
-        "lineage": "claude-sonnet-4-6",
+        "lineage": "claude-sonnet-5-5",
         "intent_classifier": "claude-haiku-4-5",
         "cron": "claude-haiku-4-5",
     }

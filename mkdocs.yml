@@ -54,6 +54,9 @@ extra_javascript:
   - javascripts/formula-reference.js
 
 
+hooks:
+  - docs/hooks/roadmap.py
+
 plugins:
   - search
   - redirects:
@@ -236,4 +239,7 @@ nav:
     - Visualizations & Graphic Walker: for-developers/visualizations.md
     - Custom Nodes in Code: users/visual-editor/creating-custom-nodes.md
 
+  - Roadmap:
+    - Priorities: roadmap.md
+    - Architecture & Technology: roadmap-details.md
   - Community: community.md

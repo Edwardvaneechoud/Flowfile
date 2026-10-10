@@ -20,7 +20,7 @@ This section documents Flowfile's Python API, focusing on extensions and differe
 
 - [**Catalog References**](catalog-references.md) - Typed catalog/schema handles for the Flowfile catalog
 - [**Cloud Storage**](cloud-connections.md) - S3 integration
-- [**Visual UI Integration**](visual-ui.md) - Working with the visual editor
+- [**Visual UI Integration**](visual-ui.md) - Working with the visual editor, visual groups from code
 - [**Native Node Classes**](native-nodes.md) - Gates, subflows, custom nodes, Python Script and any other node type from code
 
 ## Key Extensions to Polars

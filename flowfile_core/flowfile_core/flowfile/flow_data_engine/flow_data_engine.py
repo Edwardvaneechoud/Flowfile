@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 import polars as pl
 from loky import Future
 from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
+from pl_fuzzy_frame_match.output_column_name_utils import set_name_in_fuzzy_mappings
 from polars.exceptions import PanicException
 from polars_expr_transformer import simple_function_to_expr as to_expr
 from polars_grouper import graph_solver
@@ -44,7 +45,9 @@ from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_ma
 from flowfile_core.flowfile.flow_data_engine.hierarchy import explode_hierarchy_frame
 from flowfile_core.flowfile.flow_data_engine.join import (
     get_col_name_to_delete,
+    get_duplicate_output_problems,
     get_join_map_problems,
+    get_shared_output_name_problems,
     get_undo_rename_mapping_join,
     rename_df_table_for_join,
     verify_join_select_integrity,
@@ -72,7 +75,12 @@ from shared.cloud_storage import (
 from shared.cloud_storage.utils import normalize_delta_path
 from shared.cloud_storage.writers import write_to_cloud
 from shared.db_writer import write_dataframe_to_database
-from shared.path_utils import DirectoryScanUnsupportedError, assert_directory_scan_supported, is_url
+from shared.path_utils import (
+    DirectoryScanUnsupportedError,
+    assert_directory_scan_supported,
+    is_url,
+    refuse_cloud_path,
+)
 
 T = TypeVar("T", pl.DataFrame, pl.LazyFrame)
 
@@ -1255,6 +1263,7 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance with data from the file.
         """
+        refuse_cloud_path(received_table.path, received_table.file_type)
         received_table.set_absolute_filepath()
         if received_table.scan_mode == "directory":
             assert_directory_scan_supported(
@@ -1278,7 +1287,11 @@ class FlowDataEngine:
 
         # Only the excel reader reports which engine it used; the rest take the table alone.
         extra = {"logger": node_logger} if received_table.file_type == "excel" else {}
-        flow_file = cls(handler(received_table, **extra))
+        data = handler(received_table, **extra)
+        if isinstance(data, pl.DataFrame):
+            flow_file = cls(data.lazy(), number_of_records=data.height)
+        else:
+            flow_file = cls(data)
         if received_table.file_type == "parquet":
             count = create_funcs.parquet_row_count(received_table)
             if count is not None:
@@ -1985,6 +1998,8 @@ class FlowDataEngine:
             left=self, right=other, fuzzy_match_input_manager=fuzzy_match_input_manager
         )
         fuzzy_mappings = [FuzzyMapping(**fm.__dict__) for fm in fuzzy_match_input_manager.fuzzy_maps]
+        # fuzzy_match_dfs skips naming the score columns when a side is empty
+        set_name_in_fuzzy_mappings(fuzzy_mappings)
         return FlowDataEngine(
             fuzzy_match_dfs(
                 left_df, right_df, fuzzy_maps=fuzzy_mappings, logger=node_logger.logger if node_logger else logger
@@ -2035,6 +2050,9 @@ class FlowDataEngine:
             if (v.keep or v.join_key) and v.is_available
         ]
         cross_join_input_manager.auto_rename(rename_mode="suffix")
+        duplicate_problems = get_duplicate_output_problems(cross_join_input_manager)
+        if duplicate_problems:
+            raise ValueError("Cross join is not valid: " + "; ".join(duplicate_problems))
         left = self.data_frame.select(left_select).rename(cross_join_input_manager.left_select.rename_table)
         right = other.data_frame.select(right_select).rename(cross_join_input_manager.right_select.rename_table)
 
@@ -2072,24 +2090,30 @@ class FlowDataEngine:
         if join_map_problems:
             raise Exception("Join is not valid: " + "; ".join(join_map_problems))
 
+        # Either side may be eager (e.g. a local Excel read); polars only joins lazy with lazy.
+        left_lf = self.data_frame.lazy()
+        right_lf = other.data_frame.lazy()
         if join_manager.how in ("semi", "anti"):
             # Semi/anti joins push the full left input downstream unchanged (all columns,
             # original order, no rename or drop); the right frame only supplies the join
             # keys for matching. Stale entries in left_select are therefore irrelevant here.
             left_on = [jm.left_col for jm in join_manager.join_mapping]
             right_on = [jm.right_col for jm in join_manager.join_mapping]
-            right = other.data_frame.select(list(dict.fromkeys(right_on)))
-            joined_df = self.data_frame.join(other=right, left_on=left_on, right_on=right_on, how=join_manager.how)
+            right = right_lf.select(list(dict.fromkeys(right_on)))
+            joined_df = left_lf.join(other=right, left_on=left_on, right_on=right_on, how=join_manager.how)
             # -1 = unknown (not 0): a 0 here reads as a real "empty result" count.
             return FlowDataEngine(joined_df, calculate_schema_stats=False, number_of_records=-1, streamable=False)
 
         if auto_generate_selection:
             join_manager.auto_rename()
+        duplicate_problems = get_duplicate_output_problems(join_manager)
+        if duplicate_problems:
+            raise ValueError("Join is not valid: " + "; ".join(duplicate_problems))
 
-        left = self.data_frame.select(join_manager.left_manager.get_select_cols()).rename(
+        left = left_lf.select(join_manager.left_manager.get_select_cols()).rename(
             join_manager.left_manager.get_rename_table()
         )
-        right = other.data_frame.select(join_manager.right_manager.get_select_cols()).rename(
+        right = right_lf.select(join_manager.right_manager.get_select_cols()).rename(
             join_manager.right_manager.get_rename_table()
         )
 
@@ -3118,19 +3142,27 @@ class FlowDataEngine:
             A new `FlowDataEngine` with the transformed selection.
         """
         new_schema = deepcopy(self.schema)
+        frame_cols = set(self.data_frame.collect_schema().names())
         renames = [r for r in select_inputs.renames if r.is_available]
         if not keep_missing:
-            drop_cols = set(self.data_frame.collect_schema().names()) - set(r.old_name for r in renames).union(
+            drop_cols = frame_cols - set(r.old_name for r in renames).union(
                 set(r.old_name for r in renames if not r.keep)
             )
             keep_cols = []
         else:
-            keep_cols = list(set(self.data_frame.collect_schema().names()) - set(r.old_name for r in renames))
+            keep_cols = list(frame_cols - set(r.old_name for r in renames))
             drop_cols = set(r.old_name for r in renames if not r.keep)
 
         if len(drop_cols) > 0:
             new_schema = [s for s in new_schema if s.name not in drop_cols]
         new_schema_mapping = {v.name: v for v in new_schema}
+
+        # Only columns the frame holds reach the rename; a stale entry is skipped below, so it cannot collide.
+        output_sources = {r.old_name: r.new_name for r in renames if r.keep and r.old_name in frame_cols}
+        output_sources.update({c: c for c in keep_cols})
+        shared_names = get_shared_output_name_problems(output_sources)
+        if shared_names:
+            raise ValueError("Select is not valid: " + "; ".join(shared_names))
 
         available_renames = []
         for rename in renames:
@@ -3199,6 +3231,7 @@ class FlowDataEngine:
     @classmethod
     def create_from_path_worker(cls, received_table: input_schema.ReceivedTable, flow_id: int, node_id: int | str):
         """Creates a FlowDataEngine from a path in a worker process."""
+        refuse_cloud_path(received_table.path, received_table.file_type)
         received_table.set_absolute_filepath()
         if received_table.scan_mode == "directory":
             raise DirectoryScanUnsupportedError("Directory scan mode cannot be executed by the worker file reader.")
@@ -3237,8 +3270,9 @@ def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowData
     """Executes arbitrary Polars code on one or more FlowDataEngine objects.
 
     This function takes a string of Python code that uses Polars and executes it.
-    Input `FlowDataEngine` objects are made available in the code's scope as
-    `input_df` (for a single input) or `input_df_1`, `input_df_2`, etc.
+    Function-form code (a single ``def``) is called with the inputs as positional
+    LazyFrames; snippet code reads them as `input_df` (for a single input) or
+    `input_df_1`, `input_df_2`, etc.
 
     Args:
         *flowfile_tables: A variable number of `FlowDataEngine` objects to be
@@ -3249,13 +3283,7 @@ def execute_polars_code(*flowfile_tables: FlowDataEngine, code: str) -> FlowData
         A new `FlowDataEngine` instance containing the result of the executed code.
     """
     polars_executable = polars_code_parser.get_executable(code, num_inputs=len(flowfile_tables))
-    if len(flowfile_tables) == 0:
-        kwargs = {}
-    elif len(flowfile_tables) == 1:
-        kwargs = {"input_df": flowfile_tables[0].data_frame}
-    else:
-        kwargs = {f"input_df_{i+1}": flowfile_table.data_frame for i, flowfile_table in enumerate(flowfile_tables)}
-    df = polars_executable(**kwargs)
+    df = polars_executable(*(flowfile_table.data_frame for flowfile_table in flowfile_tables))
     if isinstance(df, pl.DataFrame):
         logger.warning("Got a non lazy DataFrame, possibly harming performance, if possible, try to use a lazy method")
     return FlowDataEngine(df)

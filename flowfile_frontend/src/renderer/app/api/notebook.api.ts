@@ -50,11 +50,12 @@ export interface NotebookUpdate {
   default_kernel_id?: string | null;
 }
 
-/** One cell of `GET /notebook/render`; a `cell-<first node id>` cell is one statement spanning `node_ids`. */
+/** One cell of `GET /notebook/render`; a `cell-<first node id>` cell is one statement spanning `node_ids`;
+ * the `groups` cell declares the canvas's visual groups (`ff.FlowGroup`). */
 export interface RenderedCell {
   cell_id: string;
   node_ids: number[];
-  kind: "imports" | "parameters" | "node";
+  kind: "imports" | "parameters" | "groups" | "node";
   code: string;
   status: "code" | "placeholder" | "unsupported";
   reason: string | null;
@@ -65,6 +66,8 @@ export interface NotebookRendering {
   warnings: string[];
   var_by_node: Record<number, string>;
   code_fingerprint: string;
+  /** The flow revision the rendering was taken at. */
+  revision?: number;
 }
 
 export interface NotebookPushBody {
@@ -73,7 +76,6 @@ export interface NotebookPushBody {
   changed_cell_ids: string[];
   provenance: Record<string, [string, number][]>;
   code_fingerprint: string;
-  client_max_node_id: number;
   /** Core holds back (`applied: false`) a push this action must review first; absent, it applies. */
   trigger?: "push" | "run";
   /** Set when a kernel is picked: the push runs the cells on that kernel. */
@@ -160,6 +162,11 @@ export class NotebookApi {
   static async runLineage(flowId: number, nodeId: number): Promise<RunLineageResult> {
     return (await axios.post("/editor/notebook/run_lineage/", { flow_id: flowId, node_id: nodeId }))
       .data;
+  }
+
+  /** Tells core the user exported the cells; the download itself is client-side (telemetry only). */
+  static async confirmExport(format: "py" | "ipynb"): Promise<void> {
+    await axios.post(`/notebook/exported/${format}`);
   }
 
   static async list(): Promise<NotebookSummary[]> {

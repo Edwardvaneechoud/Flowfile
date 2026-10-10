@@ -202,6 +202,8 @@ class NodeData(BaseModel):
     # The live node's state; setting_input may be a display-only proposal or derived copy.
     is_setup: bool = False
     setting_input: Any = None
+    # The settings' digest at read time; a save echoes it as `expected_settings_fingerprint` (409 when moved).
+    settings_fingerprint: str | None = None
     # Set when column prediction for this node (or one of its inputs) would
     # require executing an un-run kernel node — the user-facing warning text.
     prediction_warning: str | None = None

@@ -1,4 +1,5 @@
 // Minimizing the right drawer saves the open node settings first; a refused save keeps it open.
+// The bottom dock hides a tab whose panel is in its own window and no longer opens for it.
 
 import { setActivePinia, createPinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +17,7 @@ import type { DrawerCtx } from "../../types/drawer.types";
 import { drawers } from "./drawerRegistry";
 
 const rightDrawer = drawers.find((d) => d.id === "rightDrawer")!;
+const bottomDock = drawers.find((d) => d.id === "bottomDock")!;
 
 const openSettings = (save: () => Promise<unknown>) => {
   const editor = useEditorStore();
@@ -117,5 +119,44 @@ describe("hideAllPanels", () => {
 
     editor.hideAllPanels();
     expect(editor.showCodeGenerator).toBe(false);
+  });
+});
+
+describe("bottomDock while a tab is popped out", () => {
+  const tab = (id: string) => bottomDock.tabs.find((t) => t.id === id)!;
+  const ctx = (previewNodeId: number | null = null, flowId = 4) =>
+    ({ editor: useEditorStore(), drawer: { previewNodeId }, flow: { flowId } }) as unknown as DrawerCtx;
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("hides the Data tab and ignores a preview while the Data window is out", () => {
+    const editor = useEditorStore();
+    expect(bottomDock.visibleWhen!(ctx(3))).toBe(true);
+    editor.markPoppedOut("table", 4);
+    expect(bottomDock.visibleWhen!(ctx(3))).toBe(false);
+    expect(tab("data").visibleWhen(ctx(3))).toBe(false);
+    expect(tab("logs").visibleWhen(ctx(3))).toBe(true);
+    expect(bottomDock.visibleWhen!(ctx(3, 9))).toBe(true);
+  });
+
+  it("hides the Logs tab and ignores the run signal while the Logs window is out", () => {
+    const editor = useEditorStore();
+    editor.isShowingLogViewer = true;
+    expect(bottomDock.visibleWhen!(ctx())).toBe(true);
+    expect(tab("logs").focusWhen!(ctx())).toBe(true);
+    editor.markPoppedOut("logs", 4);
+    expect(bottomDock.visibleWhen!(ctx())).toBe(false);
+    expect(tab("logs").visibleWhen(ctx())).toBe(false);
+    expect(tab("logs").focusWhen!(ctx())).toBe(false);
+    expect(tab("data").visibleWhen(ctx())).toBe(true);
+  });
+
+  it("offers a pop-out for both tabs of an open flow only", () => {
+    expect(tab("data").popout?.kind).toBe("table");
+    expect(tab("logs").popout?.kind).toBe("logs");
+    expect(tab("data").popout!.enabled!(ctx())).toBe(true);
+    expect(tab("logs").popout!.enabled!(ctx(null, -1))).toBe(false);
   });
 });

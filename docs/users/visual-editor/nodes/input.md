@@ -161,7 +161,7 @@ Authenticate with a [saved cloud connection](../tutorials/cloud-connections.md),
 | Setting | Description |
 |---|---|
 | **File Path** | Full URI including the scheme, e.g. `s3://bucket/folder/file.csv`. **Browse** navigates the connection and picks one. The drawer warns while the path is empty or has no scheme, and such a node fails before reading anything: *Cloud storage reader has no source path…* or *Cloud storage path '…' is not a URI…*. |
-| **File Format** | CSV, Parquet, JSON, Delta Lake or Iceberg. |
+| **File Format** | CSV, Parquet, JSON or Delta Lake. |
 | **Scan Mode** | A single file, or a directory scan that reads every matching file in a folder. |
 
 CSV adds **Has Headers**, **Delimiter** (default `,`) and **Encoding** (UTF-8 or UTF-8 Lossy). Delta Lake adds a **Read** selector and an optional **Version**, which reads a past version of the table instead of the latest; the drawer lists the table's recent commits to pick from.

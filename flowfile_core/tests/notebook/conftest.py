@@ -20,7 +20,7 @@ from flowfile_core.auth.jwt import get_current_active_user, get_current_user
 from flowfile_core.auth.models import User as PydanticUser
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
-from flowfile_core.kernel.models import ExecuteResult, KernelInfo, KernelState
+from flowfile_core.kernel.models import ExecuteResult, ImageFlavour, KernelInfo, KernelState
 from flowfile_core.notebook import bridge
 from flowfile_core.notebook.interpret import CellInterpreter
 from flowfile_core.notebook.push import seed_snapshot
@@ -333,6 +333,23 @@ def orders_flow(open_as):
 
 
 @pytest.fixture
+def designer_writer_flow(open_as):
+    """``from_dict -> SCD2 Catalog Writer -> select``, the writer storing its namespace's id and name as the designer
+    does (the notebook renders only the name)."""
+    from uuid import uuid4
+
+    import flowfile as ff
+
+    catalog = f"NbWriter_{uuid4().hex[:8]}"
+    schema = ff.CatalogReference(catalog, auto_create=True).schema("tables", auto_create=True)
+    orders = ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
+    written = orders.write_catalog_table(
+        "orders", schema=schema, namespace_full_name=f"{catalog}.tables", write_mode="scd2", merge_keys=["id"]
+    )
+    return open_as(written.select(["id", "sk", "is_current"]).flow_graph)
+
+
+@pytest.fixture
 def client_as():
     def _as(user_id: int, client: tuple[str, int] | None = None) -> TestClient:
         user = PydanticUser(username=f"nb_{user_id}", id=user_id, disabled=False, is_admin=user_id == NOTEBOOK_OWNER_ID)
@@ -361,7 +378,9 @@ class KernelSimManager:
     def __init__(
         self, kernel_id: str = "nb-kernel", owner_id: int = NOTEBOOK_OWNER_ID, shared: Path | None = None
     ) -> None:
-        self.kernel = KernelInfo(id=kernel_id, name="Notebook", state=KernelState.IDLE, packages=["flowfile"])
+        self.kernel = KernelInfo(
+            id=kernel_id, name="Notebook", state=KernelState.IDLE, image_flavour=ImageFlavour.NOTEBOOK
+        )
         self.owner_id = owner_id
         self.requests = []
         self.shared_volume_path = str(shared)

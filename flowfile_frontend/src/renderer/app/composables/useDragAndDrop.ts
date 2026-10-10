@@ -71,6 +71,23 @@ export function removeCommittedEdges(removeEdges: (ids: string[]) => void, ids: 
   }
 }
 
+type EdgeEnds = {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+};
+
+const edgeKey = (edge: EdgeEnds): string =>
+  [
+    edge.id,
+    edge.source,
+    edge.sourceHandle ?? "output-0",
+    edge.target,
+    edge.targetHandle ?? "input-0",
+  ].join("|");
+
 function markHoveredEdge(nextId: string | null) {
   if (hoveredEdgeId === nextId) return;
   if (hoveredEdgeId) {
@@ -154,11 +171,6 @@ let id = 0;
 
 export function getId(): number {
   return ++id;
-}
-
-/** The last id the client handed out; the next node gets a higher one. */
-export function currentNodeId(): number {
-  return id;
 }
 
 /** Raise the client id counter to at least `max` (never lowers it: a redo may reference an undone id). */
@@ -850,8 +862,18 @@ export default function useDragAndDrop() {
       return { ...edge, label: `df_${sourceNode?.data?.id ?? edge.source}` };
     });
 
-    if (keepExisting) setEdges(edgesWithLabels);
-    else addEdges(edgesWithLabels);
+    if (keepExisting) {
+      // Drop edges core no longer has first, or a rewired single input is refused as occupied.
+      const incoming = new Set(edgesWithLabels.map(edgeKey));
+      const stale = getEdges.value.filter((edge) => !incoming.has(edgeKey(edge)));
+      if (stale.length) {
+        removeCommittedEdges(
+          removeEdges,
+          stale.map((edge) => edge.id),
+        );
+      }
+      setEdges(edgesWithLabels);
+    } else addEdges(edgesWithLabels);
     // Reused nodes keep stale handle bounds when settings changed their handles: re-measure in place.
     if (keepExisting) {
       await nextTick();

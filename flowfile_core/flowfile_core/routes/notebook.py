@@ -7,7 +7,7 @@ kernel's own call backs, for a canvas node's rows, a run of a node only the sess
 (``notebook.held_run``) and a catalog metadata lookup (``notebook.lookup``).
 """
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from flowfile_core import flow_file_handler
@@ -30,6 +30,12 @@ def require_notebook_sync(current_user=Depends(get_current_active_user)):
     because the frame's catalog lookups a cell can reach do not yet check the requesting user's grants;
     the 403 is ``require_admin``'s and comes before the flow lookup. Electron is never gated. Rendering
     and running stay open to every user.
+
+    The AI's Simple build (``POST /ai/generate``, ``mode="code"``) runs model-written cells through the same
+    runner without this gate: its pre-scan (``ai/local_model/code_build.py``) refuses every call that could
+    reach a stored resource, and where sharing is enabled a canvas holding such a node is not sent along as
+    context, so none of those lookups can happen there. Widening that dialect to catalog readers means adding
+    the grant check or this gate first.
     """
     if sharing.sharing_enabled():
         require_admin(current_user)
@@ -52,6 +58,22 @@ def render_notebook(flow_id: int = Query(...), current_user=Depends(get_current_
     except Exception as exc:
         logger.warning("Notebook render of flow %s failed: %s", flow_id, exc)
         raise HTTPException(status_code=422, detail=f"The flow could not be rendered as code: {exc}") from exc
+
+
+@router.post("/exported/py", status_code=204, response_class=Response)
+def confirm_notebook_py_export(current_user=Depends(get_current_active_user)) -> Response:
+    """Confirms the user exported the notebook as a ``.py`` script.
+
+    The export itself is a client-side download, so the deliberate action needs a signal of its own;
+    the telemetry middleware reads this route (``telemetry.ROUTE_EVENTS``), the handler stays a no-op.
+    """
+    return Response(status_code=204)
+
+
+@router.post("/exported/ipynb", status_code=204, response_class=Response)
+def confirm_notebook_ipynb_export(current_user=Depends(get_current_active_user)) -> Response:
+    """Confirms the user exported the notebook as an ``.ipynb``; see ``/exported/py``."""
+    return Response(status_code=204)
 
 
 @router.post("/plan", response_model=NotebookPlanResponse)

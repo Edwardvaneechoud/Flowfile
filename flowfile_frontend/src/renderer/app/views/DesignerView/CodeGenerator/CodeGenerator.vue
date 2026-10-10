@@ -41,15 +41,28 @@
           Notebook
         </button>
       </div>
-      <button
-        class="close-btn"
-        type="button"
-        aria-label="Close code pane"
-        title="Close (Ctrl/Cmd+G)"
-        @click="editorStore.setCodeGeneratorVisibility(false)"
-      >
-        <span class="material-icons" aria-hidden="true">close</span>
-      </button>
+      <div class="header-actions">
+        <button
+          v-if="codeMode === 'notebook' && nodeStore.flow_id > 0 && !poppedOut"
+          class="icon-btn"
+          type="button"
+          aria-label="Open the notebook in its own window"
+          title="Open the notebook in its own window"
+          data-testid="code-popout"
+          @click="popOut(nodeStore.flow_id)"
+        >
+          <span class="material-icons" aria-hidden="true">open_in_new</span>
+        </button>
+        <button
+          class="icon-btn"
+          type="button"
+          aria-label="Close code pane"
+          title="Close (Ctrl/Cmd+G)"
+          @click="editorStore.setCodeGeneratorVisibility(false)"
+        >
+          <span class="material-icons" aria-hidden="true">close</span>
+        </button>
+      </div>
     </div>
     <div v-if="!ownsBody" class="code-toolbar">
       <button class="action-btn" :disabled="loading" @click="refreshCode">
@@ -89,7 +102,8 @@
       <ProjectExport />
     </div>
     <div v-else-if="codeMode === 'notebook'" class="code-notebook">
-      <NotebookPanel :key="nodeStore.flow_id" :flow-id="nodeStore.flow_id" />
+      <NotebookPoppedOutStub v-if="poppedOut" :flow-id="nodeStore.flow_id" />
+      <NotebookPanel v-else :key="nodeStore.flow_id" :flow-id="nodeStore.flow_id" host="dock" />
     </div>
     <codemirror v-else v-model="code" :extensions="extensions" :disabled="true" />
   </div>
@@ -104,6 +118,8 @@ import { python } from "@codemirror/lang-python";
 import { EditorView } from "@codemirror/view";
 import { flowfileEditorTheme } from "@/utils/codemirrorTheme";
 import ProjectExport from "./ProjectExport.vue";
+import NotebookPoppedOutStub from "./NotebookPoppedOutStub.vue";
+import { usePopout } from "../../../composables/usePopout";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 
@@ -113,10 +129,7 @@ const NotebookPanel = defineAsyncComponent({
   loadingComponent: () => h("div", { class: "code-notebook-loading" }, "Loading the notebook…"),
 });
 
-type CodeMode = "flowframe" | "polars" | "project" | "notebook";
-
-const MODE_KEY = "flowfile.codeGenerator.mode.v1";
-const MODES: readonly CodeMode[] = ["flowframe", "polars", "project", "notebook"];
+import { CODE_MODE_KEY as MODE_KEY, CODE_MODES as MODES, type CodeMode } from "./codeMode";
 
 const readMode = (): CodeMode => {
   try {
@@ -135,6 +148,9 @@ const ownsBody = computed(() => codeMode.value === "project" || codeMode.value =
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const lastLoadedFlowId = ref<number | null>(null);
+// The notebook moved to its own window: the dock shows the stub, never a second host.
+const { popOut } = usePopout("notebook");
+const poppedOut = computed(() => editorStore.isPoppedOut("notebook", nodeStore.flow_id));
 
 const extensions = [
   python(),
@@ -192,6 +208,17 @@ const setMode = (mode: CodeMode) => {
     }
   }
 };
+
+// A request made before the pane mounted (the catalog's "Modify in notebook") lands here on mount.
+watch(
+  () => editorStore.codePaneRequest,
+  (request) => {
+    if (!request) return;
+    setMode(request.mode);
+    editorStore.consumeCodePaneRequest();
+  },
+  { immediate: true },
+);
 
 watch(
   () => nodeStore.flow_id,
@@ -314,14 +341,22 @@ const exportCode = () => {
   white-space: nowrap;
 }
 
-.close-btn {
+/* The trailing icon buttons sit together at the header's right edge. */
+.header-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--spacing-1);
+  margin-left: auto;
+}
+
+.icon-btn {
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 28px;
-  margin-left: auto;
   padding: 0;
   border: none;
   border-radius: var(--border-radius-md);
@@ -333,11 +368,11 @@ const exportCode = () => {
     color var(--transition-fast);
 }
 
-.close-btn .material-icons {
+.icon-btn .material-icons {
   font-size: 18px;
 }
 
-.close-btn:hover {
+.icon-btn:hover {
   color: var(--color-text-primary);
   background: var(--color-background-tertiary);
 }

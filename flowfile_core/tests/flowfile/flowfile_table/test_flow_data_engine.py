@@ -1,10 +1,17 @@
+import re
+
 import polars as pl
 import pytest
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
-from flowfile_core.flowfile.flow_data_engine.polars_code_parser import PolarsCodeParser, remove_comments_and_docstrings
-from flowfile_core.schemas import transform_schema
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import (
+    PolarsCodeParser,
+    function_form,
+    polars_code_parser,
+    remove_comments_and_docstrings,
+)
+from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_core.schemas.input_schema import RawData
 
 
@@ -98,6 +105,22 @@ def test_fuzzy_match_auto_select_columns_not_selected(fuzzy_test_data_left, fuzz
     fuzzy_match_result = fuzzy_test_data_left.fuzzy_join(fuzzy_match_input, fuzzy_test_data_right)
     assert fuzzy_match_result is not None, 'Fuzzy match failed'
     assert fuzzy_match_result.number_of_fields == 4
+
+
+@pytest.mark.parametrize("empty_side", ["left", "right"])
+def test_fuzzy_match_with_an_empty_side_names_the_score_column_as_with_rows(empty_side):
+    """The library returns early on an empty side without naming the score columns; the node names them itself."""
+    left = FlowDataEngine(pl.DataFrame({"name": ["edward", "court"]} if empty_side == "right" else {"name": []},
+                                       schema={"name": pl.String}))
+    right = FlowDataEngine(pl.DataFrame({"other": ["eduward"]} if empty_side == "left" else {"other": []},
+                                        schema={"other": pl.String}))
+    fuzzy_match_input = transform_schema.FuzzyMatchInput(
+        join_mapping=[FuzzyMapping(left_col="name", right_col="other")],
+        left_select=[transform_schema.SelectInput("name")],
+        right_select=[transform_schema.SelectInput("other")],
+    )
+    result = left.fuzzy_join(fuzzy_match_input, right)
+    assert result.columns == ["name", "other", "name_vs_other_levenshtein"]
 
 
 def test_fuzzy_match_external():
@@ -383,6 +406,26 @@ def test_join_anti():
     result_df.assert_equal(expected_df)
 
 
+@pytest.mark.parametrize("how, expected", [("inner", [{"name": "edward", "right_name": "edward"}]),
+                                           ("anti", [{"name": "eduward"}, {"name": "courtney"}])])
+def test_join_lazy_left_eager_right(how, expected):
+    join_input = transform_schema.JoinInput(**get_join_settings(how))
+    left_df = FlowDataEngine(pl.LazyFrame({"name": ["eduward", "edward", "courtney"]}))
+    right_df = FlowDataEngine(pl.DataFrame({"name": ["edward"]}))
+    result_df = left_df.join(join_input=join_input, other=right_df, verify_integrity=False,
+                             auto_generate_selection=True)
+    result_df.assert_equal(FlowDataEngine(expected))
+
+
+def test_create_from_path_excel_is_lazy():
+    received_table = input_schema.ReceivedTable(
+        name='fake_data.xlsx', path='flowfile_core/tests/support_files/data/fake_data.xlsx', file_type='excel',
+        table_settings=input_schema.InputExcelTable(sheet_name='Sheet1'))
+    flow_file = FlowDataEngine.create_from_path(received_table)
+    assert flow_file.lazy is True
+    assert flow_file.number_of_records == 1000
+
+
 def test_join_anti_passthrough_ignores_left_select():
     # Semi/anti joins push the full left input through unchanged; left_select
     # keep/rename flags are ignored, so 'name' (marked keep=False) is still returned.
@@ -646,6 +689,96 @@ output_df = temp_df.select("other_name")"""
     result = execute_polars_code(test_df, code=code)
     expected_result = FlowDataEngine([{'other_name': 'eduward'}, {'other_name': 'edward'}, {'other_name': 'courtney'}])
     result.assert_equal(expected_result)
+
+
+def test_function_form_calls_its_def_with_the_inputs_in_order():
+    orders = FlowDataEngine({"id": [1, 2, 3], "amount": [50, 150, 300]})
+    names = FlowDataEngine(pl.LazyFrame({"id": [2, 3], "name": ["b", "c"]}))
+    code = """# Join the big orders to their names.
+def big_named(orders: pl.LazyFrame, names: ff.FlowFrame) -> pl.LazyFrame:
+    \"\"\"Orders over 100 with a name.\"\"\"
+    def big(frame):
+        return frame.filter(pl.col("amount") > 100)
+    return big(orders).join(names, on="id")"""
+    result = execute_polars_code(orders, names, code=code)
+    assert isinstance(result.data_frame, pl.LazyFrame)
+    assert result.data_frame.sort("id").collect().to_dicts() == [
+        {"id": 2, "amount": 150, "name": "b"},
+        {"id": 3, "amount": 300, "name": "c"},
+    ]
+
+
+def test_function_form_without_inputs_is_a_source():
+    result = execute_polars_code(code="def make():\n    return pl.DataFrame({'r': [1, 2]})")
+    result.assert_equal(FlowDataEngine({"r": [1, 2]}))
+
+
+@pytest.mark.parametrize(
+    "code, inputs, message",
+    [
+        ("def f(rows):\n    return rows", 2, "`f` takes 1 frame but the node has 2 inputs"),
+        ("def f(a, b):\n    return a", 0, "`f` takes 2 frames but the node has no inputs"),
+        ("def f(rows):\n    output_df = rows", 1, "`f` returns nothing"),
+        ("def f(rows):\n    return 1", 1, "`f` returned int, not a Polars LazyFrame or DataFrame"),
+        ("def f(rows):\n    import os\n    return rows", 1, "Import statements are not allowed"),
+        ("def f(a, *, how):\n    return a", 1, "`f` has keyword-only `how` without a default"),
+        ("def f(a, b, *rest):\n    return a", 1, "`f` takes at least 2 frames but the node has 1 input"),
+        ("def f(a, b=None):\n    return a", 3, "`f` takes 1 to 2 frames but the node has 3 inputs"),
+        ("def f(a=None):\n    return a", 2, "`f` takes up to 1 frame but the node has 2 inputs"),
+        ("def f(a, /, b=None):\n    return a", 3, "`f` takes 1 to 2 frames but the node has 3 inputs"),
+    ],
+    ids=[
+        "too_many_inputs", "too_few_inputs", "no_return", "not_a_frame", "import",
+        "required_keyword_only", "too_few_for_varargs", "outside_a_default_range", "over_all_defaults",
+        "positional_only",
+    ],
+)
+def test_function_form_errors_name_the_function(code, inputs, message):
+    frames = [FlowDataEngine({"a": [1]}) for _ in range(inputs)]
+    with pytest.raises(ValueError, match=re.escape(message)):
+        execute_polars_code(*frames, code=code)
+
+
+def test_function_form_takes_varargs_and_keyword_only_defaults():
+    code = "def stacked(*frames, how='vertical'):\n    return pl.concat(frames, how=how)"
+    frames = [FlowDataEngine(pl.LazyFrame({"a": [value]})) for value in (1, 2)]
+    assert execute_polars_code(*frames, code=code).data_frame.collect()["a"].to_list() == [1, 2]
+
+
+def test_a_decorated_def_is_not_function_form():
+    assert function_form("@staticmethod\ndef f(rows):\n    return rows") is None
+    assert function_form('"""About it."""\ndef f(rows):\n    return rows').name == "f"
+
+
+def test_function_form_takes_positional_only_parameters():
+    code = "def first(a, /, b=None):\n    return a"
+    assert execute_polars_code(FlowDataEngine({"a": [1]}), code=code).data_frame.collect().height == 1
+
+
+@pytest.mark.parametrize(
+    "code, message",
+    [
+        ("async def f(rows):\n    return rows", "`f` is async: Polars Code runs a plain `def`"),
+        ("@staticmethod\ndef f(rows):\n    return rows", "`f` is decorated: Polars Code runs a plain `def`"),
+    ],
+    ids=["async", "decorated"],
+)
+def test_a_lone_async_or_decorated_def_is_refused_plainly(code, message):
+    with pytest.raises(ValueError, match=re.escape(message)):
+        execute_polars_code(FlowDataEngine({"a": [1]}), code=code)
+
+
+def test_function_form_has_the_sandbox_builtins_and_no_others():
+    rows = FlowDataEngine({"a": [1, 2, 3]})
+    code = "def f(rows):\n    return rows.head(len(range(2)))"
+    assert execute_polars_code(rows, code=code).data_frame.collect().height == 2
+    with pytest.raises(NameError, match="name 'max' is not defined"):
+        execute_polars_code(rows, code="def f(rows):\n    return rows.head(max(1, 2))")
+
+
+def test_function_form_runs_in_its_own_namespace():
+    execute_polars_code(FlowDataEngine({"a": [1]}), code="def leaks(rows):\n    return rows")
+    assert "leaks" not in polars_code_parser.safe_globals
 
 
 def test_error_no_output_df():
@@ -980,3 +1113,126 @@ class TestRawDataNestedTypes:
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def _cleared_rename(old_name: str, keep: bool = True) -> dict:
+    # What the drawer sends for a rename box the user emptied (the placeholder shows old_name).
+    return {"old_name": old_name, "new_name": "", "keep": keep, "is_altered": True, "data_type_change": False,
+            "is_available": True, "join_key": False, "position": None, "original_position": None, "data_type": None}
+
+
+def test_join_cleared_rename_boxes_keep_original_names():
+    # Regression for #815: cleared rename boxes used to rename every column to "".
+    left = FlowDataEngine(pl.DataFrame({"Company Code": ["A"], "Plant": ["P1"], "Vendor Name": ["V"]}))
+    right = FlowDataEngine(pl.DataFrame({"Company Code": ["A"], "Plant": ["P1"], "Value": [1.0]}))
+    node = input_schema.NodeJoin.model_validate({
+        "flow_id": 1, "node_id": 3, "depending_on_ids": [1, 2],
+        "join_input": {
+            "join_mapping": [{"left_col": "Plant", "right_col": "Plant"}],
+            "left_select": {"renames": [_cleared_rename("Company Code"), _cleared_rename("Plant"),
+                                        _cleared_rename("Vendor Name")]},
+            "right_select": {"renames": [_cleared_rename("Company Code", keep=False),
+                                         _cleared_rename("Plant", keep=False), _cleared_rename("Value")]},
+            "how": "inner",
+        },
+    })
+    assert [r.new_name for r in node.join_input.left_select.renames] == ["Company Code", "Plant", "Vendor Name"]
+    assert not any(r.is_altered for r in node.join_input.left_select.renames)
+    result = left.join(node.join_input, auto_generate_selection=True, verify_integrity=False, other=right)
+    assert result.columns == ["Company Code", "Plant", "Vendor Name", "Value"]
+    result.assert_equal(FlowDataEngine([{"Company Code": "A", "Plant": "P1", "Vendor Name": "V", "Value": 1.0}]))
+
+
+def test_select_cleared_rename_boxes_keep_original_names():
+    df = FlowDataEngine(pl.DataFrame({"a": [1], "b": [2], "c": [3]}))
+    select_inputs = transform_schema.SelectInputs(
+        renames=[transform_schema.SelectInput(**_cleared_rename("a")), transform_schema.SelectInput(**_cleared_rename("b"))]
+    )
+    assert df.do_select(select_inputs, keep_missing=False).columns == ["a", "b"]
+
+
+def test_join_duplicate_output_names_raises_readable_error():
+    left = FlowDataEngine(pl.DataFrame({"id": [1], "a": [1], "b": [2]}))
+    right = FlowDataEngine(pl.DataFrame({"id": [1], "c": [3]}))
+    join_input = transform_schema.JoinInput(
+        join_mapping="id",
+        left_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("a", "X"),
+                     transform_schema.SelectInput("b", "X")],
+        right_select=[transform_schema.SelectInput("id", keep=False), transform_schema.SelectInput("c")],
+    )
+    with pytest.raises(Exception, match=r"Join is not valid: left columns 'a', 'b' share the output name 'X'"):
+        left.join(join_input, auto_generate_selection=True, verify_integrity=False, other=right)
+
+
+def test_join_without_auto_selection_reports_names_kept_on_both_sides():
+    left = FlowDataEngine(pl.DataFrame({"id": [1], "a": [1]}))
+    right = FlowDataEngine(pl.DataFrame({"id": [1], "a": [2]}))
+    join_input = transform_schema.JoinInput(
+        join_mapping="id",
+        left_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("a")],
+        right_select=[transform_schema.SelectInput("id", keep=False), transform_schema.SelectInput("a")],
+    )
+    with pytest.raises(Exception, match=r"Join is not valid: columns 'a' are kept on both sides"):
+        left.join(join_input, auto_generate_selection=False, verify_integrity=False, other=right)
+
+
+def test_cross_join_duplicate_output_names_raises_readable_error():
+    left = FlowDataEngine(pl.DataFrame({"a": [1]}))
+    right = FlowDataEngine(pl.DataFrame({"c": [3], "d": [4]}))
+    cross_join_input = transform_schema.CrossJoinInput(
+        left_select=[transform_schema.SelectInput("a")],
+        right_select=[transform_schema.SelectInput("c", "Y"), transform_schema.SelectInput("d", "Y")],
+    )
+    with pytest.raises(Exception, match=r"Cross join is not valid: right columns 'c', 'd' share the output name 'Y'"):
+        left.do_cross_join(cross_join_input, auto_generate_selection=True, verify_integrity=False, other=right)
+
+
+def test_select_duplicate_output_names_raises_readable_error():
+    df = FlowDataEngine(pl.DataFrame({"a": [1], "b": [2], "c": [3]}))
+    select_inputs = transform_schema.SelectInputs(
+        renames=[transform_schema.SelectInput("a", "X"), transform_schema.SelectInput("b", "X")]
+    )
+    with pytest.raises(ValueError, match=r"Select is not valid: columns 'a', 'b' share the output name 'X'"):
+        df.do_select(select_inputs)
+
+
+def test_select_rename_onto_unmentioned_kept_column_raises_readable_error():
+    df = FlowDataEngine(pl.DataFrame({"a": [1], "b": [2]}))
+    select_inputs = transform_schema.SelectInputs(renames=[transform_schema.SelectInput("a", "b")])
+    with pytest.raises(ValueError, match=r"Select is not valid: columns 'a', 'b' share the output name 'b'"):
+        df.do_select(select_inputs, keep_missing=True)
+    # Without keep_missing the unmentioned b is dropped first, so the rename is fine.
+    assert df.do_select(select_inputs, keep_missing=False).columns == ["b"]
+
+
+def test_join_stale_kept_column_does_not_count_as_duplicate():
+    # Left still lists 'a' from an older schema; it is unavailable, so the right 'a' is the only one kept.
+    left = FlowDataEngine(pl.DataFrame({"id": [1], "b": [1]}))
+    right = FlowDataEngine(pl.DataFrame({"id": [1], "a": [2]}))
+    join_input = transform_schema.JoinInput(
+        join_mapping="id",
+        left_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("b"),
+                     transform_schema.SelectInput("a")],
+        right_select=[transform_schema.SelectInput("id", keep=False), transform_schema.SelectInput("a")],
+    )
+    result = left.join(join_input, auto_generate_selection=False, verify_integrity=False, other=right)
+    assert result.columns == ["id", "b", "a"]
+
+
+def test_cross_join_stale_renamed_column_does_not_count_as_duplicate():
+    left = FlowDataEngine(pl.DataFrame({"a": [1]}))
+    right = FlowDataEngine(pl.DataFrame({"c": [3]}))
+    cross_join_input = transform_schema.CrossJoinInput(
+        left_select=[transform_schema.SelectInput("a")],
+        right_select=[transform_schema.SelectInput("c", "Y"), transform_schema.SelectInput("gone", "Y")],
+    )
+    result = left.do_cross_join(cross_join_input, auto_generate_selection=True, verify_integrity=False, other=right)
+    assert result.columns == ["a", "Y"]
+
+
+def test_select_stale_rename_does_not_count_as_duplicate():
+    df = FlowDataEngine(pl.DataFrame({"a": [1], "b": [2]}))
+    select_inputs = transform_schema.SelectInputs(
+        renames=[transform_schema.SelectInput("gone", "b"), transform_schema.SelectInput("a")]
+    )
+    assert sorted(df.do_select(select_inputs, keep_missing=True).columns) == ["a", "b"]

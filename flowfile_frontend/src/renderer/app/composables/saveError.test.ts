@@ -64,3 +64,25 @@ describe("catalogSaveErrorMessage structured details", () => {
     expect(catalogSaveErrorMessage(err, "fallback")).toBe("boom");
   });
 });
+
+describe("extractSaveErrorMessage structured details", () => {
+  it("returns the message of an object detail (the settings-conflict 409)", () => {
+    const error = {
+      response: {
+        status: 409,
+        data: {
+          detail: {
+            code: "NODE_SETTINGS_CHANGED",
+            message: "These settings changed in another window since you opened them.",
+          },
+        },
+      },
+    };
+    expect(extractSaveErrorMessage(error)).toBe(
+      "These settings changed in another window since you opened them.",
+    );
+    expect(extractSaveErrorMessage({ response: { data: { detail: { code: "X" } } } })).toBe(
+      "Failed to save settings. Please check the node configuration.",
+    );
+  });
+});

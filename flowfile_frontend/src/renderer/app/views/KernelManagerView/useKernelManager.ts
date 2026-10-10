@@ -52,7 +52,7 @@ export function useKernelManager() {
 
   const createKernel = async (config: KernelConfig): Promise<KernelInfo> => {
     const kernel = await trackedCreateKernel(config);
-    await loadKernels();
+    await Promise.all([loadKernels(), checkDockerStatus()]);
     return kernel;
   };
 

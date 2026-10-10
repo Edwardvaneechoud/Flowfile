@@ -257,6 +257,10 @@ class HistoryState(BaseModel):
     undo_count: int = Field(default=0, description="Number of available undo steps")
     redo_count: int = Field(default=0, description="Number of available redo steps")
     flow_id: int | None = Field(default=None, description="The flow this history belongs to")
+    revision: int = Field(
+        default=0,
+        description="Monotonic flow change counter; moves on every mutation, undo/redo, run start/end and save",
+    )
 
 
 class UndoRedoResult(BaseModel):
@@ -277,3 +281,7 @@ class OperationResponse(BaseModel):
     success: bool = Field(default=True, description="Whether the operation succeeded")
     message: str | None = Field(default=None, description="Optional message")
     history: HistoryState = Field(..., description="Current history state after the operation")
+    settings_fingerprint: str | None = Field(
+        default=None,
+        description="After a save of one node's settings: its fingerprint now, the next save's expectation",
+    )

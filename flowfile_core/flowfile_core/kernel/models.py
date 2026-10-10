@@ -28,6 +28,8 @@ class ImageFlavour(str, Enum):
     # kernel-critical ones — everything else floats so user installs can
     # resolve their own dep trees freely.
     LITE = "lite"
+    # LITE plus this app's flowfile, published per app version: the canvas notebook runs here.
+    NOTEBOOK = "notebook"
     CUSTOM = "custom"
 
 
@@ -143,8 +145,6 @@ class KernelSuggestion(BaseModel):
     """Ready-to-POST create seed derived from a node's dependency specs."""
 
     config: KernelConfig
-    covered_by_flavour: list[str] = Field(default_factory=list)
-    flavour_image_available: bool | None = None  # None = Docker down / unknown
 
 
 class KernelMatchResponse(BaseModel):

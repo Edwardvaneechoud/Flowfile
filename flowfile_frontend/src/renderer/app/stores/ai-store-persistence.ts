@@ -37,6 +37,10 @@ export const chatPersistenceKey = (flowId: number | null): string =>
 
 export type PersistedAgentSurface = "agent_complex" | "agent_staged" | "agent_live";
 
+/** What Simple build asks the model for: FlowFrame ``code`` (the default) or
+ * the node-settings ``json`` of earlier releases. */
+export type PersistedSimpleBuildOutput = "code" | "json";
+
 /** Device-wide AI preferences. Every field is nullable: `null` means
  * "not set, use the store default". */
 export interface PersistedAiSettings {
@@ -53,6 +57,8 @@ export interface PersistedAiSettings {
   selectedAgentSurface: PersistedAgentSurface | null;
   /** Opt-in verify-completion gate. `null` → off. */
   verifyPlanCompletion: boolean | null;
+  /** Simple build output. `null` → the store default (``code``). */
+  simpleBuildOutput: PersistedSimpleBuildOutput | null;
 }
 
 export interface PersistedAiState {
@@ -76,6 +82,7 @@ export interface PersistedAiState {
   simpleModel?: string | null;
   selectedAgentSurface?: PersistedAgentSurface | null;
   verifyPlanCompletion?: boolean | null;
+  simpleBuildOutput?: PersistedSimpleBuildOutput | null;
 }
 
 const EMPTY_STATE: PersistedAiState = {
@@ -91,6 +98,9 @@ const _AGENT_SURFACE_VALUES: ReadonlyArray<PersistedAgentSurface> = [
 
 const isAgentSurface = (value: unknown): value is PersistedAgentSurface =>
   typeof value === "string" && (_AGENT_SURFACE_VALUES as ReadonlyArray<string>).includes(value);
+
+const isSimpleBuildOutput = (value: unknown): value is PersistedSimpleBuildOutput =>
+  value === "code" || value === "json";
 
 interface StorageLike {
   getItem(key: string): string | null;
@@ -148,6 +158,9 @@ const readSettingsFields = (payload: Record<string, unknown>): PersistedAiSettin
     : null,
   verifyPlanCompletion:
     typeof payload.verifyPlanCompletion === "boolean" ? payload.verifyPlanCompletion : null,
+  simpleBuildOutput: isSimpleBuildOutput(payload.simpleBuildOutput)
+    ? payload.simpleBuildOutput
+    : null,
 });
 
 /** Parse one JSON entry into a plain object, scrubbing a corrupt entry so

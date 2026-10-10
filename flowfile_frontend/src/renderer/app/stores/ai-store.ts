@@ -37,6 +37,7 @@ import {
   LOCAL_PROVIDER_ID,
   fetchLocalModelStatus,
   generateFlow,
+  isGenerateFlowFailure,
   selectLocalModel,
   type LocalModelStatus,
 } from "../views/AiSettingsView/localModelApi";
@@ -49,6 +50,7 @@ import {
   persistAiSettings,
   persistAiState,
   type PersistedAgentSurface,
+  type PersistedSimpleBuildOutput,
 } from "./ai-store-persistence";
 import { useEditorStore } from "./editor-store";
 import { useFlowStore } from "./flow-store";
@@ -76,6 +78,11 @@ export interface ChatMessage {
   buildDiffId?: string | null;
   buildOpCount?: number;
   buildAdded?: boolean;
+  /** Simple build in code mode: the FlowFrame script the nodes came from
+   * (shown collapsed in the bubble), or the script that failed, with
+   * ``buildCodeLine`` the 1-based line the failure names. */
+  buildCode?: string | null;
+  buildCodeLine?: number | null;
 }
 
 export type StreamingState = "idle" | "streaming" | "error";
@@ -182,6 +189,9 @@ export const useAiStore = defineStore("ai", () => {
   const splitModels = ref<boolean>(false);
   const simpleProvider = ref<string | null>(null);
   const simpleModel = ref<string | null>(null);
+
+  // Simple build output (see PersistedSimpleBuildOutput); Settings → AI → Assistant flips it.
+  const simpleBuildOutput = ref<PersistedSimpleBuildOutput>("code");
 
   // Local model (offline llama.cpp) status. Surfaced as a synthetic
   // ``"local"`` entry in ``providers`` so the chat drawer's picker lists it
@@ -299,6 +309,7 @@ export const useAiStore = defineStore("ai", () => {
     simpleModel: _hydrated.simpleModel ?? null,
     selectedAgentSurface: _hydrated.selectedAgentSurface ?? null,
     verifyPlanCompletion: _hydrated.verifyPlanCompletion ?? null,
+    simpleBuildOutput: _hydrated.simpleBuildOutput ?? null,
   };
   if (_seedSettings.selectedProvider !== null) {
     selectedProvider.value = _seedSettings.selectedProvider;
@@ -321,6 +332,9 @@ export const useAiStore = defineStore("ai", () => {
   if (_seedSettings.verifyPlanCompletion !== null) {
     verifyPlanCompletion.value = _seedSettings.verifyPlanCompletion;
   }
+  if (_seedSettings.simpleBuildOutput !== null) {
+    simpleBuildOutput.value = _seedSettings.simpleBuildOutput;
+  }
   const _snapshotSettings = () => ({
     selectedProvider: selectedProvider.value,
     selectedModel: selectedModel.value,
@@ -329,6 +343,7 @@ export const useAiStore = defineStore("ai", () => {
     simpleModel: simpleModel.value,
     selectedAgentSurface: selectedAgentSurface.value,
     verifyPlanCompletion: verifyPlanCompletion.value,
+    simpleBuildOutput: simpleBuildOutput.value,
   });
   if (_settings === null && Object.values(_seedSettings).some((v) => v !== null)) {
     persistAiSettings(_snapshotSettings());
@@ -405,6 +420,7 @@ export const useAiStore = defineStore("ai", () => {
       simpleModel,
       selectedAgentSurface,
       verifyPlanCompletion,
+      simpleBuildOutput,
     ],
     queuePersistSettings,
     { flush: "sync" },
@@ -580,6 +596,12 @@ export const useAiStore = defineStore("ai", () => {
       // Inject/refresh the synthetic ``local`` entry through the single writer
       // so the Models card and On-device card stay one source of truth.
       applyLocalModelStatus(localStatus);
+      // A saved pick the provider no longer offers (a class default that
+      // moved with a release, saved to localStorage by an older build) resets
+      // to the provider's current default, so a better default reaches users
+      // who never picked a model. A pick from the user's curated list stays.
+      selectedModel.value = _offeredOrDefault(selectedProvider.value, selectedModel.value);
+      simpleModel.value = _offeredOrDefault(simpleProvider.value, simpleModel.value);
       if (selectedProvider.value === null) {
         const first = providers.value.find(
           (p) => p.status === "configured" || p.status === "env_fallback",
@@ -612,6 +634,16 @@ export const useAiStore = defineStore("ai", () => {
     const def = meta.credential?.defaultModel ?? meta.defaultModel;
     if (def) set.add(def);
     return Array.from(set);
+  };
+
+  // ``model`` when provider ``name`` offers it (``modelsForProvider``), else
+  // the provider's current default. Unknown provider → unchanged.
+  const _offeredOrDefault = (name: string | null, model: string | null): string | null => {
+    if (!name) return model;
+    const meta = providers.value.find((p) => p.provider === name);
+    if (!meta) return model;
+    if (model !== null && modelsForProvider(name).includes(model)) return model;
+    return meta.credential?.defaultModel ?? meta.defaultModel ?? null;
   };
 
   const setSelectedProvider = (name: string): void => {
@@ -705,6 +737,10 @@ export const useAiStore = defineStore("ai", () => {
   // same store-action pattern as the other agent settings.
   const setVerifyPlanCompletion = (value: boolean): void => {
     verifyPlanCompletion.value = value;
+  };
+
+  const setSimpleBuildOutput = (value: PersistedSimpleBuildOutput): void => {
+    simpleBuildOutput.value = value;
   };
 
   const abortStream = (): void => {
@@ -1512,11 +1548,20 @@ export const useAiStore = defineStore("ai", () => {
         text,
         selectedProvider.value,
         selectedModel.value,
+        simpleBuildOutput.value === "json" ? "simple" : "code",
       );
       reactivePlaceholder.pending = false;
       streamingState.value = "idle";
+      if (result.answer !== null || result.diffId === null) {
+        // Not a pipeline description — the model replied instead of building.
+        reactivePlaceholder.content =
+          result.answer ??
+          "That doesn't describe a pipeline to build. Describe the steps, or switch to Chat mode to ask about the flow.";
+        return;
+      }
       reactivePlaceholder.buildDiffId = result.diffId;
       reactivePlaceholder.buildOpCount = result.opCount;
+      reactivePlaceholder.buildCode = result.code;
       const lines = [
         `Built a flow with ${result.opCount} node(s). Click "Add to canvas" to insert it.`,
       ];
@@ -1526,9 +1571,22 @@ export const useAiStore = defineStore("ai", () => {
       reactivePlaceholder.content = lines.join("\n");
     } catch (err) {
       reactivePlaceholder.pending = false;
-      const detail =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-        (err instanceof Error ? err.message : String(err));
+      const rawDetail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data
+        ?.detail;
+      let detail: string;
+      if (isGenerateFlowFailure(rawDetail)) {
+        // Code mode: the script still failed after its repair round. Keep the
+        // script and the line so the bubble can show where.
+        reactivePlaceholder.buildCode = rawDetail.code;
+        reactivePlaceholder.buildCodeLine = rawDetail.line;
+        detail = rawDetail.line
+          ? `line ${rawDetail.line}: ${rawDetail.message}`
+          : rawDetail.message;
+      } else if (typeof rawDetail === "string") {
+        detail = rawDetail;
+      } else {
+        detail = err instanceof Error ? err.message : String(err);
+      }
       reactivePlaceholder.error = detail;
       reactivePlaceholder.content = `Generation failed: ${detail}`;
       streamingState.value = "error";
@@ -1607,6 +1665,8 @@ export const useAiStore = defineStore("ai", () => {
     setSelectedAgentSurface,
     verifyPlanCompletion,
     setVerifyPlanCompletion,
+    simpleBuildOutput,
+    setSimpleBuildOutput,
     // Exposed so ai-agent-store's status watcher can flip it to
     // "agent" when a run terminates.
     lastInteractionKind,

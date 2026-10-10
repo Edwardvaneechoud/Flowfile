@@ -42,7 +42,7 @@ async function getAuthToken(request: APIRequestContext): Promise<string> {
 
 async function navigateWithAuth(page: Page, token: string, targetUrl: string) {
   await page.goto(targetUrl);
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
   const expirationTime = Date.now() + 60 * 60 * 1000;
   await page.evaluate(
     ({ token, expiration }: { token: string; expiration: number }) => {
@@ -52,7 +52,7 @@ async function navigateWithAuth(page: Page, token: string, targetUrl: string) {
     { token, expiration: expirationTime },
   );
   await page.reload();
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("load");
 }
 
 function authHeaders(token: string) {

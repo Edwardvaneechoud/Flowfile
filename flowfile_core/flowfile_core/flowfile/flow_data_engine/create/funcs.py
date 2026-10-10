@@ -7,7 +7,13 @@ from flowfile_core.configs import logger as _module_logger
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.schemas import input_schema
 from shared.excel_reader import read_excel_table
-from shared.path_utils import NoFilesMatchedError, expand_glob_pattern, is_url, transcode_text_to_utf8
+from shared.path_utils import (
+    NoFilesMatchedError,
+    expand_glob_pattern,
+    is_url,
+    refuse_cloud_path,
+    transcode_text_to_utf8,
+)
 
 INFER_SCHEMA_RUNGS = (10_000, 100_000)
 
@@ -340,6 +346,7 @@ def probe_eager_schema(received_table: input_schema.ReceivedTable) -> pl.Schema:
     Lets the read node predict its schema before it runs, like the excel header probe; the data
     itself still comes from the worker in remote mode.
     """
+    refuse_cloud_path(received_table.path, received_table.file_type)
     readers = {"avro": pl.read_avro, "ipc_stream": pl.read_ipc_stream}
     return readers[received_table.file_type](received_table.abs_file_path, n_rows=0).schema
 

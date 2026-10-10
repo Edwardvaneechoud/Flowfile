@@ -2,6 +2,7 @@
 
 import copy
 
+from flowfile_core.flowfile.util.layout.placement import Box, node_box
 from flowfile_core.notebook.reconcile import incoming_edges, reconcile, user_description
 
 
@@ -306,3 +307,248 @@ def test_incoming_edges_keep_two_handles_of_one_source():
         "input-0": [(2, "output-0")],
         "input-1": [(2, "output-1")],
     }
+
+
+def _at(node, x, y):
+    node.update(x_position=x, y_position=y)
+    return node
+
+
+def _added(plan):
+    return {op.node_id: (op.pos_x, op.pos_y) for op in plan.operations if op.op == "add_node"}
+
+
+def _assert_added_nodes_cover_nothing(live, plan):
+    """Every added node's box is clear of the other nodes left on the canvas, its comments and collapsed groups."""
+    added = _added(plan)
+    left = {n["id"]: (n["x_position"], n["y_position"]) for n in live["nodes"] if n["id"] not in plan.deletions}
+    positions = {**left, **added}
+    blocking = [g for g in live.get("groups", []) if g.get("collapsed")] + live.get("comments", [])
+    boxes = [Box(b["x_position"], b["y_position"], b["width"], b["height"]) for b in blocking]
+    for nid, (x, y) in added.items():
+        others = [node_box(*p) for other, p in positions.items() if other != nid] + boxes
+        assert not any(node_box(x, y).overlaps(box) for box in others), (nid, x, y)
+
+
+def _group(group_id, x, y, width, height, *, collapsed=False):
+    return {"id": group_id, "name": "g", "x_position": x, "y_position": y, "width": width, "height": height, "collapsed": collapsed}
+
+
+def test_a_node_inserted_into_a_chain_does_not_cover_the_next_node():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50), _sort(3, 2, x=500, y=50))
+    session = _payload(_manual(), _sort(5, 1), _filter(2, 5), _sort(3, 2))
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2, 3, extra={"node-2": [5, 2]}))
+    assert _added(plan) == {5: (250.0, 150.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+def test_a_second_branch_does_not_cover_the_first():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50))
+    session = _payload(_manual(), _filter(2, 1), _sort(5, 1))
+    plan = reconcile(live, session, ["cell-5"], _cells(1, 2, extra={"cell-5": [5]}))
+    assert _added(plan) == {5: (250.0, 150.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+def test_a_new_reader_goes_below_the_canvas_not_onto_its_first_node():
+    live = _payload(_at(_manual(), 50, 50), _filter(2, 1, x=300, y=50))
+    session = _payload(_manual(), _filter(2, 1), _manual(5))
+    plan = reconcile(live, session, ["cell-5"], _cells(1, 2, extra={"cell-5": [5]}))
+    assert _added(plan) == {5: (50.0, 230.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+def test_a_new_reader_joined_into_the_chain_lands_beside_the_other_join_input():
+    join = {"join_input": {"join_mapping": [{"left_col": "a", "right_col": "a"}], "how": "inner"}}
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50))
+    session = _payload(_manual(), _filter(2, 1), _manual(5), _node(6, "join", join, inputs=[2], right=5))
+    plan = reconcile(live, session, ["cell-5"], _cells(1, 2, extra={"cell-5": [5, 6]}))
+    assert _added(plan) == {6: (500.0, 50.0), 5: (250.0, 150.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+def test_a_deleted_nodes_slot_is_free_for_its_replacement():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50))
+    session = _payload(_manual(), _sort(5, 1))
+    plan = reconcile(live, session, ["node-2"], _cells(1, extra={"node-2": [5]}))
+    assert plan.deletions == [2]
+    assert _added(plan) == {5: (250.0, 50.0)}
+
+
+def test_a_node_inserted_into_a_grouped_chain_stays_in_the_group():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50), _sort(3, 2, x=500, y=50))
+    live["groups"] = [_group(1, -40, -20, 600, 300)]
+    session = _payload(_manual(), _sort(5, 1), _filter(2, 5), _sort(3, 2))
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2, 3, extra={"node-2": [5, 2]}))
+    assert _added(plan) == {5: (250.0, 150.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+def test_a_collapsed_group_in_the_way_is_avoided():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50))
+    live["groups"] = [_group(1, 500, 0, 240, 200, collapsed=True)]
+    session = _payload(_manual(), _filter(2, 1), _sort(5, 2))
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2, extra={"node-2": [2, 5]}))
+    assert _added(plan) == {5: (500.0, 250.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+def test_a_comment_in_the_way_is_avoided():
+    live = _payload(_at(_manual(), 0, 50), _filter(2, 1, x=250, y=50))
+    live["comments"] = [{"id": 1, "text": "note", "x_position": 500, "y_position": 0, "width": 240, "height": 200}]
+    session = _payload(_manual(), _filter(2, 1), _sort(5, 2))
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2, extra={"node-2": [2, 5]}))
+    assert _added(plan) == {5: (500.0, 250.0)}
+    _assert_added_nodes_cover_nothing(live, plan)
+
+
+
+# visual groups: the group routes' own ops, last
+
+
+def _vgroup(group_id, name, parent=None, color=None):
+    return {
+        "id": group_id,
+        "name": name,
+        "color": color,
+        "parent_group_id": parent,
+        "x_position": 0.0,
+        "y_position": 0.0,
+        "width": 400.0,
+        "height": 250.0,
+        "collapsed": False,
+    }
+
+
+def _grouped(*nodes, groups):
+    payload = _payload(*nodes)
+    payload["groups"] = list(groups)
+    return payload
+
+
+def _in(node, group_id):
+    return {**node, "group_id": group_id}
+
+
+def _group_ops(plan):
+    """Every group op of the plan as ``(op, ...)``, which must come after every node op."""
+    kinds = ("create_group", "update_group", "nest_group", "delete_group", "add_nodes_to_group", "remove_nodes_from_group")
+    ops = [op.model_dump(mode="json", exclude_none=True) for op in plan.operations]
+    first = next((i for i, op in enumerate(ops) if op["op"] in kinds), len(ops))
+    assert all(op["op"] in kinds for op in ops[first:])
+    return ops[first:]
+
+
+def test_same_grouping_under_other_ids_is_no_op():
+    live = _grouped(
+        _manual(), _filter(2, 1, group_id=7), _sort(3, 2, group_id=8), groups=[_vgroup(7, "Outer"), _vgroup(8, "Inner", parent=7)]
+    )
+    session = _grouped(
+        _manual(), _filter(2, 1, group_id=1), _sort(3, 2, group_id=2), groups=[_vgroup(1, "Outer"), _vgroup(2, "Inner", parent=1)]
+    )
+    assert reconcile(live, session, ["node-1", "node-2", "node-3"], _cells(1, 2, 3)).operations == []
+
+
+def test_a_changed_cell_moves_its_node_between_groups_matched_by_membership():
+    live = _grouped(
+        _in(_manual(), 8), _filter(2, 1, group_id=7), _sort(3, 2, group_id=7), groups=[_vgroup(7, "A"), _vgroup(8, "B")]
+    )
+    session = _grouped(
+        _in(_manual(), 1), _filter(2, 1, group_id=2), _sort(3, 2, group_id=1), groups=[_vgroup(1, "B"), _vgroup(2, "A")]
+    )
+    plan = reconcile(live, session, ["node-3"], _cells(1, 2, 3))
+    assert _group_ops(plan) == [{"op": "add_nodes_to_group", "group_id": 8, "node_ids": [3]}]
+
+
+def test_a_pinned_node_keeps_the_canvas_group_whatever_the_session_says():
+    live = _grouped(_manual(), _filter(2, 1, group_id=7), groups=[_vgroup(7, "A")])
+    session = _grouped(_in(_manual(), 1), _filter(2, 1, group_id=1), groups=[_vgroup(1, "A")])
+    assert reconcile(live, session, [], _cells(1, 2)).operations == []
+
+
+def test_a_new_group_is_created_above_the_ceiling_under_its_matched_parent():
+    live = _grouped(
+        _manual(), _filter(2, 1, group_id=7), _sort(3, 2, group_id=7), groups=[_vgroup(7, "Outer", color="blue")]
+    )
+    session = _grouped(
+        _manual(),
+        _filter(2, 1, group_id=1),
+        _sort(3, 2, group_id=2),
+        groups=[_vgroup(1, "Outer", color="blue"), _vgroup(2, "Inner", parent=1, color="rose")],
+    )
+    plan = reconcile(live, session, ["node-3"], _cells(1, 2, 3), group_id_ceiling=20)
+    assert _group_ops(plan) == [
+        {
+            "op": "create_group",
+            "group": {"group_id": 21, "name": "Inner", "color": "rose", "parent_group_id": 7, "node_ids": [3], "child_group_ids": []},
+        }
+    ]
+
+
+def test_a_matched_group_takes_the_cells_name_colour_and_parent():
+    live = _grouped(
+        _manual(), _filter(2, 1, group_id=7), _sort(3, 2, group_id=8), groups=[_vgroup(7, "A"), _vgroup(8, "B", parent=7)]
+    )
+    session = _grouped(
+        _manual(),
+        _filter(2, 1, group_id=1),
+        _sort(3, 2, group_id=2),
+        groups=[_vgroup(1, "Renamed", color="green"), _vgroup(2, "B")],
+    )
+    plan = reconcile(live, session, ["node-2", "node-3"], _cells(1, 2, 3))
+    assert _group_ops(plan) == [
+        {"op": "update_group", "group_id": 7, "group": {"name": "Renamed", "color": "green"}},
+        {"op": "nest_group", "group_id": 8},
+    ]
+
+
+def test_a_colour_the_cell_leaves_out_keeps_the_canvas_tint():
+    live = _grouped(_manual(), _filter(2, 1, group_id=7), groups=[_vgroup(7, "A", color="blue")])
+    session = _grouped(_manual(), _filter(2, 1, group_id=1), groups=[_vgroup(1, "A")])
+    assert reconcile(live, session, ["node-2"], _cells(1, 2)).operations == []
+
+
+def test_a_live_group_left_without_members_is_deleted_and_its_node_ungrouped():
+    live = _grouped(
+        _manual(),
+        _filter(2, 1, group_id=8),
+        _sort(3, 2, group_id=9),
+        groups=[_vgroup(7, "Outer"), _vgroup(8, "Inner", parent=7), _vgroup(9, "Gone")],
+    )
+    session = _grouped(
+        _manual(), _filter(2, 1, group_id=2), _sort(3, 2), groups=[_vgroup(1, "Outer"), _vgroup(2, "Inner", parent=1)]
+    )
+    plan = reconcile(live, session, ["node-3"], _cells(1, 2, 3))
+    assert _group_ops(plan) == [
+        {"op": "delete_group", "group_id": 9},
+        {"op": "remove_nodes_from_group", "node_ids": [3]},
+    ]
+
+
+def test_a_parent_with_no_direct_members_matches_through_its_sub_groups():
+    live = _grouped(_manual(), _filter(2, 1, group_id=8), groups=[_vgroup(7, "Outer"), _vgroup(8, "Inner", parent=7)])
+    session = _grouped(
+        _manual(), _filter(2, 1, group_id=2), groups=[_vgroup(1, "Outer renamed"), _vgroup(2, "Inner", parent=1)]
+    )
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2))
+    assert _group_ops(plan) == [{"op": "update_group", "group_id": 7, "group": {"name": "Outer renamed"}}]
+
+
+def test_a_deleted_node_leaves_its_group_without_a_group_op():
+    live = _grouped(_manual(), _filter(2, 1, group_id=7), _sort(3, 2, group_id=7), groups=[_vgroup(7, "A")])
+    session = _grouped(_manual(), _filter(2, 1, group_id=1), groups=[_vgroup(1, "A")])
+    plan = reconcile(live, session, ["node-3"], _cells(1, 2))
+    assert [op.op for op in plan.operations] == ["delete_node"] and plan.deletions == [3]
+
+
+def test_a_group_the_node_ops_prune_is_recreated_when_its_only_member_changes_type():
+    live = _grouped(_manual(), _filter(2, 1, group_id=7), groups=[_vgroup(7, "A", color="cyan")])
+    session = _grouped(_manual(), _sort(2, 1, group_id=1), groups=[_vgroup(1, "A", color="cyan")])
+    plan = reconcile(live, session, ["node-2"], _cells(1, 2))
+    assert [op.op for op in plan.operations][:2] == ["delete_node", "add_node"]
+    assert _group_ops(plan) == [
+        {
+            "op": "create_group",
+            "group": {"group_id": 8, "name": "A", "color": "cyan", "node_ids": [2], "child_group_ids": []},
+        }
+    ]

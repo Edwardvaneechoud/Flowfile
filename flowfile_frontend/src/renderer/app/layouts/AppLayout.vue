@@ -39,7 +39,9 @@ import TutorialOverlay from "../components/tutorial/TutorialOverlay.vue";
 import TutorialStartButton from "../components/tutorial/TutorialStartButton.vue";
 import TelemetryConsentModal from "../components/settings/TelemetryConsentModal.vue";
 import UpdateAvailableModal from "../components/settings/UpdateAvailableModal.vue";
+import { installPopoutListeners } from "../composables/usePopout";
 import { useAuthStore } from "../stores/auth-store";
+import { useFlowSyncStore } from "../stores/flow-sync-store";
 import { useProjectStore } from "../stores/project-store";
 import { useTelemetryStore } from "../stores/telemetry-store";
 import { useUpdateStore } from "../stores/update-store";
@@ -51,6 +53,10 @@ const telemetryStore = useTelemetryStore();
 const updateStore = useUpdateStore();
 
 onMounted(() => {
+  // Follows the active flow's change feed for the whole session (its own flowId watcher).
+  useFlowSyncStore();
+  // Follow pop-out windows closing or returning, and adopt the ones already open (desktop).
+  installPopoutListeners();
   // Pick up the active project (if any) so the header sync pill is correct on boot.
   projectStore.refreshActive();
   // The consent modal only appears once this resolves.

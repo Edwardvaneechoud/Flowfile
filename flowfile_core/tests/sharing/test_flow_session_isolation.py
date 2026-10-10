@@ -13,20 +13,25 @@ from enum import Enum
 from types import SimpleNamespace
 
 import pytest
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, RouteContext, iter_route_contexts
 from pydantic import BaseModel
 
 from flowfile_core import flow_file_handler, main
 from flowfile_core.ai import chat_routes
 from flowfile_core.ai import diff as ai_diff
+from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs.settings import FEATURE_FLAG_AI
+from flowfile_core.notebook import gate as notebook_gate
+from flowfile_core.routes.notebook import require_notebook_sync
 from flowfile_core.schemas import input_schema, schemas
 
 EXEMPT_ROUTES = {
     ("POST", "/raw_logs"): "worker/kernel log sink; the request carries no user to scope to",
-    ("POST", "/logs/{flow_id}"): "unauthenticated log sink; the request carries no user to scope to",
     ("POST", "/flow/register/"): "creates a flow; see test_register_does_not_evict_another_users_flow",
     ("POST", "/artifacts/prepare-upload"): "source_flow_id is provenance metadata, never looked up",
+    ("POST", "/notebook/session/node_result"): "kernel callback; a user is refused first, the flow is the kernel's",
+    ("POST", "/notebook/session/node_run"): "kernel callback; a user is refused first, the flow is the kernel's",
+    ("POST", "/notebook/session/lookup"): "kernel callback; a user is refused first, the flow is the kernel's",
 }
 EXEMPT_PREFIXES = {
     "/catalog/flows/{flow_id}": "a catalog registration id, authorized by the catalog AccessResolver",
@@ -62,6 +67,8 @@ def _sample(annotation, name: str = ""):
         return args[0]
     if origin is typing.Annotated:
         return _sample(args[0], name)
+    if origin is tuple and args and args[-1] is not Ellipsis:
+        return [_sample(arg, name) for arg in args]
     if origin in (list, set, tuple, frozenset):
         return [_sample(args[0], name)] if args else []
     if annotation in (list, set, tuple, frozenset):
@@ -95,7 +102,7 @@ def _locations(dependant):
         yield from _locations(sub)
 
 
-def _flow_id_slots(method: str, route: APIRoute) -> list[tuple[str, str, str | None]]:
+def _flow_id_slots(method: str, route: RouteContext) -> list[tuple[str, str, str | None]]:
     """Every place a request can name a flow, as ``(location, param, model field)``."""
     slots = []
     for kind, param in _locations(route.dependant):
@@ -112,11 +119,12 @@ def _flow_id_slots(method: str, route: APIRoute) -> list[tuple[str, str, str | N
     return slots
 
 
-def _flow_id_routes() -> dict[tuple[str, str], APIRoute]:
+def _flow_id_routes() -> dict[tuple[str, str], RouteContext]:
+    """Every live route that takes a flow id, keyed by its mounted path (routers stay nested in ``app.routes``)."""
     return {
         (method, route.path): route
-        for route in main.app.routes
-        if isinstance(route, APIRoute)
+        for route in iter_route_contexts(main.app.routes)
+        if isinstance(route.original_route, APIRoute)
         for method in route.methods
         if _flow_id_slots(method, route)
     }
@@ -130,7 +138,7 @@ SCOPED_ROUTES = sorted(
 )
 
 
-def _build_request(method: str, route: APIRoute, targets: dict, token: str) -> dict:
+def _build_request(method: str, route: RouteContext, targets: dict, token: str) -> dict:
     """Request kwargs for a TestClient: flow-id slots from ``targets``, everything else sampled."""
     path_params, query, body = {}, {}, {}
     for kind, param in _locations(route.dependant):
@@ -224,8 +232,16 @@ def ai_enabled(monkeypatch):
     FEATURE_FLAG_AI.set(original)
 
 
+@pytest.fixture
+def notebook_gates_open(monkeypatch):
+    """Lift the notebook's mode gates (admin-only sync, desktop-only kernel sessions) so the lookups behind them run."""
+    monkeypatch.setattr(notebook_gate, "kernel_sessions_allowed", lambda user: True)
+    monkeypatch.setattr(notebook_gate, "is_loopback", lambda http: True)
+    monkeypatch.setitem(main.app.dependency_overrides, require_notebook_sync, get_current_active_user)
+
+
 @pytest.mark.parametrize(("method", "path"), SCOPED_ROUTES, ids=[f"{m} {p}" for m, p in SCOPED_ROUTES])
-def test_route_resolves_flow_for_caller(method, path, users, flows, lookups, ai_enabled):
+def test_route_resolves_flow_for_caller(method, path, users, flows, lookups, ai_enabled, notebook_gates_open):
     """Pointing any one flow-id slot at alice's flow (the rest at bob's own) never reaches alice's flow."""
     route = FLOW_ID_ROUTES[(method, path)]
     alice_graph = flow_file_handler.get_flow(flows.alice_flow)

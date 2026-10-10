@@ -1,9 +1,11 @@
 """Render a canvas flow as notebook cells: the FlowFrame export, split at its own statement boundaries.
 
 The FlowFrame exporter (``placeholders=True``) is the one code path. Its imports and module helpers
-make the first cell, the flow parameters the second, then every fused statement it emits becomes a
-cell carrying the node ids of its span; a node the exporter cannot express is a ``ff.canvas_node``
-placeholder cell. Cells therefore need not align one per node.
+make the first cell, the flow parameters the second, the visual groups (``ff.FlowGroup``
+declarations, parents first) the third, then every fused statement it emits becomes a cell carrying
+the node ids of its span, a grouped node's statement ending in ``.add_to_group(<group>)``; a node the
+exporter cannot express is a ``ff.canvas_node`` placeholder cell. Cells therefore need not align one
+per node.
 """
 
 from __future__ import annotations
@@ -22,11 +24,12 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.param_types import FlowParameter, stringify_param_value
 
-CellKind = Literal["imports", "parameters", "node"]
+CellKind = Literal["imports", "parameters", "groups", "node"]
 CellStatus = Literal["code", "placeholder", "unsupported"]
 
 IMPORTS_CELL_ID = "imports"
 PARAMETERS_CELL_ID = "parameters"
+GROUPS_CELL_ID = "groups"
 _LAYOUT_FIELDS = frozenset({"pos_x", "pos_y", "is_setup", "flow_id", "user_id"})
 _NOTEBOOK_HELPERS = {
     "_flowfile_flow_parameter": (
@@ -43,7 +46,7 @@ _NOTEBOOK_HELPERS = {
 
 
 class EmittedCell(BaseModel):
-    """One notebook cell: the code for ``node_ids`` (empty for the imports and parameters cells)."""
+    """One notebook cell: the code for ``node_ids`` (empty for the imports, parameters and groups cells)."""
 
     cell_id: str
     node_ids: list[int] = Field(default_factory=list)
@@ -62,6 +65,7 @@ class NotebookRendering(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     var_by_node: dict[int, str] = Field(default_factory=dict)
     code_fingerprint: str
+    revision: int = 0
 
 
 def _settings_payload(node: FlowNode):
@@ -76,12 +80,13 @@ def _settings_payload(node: FlowNode):
 
 
 def code_fingerprint(flow_graph: FlowGraph) -> str:
-    """sha256 over every node's settings (layout fields dropped), the edges and the parameters.
+    """sha256 over every node's settings (layout fields dropped), the edges, the parameters and the groups.
 
     Position-free and deterministic (sorted keys, nodes in id order), so moving a node on the canvas
-    keeps the fingerprint and any settings, wiring or parameter change moves it. ``flow_id`` (fresh
-    on every open), ``user_id`` (server-stamped) and the ``is_setup`` flag are dropped with the
-    positions because none of them changes the rendered code.
+    keeps the fingerprint and any settings, wiring, parameter or group change moves it. ``flow_id``
+    (fresh on every open), ``user_id`` (server-stamped) and the ``is_setup`` flag are dropped with the
+    positions because none of them changes the rendered code; a group counts by its name, colour,
+    parent and members (``group_id`` stays in the settings), never by its box.
     """
     nodes = []
     for node in sorted(flow_graph.nodes, key=lambda n: n.node_id):
@@ -91,7 +96,11 @@ def code_fingerprint(flow_graph: FlowGraph) -> str:
             edges = []
         nodes.append({"id": node.node_id, "type": node.node_type, "settings": _settings_payload(node), "edges": edges})
     parameters = [p.model_dump(mode="json") for p in flow_graph.flow_settings.parameters]
-    payload = json.dumps({"nodes": nodes, "parameters": parameters}, sort_keys=True, default=str)
+    groups = [
+        {"id": g.id, "name": g.name, "color": g.color, "parent": g.parent_group_id}
+        for g in sorted(flow_graph._groups.values(), key=lambda g: g.id)
+    ]
+    payload = json.dumps({"nodes": nodes, "parameters": parameters, "groups": groups}, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -152,13 +161,16 @@ def render(flow_graph: FlowGraph) -> NotebookRendering:
     The fingerprint is taken before the export, so an edit landing mid-render leaves an older fingerprint
     and the next refresh renders again instead of keeping cells for the pre-edit graph.
     """
+    revision = flow_graph.revision
     fingerprint = code_fingerprint(flow_graph)
     converter = FlowGraphToFlowFrameConverter(
         flow_graph, placeholders=True, deterministic_names=True, decorated_scripts=True
     )
     converter.convert()
     emissions = converter.emissions(verbatim_refs=True)
-    imports = ["import flowfile as ff", *(line for line in converter.import_lines() if line != "import flowfile as ff")]
+    # Neither runner evaluates a def's annotations (exec_cell compiles as core does); the interpreter refuses the import
+    dropped = {"import flowfile as ff", "from __future__ import annotations"}
+    imports = ["import flowfile as ff", *(line for line in converter.import_lines() if line not in dropped)]
     helpers = [_NOTEBOOK_HELPERS.get(h.split("(")[0].removeprefix("def "), h) for h in converter.helpers()]
     cells = [EmittedCell(cell_id=IMPORTS_CELL_ID, kind="imports", code="\n\n\n".join(["\n".join(imports), *helpers]))]
     parameters = list(flow_graph.flow_settings.parameters)
@@ -166,6 +178,8 @@ def render(flow_graph: FlowGraph) -> NotebookRendering:
     if parameters:
         code = "\n".join(_parameter_line(p, p.name in bound) for p in parameters)
         cells.append(EmittedCell(cell_id=PARAMETERS_CELL_ID, kind="parameters", code=code))
+    if group_lines := converter.group_lines():
+        cells.append(EmittedCell(cell_id=GROUPS_CELL_ID, kind="groups", code="\n".join(group_lines)))
     for em in emissions:
         ids = em.node_ids or [em.node_id]
         status = "placeholder" if em.placeholder_reason else "code"
@@ -185,4 +199,5 @@ def render(flow_graph: FlowGraph) -> NotebookRendering:
         warnings=converter.warnings,
         var_by_node={em.node_id: em.var_name for em in emissions},
         code_fingerprint=fingerprint,
+        revision=revision,
     )

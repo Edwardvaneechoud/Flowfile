@@ -245,3 +245,25 @@ describe("node-store description cache seeding from the flow payload", () => {
     expect(mocks.getNodeDescription).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("node-store settings fingerprint", () => {
+  it("notes a save's fingerprint on the cached node only, and drops it when a save carries none", async () => {
+    const store = useNodeStore();
+    mocks.getNodeData.mockResolvedValue({ ...nodeData(4), settings_fingerprint: "loaded" });
+    await store.getNodeData(4);
+    expect(store.nodeData?.settings_fingerprint).toBe("loaded");
+
+    store.noteSettingsFingerprint(5, "other-node");
+    expect(store.nodeData?.settings_fingerprint).toBe("loaded");
+
+    store.noteSettingsFingerprint("4", "saved");
+    expect(store.nodeData?.settings_fingerprint).toBe("saved");
+
+    store.noteSettingsFingerprint(4, undefined);
+    expect(store.nodeData?.settings_fingerprint).toBeNull();
+
+    store.nodeData = null;
+    store.noteSettingsFingerprint(4, "late");
+    expect(store.nodeData).toBeNull();
+  });
+});

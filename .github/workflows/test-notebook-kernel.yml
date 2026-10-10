@@ -57,8 +57,9 @@ jobs:
       - name: Build the lite kernel image
         run: make rebuild_kernel KERNEL_FLAVOUR=lite
 
+      # On the lite image just built, so an unpublished kernel change is tested too.
       - name: Build the notebook kernel image from this checkout's wheel
-        run: make notebook_kernel_dev
+        run: make notebook_kernel_dev NOTEBOOK_BASE_IMAGE=flowfile-kernel-lite:local
 
       - name: Run the notebook kernel tests
         run: |
@@ -75,7 +76,7 @@ jobs:
         if: always()
         run: |
           docker ps -a --filter "name=flowfile-kernel" -q | xargs -r docker rm -f
-          docker rmi -f flowfile-kernel-notebook:dev flowfile-kernel-lite:local || true
+          docker rmi -f flowfile-kernel-notebook:local flowfile-kernel-lite:local || true
           docker system prune -f
 
       - name: Show kernel container logs on failure

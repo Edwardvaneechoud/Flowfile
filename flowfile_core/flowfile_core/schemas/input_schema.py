@@ -1,3 +1,4 @@
+import ast
 import os
 import re
 from contextvars import ContextVar
@@ -36,7 +37,7 @@ from flowfile_core.schemas.yaml_types import (
 )
 from flowfile_core.types import DataTypeStr
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
-from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_url
+from shared.path_utils import default_scan_extension, ensure_glob_pattern, is_cloud_path, is_url
 
 keep_paths_as_written: ContextVar[bool] = ContextVar("keep_paths_as_written", default=False)
 """While set in a context, ``set_absolute_filepath`` keeps a path as written: no ``~``, working directory or links.
@@ -292,8 +293,12 @@ class ReceivedTable(BaseModel):
             return self.path
 
     def set_absolute_filepath(self):
-        """Resolves the path to an absolute file path (or, in directory mode, to a glob pattern)."""
-        if is_url(self.path):
+        """Resolves the path to an absolute file path (or, in directory mode, to a glob pattern).
+
+        URLs and object-storage URIs are kept verbatim; the reader refuses a cloud URI with an
+        actionable error instead of resolving it into a bogus local path.
+        """
+        if is_url(self.path) or is_cloud_path(self.path):
             self.abs_file_path = self.path
             return
         if keep_paths_as_written.get():
@@ -2266,9 +2271,21 @@ class NodePolarsCode(NodeMultiInput):
     polars_code_input: transform_schema.PolarsCodeInput
 
     def get_default_description(self) -> str:
-        """Describes the Polars code snippet."""
+        """Describes the Polars code: a function's docstring line or ``name(params)``, else the snippet's first line."""
+        from flowfile_core.flowfile.flow_data_engine.polars_code_parser import function_form
+
         code = self.polars_code_input.polars_code
-        first_line = code.strip().split("\n")[0] if code else ""
+        entry = function_form(code) if code else None
+        if entry is not None:
+            docstring = (ast.get_docstring(entry) or "").strip()
+            args = entry.args
+            names = [arg.arg for arg in [*args.posonlyargs, *args.args]]
+            names += [f"*{args.vararg.arg}"] if args.vararg else ["*"] if args.kwonlyargs else []
+            names += [arg.arg for arg in args.kwonlyargs] + ([f"**{args.kwarg.arg}"] if args.kwarg else [])
+            params = ", ".join(names)
+            first_line = docstring.split("\n")[0] if docstring else f"{entry.name}({params})"
+        else:
+            first_line = code.strip().split("\n")[0] if code else ""
         if len(first_line) > 80:
             first_line = first_line[:77] + "..."
         return first_line

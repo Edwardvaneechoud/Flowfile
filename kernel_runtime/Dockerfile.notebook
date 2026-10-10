@@ -1,0 +1,12 @@
+# The notebook kernel image: a flowfile wheel on the lite image of the pinned kernel release. docker-publish.yml
+# builds it per app version (BASE_IMAGE=<org>/flowfile-kernel-lite:<kernel version>); `make notebook_kernel_dev`
+# builds flowfile-kernel-notebook:local from this checkout on flowfile-kernel-lite:local.
+# Every dependency installs from a wheel (polars-grouper >= 0.6.1 ships linux/aarch64), so no toolchain stage.
+ARG BASE_IMAGE=flowfile-kernel-lite:local
+FROM ${BASE_IMAGE}
+COPY flowfile-*.whl /tmp/wheels/
+# Lite pins little; freezing after the install pins what flowfile resolved, so a kernel's extra packages
+# (the derived image build pins against this file) cannot move its dependency tree.
+RUN pip install --no-cache-dir --constraint /opt/constraints.txt --find-links /tmp/wheels /tmp/wheels/flowfile-*.whl \
+    && pip freeze --exclude-editable | grep -v '^flowfile[ =@]' > /opt/constraints.txt \
+    && rm -rf /tmp/wheels

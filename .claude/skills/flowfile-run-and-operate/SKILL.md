@@ -299,7 +299,7 @@ Ciphertext format and HKDF derivation are owned by `flowfile-architecture-contra
 | docker logs | container stdout | `docker compose logs -f [service]` |
 
 Access:
-- Stream a flow's log live: `GET /logs/{flow_id}` (Bearer header, only flows open in the caller's session, `idle_timeout=300` default). Worker and kernel ingest: `POST /raw_logs` (signed with `X-Internal-Token`). Wipe all: `POST /clear-logs`.
+- Stream a flow's log live: `GET /logs/{flow_id}` (Bearer header, only flows open in the caller's session; follows a running flow to the run's end, sends an idle flow's file once). Worker and kernel ingest: `POST /raw_logs` (signed with `X-Internal-Token`). Wipe all: `POST /clear-logs`.
 - Prompt-log CLI: `python -m flowfile_core.ai.prompt_log tail [N]` (default 10), `... grep PATTERN [SURFACE]`.
 - **Logs survive restarts and expire only by age** (`FLOWFILE_RUN_LOG_RETENTION_DAYS`, default 30d; swept at core startup and hourly on the scheduler tick). `POST /clear-logs` is scoped to `flow_*.log` and never touches run logs. Per-flow `flow_<id>.log` is still truncated at each run start, so it holds only the latest run.
 
@@ -391,7 +391,7 @@ Volatile facts above need periodic re-verification — commands are copy-pasteab
 - **Core startup/shutdown side effects** (§4): `grep -n "cleanup_directories\|clear_all_flow_logs\|shutdown_handler" flowfile_core/flowfile_core/main.py`
 - **`docker-remote/` non-existence** (§4): `ls docker-remote 2>&1; git log --all --oneline -- docker-remote` (both should be empty) — re-read `docs/users/deployment/docker.md` for the current published-images story
 - **Compose facts** (§4): `grep -n "shm_size\|FLOWFILE_SCHEDULER_ENABLED\|FLOWFILE_ENABLE_PROJECTS" docker-compose.yml`
-- **Flow save/load format** (§5): `grep -n "def save_flow" -A 40 flowfile_core/flowfile_core/flowfile/flow_graph.py`; `sed -n '1,50p' flowfile_core/flowfile_core/flowfile/manage/io_flowfile.py` (look for `_validate_flow_path`, `open_flow`)
+- **Flow save/load format** (§5): `grep -n "def save_flow" -A 40 flowfile_core/flowfile_core/flowfile/flow_graph/persistence.py`; `sed -n '1,50p' flowfile_core/flowfile_core/flowfile/manage/io_flowfile.py` (look for `_validate_flow_path`, `open_flow`)
 - **Storage directory table** (§6): `sed -n '1,280p' shared/storage_config.py` (every `@property` under `FlowfileStorage`)
 - **DB URL resolution order + table count** (§6): `sed -n '395,420p' shared/storage_config.py`; `grep -c '__tablename__' flowfile_core/flowfile_core/database/models.py`
 - **Catalog Delta layout** (§7): `grep -n "catalog_tables_directory\|file_path\|storage_format" flowfile_core/flowfile_core/database/models.py`

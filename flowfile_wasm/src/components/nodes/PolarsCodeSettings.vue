@@ -73,7 +73,7 @@ import { EditorState, Extension, Prec } from '@codemirror/state'
 import { autocompletion, CompletionSource, acceptCompletion } from '@codemirror/autocomplete'
 import { indentMore, indentLess } from '@codemirror/commands'
 import { useFlowStore } from '../../stores/flow-store'
-import { polarsCompletionVals } from '../../config/polarsCompletions'
+import { polarsCompletionVals, DEFAULT_POLARS_CODE } from '../../config/polarsCompletions'
 import type { PolarsCodeSettings, ColumnSchema } from '../../types'
 
 const props = defineProps<{
@@ -97,11 +97,7 @@ const snippets = {
   sort: "input_df.sort('column', descending=True)"
 }
 
-const defaultCode = `# Polars transformation
-# The input dataframe is available as 'input_df'
-# Return the transformed dataframe
-
-input_df`
+const defaultCode = DEFAULT_POLARS_CODE
 
 const polarsCode = ref(props.settings.polars_code_input?.polars_code || defaultCode)
 

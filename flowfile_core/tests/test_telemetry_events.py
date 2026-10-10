@@ -768,7 +768,12 @@ def test_the_export_confirmation_routes_are_jwt_gated_no_ops() -> None:
     from flowfile_core.auth.jwt import get_current_active_user, get_current_user
     from flowfile_core.auth.models import User as PydanticUser
 
-    paths = ("/editor/code_to_polars/exported", "/editor/code_to_flowframe/exported")
+    paths = (
+        "/editor/code_to_polars/exported",
+        "/editor/code_to_flowframe/exported",
+        "/notebook/exported/py",
+        "/notebook/exported/ipynb",
+    )
     saved = dict(main.app.dependency_overrides)
     try:
         main.app.dependency_overrides.clear()
@@ -797,6 +802,11 @@ def test_the_deliberate_export_confirmations_are_the_mapped_ones() -> None:
         "export_code_used",
         {"target": "flowframe"},
     )
+    assert glue.ROUTE_EVENTS[("POST", "/notebook/exported/py")] == ("export_code_used", {"target": "notebook_py"})
+    assert glue.ROUTE_EVENTS[("POST", "/notebook/exported/ipynb")] == (
+        "export_code_used",
+        {"target": "notebook_ipynb"},
+    )
 
 
 def test_documented_export_targets_are_exactly_the_ones_routes_emit() -> None:
@@ -818,6 +828,16 @@ def test_documented_export_targets_are_exactly_the_ones_routes_emit() -> None:
     documented = {token.strip().strip("`") for token in cell.split("·")}
     emitted = {props["target"] for _, props in glue.ROUTE_EVENTS.values() if props and "target" in props}
     assert documented == emitted
+
+
+def test_every_route_target_survives_the_client_allowlist() -> None:
+    """A route target missing from ``EXPORT_TARGETS`` is stripped before sending, leaving a targetless event."""
+    from shared import telemetry
+
+    emitted = {props["target"] for _, props in glue.ROUTE_EVENTS.values() if props and "target" in props}
+    assert emitted <= set(telemetry.EXPORT_TARGETS)
+    for target in emitted:
+        assert telemetry._sanitize_props("export_code_used", {"target": target}) == {"target": target}
 
 
 class TestErrorClassRecovery:

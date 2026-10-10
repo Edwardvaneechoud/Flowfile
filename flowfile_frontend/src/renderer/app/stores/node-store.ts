@@ -14,6 +14,7 @@ import type {
   OperationResponse,
 } from "../types";
 import { FlowApi, NodeApi, ExpressionsApi } from "../api";
+import { withExpectation } from "../api/settingsExpectation";
 import { useFlowStore } from "./flow-store";
 import { useResultsStore } from "./results-store";
 import { useEditorStore } from "./editor-store";
@@ -309,6 +310,7 @@ export const useNodeStore = defineStore("node", {
         const result = await NodeApi.setNodeDescription(flowStore.flowId, nodeId, description);
 
         if (result?.success) {
+          this.noteSettingsFingerprint(nodeId, result.settings_fingerprint);
           useEditorStore().bumpGraphVersion();
         } else {
           console.warn("Unexpected response:", result);
@@ -397,6 +399,7 @@ export const useNodeStore = defineStore("node", {
         const result = await NodeApi.setNodeReference(flowStore.flowId, nodeId, reference);
 
         if (result?.success) {
+          this.noteSettingsFingerprint(nodeId, result.settings_fingerprint);
           editorStore.bumpGraphVersion();
           const vf = flowStore.vueFlowInstance;
           if (vf) {
@@ -484,6 +487,7 @@ export const useNodeStore = defineStore("node", {
           node.data.nodeTemplate.item,
           inputData,
         );
+        this.noteSettingsFingerprint(inputData.node_id, response.settings_fingerprint);
         useEditorStore().bumpGraphVersion();
         flowStore.fetchSettingsValidation();
 
@@ -496,13 +500,21 @@ export const useNodeStore = defineStore("node", {
       }
     },
 
-    async updateUserDefinedSettings(inputData: any): Promise<OperationResponse> {
+    async updateUserDefinedSettings(
+      inputData: any,
+      options?: { expectedFingerprint?: string },
+    ): Promise<OperationResponse> {
       const flowStore = useFlowStore();
 
       try {
         const node = flowStore.vueFlowInstance?.findNode(String(inputData.value.node_id)) as Node;
         const nodeType = node.data.nodeTemplate.item;
-        const response = await NodeApi.updateUserDefinedSettings(nodeType, inputData.value);
+        const response = await NodeApi.updateUserDefinedSettings(
+          nodeType,
+          inputData.value,
+          options?.expectedFingerprint,
+        );
+        this.noteSettingsFingerprint(inputData.value.node_id, response.settings_fingerprint);
         useEditorStore().bumpGraphVersion();
         flowStore.fetchSettingsValidation();
 
@@ -517,12 +529,14 @@ export const useNodeStore = defineStore("node", {
 
     /**
      * Save a node's settings. With `batch`, the save and the batch's operations are one
-     * atomic step (e.g. a settings change plus the edges it invalidates).
+     * atomic step (e.g. a settings change plus the edges it invalidates). With
+     * `expectedFingerprint` core refuses the save (409) when the node's settings moved since.
      */
     async updateSettings(
       inputData: any,
       inputNodeType?: string,
       batch?: { label: string; operations: GraphOperation[] },
+      options?: { expectedFingerprint?: string },
     ): Promise<OperationResponse> {
       const flowStore = useFlowStore();
 
@@ -532,10 +546,19 @@ export const useNodeStore = defineStore("node", {
 
         const response = batch
           ? await FlowApi.applyOperations(Number(inputData.value.flow_id), batch.label, [
-              { op: "update_settings", node_type: nodeType, settings: inputData.value },
+              {
+                op: "update_settings",
+                node_type: nodeType,
+                settings: withExpectation(inputData.value, options?.expectedFingerprint),
+              },
               ...batch.operations,
             ])
-          : await NodeApi.updateSettingsDirectly(nodeType, inputData.value);
+          : await NodeApi.updateSettingsDirectly(
+              nodeType,
+              inputData.value,
+              options?.expectedFingerprint,
+            );
+        this.noteSettingsFingerprint(inputData.value.node_id, response.settings_fingerprint);
         useEditorStore().bumpGraphVersion();
         flowStore.fetchSettingsValidation();
 
@@ -546,6 +569,17 @@ export const useNodeStore = defineStore("node", {
         console.error("Error updating settings:", error.response?.data);
         throw error;
       }
+    },
+
+    /**
+     * A save of this node's settings landed: the cached node data now expects the fingerprint core
+     * handed back, so the drawer's next save in the same session is checked against that, not the
+     * one it loaded with. No fingerprint in the response (a batch over several nodes) drops the
+     * expectation: the next save is unconditional, as before.
+     */
+    noteSettingsFingerprint(nodeId: number | string, fingerprint: string | null | undefined): void {
+      if (!this.nodeData || Number(this.nodeData.node_id) !== Number(nodeId)) return;
+      this.nodeData.settings_fingerprint = fingerprint ?? null;
     },
 
     // ========== Expressions ==========

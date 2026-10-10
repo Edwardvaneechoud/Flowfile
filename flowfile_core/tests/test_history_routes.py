@@ -1106,3 +1106,205 @@ def test_concurrent_undo_redo_and_mutations_keep_history_consistent():
         assert api.redo().json()["success"] is True
     assert api.snapshot() == final
     assert api.history()["redo_count"] == history["redo_count"]
+
+
+class TestRevision:
+    """``history.revision`` is the counter other clients compare; every change moves it by one."""
+
+    def test_every_mutating_route_moves_the_revision_by_one(self, custom_node_type):
+        api = new_flow(9240)
+        seed_two_sources_and_filter(api)
+        revision = api.history()["revision"]
+        for response in (
+            api.layout({3: (1, 1)}, record_history=False),
+            api.description(3, "d"),
+            api.reference(3, "r"),
+            api.add_node(6, CUSTOM_NODE_TYPE),
+            api.custom_settings(6, "x"),
+            api.apply([{"op": "delete_node", "node_id": 6}]),
+        ):
+            assert response.status_code == 200, response.text
+            revision += 1
+            assert response.json()["history"]["revision"] == revision
+        assert api.history()["revision"] == revision
+
+    def test_undo_and_redo_move_the_revision_and_a_no_op_does_not(self):
+        api = new_flow(9241)
+        assert api.add_node(1, "filter").status_code == 200
+        revision = api.history()["revision"]
+        assert api.undo().json()["history"]["revision"] == revision + 1
+        assert api.redo().json()["history"]["revision"] == revision + 2
+        assert api.redo().json()["history"]["revision"] == revision + 2
+        assert api.undo().json()["history"]["revision"] == revision + 3
+
+
+class TestSettingsFingerprint:
+    """``NodeData.settings_fingerprint`` is the token a drawer save echoes; a moved one is a 409 that changes nothing."""
+
+    @staticmethod
+    def fingerprint(api: Api, node_id: int) -> str:
+        response = api.http.get("/node", params={"flow_id": api.flow_id, "node_id": node_id, "include_output": False})
+        assert response.status_code == 200, response.text
+        return response.json()["settings_fingerprint"]
+
+    @staticmethod
+    def stale_save(api: Api, fingerprint: str, value: str = "3"):
+        payload = {**_filter_payload(api.flow_id, 3, 1, value), "expected_settings_fingerprint": fingerprint}
+        return api.settings("filter", payload)
+
+    def test_a_save_with_the_current_fingerprint_succeeds_and_hands_back_the_next_one(self):
+        api = new_flow(9250)
+        seed_two_sources_and_filter(api)
+        before = self.fingerprint(api, 3)
+        assert before
+        response = self.stale_save(api, before, "2")
+        assert response.status_code == 200
+        after = response.json()["settings_fingerprint"]
+        assert after and after != before
+        assert self.fingerprint(api, 3) == after
+        # A second Apply in the same drawer session expects what the first save handed back.
+        assert self.stale_save(api, after, "4").status_code == 200
+        assert self.stale_save(api, after, "5").status_code == 409
+
+    def test_every_route_that_edits_a_nodes_settings_hands_back_its_fingerprint(self, custom_node_type):
+        api = new_flow(9257)
+        seed_two_sources_and_filter(api)
+        for edit in (
+            lambda: api.description(3, "described"),
+            lambda: api.reference(3, "named"),
+            lambda: api.apply(
+                [{"op": "update_settings", "node_type": "filter", "settings": _filter_payload(api.flow_id, 3, 1, "2")}]
+            ),
+        ):
+            response = edit()
+            assert response.status_code == 200, response.text
+            assert response.json()["settings_fingerprint"] == self.fingerprint(api, 3)
+        assert api.add_node(6, CUSTOM_NODE_TYPE).status_code == 200
+        custom = api.custom_settings(6, "x")
+        assert custom.status_code == 200
+        assert custom.json()["settings_fingerprint"] == self.fingerprint(api, 6)
+        # A batch that saves two nodes names neither.
+        two = api.apply(
+            [
+                {"op": "update_settings", "node_type": "filter", "settings": _filter_payload(api.flow_id, 3, 1, "3")},
+                {"op": "update_settings", "node_type": "manual_input", "settings": _manual_payload(api.flow_id, 1, [{"a": 9}])},
+            ]
+        )
+        assert two.status_code == 200, two.text
+        assert two.json()["settings_fingerprint"] is None
+
+    def test_a_stale_fingerprint_is_refused_and_changes_nothing(self):
+        api = new_flow(9251)
+        seed_two_sources_and_filter(api)
+        stale = self.fingerprint(api, 3)
+        other_tab = Api(api.flow_id, TestClient(main.app, headers={**client.headers, "X-Flowfile-Client": "tab-b"}))
+        assert other_tab.settings("filter", _filter_payload(api.flow_id, 3, 1, "2")).status_code == 200
+        live = self.fingerprint(api, 3)
+        snapshot, history = api.snapshot(), api.history()
+
+        response = self.stale_save(api, stale, "3")
+
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "NODE_SETTINGS_CHANGED"
+        assert detail["settings_fingerprint"] == live
+        assert api.snapshot() == snapshot
+        assert api.history() == history
+        assert api.flow.get_node(3).setting_input.filter_input.basic_filter.value == "2"
+
+    def test_a_save_without_an_expectation_never_checks(self):
+        api = new_flow(9252)
+        seed_two_sources_and_filter(api)
+        assert api.settings("filter", _filter_payload(api.flow_id, 3, 1, "2")).status_code == 200
+        assert api.settings("filter", _filter_payload(api.flow_id, 3, 1, "3")).status_code == 200
+
+    def test_layout_and_group_moves_keep_the_fingerprint(self):
+        api = new_flow(9253)
+        seed_two_sources_and_filter(api)
+        before = self.fingerprint(api, 3)
+        assert api.layout({3: (50, 50)}).status_code == 200
+        assert api.create_group([3]).status_code == 200
+        assert self.fingerprint(api, 3) == before
+        assert self.stale_save(api, before, "2").status_code == 200
+
+    def test_a_node_that_left_the_canvas_is_refused(self):
+        api = new_flow(9254)
+        seed_two_sources_and_filter(api)
+        stale = self.fingerprint(api, 3)
+        assert api.delete_node(3).status_code == 200
+        response = self.stale_save(api, stale, "2")
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "NODE_SETTINGS_CHANGED"
+        assert response.json()["detail"]["settings_fingerprint"] is None
+        assert api.flow.get_node(3) is None
+
+    def test_the_batch_form_checks_too(self):
+        api = new_flow(9255)
+        seed_two_sources_and_filter(api)
+        stale = self.fingerprint(api, 3)
+        assert api.settings("filter", _filter_payload(api.flow_id, 3, 1, "2")).status_code == 200
+        settings = {**_filter_payload(api.flow_id, 3, 1, "3"), "expected_settings_fingerprint": stale}
+        response = api.apply([{"op": "update_settings", "node_type": "filter", "settings": settings}])
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert (detail["code"], detail["operation"], detail["op"]) == ("NODE_SETTINGS_CHANGED", 0, "update_settings")
+        assert api.flow.get_node(3).setting_input.filter_input.basic_filter.value == "2"
+
+    def test_a_custom_node_save_checks_its_fingerprint(self, custom_node_type):
+        api = new_flow(9256)
+        assert api.add_node(6, CUSTOM_NODE_TYPE).status_code == 200
+        assert api.custom_settings(6, "x").status_code == 200
+        stale = self.fingerprint(api, 6)
+        assert api.custom_settings(6, "y").status_code == 200
+        payload = {
+            "flow_id": api.flow_id,
+            "node_id": 6,
+            "settings": {"main_section": {"standard_input": "z"}},
+            "expected_settings_fingerprint": stale,
+        }
+        response = api.http.post(
+            "/user_defined_components/update_user_defined_node", params={"node_type": CUSTOM_NODE_TYPE}, json=payload
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "NODE_SETTINGS_CHANGED"
+        assert api.flow.get_node(6).setting_input.settings["main_section"]["standard_input"] == "y"
+
+
+class TestNodeIdTaken:
+    """A placement on an id that is on the canvas is refused: it never replaces a node the client did not see."""
+
+    def test_placing_on_a_live_id_is_refused_and_changes_nothing(self):
+        api = new_flow(9260)
+        seed_two_sources_and_filter(api)
+        snapshot, history = api.snapshot(), api.history()
+        response = api.add_node(3, "sort")
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"] == {
+            "code": "NODE_ID_TAKEN",
+            "message": "Node 3 is already on the canvas.",
+            "node_id": 3,
+        }
+        assert api.snapshot() == snapshot
+        assert api.history() == history
+        assert api.flow.get_node(3).node_type == "filter"
+
+    def test_pasting_on_a_live_id_is_refused(self):
+        api = new_flow(9261)
+        seed_two_sources_and_filter(api)
+        snapshot = api.snapshot()
+        response = api.copy(1, 2, "manual_input")
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "NODE_ID_TAKEN"
+        assert api.snapshot() == snapshot
+
+    def test_a_batch_placement_on_a_live_id_is_refused_whole(self):
+        api = new_flow(9262)
+        seed_two_sources_and_filter(api)
+        snapshot = api.snapshot()
+        response = api.apply(
+            [{"op": "add_node", "node_id": 7, "node_type": "sort"}, {"op": "add_node", "node_id": 3, "node_type": "sort"}]
+        )
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert (detail["code"], detail["operation"], detail["op"]) == ("NODE_ID_TAKEN", 1, "add_node")
+        assert api.snapshot() == snapshot

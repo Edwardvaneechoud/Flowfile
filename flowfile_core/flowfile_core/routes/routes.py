@@ -13,7 +13,7 @@ import logging
 import os
 import re
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import aclosing, contextmanager
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from flowfile_core import events, flow_file_handler
+from flowfile_core import change_feed, events, flow_file_handler
 
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
@@ -300,6 +300,24 @@ async def get_active_flow_file_sessions(
     return _with_display_names(sessions)
 
 
+class RunStartedResponse(JSONResponse):
+    """The answer to a run request whose slot ``try_claim_run`` already holds.
+
+    Starlette runs a response's background task only once the body has gone out, so a failure while
+    sending (a middleware raising, the connection torn down mid-write) would drop the queued run and
+    leave ``is_running`` set until core restarts. Here the run goes ahead whatever became of the
+    answer: the slot is the run's to release, and the feed's ``run_started`` has already announced it.
+    """
+
+    async def __call__(self, scope, receive, send) -> None:
+        background, self.background = self.background, None
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            if background is not None:
+                await background()
+
+
 @router.post("/node/trigger_fetch_data", tags=["editor"])
 async def trigger_fetch_node_data(
     flow_id: int,
@@ -317,19 +335,21 @@ async def trigger_fetch_node_data(
     flow = get_flow_or_404(flow_id, current_user)
     lock = get_flow_run_lock(flow_id)
     async with lock:
-        if flow.flow_settings.is_running:
-            raise HTTPException(422, "Flow is already running")
         try:
             flow.validate_if_node_can_be_fetched(node_id)
         except Exception as e:
             raise HTTPException(422, str(e)) from e
+        # Claimed before the answer, like `_start_run`; the fetch releases the slot on every exit.
+        if not await asyncio.to_thread(flow.try_claim_run):
+            raise HTTPException(422, "Flow is already running")
         background_tasks.add_task(
             flow.trigger_fetch_node,
             node_id,
             performance_mode=performance_mode,
             reset_cache=not performance_mode,
+            claimed=True,
         )
-    return JSONResponse(
+    return RunStartedResponse(
         content={"message": "Data started", "flow_id": flow_id, "node_id": node_id}, status_code=status.HTTP_200_OK
     )
 
@@ -408,17 +428,8 @@ def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
     return reg_id, display_name, flow_path
 
 
-def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
-    """Wrapper that runs a flow (only ``node_ids`` when given) and persists the run record to the database.
-
-    Uses a two-phase pattern:
-    1. Create a run record BEFORE execution (makes run visible as "active")
-    2. Update the record AFTER execution with results
-
-    This runs in a BackgroundTask. If DB persistence fails, the run still
-    completed but won't appear in the run history. Failures are logged at
-    ERROR level so they're visible in logs.
-    """
+def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tuple:
+    """The pre-work of a tracked run: registration, the snapshot and the run record (phase 1)."""
     # Resolve source_registration_id before execution so kernel nodes
     # (e.g. publish_global) can reference the catalog registration.
     resolve_source_registration_id(flow)
@@ -465,9 +476,30 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
             logger.info(f"Flow '{flow_name}' run started: run_id={run_id}")
     except Exception as exc:
         logger.error(f"Failed to create run record for flow '{flow_name}': {exc}", exc_info=True)
+    return reg_id, flow_name, flow_path, run_id, snapshot_yaml
 
-    # A lineage run that writes nothing only looks at rows: change-feed cursors and Kafka offsets stay put.
-    run_info = flow.run_graph(node_ids=node_ids, commit_sources=node_ids is None or lineage_commits(flow, node_ids))
+
+def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
+    """Run a flow (only ``node_ids`` when given) and persist the run record to the database.
+
+    Uses a two-phase pattern:
+    1. Create a run record BEFORE execution (makes run visible as "active")
+    2. Update the record AFTER execution with results
+
+    This runs in a BackgroundTask on a run slot ``_start_run`` already claimed: the slot is released
+    here when the pre-work fails, by ``run_graph`` otherwise. If DB persistence fails, the run still
+    completed but won't appear in the run history. Failures are logged at ERROR level so they're
+    visible in logs.
+    """
+    try:
+        reg_id, flow_name, flow_path, run_id, snapshot_yaml = _open_run_record(flow, user_id, node_ids)
+        # A lineage run that writes nothing only looks at rows: change-feed cursors and Kafka offsets stay put.
+        commit_sources = node_ids is None or lineage_commits(flow, node_ids)
+    except BaseException:
+        flow.release_run()
+        raise
+
+    run_info = flow.run_graph(node_ids=node_ids, commit_sources=commit_sources, claimed=True)
     if run_info is None:
         logger.error(f"Flow '{flow_name}' returned no run_info - run tracking skipped")
         return
@@ -523,9 +555,15 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
 
 
 async def _start_run(flow, flow_id: int, user_id, background_tasks: BackgroundTasks, node_ids=None) -> None:
-    """Queue a tracked run under the flow's run lock; 422 when it is already running."""
+    """Claim the run under the flow's run lock and queue it; 422 when it is already running.
+
+    The claim lands before the response (``try_claim_run`` waits on the edit lock, hence the thread), so
+    a client that reads ``is_running`` or opens the log stream once this answers finds the run it asked
+    for, with the log file already rewritten for it. The queued task releases the slot on every exit,
+    and the route answers with a ``RunStartedResponse`` so the task runs even when the answer is lost.
+    """
     async with get_flow_run_lock(flow_id):
-        if flow.flow_settings.is_running:
+        if not await asyncio.to_thread(flow.try_claim_run):
             raise HTTPException(422, "Flow is already running")
         background_tasks.add_task(_run_and_track, flow, user_id, node_ids)
 
@@ -550,7 +588,7 @@ async def run_flow(
     )
     user_id = current_user.id if current_user else None
     await _start_run(flow, flow_id, user_id, background_tasks)
-    return JSONResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_200_OK)
+    return RunStartedResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_200_OK)
 
 
 @router.post("/flow/cancel/", tags=["editor"])
@@ -629,8 +667,7 @@ def copy_node(
     ) as txn:
         try:
             node_to_copy = flow_to_copy_from.get_node(node_id_to_copy_from)
-            if flow.get_node(node_promise.node_id) is not None:
-                flow.delete_node(node_promise.node_id)
+            require_node_id_free(flow, node_promise.node_id)
             if node_promise.node_type == "explore_data":
                 flow.add_initial_node_analysis(node_promise)
             else:
@@ -671,8 +708,7 @@ def add_node(
     flow = get_flow_or_404(flow_id, current_user)
     logger.info(f"Adding a promise for {node_type}")
     with edit_flow(flow, f"Add {node_type} node", HistoryActionType.ADD_NODE, node_id=node_id) as txn:
-        if flow.get_node(node_id) is not None:
-            flow.delete_node(node_id)
+        require_node_id_free(flow, node_id)
         node_promise = input_schema.NodePromise(
             flow_id=flow_id, node_id=node_id, cache_results=False, pos_x=pos_x, pos_y=pos_y, node_type=node_type
         )
@@ -887,6 +923,9 @@ def create_group(
     """Create a visual group around a set of nodes. Returns the new server-assigned group."""
     flow = get_flow_or_404(flow_id, current_user)
     with edit_flow(flow, f"Create group '{request.name}'", HistoryActionType.CREATE_GROUP) as txn:
+        if request.group_id is not None and request.group_id <= flow.group_id_ceiling:
+            message = f"Group id {request.group_id} is not above every id this flow has held."
+            raise HTTPException(409, {"code": GROUP_ID_TAKEN, "message": message, "group_id": request.group_id})
         group = flow.create_group(
             request.name,
             request.node_ids,
@@ -894,6 +933,7 @@ def create_group(
             bounds=_bounds_from_request(request),
             parent_group_id=request.parent_group_id,
             child_group_ids=request.child_group_ids,
+            group_id=request.group_id,
         )
     return GroupOperationResponse(success=True, history=txn.history, group=_group_to_schema(group))
 
@@ -1053,7 +1093,14 @@ def apply_operations(
     flow = get_flow_or_404(request.flow_id, current_user)
     with edit_flow(flow, request.label, HistoryActionType.BATCH) as txn:
         _run_operations(flow, request.flow_id, request.operations, current_user)
-    return OperationResponse(success=True, history=txn.history)
+    # A drawer's save-with-operations is one update_settings op: hand back that node's fingerprint.
+    saved_nodes = {
+        int(op.settings["node_id"])
+        for op in request.operations
+        if op.op == "update_settings" and op.settings and op.settings.get("node_id") is not None
+    }
+    fingerprint = settings_fingerprint_of(flow, saved_nodes.pop()) if len(saved_nodes) == 1 else None
+    return OperationResponse(success=True, history=txn.history, settings_fingerprint=fingerprint)
 
 
 def _run_operations(flow, flow_id: int, operations: list[schemas.EditorOperation], current_user) -> None:
@@ -1067,6 +1114,10 @@ def _run_operations(flow, flow_id: int, operations: list[schemas.EditorOperation
             try:
                 _apply_operation(flow_id, operation, current_user)
             except HTTPException as exc:
+                # A structured detail (the 409 codes) keeps its shape: the renderer dispatches on `code`.
+                if isinstance(exc.detail, dict):
+                    detail = {**exc.detail, "operation": index, "op": operation.op}
+                    raise HTTPException(exc.status_code, detail) from exc
                 raise HTTPException(exc.status_code, f"Operation {index} ({operation.op}): {exc.detail}") from exc
             except Exception as exc:
                 logger.exception(f"apply_operations: operation {index} ({operation.op}) failed")
@@ -1115,6 +1166,23 @@ def _apply_operation(flow_id: int, operation: schemas.EditorOperation, current_u
             update_user_defined_node(settings, operation.node_type, current_user=current_user)
         case "set_flow_parameters":
             get_flow_or_404(flow_id, current_user).flow_settings.parameters = list(operation.parameters)
+        case "create_group":
+            create_group(flow_id, operation.group, current_user)
+        case "update_group":
+            update_group(flow_id, operation.group_id, operation.group, current_user)
+        case "nest_group":
+            try:
+                get_flow_or_404(flow_id, current_user).nest_group(operation.group_id, operation.parent_group_id)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+        case "delete_group":
+            delete_group(flow_id, operation.group_id, current_user)
+        case "add_nodes_to_group":
+            membership = schemas.GroupMembershipRequest(node_ids=operation.node_ids)
+            add_nodes_to_group(flow_id, operation.group_id, membership, current_user)
+        case "remove_nodes_from_group":
+            membership = schemas.GroupMembershipRequest(node_ids=operation.node_ids)
+            remove_nodes_from_group(flow_id, membership, current_user)
 
 
 @router.post(
@@ -1183,7 +1251,9 @@ async def run_notebook_lineage(
         raise HTTPException(404, f"Node {request.node_id} not found")
     node_ids = {request.node_id, *flow._get_upstream_node_ids(request.node_id)}
     await _start_run(flow, request.flow_id, current_user.id, background_tasks, node_ids)
-    return JSONResponse(content={"message": "Data started", "flow_id": request.flow_id, "node_ids": sorted(node_ids)})
+    return RunStartedResponse(
+        content={"message": "Data started", "flow_id": request.flow_id, "node_ids": sorted(node_ids)}
+    )
 
 
 @router.get("/editor/expression_doc", tags=["editor"], response_model=list[output_model.ExpressionsOverview])
@@ -1537,6 +1607,52 @@ def get_history_status(flow_id: int, current_user=Depends(get_current_active_use
     return flow.get_history_state()
 
 
+@router.get("/editor/events", tags=["editor"])
+async def flow_events(flow_id: int, current_user=Depends(get_current_active_user)):
+    """Stream the flow's changes as server-sent events, for every client showing it.
+
+    The first frame is ``hello`` with the flow's current ``revision`` and ``is_running``, then one
+    frame per change (``graph``, ``run_started``, ``run_ended``, ``saved``, ``closed``), each echoing
+    the ``X-Flowfile-Client`` origin of the request that made it, so a client can skip its own.
+    Comment lines keep the connection alive while nothing happens; ``closed`` ends the stream, and
+    so does ``rekeyed`` (a Save As moved the flow to ``new_flow_id``: subscribe there).
+    """
+    from flowfile_core.ai.streaming import (
+        KEEPALIVE_INTERVAL_SECONDS,
+        SSEEvent,
+        format_sse_keepalive,
+        make_streaming_response,
+    )
+
+    flow = flow_file_handler.get_flow(flow_id, current_user.id if current_user else None)
+    if flow is None:
+        raise HTTPException(404, "Could not find the flow")
+
+    def frame(kind: str, payload: dict, revision: int | None) -> str:
+        event_id = None if revision is None else str(revision)
+        return SSEEvent(event=kind, data=json.dumps(payload), id=event_id).format()
+
+    async def generate():
+        # Subscribed before the revision is read: a change landing while hello is sent arrives as an event.
+        with change_feed.subscribe(flow_id) as subscriber:
+            revision = flow.revision
+            hello = {
+                "kind": "hello",
+                "flow_id": flow_id,
+                "revision": revision,
+                "is_running": flow.flow_settings.is_running,
+            }
+            yield frame("hello", hello, revision)
+            async with aclosing(subscriber.events(keepalive=KEEPALIVE_INTERVAL_SECONDS)) as feed:
+                async for event in feed:
+                    if event is None:
+                        yield format_sse_keepalive()
+                    else:
+                        yield frame(event.kind, event.payload(), event.revision)
+
+    return make_streaming_response(generate())
+
+
 @router.post("/editor/history_clear/", tags=["editor"])
 def clear_history(flow_id: int, current_user=Depends(get_current_active_user)):
     """Clear all history for a flow.
@@ -1661,6 +1777,7 @@ def add_generic_settings(
         OperationResponse with current history state.
     """
     input_data["user_id"] = current_user.id
+    expected_fingerprint = input_data.pop("expected_settings_fingerprint", None)
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get("flow_id"))
     node_id = int(input_data.get("node_id"))
@@ -1683,6 +1800,7 @@ def add_generic_settings(
     if parsed_input is None:
         raise HTTPException(404, "could not find the interface")
     with edit_flow(flow, f"Update {node_type} settings", HistoryActionType.UPDATE_SETTINGS, node_id=node_id) as txn:
+        require_settings_unchanged(flow, node_id, expected_fingerprint)
         keep_server_owned_layout(flow, parsed_input)
         if node_type == "catalog_writer":
             _validate_catalog_writer_target(parsed_input, current_user, flow)
@@ -1694,7 +1812,9 @@ def add_generic_settings(
             logger.error(e)
             raise HTTPException(419, str(f"error: {e}")) from e
 
-    return OperationResponse(success=True, history=txn.history)
+    return OperationResponse(
+        success=True, history=txn.history, settings_fingerprint=settings_fingerprint_of(flow, node_id)
+    )
 
 
 _SERVER_OWNED_LAYOUT_FIELDS = ("pos_x", "pos_y", "group_id")
@@ -1709,6 +1829,51 @@ def keep_server_owned_layout(flow, settings) -> None:
     for field in _SERVER_OWNED_LAYOUT_FIELDS:
         if hasattr(settings, field) and hasattr(live_settings, field):
             setattr(settings, field, getattr(live_settings, field))
+
+
+NODE_SETTINGS_CHANGED = "NODE_SETTINGS_CHANGED"
+NODE_ID_TAKEN = "NODE_ID_TAKEN"
+GROUP_ID_TAKEN = "GROUP_ID_TAKEN"
+
+
+def require_settings_unchanged(flow, node_id: int, expected_fingerprint: str | None) -> None:
+    """409 when the node's settings moved since the client read them; no check without an expectation.
+
+    Called under the edit lock before the save applies, so a stale drawer in another window never
+    overwrites a push or a save made there. The detail carries the live fingerprint.
+    """
+    if expected_fingerprint is None:
+        return
+    live = flow.get_node(node_id)
+    live_fingerprint = live.settings_fingerprint() if live is not None else None
+    if live is None or live_fingerprint != expected_fingerprint:
+        raise HTTPException(
+            409,
+            {
+                "code": NODE_SETTINGS_CHANGED,
+                "message": (
+                    "This node no longer exists on the canvas."
+                    if live is None
+                    else "These settings changed in another window since you opened them."
+                ),
+                "settings_fingerprint": live_fingerprint,
+            },
+        )
+
+
+def settings_fingerprint_of(flow, node_id: int) -> str | None:
+    """The node's settings fingerprint after a save, for the response: the drawer's next expectation."""
+    node = flow.get_node(node_id)
+    return node.settings_fingerprint() if node is not None else None
+
+
+def require_node_id_free(flow, node_id: int) -> None:
+    """409 when a node with this id is on the canvas: a placement never replaces a node it did not see."""
+    if flow.get_node(node_id) is not None:
+        raise HTTPException(
+            409,
+            {"code": NODE_ID_TAKEN, "message": f"Node {node_id} is already on the canvas.", "node_id": node_id},
+        )
 
 
 class RestApiSampleResponse(BaseModel):
@@ -1916,7 +2081,9 @@ def update_description_node(
         if node is None:
             raise HTTPException(404, "Could not find the node")
         node.setting_input.description = description
-    return OperationResponse(success=True, history=txn.history)
+    return OperationResponse(
+        success=True, history=txn.history, settings_fingerprint=settings_fingerprint_of(flow, node_id)
+    )
 
 
 @router.get("/node/description", response_model=output_model.NodeDescriptionResponse, tags=["editor"])
@@ -1956,7 +2123,9 @@ def update_reference_node(
             raise HTTPException(422, error)
         # Clearing falls back to the default df_<node_id> reference.
         node.setting_input.node_reference = reference or None
-    return OperationResponse(success=True, history=txn.history)
+    return OperationResponse(
+        success=True, history=txn.history, settings_fingerprint=settings_fingerprint_of(flow, node_id)
+    )
 
 
 def _reference_error(flow, node_id: int, reference: str) -> str | None:

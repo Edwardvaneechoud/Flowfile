@@ -7,6 +7,13 @@ import FlowResults from "../../features/designer/editor/results.vue";
 import AiAssistant from "../../features/ai/AiAssistant.vue";
 import DataPreview from "../../features/designer/dataPreview.vue";
 import type { DrawerDef } from "../../types/drawer.types";
+import {
+  bottomDockOpen,
+  dataTabVisible,
+  logsTabFocused,
+  logsTabVisible,
+  readBottomDockState,
+} from "./bottomDockState";
 
 export const drawers: DrawerDef[] = [
   {
@@ -70,8 +77,8 @@ export const drawers: DrawerDef[] = [
     // so the dock starts right next to Data actions.
     widthBehaviour: "scale",
     allowFullScreen: true,
-    // Opens for a data preview or logs; Data is a permanent home tab (placeholder).
-    visibleWhen: ({ drawer, editor }) => drawer.previewNodeId !== null || editor.isShowingLogViewer,
+    // Opens for a data preview or logs, unless that tab's panel is in its own window.
+    visibleWhen: (ctx) => bottomDockOpen(readBottomDockState(ctx)),
     onMinimize: ({ drawer, editor }) => {
       drawer.clearPreview();
       editor.hideLogViewerForThisRun = true;
@@ -82,7 +89,9 @@ export const drawers: DrawerDef[] = [
         id: "data",
         label: "Data",
         component: markRaw(DataPreview),
-        visibleWhen: () => true,
+        // The permanent home tab (placeholder), hidden while the flow's Data window hosts the preview.
+        visibleWhen: (ctx) => dataTabVisible(readBottomDockState(ctx)),
+        popout: { kind: "table", enabled: ({ flow }) => flow.flowId > 0 },
         props: ({ drawer }) => ({
           nodeId: drawer.previewNodeId,
           refreshToken: drawer.previewRefreshToken,
@@ -94,9 +103,10 @@ export const drawers: DrawerDef[] = [
         id: "logs",
         label: "Logs",
         component: markRaw(LogViewer),
-        // Always a tab; the run/results signal only pulls focus to it.
-        visibleWhen: ({ editor }) => editor.displayLogViewer,
-        focusWhen: ({ editor }) => editor.isShowingLogViewer,
+        // Always a tab unless popped out; the run/results signal only pulls focus to it.
+        visibleWhen: (ctx) => logsTabVisible(readBottomDockState(ctx)),
+        focusWhen: (ctx) => logsTabFocused(readBottomDockState(ctx)),
+        popout: { kind: "logs", enabled: ({ flow }) => flow.flowId > 0 },
       },
     ],
   },

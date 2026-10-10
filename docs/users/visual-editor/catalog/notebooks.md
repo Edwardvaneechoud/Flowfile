@@ -29,6 +29,10 @@ A result never disappears because you changed the code that made it — it stays
 
 **Reset session** in the **⋯** menu clears this notebook's variables on the kernel without stopping it: the kernel keeps running and other notebooks keep their own variables. The outputs and the execution counter are cleared with the variables, and a reset that fails says so rather than pretending to have worked. A response that arrives after a reset or a kernel switch is discarded instead of being written into the cell, so a slow run can never make an outdated output look current.
 
+## Exporting a notebook
+
+The toolbar's **⋯** menu also saves a notebook as a file: **Export as Python script…** writes a `.py` with a `# %%` marker ahead of every cell (Markdown cells become comments), **Export as Jupyter notebook…** writes an `.ipynb` with each cell's last output, and **Copy as Python script** puts the script on the clipboard. The export reflects the cells as they are in the panel, saved or not, and is named after the notebook.
+
 ## Talking to the catalog
 
 Cells see the catalog through the same `flowfile_ctx` API that Python Script nodes use. `display` and `explore` are bound as bare names, so they need no prefix:

@@ -48,8 +48,9 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `edwardvaneechoud/flowfile-kernel-base` | Python-script kernel (base) |
 | `edwardvaneechoud/flowfile-kernel-ml` | Python-script kernel with sklearn / xgboost / lightgbm / statsmodels |
 | `edwardvaneechoud/flowfile-kernel-lite` | Slimmed Python-script kernel for constrained hosts |
+| `edwardvaneechoud/flowfile-kernel-notebook` | The lite kernel with that release's `flowfile` installed; runs the canvas notebook |
 
-The application images (`flowfile-frontend`, `flowfile-core`, `flowfile-worker`) share the project version and are published once per release: each `v*` tag pushes `:<version>`, and stable releases also move `:latest` (prerelease tags with a `-` suffix, e.g. `-rc.1`, don't). The kernel images carry their own version so the kernel runtime can evolve independently of the rest of the application; they are published only when that version is new, and the tag core pulls by default is set in `flowfile_core/flowfile_core/kernel/images.py` (`_KERNEL_IMAGE_*_DEFAULT`).
+The application images (`flowfile-frontend`, `flowfile-core`, `flowfile-worker`) and the notebook kernel image share the project version and are published once per release: each `v*` tag pushes `:<version>`, and stable releases also move `:latest` (prerelease tags with a `-` suffix, e.g. `-rc.1`, don't). The other kernel images carry their own version so the kernel runtime can evolve independently of the rest of the application; they are published only when that version is new, and the tag core pulls by default is set in `flowfile_core/flowfile_core/kernel/images.py` (`_KERNEL_IMAGE_*_DEFAULT`).
 
 ## docker-compose.yml
 
@@ -245,9 +246,9 @@ For the full model — creating groups, the `use`/`manage` levels, how shared se
 
 ## Python Script (Kernel) Nodes
 
-Python-script nodes run inside short-lived kernel containers spawned by `flowfile-core` via the host Docker socket. To enable them, mount the Docker socket into `flowfile-core` (the bundled compose already does) and pull the kernel image you want.
+Python-script nodes run inside short-lived kernel containers spawned by `flowfile-core` via the host Docker socket. To enable them, mount the Docker socket into `flowfile-core` (the bundled compose already does). Creating or starting a kernel pulls its image when it is missing, so this step is optional; pull ahead of time on an air-gapped or slow host.
 
-### 1. Pull the kernel image
+### 1. Pull the kernel image (optional)
 
 Kernel images are versioned independently of the app; the default tag lives in `flowfile_core/flowfile_core/kernel/images.py`. Pull the matching tag:
 

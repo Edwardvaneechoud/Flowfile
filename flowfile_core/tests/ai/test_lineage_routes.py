@@ -1025,3 +1025,34 @@ def test_lazy_litellm_import_for_lineage_routes() -> None:
             ), "flowfile_core.ai.lineage_routes pulled litellm into sys.modules at import time"
     finally:
         sys.modules.update(saved)
+
+
+
+# ---------- on-device prompt ----------
+
+
+@pytest.mark.parametrize("provider", ["local", "anthropic"])
+def test_lineage_question_local_provider_takes_on_device_prompt(
+    authed_client: TestClient,
+    patch_get_configured_provider: FakeProvider,
+    registered_flow: FlowGraph,
+    provider: str,
+) -> None:
+    """``provider="local"`` renders the on-device assist suffix (no
+    agent-mode footer a small model would parrot, one-line node
+    reference); every other provider keeps the cloud prompt verbatim."""
+    response = authed_client.post(
+        "/ai/lineage_question",
+        json={"flow_id": _FLOW_ID, "provider": provider, "question": "Why is customer_id null?"},
+    )
+    assert response.status_code == 200
+    system = patch_get_configured_provider.last_call_kwargs["messages"][0].content
+    if provider == "local":
+        assert "agent mode" not in system.lower()
+        assert "Simple build" in system
+        assert "- Filter data (Transformations):" in system
+        assert "### filter" not in system
+    else:
+        assert "auto-switch to agent mode" in system
+        assert "### filter" in system
+        assert "Simple build" not in system

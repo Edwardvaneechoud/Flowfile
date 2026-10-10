@@ -61,6 +61,7 @@ from flowfile_core.catalog import (
 )
 from flowfile_core.catalog.access import AccessResolver
 from flowfile_core.catalog.validators import validate_cron_expression, validate_cron_timezone
+from flowfile_core.configs import logger
 from flowfile_core.database.connection import get_db
 from flowfile_core.database.models import RunType, SchedulerLock
 from flowfile_core.fileExplorer import validate_path_under_cwd
@@ -92,6 +93,8 @@ from flowfile_core.schemas.catalog_schema import (
     DashboardUpdate,
     DeltaTableHistory,
     FavoriteOut,
+    FlowCodeFormat,
+    FlowCodeOut,
     FlowInterfaceOut,
     FlowInterfacePort,
     FlowRegistrationCreate,
@@ -449,6 +452,55 @@ def get_flow_interface(
         parameters=interface.parameters,
         file_exists=registration.file_exists,
     )
+
+
+@router.get("/flows/{flow_id}/code", response_model=FlowCodeOut)
+@handle_catalog_exceptions()
+def get_flow_code(
+    flow_id: int,
+    format: FlowCodeFormat = Query("flowframe"),
+    current_user=Depends(get_current_active_user),
+    service: CatalogService = Depends(get_catalog_service),
+):
+    """The registered flow as text to copy: its file, its notebook cells as a script, or a code export.
+
+    Everything but ``yaml`` builds the graph for this call only (``ephemeral_flow_graph``: a fresh id,
+    released afterwards) and never enters the editor sessions. A missing file or a flow the exporter
+    cannot express is a soft result, like ``/interface``, so the catalog page can say why.
+    """
+    from flowfile_core.flowfile.code_generator import export_flow_to_flowframe, export_flow_to_polars
+    from flowfile_core.flowfile.manage.ephemeral_graph import ephemeral_flow_graph
+    from flowfile_core.flowfile.manage.io_flowfile import require_flow_in_storage
+    from flowfile_core.notebook.render import render
+
+    registration = service.get_flow(registration_id=flow_id, user_id=current_user.id)
+    if not registration.file_exists:
+        return FlowCodeOut(registration_id=flow_id, format=format, file_exists=False)
+    try:
+        path = require_flow_in_storage(Path(registration.flow_path))
+        if format == "yaml":
+            if path.suffix.lower() not in (".yaml", ".yml", ".json"):
+                raise ValueError("the flow is stored in the legacy binary format; save it from the designer first")
+            content = path.read_text(encoding="utf-8")
+        else:
+            with ephemeral_flow_graph(path, current_user.id) as graph:
+                if format == "notebook":
+                    content = notebook_script(render(graph).cells)
+                elif format == "polars":
+                    content = export_flow_to_polars(graph)
+                else:
+                    content = export_flow_to_flowframe(graph)
+    except Exception as exc:  # noqa: BLE001 - the page reports the reason, whatever it is
+        logger.warning("Code of registered flow %s could not be produced as %s: %s", flow_id, format, exc)
+        return FlowCodeOut(registration_id=flow_id, format=format, error=str(exc))
+    return FlowCodeOut(registration_id=flow_id, format=format, content=content)
+
+
+def notebook_script(cells) -> str:
+    """The notebook's cells as one script with a ``# %%`` marker per cell (the panel's "Export as Python
+    script" shape; the frontend's ``notebookExport.ts`` writes the same for python cells)."""
+    blocks = [f"# %%\n{cell.code.rstrip()}" for cell in cells if cell.code.strip()]
+    return "\n\n".join(blocks) + "\n" if blocks else ""
 
 
 @router.put("/flows/{flow_id}", response_model=FlowRegistrationOut)

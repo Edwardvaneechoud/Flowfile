@@ -4,7 +4,9 @@ node the kernel cannot compute come from the canvas as parquet on the kernel's s
 from __future__ import annotations
 
 import json
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -214,6 +216,71 @@ def test_a_new_pivot_below_a_deferred_canvas_node_computes_here_on_its_rows(code
     assert [body["node_id"] for body in kernel_sim.node_results] == [node_id]
 
 
+PENGUINS_CSV = b"species,bill_length_mm,bill_depth_mm,body_mass_g\nA,39.1,18.7,3750\nA,,,\nB,46.5,17.9,4800\n"
+
+
+class _CsvOverHttp(BaseHTTPRequestHandler):
+    """Serves ``PENGUINS_CSV`` with the range requests Polars' object store reads a URL with."""
+
+    def do_HEAD(self):  # noqa: N802
+        self._send(body=False)
+
+    def do_GET(self):  # noqa: N802
+        self._send(body=True)
+
+    def _send(self, body: bool) -> None:
+        data, requested = PENGUINS_CSV, self.headers.get("Range")
+        if requested:
+            start, _, end = requested.removeprefix("bytes=").partition("-")
+            first, last = int(start), min(int(end or len(PENGUINS_CSV) - 1), len(PENGUINS_CSV) - 1)
+            data = PENGUINS_CSV[first : last + 1]
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {first}-{last}/{len(PENGUINS_CSV)}")
+        else:
+            self.send_response(200)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Accept-Ranges", "bytes")
+        self.end_headers()
+        if body:
+            self.wfile.write(data)
+
+    def log_message(self, *args) -> None:
+        pass
+
+
+@pytest.fixture
+def penguins_url():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _CsvOverHttp)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/penguins.csv"
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.mark.parametrize(
+    "options, node_type", [("", "read"), (", null_values=['NA', '']", "polars_code")], ids=["read", "polars-code"]
+)
+def test_a_cell_builds_on_a_url_read_without_showing_it_first(
+    coded_flow, client, kernel_sim, penguins_url, options, node_type
+):
+    """The kernel reads a URL itself. An option the read node lacks builds it as Polars Code, which the session
+    computes here, so its seed predicts the file's columns: ``.columns`` and a formula built on it see them."""
+    cell = (
+        f"df = ff.read_csv({penguins_url!r}{options})\n"
+        "print(df.flow_graph.get_node(df.node_id).node_type, df.columns)\n"
+        "clean = df.drop_nulls(subset=['bill_length_mm', 'body_mass_g'])"
+        ".with_columns((ff.col('body_mass_g') / 1000).alias('body_mass_kg'))\n"
+        "print(clean.columns[-1], clean.collect().height)"
+    )
+    result = _execute(client, coded_flow, kernel_sim, cell)
+    assert result["success"], result.get("error")
+    assert result["stdout"].splitlines() == [
+        f"{node_type} ['species', 'bill_length_mm', 'bill_depth_mm', 'body_mass_g']",
+        "body_mass_kg 2",
+    ], result["stdout"]
+    assert not kernel_sim.node_results and not kernel_sim.node_runs
+
+
 def test_a_running_flow_is_refused_with_a_message(coded_flow, client, kernel_sim):
     node_id = _coded_id(coded_flow)
     coded_flow.flow_settings.is_running = True
@@ -324,6 +391,54 @@ def test_run_all_of_a_flow_on_a_file_the_kernel_cannot_see_shows_the_canvas_rows
         assert result["success"], (cell.code, result)
     name = cells[-1].code.split("=", 1)[0].strip()
     assert len(_rows(_execute(client, flow, kernel_sim, f"display({name})"))) == 2
+
+
+def test_run_all_of_a_designer_configured_catalog_writer_reads_below_it_from_the_canvas(
+    designer_writer_flow, client, kernel_sim
+):
+    """The writer's cell drops the namespace id the designer stored beside its name; it still stands for the
+    canvas writer, so the rows below it are the canvas's and core is never asked to run (and refuse) a writer."""
+    from flowfile_core.notebook.render import render
+
+    flow = designer_writer_flow
+    cells = [cell for cell in render(flow).cells if cell.kind in ("imports", "node")]
+    for cell in cells:
+        result = _execute(client, flow, kernel_sim, cell.code)
+        assert result["success"], (cell.code, result)
+    read = _execute(client, flow, kernel_sim, f"print({cells[-1].defines[-1]}.collect().shape)")
+
+    assert read["success"] and read["stdout"].strip() == "(3, 3)", read
+    writer = next(node.node_id for node in flow.nodes if node.node_type == "catalog_writer")
+    assert [body["node_id"] for body in kernel_sim.node_results] == [writer]
+    assert kernel_sim.node_runs == []
+
+
+def test_run_all_of_the_product_fuzzy_match_template_matches_on_the_renamed_keys(open_as, client, kernel_sim, tmp_path):
+    """The template's Fuzzy Match renames both keys in its selects; its cell renames before ``fuzzy_join``, which
+    builds in the kernel on the canvas rows of the two reads."""
+    import yaml
+
+    from flowfile_core.flowfile.manage.io_flowfile import open_flow
+    from flowfile_core.notebook.render import render
+    from flowfile_core.templates import get_template_flowfile_data
+    from tests.templates.conftest import TEMPLATE_DATA_DIR
+
+    path = tmp_path / "product_fuzzy_match.yaml"
+    path.write_text(yaml.dump(get_template_flowfile_data("product_fuzzy_match", TEMPLATE_DATA_DIR).model_dump()))
+    flow = open_as(open_flow(path))
+    assert all(result.success for result in flow.run_graph().node_step_result)
+    expected = flow.get_node(3).get_resulting_data().data_frame.collect()
+    assert flow.get_node(4).get_resulting_data().data_frame.collect().height > 0
+
+    cells = [cell for cell in render(flow).cells if cell.kind in ("imports", "node")]
+    for cell in cells:
+        result = _execute(client, flow, kernel_sim, cell.code)
+        assert result["success"], (cell.code, result)
+    joined = next(cell.defines[-1] for cell in cells if 3 in cell.node_ids)
+    read = _execute(client, flow, kernel_sim, f"frame = {joined}.collect()\nprint(frame.columns, frame.height)")
+
+    assert read["success"], read
+    assert read["stdout"].strip() == f"{expected.columns} {expected.height}" and expected.height > 0, read
 
 
 @pytest.fixture

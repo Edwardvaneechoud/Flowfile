@@ -382,21 +382,24 @@ class TransformHandlersMixin(ConverterMixinBase):
         output_str = "["
         for i, fuzzy_mapping in enumerate(fuzzy_mappings):
             output_str += (
-                f"{prefix}FuzzyMapping(left_col='{fuzzy_mapping.left_col}',"
-                f" right_col='{fuzzy_mapping.right_col}', "
+                f"{prefix}FuzzyMapping(left_col={fuzzy_mapping.left_col!r},"
+                f" right_col={fuzzy_mapping.right_col!r}, "
                 f"threshold_score={fuzzy_mapping.threshold_score}, "
-                f"fuzzy_type='{fuzzy_mapping.fuzzy_type}')"
+                f"fuzzy_type={fuzzy_mapping.fuzzy_type!r})"
             )
             if i < len(fuzzy_mappings) - 1:
                 output_str += ",\n"
         output_str += "]"
         return output_str
 
-    def _handle_fuzzy_match(
-        self, settings: input_schema.NodeFuzzyMatch, var_name: str, input_vars: dict[str, str]
-    ) -> None:
-        """Handle fuzzy match nodes."""
-        self.imports.add("from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs")
+    def _fuzzy_match_inputs(
+        self, settings: input_schema.NodeFuzzyMatch, input_vars: dict[str, str]
+    ) -> tuple[str, str, transform_schema.FuzzyMatchInputManager]:
+        """The left and right frames as the node matches them, and its input manager.
+
+        The node applies each side's select (drops, then renames) before it matches, and its ``join_mapping``
+        names the renamed keys, so each side gets the same select here.
+        """
         fuzzy_match_handler = transform_schema.FuzzyMatchInputManager(settings.join_input)
         left_df = input_vars.get("main", input_vars.get("main_0", "df_left"))
         right_df = input_vars.get("right", input_vars.get("main_1", "df_right"))
@@ -405,18 +408,48 @@ class TransformHandlersMixin(ConverterMixinBase):
             right_df = "df_right"
             self._add_code(f"{right_df} = {left_df}")
 
-        # Drop into node-local temps so a fanned-out upstream frame isn't rebound.
-        if fuzzy_match_handler.left_select.has_drop_cols():
-            left_drop_cols = [c.old_name for c in fuzzy_match_handler.left_select.non_jk_drop_columns]
-            fuzzy_left = f"_fuzzy_left_{settings.node_id}"
-            self._add_code(f"{fuzzy_left} = {left_df}.drop({left_drop_cols})")
-            left_df = fuzzy_left
-        if fuzzy_match_handler.right_select.has_drop_cols():
-            right_drop_cols = [c.old_name for c in fuzzy_match_handler.right_select.non_jk_drop_columns]
-            fuzzy_right = f"_fuzzy_right_{settings.node_id}"
-            self._add_code(f"{fuzzy_right} = {right_df}.drop({right_drop_cols})")
-            right_df = fuzzy_right
+        inputs = self.flow_graph.get_node(settings.node_id).node_inputs
+        left_columns = self._predicted_columns((inputs.main_inputs or [None])[0])
+        right_columns = self._predicted_columns(inputs.right_input)
+        node_id = settings.node_id
+        left_df = self._fuzzy_select(left_df, fuzzy_match_handler.left_select, left_columns, f"_fuzzy_left_{node_id}")
+        right_df = self._fuzzy_select(
+            right_df, fuzzy_match_handler.right_select, right_columns, f"_fuzzy_right_{node_id}"
+        )
+        return left_df, right_df, fuzzy_match_handler
 
+    @staticmethod
+    def _predicted_columns(node) -> set[str] | None:
+        """The column names ``node`` outputs; None without a node or when its schema can't be predicted."""
+        try:
+            schema = node.get_predicted_schema() if node is not None else None
+        except Exception:
+            return None
+        return {column.column_name for column in schema} if schema else None
+
+    def _fuzzy_select(
+        self, frame: str, select: transform_schema.JoinInputsManager, columns: set[str] | None, temp: str
+    ) -> str:
+        """``frame`` as the node selects it from one side before matching.
+
+        Like ``prepare_for_fuzzy_match``, an entry whose column is no longer in the input is ignored, and a
+        present column is kept only when it is available and kept or a join key; without a predicted
+        ``columns`` the stored flags decide.
+        """
+        if columns is None:
+            drops = [c.old_name for c in select.non_jk_drop_columns]
+        else:
+            select.join_inputs.renames = [c for c in select.renames if c.old_name in columns]
+            drops = [c.old_name for c in select.renames if not ((c.keep or c.join_key) and c.is_available)]
+        renames = {old: new for old, new in select.rename_table.items() if old != new}
+        return self._select_into_temp(frame, temp, drops, renames)
+
+    def _handle_fuzzy_match(
+        self, settings: input_schema.NodeFuzzyMatch, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle fuzzy match nodes."""
+        self.imports.add("from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs")
+        left_df, right_df, fuzzy_match_handler = self._fuzzy_match_inputs(settings, input_vars)
         fuzzy_join_mapping_settings = self._transform_fuzzy_mappings_to_string(fuzzy_match_handler.join_mapping)
         self._add_code(
             f"{var_name} = fuzzy_match_dfs(\n"

@@ -7,23 +7,26 @@ description: Read a flow as Python cells in the Code panel, edit them, and run a
 The canvas notebook shows the open flow as Python code, one cell per statement, in the **Notebook** mode of the Code panel. It uses the editor of a [catalog notebook](catalog/notebooks.md), with the same cells, shortcuts, undo, drag and completions. By default it has no kernel: running a cell writes your edits onto the canvas and runs the cell's node where the flow runs. In the desktop app you can also [run it on a kernel](#running-on-a-kernel), where cells run as real Python. This page covers what the cells contain, what **Run** does for each kind of cell, what a sync refuses, running on a kernel, and how the notebook behaves in each deployment.
 
 <details markdown="1" open>
-<summary>See it: notebook cells pushed to the canvas, and a canvas edit back in the notebook</summary>
+<summary>See it: a filter cell pushed to the canvas, and a Sort node added on the canvas back in the notebook</summary>
 
-<video autoplay loop muted playsinline controls preload="metadata" width="1280" height="676" style="width: 100%; height: auto;" aria-label="A flow opened in the canvas notebook: a cell that counts customers and premium customers per city and joins them is pushed and appears on the canvas as group-by, filter and join nodes; after a run, a Sort node added on the canvas shows up in the notebook as an ordered_17 = output.sort(...) cell">
-  <source src="../../assets/images/guides/notebooks/canvas-notebook-in-action.mp4" type="video/mp4">
+<video autoplay loop muted playsinline controls preload="metadata" width="1600" height="900" style="width: 100%; height: auto;" aria-label="A flow with one CSV reader opened in the canvas notebook. A cell big_orders = source_1.filter(ff.col('qty') > 5) is typed and pushed: a Filter node appears on the canvas and the cells re-render as one chained big_orders statement. A Sort node dropped on the canvas shows up as a placeholder cell, ordered_3 = ff.canvas_node(3), marked inputs not fully connected; once it is connected and set to sort by qty descending, the cell reads ordered_3 = big_orders.sort(['qty'], descending=[True])">
+  <source src="../../assets/images/guides/notebooks/notebook-round-trip.mp4" type="video/mp4">
 </video>
 
 </details>
 
 ## Opening it
 
-Open the [Code panel](tutorials/code-generator.md) (Ctrl/Cmd+G) and pick **Notebook**. The panel stays open while you click the canvas or switch flows; a double-click on an empty spot of the canvas closes it, and closing it keeps your edits. The notebook renders the flow:
+Open the [Code panel](tutorials/code-generator.md) (Ctrl/Cmd+G) and pick **Notebook**, or click **Modify in notebook** on a flow's page in the [Catalog](catalog/index.md#flow-detail-panel), which opens the flow with the notebook already showing. The panel stays open while you click the canvas or switch flows; a double-click on an empty spot of the canvas closes it, and closing it keeps your edits. The notebook renders the flow:
 
-- The leading cells hold the imports and the flow parameters, then one cell per statement in the order the flow runs; a cell holds every node its statement chains together.
+- The leading cells hold the imports, the flow parameters and the canvas's visual groups (`cleaning = ff.FlowGroup("Cleaning", color="blue")`, a nested group with `parent_group=`), then one cell per statement in the order the flow runs; a cell holds every node its statement chains together, and a node inside a group ends its call with `.add_to_group(cleaning)`.
 - Cells use the [Python API](../python-api/index.md) (`import flowfile as ff`): fluent `FlowFrame` calls for built-in transforms, and the [native node classes](../python-api/reference/native-nodes.md) (`ff.Gate`, `ff.RunFlow`, `ff.PythonScript`, custom nodes, parameters) for the rest.
 - A Python Script node written in its drawer is a `@ff.python_script` function [without a `return`](../python-api/reference/native-nodes.md#scripts-without-a-return): the body is the script as written, its cells separated by `# %%` markers, and the frames it reads go in the call below it (`python_script_2 = _script_2(df)`). A script that would not come back from that form unchanged, such as one holding a multi-line string, is an `ff.PythonScript(cells=[...])` call instead.
+- A Polars Code node holding a function is that function as written, followed by the call that wires it (`transformed_5 = df.polars_code(high_value)`); rename the function or its parameters and the node keeps your names. A node holding a snippet is a generated `_polars_code_<id>(input_df)` function whose body is the snippet with its result returned; edit the body and it stays a snippet, rename the function or a parameter and it becomes a function node.
 - A node's variable is its node reference when it has one, else a label derived from its type and id (`filtered_12`).
 - Dropping, connecting or saving a node on the canvas updates the cells within a couple of seconds; a cell you edited keeps your text. Moving a node changes nothing.
+
+![The canvas holds a CSV reader, a filter and a Sort by qty Descending node; the notebook beside it shows the reader and filter as one chained big_orders statement and the sort as its own cell, ordered_3 = big_orders.sort(["qty"], descending=[True])](../../assets/images/guides/notebooks/notebook-canvas-sort.png)
 
 The code is rendered on the server and needs no Python session, no kernel and no Docker, so every user can open it in every deployment.
 
@@ -54,6 +57,7 @@ This section describes the notebook with **No kernel** picked. Cell code never r
 | Cell | Example | What Run shows |
 |---|---|---|
 | Imports | `import flowfile as ff` | Nothing. |
+| Groups | `cleaning = ff.FlowGroup("Cleaning", color="blue")` | Nothing. |
 | Parameters | `min_quantity = ff.add_flow_parameter(flow, ff.Parameter("min_quantity", default=8, type="integer"))` | The flow's parameters, each with its name, type and default, read from the canvas after the sync. |
 | Node | `filtered_2 = source_1.filter(ff.col("quantity") >= min_quantity)` | Runs the cell's last node and everything it depends on, honouring [gates](nodes/combine.md), then shows up to 100 of its rows. A writer cell writes, and a [change-tracking](catalog/change-tracking.md) cursor or Kafka offsets then move with what it wrote. Any other node cell only shows rows and leaves them where they are. |
 | Plain value | `threshold = 8` | Nothing. |
@@ -82,13 +86,24 @@ These markers take the place of the catalog notebook's **Code changed — rerun*
 
 **Push** only syncs: it writes the cells onto the canvas and runs nothing.
 
+![After a push, the canvas shows a CSV reader connected to a filter node labelled [qty] > 5, and the notebook shows the two as one cell: big_orders = ff.scan_csv(...).filter(ff.col("qty") > 5)](../../assets/images/guides/notebooks/notebook-push-filter.png)
+
+<details markdown="1">
+<summary>See it: a longer example with a group-by, filter and join pushed from one cell</summary>
+
+<video loop muted playsinline controls preload="metadata" width="1280" height="676" style="width: 100%; height: auto;" aria-label="A flow opened in the canvas notebook: a cell that counts customers and premium customers per city and joins them is pushed and appears on the canvas as group-by, filter and join nodes; after a run, a Sort node added on the canvas shows up in the notebook as an ordered_17 = output.sort(...) cell">
+  <source src="../../assets/images/guides/notebooks/canvas-notebook-in-action.mp4" type="video/mp4">
+</video>
+
+</details>
+
 ## What a sync does
 
 **Run**, **Run all** and **Push** sync the same way. The server reads every cell top to bottom on a fresh copy of the flow, so a name a cell defines is available to the cells below it; no variable is kept from one sync to the next. A cell may only describe the flow, with the calls the notebook itself renders (`ff` readers, transforms and writers, the native node classes, parameters and plain values) and a few Polars frame methods it renders another way, such as `.limit(n)`, `.tail(n)` and `.write_ipc(path)`. Such a method places the node the [Python API](../python-api/index.md) builds for it, most often a Polars Code node, and the next render shows that node instead of your call. `ff.LazyFrame(data)` and `ff.DataFrame(data)` work the same way: they take Polars' constructor arguments (`schema=`, `orient=` and the like) and place a Manual Input node holding the data, which the next render writes as `ff.from_raw_data(...)`. The result is applied to the canvas as one step that **Undo** reverts.
 
 A sync runs no node and opens no connection. A source, or a node whose columns depend on its data (Polars code, pivot, custom nodes, a data cleansing that removes null columns), keeps the columns the canvas shows while its settings are unchanged; a new or edited one takes the columns its cell declares, the columns Polars works out from the call when `.tail(n)` or a similar Polars frame method, or `with_columns`, `select`, `filter` or `sort`, places a Polars Code node, the header of the local file it reads or a catalog table's registered columns, and otherwise the sync treats it as having no columns.
 
-A sync keeps the id, position, description and cached results of every node the edit does not touch, and a lowercase variable name assigned in a cell becomes that node's reference.
+A sync keeps the id, position, description and cached results of every node the edit does not touch, and a lowercase variable name assigned in a cell becomes that node's reference. Visual groups follow the cells too: a node whose cell changed lands in the group its `.add_to_group(...)` names (a new `ff.FlowGroup` in the groups cell becomes a new box, a renamed or recoloured one updates the box), a node whose cell did not change keeps its canvas group, and a box left empty is removed.
 
 ## What a sync refuses or asks about
 
@@ -106,7 +121,7 @@ A sync is refused, with the reason on the failing cell or in a message, when:
 
 ## Running on a kernel
 
-In the desktop app, and with `pip install flowfile` in the default mode, the notebook toolbar has a kernel picker. Pick a **notebook kernel**, a [kernel](kernels.md) with the `flowfile` package installed, and the cells run as real Python in a session on that kernel: loops, `print`, other imports and `display(...)` work, as in a script. When you have no such kernel, **Create notebook kernel…** in the picker opens the kernel form with `flowfile` of this app's version already in its packages. Pick **No kernel** to go back to running on the canvas.
+In the desktop app, and with `pip install flowfile` in the default mode, the notebook toolbar has a kernel picker. Pick a **notebook kernel**, a [kernel](kernels.md) on the **Notebook** image (the Lite image with this app's `flowfile` installed, published for every Flowfile version), and the cells run as real Python in a session on that kernel: loops, `print`, other imports and `display(...)` work, as in a script. When you have no such kernel, **Create notebook kernel** in the toolbar sets one up in one click: created, started and selected for this flow; nothing is installed on your machine. When the Notebook image is not here yet, the button reads **Download image and create notebook kernel** and downloads it first (several hundred MB, once per Flowfile version). **Customise…** in the picker opens the kernel form with the same settings filled in. A flow you never picked a kernel for selects a notebook kernel by itself as soon as one exists (a running one first). Pick **No kernel** to run on the canvas instead; that choice is remembered for the flow.
 
 | Action | With a kernel picked |
 |---|---|
@@ -132,14 +147,17 @@ In cells, write file paths as they are on your machine (`C:\Users\me\data\sales.
 Limits:
 
 - Only in the desktop app and in a default `pip install flowfile` (`FLOWFILE_MODE` unset or `electron`), for a local connection. Docker deployments keep the notebook without a kernel.
-- The kernel's `flowfile` must have the same version as the app; after an update, recreate the notebook kernel.
-- On Apple Silicon Macs (Linux arm64 containers), installing `flowfile` on the lite kernel currently fails, because `polars-grouper` publishes no aarch64 Linux wheel.
+- The kernel's `flowfile` must have the same version as the app. After an app update the picked kernel still runs the previous Notebook image, so the toolbar shows **Update notebook kernel**: it stops the kernel and starts it again, which downloads this app's image and drops what the kernel holds in memory.
 
 ## Kernels, Docker and deployments
 
 With **No kernel** picked the notebook starts no Python process and needs no [kernel](kernels.md) and no Docker. A Python Script node in the flow still runs on its kernel: its cell is an `ff.PythonScript` or `@ff.python_script` definition, and running that cell runs the node on its kernel, which needs Docker as it does on the canvas. Python that prints, displays or computes needs a kernel: this notebook [on a kernel](#running-on-a-kernel), a Python Script node or a [catalog notebook](catalog/notebooks.md).
 
 Viewing and editing the cells, and running them while the notebook matches the canvas, work for every user, for their own flows, in the desktop app, with `pip install flowfile` and in a Docker deployment. Syncing works for every user in the default `electron` mode: the desktop app, and `pip install flowfile` unless you set `FLOWFILE_MODE`. With any other `FLOWFILE_MODE` (`docker` in a Docker deployment, or `package`) syncing needs an admin account, because the catalog lookups a cell can reach do not check each user's access. Other users keep editable cells; **Run** and **Run all** when the notebook no longer matches the canvas, and **Push**, leave the edits in the notebook, and a banner says that syncing needs an admin. The notebook has no settings of its own.
+
+## Exporting the notebook
+
+The **⋯** menu in the toolbar saves the cells as a file, so the code can leave Flowfile. **Export as Python script…** writes a `.py` file in which every cell opens with a `# %%` marker (`# %% [markdown]` for a Markdown cell, whose text becomes comments): VS Code, Spyder and Jupytext read the markers as cell boundaries, and a plain `python` runs the file top to bottom, since the imports cell comes first. **Export as Jupyter notebook…** writes an `.ipynb` that Jupyter, VS Code and Colab open, carrying the last output of every cell that ran in the panel. **Copy as Python script** puts the same script on the clipboard. The desktop app asks where to save; the browser downloads the file. The file is named after the flow, and nothing is sent anywhere: the export is built from the cells as they are in the panel, edits included.
 
 ## What is not saved with the flow
 

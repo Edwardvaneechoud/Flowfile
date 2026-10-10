@@ -12,6 +12,11 @@ button. Works for ANY resolvable provider (local or cloud) via
     good for small local models).
   * ``"one_shot"`` — validate each node through the executor (schema
     prediction + dry-run); for bigger models.
+  * ``"code"`` — the model writes FlowFrame code; the notebook's exec-free
+    interpreter turns it into nodes (``local_model/code_build.py``). The
+    chat drawer's default. Stays JWT-only in every mode: the pre-scan refuses
+    every call that could reach a stored resource, so none of the grant-less
+    catalog lookups behind ``require_notebook_sync`` can happen here.
 
 Mounted under ``/ai`` from :mod:`flowfile_core.ai.routes`; the feature-flag
 gate + auth apply via the parent router.
@@ -28,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
 from flowfile_core.ai.byok import ProviderNotConfiguredError, get_configured_provider
-from flowfile_core.ai.local_model import manager, oneshot
+from flowfile_core.ai.local_model import code_build, manager, oneshot
 from flowfile_core.ai.providers import UnknownProviderError, is_resolvable_provider, resolvable_provider_names
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.database.connection import get_db
@@ -49,7 +54,7 @@ class GenerateFlowRequest(BaseModel):
     user_request: str = Field(min_length=1)
     provider: str = Field(min_length=1)
     model: str | None = None
-    mode: Literal["simple", "one_shot"] = "simple"
+    mode: Literal["simple", "one_shot", "code"] = "simple"
     max_tokens: int | None = Field(default=None, gt=0)
 
 
@@ -63,12 +68,18 @@ async def generate_flow_route(
 
     Returns ``{diff_id, op_count, created, warnings, rationale, diff_payload}``;
     the frontend's "Add to canvas" applies it via the existing diff-accept
-    route. Writer / sink nodes are never created — the user attaches the
+    route. When the model answered instead of building (the request was a
+    question), ``answer`` carries its reply and ``diff_id`` is ``None``.
+    In ``code`` mode ``code`` carries the accepted FlowFrame script.
+    Writer / sink nodes are never created — the user attaches the
     destination after inserting.
 
     Errors: 404 unknown provider · 409 provider not configured / local model
-    not installed · 422 flow not found / unparseable model output · 503 AI off
-    or local server failed to boot.
+    not installed · 422 flow not found (not open in the caller's session; the
+    code mode reads the whole flow) / unparseable model output (a string
+    detail), or in ``code`` mode a script that still fails after its repair
+    round (detail ``{message, line, kind: "code", code}``) · 503 AI off or
+    local server failed to boot.
     """
     if not is_resolvable_provider(body.provider):
         raise HTTPException(
@@ -103,6 +114,11 @@ async def generate_flow_route(
             max_tokens=body.max_tokens,
             mode=body.mode,
         )
+    except code_build.CodeBuildError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": exc.message, "line": exc.line, "kind": "code", "code": exc.code},
+        ) from exc
     except oneshot.OneShotError as exc:
         raise HTTPException(status_code=422, detail=f"Could not generate a flow: {exc}") from exc
     except manager.LocalModelNotInstalled as exc:

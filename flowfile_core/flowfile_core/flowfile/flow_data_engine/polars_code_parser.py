@@ -1,3 +1,5 @@
+import __future__
+
 import ast
 import base64
 import re
@@ -115,6 +117,83 @@ def remove_comments_and_docstrings(source: str) -> str:
         return "\n".join(line for line in result.splitlines() if line.strip())
     except Exception:
         return source
+
+
+def _lone_def(code: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """The one top-level def of ``code`` (after an optional module docstring), plain or not, else ``None``."""
+    try:
+        body = ast.parse(textwrap.dedent(code).strip()).body
+    except SyntaxError:
+        return None
+    if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0].value, "value", None), str):
+        body = body[1:]
+    if len(body) == 1 and isinstance(body[0], ast.FunctionDef | ast.AsyncFunctionDef):
+        return body[0]
+    return None
+
+
+def function_form(code: str) -> ast.FunctionDef | None:
+    """The ``def`` of function-form Polars Code, else ``None`` (snippet form, or code that does not parse).
+
+    Function form is code whose top level is exactly one undecorated ``def``, optionally after a module
+    docstring; the node calls it with its inputs, in connection order, and its ``return`` is the output.
+    """
+    entry = _lone_def(code)
+    if isinstance(entry, ast.FunctionDef) and not entry.decorator_list:
+        return entry
+    return None
+
+
+def unrunnable_def_error(code: str) -> str | None:
+    """Why a lone top-level def is not function form: it is async or decorated, which Polars Code cannot run."""
+    entry = _lone_def(code)
+    if entry is None or not (isinstance(entry, ast.AsyncFunctionDef) or entry.decorator_list):
+        return None
+    what = "async" if isinstance(entry, ast.AsyncFunctionDef) else "decorated"
+    return f"`{entry.name}` is {what}: Polars Code runs a plain `def` (no `async`, no decorator)"
+
+
+def function_form_error(entry: ast.FunctionDef, num_inputs: int) -> str | None:
+    """Why ``entry`` cannot run as the node's code with ``num_inputs`` frames, or ``None`` when it can."""
+    if not _returns_a_value(entry):
+        return f"`{entry.name}` returns nothing: end it with `return <frame>`, which is the node's output"
+    args = entry.args
+    keywords = [arg.arg for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True) if default is None]
+    if keywords:
+        names = ", ".join(f"`{name}`" for name in keywords)
+        return f"`{entry.name}` has keyword-only {names} without a default: the node passes its inputs by position"
+    positional = len(args.posonlyargs) + len(args.args)
+    required = positional - len(args.defaults)
+    if required <= num_inputs <= positional or (args.vararg and num_inputs >= required):
+        return None
+    if args.vararg:
+        takes = f"at least {_count(required, 'frame')}"
+    elif required == positional:
+        takes = _count(positional, "frame")
+    elif required == 0:
+        takes = f"up to {_count(positional, 'frame')}"
+    else:
+        takes = f"{required} to {_count(positional, 'frame')}"
+    return (
+        f"`{entry.name}` takes {takes} but the node has {_count(num_inputs, 'input')}: "
+        "give it one parameter per connected input"
+    )
+
+
+def _returns_a_value(entry: ast.FunctionDef) -> bool:
+    """Whether ``entry`` has a ``return <value>`` of its own (not one of a function nested in it)."""
+    stack: list[ast.AST] = list(entry.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Return) and node.value is not None:
+            return True
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda | ast.ClassDef):
+            stack.extend(ast.iter_child_nodes(node))
+    return False
+
+
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}" if number == 1 else f"{number or 'no'} {noun}s"
 
 
 class PolarsCodeParser:
@@ -282,6 +361,16 @@ class PolarsCodeParser:
         code = textwrap.dedent(code).strip()
         self._validate_code(code)
 
+        entry = function_form(code)
+        if entry is not None:
+            error = function_form_error(entry, num_inputs)
+            if error is not None:
+                raise ValueError(error)
+            return self._function_form_executable(code, entry.name)
+        error = unrunnable_def_error(code)
+        if error is not None:
+            raise ValueError(error)
+
         wrapped_code = self._wrap_in_function(code, num_inputs)
         try:
             local_namespace: dict[str, Any] = {}
@@ -292,6 +381,29 @@ class PolarsCodeParser:
             return transform_func
         except Exception as e:
             raise ValueError(f"Error executing code: {str(e)}") from e
+
+    def _function_form_executable(self, code: str, name: str) -> Callable:
+        """The ``def`` of function-form code, called with the node's inputs positionally as LazyFrames.
+
+        The code runs in its own copy of the sandbox globals (one namespace, so the shared globals
+        never see it) and its annotations are never evaluated, so they are documentation only.
+        """
+        namespace = dict(self.safe_globals)
+        try:
+            flags = __future__.annotations.compiler_flag
+            compiled = compile(code, "<polars_code>", "exec", flags=flags, dont_inherit=True)
+            exec(compiled, namespace)
+        except Exception as e:
+            raise ValueError(f"Error executing code: {str(e)}") from e
+        function = namespace[name]
+
+        def _call(*frames):
+            result = function(*(frame.lazy() for frame in frames))
+            if not isinstance(result, pl.LazyFrame | pl.DataFrame):
+                raise ValueError(f"`{name}` returned {type(result).__name__}, not a Polars LazyFrame or DataFrame")
+            return result
+
+        return _call
 
     def validate_code(self, code: str):
         """

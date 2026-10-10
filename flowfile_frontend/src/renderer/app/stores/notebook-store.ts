@@ -217,7 +217,7 @@ export interface FlowNotice {
 }
 
 /** What Run does for a flow cell: imports and plain cells show nothing, the others an output. */
-export type FlowCellKind = "imports" | "parameters" | "node" | "plain";
+export type FlowCellKind = "imports" | "parameters" | "groups" | "node" | "plain";
 
 /** Push reviews every plan; Run's automatic sync asks only before deleting canvas nodes. */
 export type FlowSyncTrigger = "push" | "run";
@@ -235,8 +235,6 @@ export type FlowSyncStatus =
 export interface FlowNotebookHooks {
   /** Flush pending canvas edits and save the settings drawer; false aborts the action. */
   prepare(): Promise<boolean>;
-  /** The designer's node id counter, so new nodes number above ids it handed out. */
-  clientMaxNodeId(): number;
   /** Ask before applying a push core held back for review (`applied: false`); it lists `warnings`. */
   confirm(held: NotebookPushResult, trigger: FlowSyncTrigger): Promise<boolean>;
   /** A push was applied (seed the node id counter, reload the canvas). */
@@ -249,7 +247,6 @@ export interface FlowNotebookHooks {
 
 const NO_HOOKS: FlowNotebookHooks = {
   prepare: async () => true,
-  clientMaxNodeId: () => 0,
   confirm: async () => false,
   pushed: () => undefined,
   runStarted: () => undefined,
@@ -279,7 +276,8 @@ export const SYNC_NEEDS_ADMIN =
 export const CANVAS_CHANGED =
   "The canvas changed since these cells were rendered, so they were refreshed; run again to sync your edits.";
 export const RERENDER_FAILED = "The notebook could not be re-rendered from the canvas.";
-export const PICK_KERNEL_HINT = "Pick a notebook kernel in the toolbar to run this cell as Python.";
+export const PICK_KERNEL_HINT =
+  "Pick or create a notebook kernel in the toolbar to run this cell as Python.";
 export const NOTHING_TO_PUSH = "Nothing to push: the canvas already matches these cells.";
 export const SESSION_NOT_RESEEDED =
   "Pushed to the canvas, but the kernel session still holds the old frames; use Reset session.";
@@ -297,17 +295,18 @@ function storedFlowKernels(): Record<string, string> {
   }
 }
 
-/** The kernel last picked for a flow's notebook, kept in this browser. */
-export function rememberedFlowKernel(flowId: number): string | null {
+/** The kernel last picked for a flow's notebook, kept in this browser: `null` is an explicit **No kernel**,
+ * `undefined` no pick yet (the panel then selects a notebook kernel when there is one). */
+export function rememberedFlowKernel(flowId: number): string | null | undefined {
   const id = storedFlowKernels()[String(flowId)];
-  return typeof id === "string" ? id : null;
+  if (typeof id !== "string") return undefined;
+  return id === "" ? null : id;
 }
 
 function rememberFlowKernel(flowId: number, kernelId: string | null): void {
   try {
     const kernels = storedFlowKernels();
-    if (kernelId) kernels[String(flowId)] = kernelId;
-    else delete kernels[String(flowId)];
+    kernels[String(flowId)] = kernelId ?? "";
     localStorage.setItem(FLOW_KERNELS_KEY, JSON.stringify(kernels));
   } catch {
     // Storage unavailable: the choice lasts for this page only.
@@ -400,11 +399,7 @@ function applyRendering(nb: OpenNotebook, rendering: NotebookRendering): void {
 }
 
 /** The push body: Python cells, the edited ones marked, and their live nodes as `[type, id]`. */
-export function flowPushBody(
-  nb: OpenNotebook,
-  nodeTypes: Map<number, string>,
-  clientMaxNodeId: number,
-): NotebookPushBody {
+export function flowPushBody(nb: OpenNotebook, nodeTypes: Map<number, string>): NotebookPushBody {
   const python = nb.cells.filter((c) => c.cellType === "python");
   const provenance: Record<string, [string, number][]> = {};
   for (const cell of python) {
@@ -417,7 +412,6 @@ export function flowPushBody(
     changed_cell_ids: python.filter((c) => isEdited(nb, c)).map((c) => c.id),
     provenance,
     code_fingerprint: nb.fingerprint ?? "",
-    client_max_node_id: Math.max(clientMaxNodeId, ...nodeTypes.keys()),
     ...(nb.kernelId ? { kernel_id: nb.kernelId } : {}),
   };
 }
@@ -426,10 +420,10 @@ export function flowPushBody(
 export const flowNeedsSync = (nb: OpenNotebook): boolean =>
   nb.dirty || nb.cells.some((c) => isEdited(nb, c));
 
-/** Rendered imports/parameters cells keep their kind; other cells are node cells while they build nodes. */
+/** Rendered imports/parameters/groups cells keep their kind; other cells are node cells while they build nodes. */
 export function flowCellKind(nb: OpenNotebook, cellId: string): FlowCellKind {
   const rendered = nb.kinds?.[cellId];
-  if (rendered === "imports" || rendered === "parameters") return rendered;
+  if (rendered === "imports" || rendered === "parameters" || rendered === "groups") return rendered;
   return nb.nodeIds?.[cellId]?.length ? "node" : "plain";
 }
 
@@ -664,6 +658,8 @@ interface NotebookState {
   hydrated: boolean;
   /** `GET /notebook/status`; `null` until loaded or when it failed. */
   flowStatus: { kernel_sessions: boolean } | null;
+  /** Off in a pop-out window: it neither restores the designer's catalog tabs nor writes over them. */
+  persistence: boolean;
 }
 
 let _persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -676,6 +672,7 @@ export const useNotebookStore = defineStore("notebook", {
     loading: false,
     hydrated: false,
     flowStatus: null,
+    persistence: true,
   }),
 
   getters: {
@@ -714,7 +711,14 @@ export const useNotebookStore = defineStore("notebook", {
       };
     },
 
+    /** A pop-out window turns persistence off before it opens its flow tab (see `persistence`). */
+    setPersistence(on: boolean) {
+      this.persistence = on;
+      if (!on) this.hydrated = true;
+    },
+
     _schedulePersist() {
+      if (!this.persistence) return;
       const snapshot = this._snapshot();
       if (_persistTimer) clearTimeout(_persistTimer);
       _persistTimer = setTimeout(() => persistNotebooks(snapshot), 400);
@@ -735,7 +739,7 @@ export const useNotebookStore = defineStore("notebook", {
     /** Restore open tabs from browser storage on first use; start one blank
      * notebook if there's nothing persisted. Idempotent. */
     ensureHydrated() {
-      if (this.hydrated) return;
+      if (this.hydrated || !this.persistence) return;
       this.hydrated = true;
       const persisted = loadPersistedNotebooks();
       if (persisted.openNotebooks.length) {
@@ -833,7 +837,7 @@ export const useNotebookStore = defineStore("notebook", {
           description: null,
           namespaceId: null,
           cells: [],
-          kernelId: this.kernelSessions ? rememberedFlowKernel(flowId) : null,
+          kernelId: this.kernelSessions ? (rememberedFlowKernel(flowId) ?? null) : null,
           dirty: false,
           saving: false,
           executionCount: 0,
@@ -1349,11 +1353,7 @@ export const useNotebookStore = defineStore("notebook", {
         // `prepare` may have saved the settings drawer, which moves the canvas fingerprint.
         await this.refreshFlowNotebook(flowId);
         const nodes = (await FlowApi.getFlowData(flowId)).node_inputs;
-        const body = flowPushBody(
-          nb,
-          new Map(nodes.map((n) => [n.id, n.item])),
-          hooks.clientMaxNodeId(),
-        );
+        const body = flowPushBody(nb, new Map(nodes.map((n) => [n.id, n.item])));
         cells = body.cells;
         let result = await NotebookApi.pushFlowNotebook({ ...body, trigger });
         if (!result.applied) {
@@ -1473,7 +1473,7 @@ export const useNotebookStore = defineStore("notebook", {
           }
           if (needsSync && (await this._syncFlow(nb, "run", hooks)) !== "synced") return false;
           const kind = flowCellKind(nb, cellId);
-          if (kind === "imports" || kind === "plain") {
+          if (kind === "imports" || kind === "groups" || kind === "plain") {
             cell.output = null;
             return true;
           }

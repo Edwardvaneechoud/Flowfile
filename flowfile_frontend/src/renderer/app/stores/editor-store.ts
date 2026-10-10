@@ -5,6 +5,8 @@ import { ref, shallowRef } from "vue";
 import type { Component } from "vue";
 import type { NodeTitleInfo } from "../types";
 import type { DrawerCloseOptions } from "../composables/settingsDrawerSession";
+import type { CodeMode } from "../views/DesignerView/CodeGenerator/codeMode";
+import type { PopoutKind } from "../../lib/popoutWindow";
 
 // One leave attempt at a time: a double-click must not save (or refuse) the same drawer three times.
 let leaveInFlight: Promise<boolean> | null = null;
@@ -35,6 +37,11 @@ export const useEditorStore = defineStore("editor", {
 
     // Code generator split pane beside the canvas (DesignerView)
     showCodeGenerator: false,
+    // A request to show the pane in one mode (the catalog's "Modify in notebook"); CodeGenerator
+    // applies it on mount or live and then consumes it. Not persisted: the pane keeps its own mode.
+    codePaneRequest: null as { mode: CodeMode; token: number } | null,
+    // Per kind, the flows whose panel moved to its own window: the designer never hosts a second.
+    poppedOut: { notebook: [], table: [], logs: [], ai: [] } as Record<PopoutKind, number[]>,
 
     // Edge label state
     showEdgeLabels: false,
@@ -245,6 +252,29 @@ export const useEditorStore = defineStore("editor", {
 
     setCodeGeneratorVisibility(visible: boolean) {
       this.showCodeGenerator = visible;
+    },
+
+    /** Show the code pane in `mode`, now if the designer is mounted, else when it next mounts. */
+    openCodePane(mode: CodeMode) {
+      this.showCodeGenerator = true;
+      this.codePaneRequest = { mode, token: (this.codePaneRequest?.token ?? 0) + 1 };
+    },
+
+    consumeCodePaneRequest() {
+      this.codePaneRequest = null;
+    },
+
+    // ========== Pop-out windows ==========
+    markPoppedOut(kind: PopoutKind, flowId: number) {
+      if (!this.poppedOut[kind].includes(flowId)) this.poppedOut[kind].push(flowId);
+    },
+
+    clearPoppedOut(kind: PopoutKind, flowId: number) {
+      this.poppedOut[kind] = this.poppedOut[kind].filter((id) => id !== flowId);
+    },
+
+    isPoppedOut(kind: PopoutKind, flowId: number): boolean {
+      return this.poppedOut[kind].includes(flowId);
     },
 
     // ========== Log Viewer ==========

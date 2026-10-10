@@ -556,10 +556,10 @@ NODE_LONG_DESCRIPTIONS: Final[dict[str, str]] = {
         "node when results are consumed by downstream cloud systems."
     ),
     "catalog_reader": (
-        "Read from a data catalog table (e.g. Iceberg, Delta) via a registered "
-        "catalog connection. Use to pull governed data without managing object "
-        "paths directly. Don't use 'cloud_storage_reader' when a catalog binding "
-        "exists — the catalog reader handles schema, partitioning, and time-travel "
+        "Read a table from Flowfile's own catalog (Delta tables under a namespace, "
+        "picked by schema and table name). Use to pull governed data without managing "
+        "object paths directly. Don't use 'cloud_storage_reader' when the data is a "
+        "catalog table — the catalog reader handles schema, partitioning, and time-travel "
         "on the user's behalf. Often the first step in a governed pipeline. "
         "If the table is SCD2-tracked, a History selector chooses active / all / "
         "active at a given time; the default is all records — add an explicit "
@@ -952,7 +952,10 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "write `output_df = input_df.with_columns(pl.col('amount').mean()."
         "over('region').alias('avg_30d'))`. Pitfall: the script is not "
         "Python in general — it's a Polars expression. Imperative loops "
-        "don't fit; use 'Python Script' for that."
+        "don't fit; use 'Python Script' for that. A new node starts as "
+        "`def transform(input_df: pl.LazyFrame) -> pl.LazyFrame: return input_df`: "
+        "code that is a single `def` is called with one parameter per input, in "
+        "connection order, and what it returns is the output."
     ),
     "sql_query": (
         "Settings panel: a SQL editor under a 'SQL Query' heading. "
@@ -1142,11 +1145,11 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "'Write data' writes to local disk."
     ),
     "catalog_reader": (
-        "Settings panel: a 'Catalog' dropdown (Iceberg / Delta), a "
-        "table picker (often namespaced), and an optional time-travel "
-        "version selector. Worked example: 'read the latest customers "
-        "snapshot from Iceberg' → drag 'Read from Catalog' from Input "
-        "Sources, pick the catalog, navigate to db.customers. Pitfall: "
+        "Settings panel: a 'Catalog / Schema' (namespace) dropdown, a "
+        "'Table' picker, and an optional 'Version' selector for time travel. "
+        "Worked example: 'read the latest customers snapshot from the catalog' "
+        "→ drag 'Read from Catalog' from Input Sources, pick the schema, "
+        "then the customers table. Pitfall: "
         "use this rather than 'Read from cloud provider' when the "
         "destination is a *catalog table* (managed metadata) instead "
         "of bare files — the catalog handles partitioning and schema "
@@ -1156,11 +1159,12 @@ NODE_USER_INSTRUCTIONS: Final[dict[str, str]] = {
         "expecting one row per key needs 'active' set explicitly."
     ),
     "catalog_writer": (
-        "Settings panel: a 'Catalog' dropdown, a target table, and a "
-        "mode (append / overwrite / merge). Worked example: 'persist "
-        "the cleaned customers to Iceberg' → drag 'Write to Catalog' "
-        "from Output Operations, pick the catalog, table=db.clean_customers, "
-        "mode=overwrite. Pitfall: 'merge' needs a key — define it via "
+        "Settings panel: a target table name, a namespace dropdown, and a "
+        "write mode (overwrite / error if exists / append / upsert / update / "
+        "delete / scd2). Worked example: 'persist the cleaned customers to the "
+        "catalog' → drag 'Write to Catalog' from Output Operations, pick the "
+        "namespace, table=clean_customers, mode=overwrite. Pitfall: 'merge' "
+        "needs a key — define it via "
         "the upstream schema; without a key, only append / overwrite "
         "are valid. SCD2 requires key columns too (the business key); "
         "the target table must be new or already SCD2 — Flowfile "

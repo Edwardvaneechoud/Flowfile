@@ -312,3 +312,56 @@ describe("executeDrawCloseFunctionOnce", () => {
     expect(store.drawCloseFunction).toBe(close);
   });
 });
+
+describe("openCodePane", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("shows the pane and records the requested mode with a fresh token", () => {
+    const store = useEditorStore();
+    store.openCodePane("notebook");
+    expect(store.showCodeGenerator).toBe(true);
+    expect(store.codePaneRequest).toEqual({ mode: "notebook", token: 1 });
+    store.openCodePane("polars");
+    expect(store.codePaneRequest).toEqual({ mode: "polars", token: 2 });
+  });
+
+  it("is consumed once the pane applied it, leaving the pane visible", () => {
+    const store = useEditorStore();
+    store.openCodePane("notebook");
+    store.consumeCodePaneRequest();
+    expect(store.codePaneRequest).toBeNull();
+    expect(store.showCodeGenerator).toBe(true);
+  });
+});
+
+describe("pop-out window state", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("marks, answers and clears a popped-out flow once per kind", () => {
+    const store = useEditorStore();
+    expect(store.isPoppedOut("notebook", 4)).toBe(false);
+    store.markPoppedOut("notebook", 4);
+    store.markPoppedOut("notebook", 4);
+    expect(store.poppedOut.notebook).toEqual([4]);
+    expect(store.isPoppedOut("notebook", 4)).toBe(true);
+    expect(store.isPoppedOut("notebook", 5)).toBe(false);
+    store.clearPoppedOut("notebook", 4);
+    expect(store.poppedOut.notebook).toEqual([]);
+    store.clearPoppedOut("notebook", 4);
+    expect(store.isPoppedOut("notebook", 4)).toBe(false);
+  });
+
+  it("keeps the kinds apart", () => {
+    const store = useEditorStore();
+    store.markPoppedOut("table", 4);
+    expect(store.isPoppedOut("table", 4)).toBe(true);
+    expect(store.isPoppedOut("notebook", 4)).toBe(false);
+    expect(store.isPoppedOut("logs", 4)).toBe(false);
+    store.clearPoppedOut("notebook", 4);
+    expect(store.isPoppedOut("table", 4)).toBe(true);
+  });
+});

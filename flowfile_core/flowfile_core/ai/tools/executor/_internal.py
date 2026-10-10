@@ -15,9 +15,10 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 from pydantic import BaseModel, Field
 
 from flowfile_core.ai import audit, safety
+from flowfile_core.flowfile.util.layout.placement import FALLBACK, X_SPACING, Y_SPACING, Box, Placer
 
 if TYPE_CHECKING:
-    pass
+    from flowfile_core.flowfile.flow_graph import FlowGraph
 
 logger = logging.getLogger("flowfile_core.ai.tools.executor")
 
@@ -55,15 +56,11 @@ _POLARS_CODE_IMPORT_REFUSAL: Final[str] = (
 )
 
 
-#: Layout offsets used by :func:`_resolve_insertion_position` when
-#: ``InsertionContext.pos_x`` / ``pos_y`` are unset. Mirrors the canonical
-#: spacings of :func:`flowfile_core.flowfile.util.calculate_layout.calculate_layered_layout`
-#: (``x_spacing=250, y_spacing=100, initial_y=50``) so AI-staged nodes lay out
-#: with the same density the auto-layout helper would produce.
-_AUTO_LAYOUT_X_SPACING: Final[float] = 250.0
-_AUTO_LAYOUT_Y_SPACING: Final[float] = 100.0
-_AUTO_LAYOUT_FALLBACK_X: Final[float] = 50.0
-_AUTO_LAYOUT_FALLBACK_Y: Final[float] = 50.0
+#: The spacings of ``layout.placement`` (= ``calculate_layered_layout``'s defaults) under their old names.
+_AUTO_LAYOUT_X_SPACING: Final[float] = float(X_SPACING)
+_AUTO_LAYOUT_Y_SPACING: Final[float] = float(Y_SPACING)
+_AUTO_LAYOUT_FALLBACK_X: Final[float] = float(FALLBACK[0])
+_AUTO_LAYOUT_FALLBACK_Y: Final[float] = float(FALLBACK[1])
 
 
 class InsertionContext(BaseModel):
@@ -98,7 +95,9 @@ def _resolve_insertion_position(
     ``staged_offset_index * _AUTO_LAYOUT_Y_SPACING``. ``staged_offset_index``
     is the count of prior in-batch staged adds anchored at the same upstream;
     callers (planner / Cmd+K) thread it so fan-outs from one upstream stack
-    instead of overlapping.
+    instead of overlapping. The result is the free slot nearest that spot
+    (:meth:`Placer.free_slot` over the live nodes, the staged positions,
+    comments and collapsed groups), so a staged node never covers anything.
 
     ``extra_upstream_positions`` is a caller-supplied lookup
     ``{node_id: (pos_x, pos_y)}`` consulted before the live graph. The
@@ -118,43 +117,50 @@ def _resolve_insertion_position(
     (``NodeBase.pos_x`` / ``pos_y``). Live ``node_information`` mirrors the
     same value but only as ``int``.
     """
+    staged = {
+        uid: point for uid, cand in (extra_upstream_positions or {}).items() if (point := _as_point(cand)) is not None
+    }
     upstream_pos: tuple[float, float] | None = None
     for uid in reversed(upstream_node_ids):
         if uid is None:
             continue
-        if extra_upstream_positions and uid in extra_upstream_positions:
-            cand = extra_upstream_positions[uid]
-            if (
-                isinstance(cand, tuple)
-                and len(cand) == 2
-                and isinstance(cand[0], int | float)
-                and isinstance(cand[1], int | float)
-            ):
-                upstream_pos = (float(cand[0]), float(cand[1]))
-                break
+        if uid in staged:
+            upstream_pos = staged[uid]
+            break
         node = flow.get_node(uid)
-        if node is None:
-            continue
-        setting_input = getattr(node, "setting_input", None)
-        if setting_input is None:
-            continue
-        ux = getattr(setting_input, "pos_x", None)
-        uy = getattr(setting_input, "pos_y", None)
-        if isinstance(ux, int | float) and isinstance(uy, int | float):
-            upstream_pos = (float(ux), float(uy))
+        upstream_pos = _node_position(node) if node is not None else None
+        if upstream_pos is not None:
             break
 
     if upstream_pos is None:
-        return (
-            _AUTO_LAYOUT_FALLBACK_X,
-            _AUTO_LAYOUT_FALLBACK_Y + staged_offset_index * _AUTO_LAYOUT_Y_SPACING,
-        )
+        x, y = _AUTO_LAYOUT_FALLBACK_X, _AUTO_LAYOUT_FALLBACK_Y + staged_offset_index * _AUTO_LAYOUT_Y_SPACING
+    else:
+        x, y = upstream_pos[0] + _AUTO_LAYOUT_X_SPACING, upstream_pos[1] + staged_offset_index * _AUTO_LAYOUT_Y_SPACING
+    slot_x, slot_y = _canvas_placer(flow, staged).free_slot(x, y)
+    return float(slot_x), float(slot_y)
 
-    base_x, base_y = upstream_pos
-    return (
-        base_x + _AUTO_LAYOUT_X_SPACING,
-        base_y + staged_offset_index * _AUTO_LAYOUT_Y_SPACING,
-    )
+
+def _as_point(cand: Any) -> tuple[float, float] | None:
+    if isinstance(cand, tuple) and len(cand) == 2 and all(isinstance(v, int | float) for v in cand):
+        return float(cand[0]), float(cand[1])
+    return None
+
+
+def _node_position(node: Any) -> tuple[float, float] | None:
+    """``setting_input.pos_x`` / ``pos_y`` (the persistent canvas position), ``None`` unless both are numeric."""
+    setting_input = getattr(node, "setting_input", None)
+    return _as_point((getattr(setting_input, "pos_x", None), getattr(setting_input, "pos_y", None)))
+
+
+def _canvas_placer(flow: FlowGraph, staged: dict[int, tuple[float, float]]) -> Placer:
+    """The live nodes plus the batch's staged positions, with comments and collapsed groups as obstacles."""
+    positions = {node.node_id: point for node in flow.nodes if (point := _node_position(node)) is not None}
+    positions.update(staged)
+    groups = getattr(flow, "_groups", {}).values()
+    comments = getattr(flow, "_comments", {}).values()
+    obstacles = [Box(g.x_position, g.y_position, g.width, g.height) for g in groups if g.collapsed]
+    obstacles += [Box(c.x_position, c.y_position, c.width, c.height) for c in comments]
+    return Placer(positions, obstacles)
 
 
 class ToolExecutionResult(BaseModel):

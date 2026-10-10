@@ -627,10 +627,16 @@ class TestDerivedImageBuildDedup:
         mgr._kernels["ml"] = kernel
 
         built = threading.Event()
+        base_image = kernel_manager._resolve_image(kernel.image_flavour, None)
 
         def _images_get(tag):
-            if tag.startswith("flowfile-kernel-derived-") and not built.is_set():
-                raise docker.errors.ImageNotFound(tag)
+            if tag.startswith("flowfile-kernel-derived-"):
+                if not built.is_set():
+                    raise docker.errors.ImageNotFound(tag)
+                # A built derived image carries the base it was baked on; waiters must reuse it.
+                derived = MagicMock()
+                derived.labels = {kernel_manager._IMAGE_LABEL_BASE_IMAGE: base_image}
+                return derived
             return MagicMock()
 
         def _images_build(**kwargs):

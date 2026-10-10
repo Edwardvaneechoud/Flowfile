@@ -94,6 +94,8 @@ export interface HistoryState {
   redo_description: string | null;
   undo_count: number;
   redo_count: number;
+  // Core's monotonic change counter for the flow; the change feed reports moves of it.
+  revision?: number;
 }
 
 export interface UndoRedoResult {
@@ -107,6 +109,8 @@ export interface OperationResponse {
   success: boolean;
   message: string | null;
   history: HistoryState;
+  /** After a save of one node's settings: that node's fingerprint now, the next save's expectation. */
+  settings_fingerprint?: string | null;
 }
 
 // Local File Types
@@ -241,6 +245,8 @@ export interface CreateGroupRequest {
   height?: number | null;
   parent_group_id?: number | null;
   child_group_ids?: number[];
+  // a batch names the group it creates; must be above every id the flow has held
+  group_id?: number | null;
 }
 
 // mirrors schemas.UpdateGroupRequest

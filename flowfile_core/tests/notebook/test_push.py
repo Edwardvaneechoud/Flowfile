@@ -15,6 +15,7 @@ from flowfile_core import events
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.database.models import FlowRun
 from flowfile_core.flowfile.param_types import FlowParameter
+from flowfile_core.flowfile.util.layout.placement import node_box
 from flowfile_core.notebook import bridge
 from flowfile_core.notebook.push import needs_confirmation, refused_nodes
 from flowfile_core.notebook.reconcile import ReconcilePlan
@@ -243,6 +244,31 @@ def test_a_push_with_nothing_to_review_applies_in_one_call(runner, orders_flow, 
         [],
     )
     assert "20" in graph.get_node(filt.node_id).setting_input.filter_input.advanced_filter
+
+
+def test_a_node_pushed_into_the_middle_of_a_chain_lands_clear_of_every_node(runner, orders_flow, client_as):
+    client = client_as(OWNER_ID)
+    graph = orders_flow
+    assert client.post("/flow/apply_standard_layout/", params={"flow_id": graph.flow_id}).status_code == 200
+
+    def positions():
+        return {n.node_id: (n.setting_input.pos_x, n.setting_input.pos_y) for n in graph.nodes}
+
+    before = positions()
+    cell_id = _cell_of(graph, _node_of_type(graph, "filter").node_id)
+    step = '.filter(ff.col("amount") > 10)'
+
+    def insert_sort(cells):
+        assert step in cells[cell_id]
+        return {**cells, cell_id: cells[cell_id].replace(step, f'{step}\n    .sort("amount")')}
+
+    response = client.post("/editor/notebook/push/", json=_body(graph, insert_sort, changed=[cell_id]))
+    assert response.status_code == 200, response.text
+    sort = _node_of_type(graph, "sort")
+    after = positions()
+    assert {node_id: after[node_id] for node_id in before} == before
+    boxes = {node_id: node_box(x, y) for node_id, (x, y) in after.items()}
+    assert not any(boxes[sort.node_id].overlaps(box) for node_id, box in boxes.items() if node_id != sort.node_id)
 
 
 def test_a_run_reviews_only_deletions_and_a_push_anything_to_review():
@@ -515,6 +541,17 @@ def test_a_described_catalog_reader_renders_its_description_and_syncs_back_keepi
     assert graph.get_node(reader).setting_input.description == "sales data"
 
 
+def test_a_cosmetic_edit_of_a_designer_configured_catalog_writer_plans_nothing(runner, designer_writer_flow, client_as):
+    """The cell carries the namespace name only; the designer's id beside it is no change to send back."""
+    graph = designer_writer_flow
+    cell_id = _cell_of(graph, _node_of_type(graph, "catalog_writer").node_id)
+    body = _body(graph, lambda cells: {**cells, cell_id: "# reviewed\n" + cells[cell_id]}, changed=[cell_id])
+
+    plan = client_as(OWNER_ID).post("/notebook/plan", json=body)
+    assert plan.status_code == 200, plan.text
+    assert plan.json()["operations"] == []
+
+
 def test_user_2_cannot_push_plan_or_run_user_3s_flow(runner, open_as, client_as):
     graph = open_as(ff.from_dict({"a": [1, 2]}).filter(ff.col("a") > 1).flow_graph, user_id=3)
     fingerprint = code_fingerprint(graph)
@@ -638,3 +675,127 @@ def _missing_connection():
         "output_connection": {"node_id": 998, "connection_class": "output-0"},
         "input_connection": {"node_id": 999, "connection_class": "input-0"},
     }
+
+
+def test_a_push_numbers_new_nodes_above_every_id_the_canvas_has_held(runner, orders_flow, client_as):
+    """The canvas keeps the ceiling: a deleted id is not reused, and the client need not send its counter."""
+    client, graph = client_as(OWNER_ID), orders_flow
+    formula = _node_of_type(graph, "formula")
+    highest = max(n.node_id for n in graph.nodes)
+    assert formula.node_id == highest
+    assert client.post("/editor/delete_node/", params={"flow_id": graph.flow_id, "node_id": highest}).status_code == 200
+    filt = _node_of_type(graph, "filter")
+    cell_id = _cell_of(graph, filt.node_id)
+
+    def add_a_filter(cells):
+        code = cells[cell_id]
+        name = re.match(r"(\w+) = ", code).group(1)
+        return {**cells, cell_id: f"{code}\n{name}_more = {name}.filter(ff.col('amount') > 15)\n"}
+
+    body = {**_body(graph, add_a_filter, changed=[cell_id]), "client_max_node_id": 0}
+    response = client.post("/editor/notebook/push/", json=body)
+    assert response.status_code == 200, response.text
+    new_ids = {n.node_id for n in graph.nodes} - {filt.node_id, _node_of_type(graph, "manual_input").node_id}
+    assert new_ids and min(new_ids) > highest, new_ids
+    assert response.json()["max_node_id"] == max(new_ids)
+
+
+# visual groups: declared in the groups cell, joined with add_to_group, reconciled as one set_groups op
+
+
+@pytest.fixture
+def grouped_flow(open_as):
+    outer = ff.FlowGroup("Clean", color="blue")
+    inner = ff.FlowGroup("Inner", parent_group=outer)
+    orders = ff.from_dict({"id": [1, 2, 3], "amount": [10, 20, 30]})
+    kept = orders.filter(ff.col("amount") > 10).add_to_group(outer)
+    return open_as(kept.with_columns((ff.col("amount") * 2).alias("double")).add_to_group(inner).flow_graph)
+
+
+def _group_shape(graph):
+    by_id = {g.id: g for g in graph._groups.values()}
+    return {
+        g.name: (
+            g.color,
+            by_id[g.parent_group_id].name if g.parent_group_id else None,
+            sorted(graph._member_node_ids(g.id)),
+        )
+        for g in by_id.values()
+    }
+
+
+def test_an_unedited_grouped_flow_pushes_nothing(runner, grouped_flow, client_as):
+    client = client_as(OWNER_ID)
+    body = _body(grouped_flow)
+    assert "groups" in dict(body["cells"])
+    plan = client.post("/notebook/plan", json=body)
+    assert plan.status_code == 200 and plan.json()["operations"] == [], plan.text
+
+
+def test_push_creates_renames_and_regroups_from_the_cells_in_one_undo_step(runner, grouped_flow, client_as):
+    client, graph = client_as(OWNER_ID), grouped_flow
+    filt, formula = (_node_of_type(graph, t) for t in ("filter", "formula"))
+    before = _group_shape(graph)
+    assert before == {"Clean": ("blue", None, [filt.node_id]), "Inner": (None, "Clean", [formula.node_id])}
+    clean_id = next(g.id for g in graph._groups.values() if g.name == "Clean")
+    undo_before = client.get("/editor/history_status/", params={"flow_id": graph.flow_id}).json()["undo_count"]
+
+    def edit(cells):
+        node_cell = next(k for k in cells if k.startswith("cell-"))
+        cells["groups"] = (
+            cells["groups"].replace('"Clean", color="blue"', '"Cleaning", color="green"')
+            + '\nextra = ff.FlowGroup("Extra", parent_group=clean)'
+        )
+        cells[node_cell] = cells[node_cell].replace(".add_to_group(inner)", ".add_to_group(extra)")
+        return cells
+
+    body = _body(graph, edit, changed=["groups", _cell_of(graph, filt.node_id)])
+    plan = client.post("/notebook/plan", json=body)
+    assert plan.status_code == 200, plan.text
+    assert [op["op"] for op in plan.json()["operations"]] == ["update_group", "update_group"]
+    response = client.post("/editor/notebook/push/", json=body)
+    assert response.status_code == 200, response.text
+    assert _group_shape(graph) == {
+        "Cleaning": ("green", None, [filt.node_id]),
+        "Extra": (None, "Cleaning", [formula.node_id]),
+    }
+    assert next(g.id for g in graph._groups.values() if g.name == "Cleaning") == clean_id
+    assert response.json()["history"]["undo_count"] == undo_before + 1
+
+    assert client.post("/editor/undo/", params={"flow_id": graph.flow_id}).status_code == 200
+    assert _group_shape(graph) == before
+
+
+def test_a_new_node_in_an_edited_cell_joins_the_group_its_cell_names(runner, grouped_flow, client_as):
+    client, graph = client_as(OWNER_ID), grouped_flow
+    formula = _node_of_type(graph, "formula")
+    cell_id = _cell_of(graph, formula.node_id)
+
+    def edit(cells):
+        var = next(line.split(" = ")[0] for line in cells[cell_id].splitlines() if " = " in line)
+        cells[cell_id] += f'\nsorted_out = {var}.sort("amount").add_to_group(clean)'
+        return cells
+
+    body = _body(graph, edit, changed=[cell_id])
+    response = client.post("/editor/notebook/push/", json=body)
+    assert response.status_code == 200, response.text
+    new_node = _node_of_type(graph, "sort")
+    assert new_node.setting_input.node_reference == "sorted_out"
+    assert _group_shape(graph)["Clean"] == (
+        "blue",
+        None,
+        sorted([_node_of_type(graph, "filter").node_id, new_node.node_id]),
+    )
+
+
+def test_dropping_every_add_to_group_removes_the_groups(runner, grouped_flow, client_as):
+    client, graph = client_as(OWNER_ID), grouped_flow
+    node_cell = _cell_of(graph, _node_of_type(graph, "filter").node_id)
+
+    def edit(cells):
+        cells[node_cell] = cells[node_cell].replace(".add_to_group(clean)", "").replace(".add_to_group(inner)", "")
+        return cells
+
+    response = client.post("/editor/notebook/push/", json=_body(graph, edit, changed=[node_cell]))
+    assert response.status_code == 200, response.text
+    assert graph._groups == {} and all(n.setting_input.group_id is None for n in graph.nodes)

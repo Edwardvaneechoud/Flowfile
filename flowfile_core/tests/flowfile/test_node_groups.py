@@ -317,3 +317,66 @@ def test_restore_groups_resyncs_id_counter(temp_dir):
     assert reloaded._group_id_seq == 3  # counter resumes above the highest restored id
     regrouped = reloaded.create_group("D", [1])
     assert regrouped.id == 4
+
+
+
+# a batch names the group it creates (group_id above the ceiling) and nests groups with nest_group
+
+
+def _shape(graph):
+    return {
+        g.id: (g.name, g.color, g.parent_group_id, sorted(graph._member_node_ids(g.id))) for g in graph._groups.values()
+    }
+
+
+def test_create_group_takes_an_id_above_the_ceiling_and_never_a_held_one():
+    graph = build_two_node_graph()
+    first = graph.create_group("First", [1])
+    assert graph.group_id_ceiling == first.id == 1
+    named = graph.create_group("Named", [2], group_id=5)
+    assert named.id == 5 and graph.group_id_ceiling == 5
+    graph.delete_group(5)
+    assert graph.group_id_ceiling == 5  # a freed id is never reused
+    with pytest.raises(ValueError, match="not above every id"):
+        graph.create_group("Again", [2], group_id=5)
+    assert graph.create_group("Next", [2]).id == 6
+
+
+def test_nest_group_moves_a_group_under_a_parent_and_back_to_the_top():
+    graph = build_two_node_graph()
+    outer = graph.create_group("Outer", [1])
+    inner = graph.create_group("Inner", [2])
+    before = (outer.width, outer.height)
+
+    graph.nest_group(inner.id, outer.id)
+    assert _shape(graph) == {outer.id: ("Outer", None, None, [1]), inner.id: ("Inner", None, outer.id, [2])}
+    assert (outer.width, outer.height) != before  # the parent's box refits around its new child
+
+    graph.nest_group(inner.id, None)
+    assert graph._groups[inner.id].parent_group_id is None
+
+
+def test_nest_group_refuses_cycles_and_unknown_groups():
+    graph = build_two_node_graph()
+    outer = graph.create_group("Outer", [1])
+    inner = graph.create_group("Inner", [2], parent_group_id=outer.id)
+    with pytest.raises(ValueError, match="inside itself"):
+        graph.nest_group(outer.id, inner.id)
+    with pytest.raises(ValueError, match="inside itself"):
+        graph.nest_group(outer.id, outer.id)
+    with pytest.raises(ValueError, match="does not exist"):
+        graph.nest_group(inner.id, 99)
+    with pytest.raises(ValueError, match="does not exist"):
+        graph.nest_group(99, outer.id)
+    assert _shape(graph) == {outer.id: ("Outer", None, None, [1]), inner.id: ("Inner", None, outer.id, [2])}
+
+
+def test_nest_group_is_one_undo_step():
+    graph = build_two_node_graph()
+    outer = graph.create_group("Outer", [1])
+    inner = graph.create_group("Inner", [2])
+    before = graph.get_history_state().undo_count
+    graph.nest_group(inner.id, outer.id)
+    assert graph.get_history_state().undo_count == before + 1
+    assert graph.undo().success
+    assert graph._groups[inner.id].parent_group_id is None

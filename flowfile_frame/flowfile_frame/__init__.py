@@ -129,6 +129,7 @@ from flowfile_frame.flow_frame_methods import (  # noqa: F401
     scan_parquet,
     scan_parquet_from_cloud_storage,
 )
+from flowfile_frame.flow_group import FlowGroup  # noqa: F401
 from flowfile_frame.gate import Gate  # noqa: F401
 
 # File I/O

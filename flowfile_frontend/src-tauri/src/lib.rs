@@ -3,6 +3,7 @@ mod drag_paths;
 mod env;
 mod menu;
 mod oauth;
+mod popout;
 mod sidecar;
 mod state;
 mod webview2_drop;
@@ -35,7 +36,12 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build());
+        // Pop-out windows are per flow and kind: remembering each would pile up and override the built size.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_filter(|label| !popout::is_popout_label(label))
+                .build(),
+        );
 
     #[cfg(desktop)]
     {
@@ -52,8 +58,16 @@ pub fn run() {
             commands::app_refresh,
             commands::open_oauth,
             commands::read_drag_paths,
+            commands::open_popout_window,
+            commands::focus_popout_window,
+            commands::close_popout_window,
+            commands::list_popout_windows,
+            commands::return_popout_window,
+            commands::rekey_popout_window,
+            commands::popout_window_ready,
+            commands::post_to_popout_window,
         ])
-        .menu(|app_handle| menu::build(app_handle))
+        .menu(menu::build)
         .on_menu_event(|app, event| menu::on_menu_event(app, event.id().as_ref()))
         .setup(|app| {
             let handle = app.handle().clone();
@@ -134,6 +148,8 @@ pub fn run() {
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { .. } = event {
                     let app = window.app_handle().clone();
+                    // Pop-out windows go first: left open they would outlive the sidecars and keep the app alive.
+                    window::close_popout_windows(&app);
                     tauri::async_runtime::block_on(async move {
                         sidecar::shutdown::shutdown_all(&app).await;
                     });
@@ -160,31 +176,24 @@ pub fn run() {
         });
 }
 
-/// Create the main window programmatically so we can inject the discovered
-/// service ports into the page **before** any renderer script runs. This is
-/// what lets the renderer build its axios baseURL against the right ports
-/// when multiple Flowfile instances coexist.
-fn create_main_window(
-    app: &tauri::AppHandle,
+/// A window on the app's renderer with the discovered service ports injected into the page
+/// **before** any renderer script runs: the only place `window.__FLOWFILE_PORTS__` comes from,
+/// which lets the renderer build its axios baseURL against the right ports when multiple
+/// Flowfile instances coexist. `path` is the page relative to the renderer root, fragment
+/// included (`index.html`, `index.html#/notebook?flow=3`).
+pub(crate) fn build_app_window<'a>(
+    app: &'a tauri::AppHandle,
+    label: &str,
+    path: &str,
     ports: ServicePorts,
-) -> tauri::Result<tauri::WebviewWindow> {
-    // If a previous setup attempt already created it, just hand it back.
-    if let Some(existing) = app.get_webview_window("main") {
-        return Ok(existing);
-    }
-
+) -> WebviewWindowBuilder<'a, tauri::Wry, tauri::AppHandle> {
     let init_script = format!(
         "window.__FLOWFILE_PORTS__ = Object.freeze({{ core: {}, worker: {} }});",
         ports.core, ports.worker
     );
 
-    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-        .title("Flowfile")
-        .inner_size(1600.0, 1000.0)
-        .min_inner_size(1024.0, 700.0)
+    WebviewWindowBuilder::new(app, label, WebviewUrl::App(path.into()))
         .resizable(true)
-        .center()
-        .visible(false)
         // tauri-runtime-wry's native drag handler returns true unconditionally on every
         // platform, swallowing internal HTML5 drags too (VueFlow palette, AG Grid), so it
         // stays off. OS file drops then arrive as plain HTML5 drops in the renderer
@@ -197,5 +206,24 @@ fn create_main_window(
         // opt in so that click also reaches the page (no-op on other platforms).
         .accept_first_mouse(true)
         .initialization_script(&init_script)
+}
+
+/// Create the main window programmatically (not from `tauri.conf.json`), so the ports can be
+/// injected; see `build_app_window`.
+fn create_main_window(
+    app: &tauri::AppHandle,
+    ports: ServicePorts,
+) -> tauri::Result<tauri::WebviewWindow> {
+    // If a previous setup attempt already created it, just hand it back.
+    if let Some(existing) = app.get_webview_window("main") {
+        return Ok(existing);
+    }
+
+    build_app_window(app, "main", "index.html", ports)
+        .title("Flowfile")
+        .inner_size(1600.0, 1000.0)
+        .min_inner_size(1024.0, 700.0)
+        .center()
+        .visible(false)
         .build()
 }
