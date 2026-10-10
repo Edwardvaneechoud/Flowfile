@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "notebook-capability",
-  "description": "Capabilities granted to a flow's pop-out notebook window (label notebook-<flow id>): the notebook's clipboard and export, closing itself, nothing that exits or updates the app",
-  "windows": ["notebook-*"],
+  "identifier": "popout-capability",
+  "description": "Capabilities granted to a flow's pop-out windows (label popout-<kind>-<seq>: notebook, data, logs, AI assistant): clipboard and export, closing itself, the designer's selection channel, nothing that exits or updates the app",
+  "windows": ["popout-*"],
   "permissions": [
     "core:default",
     "core:event:default",

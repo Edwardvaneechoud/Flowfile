@@ -291,6 +291,24 @@ async def get_active_flow_file_sessions(
     return _with_display_names(sessions)
 
 
+class RunStartedResponse(JSONResponse):
+    """The answer to a run request whose slot ``try_claim_run`` already holds.
+
+    Starlette runs a response's background task only once the body has gone out, so a failure while
+    sending (a middleware raising, the connection torn down mid-write) would drop the queued run and
+    leave ``is_running`` set until core restarts. Here the run goes ahead whatever became of the
+    answer: the slot is the run's to release, and the feed's ``run_started`` has already announced it.
+    """
+
+    async def __call__(self, scope, receive, send) -> None:
+        background, self.background = self.background, None
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            if background is not None:
+                await background()
+
+
 @router.post("/node/trigger_fetch_data", tags=["editor"])
 async def trigger_fetch_node_data(
     flow_id: int,
@@ -307,19 +325,21 @@ async def trigger_fetch_node_data(
     flow = flow_file_handler.get_flow(flow_id)
     lock = get_flow_run_lock(flow_id)
     async with lock:
-        if flow.flow_settings.is_running:
-            raise HTTPException(422, "Flow is already running")
         try:
             flow.validate_if_node_can_be_fetched(node_id)
         except Exception as e:
             raise HTTPException(422, str(e)) from e
+        # Claimed before the answer, like `_start_run`; the fetch releases the slot on every exit.
+        if not await asyncio.to_thread(flow.try_claim_run):
+            raise HTTPException(422, "Flow is already running")
         background_tasks.add_task(
             flow.trigger_fetch_node,
             node_id,
             performance_mode=performance_mode,
             reset_cache=not performance_mode,
+            claimed=True,
         )
-    return JSONResponse(
+    return RunStartedResponse(
         content={"message": "Data started", "flow_id": flow_id, "node_id": node_id}, status_code=status.HTTP_200_OK
     )
 
@@ -398,17 +418,8 @@ def _resolve_run_identity(flow) -> tuple[int | None, str, str | None]:
     return reg_id, display_name, flow_path
 
 
-def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
-    """Wrapper that runs a flow (only ``node_ids`` when given) and persists the run record to the database.
-
-    Uses a two-phase pattern:
-    1. Create a run record BEFORE execution (makes run visible as "active")
-    2. Update the record AFTER execution with results
-
-    This runs in a BackgroundTask. If DB persistence fails, the run still
-    completed but won't appear in the run history. Failures are logged at
-    ERROR level so they're visible in logs.
-    """
+def _open_run_record(flow, user_id: int | None, node_ids: set[int] | None) -> tuple:
+    """The pre-work of a tracked run: registration, the snapshot and the run record (phase 1)."""
     # Resolve source_registration_id before execution so kernel nodes
     # (e.g. publish_global) can reference the catalog registration.
     resolve_source_registration_id(flow)
@@ -455,9 +466,30 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
             logger.info(f"Flow '{flow_name}' run started: run_id={run_id}")
     except Exception as exc:
         logger.error(f"Failed to create run record for flow '{flow_name}': {exc}", exc_info=True)
+    return reg_id, flow_name, flow_path, run_id, snapshot_yaml
 
-    # A lineage run that writes nothing only looks at rows: change-feed cursors and Kafka offsets stay put.
-    run_info = flow.run_graph(node_ids=node_ids, commit_sources=node_ids is None or lineage_commits(flow, node_ids))
+
+def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
+    """Run a flow (only ``node_ids`` when given) and persist the run record to the database.
+
+    Uses a two-phase pattern:
+    1. Create a run record BEFORE execution (makes run visible as "active")
+    2. Update the record AFTER execution with results
+
+    This runs in a BackgroundTask on a run slot ``_start_run`` already claimed: the slot is released
+    here when the pre-work fails, by ``run_graph`` otherwise. If DB persistence fails, the run still
+    completed but won't appear in the run history. Failures are logged at ERROR level so they're
+    visible in logs.
+    """
+    try:
+        reg_id, flow_name, flow_path, run_id, snapshot_yaml = _open_run_record(flow, user_id, node_ids)
+        # A lineage run that writes nothing only looks at rows: change-feed cursors and Kafka offsets stay put.
+        commit_sources = node_ids is None or lineage_commits(flow, node_ids)
+    except BaseException:
+        flow.release_run()
+        raise
+
+    run_info = flow.run_graph(node_ids=node_ids, commit_sources=commit_sources, claimed=True)
     if run_info is None:
         logger.error(f"Flow '{flow_name}' returned no run_info - run tracking skipped")
         return
@@ -513,9 +545,15 @@ def _run_and_track(flow, user_id: int | None, node_ids: set[int] | None = None):
 
 
 async def _start_run(flow, flow_id: int, user_id, background_tasks: BackgroundTasks, node_ids=None) -> None:
-    """Queue a tracked run under the flow's run lock; 422 when it is already running."""
+    """Claim the run under the flow's run lock and queue it; 422 when it is already running.
+
+    The claim lands before the response (``try_claim_run`` waits on the edit lock, hence the thread), so
+    a client that reads ``is_running`` or opens the log stream once this answers finds the run it asked
+    for, with the log file already rewritten for it. The queued task releases the slot on every exit,
+    and the route answers with a ``RunStartedResponse`` so the task runs even when the answer is lost.
+    """
     async with get_flow_run_lock(flow_id):
-        if flow.flow_settings.is_running:
+        if not await asyncio.to_thread(flow.try_claim_run):
             raise HTTPException(422, "Flow is already running")
         background_tasks.add_task(_run_and_track, flow, user_id, node_ids)
 
@@ -545,7 +583,7 @@ async def run_flow(
         )
     user_id = current_user.id if current_user else None
     await _start_run(flow, flow_id, user_id, background_tasks)
-    return JSONResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_200_OK)
+    return RunStartedResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_200_OK)
 
 
 @router.post("/flow/cancel/", tags=["editor"])
@@ -1157,7 +1195,9 @@ async def run_notebook_lineage(
         raise HTTPException(404, f"Node {request.node_id} not found")
     node_ids = {request.node_id, *flow._get_upstream_node_ids(request.node_id)}
     await _start_run(flow, request.flow_id, current_user.id, background_tasks, node_ids)
-    return JSONResponse(content={"message": "Data started", "flow_id": request.flow_id, "node_ids": sorted(node_ids)})
+    return RunStartedResponse(
+        content={"message": "Data started", "flow_id": request.flow_id, "node_ids": sorted(node_ids)}
+    )
 
 
 @router.get("/editor/expression_doc", tags=["editor"], response_model=list[output_model.ExpressionsOverview])

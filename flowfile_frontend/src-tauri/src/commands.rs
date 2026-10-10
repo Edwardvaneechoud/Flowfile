@@ -1,11 +1,12 @@
 use crate::oauth;
+use crate::popout::PopoutRef;
 use crate::state::{AppState, ServicePorts, ServicesStatus};
 use crate::window;
 use std::sync::Arc;
 use tauri::{AppHandle, State, WebviewWindow, Window};
 
 /// Commands are not gated by the capability files, so the ones that end or reshape the app check
-/// the calling window themselves: a pop-out notebook window must never quit or update the app.
+/// the calling window themselves: a pop-out window must never quit or update the app.
 fn require_main(window: &Window) -> Result<(), String> {
     if window.label() == "main" {
         Ok(())
@@ -69,56 +70,81 @@ pub fn read_drag_paths() -> Vec<String> {
 
 // Async on purpose: a sync command runs inside the WebView2 IPC callback on Windows, where
 // building a webview deadlocks (wry#583): the new window stays blank forever. From the async
-// runtime the build is dispatched to the event loop instead. The other window commands only
-// post messages, so they stay sync.
+// runtime the build is dispatched to the event loop instead. The same holds for closing one:
+// tauri's own window `close` command is async for it, so the commands that close a window are
+// async too, while the ones that only post messages stay sync.
 #[tauri::command]
-pub async fn open_notebook_window(
+pub async fn open_popout_window(
     app: AppHandle,
     window: Window,
+    kind: String,
+    flow_id: i64,
+    hash: String,
+    title: String,
+) -> Result<(), String> {
+    require_main(&window)?;
+    window::open_popout_window(&app, &kind, flow_id, &hash, &title)
+}
+
+#[tauri::command]
+pub fn focus_popout_window(
+    app: AppHandle,
+    window: Window,
+    kind: String,
     flow_id: i64,
 ) -> Result<(), String> {
     require_main(&window)?;
-    window::open_notebook_window(&app, flow_id)
-}
-
-#[tauri::command]
-pub fn focus_notebook_window(app: AppHandle, window: Window, flow_id: i64) -> Result<(), String> {
-    require_main(&window)?;
-    window::focus_notebook_window(&app, flow_id);
+    window::focus_popout_window(&app, &kind, flow_id);
     Ok(())
 }
 
 #[tauri::command]
-pub fn close_notebook_window(app: AppHandle, window: Window, flow_id: i64) -> Result<(), String> {
+pub async fn close_popout_window(
+    app: AppHandle,
+    window: Window,
+    kind: String,
+    flow_id: i64,
+) -> Result<(), String> {
     require_main(&window)?;
-    window::close_notebook_window(&app, flow_id);
-    Ok(())
-}
-
-/// Only the notebook window of that flow may hand itself back to the designer.
-fn require_notebook(window: &Window, flow_id: i64) -> Result<(), String> {
-    if window.label() == window::notebook_label(flow_id) {
-        Ok(())
-    } else {
-        Err(format!(
-            "window '{}' is not the notebook window of flow {flow_id}",
-            window.label()
-        ))
-    }
-}
-
-#[tauri::command]
-pub fn return_notebook_window(app: AppHandle, window: Window, flow_id: i64) -> Result<(), String> {
-    require_notebook(&window, flow_id)?;
-    window::return_notebook_window(&app, flow_id);
+    window::close_popout_window(&app, &kind, flow_id);
     Ok(())
 }
 
 #[tauri::command]
-pub fn list_notebook_windows(app: AppHandle, window: Window) -> Result<Vec<i64>, String> {
+pub fn list_popout_windows(app: AppHandle, window: Window) -> Result<Vec<PopoutRef>, String> {
     require_main(&window)?;
-    Ok(window::notebook_windows(&app)
-        .into_iter()
-        .map(|(id, _)| id)
-        .collect())
+    Ok(window::popout_windows(&app))
+}
+
+// A pop-out acts on itself: the registry entry of the calling window's label says what it hosts,
+// so the caller names no kind or flow, and a window without an entry (`main`) is refused there.
+// Async: it closes the calling window (see `open_popout_window`).
+#[tauri::command]
+pub async fn return_popout_window(app: AppHandle, window: Window) -> Result<(), String> {
+    window::return_popout_window(&app, window.label())
+}
+
+/// The calling pop-out followed its flow's Save As to `to`; the registry follows and `main` is told.
+#[tauri::command]
+pub fn rekey_popout_window(app: AppHandle, window: Window, to: i64) -> Result<(), String> {
+    window::rekey_popout_window(&app, window.label(), to)
+}
+
+/// The calling pop-out listens for the designer's messages now; `main` answers with the current state.
+#[tauri::command]
+pub fn popout_window_ready(app: AppHandle, window: Window) -> Result<(), String> {
+    window::popout_window_ready(&app, window.label())
+}
+
+/// The designer's message to a flow's pop-out window of one kind (a selection to follow).
+#[tauri::command]
+pub fn post_to_popout_window(
+    app: AppHandle,
+    window: Window,
+    kind: String,
+    flow_id: i64,
+    message: serde_json::Value,
+) -> Result<(), String> {
+    require_main(&window)?;
+    window::post_to_popout_window(&app, &kind, flow_id, message)
 }

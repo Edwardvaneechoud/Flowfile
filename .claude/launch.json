@@ -147,6 +147,12 @@
         "FLOWFILE_CORE_PORT=63596 npm run dev:web --prefix flowfile_frontend -- --port 8086"
       ],
       "port": 8086
+    },
+    {
+      "name": "core-ff",
+      "runtimeExecutable": "C:/Users/edwar/miniconda3/envs/ff/Scripts/flowfile_core.cmd",
+      "runtimeArgs": [],
+      "port": 63578
     }
   ]
 }
