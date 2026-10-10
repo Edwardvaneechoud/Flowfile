@@ -1,0 +1,2139 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A visual ETL tool combining drag-and-drop workflow building with Polars dataframes">
+      
+      
+      
+        <link rel="canonical" href="https://edwardvaneechoud.github.io/Flowfile/roadmap-details.html">
+      
+      
+        <link rel="prev" href="roadmap.html">
+      
+      
+        <link rel="next" href="community.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="assets/images/logo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Architecture & Technology - Flowfile</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
+    
+      <link rel="stylesheet" href="stylesheets/formula-reference.css">
+    
+    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#roadmap-background" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="index.html" title="Flowfile" class="md-header__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="assets/images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Flowfile
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Architecture & Technology
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="what-is-flowfile.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Get Started
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="users/visual-editor/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Visual Editor
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="users/connect/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Connect Your Data
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="users/visual-editor/catalog/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Catalog & Automation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="users/python-api/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Python API
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="ai/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  AI Assistant
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="users/deployment/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy & Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="for-developers/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  For Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="roadmap.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Roadmap
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="community.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Community
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="Flowfile" class="md-nav__button md-logo" aria-label="Flowfile" data-md-component="logo">
+      
+  <img src="assets/images/logo.png" alt="logo">
+
+    </a>
+    Flowfile
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/edwardvaneechoud/Flowfile" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    
+  
+  
+  
+    <a href="what-is-flowfile.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get Started
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="users/visual-editor/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visual Editor
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="users/connect/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Data
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="users/visual-editor/catalog/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog & Automation
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="users/python-api/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="ai/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Assistant
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="users/deployment/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy & Operate
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="for-developers/index.html" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For Developers
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Roadmap
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="roadmap.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Priorities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture & Technology
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="roadmap-details.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture & Technology
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#design-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#longer-term-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Longer-term direction
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Longer-term direction">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-target-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The target architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation notes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation notes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#canvas-python-and-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Canvas, Python and export
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#everyday-reliability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Everyday reliability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#remote-workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Remote workers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#open-formats-and-catalogs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open formats and catalogs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shared-catalogs-and-team-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared catalogs and team deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reference-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ai-planner-reliability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AI planner reliability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#later-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Later options
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#technology-choices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Technology choices
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="community.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#design-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#longer-term-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Longer-term direction
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Longer-term direction">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-target-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The target architecture
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation notes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Implementation notes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#canvas-python-and-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Canvas, Python and export
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#everyday-reliability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Everyday reliability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#remote-workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Remote workers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#open-formats-and-catalogs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open formats and catalogs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shared-catalogs-and-team-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared catalogs and team deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reference-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ai-planner-reliability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AI planner reliability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#later-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Later options
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#technology-choices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Technology choices
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="roadmap-background">Roadmap background</h1>
+<p>This page holds the architecture, implementation notes and technology
+choices behind the <a href="roadmap.html">roadmap</a>. The roadmap is the place to check
+priorities, status and the scope of 1.0. The options here may change as the
+work develops.</p>
+<h2 id="design-context">Design context</h2>
+<p>Visual tools like Alteryx, KNIME and Power Query start with a canvas and let
+you add scripts where needed. Tools like dbt, Airflow and Dagster start with
+code and show you a graph of what you wrote. Both approaches work.</p>
+<p>In Flowfile, the canvas and Python API edit <strong>the same graph</strong>. An analyst
+can build a flow visually, and an engineer can open it in Python and carry
+on from there, with the same node IDs.</p>
+<p><img alt="The visual designer and Python API edit the same flow graph. The graph exports to a Polars script that runs without Flowfile." src="assets/images/roadmap/one-graph-three-renderings.svg" /></p>
+<p>It works the other way too: a flow written in Python opens as editable nodes
+on the canvas. Both export to a Polars script that runs without Flowfile
+installed.</p>
+<p>This is roughly where we place Flowfile alongside other tools:</p>
+<p><img alt="A two-by-two chart comparing tools: Alteryx, KNIME and Power Query favour the canvas; dbt, Airflow, Dagster, Databricks and Polars favour code; Excel and one-off scripts sit bottom-left. Enso and Flowfile sit top-right, with both canvas and code as primary ways to work." src="assets/images/roadmap/where-flowfile-sits.svg" /></p>
+<p><em>This is our view of each tool's priorities. Product names belong to their
+respective owners, and Flowfile isn't affiliated with them.</em></p>
+<p>Enso is the closest neighbour. It also treats the diagram and code as one
+thing, using its own language. Flowfile uses Python and Polars, which many
+data teams already work with.</p>
+<p>The Alteryx importer reports what it couldn't reproduce for each tool.
+The canvas notebook shows the open flow as Python cells and writes edits
+back to it. On every commit, tests compare exported code with the canvas
+result. The same requirement applies to new features: they need to work on
+the canvas, in the Python API and in the export.</p>
+<h2 id="longer-term-direction">Longer-term direction</h2>
+<p>As the deployment options grow, these are the four things we want to support:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Requirement</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>Your compute</strong></td>
+<td>Data is processed on machines you choose and control.</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>Open formats</strong></td>
+<td>Other engines can read your tables without Flowfile.</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>Your catalog</strong></td>
+<td>You run the catalog. It passes credentials to the compute, so the flow doesn't need to hold them.</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>Keep your work</strong></td>
+<td>If you stop using Flowfile, your pipeline still runs.</td>
+</tr>
+</tbody>
+</table>
+<p>The first target is work that fits on one good machine. Many analytics
+pipelines deal with gigabytes, and a single machine handles them fine. When
+you do need a cluster, you should be able to use one without rebuilding the
+flow.</p>
+<p>These requirements also matter to teams moving to European or on-premises
+infrastructure. Choosing a datacenter is part of data sovereignty; the tools
+you use every day need to support that choice too.</p>
+<h3 id="the-target-architecture">The target architecture</h3>
+<p>The idea is to let you choose the parts of the stack, and replace them when
+you need to.</p>
+<p><img alt="The planned stack: the visual designer, Python API, canvas notebook and AI planner share one flow graph, with Polars export and Alteryx import. Execution options include a laptop, your own worker, Polars Cloud and sandboxed kernels. Tables use Delta internally and Iceberg for exchange. Catalog options include Flowfile metadata, Lakekeeper and other Iceberg REST catalogs, backed by your choice of object store." src="assets/images/roadmap/target-architecture.svg" /></p>
+<p><strong>Legend:</strong> plain cards are shipped · <code>GAP</code> marks a known limitation in
+something shipped · dimmed cards are planned.</p>
+<p>The diagram marks two gaps. Code export still has coverage gaps, including
+Google Analytics and API response nodes. The worker has its
+own URL and authentication, but returns results as a path on its local
+disk. Core needs to read that file, so the two still need a shared
+filesystem. Both need fixing.</p>
+<h2 id="implementation-notes">Implementation notes</h2>
+<h3 id="canvas-python-and-export">Canvas, Python and export</h3>
+<p>You should be able to switch between the canvas and Python without fixing
+the flow by hand, and export it when you want to run it elsewhere.</p>
+<p>Round-trip tests and a regression ledger already cover a committed set of
+flows. SQL-query export is implemented too. The next step is to extend that
+coverage to the remaining export handlers and expressions that are stored
+as opaque blobs because the Python API can't turn them back into source.</p>
+<p>Completion means the agreed flow corpus keeps node types and settings
+through the canvas/Python round-trip, and exported code produces matching
+results without Flowfile installed. Track unsupported exports and opaque
+expressions explicitly, with a target of zero for the supported scope.
+Document how interactive-only nodes are handled rather than silently
+dropping meaningful work.</p>
+<h3 id="everyday-reliability">Everyday reliability</h3>
+<p>A working pipeline should survive closing the app and upgrading it. When a
+run fails, the user needs to be able to find the cause, fix it and continue.</p>
+<p>The first step is to agree on the supported versions and a representative
+set of everyday flows. Use those to check save/reopen, upgrades, export and
+recovery from failed runs. Include common failures such as missing inputs
+and invalid expressions. Record the compatibility policy and any required
+migration steps.</p>
+<p>The local quickstart should also be checked from a clean installation.
+These checks form the core 1.0 release criteria described in the roadmap;
+they don't require an external catalog or an organization identity provider.</p>
+<h3 id="remote-workers">Remote workers</h3>
+<p>Run a flow on your laptop, a VM in your own account or a managed Polars
+cluster without changing it. The worker is already a separate service with
+its own URL and authentication. The remaining dependency is its result
+file: core opens it to read the schema and preview.</p>
+<p>The first step is to return a limited sample, schema and row count over the
+network, behind a feature flag. Core should no longer need access to the
+worker's files. We'll verify this by running the end-to-end suite with core
+and worker on separate hosts and no shared filesystem.</p>
+<p>After that, we'll replace the scattered local-or-remote branches with one
+execution interface and support backends as entry-point plugins. That makes
+room for Polars Cloud, with no credentials in submitted plans, and kernels
+running on a remote Docker host.</p>
+<h3 id="open-formats-and-catalogs">Open formats and catalogs</h3>
+<p>Other engines should be able to read Flowfile's tables, and Flowfile should
+work with the catalogs you already use. Delta stays the internal format. It
+doesn't require a catalog, and our change data feed, merge, SCD2, row edits
+and time travel support already use it.</p>
+<p>The first step is reading Iceberg data. Catalog-backed writes follow, with
+Lakekeeper as the initial integration. Polaris, Unity, Glue and S3 Tables
+are candidates for later support through the Iceberg REST API.</p>
+<p>First comes an Iceberg reader that takes a metadata path. It will run in the
+worker so credentials stay out of the plan. The writer follows once the
+catalog connection is in place, since committing to Iceberg requires a
+catalog operation. Choosing a table format per catalog root comes after
+the reader and writer work.</p>
+<p>The first check is to read an Iceberg table stored in MinIO and written by
+another engine, using the node, Python API and exported code. Later, a Delta
+table written by Flowfile should appear in Lakekeeper and be readable by
+another engine, using credentials supplied by the catalog. That engine
+shouldn't need storage keys in its config.</p>
+<h3 id="shared-catalogs-and-team-deployment">Shared catalogs and team deployment</h3>
+<p>Separate Flowfile installs should be able to share a catalog, each with its
+own compute. We have the parts: PostgreSQL metadata, data in your bucket,
+and secrets that any instance with the master key can re-derive. We still
+need to prove they work together safely.</p>
+<p>We'll start with a test: two cores, one PostgreSQL catalog, one MinIO bucket
+and a worker for each core. Instance B must read what instance A wrote.
+Cloud-backed reads must never replay a plan containing another instance's
+credentials.</p>
+<p>Once that runs in CI, the next step is OIDC login in server mode, passing
+the user's identity to external catalogs. Then custom nodes, flow
+references and connections can move from per-instance files into the shared
+catalog.</p>
+<h3 id="reference-deployment">Reference deployment</h3>
+<p>One command should start the full stack on your own machines: PostgreSQL
+for metadata, MinIO for tables, Lakekeeper as the catalog, plus core, worker
+and kernels. This gives people a working setup to try the whole roadmap
+end to end.</p>
+<p>First comes a <code>sovereign</code> Docker Compose profile with PostgreSQL and MinIO.
+Lakekeeper joins once the catalog integration is ready. This deployment has
+its own acceptance checks, separate from the local 1.0 requirements.</p>
+<p>We'll check the setup with a documented walkthrough: install it, write a
+table, read that table from another engine, run a flow on a second worker,
+then export the flow and run it with Flowfile uninstalled. A new contributor
+should be able to do this on a clean machine in under an hour. Every step
+must also run in CI.</p>
+<h3 id="ai-planner-reliability">AI planner reliability</h3>
+<p>The aim is to spend less time correcting the planner and to catch
+regressions before release.</p>
+<p>The planner already shows changes as a diff for review. It pauses if you
+edit the canvas while it's working, and applies or rejects each set of
+changes in full. We still need a reliable measure of how often it gets the
+job right.</p>
+<p>We'll start with a held-out benchmark using recorded provider responses,
+measuring success rate and retries. We'll set the pass thresholds in
+advance, and the planner must meet them without a person correcting tool
+names. We'll also track refusals and use the benchmark to check fixes where
+the planner hands work to the executor.</p>
+<h3 id="later-options">Later options</h3>
+<p>Once remote execution works, a common execution interface can support
+backend plugins and a Polars Cloud experiment behind a feature flag. A
+stable backend depends on that experiment, including keeping credentials
+out of submitted plans.</p>
+<p>Other follow-ups include Lakekeeper in delegate mode, custom nodes and
+connections shared through the catalog, and kernels on a remote Docker
+host. A deployment checklist should map the four longer-term requirements
+to the relevant settings.</p>
+<h2 id="scope">Scope</h2>
+<p>Flowfile handles part of a data platform. For the rest, we'll integrate with
+existing tools.</p>
+<p><img alt="Flowfile builds the shared flow graph, canvas, Python API, code export, nodes, catalog metadata, execution interface, worker and importers. It integrates with compute clusters, external catalogs, identity providers, orchestrators, storage, model providers, warehouses and BI tools." src="assets/images/roadmap/we-build-we-support.svg" /></p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>What we do</th>
+<th>What we leave to other tools</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Compute at scale</strong></td>
+<td>Pluggable backends, your workers, and Polars Cloud as the reference scale-out backend</td>
+<td>Cluster management and distributed engines</td>
+</tr>
+<tr>
+<td><strong>Catalog servers</strong></td>
+<td>Connect to Iceberg REST catalogs and mirror our tables into them</td>
+<td>Building an Iceberg REST server</td>
+</tr>
+<tr>
+<td><strong>Identity</strong></td>
+<td>OIDC login and token pass-through</td>
+<td>Providing an identity service</td>
+</tr>
+<tr>
+<td><strong>Orchestration</strong></td>
+<td>A small embedded scheduler, plus exports and a CLI for use with any orchestrator</td>
+<td>Full orchestration, as in Airflow or Dagster</td>
+</tr>
+<tr>
+<td><strong>Storage</strong></td>
+<td>Read and write S3-compatible stores, ADLS, GCS and local disk</td>
+<td>Operating storage</td>
+</tr>
+<tr>
+<td><strong>Language models</strong></td>
+<td>Use your own key and provider, or a local model</td>
+<td>Training and hosting models</td>
+</tr>
+<tr>
+<td><strong>Analytics and BI</strong></td>
+<td>Previews at every node and lightweight exploration dashboards</td>
+<td>A full BI product</td>
+</tr>
+<tr>
+<td><strong>Warehouses</strong></td>
+<td>Read and write through database nodes</td>
+<td>Building a warehouse</td>
+</tr>
+</tbody>
+</table>
+<p>Delta remains the internal table format, and Polars remains the pipeline
+engine. We plan to keep SQL metadata and standard migrations. Certification
+work and a hosted multi-tenant service are outside the current roadmap.</p>
+<h2 id="technology-choices">Technology choices</h2>
+<p>What we use, what we're looking at, and what we've dropped.</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Role in Flowfile</th>
+<th>Status</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Polars</strong></td>
+<td>Data engine</td>
+<td>Keeping</td>
+<td>One pinned version across platforms; plugins and the kernel image update with it</td>
+</tr>
+<tr>
+<td><strong>delta-rs</strong></td>
+<td>Catalog table storage</td>
+<td>Keeping</td>
+<td>No catalog required; supports CDC, merge, SCD2, row edits and time travel</td>
+</tr>
+<tr>
+<td><strong>Apache Iceberg</strong> (pyiceberg)</td>
+<td>Reading and writing tables across tools</td>
+<td>Adopting</td>
+<td>Already a dependency; the reader comes before catalog-backed writes</td>
+</tr>
+<tr>
+<td><strong>Lakekeeper</strong></td>
+<td>Reference Iceberg catalog</td>
+<td>Adopting</td>
+<td>Apache 2.0, Rust, credential vending and OIDC; also registers non-Iceberg tables</td>
+</tr>
+<tr>
+<td><strong>Polars Cloud</strong></td>
+<td>Reference scale-out backend</td>
+<td>Evaluating</td>
+<td>Same API, compute in your account or on-prem, European vendor. They run the control plane, so it will remain one of several backend options</td>
+</tr>
+<tr>
+<td><strong>PostgreSQL</strong></td>
+<td>Catalog metadata</td>
+<td>Shipped</td>
+<td>Available alongside SQLite; CI runs the migrations against both</td>
+</tr>
+<tr>
+<td><strong>OIDC</strong> (any provider)</td>
+<td>Server-mode identity</td>
+<td>Adopting</td>
+<td>Needed for per-user authorization in external catalogs</td>
+</tr>
+<tr>
+<td><strong>Docker kernels</strong></td>
+<td>Sandboxed Python execution</td>
+<td>Shipped</td>
+<td>Support for a remote Docker host is planned</td>
+</tr>
+<tr>
+<td><strong>Tauri</strong></td>
+<td>Desktop shell</td>
+<td>Migrated in May 2026</td>
+<td>Replaced Electron for a smaller, faster app with signed sidecars</td>
+</tr>
+<tr>
+<td><strong>Alteryx <code>.yxmd</code> import</strong></td>
+<td>Importing existing visual workflows</td>
+<td>Shipped</td>
+<td>Reports unsupported behaviour per tool instead of silently approximating it</td>
+</tr>
+<tr>
+<td><strong>Airbyte connector</strong></td>
+<td>Cloud ingestion</td>
+<td>Retired in July 2025</td>
+<td>Replaced by native cloud-storage reads</td>
+</tr>
+<tr>
+<td><strong>In-house fuzzy matcher</strong></td>
+<td>Fuzzy join</td>
+<td>Extracted in August 2025</td>
+<td>Now an external package imported by the worker</td>
+</tr>
+<tr>
+<td><strong>DuckDB</strong></td>
+<td>Second SQL engine</td>
+<td>Not planned</td>
+<td>A frequent request, but Polars SQL covers the SQL nodes. Keeping one engine makes it easier to keep canvas, API and export results consistent</td>
+</tr>
+<tr>
+<td><strong>Spark</strong></td>
+<td>Distributed compute</td>
+<td>Not planned</td>
+<td>We'll add scale through execution backends</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="roadmap.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Priorities">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Priorities
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="community.html" class="md-footer__link md-footer__link--next" aria-label="Next: Community">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Community
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Flowfile is MIT-licensed. Alteryx is a trademark of Alteryx, Inc.; KNIME is a trademark of KNIME AG. Flowfile is not affiliated with or endorsed by either.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.tabs", "navigation.indexes", "navigation.prune", "navigation.tracking", "navigation.top", "navigation.footer", "toc.follow", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.tabs.link"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="javascripts/formula-reference.js"></script>
+      
+    
+  </body>
+</html>

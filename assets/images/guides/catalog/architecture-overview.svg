@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600" role="img" aria-label="Catalog architecture in two layers. A thin HTTP router feeds the CatalogService facade. Its per-domain feature services — organize: namespaces, flows, tables, virtual tables, artifacts; analyze: SQL, previews, visualizations, dashboards, notebooks; operate: schedules, runs, favorites, stats — are how you create and query data. Beneath them a distinct storage layer holds the two substrates that persist it: a SQLite metadata DB (rows and grants) and Delta table storage (local or S3, one directory per table), linked by file_path. The scheduler and worker attach to the services; projects and kernels attach to storage.">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD5D3"/><stop offset="0.55" stop-color="#26A8E0"/><stop offset="1" stop-color="#1D76D6"/>
+    </linearGradient>
+    <marker id="ah" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto"><path d="M1,1 L8,4.5 L1,8 Z" fill="#9aa8b6"/></marker>
+    <marker id="ahc" markerWidth="11" markerHeight="11" refX="7.8" refY="5" orient="auto"><path d="M1,1.2 L8.6,5 L1,8.8 Z" fill="#2DD5D3"/></marker>
+  </defs>
+  <style>
+    .panel { fill:#ffffff; stroke:#1D76D6; stroke-width:1.6; }
+    .box   { fill:#ffffff; stroke:#9aa0a6; stroke-width:1.4; }
+    .rbox  { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .svc   { fill:#f4f9ff; stroke:#bcd8f2; stroke-width:1.1; }
+    .store { fill:#eef4fb; stroke:#8fb0d6; stroke-width:1.5; }
+    .sub   { fill:#ffffff; stroke:#1D76D6; stroke-width:1.5; }
+    .chip  { fill:#eef0f2; }
+    .chipb { fill:#eaf3fc; }
+    .ic    { fill:none; stroke:#1D76D6; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icg   { fill:none; stroke:#5b6470; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .icw   { fill:none; stroke:#ffffff; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .th    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:15px; fill:#233588; }
+    .t     { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:14px; fill:#233588; }
+    .ts    { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:12.5px; fill:#233588; }
+    .s     { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#6b7280; }
+    .ss    { font-family:Roboto,Arial,sans-serif; font-size:9.5px; fill:#8a93a3; }
+    .svct  { font-family:Roboto,Arial,sans-serif; font-weight:600; font-size:10.5px; fill:#233588; }
+    .sect  { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:10px; letter-spacing:0.7px; fill:#1D76D6; }
+    .grp   { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:9px; letter-spacing:0.9px; fill:#3f6390; }
+    .sectg { font-family:Roboto,Arial,sans-serif; font-weight:700; font-size:10px; letter-spacing:0.7px; fill:#3f6390; }
+    .sub2  { font-family:Roboto,Arial,sans-serif; font-size:9.5px; fill:#6b7280; }
+    .albl  { font-family:Roboto,Arial,sans-serif; font-size:10.5px; fill:#8a93a3; }
+    .arw   { fill:none; stroke:#b3bcc9; stroke-width:1.8; }
+    .arwc  { fill:none; stroke:#2DD5D3; stroke-width:3; }
+    .dv    { stroke:#e6ebf1; stroke-width:1; }
+  </style>
+
+  <!-- ============ HTTP ROUTER ============ -->
+  <g>
+    <rect class="rbox" x="412" y="26" width="176" height="62" rx="11"/>
+    <rect class="chipb" x="426" y="40" width="34" height="34" rx="8"/>
+    <g class="ic" transform="translate(431,45)"><path d="M8,7 L4,12 L8,17"/><path d="M16,7 L20,12 L16,17"/><line x1="13.6" y1="6" x2="10.4" y2="18"/></g>
+    <text class="t" x="470" y="54">HTTP router</text>
+    <text class="s" x="470" y="72">/catalog &#183; thin adapter</text>
+  </g>
+  <path class="arwc" d="M500,88 L500,142" marker-end="url(#ahc)"/>
+  <text class="albl" x="512" y="110">requests in</text>
+  <text class="ss" x="512" y="124">JWT &#183; X-Internal</text>
+
+  <!-- ============ SERVICE FACADE (how you create + query data) ============ -->
+  <rect class="panel" x="300" y="146" width="400" height="252" rx="16"/>
+  <path fill="url(#brand)" d="M356,182 L344,161.2 L320,161.2 L308,182 L320,202.8 L344,202.8 Z"/>
+  <g class="icw" transform="translate(332,182)">
+    <line x1="0" y1="0" x2="-8" y2="-11"/><line x1="0" y1="0" x2="10" y2="-11"/><line x1="0" y1="0" x2="0" y2="13"/>
+    <circle cx="0" cy="0" r="2.4" fill="#ffffff"/><circle cx="-8" cy="-11" r="2" fill="#ffffff"/><circle cx="10" cy="-11" r="2" fill="#ffffff"/><circle cx="0" cy="13" r="2" fill="#ffffff"/>
+  </g>
+  <text class="th" x="368" y="177">CatalogService</text>
+  <text class="s" x="368" y="194">facade over per-domain services</text>
+  <line class="dv" x1="314" y1="210" x2="686" y2="210"/>
+  <text class="sect" x="316" y="226">FEATURE SERVICES &#183; HOW YOU WORK WITH DATA</text>
+
+  <!-- three service categories, one column each -->
+  <text class="grp" x="366" y="245" text-anchor="middle">ORGANIZE</text>
+  <text class="grp" x="500" y="245" text-anchor="middle">ANALYZE</text>
+  <text class="grp" x="634" y="245" text-anchor="middle">OPERATE</text>
+  <line class="dv" x1="433" y1="252" x2="433" y2="392"/>
+  <line class="dv" x1="567" y1="252" x2="567" y2="392"/>
+  <g>
+    <!-- Organize: what's registered + structured in the catalog -->
+    <rect class="svc" x="310" y="252" width="112" height="24" rx="7"/><text class="svct" x="366" y="268" text-anchor="middle">Namespaces</text>
+    <rect class="svc" x="310" y="280" width="112" height="24" rx="7"/><text class="svct" x="366" y="296" text-anchor="middle">Flows</text>
+    <rect class="svc" x="310" y="308" width="112" height="24" rx="7"/><text class="svct" x="366" y="324" text-anchor="middle">Tables</text>
+    <rect class="svc" x="310" y="336" width="112" height="24" rx="7"/><text class="svct" x="366" y="352" text-anchor="middle">Virtual tables</text>
+    <rect class="svc" x="310" y="364" width="112" height="24" rx="7"/><text class="svct" x="366" y="380" text-anchor="middle">Artifacts</text>
+    <!-- Analyze: query, view, present, explore -->
+    <rect class="svc" x="444" y="252" width="112" height="24" rx="7"/><text class="svct" x="500" y="268" text-anchor="middle">SQL</text>
+    <rect class="svc" x="444" y="280" width="112" height="24" rx="7"/><text class="svct" x="500" y="296" text-anchor="middle">Previews</text>
+    <rect class="svc" x="444" y="308" width="112" height="24" rx="7"/><text class="svct" x="500" y="324" text-anchor="middle">Visualizations</text>
+    <rect class="svc" x="444" y="336" width="112" height="24" rx="7"/><text class="svct" x="500" y="352" text-anchor="middle">Dashboards</text>
+    <rect class="svc" x="444" y="364" width="112" height="24" rx="7"/><text class="svct" x="500" y="380" text-anchor="middle">Notebooks</text>
+    <!-- Operate: automate, run, track -->
+    <rect class="svc" x="578" y="252" width="112" height="24" rx="7"/><text class="svct" x="634" y="268" text-anchor="middle">Schedules</text>
+    <rect class="svc" x="578" y="280" width="112" height="24" rx="7"/><text class="svct" x="634" y="296" text-anchor="middle">Runs</text>
+    <rect class="svc" x="578" y="308" width="112" height="24" rx="7"/><text class="svct" x="634" y="324" text-anchor="middle">Favorites</text>
+    <rect class="svc" x="578" y="336" width="112" height="24" rx="7"/><text class="svct" x="634" y="352" text-anchor="middle">Stats</text>
+  </g>
+
+  <!-- services persist to storage -->
+  <path class="arw" d="M500,398 L500,428" marker-end="url(#ah)" stroke-width="1.6"/>
+  <text class="albl" x="510" y="418">read / write</text>
+
+  <!-- ============ STORAGE LAYER (what's persisted) — visually distinct band ============ -->
+  <rect class="store" x="300" y="430" width="400" height="134" rx="14"/>
+  <text class="sectg" x="316" y="452">STORAGE &#183; WHAT'S PERSISTED &#183; TWO SUBSTRATES</text>
+
+  <!-- Metadata DB -->
+  <rect class="sub" x="314" y="460" width="166" height="92" rx="11"/>
+  <rect class="chipb" x="326" y="478" width="38" height="38" rx="9"/>
+  <g class="ic" transform="translate(333,485)"><ellipse cx="12" cy="6" rx="7" ry="2.6"/><path d="M5,6 V16 C5,17.4 8.1,18.6 12,18.6 C15.9,18.6 19,17.4 19,16 V6"/><path d="M5,11 C5,12.4 8.1,13.6 12,13.6 C15.9,13.6 19,12.4 19,11"/></g>
+  <text class="ts" x="372" y="490">Metadata DB</text>
+  <text class="s"  x="372" y="507">SQLite &#183; shared</text>
+  <text class="ss" x="372" y="522">rows + grants</text>
+
+  <!-- Table storage -->
+  <rect class="sub" x="520" y="460" width="166" height="92" rx="11"/>
+  <rect class="chipb" x="532" y="478" width="38" height="38" rx="9"/>
+  <g class="ic" transform="translate(538,485)"><rect x="3" y="4" width="18" height="15" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="9" y1="4" x2="9" y2="19"/><line x1="15" y1="4" x2="15" y2="19"/></g>
+  <text class="ts" x="578" y="490">Table storage</text>
+  <text class="s"  x="578" y="507">Delta &#183; local / S3</text>
+  <text class="ss" x="578" y="522">one dir per table</text>
+
+  <!-- file_path link between the two substrates -->
+  <path class="arw" d="M482,504 L518,504" marker-end="url(#ah)" stroke-width="1.5"/>
+  <text class="ss" x="500" y="497" text-anchor="middle">file_path</text>
+
+  <!-- ============ NEIGHBORS ============ -->
+  <!-- Scheduler (attaches to services) -->
+  <g>
+    <rect class="box" x="40" y="257" width="182" height="86" rx="11"/>
+    <rect class="chip" x="54" y="278" width="42" height="42" rx="9"/>
+    <g class="icg" transform="translate(63,287)"><rect x="4" y="5" width="16" height="15" rx="2"/><line x1="4" y1="9.5" x2="20" y2="9.5"/><line x1="8" y1="3.5" x2="8" y2="6.5"/><line x1="16" y1="3.5" x2="16" y2="6.5"/><circle cx="15.5" cy="15.5" r="3.4" fill="#eef0f2"/><path d="M15.5,13.7 V15.5 L17,16.4"/></g>
+    <text class="t" x="108" y="295">Scheduler</text>
+    <text class="s" x="108" y="313">embedded &#183; shared DB</text>
+  </g>
+  <path class="arw" d="M222,300 L298,300" marker-end="url(#ah)"/>
+  <text class="ss" x="260" y="293" text-anchor="middle">polls shared DB</text>
+
+  <!-- Worker (attaches to services) -->
+  <g>
+    <rect class="box" x="778" y="257" width="182" height="86" rx="11"/>
+    <rect class="chip" x="792" y="278" width="42" height="42" rx="9"/>
+    <g class="icg" transform="translate(801,287)"><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="2"/><line x1="17" y1="12" x2="19.5" y2="12"/><line x1="4.5" y1="12" x2="7" y2="12"/><line x1="12" y1="17" x2="12" y2="19.5"/><line x1="12" y1="4.5" x2="12" y2="7"/><line x1="15.54" y1="15.54" x2="17.3" y2="17.3"/><line x1="6.7" y1="6.7" x2="8.46" y2="8.46"/><line x1="15.54" y1="8.46" x2="17.3" y2="6.7"/><line x1="6.7" y1="17.3" x2="8.46" y2="15.54"/></g>
+    <text class="t" x="846" y="295">Worker</text>
+    <text class="s" x="846" y="313">spawned children</text>
+  </g>
+  <path class="arw" d="M702,300 L776,300" marker-end="url(#ah)"/>
+  <text class="albl" x="739" y="293" text-anchor="middle">collect + IPC</text>
+
+  <!-- Projects (attaches to storage) -->
+  <g>
+    <rect class="box" x="40" y="452" width="182" height="86" rx="11"/>
+    <rect class="chip" x="54" y="473" width="42" height="42" rx="9"/>
+    <g class="icg" transform="translate(63,482)"><line x1="6" y1="6.5" x2="6" y2="17.5"/><circle cx="6" cy="5" r="2" fill="#eef0f2"/><circle cx="6" cy="19" r="2" fill="#eef0f2"/><circle cx="18" cy="9" r="2" fill="#eef0f2"/><path d="M6,12 C6,9 18,12.5 18,10.8"/></g>
+    <text class="t" x="108" y="490">Projects</text>
+    <text class="s" x="108" y="508">git-tracked mirror</text>
+  </g>
+  <path class="arw" d="M298,496 L224,496" marker-end="url(#ah)"/>
+  <text class="albl" x="261" y="489" text-anchor="middle">metadata &#8594; git</text>
+
+  <!-- Kernels (attaches to storage) -->
+  <g>
+    <rect class="box" x="778" y="452" width="182" height="86" rx="11"/>
+    <rect class="chip" x="792" y="473" width="42" height="42" rx="9"/>
+    <g class="icg" transform="translate(801,482)"><path d="M12,3 L20,7.4 V16.6 L12,21 L4,16.6 V7.4 Z"/><path d="M4,7.4 L12,11.8 L20,7.4"/><path d="M12,11.8 V21"/></g>
+    <text class="t" x="846" y="490">Kernels</text>
+    <text class="s" x="846" y="508">sandboxed code</text>
+  </g>
+  <path class="arw" d="M776,496 L702,496" marker-end="url(#ah)"/>
+  <text class="ss" x="739" y="490" text-anchor="middle">metadata &#8594; core</text>
+  <text class="ss" x="739" y="508" text-anchor="middle">Delta &#8594; volume</text>
+</svg>
