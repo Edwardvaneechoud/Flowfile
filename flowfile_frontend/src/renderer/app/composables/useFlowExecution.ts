@@ -124,6 +124,7 @@ export function useFlowExecution(
   const state = FlowExecutionState.getInstance();
   const localPollingInterval = ref<number | null>(null);
   const isExecuting = ref(false);
+  const isCancelling = ref(false);
 
   const getFlowId = () => {
     if (typeof flowId === "function") return flowId();
@@ -235,6 +236,7 @@ export function useFlowExecution(
       unFreezeFlow();
       editorStore.isRunning = false;
       isExecuting.value = false;
+      isCancelling.value = false;
       state.setExecutionState(getPollingKey(pollingKeySuffix), false);
       if (!notified) {
         notified = true;
@@ -448,24 +450,22 @@ export function useFlowExecution(
   };
 
   const cancelFlow = async () => {
+    if (isCancelling.value) return;
+    isCancelling.value = true;
     try {
       await axios.post("/flow/cancel/", null, {
         params: { flow_id: getFlowId() },
         headers: { accept: "application/json" },
       });
       showNotification("Cancelling", "The operation is being cancelled");
-      unFreezeFlow();
-      editorStore.isRunning = false;
-      isExecuting.value = false;
-
-      stopPolling();
-      if (options.persistPolling) {
-        for (let i = 0; i < 100; i++) {
-          // Assuming max 100 nodes
-          state.clearPollingInterval(getPollingKey(`node_${i}`));
-        }
+      // Cancellation is asynchronous on the server. Keep the run locked and
+      // poll until run_status includes the terminal result for every node.
+      if (isCancelling.value) {
+        startPolling(() => checkRunStatus());
+        await checkRunStatus();
       }
     } catch (error) {
+      isCancelling.value = false;
       console.error("Error cancelling run:", error);
       showNotification("Error", "Failed to cancel the operation", "error");
     }
@@ -481,6 +481,7 @@ export function useFlowExecution(
   return {
     // State
     isExecuting,
+    isCancelling,
 
     // Methods
     runFlow,
